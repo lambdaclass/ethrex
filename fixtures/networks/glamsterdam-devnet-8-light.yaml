@@ -1,0 +1,38 @@
+participants:
+  - el_type: geth
+    el_image: ethpandaops/geth:glamsterdam-devnet-8
+    cl_type: lodestar
+    cl_image: ethpandaops/lodestar:glamsterdam-devnet-8
+  - el_type: ethrex
+    el_image: ethrex:local
+    cl_type: grandine
+    cl_image: ethpandaops/grandine:glamsterdam-devnet-8-minimal
+    el_extra_env_vars:
+      RUST_LOG: "debug,ethrex_p2p::tx_broadcaster=info"
+
+global_log_level: debug
+network_params:
+  preset: minimal
+  deploy_eip8282_contracts: true
+  gloas_fork_epoch: 1
+  gas_limit: 600000000
+  genesis_gaslimit: 600000000
+  withdrawal_type: "0x02"
+
+additional_services:
+  - spamoor
+
+# No BPO2 is scheduled, so Amsterdam inherits BPO1's target of 10 and max of 15.
+# Clients that disagree on the target only reject each other's headers when a
+# parent block's blob gas lands between the two targets, so keep blob load in
+# that range rather than saturating at max.
+spamoor_params:
+  image: ethpandaops/spamoor:latest
+  spammers:
+    - scenario: blobs
+      config:
+        throughput: 8
+        max_pending: 20
+    - scenario: eoatx
+      config:
+        throughput: 15

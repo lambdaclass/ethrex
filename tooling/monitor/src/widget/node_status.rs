@@ -50,7 +50,6 @@ impl NodeStatusTable {
         let last_known_batch = "NaN"; // TODO: Implement last known batch retrieval
         let last_known_block = store
             .get_latest_block_number()
-            .await
             .map_err(|_| MonitorError::GetLatestBlock)?;
         let peers = if is_based {
             Some(l2_client.peer_count().await?)

@@ -363,7 +363,7 @@ async fn boot_clamps_head_to_flushed_upto() {
         .expect("boot must not brick: head clamped to durable block 10");
 
     assert_eq!(
-        store.get_latest_block_number().await.expect("head"),
+        store.get_latest_block_number().expect("head"),
         10,
         "boot must clamp LatestBlockNumber to the durable head"
     );
@@ -429,7 +429,7 @@ async fn boot_on_legacy_db_without_marker_keeps_head() {
 
     // Head must be preserved at 10, NOT rewound to genesis.
     assert_eq!(
-        store.get_latest_block_number().await.expect("head"),
+        store.get_latest_block_number().expect("head"),
         10,
         "legacy DB must keep its head, not clamp to genesis"
     );
@@ -937,7 +937,7 @@ async fn boot_walks_past_reorged_unflushed_head() {
         .expect("boot must not brick: head walks down to durable block 9");
 
     assert_eq!(
-        store.get_latest_block_number().await.expect("head"),
+        store.get_latest_block_number().expect("head"),
         9,
         "boot must re-anchor LatestBlockNumber to the highest resolvable head"
     );
@@ -1011,7 +1011,7 @@ async fn shutdown_flushes_buffered_block_a_crash_would_lose() {
         "shutdown must have flushed the buffered block to disk"
     );
     assert_eq!(
-        store.get_latest_block_number().await.expect("head"),
+        store.get_latest_block_number().expect("head"),
         10,
         "head must stay at the durable block after a clean shutdown"
     );

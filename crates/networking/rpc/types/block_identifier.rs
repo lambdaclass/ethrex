@@ -41,7 +41,7 @@ impl BlockIdentifier {
                 BlockTag::Earliest => Ok(Some(storage.get_earliest_block_number().await?)),
                 BlockTag::Finalized => storage.get_finalized_block_number().await,
                 BlockTag::Safe => storage.get_safe_block_number().await,
-                BlockTag::Latest => Ok(Some(storage.get_latest_block_number().await?)),
+                BlockTag::Latest => Ok(Some(storage.get_latest_block_number()?)),
                 BlockTag::Pending => {
                     // TODO(#1112): We need to check individual intrincacies of the pending tag for
                     // each RPC method that uses it.
@@ -49,7 +49,7 @@ impl BlockIdentifier {
                         Ok(Some(pending_block_number))
                     } else {
                         // If there are no pending blocks, we return the latest block number
-                        Ok(Some(storage.get_latest_block_number().await?))
+                        Ok(Some(storage.get_latest_block_number()?))
                     }
                 }
             },
@@ -155,7 +155,7 @@ impl BlockIdentifierOrHash {
         }
 
         let result = self.resolve_block_number(storage).await?;
-        let latest = storage.get_latest_block_number().await?;
+        let latest = storage.get_latest_block_number()?;
 
         Ok(result.is_some_and(|res| res == latest))
     }

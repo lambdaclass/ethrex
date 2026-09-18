@@ -48,7 +48,6 @@ std = [
     "dep:crossbeam",
     "dep:rayon",
 ]
-eip-8025 = []
 
 [lib]
 path = "./trie.rs"

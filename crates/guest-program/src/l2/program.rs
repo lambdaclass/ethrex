@@ -76,3 +76,16 @@ pub fn execution_program(
         balance_diffs,
     })
 }
+
+/// Run the L2 batch guest: rkyv-encoded `ProgramInput` in, encoded
+/// `ProgramOutput` out.
+///
+/// Mirrors `crate::l1::run_stateless_guest`'s byte-in/byte-out shape so the zkVM
+/// binaries carry no serialization logic, while keeping the L2 commitment format —
+/// the on-chain verifier needs state roots and blob/message commitments that
+/// `statelessOutputBytes` does not carry.
+pub fn run_guest(input_bytes: &[u8], crypto: Arc<dyn Crypto>) -> Result<Vec<u8>, L2ExecutionError> {
+    let input = rkyv::from_bytes::<ProgramInput, rkyv::rancor::Error>(input_bytes)
+        .map_err(|e| L2ExecutionError::Internal(format!("rkyv decode: {e}")))?;
+    Ok(execution_program(input, crypto)?.encode())
+}

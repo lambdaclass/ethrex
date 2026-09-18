@@ -143,7 +143,7 @@ impl StateUpdater {
     pub async fn update_state(&mut self) -> Result<(), StateUpdaterError> {
         let current_state = self.sequencer_state.status();
         if !self.based {
-            let current_block: U256 = self.store.get_latest_block_number().await?.into();
+            let current_block: U256 = self.store.get_latest_block_number()?.into();
             let mut new_state = current_state;
 
             // The node if set to stop sequencing at a specific block we will set it to Following once we reach it.

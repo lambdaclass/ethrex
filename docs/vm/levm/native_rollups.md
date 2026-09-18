@@ -34,7 +34,7 @@ SSZ-encoded StatelessInput (NewPayloadRequest + ExecutionWitness + ChainConfig)
   5. Execute block via LEVM
   6. Return StatelessValidationResult (SSZ)
         |
-  Returns SSZ-encoded (new_payload_request_root, successful_validation, chain_config) or reverts
+  Returns SSZ-encoded (new_payload_request_root, successful_validation, chain_id, schema_id) or reverts
 ```
 
 ## EXECUTE Precompile
@@ -49,8 +49,8 @@ SSZ-encoded `StatelessInput`:
 pub struct SszStatelessInput {
     pub new_payload_request: NewPayloadRequest,  // Full block as SSZ
     pub witness: SszExecutionWitness,            // State trie, storage tries, codes
-    pub chain_config: SszChainConfig,            // chain_id
-    pub public_keys: SszList<...>,               // Pre-recovered tx public keys (stub)
+    pub chain_id: u64,                           // #3278: the only config on the wire
+    pub public_keys: SszList<...>,               // One recovered tx public key per tx
 }
 ```
 
@@ -65,10 +65,11 @@ The `NewPayloadRequest` contains:
 SSZ-encoded `StatelessValidationResult`:
 
 ```rust
-pub struct StatelessValidationResult {
+pub struct SszStatelessValidationResult {
     pub new_payload_request_root: [u8; 32],  // hash_tree_root of NewPayloadRequest
     pub successful_validation: bool,          // Whether execution was valid
-    pub chain_config: SszChainConfig,         // chain_id (echo back)
+    pub chain_id: u64,                        // echoed from the input
+    pub schema_id: u16,                       // fork/encoding the guest decoded
 }
 ```
 
@@ -81,8 +82,19 @@ Before delegating to `verify_stateless_new_payload`, the precompile validates:
 - `blob_gas_used == 0` — no blob data on L2
 - `excess_blob_gas == 0` — no blob fee market on L2
 - `withdrawals` is empty — L2 doesn't have consensus-layer withdrawals
-- `execution_requests` is empty — no deposit/withdrawal/consolidation requests
-- No type-3 (blob) transactions in the transaction list
+- `execution_requests` is empty — no deposit, withdrawal, consolidation, builder-deposit or builder-exit requests
+- No type-`0x03` (blob), `0x06` (frame) or `0x7e` (privileged) transactions in the transaction list
+
+The two signature-less types are rejected for a structural reason, not a policy
+one: they carry an explicit sender and no signature, so no public key can be
+recovered for them, while `StatelessInput` commits exactly one key per
+transaction. Native rollups do not need them — L1→L2 messages are relayed as
+signed EIP-1559 transactions — so rejecting them makes "every transaction in the
+payload is signature-bearing" an invariant the producer can rely on.
+
+The 2-byte schema-id prefix is also required, and only `0x1501` is accepted:
+since execution-specs #3278 no chain configuration crosses the wire, so the
+prefix is the sole carrier of the fork.
 
 ### Gas Charging
 
@@ -162,8 +174,13 @@ The `GuestProgramStateDb` adapter (`crates/vm/levm/src/db/guest_program_state_db
 2. Validates block headers from the witness
 3. Builds `GuestProgramState` from the witness
 4. Converts the SSZ `NewPayloadRequest` → ethrex `Block`
-5. Executes the block via LEVM
-6. Returns `StatelessValidationResult` with the hash tree root and a `successful_validation` flag
+5. Checks each supplied public key derives to that transaction's recovered sender
+6. Executes the block via LEVM
+7. Returns `StatelessValidationResult` with the hash tree root, `chain_id`, `schema_id` and a `successful_validation` flag
+
+Steps 4–7 live in `verify_stateless_block` (`crates/guest-program/src/l1/program.rs`),
+which is the single point both this path and the zkVM guests pass through — so
+neither can enforce a different set of checks than the other.
 
 The state root check implicitly guarantees both correct L1 message processing and correct L2→L1 withdrawal recording.
 
@@ -225,33 +242,22 @@ The native-rollup EXECUTE precompile, the stateless-validation pipeline, and all
 
 **Runtime gate:** the EXECUTE precompile body executes only when `fork >= Fork::LStar && vm_type == VMType::L1`. On any other fork or VM type the precompile is a no-op CALL.
 
-The only remaining cargo feature is **`eip-8025`**, which controls the guest-program input/output format. The SSZ dep chain is:
+There is no longer an `eip-8025` cargo feature. It was removed along with the legacy guest path, so
+`libssz` and the SSZ types are unconditional dependencies of `ethrex-common`, and the guest has a
+single wire format rather than one per feature setting. A `grep eip-8025 -- '*.toml'` returns no
+feature declarations.
 
-```toml
-# crates/guest-program/Cargo.toml  (guest only — not the host)
-eip-8025 = [
-    "ethrex-common/eip-8025",
-    "ethrex-vm/eip-8025",
-    "dep:libssz",
-    "dep:libssz-merkle",
-    "dep:libssz-types",
-    "dep:libssz-derive",
-]
+The guest input/output format is now fixed:
 
-# crates/blockchain/Cargo.toml
-eip-8025 = ["ethrex-common/eip-8025", "ethrex-vm/eip-8025"]
+- **Input:** a 2-byte big-endian schema-id prefix (`STATELESS_INPUT_SCHEMA_ID`, currently `0x1501`)
+  followed by the SSZ-encoded `SszStatelessInput`. A wrong or missing prefix is rejected before the
+  body is parsed.
+- **Output:** 43 bytes, laid out as
+  `new_payload_request_root (32) || successful_validation (1) || chain_id (8) || schema_id (2)`,
+  with `schema_id` little-endian at offset 41.
 
-# crates/common/Cargo.toml
-eip-8025 = ["ethrex-trie/eip-8025"]   # guest-only trie SSZ support; the always-compiled stateless SSZ types do not need it
-```
-
-When `eip-8025` is compiled into the guest program:
-- Input format: `NewPayloadRequest` (SSZ) + `ExecutionWitness` (rkyv) — the EIP-8025 wire format
-- Output format: `ProgramOutput { new_payload_request_root: [u8; 32], valid: bool }` — 33 bytes
-
-Without `eip-8025`:
-- Input/output use the legacy rkyv `ProgramInput`/`ProgramOutput` format
-- The host (node) always has the SSZ types compiled in for the EXECUTE precompile
+The 43-byte layout is pinned against `NativeRollup.sol` by
+`test/tests/l2/native_rollup_sol_offsets.rs`.
 
 ## Summary Table (vs l2beat native-rollups spec; see divergences note above)
 
@@ -277,7 +283,7 @@ Without `eip-8025`:
 | ZK variant | Specified (proof-carrying tx + PROOFROOT) | Not implemented (re-execution only) | **Gap (by design)** |
 | Forced transactions | WIP (FOCIL) | Not implemented | **Gap** |
 | DA cost pricing | WIP | Not implemented | **Both WIP** |
-| `public_keys` | Pre-recovered tx keys | Empty tuple (stub) | **Stub** |
+| `public_keys` | Pre-recovered tx keys | Populated by the advancer, checked against recovered senders | **Aligned** |
 
 ### EIP-8079 divergences
 
@@ -296,4 +302,3 @@ This PoC intentionally omits several things that would be needed for production:
 - **No L1 message inclusion deadline** — `pendingL1Messages` have no per-message deadline, so the advancer can defer processing them indefinitely without on-chain consequence. `OnChainProposer.sol` enforces this for privileged transactions via `PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION` + `hasExpiredPrivilegedTransactions()`; the analogous mechanism for `NativeRollup.sol` is a TODO.
 - **L2 ETH supply drain** — Base fees are burned but not credited back on L2. A production solution would use a `BaseFeeVault` pattern.
 - **No blob data support** — Only calldata-based input (spec proposes blob references via EIP-8142)
-- **`public_keys` empty** — Pre-recovered transaction public keys are not populated yet

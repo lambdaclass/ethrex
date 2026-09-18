@@ -41,6 +41,6 @@ async fn test_validate_status() {
         genesis: genesis_hash,
         fork_id,
     };
-    let result = validate_status(message, &storage, &eth).await;
+    let result = validate_status(message, &storage, &eth);
     assert!(result.is_ok());
 }

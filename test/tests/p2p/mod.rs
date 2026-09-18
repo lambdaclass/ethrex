@@ -13,4 +13,5 @@ mod snap_v2_flat_tests;
 mod snap_v2_message_tests;
 mod snap_v2_reconstruction_tests;
 mod snap_v2_server_tests;
+mod sync_race_tests;
 mod types_tests;
