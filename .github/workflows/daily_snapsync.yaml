@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # notify_snapsync_run.sh lists earlier runs on the same commit
 
 concurrency:
   group: ethrex-sync-server
@@ -130,6 +131,8 @@ jobs:
           START_TIME: ${{ steps.start.outputs.timestamp }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
+          EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           bash .github/scripts/notify_snapsync_run.sh
 
@@ -182,5 +185,7 @@ jobs:
           START_TIME: ${{ steps.start.outputs.timestamp }}
           RUN_ID: ${{ github.run_id }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
+          EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           bash .github/scripts/notify_snapsync_run.sh
