@@ -190,15 +190,14 @@ jobs:
         with:
           simulator: ${{ matrix.test.simulation }}
           client: ethrex
-          # Pin hive to ethereum/hive#1530's merge commit, which fixes the
-          # clients/ethrex/mapper.jq depositContractAddress bug from #1507:
-          # #1524 wrapped the `//` value in parens (the unparenthesized form was
-          # a jq syntax error that stopped the client from starting), and #1530
-          # restored the mainnet deposit contract address as the fallback (the
-          # zero-address default made every eip6110 deposit / eip7685 request
-          # test fail). Also gives the daily report a reproducible hive version
-          # instead of floating on the action's default.
-          hive_version: 7c4c99ebb79955f23e1952fb0282a0dadcb6e181
+          # Our fork of ethereum/hive: identical to upstream 7c4c99eb (the deposit-contract
+          # mapper fix from ethereum/hive#1530) plus one commit pinning the go-ethereum
+          # checkout inside the devp2p simulator. Upstream builds that simulator from geth
+          # master, so its eth/snap suite changed under us on 2026-09-02 (Osaka testdata,
+          # eth/72) and failed every PR with "wrong fork ID". Bump GETH_REF in the fork to
+          # move deliberately.
+          hive_repository: lambdaclass/hive-ci
+          hive_version: bda630136e76df758b1ab3f6879af3ae0b106813
           extra_flags: ${{ steps.hive-flags.outputs.flags }}
           workflow_artifact_upload: true
           workflow_artifact_prefix: ${{ matrix.test.file_name }}_daily
