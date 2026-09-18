@@ -4182,6 +4182,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "indexmap 2.14.0",
+ "ipnet",
  "lazy_static",
  "lru 0.16.4",
  "prometheus",
