@@ -20,6 +20,16 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ethrex_common::{BigEndianHash, H256, U256};
 
+/// The first hash after `hash`, or `None` at the top of the space.
+///
+/// Shared by the cursor and the download: a range that has been served through
+/// `hash` resumes here, and there is no hash past `H256::MAX` to resume from.
+pub(crate) fn next_hash(hash: H256) -> Option<H256> {
+    hash.into_uint()
+        .checked_add(U256::one())
+        .map(|next| H256::from_uint(&next))
+}
+
 /// A half-open-at-the-front range of hashes still to be served: `next` is the
 /// first hash not yet covered, `last` the final hash the range owns.
 ///
@@ -158,8 +168,8 @@ impl DownloadCursor {
         else {
             return;
         };
-        match served_through.into_uint().checked_add(U256::one()) {
-            Some(next) => self.account_ranges[index].next = H256::from_uint(&next),
+        match next_hash(served_through) {
+            Some(next) => self.account_ranges[index].next = next,
             // Served through the top of the hash space, which only the range
             // owning the tail can reach. There is no next hash to point at, so
             // drop the range rather than expressing the frontier past it.
@@ -211,8 +221,8 @@ impl DownloadCursor {
             return;
         };
         if let Some(index) = ranges.iter().position(|range| served_through <= range.last) {
-            match served_through.into_uint().checked_add(U256::one()) {
-                Some(next) => ranges[index].next = H256::from_uint(&next),
+            match next_hash(served_through) {
+                Some(next) => ranges[index].next = next,
                 // As in `advance_accounts`: the range owning the tail of the
                 // slot space has no next hash to point at.
                 None => {

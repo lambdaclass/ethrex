@@ -12,7 +12,7 @@
 //! not check it.
 
 use ethrex_common::{
-    BigEndianHash, H256, U256,
+    H256, U256,
     types::{AccountState, BlockHeader},
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -30,6 +30,7 @@ use crate::{
         constants::{HASH_MAX, MAX_RESPONSE_BYTES, PEER_REPLY_TIMEOUT},
         encodable_to_proof,
     },
+    sync::snap2::cursor::next_hash,
 };
 
 /// What one account-range request produced.
@@ -248,11 +249,4 @@ pub async fn request_storage_ranges(
         unserved,
         verified: true,
     }
-}
-
-/// The first hash after `hash`, or `None` at the top of the space.
-fn next_hash(hash: H256) -> Option<H256> {
-    hash.into_uint()
-        .checked_add(U256::one())
-        .map(|next| H256::from_uint(&next))
 }

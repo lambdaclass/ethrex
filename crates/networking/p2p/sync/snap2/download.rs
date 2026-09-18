@@ -51,6 +51,7 @@ use crate::{
         code_collector::CodeHashCollector,
         snap2::{
             DownloadCursor, FlatState, HashRange, catch_up, catch_up_exceeds_retention,
+            cursor::next_hash,
             worker::{
                 AccountRangeOutcome, StorageRangeOutcome, request_account_range,
                 request_storage_ranges,
@@ -502,14 +503,6 @@ async fn schedule(
     }
 
     Ok(scheduled)
-}
-
-/// The first hash after `hash`, or `None` at the top of the space.
-fn next_hash(hash: H256) -> Option<H256> {
-    use ethrex_common::BigEndianHash;
-    hash.into_uint()
-        .checked_add(U256::one())
-        .map(|next| H256::from_uint(&next))
 }
 
 /// Take the next set of contracts to request storage for.
