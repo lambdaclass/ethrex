@@ -34,10 +34,10 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-85a9eec8.js";
+            window.path_to_searchindex_js = "../../searchindex-e833aa2f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../../toc-c68b2aa5.js"></script>
+        <script src="../../toc-f6d73635.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -182,6 +182,18 @@
 <p>Full syncing works by downloading and executing every block from genesis. This means that full syncing will only work for networks that started after <a href="https://ethereum.org/en/roadmap/merge/">The Merge</a>, as ethrex only supports post merge execution.</p>
 <h2 id="snap-sync"><a class="header" href="#snap-sync">Snap sync</a></h2>
 <p>For snap sync, you can view the <a href="./snap_sync.html">main document here</a>.</p>
+<h3 id="snap2-eip-8189"><a class="header" href="#snap2-eip-8189">snap/2 (EIP-8189)</a></h3>
+<p>ethrex advertises <code>snap/2</code> alongside <code>snap/1</code> unless its own state sync still
+depends on <code>GetTrieNodes</code>, which snap/2 removes; the version is negotiated
+per-peer at handshake.</p>
+<p>On a post-Amsterdam chain with a <code>snap/2</code> peer available, state sync downloads
+flat key-value state, patches it with the block access lists of the blocks that
+passed while it downloaded, then rebuilds every trie locally and verifies the
+result against the pivot’s state root. There is no trie healing at all.</p>
+<p>It falls back to <code>snap/1</code> when no <code>snap/2</code> peer is available, when the pivot is
+pre-Amsterdam, or when BAL validation fails.</p>
+<p>Implementation notes and known gaps are in
+<a href="../../internal/l1/snap_v2.html">snap/2 internals</a>.</p>
 <h2 id="historical-chain-backfill"><a class="header" href="#historical-chain-backfill">Historical chain backfill</a></h2>
 <p>A snap-synced node keeps only block <strong>headers</strong> below the sync pivot, so
 historical RPC queries for pre-pivot blocks (<code>eth_getBlockByNumber</code>,

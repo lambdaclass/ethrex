@@ -1,0 +1,637 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>snap/2 (EIP-8189) internals - Ethrex</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="shortcut icon" href="../../favicon-65f98953.png">
+        <link rel="stylesheet" href="../../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../../css/general-2459343d.css">
+        <link rel="stylesheet" href="../../css/chrome-ae938929.css">
+        <link rel="stylesheet" href="../../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../../searchindex-e833aa2f.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../../toc-f6d73635.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Ethrex</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<h1 id="snap2-eip-8189-internals"><a class="header" href="#snap2-eip-8189-internals">snap/2 (EIP-8189) internals</a></h1>
+<p>snap/2 replaces the iterative <code>GetTrieNodes</code> / <code>TrieNodes</code> round-trips of the
+snap/1 healing phase with Block Access List (EIP-7928) replay. Instead of
+repairing a range download by asking peers for the individual trie nodes that
+disagree, a snap/2 sync downloads flat key-value state, patches it with the
+access lists of the blocks that passed while it downloaded, and rebuilds every
+trie locally from the result.</p>
+<p>Implements <a href="https://eips.ethereum.org/EIPS/eip-8189">EIP-8189</a> and depends on
+EIP-7928 for the <code>block_access_list_hash</code> header field.</p>
+<p>The client-side algorithm is normative and is specified in devp2p
+<code>caps/snap.md</code>, “Synchronization algorithm”, not in EIP-8189, which only
+sketches it. Concurrent account and storage fetch, a monotonic cursor across
+pivot moves, and one final root check are all requirements from that text
+rather than implementation choices.</p>
+<h2 id="capability-negotiation"><a class="header" href="#capability-negotiation">Capability negotiation</a></h2>
+<p>What a connection advertises depends on whether this node’s own state sync still
+depends on trie nodes, via <code>advertised_snap_capabilities(needs_trie_nodes)</code>.
+EIP-8189 (“Backwards Compatibility”) says a node synchronizing data should use
+one snap version for state sync and serve both only once synchronization is
+complete. A snap/1 state sync reconciles the trie with <code>GetTrieNodes</code>, which
+snap/2 removes, so a node that offered snap/2 while depending on them would
+negotiate away its only healing mechanism and then find no peer able to serve
+it; <code>heal_state_trie</code> would re-queue its batch and spin.</p>
+<p>The flag is set in <code>SyncManager::new</code> from “a snap sync is running <strong>and</strong> the
+chain has no Amsterdam”, since snap/2 reconciles with access lists that do not
+exist before that fork. It is cleared as soon as the sync commits to the snap/2
+path.</p>
+<p>Keying it on “a snap sync is running” alone is circular and strands the snap/2
+client permanently: withholding snap/2 means never negotiating it, which means
+never finding a snap/2 peer, which means always falling back to snap/1, which
+never clears the flag. The fallback leaves a correctly synced node behind, so
+this reads as success from the outside.</p>
+<p>The Hello exchange picks the highest snap version common to the peer’s list and
+the set this connection advertised, matching against the advertised set rather
+than <code>SUPPORTED_SNAP_CAPABILITIES</code>, so a version withheld by the gate above is
+not negotiated back. The result lives on <code>Established.negotiated_snap_capability</code>
+and is mirrored into the codec via
+<code>RLPxCodec.snap_version: Arc&lt;RwLock&lt;Option&lt;SnapCapVersion&gt;&gt;&gt;</code> so cross-version
+codes are rejected at decode time. <code>SnapCapVersion::V1</code> accepts codes
+<code>0x00..=0x07</code>; <code>V2</code> accepts <code>0x00..=0x05</code> plus <code>0x08</code>, <code>0x09</code>.</p>
+<p><code>GetTrieNodes</code> / <code>TrieNodes</code> are absent from snap/2, so any healing code path
+that sends them must restrict peer selection to snap/1 via
+<code>SNAP1_ONLY_CAPABILITIES</code> in <code>rlpx/p2p.rs</code>.</p>
+<p>That restriction only works because peer selection filters on
+<code>PeerData.negotiated_capabilities</code> rather than on the advertised
+<code>supported_capabilities</code>. A peer advertising both snap/1 and snap/2 negotiates
+snap/2 and would reject <code>GetTrieNodes</code>, so matching the advertised list would
+route trie-node healing straight into a protocol error. <code>supported_capabilities</code>
+remains the full advertised list because <code>admin_peers</code> reports it, which makes
+the two easy to confuse when reading a live node.</p>
+<h2 id="wire-format"><a class="header" href="#wire-format">Wire format</a></h2>
+<p><code>Snap2GetBlockAccessLists</code> carries <code>[id, [hashes...], response_bytes]</code>.
+<code>response_bytes</code> is a soft cap; <code>0</code> means “use the default” (2 MiB).</p>
+<p><code>Snap2BlockAccessLists</code> carries <code>[id, [entries...]]</code> with one entry per
+requested hash, in order. An unavailable BAL is encoded as the RLP empty
+string <code>0x80</code> (NOT the empty list <code>0xc0</code> — that is eth/71’s <code>OptionalBal</code>
+convention, a different protocol). The codec test
+<code>snap2_bal_none_uses_0x80_sentinel</code> locks the sentinel byte against
+regressions.</p>
+<pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct Snap2GetBlockAccessLists {
+    pub id: u64,
+    pub block_hashes: Vec&lt;H256&gt;,
+    pub response_bytes: u64,
+}
+
+pub struct Snap2BlockAccessLists {
+    pub id: u64,
+    pub bals: Vec&lt;Option&lt;BlockAccessList&gt;&gt;,
+}
+<span class="boring">}</span></code></pre>
+<p><code>caps/snap.md</code> writes the response body as <code>bals: [bal1: B, …]</code>, which reads
+like each entry is wrapped. It is not: entries are the BAL’s own RLP list
+spliced in raw, with <code>0x80</code> for an absent one. That is a spec bug, and ethrex
+follows the wire behaviour rather than the notation.</p>
+<h2 id="server-handler"><a class="header" href="#server-handler">Server handler</a></h2>
+<p><code>build_snap2_bal_response</code> in <code>rlpx/connection/server.rs</code> builds the response
+from a batched <code>Store::iter_block_access_lists_by_hashes</code>. No per-hash header
+lookup is needed: BAL storage is gated on the Amsterdam fork, so a stored BAL
+implies a post-Amsterdam block and is served directly, while a pre-Amsterdam,
+pruned, or unknown block has nothing stored and yields <code>None</code>.</p>
+<p>The byte budget is tracked via <code>bal.length()</code> (the zero-allocation
+<code>RLPEncode</code> trait method) and capped at <code>min(response_bytes, 2 MiB)</code>. When
+the cap is exceeded the loop breaks, preserving order up to the cutoff and
+keeping at least one entry. The handler always returns a response, never
+drops the request, and serves orphaned (non-canonical) blocks the same as
+canonical ones because the storage is keyed by hash.</p>
+<p>A defensive check rejects snap/2 messages received over a snap/1 connection
+by sending <code>DisconnectReason::ProtocolError</code>. The codec already rejects
+cross-version codes at decode time, so this only catches misconfigurations.</p>
+<h2 id="client-request"><a class="header" href="#client-request">Client request</a></h2>
+<p><code>PeerHandler::request_snap2_bals</code> filters on <code>Capability::snap(2)</code> so the
+request only goes to a peer that can serve it. <code>Ok(None)</code> signals “no
+snap/2 peer available” and the caller falls back to snap/1 healing. A peer
+that returns a mismatched <code>id</code> or a non-<code>Snap2BlockAccessLists</code> reply is
+recorded as a failure.</p>
+<p>The capability list it takes is <em>required</em>, not excluded. The “excluding” in
+<code>get_best_peer_excluding</code> refers to <code>failed_peers</code>, which is a separate
+argument.</p>
+<h2 id="the-state-sync-pipeline"><a class="header" href="#the-state-sync-pipeline">The state sync pipeline</a></h2>
+<p><code>sync/snap2/</code> holds the client half. <code>snap2_sync</code> in <code>snap_sync.rs</code> runs four
+stages in order: download, catch-up (interleaved with the download on every
+pivot move), reconstruction, then the root check.</p>
+<h3 id="range-download"><a class="header" href="#range-download">Range download</a></h3>
+<p><code>download.rs</code> splits the account hash space into <code>ACCOUNT_RANGE_CHUNK_COUNT</code>
+(800) ranges and works them concurrently. Each range owns a <code>next</code> cursor and a
+<code>last</code> bound; a range retires when <code>next</code> passes <code>last</code>.</p>
+<p><code>worker.rs</code> issues the individual requests and verifies each response against
+the root the request named before returning it. For storage that root is the
+account’s own, which is only correct while the account leaf that carried it came
+from the same pivot; the driver guarantees that, the worker does not check it.</p>
+<p>Accounts and storage are fetched <strong>concurrently</strong>, which is what keeps the
+result honest. snap/1 downloads every account first and every storage
+afterwards, closing the gap by healing the account trie back to the current
+pivot before each storage pass. snap/2 cannot make that repair, because it
+removes <code>GetTrieNodes</code>. So a range advances only once its accounts <em>and</em> their
+storage are in, in batches of <code>STORAGE_BATCH_SIZE</code> (300) accounts per storage
+request. Work still inside a pending range is dropped and re-requested when the
+pivot moves.</p>
+<p>Two peer-level guards, both of which exist because a peer that cannot serve
+still looks perfectly healthy from the outside:</p>
+<ul>
+<li>Every response scores its peer via <code>record_success</code> / <code>record_failure</code>.
+Without this, a peer stalled behind a fork it could not follow keeps full
+score, wins selection forever, and the download retries it indefinitely.</li>
+<li>The stall guard is measured against <strong>frontier movement</strong>, not request
+dispatch. A download feeding a dead peer is busy by every local measure and
+getting nowhere. <code>STALL_TIMEOUT</code> is 300s, generous because a thin or busy
+peer set can go quiet without anything being wrong.</li>
+</ul>
+<p>Two response shapes are not failures and must retire their range, or it is
+rescheduled forever while every response still verifies:</p>
+<ul>
+<li>Accounts returned but all beyond the range’s limit. <code>caps/snap.md</code> has a peer
+fall back to the first account past <code>limit_hash</code> when the range itself is
+empty, so this is the answer for an empty span. The range is served through to
+<code>last</code>.</li>
+<li>No accounts at all, <strong>with</strong> a proof. Past the last account of the trie there
+is no account in range and none after the limit either, so an edge proof of
+absence is the only available answer. <code>verify_range</code> checks it. Only an empty
+answer with <em>no</em> proof means the peer does not hold the root, and that is a
+genuine failure.</li>
+</ul>
+<h3 id="the-download-cursor-and-the-frontier"><a class="header" href="#the-download-cursor-and-the-frontier">The download cursor and the frontier</a></h3>
+<p><code>cursor.rs</code> tracks how far the download has advanced through the key space. The
+flat state it produces mixes leaves from roots <code>R₀ … Rₙ</code>, and is patched back
+into consistency by access lists. A patch is only correct for a key the download
+has already passed: a key still ahead of the cursor will be served later, at a
+newer root, and already carries the change the access list describes. Applying
+it twice, or applying it to a key that is not there yet, corrupts the flat
+state, so every BAL write is gated on the cursor’s predicates.</p>
+<p>The invariant the whole design rests on:</p>
+<blockquote>
+<p>An account below the frontier has been served <strong>together with its storage</strong>.
+An account above it has not been served at all. Nothing may sit in between.</p>
+</blockquote>
+<p>The frontier therefore commits per response batch (accounts plus their storage),
+never per range. Committing per range leaves accounts served between the two
+positions invisible to catch-up: the frontier has moved past them, so the access
+lists that changed them are never applied again, and no later check catches it.
+The frontier and the request cursor must never disagree.</p>
+<h3 id="flat-state"><a class="header" href="#flat-state">Flat state</a></h3>
+<p><code>flat.rs</code> holds the download’s output. Patching means reading a leaf the
+download already produced, changing it, and writing it back, so the output has
+to stay addressable for the whole sync rather than being consumed once at the
+end. Range responses arrive as sorted chunk files (<code>RANGE_FILE_CHUNK_SIZE</code>,
+64 MiB) and are absorbed in bulk; access-list diffs are applied on top as
+individual writes.</p>
+<p>Absorbing a chunk cannot clobber a diff already written, because a chunk only
+ever covers keys the download had not reached, and the cursor refuses to patch
+exactly those.</p>
+<h3 id="pivot-moves-and-access-list-catch-up"><a class="header" href="#pivot-moves-and-access-list-catch-up">Pivot moves and access-list catch-up</a></h3>
+<p><code>catchup.rs</code> implements steps 3 and 4 of the algorithm: as the chain advances
+from <code>P</code> to <code>P+K</code>, fetch the BALs for <code>P+1..P+K</code>, verify each against its
+header’s <code>block_access_list_hash</code>, and apply the diff to the partial flat state.
+<code>P+K</code> is then the target for the remaining range requests. This runs on every
+pivot move before the download resumes against the new root, so the flat state
+is never more than one pivot behind the range requests.</p>
+<p><code>MAX_CATCH_UP_BLOCKS</code> is <code>3533 * 32</code>: EIP-7928 obliges the execution layer to
+retain access lists for at least the weak subjectivity period, so that is the
+largest gap a peer can be expected to serve. Past it a catch-up would stall
+partway through, and <code>caps/snap.md</code> has the node discard its partial state and
+resync instead.</p>
+<p>The span to catch up is walked back along parent hashes from the target, not
+read from the canonical index. <code>Store::add_block_headers</code> writes HEADERS and
+BLOCK_NUMBERS but <strong>not</strong> the canonical-block-hash table, which stays empty
+until the sync commits, so the canonical index reads as empty mid-sync. Walking
+parent hashes is also the reorg check.</p>
+<h3 id="reconstruction-and-the-root-check"><a class="header" href="#reconstruction-and-the-root-check">Reconstruction and the root check</a></h3>
+<p><code>generate.rs</code> rebuilds every trie from the flat state and compares the resulting
+root against the pivot header. This is the only place a snap/2 sync checks its
+work. snap/1 gets the check for free, because healing walks down from the
+pivot’s root and cannot finish unless the trie reaches it; snap/2 removes
+healing, so this comparison is what stands between a corrupt download and a
+corrupt chain.</p>
+<p>Each account is written with the root its storage trie actually hashes to, not
+the one served with it. Served roots come from whichever pivot answered that
+account’s range and disagree with the slots on disk as soon as the pivot moves.</p>
+<p>Storage tries take one of two builders, chosen by slot count. At or above
+<code>BULK_STORAGE_TRIE_SLOTS</code> a contract goes through <code>trie_from_sorted_accounts</code>,
+the same bulk builder the account trie uses, which constructs bottom-up from
+sorted leaves and writes through the trie’s own db. Below it the contract is
+built slot by slot and its node changes are buffered, because the bulk builder
+spawns a writer pool per call and most contracts hold a handful of slots. The
+buffered changes are flushed every <code>STORAGE_WRITE_BATCH_NODES</code> nodes; writing
+each contract as it is built would open one write transaction per contract.</p>
+<p>Both builders must agree on the root, since a real state exercises both and only
+the combined state root would show a disagreement, far from the contract that
+caused it. <code>a_bulk_built_storage_trie_matches_a_slot_by_slot_one</code> pins that.</p>
+<p>Measured on the devnet at ~201,500 storage slots, one contract holding 98,871 of
+them, three interleaved runs per side against the same chain: reconstruction went
+from 854 ms to 293 ms, roughly 2.9x. Both sides reconstruct to the same roots, so
+this is a like-for-like comparison and not a behaviour change.</p>
+<p>Do not measure this by comparing runs at different state sizes. The per-contract
+costs are fixed costs, so they amortize as the state grows, and a comparison that
+lets the state grow between the two sides credits that amortization to the code.
+Doing exactly that overstated the gain here as 4.9x.</p>
+<p>On success the sync latches <code>snap2_reconstructed_block</code> in the diagnostics.
+That is the terminal evidence the snap/2 path ran to completion, and it is what
+test harnesses should assert on.</p>
+<h3 id="failure-discard-and-restart"><a class="header" href="#failure-discard-and-restart">Failure: discard and restart</a></h3>
+<p>Any error in the download or reconstruction runs <code>discard_partial_state</code>, and
+the discard has to be real. <code>caps/snap.md</code> leaves one remedy for a sync that
+cannot be made consistent, “discard partial state and restart synchronization”.
+Leaving the flat state behind would let the next attempt reuse leaves for
+accounts that no longer exist, which no later check would catch: the frontier
+would have moved past them, so the access lists that deleted them are never
+applied again.</p>
+<h2 id="bal-replay-on-the-snap1-path"><a class="header" href="#bal-replay-on-the-snap1-path">BAL replay on the snap/1 path</a></h2>
+<p><code>sync/bal_healing/</code> is a separate, older use of the same messages: it
+accelerates the snap/1 post-download healing loop with BAL replay. It is not
+part of the snap/2 pipeline above and remains in use whenever the sync falls
+back to snap/1.</p>
+<h3 id="applier"><a class="header" href="#applier">Applier</a></h3>
+<p><code>sync/bal_healing/apply.rs::apply_bal(store, parent_state_root, bal, header)</code>:</p>
+<ol>
+<li>Empty-BAL short-circuit — <code>bal.is_empty()</code> returns <code>parent_state_root</code>
+directly.</li>
+<li>Hash validation — <code>bal.compute_hash()</code> must equal
+<code>header.block_access_list_hash.unwrap_or(EMPTY_BLOCK_ACCESS_LIST_HASH)</code>.</li>
+<li><code>bal.validate_ordering()</code> — defense against malicious peers reordering
+entries to forge a different post-state with the same RLP encoding.</li>
+<li>Apply balance, nonce, code, and storage diffs derivable from the BAL.
+Trie writes go via <code>write_batch(STORAGE_TRIE_NODES, …)</code> which bypasses
+<code>TrieLayerCache</code> cleanly: the cache reads, batch writes go to the
+backend directly, no invalidation needed.</li>
+<li>Persist the BAL via <code>Store::store_block_access_list</code> so this node can
+serve it onward (the heal path never goes through <code>store_block</code>).</li>
+<li>Return the post-block state root.</li>
+</ol>
+<p>A wrong-state-root return triggers <code>SyncError::StateRootMismatch</code>, which is
+classified as recoverable so the outer loop can retry with a different peer.</p>
+<p>Only the post-block value of each entry matters, so the last change recorded for
+a key wins and intermediate ones are ignored. Each account’s <code>storage_root</code> is
+left as served: it is wrong in general, and it is recomputed from the
+reconstructed storage tries, so writing anything there would be discarded.</p>
+<p>Correctness rests on the access list enumerating every storage change as an
+individual slot write, a premise carried from go-ethereum’s
+<code>eth/protocols/snap/bal_apply.go</code>. This holds post
+<a href="https://eips.ethereum.org/EIPS/eip-6780">EIP-6780</a>: pre-existing contracts can
+no longer be destructed, so storage only changes via SSTOREs, all of which are
+recorded. <strong>Networks with the legacy SELFDESTRUCT break this premise</strong>, since
+wholesale storage wipes carry no per-slot writes and leave already-downloaded
+slots stale.</p>
+<h3 id="driver"><a class="header" href="#driver">Driver</a></h3>
+<p><code>advance_state_via_bals</code> in <code>sync/bal_healing/mod.rs</code> loads canonical
+headers from <code>start_block.number + 1</code> to the target, then requests BALs in
+batches of <code>BAL_REQUEST_BATCH_SIZE</code> — derived from the response soft cap and
+EIP-7928’s average BAL size so a typical response is not truncated — retrying
+each block up to <code>BAL_MAX_RETRIES_PER_BLOCK</code> (3) times. Strict in-batch
+ordering: a slot is only applied once all prior slots in the batch have been
+applied. A parent-hash check before each apply returns
+<code>SyncError::ChainReorgDetected</code> (non-recoverable) on mismatch.</p>
+<p>A response covering no slot at all is charged to the first pending slot’s retry
+budget, so a peer that truncates everything cannot stall the driver. Once any
+slot exhausts its retries the driver returns the partial state root reached so
+far; the caller in <code>snap_sync.rs</code> compares it against the target and runs
+snap/1 healing for the remainder.</p>
+<h3 id="snap-sync-integration"><a class="header" href="#snap-sync-integration">Snap-sync integration</a></h3>
+<p>This replay implements EIP-8189 steps 5 and 7 and runs only in the
+post-bulk-download healing loop. The healing pass inside the storage-ranges
+download loop stays on snap/1: a BAL carries state changes, not the state trie,
+so a diff like <code>balance(X): a→b</code> needs an existing local value to apply to, and
+during bulk download most accounts do not have one yet.</p>
+<p>The loop tracks <code>completed_pivot</code> — the pivot whose state a healing pass
+verified in full. That is the only valid starting point for a replay, because
+the diffs are applied on top of it. Replaying from the <em>current</em> pivot instead
+would apply a span of changes to a state that does not correspond to its first
+block, and the resulting root would be wrong in a way the per-block check
+cannot attribute.</p>
+<p>While <code>completed_pivot</code> is <code>None</code> — the first pass, and after any reorg — the
+loop heals. Once a pass sets it and the chain advances, a later pivot is reached
+by replaying the span between them and checking the result against
+<code>pivot_header.state_root</code> (step 7). A short root, a peer failure, or an
+unavailable BAL falls back to healing for that pass; <code>SyncError::ChainReorgDetected</code>
+additionally clears the anchor, since a reorg past the pivot means the state it
+names belongs to an abandoned fork.</p>
+<p>Note that a BAL cannot supply an account’s <code>storage_root</code>: EIP-7928’s
+<code>AccountChanges</code> is <code>[address, storage_changes, storage_reads, balance_changes, nonce_changes, code_changes]</code>, with no root. A root is only re-derivable by
+re-hashing the storage trie, which is why replay is placed after the storage
+download rather than before it.</p>
+<h2 id="pre-amsterdam-handling"><a class="header" href="#pre-amsterdam-handling">Pre-Amsterdam handling</a></h2>
+<p><code>block_access_list_hash</code> is absent in pre-Amsterdam headers, so snap/2 is
+functionally dormant before the fork: the server returns <code>None</code> for every
+pre-Amsterdam hash, and the catch-up requires the anchoring pivot to carry a
+<code>block_access_list_hash</code>, so the driver never starts. A peer returning
+<code>Some(bal)</code> for a header whose <code>block_access_list_hash</code> is <code>None</code> is a protocol
+violation; the hash check against <code>EMPTY_BLOCK_ACCESS_LIST_HASH</code> catches it.</p>
+<p>Because a pre-Amsterdam pivot still needs <code>GetTrieNodes</code>, the capability gate
+cannot become unconditional and snap/1 has to stay as the fallback path.</p>
+<h2 id="errors"><a class="header" href="#errors">Errors</a></h2>
+<p><code>SyncError</code> gains four variants in <code>sync.rs</code>:</p>
+<ul>
+<li><code>StateRootMismatch(expected, got)</code> — applied BAL produced a different
+state root from <code>header.state_root</code>. Recoverable.</li>
+<li><code>MissingHeaderForBal(BlockHash)</code> — local header missing for a BAL we
+need to apply. Non-recoverable (DB inconsistency).</li>
+<li><code>MissingCanonicalBlock(number)</code> — no canonical hash recorded at a block
+number in the replay range. Non-recoverable (DB inconsistency).</li>
+<li><code>ChainReorgDetected { expected_parent, actual_parent }</code> — peer’s BAL
+chain doesn’t connect to our local view. Non-recoverable; the caller
+falls back to snap/1.</li>
+</ul>
+<h2 id="diagnostics"><a class="header" href="#diagnostics">Diagnostics</a></h2>
+<p><code>SyncDiagnostics</code> is served by <code>admin_syncStatus</code>. Replay counters:
+<code>snap2_bal_requests_sent</code>, <code>snap2_blocks_replayed</code>, <code>snap2_bals_unavailable</code>,
+<code>snap2_validation_failures</code>, <code>snap2_peer_failures</code>.</p>
+<p>Download counters: <code>snap2_ranges_served</code>, <code>snap2_ranges_unverified</code>,
+<code>snap2_storage_requeued</code>, <code>snap2_storage_partial</code>, plus
+<code>snap2_ranges_remaining</code> in <code>phase_progress</code>. A high served count against a
+flat remaining count is the signature of a range that verifies every response
+and retires nothing.</p>
+<p><code>snap2_reconstructed_block</code> is latched, not sampled, and carries the pivot whose
+root reconstruction reproduced. Use it, not <code>current_phase</code>, to decide which
+path a sync took: the phase fields describe the sync only while it runs, and a
+small state downloads between two polls.</p>
+<h2 id="testing"><a class="header" href="#testing">Testing</a></h2>
+<p>Unit and integration coverage lives in <code>test/tests/p2p/</code>: codec round-trips,
+server responses, <code>apply_bal</code>, the cursor predicates, flat state, and
+reconstruction. Hive covers the serving side.</p>
+<p><code>scripts/snap2-devnet/join.py</code> covers the client side against real peers. It
+joins a fresh ethrex node to a running kurtosis enclave, drives it with
+<code>engine_forkchoiceUpdatedV4</code>, and asserts on which path the sync took.</p>
+<p>Devnet requirements, all load-bearing:</p>
+<ul>
+<li><strong>Mainnet preset, not <code>minimal</code>.</strong> Minimal reaches Amsterdam sooner but block
+production dies at the Gloas transition: <code>payload_attestation_data</code> 404s,
+builder registration 500s, every slot empty.</li>
+<li><strong><code>gloas_fork_epoch &gt;= 1</code>.</strong> At 0 the beacon genesis state is a Gloas state
+and lighthouse cannot decode it.</li>
+<li><strong>EIP-8282 builder predeploys preloaded.</strong> The genesis generator omits them
+and their empty code invalidates any Amsterdam+ block.</li>
+<li><strong>EIP-7997 deterministic factory in genesis</strong> (nonce 1). Without it, a geth
+peer that injects the factory at the fork boundary produces a block-access
+index 0 nonce change ethrex never makes, and the two clients reject each
+other’s transition block.</li>
+<li>Forkchoice must send <strong>zero</strong> safe and finalized hashes. A non-zero hash the
+node has never seen is looked up and order-checked, which errors instead of
+returning SYNCING, so the sync never starts.</li>
+<li>Under the <code>sync-test</code> feature, <code>MIN_FULL_BLOCKS</code>, <code>SNAP_LIMIT</code> and
+<code>SECONDS_PER_BLOCK</code> are overridable, since production values need a chain
+10k blocks deep and a 25-minute pivot lifetime. <code>SECONDS_PER_BLOCK</code> must match
+the real slot time or <code>update_pivot</code> mis-estimates and pivots arrive stale.</li>
+</ul>
+<p>The trap the harness exists to avoid: <strong>a snap/1 fallback also ends with a
+correctly synced node</strong>, so “the node synced” is not evidence that snap/2 ran.
+Assert on the latched reconstruction.</p>
+<h2 id="known-gaps"><a class="header" href="#known-gaps">Known gaps</a></h2>
+<ul>
+<li><strong>Access-list catch-up is not exercised on every run.</strong> A state small enough
+to download inside a single pivot never makes the pivot go stale, so catch-up
+correctly has nothing to do. It has been verified on a slower run (48 blocks
+over 4 rounds, 0 validation failures); the harness reports when a run leaves
+it untested rather than passing silently. Covering it deliberately needs real
+state on the devnet, not a lower <code>SNAP_LIMIT</code>.</li>
+<li><strong>Reorg past the pivot is unimplemented.</strong> The sync takes the
+discard-and-restart escape hatch <code>caps/snap.md</code> permits, rather than
+recovering.</li>
+<li><strong>Reconstruction does not fan out across accounts</strong>, where snap/1’s storage
+insert runs them through rayon. The per-contract costs it used to pay (a write
+transaction each, and a root-down descent per slot) are gone, but the account
+loop itself is still serial. Sharding it needs a range-bounded account
+iterator on <code>FlatState</code>; the underlying RocksDB handle is <code>Sync</code> and already
+hands out independent iterators, so nothing structural blocks it. Unmeasured
+at mainnet scale, which is the reason it has not been done.</li>
+<li><strong><code>STORAGE_BATCH_SIZE</code> is a fixed count of 300 accounts</strong> against a 512 KB
+response cap, where geth sizes the batch by response budget
+(<code>storageSets := cap / 1024</code>). Not currently implicated in truncation, but
+untested under real load.</li>
+<li><strong><code>ChunkWriter::is_full</code> sizes buffers with <code>size_of::&lt;AccountState&gt;()</code></strong>,
+which under-counts the RLP. Inherited from snap/1.</li>
+<li><strong>No hive snap/2 simulator.</strong> <code>test/tests/p2p/</code> has no multi-node RLPx
+harness, and the existing hive devp2p snap simulator calls the external Go
+<code>devp2p</code> CLI. The devnet harness covers the same ground manually.</li>
+<li><strong>Legacy-SELFDESTRUCT networks are out of scope</strong>, per the applier’s
+correctness premise above.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../l1/fundamentals/snap_sync.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../../internal/l1/delete_accounts.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../l1/fundamentals/snap_sync.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../../internal/l1/delete_accounts.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../../mark-09e88c2c.min.js"></script>
+        <script src="../../searcher-c2a407aa.js"></script>
+
+        <script src="../../clipboard-1626706a.min.js"></script>
+        <script src="../../highlight-abc7f01d.js"></script>
+        <script src="../../book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../../mermaid-eefea253.min.js"></script>
+        <script src="../../mermaid-init-ccf746f1.js"></script>
+
+
+
+    </div>
+    </body>
+</html>
