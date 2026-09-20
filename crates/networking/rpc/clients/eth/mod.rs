@@ -23,7 +23,7 @@ use ethrex_common::{
 };
 use ethrex_rlp::decode::RLPDecode;
 use reqwest::{Client, Url};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use tracing::{debug, trace, warn};
 
 pub mod errors;
@@ -78,13 +78,22 @@ pub fn estimate_gas_call_object(transaction: GenericTransaction) -> Result<Value
         TxKind::Create => None,
     };
 
-    let mut data = json!({
-        "to": to,
-        "input": format!("0x{:#x}", transaction.input),
-        "from": format!("{:#x}", transaction.from),
-        "value": format!("{:#x}", transaction.value),
-
-    });
+    // Assembled as a `Map` rather than a `Value` so there is no "not an object" state for
+    // the inserts below to cope with. That state was previously handled two ways in the one
+    // function: a fallible `as_object_mut()` for the blob fields and a silent `if let
+    // Value::Object` for the nonce and the fees. The silent form is the dangerous one here,
+    // since a dropped fee field is not a rejected request but a quiet under-estimate.
+    let mut data = Map::new();
+    data.insert("to".to_owned(), json!(to));
+    data.insert(
+        "input".to_owned(),
+        json!(format!("0x{:#x}", transaction.input)),
+    );
+    data.insert("from".to_owned(), json!(format!("{:#x}", transaction.from)));
+    data.insert(
+        "value".to_owned(),
+        json!(format!("{:#x}", transaction.value)),
+    );
 
     if !transaction.blob_versioned_hashes.is_empty() {
         let blob_versioned_hashes_str: Vec<_> = transaction
@@ -93,14 +102,10 @@ pub fn estimate_gas_call_object(transaction: GenericTransaction) -> Result<Value
             .map(|hash| format!("{hash:#x}"))
             .collect();
 
-        data.as_object_mut()
-            .ok_or_else(|| {
-                EthClientError::Custom("Failed to mutate data in estimate_gas".to_owned())
-            })?
-            .insert(
-                "blobVersionedHashes".to_owned(),
-                json!(blob_versioned_hashes_str),
-            );
+        data.insert(
+            "blobVersionedHashes".to_owned(),
+            json!(blob_versioned_hashes_str),
+        );
     }
 
     if !transaction.blobs.is_empty() {
@@ -110,53 +115,45 @@ pub fn estimate_gas_call_object(transaction: GenericTransaction) -> Result<Value
             .map(|blob| format!("0x{}", hex::encode(blob)))
             .collect();
 
-        data.as_object_mut()
-            .ok_or_else(|| {
-                EthClientError::Custom("Failed to mutate data in estimate_gas".to_owned())
-            })?
-            .insert("blobs".to_owned(), json!(blobs_str));
+        data.insert("blobs".to_owned(), json!(blobs_str));
     }
 
     // Add the nonce just if present, otherwise the RPC will use the latest nonce
-    if let Some(nonce) = transaction.nonce
-        && let Value::Object(ref mut map) = data
-    {
-        map.insert("nonce".to_owned(), json!(format!("{nonce:#x}")));
+    if let Some(nonce) = transaction.nonce {
+        data.insert("nonce".to_owned(), json!(format!("{nonce:#x}")));
     }
 
     // Send the fees the transaction will actually carry. Omitting them leaves the
     // server simulating at a zero gas price, and on an L2 a zero gas price disables
     // the fee configs entirely (`adjust_disabled_l2_fees`), so the estimate comes back
-    // without the L1 data fee gas that the submitted transaction is charged — and the
+    // without the L1 data fee gas that the submitted transaction is charged, and the
     // transaction then runs out of gas at exactly its estimate.
-    if let Value::Object(ref mut map) = data {
-        if let Some(max_fee_per_gas) = transaction.max_fee_per_gas {
-            map.insert(
-                "maxFeePerGas".to_owned(),
-                json!(format!("{max_fee_per_gas:#x}")),
-            );
-        }
-        if let Some(max_priority_fee_per_gas) = transaction.max_priority_fee_per_gas {
-            map.insert(
-                "maxPriorityFeePerGas".to_owned(),
-                json!(format!("{max_priority_fee_per_gas:#x}")),
-            );
-        }
-        if !transaction.gas_price.is_zero() {
-            map.insert(
-                "gasPrice".to_owned(),
-                json!(format!("{:#x}", transaction.gas_price)),
-            );
-        }
-        if let Some(max_fee_per_blob_gas) = transaction.max_fee_per_blob_gas {
-            map.insert(
-                "maxFeePerBlobGas".to_owned(),
-                json!(format!("{max_fee_per_blob_gas:#x}")),
-            );
-        }
+    if let Some(max_fee_per_gas) = transaction.max_fee_per_gas {
+        data.insert(
+            "maxFeePerGas".to_owned(),
+            json!(format!("{max_fee_per_gas:#x}")),
+        );
+    }
+    if let Some(max_priority_fee_per_gas) = transaction.max_priority_fee_per_gas {
+        data.insert(
+            "maxPriorityFeePerGas".to_owned(),
+            json!(format!("{max_priority_fee_per_gas:#x}")),
+        );
+    }
+    if !transaction.gas_price.is_zero() {
+        data.insert(
+            "gasPrice".to_owned(),
+            json!(format!("{:#x}", transaction.gas_price)),
+        );
+    }
+    if let Some(max_fee_per_blob_gas) = transaction.max_fee_per_blob_gas {
+        data.insert(
+            "maxFeePerBlobGas".to_owned(),
+            json!(format!("{max_fee_per_blob_gas:#x}")),
+        );
     }
 
-    Ok(data)
+    Ok(Value::Object(data))
 }
 
 impl EthClient {
