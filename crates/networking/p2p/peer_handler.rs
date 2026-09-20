@@ -98,6 +98,83 @@ fn negotiated_eth_version(capabilities: &[Capability]) -> Option<u8> {
         .max()
 }
 
+/// What a peer's batch response earns, decided from the data alone.
+///
+/// Kept separate from the peer-table side effects so the classification can be
+/// tested directly: these are the rules that decide whether a short or
+/// misaligned response is an honest partial-history peer or a dishonest one, and
+/// they are easy to get subtly wrong.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ResponseVerdict {
+    /// Every returned entry validated against its header, in order.
+    Complete { keep: usize },
+    /// An entry did not match its header but does match a later requested one, so
+    /// the peer omitted blocks it does not have and the list is compacted rather
+    /// than a prefix. Expected after history expiry; costs the peer nothing.
+    Compacted { keep: usize },
+    /// An entry matches no requested header: the peer invented it.
+    Fabricated { keep: usize, at: usize },
+}
+
+impl ResponseVerdict {
+    /// Leading entries that validated and may be stored.
+    pub(crate) fn keep(&self) -> usize {
+        match self {
+            ResponseVerdict::Complete { keep }
+            | ResponseVerdict::Compacted { keep }
+            | ResponseVerdict::Fabricated { keep, .. } => *keep,
+        }
+    }
+}
+
+/// Classify a `BlockBodies` response against the headers it was requested for.
+pub(crate) fn classify_body_response(
+    block_headers: &[BlockHeader],
+    block_bodies: &[BlockBody],
+) -> ResponseVerdict {
+    let mut keep = 0usize;
+    for (idx, body) in block_bodies.iter().enumerate() {
+        if validate_block_body(&block_headers[idx], body, &NativeCrypto).is_err() {
+            // Does this body belong to some later header we asked for?
+            let compacted = block_headers[idx + 1..]
+                .iter()
+                .any(|header| validate_block_body(header, body, &NativeCrypto).is_ok());
+            return if compacted {
+                ResponseVerdict::Compacted { keep }
+            } else {
+                ResponseVerdict::Fabricated { keep, at: idx }
+            };
+        }
+        keep = idx + 1;
+    }
+    ResponseVerdict::Complete { keep }
+}
+
+/// Classify a `Receipts` response against the headers it was requested for.
+///
+/// Mirrors [`classify_body_response`], matching on the receipts root instead.
+pub(crate) fn classify_receipt_response(
+    block_headers: &[BlockHeader],
+    receipts: &[Vec<Receipt>],
+) -> ResponseVerdict {
+    let mut keep = 0usize;
+    for (idx, block_receipts) in receipts.iter().enumerate() {
+        let computed = compute_receipts_root(block_receipts, &NativeCrypto);
+        if computed != block_headers[idx].receipts_root {
+            let compacted = block_headers[idx + 1..]
+                .iter()
+                .any(|header| header.receipts_root == computed);
+            return if compacted {
+                ResponseVerdict::Compacted { keep }
+            } else {
+                ResponseVerdict::Fabricated { keep, at: idx }
+            };
+        }
+        keep = idx + 1;
+    }
+    ResponseVerdict::Complete { keep }
+}
+
 /// Asks a single already-selected peer for the block number at `sync_head`.
 /// Consumes a `RequestPermit`; the permit drops on return, releasing the slot.
 async fn ask_peer_head_number(
@@ -643,45 +720,25 @@ impl PeerHandler {
             else {
                 continue; // Retry on empty response
             };
-            // Keep the longest leading run of bodies that validates against its
-            // header, and stop at the first that doesn't.
-            //
             // A response is not necessarily aligned with the request: a peer holding
             // only part of the range omits the hashes it lacks rather than truncating
             // (geth's `ServiceGetBlockBodiesQuery` appends only what it finds), so the
-            // list can be compacted rather than a prefix. That is expected from peers
-            // with partially expired history and must not be punished. A body that
-            // matches *no* requested header is a different thing entirely: the peer
-            // made it up, and that still earns a critical failure.
-            let mut valid_upto = 0usize;
-            let mut mismatch = None;
-            for (idx, body) in block_bodies.iter().enumerate() {
-                if let Err(err) = validate_block_body(&block_headers[idx], body, &NativeCrypto) {
-                    mismatch = Some((idx, err));
-                    break;
-                }
-                valid_upto = idx + 1;
-            }
-
-            if let Some((idx, err)) = &mismatch {
-                // Does this body belong to some later header we asked for? If so the
-                // response is compacted, not fabricated.
-                let compacted = block_headers[idx + 1..].iter().any(|header| {
-                    validate_block_body(header, &block_bodies[*idx], &NativeCrypto).is_ok()
-                });
-                if compacted {
+            // list can be compacted rather than a prefix. Only a body matching no
+            // requested header at all means the peer invented it.
+            let verdict = classify_body_response(block_headers, &block_bodies);
+            let valid_upto = verdict.keep();
+            match &verdict {
+                ResponseVerdict::Complete { .. } => {}
+                ResponseVerdict::Compacted { keep } => debug!(
+                    %peer_id,
+                    bodies_kept = keep,
+                    "Peer skipped requested blocks it does not have; keeping the bodies verified so far"
+                ),
+                ResponseVerdict::Fabricated { keep, at } => {
                     debug!(
                         %peer_id,
-                        block_number = block_headers[*idx].number,
-                        bodies_kept = valid_upto,
-                        "Peer skipped requested blocks it does not have; keeping the bodies verified so far"
-                    );
-                } else {
-                    debug!(
-                        %peer_id,
-                        err = %err,
-                        block_number = block_headers[*idx].number,
-                        bodies_kept = valid_upto,
+                        block_number = block_headers[*at].number,
+                        bodies_kept = keep,
                         "Block body matches no requested header, discarding peer"
                     );
                     self.peer_table.record_critical_failure(peer_id)?;
@@ -697,7 +754,7 @@ impl PeerHandler {
             // Nothing usable. A fabricated body was already charged above; anything
             // else (e.g. a peer whose whole response was for other blocks) gets a
             // soft penalty before re-rolling onto another peer.
-            if mismatch.is_none() {
+            if !matches!(verdict, ResponseVerdict::Fabricated { .. }) {
                 self.peer_table.record_failure(peer_id)?;
             }
         }
@@ -813,21 +870,19 @@ impl PeerHandler {
             else {
                 continue; // retry on no-peer / empty response
             };
-            // As with bodies, keep the longest leading run whose receipts root
-            // matches its header and stop at the first that doesn't, since a peer
-            // holding only part of the range answers with a compacted list rather
-            // than a prefix.
-            let mut verified = 0usize;
-            for (header, block_receipts) in block_headers[..receipts.len()].iter().zip(&receipts) {
-                let computed = compute_receipts_root(block_receipts, &NativeCrypto);
-                if computed != header.receipts_root {
-                    debug!(
-                        "Receipts root mismatch for block {} (computed {computed:?}, expected {:?}); keeping the {verified} verified before it",
-                        header.number, header.receipts_root
-                    );
-                    break;
-                }
-                verified += 1;
+            // As with bodies, a peer holding only part of the range answers with a
+            // compacted list rather than a prefix, so keep the longest leading run
+            // whose receipts root matches its header.
+            let verdict = classify_receipt_response(block_headers, &receipts);
+            let verified = verdict.keep();
+            if let ResponseVerdict::Fabricated { at, .. } = &verdict {
+                debug!(
+                    %peer_id,
+                    block_number = block_headers[*at].number,
+                    receipts_kept = verified,
+                    "Receipts match no requested header, discarding peer"
+                );
+                self.peer_table.record_critical_failure(peer_id)?;
             }
             let mut receipts = receipts;
             receipts.truncate(verified);
@@ -835,8 +890,11 @@ impl PeerHandler {
                 self.peer_table.record_success(peer_id)?;
                 return Ok(Some(receipts));
             }
-            // Nothing usable: penalize and re-roll onto another peer.
-            self.peer_table.record_failure(peer_id)?;
+            // Nothing usable. A fabricated response was already charged above;
+            // anything else gets a soft penalty before re-rolling onto another peer.
+            if !matches!(verdict, ResponseVerdict::Fabricated { .. }) {
+                self.peer_table.record_failure(peer_id)?;
+            }
         }
         Ok(None)
     }
@@ -1019,5 +1077,252 @@ impl PeerHandlerError {
             PeerHandlerError::PeerTableError(ActorError::ActorStopped) => false,
             PeerHandlerError::StorageFull | PeerHandlerError::Snap(_) => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod response_classification_tests {
+    use super::*;
+    use ethrex_common::types::{
+        EIP1559Transaction, Transaction, TxType, compute_transactions_root,
+        compute_withdrawals_root,
+    };
+
+    /// Builds a header whose transactions/withdrawals/receipts roots match the
+    /// body and receipts given, so the pair validates the way a real block does.
+    fn block(
+        number: u64,
+        txs: Vec<Transaction>,
+        receipts: Vec<Receipt>,
+    ) -> (BlockHeader, BlockBody, Vec<Receipt>) {
+        let body = BlockBody {
+            transactions: txs,
+            ommers: Vec::new(),
+            withdrawals: Some(Vec::new()),
+        };
+        let header = BlockHeader {
+            number,
+            transactions_root: compute_transactions_root(&body.transactions, &NativeCrypto),
+            withdrawals_root: Some(compute_withdrawals_root(
+                body.withdrawals.as_ref().expect("withdrawals set above"),
+                &NativeCrypto,
+            )),
+            receipts_root: compute_receipts_root(&receipts, &NativeCrypto),
+            ..Default::default()
+        };
+        (header, body, receipts)
+    }
+
+    fn receipt(gas: u64) -> Receipt {
+        Receipt::new(TxType::Legacy, true, gas, Vec::new())
+    }
+
+    /// A transaction whose nonce makes the enclosing body unique, so that two
+    /// different blocks do not share a transactions root.
+    fn tx(nonce: u64) -> Transaction {
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            nonce,
+            ..Default::default()
+        })
+    }
+
+    /// Distinct blocks: differing receipts give differing receipts roots, so a
+    /// misplaced entry is detectable.
+    fn chain(len: u64) -> (Vec<BlockHeader>, Vec<BlockBody>, Vec<Vec<Receipt>>) {
+        let mut headers = Vec::new();
+        let mut bodies = Vec::new();
+        let mut receipts = Vec::new();
+        for n in 0..len {
+            let (h, b, r) = block(n, vec![tx(n)], vec![receipt(21_000 + n)]);
+            headers.push(h);
+            bodies.push(b);
+            receipts.push(r);
+        }
+        (headers, bodies, receipts)
+    }
+
+    #[test]
+    fn a_full_aligned_response_is_complete() {
+        let (headers, bodies, receipts) = chain(4);
+        assert_eq!(
+            classify_body_response(&headers, &bodies),
+            ResponseVerdict::Complete { keep: 4 }
+        );
+        assert_eq!(
+            classify_receipt_response(&headers, &receipts),
+            ResponseVerdict::Complete { keep: 4 }
+        );
+    }
+
+    /// A peer that truncates still returns an aligned prefix.
+    #[test]
+    fn a_truncated_response_is_complete_for_what_it_returned() {
+        let (headers, bodies, receipts) = chain(4);
+        assert_eq!(
+            classify_body_response(&headers, &bodies[..2]),
+            ResponseVerdict::Complete { keep: 2 }
+        );
+        assert_eq!(
+            classify_receipt_response(&headers, &receipts[..2]),
+            ResponseVerdict::Complete { keep: 2 }
+        );
+    }
+
+    /// The case that matters after history expiry: a peer missing block 1 answers
+    /// with [b0, b2, b3], which is not a prefix. It keeps what validated and is
+    /// not penalized, because it behaved honestly.
+    #[test]
+    fn a_compacted_response_keeps_the_prefix_and_is_not_fabricated() {
+        let (headers, bodies, receipts) = chain(4);
+        let compacted_bodies = vec![bodies[0].clone(), bodies[2].clone(), bodies[3].clone()];
+        assert_eq!(
+            classify_body_response(&headers, &compacted_bodies),
+            ResponseVerdict::Compacted { keep: 1 }
+        );
+
+        let compacted_receipts = vec![
+            receipts[0].clone(),
+            receipts[2].clone(),
+            receipts[3].clone(),
+        ];
+        assert_eq!(
+            classify_receipt_response(&headers, &compacted_receipts),
+            ResponseVerdict::Compacted { keep: 1 }
+        );
+    }
+
+    /// An entry matching no requested header is invented, and must be
+    /// distinguishable from the compacted case above: this is what earns a
+    /// critical failure.
+    #[test]
+    fn an_invented_entry_is_fabricated() {
+        let (headers, bodies, receipts) = chain(4);
+        let (_, alien_body, alien_receipts) = block(999, vec![tx(999)], vec![receipt(999_999)]);
+
+        let mut bad_bodies = bodies;
+        bad_bodies[1] = alien_body;
+        assert_eq!(
+            classify_body_response(&headers, &bad_bodies),
+            ResponseVerdict::Fabricated { keep: 1, at: 1 }
+        );
+
+        let mut bad_receipts = receipts;
+        bad_receipts[1] = alien_receipts;
+        assert_eq!(
+            classify_receipt_response(&headers, &bad_receipts),
+            ResponseVerdict::Fabricated { keep: 1, at: 1 }
+        );
+    }
+
+    /// Regression guard for the scoring bug this classification exists to prevent:
+    /// one valid entry followed by junk must NOT read as a usable response that
+    /// earns the peer credit. It keeps the single valid entry but is flagged
+    /// fabricated, so the caller charges a critical failure.
+    #[test]
+    fn one_valid_entry_then_junk_is_still_fabricated() {
+        let (headers, bodies, _) = chain(8);
+        let (_, junk, _) = block(999, vec![tx(999)], vec![receipt(1)]);
+        let mut response = vec![bodies[0].clone()];
+        response.extend(std::iter::repeat_n(junk, 7));
+        let verdict = classify_body_response(&headers, &response);
+        assert_eq!(verdict, ResponseVerdict::Fabricated { keep: 1, at: 1 });
+        assert_eq!(verdict.keep(), 1, "the one honest body is still usable");
+    }
+
+    /// An empty response is classified as complete-with-nothing, so the caller
+    /// applies only a soft penalty instead of disposing an honest peer that
+    /// simply holds none of the range.
+    #[test]
+    fn an_empty_response_keeps_nothing_and_is_not_fabricated() {
+        let (headers, _, _) = chain(4);
+        assert_eq!(
+            classify_body_response(&headers, &[]),
+            ResponseVerdict::Complete { keep: 0 }
+        );
+        assert_eq!(
+            classify_receipt_response(&headers, &[]),
+            ResponseVerdict::Complete { keep: 0 }
+        );
+    }
+
+    /// Blocks with no transactions share the empty receipts root, so a response
+    /// of empty blocks validates positionally and must not be mistaken for
+    /// fabrication.
+    #[test]
+    fn empty_blocks_validate_despite_identical_roots() {
+        let mut headers = Vec::new();
+        let mut bodies = Vec::new();
+        let mut receipts = Vec::new();
+        for n in 0..3 {
+            let (h, b, r) = block(n, Vec::new(), Vec::new());
+            headers.push(h);
+            bodies.push(b);
+            receipts.push(r);
+        }
+        assert_eq!(
+            classify_body_response(&headers, &bodies),
+            ResponseVerdict::Complete { keep: 3 }
+        );
+        assert_eq!(
+            classify_receipt_response(&headers, &receipts),
+            ResponseVerdict::Complete { keep: 3 }
+        );
+    }
+}
+
+#[cfg(test)]
+mod negotiated_version_tests {
+    use super::*;
+
+    /// The handshake keeps the highest version both sides support
+    /// (`rlpx::connection::server`). `negotiated_eth_version` reimplements that
+    /// rule so callers can pick a wire format without asking the connection, and
+    /// the two must not drift: choosing wrongly here sends a peer a request it
+    /// cannot decode, which is invisible locally and only fails on their side.
+    #[test]
+    fn picks_the_highest_mutually_supported_version() {
+        let peer = vec![
+            Capability::eth(68),
+            Capability::eth(69),
+            Capability::eth(71),
+        ];
+        assert_eq!(negotiated_eth_version(&peer), Some(71));
+    }
+
+    /// A peer advertising an old version alongside a new one still negotiates the
+    /// new one, so selecting it by the old capability must not imply the old wire
+    /// format. This is the case that broke receipt fetching against most of
+    /// mainnet: eth/70 (EIP-7975) changed `GetReceipts`, and eth/71 builds on it.
+    #[test]
+    fn an_eth68_peer_that_also_speaks_71_negotiates_71() {
+        let peer = vec![Capability::eth(68), Capability::eth(71)];
+        let version = negotiated_eth_version(&peer).expect("shared version");
+        assert_eq!(version, 71);
+        assert!(version >= 70, "must take the paginated GetReceipts form");
+    }
+
+    #[test]
+    fn a_pre_70_peer_takes_the_original_form() {
+        for caps in [
+            vec![Capability::eth(68)],
+            vec![Capability::eth(68), Capability::eth(69)],
+        ] {
+            let version = negotiated_eth_version(&caps).expect("shared version");
+            assert!(version < 70, "must take the original GetReceipts form");
+        }
+    }
+
+    /// Capabilities we do not support are ignored rather than selected.
+    #[test]
+    fn unsupported_versions_are_ignored() {
+        let peer = vec![Capability::eth(69), Capability::eth(99)];
+        assert_eq!(negotiated_eth_version(&peer), Some(69));
+    }
+
+    #[test]
+    fn no_shared_eth_version_yields_none() {
+        assert_eq!(negotiated_eth_version(&[]), None);
+        assert_eq!(negotiated_eth_version(&[Capability::eth(1)]), None);
+        assert_eq!(negotiated_eth_version(&[Capability::snap(1)]), None);
     }
 }
