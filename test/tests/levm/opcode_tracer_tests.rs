@@ -547,3 +547,54 @@ fn opcode_tracer_jumpdest_synthesized_when_jumpi_charge_runs_out_of_gas() {
     assert_eq!(steps[3]["gasCost"].as_u64(), Some(1));
     assert!(steps[3]["error"].is_string());
 }
+
+/// A `limit`-capped log must be a prefix of the uncapped one, including when the
+/// cap is what drops the faulting JUMPDEST.
+///
+/// The synthetic JUMPDEST is the step that faults, so it takes over the tracer's
+/// pending finalize target. When the cap drops it there is nothing to take over,
+/// and leaving the target on the JUMP/JUMPI would let the dispatch loop write the
+/// dropped step's out-of-gas error onto a record that is inside the cap and, in the
+/// uncapped log, error-free.
+#[test]
+fn opcode_tracer_capped_log_is_a_prefix_when_the_cap_drops_the_faulting_jumpdest() {
+    // (bytecode, gas limit, cap that lands exactly on the faulting JUMPDEST)
+    let cases: [(&str, Vec<u8>, u64, usize); 2] = [
+        (
+            "JUMP",
+            vec![0x60, 0x03, 0x56, 0x5b, 0x00],
+            21_000 + 3 + 8,
+            2,
+        ),
+        (
+            "JUMPI",
+            vec![0x60, 0x01, 0x60, 0x05, 0x57, 0x5b, 0x00],
+            21_000 + 3 + 3 + 10,
+            3,
+        ),
+    ];
+
+    for (name, bytecode, gas_limit, cap) in cases {
+        let uncapped =
+            trace_to_json_with_gas(bytecode.clone(), OpcodeTracerConfig::default(), gas_limit);
+        let capped = trace_to_json_with_gas(
+            bytecode,
+            OpcodeTracerConfig {
+                limit: cap,
+                ..Default::default()
+            },
+            gas_limit,
+        );
+
+        let uncapped_steps = uncapped["structLogs"].as_array().expect("structLogs");
+        let capped_steps = capped["structLogs"].as_array().expect("structLogs");
+
+        assert_eq!(uncapped_steps.len(), cap + 1, "{name}: uncapped step count");
+        assert_eq!(capped_steps.len(), cap, "{name}: capped step count");
+        assert_eq!(
+            capped_steps.as_slice(),
+            &uncapped_steps[..cap],
+            "{name}: the capped log must be a prefix of the uncapped one",
+        );
+    }
+}
