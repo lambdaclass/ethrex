@@ -2999,6 +2999,7 @@ impl LEVM {
             disable_balance_check: false,
             disable_nonce_check: false,
             disable_gas_allowance_check: false,
+            disable_sender_eoa_check: false,
             is_system_call: false,
         };
 
@@ -3097,12 +3098,11 @@ impl LEVM {
         crypto: &dyn Crypto,
         stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<ExecutionResult, EvmError> {
+        // `env_from_generic` already relaxes the admission-only validations for every
+        // simulation RPC, the gas allowance included. `block_gas_limit` keeps the block's
+        // real value there: the GASLIMIT opcode reads it, so overwriting it would make
+        // 0x45 return a number that appears nowhere on chain.
         let mut env = env_from_generic(tx, block_header, db, vm_type)?;
-
-        // Let the call run with a `gas` above the block's limit, but leave
-        // `block_gas_limit` at the block's real value: the GASLIMIT opcode reads it, so
-        // overwriting it makes 0x45 return a number that appears nowhere on chain.
-        env.disable_gas_allowance_check = true;
 
         adjust_disabled_base_fee(&mut env);
 
@@ -3821,15 +3821,23 @@ pub fn calculate_gas_price_for_tx(
 /// When basefee tracking is disabled  (ie. env.disable_base_fee = true; env.disable_block_gas_limit = true;)
 /// and no gas prices were specified, lower the basefee to 0 to avoid breaking EVM invariants (basefee < feecap)
 /// See https://github.com/ethereum/go-ethereum/blob/00294e9d28151122e955c7db4344f06724295ec5/core/vm/evm.go#L137
-fn adjust_disabled_base_fee(env: &mut Environment) {
+pub(crate) fn adjust_disabled_base_fee(env: &mut Environment) {
     if env.gas_price == U256::zero() {
         env.base_fee_per_gas = U256::zero();
     }
+    // Same for the blob fee: a call object that opts out by passing `maxFeePerBlobGas: 0`
+    // must not be rejected for undercutting the block's blob base fee.
+    // `base_blob_fee_per_gas` is the field the validation and the up-front cost both read
+    // (`validate_max_fee_per_blob_gas`, `deduct_caller`), and it is computed in
+    // `env_from_generic` before this runs, so it is what has to be lowered. Clearing
+    // `block_excess_blob_gas` instead had no effect: nothing reads that field, and the
+    // blob base fee derived from a zero excess still has a floor of 1, which a zero fee
+    // cap undercuts just the same.
     if env
         .tx_max_fee_per_blob_gas
         .is_some_and(|v| v == U256::zero())
     {
-        env.block_excess_blob_gas = None;
+        env.base_blob_fee_per_gas = U256::zero();
     }
 }
 
@@ -3848,7 +3856,7 @@ fn adjust_disabled_l2_fees(env: &Environment, vm_type: VMType) -> VMType {
     vm_type
 }
 
-fn env_from_generic(
+pub(crate) fn env_from_generic(
     tx: &GenericTransaction,
     header: &BlockHeader,
     db: &GeneralizedDatabase,
@@ -3912,14 +3920,20 @@ fn env_from_generic(
         // `nonce` defaults `tx_nonce` to 0 above, which the hook would otherwise
         // reject for any sender whose nonce is nonzero.
         disable_nonce_check: true,
-        // Opt-in per caller: `simulate_tx_from_generic` and `debug_traceCall` relax it so
-        // an over-limit `gas` still runs, while `create_access_list` keeps enforcing it.
-        disable_gas_allowance_check: false,
+        // Same reasoning: a caller passing a `gas` above the block allowance or above the
+        // EIP-7825 per-transaction cap still expects an answer, because nothing is being
+        // submitted. `eth_createAccessList` enforced both until now, which rejected call
+        // objects that the other simulation RPCs answered, and which tools that pass the
+        // block gas limit as `gas` hit routinely.
+        disable_gas_allowance_check: true,
+        // Same reasoning: a simulated call carries no signature, so EIP-3607 has nothing
+        // to protect, and a contract as `from` is a normal thing to simulate.
+        disable_sender_eoa_check: true,
         is_system_call: false,
     })
 }
 
-/// Converts a `GenericTransaction` (RPC/simulation input) into a concrete `Transaction`.
+/// Build a synthetic `Transaction` from a `GenericTransaction` for simulation paths.
 ///
 /// Split out from `vm_from_generic` so the caller owns the resulting `Transaction` for at least
 /// the VM's lifetime — `VM` now borrows its tx (`&'a Transaction`) instead of cloning it.

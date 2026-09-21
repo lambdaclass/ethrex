@@ -1,15 +1,64 @@
 use std::time::Duration;
 
 use ethrex_common::{
-    H256,
+    Address, H256,
     tracing::{CallTrace, OpcodeTraceResult, PrestateResult},
-    types::{Block, GenericTransaction},
+    types::{Block, BlockHeader, BlockNumber, GenericTransaction},
 };
 use ethrex_storage::Store;
 use ethrex_vm::tracing::OpcodeTracerConfig;
 use ethrex_vm::{Evm, EvmError};
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
-use crate::{Blockchain, error::ChainError, vm::StoreVmDatabase};
+use crate::{
+    Blockchain,
+    error::ChainError,
+    vm::{ReplayedVmDatabase, StateOverride, StoreVmDatabase},
+};
+
+/// The geth override sets applied to a `debug_traceCall`. `Default` means "no
+/// overrides", which is every other tracing entry point.
+///
+/// The two sets reach the VM by different routes, which is why they travel together:
+/// the State Override Set wraps the database, while the Block Override Set is already
+/// baked into `effective_header` by the caller.
+#[derive(Default, Clone)]
+pub struct TraceCallOverrides {
+    /// State Override Set, already converted by the RPC layer. Shared rather than owned
+    /// so building the overlay does not copy it.
+    pub state: Arc<BTreeMap<Address, StateOverride>>,
+    /// Header the EVM environment is built from when a Block Override Set was given.
+    /// The *database* is always built from the real header, so `state_root` and
+    /// block-hash ancestor walks still resolve against actual chain state.
+    pub effective_header: Option<BlockHeader>,
+}
+
+impl TraceCallOverrides {
+    fn has_state(&self) -> bool {
+        !self.state.is_empty()
+    }
+
+    /// True when the overlay must be installed: there is state to overlay, or the
+    /// synthetic block sits above the real one.
+    ///
+    /// A Block Override Set on its own only needs the overlay for its
+    /// `BLOCKHASH`-past-the-base-block clamp, and that clamp cannot fire unless `number`
+    /// moved forward: LEVM measures its own 256-block window against the synthetic number
+    /// (`opcode_handlers/block.rs`), so with the number unchanged or moved down every
+    /// number it can reach is already below the base. Overriding only `time`, `coinbase`
+    /// or `difficulty` therefore reaches the environment and the fork, never the database
+    /// — and on the re-execution path an overlay would otherwise pull the trace through
+    /// `ReplayedVmDatabase`'s reconstructed `storage_root` for nothing, which is the same
+    /// thing `build_call_trace_vm` avoids for an override-free trace.
+    fn needs_overlay(&self, base_block_number: BlockNumber) -> bool {
+        self.has_state()
+            || self
+                .effective_header
+                .as_ref()
+                .is_some_and(|header| header.number > base_block_number)
+    }
+}
 
 impl Blockchain {
     /// Outputs the call trace for the given transaction
@@ -210,15 +259,18 @@ impl Blockchain {
         timeout: Duration,
         only_top_call: bool,
         with_log: bool,
+        overrides: TraceCallOverrides,
     ) -> Result<CallTrace, ChainError> {
-        let mut vm = self.build_call_trace_vm(&block, tx_index, reexec).await?;
+        let mut vm = self
+            .build_call_trace_vm(&block, tx_index, reexec, &overrides)
+            .await?;
         // Log index base = logs from the txs the call runs on top of: those before
         // `tx_index`, or the whole block when tracing on top of it (`None`).
         let preceding_txs = tx_index.unwrap_or(block.body.transactions.len());
         let log_index_base = self
             .log_index_base(block.hash(), preceding_txs, with_log)
             .await?;
-        let header = block.header;
+        let header = overrides.effective_header.unwrap_or(block.header);
         timeout_trace_operation(timeout, move || {
             vm.trace_call_calls(
                 &header,
@@ -243,9 +295,12 @@ impl Blockchain {
         timeout: Duration,
         diff_mode: bool,
         include_empty: bool,
+        overrides: TraceCallOverrides,
     ) -> Result<PrestateResult, ChainError> {
-        let mut vm = self.build_call_trace_vm(&block, tx_index, reexec).await?;
-        let header = block.header;
+        let mut vm = self
+            .build_call_trace_vm(&block, tx_index, reexec, &overrides)
+            .await?;
+        let header = overrides.effective_header.unwrap_or(block.header);
         timeout_trace_operation(timeout, move || {
             vm.trace_call_prestate(&header, &transaction, diff_mode, include_empty)
         })
@@ -255,6 +310,7 @@ impl Blockchain {
     /// Traces a synthetic `eth_call`-shaped request (`debug_traceCall`) with the opcode
     /// (EIP-3155) tracer. See [`Self::trace_call_calls`] for the `tx_index`/`reexec`
     /// state-rebuild semantics.
+    #[allow(clippy::too_many_arguments)]
     pub async fn trace_call_opcodes(
         &self,
         block: Block,
@@ -263,9 +319,12 @@ impl Blockchain {
         reexec: u32,
         timeout: Duration,
         cfg: OpcodeTracerConfig,
+        overrides: TraceCallOverrides,
     ) -> Result<OpcodeTraceResult, ChainError> {
-        let mut vm = self.build_call_trace_vm(&block, tx_index, reexec).await?;
-        let header = block.header;
+        let mut vm = self
+            .build_call_trace_vm(&block, tx_index, reexec, &overrides)
+            .await?;
+        let header = overrides.effective_header.unwrap_or(block.header);
         timeout_trace_operation(timeout, move || {
             vm.trace_call_opcodes(&header, &transaction, cfg)
         })
@@ -279,31 +338,99 @@ impl Blockchain {
     /// re-execution. This is the common path (e.g. tracing a call on `latest`) and matches
     /// what `eth_call` does. When a specific `tx_index` is requested, or the block's state
     /// isn't stored (archive/pruned gap), the parent state is rebuilt and the block re-run
-    /// up to `tx_index` (processing withdrawals only when the whole block runs).
+    /// up to `tx_index` (processing withdrawals only when the whole block runs), then
+    /// exposed as a [`ReplayedVmDatabase`] so the override overlay can be layered on top
+    /// of the replay rather than around it.
     async fn build_call_trace_vm(
         &self,
         block: &Block,
         tx_index: Option<usize>,
         reexec: u32,
+        overrides: &TraceCallOverrides,
     ) -> Result<Evm, ChainError> {
         if tx_index.is_none() && self.storage.has_state_root(block.header.state_root)? {
+            // Built from the real header even under a Block Override Set, so `state_root`
+            // resolves; the synthetic header only feeds the EVM environment.
             let vm_db = StoreVmDatabase::new(self.storage.clone(), block.header.clone())?;
+            if overrides.needs_overlay(block.header.number) {
+                return Ok(self.new_overlaid_evm(
+                    vm_db,
+                    overrides.state.clone(),
+                    block.header.number,
+                )?);
+            }
             return Ok(self.new_evm(vm_db)?);
         }
-        let mut vm = self
-            .rebuild_parent_state(block.header.parent_hash, reexec)
+        // Re-execution path: `txIndex` was given, or the block's post-state is not stored
+        // (archive/pruned gap). Both mean rebuilding state by replaying blocks.
+        //
+        // The replay must not see the State Override Set — the block's own transactions
+        // really happened and have to execute against the state they really saw. So the
+        // replay finishes in its own `Evm`, is materialised as a `ReplayedVmDatabase`, and
+        // the overlay goes on top of that for a second `Evm` that runs only the traced
+        // call. That is geth's ordering: `StateAtTransaction`, then `StateOverride.Apply`.
+        let (mut vm, base_db) = self
+            .rebuild_parent_state_with_db(block.header.parent_hash, reexec)
             .await?;
         vm.rerun_block(block, tx_index)?;
-        Ok(vm)
+        // With no overlay to install there is nothing to layer over, so hand back the
+        // replay's own `Evm` as this function always did. Projecting it through
+        // `ReplayedVmDatabase` would work, but the projection reconstructs `storage_root`
+        // from an `AccountUpdate` rather than carrying the real one (see
+        // `UNMATERIALISED_STORAGE_ROOT`), and there is no reason to put the
+        // override-free `txIndex` trace through an approximation it does not need.
+        if !overrides.needs_overlay(block.header.number) {
+            return Ok(vm);
+        }
+        // `get_state_transitions` diffs `current_accounts_state` against
+        // `initial_accounts_state`, so this is the complete replay only while the latter
+        // is still the untouched `base_db` baseline. That holds because `rerun_block` is
+        // `prepare_block` plus a plain `execute_tx` loop; the drain-back that folds
+        // in-block changes into `initial_accounts_state` lives in the BAL-parallel and
+        // streaming-merkleizer executors, which tracing does not use. If `rerun_block`
+        // ever adopts one, this returns a PARTIAL diff and traces go quietly wrong.
+        //
+        // There is deliberately no assertion here. A drain merges `current_accounts_state`
+        // into `initial_accounts_state` and later transactions repopulate `current`, so the
+        // drained and undrained states are indistinguishable from outside — any cheap
+        // assert would pass in exactly the case it claims to catch. The comment is the
+        // guard; keep it attached to this call.
+        let replayed = ReplayedVmDatabase::new(base_db, vm.get_state_transitions()?);
+        Ok(self.new_overlaid_evm(replayed, overrides.state.clone(), block.header.number)?)
     }
 
-    /// Rebuild the parent state for a block given its parent hash, returning an `Evm` instance with all changes cached
-    /// Will re-execute all ancestor block's which's state is not stored up to a maximum given by `reexec`
+    /// Rebuild the parent state for a block given its parent hash, returning an `Evm`
+    /// instance with all changes cached.
+    ///
+    /// Will re-execute all ancestor blocks whose state is not stored, up to a maximum
+    /// given by `reexec`. See [`Self::rebuild_parent_state_with_db`] for the variant that
+    /// also hands back the database.
     async fn rebuild_parent_state(
         &self,
         parent_hash: H256,
         reexec: u32,
     ) -> Result<Evm, ChainError> {
+        Ok(self
+            .rebuild_parent_state_with_db(parent_hash, reexec)
+            .await?
+            .0)
+    }
+
+    /// Rebuild the parent state for a block given its parent hash, returning an `Evm`
+    /// instance with all changes cached, together with the [`StoreVmDatabase`] that `Evm`
+    /// reads through.
+    ///
+    /// Will re-execute all ancestor blocks whose state is not stored, up to a maximum
+    /// given by `reexec`.
+    ///
+    /// `build_call_trace_vm` needs that exact database instance: it carries the block-hash
+    /// cache for the re-executed parents, so a freshly constructed equivalent would make
+    /// `BLOCKHASH` unresolvable for those blocks.
+    async fn rebuild_parent_state_with_db(
+        &self,
+        parent_hash: H256,
+        reexec: u32,
+    ) -> Result<(Evm, StoreVmDatabase), ChainError> {
         // Check if we need to re-execute parent blocks
         let blocks_to_re_execute =
             get_missing_state_parents(parent_hash, &self.storage, reexec).await?;
@@ -326,12 +453,12 @@ impl Blockchain {
             parent_header,
             block_hash_cache,
         )?;
-        let mut vm = self.new_evm(vm_db)?;
+        let mut vm = self.new_evm(vm_db.clone())?;
         // Run parents to rebuild pre-state
         for block in blocks_to_re_execute.iter().rev() {
             vm.rerun_block(block, None)?;
         }
-        Ok(vm)
+        Ok((vm, vm_db))
     }
 }
 
