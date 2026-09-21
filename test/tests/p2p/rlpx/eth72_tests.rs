@@ -38,13 +38,14 @@ fn npth(cell_mask: Option<u128>) -> NewPooledTransactionHashes72 {
 // ── NewPooledTransactionHashes72 tests ───────────────────────────────────────
 
 #[test]
-fn cell_mask_none_encodes_to_rlp_nil() {
-    // cell_mask None must encode to RLP 0x80 (nil byte string).
+fn cell_mask_none_encodes_to_a_zero_b16_not_nil() {
+    // devp2p `caps/eth.md` types the field `cells: B_16`: always 16 bytes, whose
+    // content "can be ignored when no blob transactions are announced". geth
+    // decodes it into `types.CustodyBitmap [16]byte` and rejects a shorter string
+    // outright, so an unset mask must still go out as an all-zero B_16.
     let msg = npth(None);
-    let encoded = encode(&msg);
-    // Decoded must preserve None.
-    let decoded = NewPooledTransactionHashes72::decode(&encoded).expect("decode");
-    assert_eq!(decoded.cell_mask, None);
+    let decoded = NewPooledTransactionHashes72::decode(&encode(&msg)).expect("decode");
+    assert_eq!(decoded.cell_mask, Some(0));
 }
 
 #[test]
@@ -431,8 +432,9 @@ fn eth72_announcement_keeps_a_sparse_held_blob_tx() {
 
 /// A blob tx whose bundle left the pool entirely can't be served on any protocol
 /// version, so eth/72 must skip it too — and when the skip removes the only type-3
-/// tx, the announcement must carry a nil cell mask (EIP-8070: cell_mask MUST be nil
-/// when no type-3 tx is announced).
+/// tx, the announcement carries no cell mask. That is an in-memory state only: on the
+/// wire it still becomes an all-zero `B_16`, which receivers ignore for a blob-free
+/// announcement (devp2p `caps/eth.md`).
 #[test]
 fn eth72_announcement_skips_a_gone_bundle_blob_tx_and_keeps_cell_mask_nil() {
     let bc = test_blockchain();

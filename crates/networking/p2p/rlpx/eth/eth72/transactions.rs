@@ -37,14 +37,17 @@ pub fn b16_to_u128(b: [u8; 16]) -> u128 {
     u128::from_le_bytes(b)
 }
 
-/// Encode `cell_mask: Option<u128>` as RLP bytes:
-/// - None  → empty bytes (RLP nil, 0x80)
-/// - Some  → 16-byte little-endian (B_16, geth CustodyBitmap layout)
+/// Encode `cell_mask` as the wire's 16-byte little-endian `B_16` (geth
+/// `CustodyBitmap` layout).
+///
+/// `None` encodes to an all-zero mask, not to RLP nil. devp2p `caps/eth.md` types
+/// the field `cells: B_16` and says only that it "can be ignored when no blob
+/// transactions are announced" — the element itself is always 16 bytes wide. geth
+/// decodes it into `types.CustodyBitmap [16]byte`, which rejects anything shorter
+/// with "input string too short", so a nil mask makes every announcement without a
+/// blob tx undecodable to the rest of the network.
 fn cell_mask_to_bytes(mask: Option<u128>) -> Bytes {
-    match mask {
-        None => Bytes::new(),
-        Some(v) => Bytes::from(u128_to_b16(v).to_vec()),
-    }
+    Bytes::from(u128_to_b16(mask.unwrap_or(0)).to_vec())
 }
 
 /// Decode RLP bytes back to `cell_mask`:
@@ -73,8 +76,11 @@ pub struct NewPooledTransactionHashes72 {
     pub transaction_sizes: Vec<usize>,
     pub transaction_hashes: Vec<H256>,
     /// 128-bit bitmask indicating which cells are held for blob txs.
-    /// None encodes to RLP nil (0x80) and MUST be nil when no type-3 tx is
-    /// announced.
+    ///
+    /// `None` means "no blob tx in this announcement, so nothing to advertise";
+    /// it still goes on the wire as an all-zero `B_16` (see
+    /// [`cell_mask_to_bytes`]). Receivers ignore the mask unless
+    /// [`Self::announces_blob_tx`] holds.
     pub cell_mask: Option<u128>,
 }
 
@@ -121,8 +127,9 @@ impl NewPooledTransactionHashes72 {
             transaction_sizes.push(transaction_size);
         }
 
-        // cell_mask MUST be nil when no type-3 tx is announced (EIP-8070, devp2p
-        // changes to `NewPooledTransactionHashes`).
+        // With no type-3 tx announced the mask carries no information — devp2p
+        // `caps/eth.md` says it "can be ignored" in that case — so leave it unset
+        // and let the encoder put an all-zero `B_16` on the wire.
         // When blob txs are present, compute the AND of available_cell_mask over
         // every type-3 hash: this is the set of columns available for ALL of them,
         // so receivers know we can serve every requested column for the whole batch.
