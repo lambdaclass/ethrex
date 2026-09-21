@@ -449,6 +449,114 @@ fn trace_call_calls_log_index_is_block_absolute() {
     assert_eq!((logs[1].index, logs[1].position), (6, 0));
 }
 
+/// `CALLDATASIZE; PUSH1 child; JUMPI; CALL(self, 1 byte); POP; LOG0; STOP;
+/// child: JUMPDEST; LOG0; <child_tail>`. The root call (empty calldata) calls the
+/// contract itself with one byte of calldata, which takes the child branch and emits
+/// a log before the root's own `LOG0`.
+fn nested_log_then_root_log_bytecode(child_tail: &[u8]) -> Vec<u8> {
+    let mut code = vec![
+        0x36, // CALLDATASIZE
+        0x60, 0x1a, // PUSH1 child
+        0x57, // JUMPI
+        0x60, 0x00, // PUSH1 0 (retSize)
+        0x60, 0x00, // PUSH1 0 (retOffset)
+        0x60, 0x01, // PUSH1 1 (argsSize)
+        0x60, 0x00, // PUSH1 0 (argsOffset)
+        0x60, 0x00, // PUSH1 0 (value)
+        0x61, 0xC0, 0x00, // PUSH2 CONTRACT
+        0x5a, // GAS
+        0xf1, // CALL
+        0x50, // POP
+        0x60, 0x00, 0x60, 0x00, 0xa0, // LOG0
+        0x00, // STOP
+        0x5b, // JUMPDEST (child)
+        0x60, 0x00, 0x60, 0x00, 0xa0, // LOG0
+    ];
+    code.extend_from_slice(child_tail);
+    code
+}
+
+/// `onlyTopCall` with `withLog` reports only the root frame's own logs, but the nested
+/// log it leaves out still consumes a block-absolute index (the root log is 6 with base
+/// 5), and `position` is 0 because no subcalls are collected.
+#[test]
+fn trace_call_calls_only_top_call_keeps_block_absolute_log_index() {
+    let mut db = db_with_contract(nested_log_then_root_log_bytecode(&[0x00]));
+    let header = default_header();
+    let tx = call_tx();
+
+    let trace = LEVM::trace_call_calls(
+        &mut db,
+        &header,
+        &tx,
+        /* only_top_call */ true,
+        /* with_log */ true,
+        /* log_index_base */ 5,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace_call_calls should succeed");
+
+    let frame = &trace[0];
+    assert!(frame.error.is_none(), "root call must succeed");
+    assert!(frame.calls.is_empty(), "onlyTopCall collects no subcalls");
+    assert_eq!(
+        frame.logs.len(),
+        1,
+        "only the root frame's own log is reported"
+    );
+    assert_eq!((frame.logs[0].index, frame.logs[0].position), (6, 0));
+}
+
+/// A reverted nested call's log never takes effect, so under `onlyTopCall` it neither
+/// shows up on the root frame nor consumes an index: the root log keeps the base.
+#[test]
+fn trace_call_calls_only_top_call_ignores_reverted_nested_log() {
+    // child tail: PUSH1 0 PUSH1 0 REVERT
+    let bytecode = nested_log_then_root_log_bytecode(&[0x60, 0x00, 0x60, 0x00, 0xfd]);
+    let header = default_header();
+    let tx = call_tx();
+
+    let full = LEVM::trace_call_calls(
+        &mut db_with_contract(bytecode.clone()),
+        &header,
+        &tx,
+        false,
+        /* with_log */ true,
+        /* log_index_base */ 5,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace_call_calls should succeed");
+    assert_eq!(
+        full[0].calls.len(),
+        1,
+        "the nested call is traced without onlyTopCall"
+    );
+    assert!(full[0].calls[0].error.is_some(), "the nested call reverted");
+
+    let trace = LEVM::trace_call_calls(
+        &mut db_with_contract(bytecode),
+        &header,
+        &tx,
+        /* only_top_call */ true,
+        /* with_log */ true,
+        /* log_index_base */ 5,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace_call_calls should succeed");
+
+    let frame = &trace[0];
+    assert!(frame.calls.is_empty(), "onlyTopCall collects no subcalls");
+    assert_eq!(
+        frame.logs.len(),
+        1,
+        "the reverted nested log is not reported"
+    );
+    assert_eq!((frame.logs[0].index, frame.logs[0].position), (5, 0));
+}
+
 /// The serialized top frame must omit geth's optional fields when they carry no
 /// information: no `error`/`revertReason`/`calls` and no empty `output` on a clean
 /// call. `to`/`value`/`input` remain present.

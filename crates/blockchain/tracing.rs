@@ -264,9 +264,9 @@ impl Blockchain {
         let mut vm = self
             .build_call_trace_vm(&block, tx_index, reexec, &overrides)
             .await?;
-        // Log index base = logs from the txs the call runs on top of: those before
-        // `tx_index`, or the whole block when tracing on top of it (`None`).
-        let preceding_txs = tx_index.unwrap_or(block.body.transactions.len());
+        // Log index base = logs of the txs replayed before the call (those before
+        // `tx_index`); on top of the block nothing is replayed and geth starts at 0.
+        let preceding_txs = tx_index.unwrap_or(0);
         let log_index_base = self
             .log_index_base(block.hash(), preceding_txs, with_log)
             .await?;
