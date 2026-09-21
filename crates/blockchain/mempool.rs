@@ -661,8 +661,13 @@ pub struct Mempool {
     /// to return.
     tx_seq: AtomicU64,
     /// When true, the EIP-8070 sampler/provider state machine is active.
-    /// When false (default), the node always acts as provider (p=1.0).
-    pub blob_sampling_enabled: bool,
+    /// When false, the node always acts as provider (p=1.0).
+    ///
+    /// Seeded from the operator's `--blob-sampling` / `--blob-eager-provider`
+    /// choice, then latched on by `Blockchain::blob_sampling_enabled` once the
+    /// chain head reaches Amsterdam, the fork EIP-8070 rides on. One-way: see
+    /// [`Self::enable_blob_sampling`].
+    blob_sampling: AtomicBool,
     /// When true, this node always acts as provider (p=1.0) for every blob tx
     /// regardless of the pseudo-random role decision. Block builders SHOULD
     /// permanently act in eager mode (EIP-8070) to ensure they hold complete blob
@@ -688,7 +693,7 @@ impl Mempool {
             inner: RwLock::new(MempoolInner::new(max_mempool_size)),
             tx_added: tokio::sync::Notify::new(),
             tx_seq: AtomicU64::new(0),
-            blob_sampling_enabled: false,
+            blob_sampling: AtomicBool::new(false),
             eager_provider: AtomicBool::new(false),
             custody_generation: AtomicU64::new(0),
         }
@@ -697,7 +702,7 @@ impl Mempool {
     /// Create a mempool with blob sampling enabled.
     pub fn new_with_sampling(max_mempool_size: usize) -> Self {
         Mempool {
-            blob_sampling_enabled: true,
+            blob_sampling: AtomicBool::new(true),
             ..Self::new(max_mempool_size)
         }
     }
@@ -716,9 +721,29 @@ impl Mempool {
     /// "Execution clients :: Local block builders").
     pub fn new_with_eager_provider(max_mempool_size: usize) -> Self {
         Mempool {
-            blob_sampling_enabled: true,
+            blob_sampling: AtomicBool::new(true),
             eager_provider: AtomicBool::new(true),
             ..Self::new(max_mempool_size)
+        }
+    }
+
+    /// Whether the EIP-8070 sampler/provider state machine is active.
+    pub fn blob_sampling_enabled(&self) -> bool {
+        self.blob_sampling.load(Ordering::Acquire)
+    }
+
+    /// Turn the EIP-8070 state machine on permanently.
+    ///
+    /// Called by `Blockchain::blob_sampling_enabled` when the chain head first
+    /// reaches Amsterdam, and one-way for the same reason [`Self::latch_eager_provider`]
+    /// is: a chain that reorgs back below the fork boundary would otherwise flap
+    /// the advertised eth capability set, dropping and re-forming peer
+    /// connections over a boundary the chain is about to cross again anyway.
+    pub(crate) fn enable_blob_sampling(&self) {
+        if !self.blob_sampling.swap(true, Ordering::AcqRel) {
+            info!(
+                "Amsterdam reached: enabling EIP-8070 blob sampling (node now advertises eth/72)"
+            );
         }
     }
 
@@ -733,10 +758,10 @@ impl Mempool {
     /// The latch is one-way on purpose — dropping back to sampling between slots
     /// would leak the node's proposer schedule through its fetch pattern.
     ///
-    /// Inert unless sampling is enabled: without `--blob-sampling` the node is
-    /// already a full-replication provider.
+    /// Inert unless sampling is enabled: before Amsterdam (and without
+    /// `--blob-sampling`) the node is already a full-replication provider.
     pub fn latch_eager_provider(&self) {
-        if !self.blob_sampling_enabled {
+        if !self.blob_sampling_enabled() {
             return;
         }
         if !self.eager_provider.swap(true, Ordering::AcqRel) {

@@ -396,14 +396,20 @@ pub struct BlockchainOptions {
     /// `--no-bal-parallel-trie`) to fall back to streaming `AccountUpdate`s from
     /// the executor and merkleizing post-execution.
     pub bal_parallel_trie_enabled: bool,
-    /// EIP-8070: when true, activate the sampler/provider state machine.
-    /// When false (default), the node always acts as provider (p=1.0).
-    pub blob_sampling_enabled: bool,
+    /// EIP-8070: when true, activate the sampler/provider state machine at
+    /// startup regardless of the chain's fork schedule (`--blob-sampling`).
+    ///
+    /// When false (default), sampling still switches itself on once the chain
+    /// head reaches Amsterdam; see [`Blockchain::blob_sampling_enabled`]. This
+    /// flag only brings that forward, for devnets and for chains that schedule
+    /// the fork later than they want the state machine running.
+    pub force_blob_sampling: bool,
     /// EIP-8070: when true, always act as provider (p=1.0) regardless of role
     /// randomization, as block builders SHOULD (EIP-8070, "Execution clients ::
     /// Local block builders"). Enabled via `--blob-eager-provider`; a node that
-    /// builds payloads latches it at runtime regardless. Only meaningful when
-    /// `blob_sampling_enabled` is also true.
+    /// builds payloads latches it at runtime regardless. Implies
+    /// `force_blob_sampling`, since eager provider is a role *within* the
+    /// sampling state machine.
     pub blob_eager_provider: bool,
     /// Optional operator override for the maximum reorg depth. `None` ; cap is purely
     /// physical (layer-cache retention plus journal reach; bounded indirectly by finality
@@ -446,7 +452,7 @@ impl Default for BlockchainOptions {
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
             bal_parallel_trie_enabled: true,
-            blob_sampling_enabled: false,
+            force_blob_sampling: false,
             blob_eager_provider: false,
             max_reorg_depth: None,
             gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
@@ -588,7 +594,7 @@ impl Blockchain {
     pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
         let mempool = if blockchain_opts.blob_eager_provider {
             Mempool::new_with_eager_provider(blockchain_opts.max_mempool_size)
-        } else if blockchain_opts.blob_sampling_enabled {
+        } else if blockchain_opts.force_blob_sampling {
             Mempool::new_with_sampling(blockchain_opts.max_mempool_size)
         } else {
             Mempool::new(blockchain_opts.max_mempool_size)
@@ -4175,6 +4181,48 @@ impl Blockchain {
     /// date, this tracks the state sync itself.
     pub fn state_sync_needs_trie_nodes(&self) -> bool {
         self.snap_syncing.load(Ordering::Relaxed)
+    }
+
+    /// Whether the EIP-8070 sampler/provider state machine is active.
+    ///
+    /// This is what decides whether eth/72 may be offered to a peer, and which
+    /// role this node takes for each blob transaction. It turns on when the
+    /// chain head reaches Amsterdam, the fork EIP-8070 rides on, or earlier if
+    /// the operator passed `--blob-sampling` / `--blob-eager-provider`.
+    ///
+    /// Gating on the fork rather than on a flag alone keeps the two halves of
+    /// eth/72 in step. eth/72 always elides blob payloads from
+    /// `PooledTransactions`, so blobs arrive only through `GetCells`, which only
+    /// this state machine issues. A node that advertised the capability without
+    /// it would accept blob transactions it could never reconstruct.
+    ///
+    /// Latching happens here rather than on block import so that the fork check
+    /// costs nothing on the import path; the p2p paths that ask this question
+    /// run per connection or per announcement, and pay one atomic load each once
+    /// the fork is behind us.
+    pub fn blob_sampling_enabled(&self) -> bool {
+        if self.mempool.blob_sampling_enabled() {
+            return true;
+        }
+        // L2 rejects blob txs outright, so its fork schedule must not drag the
+        // blobpool state machine in.
+        if !matches!(self.options.r#type, BlockchainType::L1) {
+            return false;
+        }
+        let head = self.storage.latest_block_timestamp();
+        if !self.storage.get_chain_config().is_amsterdam_activated(head) {
+            return false;
+        }
+        self.mempool.enable_blob_sampling();
+        true
+    }
+
+    /// Latch eager-provider mode on, resolving the fork-driven sampling latch
+    /// first: [`Mempool::latch_eager_provider`] is inert while sampling is off.
+    pub fn latch_eager_provider(&self) {
+        if self.blob_sampling_enabled() {
+            self.mempool.latch_eager_provider();
+        }
     }
 
     pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {

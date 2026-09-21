@@ -441,7 +441,7 @@ impl Blockchain {
         // EIP-8070: a node that builds payloads SHOULD permanently act as an eager
         // provider, so it holds complete blob data for every blob tx it may include.
         // Inert unless blob sampling is enabled.
-        self.mempool.latch_eager_provider();
+        self.latch_eager_provider();
         let self_clone = self.clone();
         let cancel_token = CancellationToken::new();
         let cancel_token_clone = cancel_token.clone();

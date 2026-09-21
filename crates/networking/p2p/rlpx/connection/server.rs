@@ -751,7 +751,7 @@ impl PeerConnectionServer {
             // mode latched on, fetch the now-wanted columns this peer can serve for
             // pending blob txs. Inert unless sampling is enabled, and only ever
             // asked of an eth/72 peer.
-            if state.blockchain.mempool.blob_sampling_enabled && supports_eth72(state) {
+            if state.blockchain.blob_sampling_enabled() && supports_eth72(state) {
                 let generation = state.blockchain.mempool.custody_generation();
                 if generation != state.last_custody_generation {
                     state.last_custody_generation = generation;
@@ -1272,10 +1272,11 @@ where
     // eth/72 (EIP-8070) is only safe to negotiate when blob sampling is enabled:
     // it always elides blob payloads in PooledTransactions, and a node that does
     // not run the sampler/provider cell-fetch loop would receive blob txs it can
-    // never reconstruct. With sampling off we cap at eth/71 so default nodes keep
-    // full-blob propagation unchanged. The EIP's Backwards Compatibility section
-    // explicitly supports this gradual, version-gated rollout.
-    let offer_eth72 = state.blockchain.mempool.blob_sampling_enabled;
+    // never reconstruct. Sampling switches on at Amsterdam, so pre-fork peers cap
+    // at eth/71 and keep full-blob propagation unchanged. The EIP's Backwards
+    // Compatibility section explicitly supports this gradual, version-gated
+    // rollout.
+    let offer_eth72 = state.blockchain.blob_sampling_enabled();
     // This allow is because in l2 we mut the capabilities
     // to include the l2 cap
     let snap_capabilities =
@@ -1810,7 +1811,7 @@ async fn handle_incoming_message(
                     announcement.get_transactions_to_request(&state.blockchain, peer_id)?;
 
                 if !hashes.is_empty() {
-                    if !state.blockchain.mempool.blob_sampling_enabled {
+                    if !state.blockchain.blob_sampling_enabled() {
                         // Sampling disabled: always provider — request everything.
                         // Trim to the truly-requested subset so the flush does not
                         // re-request hashes already in-flight from another peer.
@@ -2137,7 +2138,7 @@ async fn handle_incoming_message(
                 }
                 // EIP-8070 sampler: after tx validation, check if we have enough provider
                 // announcements to start fetching cells.
-                if state.blockchain.mempool.blob_sampling_enabled {
+                if state.blockchain.blob_sampling_enabled() {
                     let peer_id = state.node.node_id();
                     let mempool = &state.blockchain.mempool;
                     let local_pubkey = public_key_from_signing_key(&state.signer);
