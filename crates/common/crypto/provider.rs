@@ -160,6 +160,39 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         Ok(hash)
     }
 
+    /// Recover the signer's **uncompressed** secp256k1 public key (`0x04 || X || Y`).
+    ///
+    /// REST payload witness responses include the full key for each transaction.
+    /// Unlike [`Self::recover_signer`], this returns the key before hashing it
+    /// to derive the sender address. Both apply the same EIP-2 low-s rejection.
+    ///
+    /// Host-only: requires the native `secp256k1` feature.
+    #[cfg(feature = "secp256k1")]
+    fn recover_public_key(&self, sig: &[u8; 65], msg: &[u8; 32]) -> Result<[u8; 65], CryptoError> {
+        // EIP-2: reject high-s signatures (s > secp256k1n/2), matching recover_signer.
+        const SECP256K1_N_HALF: [u8; 32] =
+            hex_literal::hex!("7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0");
+        if sig[32..64] > SECP256K1_N_HALF[..] {
+            return Err(CryptoError::InvalidSignature);
+        }
+
+        let recovery_id = secp256k1::ecdsa::RecoveryId::try_from(sig[64] as i32)
+            .map_err(|_| CryptoError::InvalidRecoveryId)?;
+        let recoverable_sig = secp256k1::ecdsa::RecoverableSignature::from_compact(
+            sig[..64]
+                .try_into()
+                .map_err(|_| CryptoError::InvalidSignature)?,
+            recovery_id,
+        )
+        .map_err(|_| CryptoError::InvalidSignature)?;
+
+        let public_key = recoverable_sig
+            .recover(&secp256k1::Message::from_digest(*msg))
+            .map_err(|_| CryptoError::RecoveryFailed)?;
+
+        Ok(public_key.serialize_uncompressed())
+    }
+
     /// Recover the signer address from a 65-byte signature (r||s||v) + 32-byte message hash.
     /// Used by transaction validation (tx.sender()) and EIP-7702 authority recovery.
     fn recover_signer(&self, sig: &[u8; 65], msg: &[u8; 32]) -> Result<Address, CryptoError> {

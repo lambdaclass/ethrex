@@ -430,7 +430,7 @@ mod capabilities_tests {
         );
         assert_eq!(
             caps.fork_scoped_endpoints,
-            vec!["payloads", "forkchoice", "bodies"]
+            vec!["payloads", "payloads/witness", "forkchoice", "bodies"]
         );
         assert_eq!(caps.unscoped_endpoints, vec!["capabilities", "identity"]);
         // Flat dot-notation limit keys with scalar values per #793 refactor.md,
@@ -543,6 +543,7 @@ mod router_tests {
             ("GET", "/identity"),
             ("GET", "/capabilities"),
             ("POST", "/payloads"),
+            ("POST", "/payloads/witness"),
             ("POST", "/blobs/v1"),
         ] {
             let app = app.clone();
@@ -2682,6 +2683,7 @@ mod sp3_smoke_tests {
             ("GET", "/identity"),
             ("GET", "/capabilities"),
             ("POST", "/payloads"),
+            ("POST", "/payloads/witness"),
             ("GET", "/payloads/0x0102030405060708"),
             ("POST", "/forkchoice"),
             ("POST", "/bodies/hash"),

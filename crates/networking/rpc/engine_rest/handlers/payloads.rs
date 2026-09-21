@@ -1,4 +1,4 @@
-//! Real handlers for `POST /payloads` and `GET /payloads/{id}`. The fork is
+//! Handlers for `POST /payloads`, `POST /payloads/witness` and `GET /payloads/{id}`. The fork is
 //! selected by the `Eth-Execution-Version` request header.
 
 use std::str::FromStr;
@@ -27,10 +27,12 @@ use crate::engine_rest::types::built_payload::{
     BlobsBundleV1, BlobsBundleV2, BuiltPayloadAmsterdam, BuiltPayloadCancun, BuiltPayloadOsaka,
     BuiltPayloadParis, BuiltPayloadPrague, BuiltPayloadShanghai, MAX_BLOB_COMMITMENTS_PER_BLOCK,
 };
+use crate::engine_rest::types::common::to_optional;
 use crate::engine_rest::types::common::{
     Bytes20, PayloadId, PayloadStatus as SszPayloadStatus, PayloadStatusCode,
 };
 use crate::engine_rest::types::conversions::{DecodedNewPayload, EngineCall, IntoEngineCall};
+use crate::engine_rest::types::witness::{ExecutionWitness, PayloadStatusWithWitness, PublicKeys};
 use crate::engine_rest::types::{amsterdam, cancun, paris, prague, shanghai};
 use crate::rpc::RpcApiContext;
 use crate::types::payload::PayloadValidationStatus;
@@ -42,6 +44,19 @@ pub(crate) async fn submit_payload(
     State(ctx): State<RpcApiContext>,
     req: Request,
 ) -> Response {
+    submit(fork, ctx, req, false).await
+}
+
+pub(crate) async fn submit_payload_with_witness(
+    ExecutionVersion(fork): ExecutionVersion,
+    State(ctx): State<RpcApiContext>,
+    req: Request,
+) -> Response {
+    // Ethrex also supports pre-Amsterdam witnesses using each fork's envelope.
+    submit(fork, ctx, req, true).await
+}
+
+async fn submit(fork: Fork, ctx: RpcApiContext, req: Request, make_witness: bool) -> Response {
     if let Err(p) = check_content_type(req.headers()) {
         return p.into_response();
     }
@@ -58,16 +73,30 @@ pub(crate) async fn submit_payload(
         }
     };
     match fork {
-        Fork::Paris => decode_and_submit::<paris::ExecutionPayloadEnvelope>(body, ctx).await,
-        Fork::Shanghai => decode_and_submit::<shanghai::ExecutionPayloadEnvelope>(body, ctx).await,
-        Fork::Cancun => decode_and_submit::<cancun::ExecutionPayloadEnvelope>(body, ctx).await,
-        Fork::Prague => decode_and_submit::<prague::ExecutionPayloadEnvelope>(body, ctx).await,
+        Fork::Paris => {
+            decode_and_submit::<paris::ExecutionPayloadEnvelope>(body, ctx, fork, make_witness)
+                .await
+        }
+        Fork::Shanghai => {
+            decode_and_submit::<shanghai::ExecutionPayloadEnvelope>(body, ctx, fork, make_witness)
+                .await
+        }
+        Fork::Cancun => {
+            decode_and_submit::<cancun::ExecutionPayloadEnvelope>(body, ctx, fork, make_witness)
+                .await
+        }
+        Fork::Prague => {
+            decode_and_submit::<prague::ExecutionPayloadEnvelope>(body, ctx, fork, make_witness)
+                .await
+        }
         Fork::Osaka => {
             // Osaka re-exports Prague's envelope (see types/osaka.rs); same shape.
-            decode_and_submit::<prague::ExecutionPayloadEnvelope>(body, ctx).await
+            decode_and_submit::<prague::ExecutionPayloadEnvelope>(body, ctx, fork, make_witness)
+                .await
         }
         Fork::Amsterdam => {
-            decode_and_submit::<amsterdam::ExecutionPayloadEnvelope>(body, ctx).await
+            decode_and_submit::<amsterdam::ExecutionPayloadEnvelope>(body, ctx, fork, make_witness)
+                .await
         }
         // Unreachable: the ExecutionVersion header extractor rejects all
         // non-spec forks with 400 before the handler runs.
@@ -75,7 +104,12 @@ pub(crate) async fn submit_payload(
     }
 }
 
-async fn decode_and_submit<T>(body: Bytes, ctx: RpcApiContext) -> Response
+async fn decode_and_submit<T>(
+    body: Bytes,
+    ctx: RpcApiContext,
+    fork: Fork,
+    make_witness: bool,
+) -> Response
 where
     T: libssz::SszDecode + IntoEngineCall,
 {
@@ -142,7 +176,9 @@ where
         }
         EngineCall::V5 { .. } => !chain_config.is_amsterdam_activated(ts),
     };
-    if misrouted {
+    // Witness requests select a specific REST fork even when Engine versions
+    // share a handler (Paris/Shanghai and Prague/Osaka).
+    if misrouted || (make_witness && !fork_covers_timestamp(&chain_config, fork, ts)) {
         return ProblemJson::unsupported_fork(&format!(
             "Eth-Execution-Version does not match the payload's fork: {:?}",
             chain_config.get_fork(ts)
@@ -161,17 +197,25 @@ where
     //    binds the CL and EL to the same transactions, so a mismatch still
     //    surfaces as INVALID. The JSON-RPC path keeps the explicit cross-check
     //    (it still receives the param); only this transport drops it.
+    // Keep transactions only for the witness response; address caches cannot
+    // reconstruct public keys. Recovery happens after successful validation.
+    let transactions = if make_witness {
+        block.body.transactions.clone()
+    } else {
+        Vec::new()
+    };
+    let parent_hash = block.header.parent_hash;
     let result = match call {
         EngineCall::V1V2 => {
-            handle_new_payload_v1_v2(expected_block_hash, block, ctx, None, false).await
+            handle_new_payload_v1_v2(expected_block_hash, block, ctx, None, make_witness).await
         }
         EngineCall::V3 => {
-            handle_new_payload_v3(expected_block_hash, ctx, block, None, None, false).await
+            handle_new_payload_v3(expected_block_hash, ctx, block, None, None, make_witness).await
         }
         // Prague (V4) reuses handle_new_payload_v3 — matches the JSON-RPC
         // NewPayloadV4Request::handle behavior in engine/payload.rs.
         EngineCall::V4 => {
-            handle_new_payload_v3(expected_block_hash, ctx, block, None, None, false).await
+            handle_new_payload_v3(expected_block_hash, ctx, block, None, None, make_witness).await
         }
         EngineCall::V5 { .. } => {
             // Pass the decoded BAL so handle_new_payload_v4 runs validate_ordering,
@@ -182,20 +226,21 @@ where
                 block,
                 None,
                 block_access_list,
-                false,
+                make_witness,
             )
             .await
         }
     };
 
     // 5. Map internal PayloadStatus → SSZ PayloadStatus.
-    let internal_status = match result {
+    let submission = match result {
         Ok(s) => s,
         Err(err) => {
             return ProblemJson::internal(&format!("engine error: {err}")).into_response();
         }
     };
 
+    let internal_status = submission.status;
     let status_code: u8 = match internal_status.status {
         PayloadValidationStatus::Valid => PayloadStatusCode::Valid as u8,
         PayloadValidationStatus::Invalid => PayloadStatusCode::Invalid as u8,
@@ -208,7 +253,51 @@ where
         internal_status.validation_error,
     );
 
-    SszBody(ssz_status).into_response()
+    if !make_witness {
+        return SszBody(ssz_status).into_response();
+    }
+    let response = (|| -> Result<PayloadStatusWithWitness, ProblemJson> {
+        let (witness, public_keys) = if internal_status.status == PayloadValidationStatus::Valid {
+            let witness = submission
+                .witness
+                .ok_or_else(|| ProblemJson::internal("valid payload has no witness"))?;
+            let witness = ExecutionWitness::from_rpc(witness, parent_hash)?;
+            let keys = transactions
+                .iter()
+                .map(|tx| {
+                    let key = tx
+                        .public_key(&ethrex_crypto::NativeCrypto)
+                        .map_err(|e| {
+                            ProblemJson::internal(&format!("public key recovery failed: {e}"))
+                        })?
+                        .ok_or_else(|| {
+                            ProblemJson::internal(
+                                "valid payload transaction has no sender public key",
+                            )
+                        })?;
+                    SszVector::<u8, 65>::try_from(key.to_vec())
+                        .map_err(|_| ProblemJson::internal("invalid public key length"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let keys: PublicKeys = keys
+                .try_into()
+                .map_err(|_| ProblemJson::internal("too many transaction public keys"))?;
+            (to_optional(Some(witness)), keys)
+        } else {
+            (to_optional(None), PublicKeys::default())
+        };
+        let response = PayloadStatusWithWitness {
+            payload_status: ssz_status,
+            witness,
+            public_keys,
+        };
+        response.check_encoded_length()?;
+        Ok(response)
+    })();
+    match response {
+        Ok(response) => SszBody(response).into_response(),
+        Err(problem) => problem.into_response(),
+    }
 }
 
 // ── get_payload ───────────────────────────────────────────────────────────────

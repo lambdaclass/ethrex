@@ -6,7 +6,7 @@
 //! ```json
 //! {
 //!   "supported_forks": ["paris", ...],
-//!   "fork_scoped_endpoints": ["payloads", "forkchoice", "bodies"],
+//!   "fork_scoped_endpoints": ["payloads", "payloads/witness", "forkchoice", "bodies"],
 //!   "independently_versioned": { "blobs": ["v1", ...] },
 //!   "unscoped_endpoints": ["capabilities", "identity"],
 //!   "limits": { "bodies.max_count": N, "blobs.max_versioned_hashes": N, "payload.max_bytes": N }
@@ -71,7 +71,12 @@ pub fn capabilities() -> Capabilities {
             "osaka".into(),
             "amsterdam".into(),
         ],
-        fork_scoped_endpoints: vec!["payloads".into(), "forkchoice".into(), "bodies".into()],
+        fork_scoped_endpoints: vec![
+            "payloads".into(),
+            "payloads/witness".into(),
+            "forkchoice".into(),
+            "bodies".into(),
+        ],
         independently_versioned: IndependentlyVersioned {
             blobs: vec!["v1".into(), "v2".into(), "v3".into(), "v4".into()],
         },

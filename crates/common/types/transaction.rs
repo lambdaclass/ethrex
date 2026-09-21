@@ -36,6 +36,9 @@ pub use serde_impl::{
     GenericTransactionError,
 };
 
+/// Signing preimage and compact recoverable signature (r || s || parity).
+pub type SigningPayload = (Vec<u8>, [u8; 65]);
+
 /// The serialized length of a default eip1559 transaction
 pub const EIP1559_DEFAULT_SERIALIZED_LENGTH: usize = 15;
 
@@ -1247,7 +1250,11 @@ impl Transaction {
             .copied()
     }
 
-    fn compute_sender(&self, crypto: &dyn Crypto) -> Result<Address, CryptoError> {
+    /// The bytes that were signed, plus the 65-byte `r || s || v` signature.
+    ///
+    /// `Ok(None)` for transactions that carry an explicit sender and no signature
+    /// (privileged L2 and frame), for which there is nothing to recover.
+    pub fn signing_payload(&self) -> Result<Option<SigningPayload>, CryptoError> {
         let (buf, sig) = match self {
             Transaction::LegacyTransaction(tx) => {
                 let v = u64::try_from(tx.v).map_err(|_| CryptoError::InvalidSignature)?;
@@ -1373,8 +1380,10 @@ impl Transaction {
                 sig[64] = tx.signature_y_parity as u8;
                 (buf, sig)
             }
-            Transaction::PrivilegedL2Transaction(tx) => return Ok(tx.from),
-            Transaction::FrameTransaction(tx) => return Ok(tx.sender),
+            // Explicit sender, no signature: nothing to recover from.
+            Transaction::PrivilegedL2Transaction(_) | Transaction::FrameTransaction(_) => {
+                return Ok(None);
+            }
             Transaction::FeeTokenTransaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
                 Encoder::new(&mut buf)
@@ -1396,8 +1405,35 @@ impl Transaction {
                 (buf, sig)
             }
         };
+        Ok(Some((buf, sig)))
+    }
+
+    fn compute_sender(&self, crypto: &dyn Crypto) -> Result<Address, CryptoError> {
+        match self {
+            Transaction::PrivilegedL2Transaction(tx) => return Ok(tx.from),
+            Transaction::FrameTransaction(tx) => return Ok(tx.sender),
+            _ => {}
+        }
+        let Some((buf, sig)) = self.signing_payload()? else {
+            // Unreachable: the two signature-less variants are handled above.
+            return Err(CryptoError::InvalidSignature);
+        };
         let msg = crypto.keccak256(&buf);
         crypto.recover_signer(&sig, &msg)
+    }
+
+    /// The signer's uncompressed secp256k1 public key (`0x04 || X || Y`).
+    ///
+    /// `Ok(None)` for privileged L2 and frame transactions, which carry an explicit
+    /// sender and no signature. REST payload witness responses include these
+    /// keys so stateless consumers can verify transaction signatures.
+    #[cfg(feature = "secp256k1")]
+    pub fn public_key(&self, crypto: &dyn Crypto) -> Result<Option<[u8; 65]>, CryptoError> {
+        let Some((buf, sig)) = self.signing_payload()? else {
+            return Ok(None);
+        };
+        let msg = crypto.keccak256(&buf);
+        crypto.recover_public_key(&sig, &msg).map(Some)
     }
 
     pub fn gas_limit(&self) -> u64 {
@@ -5858,6 +5894,103 @@ mod tests {
         assert_eq!(
             got, expected,
             "blob-gas term missing from cost_without_base_fee() for EIP-4844"
+        );
+    }
+}
+
+#[cfg(all(test, feature = "secp256k1"))]
+mod public_key_tests {
+    use super::*;
+    use ethrex_crypto::NativeCrypto;
+    use secp256k1::{Message, PublicKey, SECP256K1, SecretKey};
+
+    #[test]
+    fn public_keys_match_signers_for_every_l1_signature_format() {
+        let secret = SecretKey::from_byte_array(&[7; 32]).unwrap();
+        let expected = PublicKey::from_secret_key(SECP256K1, &secret).serialize_uncompressed();
+        let expected_sender = Address::from_slice(&NativeCrypto.keccak256(&expected[1..])[12..]);
+        for mut tx in [
+            Transaction::LegacyTransaction(LegacyTransaction {
+                v: 27.into(),
+                ..Default::default()
+            }),
+            Transaction::LegacyTransaction(LegacyTransaction {
+                v: 37.into(),
+                ..Default::default()
+            }),
+            Transaction::EIP2930Transaction(Default::default()),
+            Transaction::EIP1559Transaction(Default::default()),
+            Transaction::EIP4844Transaction(Default::default()),
+            Transaction::EIP7702Transaction(Default::default()),
+        ] {
+            let (preimage, _) = tx.signing_payload().unwrap().unwrap();
+            let msg = NativeCrypto.keccak256(&preimage);
+            let (id, sig) = SECP256K1
+                .sign_ecdsa_recoverable(&Message::from_digest(msg), &secret)
+                .serialize_compact();
+            let r = U256::from_big_endian(&sig[..32]);
+            let s = U256::from_big_endian(&sig[32..]);
+            let parity = i32::from(id) != 0;
+            macro_rules! typed {
+                ($t:expr) => {{
+                    $t.signature_r = r;
+                    $t.signature_s = s;
+                    $t.signature_y_parity = parity;
+                }};
+            }
+            match &mut tx {
+                Transaction::LegacyTransaction(t) => {
+                    t.r = r;
+                    t.s = s;
+                    t.v += U256::from(parity as u8);
+                }
+                Transaction::EIP2930Transaction(t) => typed!(t),
+                Transaction::EIP1559Transaction(t) => typed!(t),
+                Transaction::EIP4844Transaction(t) => typed!(t),
+                Transaction::EIP7702Transaction(t) => typed!(t),
+                _ => unreachable!(),
+            }
+            assert_eq!(tx.public_key(&NativeCrypto).unwrap(), Some(expected));
+            // Warm both sender caches; public-key recovery must still work.
+            assert_eq!(tx.sender(&NativeCrypto).unwrap(), expected_sender);
+            assert_eq!(tx.public_key(&NativeCrypto).unwrap(), Some(expected));
+            let mut signature = [0; 65];
+            signature[..64].copy_from_slice(&sig);
+            signature[64] = parity as u8;
+            signature[64] ^= 1;
+            assert_ne!(
+                NativeCrypto.recover_public_key(&signature, &msg).unwrap(),
+                expected
+            );
+            signature[64] = 4;
+            assert!(NativeCrypto.recover_public_key(&signature, &msg).is_err());
+            signature[64] = parity as u8;
+            signature[32..64].fill(0xff);
+            assert!(NativeCrypto.recover_public_key(&signature, &msg).is_err());
+        }
+        for v in [0, 1, 26, 29, 34] {
+            let tx = Transaction::LegacyTransaction(LegacyTransaction {
+                v: v.into(),
+                ..Default::default()
+            });
+            assert!(tx.public_key(&NativeCrypto).is_err());
+        }
+        assert!(
+            Transaction::EIP1559Transaction(Default::default())
+                .public_key(&NativeCrypto)
+                .is_err()
+        );
+        assert_eq!(
+            Transaction::PrivilegedL2Transaction(Default::default())
+                .public_key(&NativeCrypto)
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            Transaction::FrameTransaction(Default::default())
+                .public_key(&NativeCrypto)
+                .unwrap(),
+            None
         );
     }
 }
