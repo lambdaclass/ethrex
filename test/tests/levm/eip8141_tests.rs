@@ -6076,6 +6076,202 @@ fn a_reverting_frame_discards_the_approval_it_granted() {
     );
 }
 
+mod nested_call_approval_rollback_tests {
+    use super::*;
+    use ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE;
+    use ethrex_levm::errors::TxValidationError;
+
+    const WRAPPER: Address = Address::repeat_byte(0xBB);
+    const REVERTER: Address = Address::repeat_byte(0xCC);
+    const INITIAL_BALANCE: u64 = 1_000_000_000_000_000_000;
+    const FAILURES: [&[u8]; 2] = [PURE_REVERT_CODE, &[0xFE]];
+
+    /// CALL target with no value or calldata, leaving its success flag on stack.
+    fn empty_call(target: Address) -> Vec<u8> {
+        let mut code = vec![0x5F, 0x5F, 0x5F, 0x5F, 0x5F, 0x73];
+        code.extend_from_slice(target.as_bytes());
+        code.extend([0x5A, 0xF1]); // GAS; CALL
+        code
+    }
+
+    /// Empty calldata approves; the outer frame writes storage, calls WRAPPER,
+    /// and succeeds even when WRAPPER fails.
+    fn sender_code() -> Bytes {
+        let mut code = vec![0x36, 0x60, 0x0B, 0x57]; // CALLDATASIZE; JUMPI 0x0B
+        code.extend_from_slice(APPROVE_BOTH_CODE);
+        code.extend([0x5B, 0x60, 0x01, 0x5F, 0x55]); // JUMPDEST; SSTORE(0, 1)
+        code.extend(empty_call(WRAPPER));
+        code.extend([0x50, 0x00]); // POP; STOP
+        Bytes::from(code)
+    }
+
+    /// Call back into the sender to approve, record the result, then stop or fail.
+    fn callback_code(ending: &[u8]) -> Bytes {
+        let mut code = empty_call(FUNDED_SENDER);
+        code.extend([0x5F, 0x55]); // SSTORE(0, CALL success)
+        code.extend_from_slice(ending);
+        Bytes::from(code)
+    }
+
+    fn accounts(ending: &[u8]) -> Vec<SeededAccount> {
+        vec![
+            (FUNDED_SENDER, U256::from(INITIAL_BALANCE), 0, sender_code()),
+            (WRAPPER, U256::zero(), 0, callback_code(ending)),
+        ]
+    }
+
+    fn outer_frame() -> Frame {
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0x03,
+            target: Some(FUNDED_SENDER),
+            gas_limit: 400_000,
+            state_gas_limit: 1_000_000,
+            value: U256::zero(),
+            data: Bytes::from_static(&[0x01]),
+        }
+    }
+
+    fn assert_missing_payer(result: Result<ExecutionReport, VMError>) {
+        assert!(
+            matches!(
+                &result,
+                Err(VMError::TxValidation(TxValidationError::InvalidFrameTransaction(reason)))
+                    if reason == "no frame approved payment (payer is unset)"
+            ),
+            "the caught failure must discard its nested approval: {result:?}"
+        );
+    }
+
+    fn assert_settled_once(db: &GeneralizedDatabase, report: &ExecutionReport) {
+        assert_eq!(nonce_of(db, FUNDED_SENDER), 1);
+        // Harness fees are base 1 + priority 1, with no blobs or value transfers.
+        assert_eq!(
+            U256::from(INITIAL_BALANCE) - balance_of(db, FUNDED_SENDER),
+            U256::from(report.gas_spent) * U256::from(2u64),
+            "exactly one payment must survive and settle at the effective price"
+        );
+        assert_eq!(balance_of(db, COINBASE_ADDR), U256::from(report.gas_spent));
+    }
+
+    #[test]
+    fn caught_child_failure_discards_approval_and_restores_transaction_state() {
+        for ending in FAILURES {
+            let accounts = accounts(ending);
+            let tx = frame_tx_with_frames(vec![outer_frame()]);
+            let (result, db) = run_frame_tx(&accounts, tx);
+
+            assert_missing_payer(result);
+            assert_db_cache_unchanged(&db, &accounts);
+        }
+    }
+
+    #[test]
+    fn caught_child_failure_allows_later_clean_approval() {
+        for ending in FAILURES {
+            let accounts = accounts(ending);
+            let tx = frame_tx_with_frames(vec![outer_frame(), verify_frame(FUNDED_SENDER)]);
+            let (result, db) = run_frame_tx_with_fees(&accounts, tx, HARNESS_BASE_FEE);
+            let report = result.expect("a later frame must be able to approve again");
+
+            assert_eq!(report.result, TxResult::Success);
+            assert_settled_once(&db, &report);
+            let frames = report.frame_results.as_ref().expect("per-frame results");
+            assert_eq!(frames[0].0, FRAME_RECEIPT_STATUS_SUCCESS);
+            assert_eq!(frames[1].0, FRAME_RECEIPT_STATUS_SUCCESS);
+            assert_eq!(storage_slot(&db, FUNDED_SENDER, H256::zero()), U256::one());
+            assert_eq!(storage_slot(&db, WRAPPER, H256::zero()), U256::zero());
+        }
+    }
+
+    #[test]
+    fn successful_nested_approval_commits_once() {
+        let tx = frame_tx_with_frames(vec![outer_frame()]);
+        let (result, db) = run_frame_tx_with_fees(&accounts(&[0x00]), tx, HARNESS_BASE_FEE);
+        let report = result.expect("a successful child must retain its approval");
+
+        assert_eq!(report.result, TxResult::Success);
+        assert_settled_once(&db, &report);
+        assert_eq!(
+            report.frame_results.as_ref().expect("per-frame results")[0].0,
+            FRAME_RECEIPT_STATUS_SUCCESS
+        );
+        assert_eq!(storage_slot(&db, FUNDED_SENDER, H256::zero()), U256::one());
+        assert_eq!(storage_slot(&db, WRAPPER, H256::zero()), U256::one());
+    }
+
+    #[test]
+    fn successful_nested_approval_survives_later_body_revert() {
+        let mut accounts = accounts(&[0x00]);
+        accounts.push((
+            REVERTER,
+            U256::zero(),
+            0,
+            Bytes::from(SSTORE_THEN_REVERT_CODE),
+        ));
+        let tx = frame_tx_with_frames(vec![
+            outer_frame(),
+            Frame {
+                mode: u8::from(FrameMode::Sender),
+                flags: 0,
+                target: Some(REVERTER),
+                data: Bytes::new(),
+                ..outer_frame()
+            },
+        ]);
+        let (result, db) = run_frame_tx_with_fees(&accounts, tx, HARNESS_BASE_FEE);
+        let report = result.expect("a later body revert must preserve earlier approval");
+
+        assert_eq!(report.result, TxResult::Revert(VMError::RevertOpcode));
+        assert_settled_once(&db, &report);
+        let frames = report.frame_results.as_ref().expect("per-frame results");
+        assert_eq!(frames[0].0, FRAME_RECEIPT_STATUS_SUCCESS);
+        assert_eq!(frames[1].0, FRAME_RECEIPT_STATUS_FAILURE);
+        assert_eq!(storage_slot(&db, WRAPPER, H256::zero()), U256::one());
+        assert_eq!(storage_slot(&db, REVERTER, H256::zero()), U256::zero());
+    }
+
+    #[test]
+    fn caught_child_failure_preserves_preexisting_approval() {
+        for ending in FAILURES {
+            let tx = frame_tx_with_frames(vec![verify_frame(FUNDED_SENDER), outer_frame()]);
+            let (result, db) = run_frame_tx_with_fees(&accounts(ending), tx, HARNESS_BASE_FEE);
+            let report = result.expect("restoring a child must not clear an earlier approval");
+
+            assert_eq!(report.result, TxResult::Success);
+            assert_settled_once(&db, &report);
+            let frames = report.frame_results.as_ref().expect("per-frame results");
+            assert_eq!(frames[0].0, FRAME_RECEIPT_STATUS_SUCCESS);
+            assert_eq!(frames[1].0, FRAME_RECEIPT_STATUS_SUCCESS);
+            assert_eq!(storage_slot(&db, FUNDED_SENDER, H256::zero()), U256::one());
+            assert_eq!(storage_slot(&db, WRAPPER, H256::zero()), U256::zero());
+        }
+    }
+
+    #[test]
+    fn caught_constructor_failure_discards_callback_approval() {
+        for ending in FAILURES {
+            // S calls WRAPPER, which creates a contract whose initcode calls S
+            // to approve. WRAPPER and S catch the failure and both succeed.
+            let initcode = callback_code(ending);
+            let len = u8::try_from(initcode.len()).expect("short initcode");
+            let mut factory = vec![
+                0x60, len, 0x60, 0x0D, 0x5F, 0x39, // CODECOPY initcode
+                0x60, len, 0x5F, 0x5F, 0xF0, // CREATE(0, 0, len)
+                0x50, 0x00, // POP; STOP
+            ];
+            factory.extend_from_slice(&initcode);
+            let mut accounts = accounts(ending);
+            accounts[1].3 = Bytes::from(factory);
+            let tx = frame_tx_with_frames(vec![outer_frame()]);
+            let (result, db) = run_frame_tx(&accounts, tx);
+
+            assert_missing_payer(result);
+            assert_db_cache_unchanged(&db, &accounts);
+        }
+    }
+}
+
 // ==================== Rejection-reason granularity ====================
 //
 // A frame transaction that is rejected for the right reason but reports the

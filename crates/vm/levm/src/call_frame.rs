@@ -332,6 +332,9 @@ pub struct CallFrameBackup {
     /// BAL checkpoint for EIP-7928 - used to restore state changes on revert
     /// while preserving touched_addresses.
     pub bal_checkpoint: Option<BlockAccessListCheckpoint>,
+    /// EIP-8141 approval context at entry to this ordinary EVM child call.
+    /// It must roll back with nonce/payment state if this child later fails.
+    pub approval_context_snapshot: Option<(bool, Option<Address>, bool)>,
     /// Code hashes this frame inserted into the by-hash code cache
     /// (`GeneralizedDatabase::codes`) for codes it deployed. Removed from the
     /// cache on revert: a stale entry would make a later read of the same
@@ -363,6 +366,7 @@ impl CallFrameBackup {
         self.original_accounts_info.clear();
         self.original_account_storage_slots.clear();
         self.bal_checkpoint = None;
+        self.approval_context_snapshot = None;
         self.inserted_code_hashes.clear();
     }
 
@@ -516,7 +520,15 @@ impl CallFrame {
 impl<'a> VM<'a> {
     /// Adds current calframe to call_frames, sets current call frame to the passed callframe.
     #[inline(always)]
-    pub fn add_callframe(&mut self, new_call_frame: CallFrame) {
+    pub fn add_callframe(&mut self, mut new_call_frame: CallFrame) {
+        new_call_frame.call_frame_backup.approval_context_snapshot =
+            self.frame_tx_context.as_ref().map(|ctx| {
+                (
+                    ctx.sender_approved,
+                    ctx.payer_address,
+                    ctx.approve_called_in_current_frame,
+                )
+            });
         // Reserve once on the first sub-call (p99 depth ~10, max 27): keeps the ~43% of txs that
         // never make a call alloc-free (`call_frames` starts as `Vec::new()`), while avoiding the
         // repeated reallocs a call-heavy tx would otherwise incur as depth grows.
