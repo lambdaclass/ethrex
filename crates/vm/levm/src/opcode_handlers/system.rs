@@ -1369,6 +1369,21 @@ impl<'a> VM<'a> {
             ctx.restore_approvals((sender_approved, payer));
             ctx.approve_called_in_current_frame = approve_called;
         }
+        if !ctx_result.is_success() {
+            // Same reasoning for the state-gas refills this frame credited: the clears
+            // that earned them are about to be rolled back, so the charges they settled
+            // are owed again. Undone newest first, so a slot cleared twice lands back on
+            // the frame that owned it first.
+            let refills = core::mem::take(
+                &mut self
+                    .current_call_frame
+                    .call_frame_backup
+                    .frame_state_gas_refills,
+            );
+            for (owner, amount, slot) in refills.into_iter().rev() {
+                self.undo_frame_state_gas_refill(owner, amount, slot);
+            }
+        }
         // The frame is popped immediately below and its backup is not read again on
         // the revert path, so move it out instead of cloning.
         self.handle_state_backup(ctx_result, true)?;

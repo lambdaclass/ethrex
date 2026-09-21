@@ -417,7 +417,16 @@ impl OpcodeHandler for OpSStoreHandler {
                 .as_mut()
                 .and_then(|ctx| ctx.outstanding_charge_owners.remove(&(to, key)));
             match owner {
-                Some(owner) => vm.credit_frame_state_gas_refill(owner, vm.state_gas_storage_set)?,
+                Some(owner) => {
+                    let amount = vm.state_gas_storage_set;
+                    // Journalled so a failing call frame can put the charge back: the
+                    // clear that earned this refill goes away with the frame's writes.
+                    vm.current_call_frame
+                        .call_frame_backup
+                        .frame_state_gas_refills
+                        .push((owner, amount, (to, key)));
+                    vm.credit_frame_state_gas_refill(owner, amount)?
+                }
                 None => vm.credit_state_gas_refund(vm.state_gas_storage_set)?,
             }
         }

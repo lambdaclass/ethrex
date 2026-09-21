@@ -4884,6 +4884,159 @@ fn a_same_frame_state_refill_returns_to_that_frames_pool() {
     );
 }
 
+/// EIP-8141 state-gas attribution when a *caught child call* clears a slot an earlier
+/// frame created.
+///
+/// Clearing such a slot credits the refill to the frame that paid the creation charge and
+/// consumes that slot's `outstanding_charge_owners` entry. Both are VM-level accounting
+/// rather than journaled state, so neither is undone when the call frame that made the
+/// clear fails and its caller catches the failure, while the clear itself is: the slot
+/// still holds the earlier frame's value at the end of the transaction. Per-frame
+/// `gas_used.state` lands in the frame receipt and therefore in the receipts root, so a
+/// figure that disagrees with the surviving state is a consensus divergence.
+mod caught_child_state_gas_attribution_tests {
+    use super::*;
+
+    const SLOT_OWNER: Address = Address::repeat_byte(0x51);
+    const WRAPPER: Address = Address::repeat_byte(0x34);
+
+    /// CALLDATASIZE; PUSH1 0x0A; JUMPI       -- with calldata, take the write path
+    ///   PUSH0; PUSH0; SSTORE                -- else clear slot 0 ...
+    ///   PUSH0; PUSH0; REVERT                -- ... and fail
+    /// JUMPDEST; PUSH1 0; CALLDATALOAD; PUSH0; SSTORE; STOP   -- slot 0 = the word
+    const SLOT_OWNER_CODE: &[u8] = &[
+        0x36, 0x60, 0x0A, 0x57, 0x5F, 0x5F, 0x55, 0x5F, 0x5F, 0xFD, 0x5B, 0x60, 0x00, 0x35, 0x5F,
+        0x55, 0x00,
+    ];
+
+    /// CALL SLOT_OWNER with no value and no calldata, then drop the failure flag.
+    fn wrapper_code() -> Bytes {
+        let mut code = vec![0x5F, 0x5F, 0x5F, 0x5F, 0x5F, 0x73];
+        code.extend_from_slice(SLOT_OWNER.as_bytes());
+        code.extend([0x5A, 0xF1, 0x50, 0x00]); // GAS; CALL; POP; STOP
+        Bytes::from(code)
+    }
+
+    fn accounts() -> Vec<SeededAccount> {
+        vec![
+            (
+                FUNDED_SENDER,
+                AUTO_SEED_SENDER_BALANCE,
+                0,
+                Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+            ),
+            (
+                SLOT_OWNER,
+                U256::zero(),
+                0,
+                Bytes::from(SLOT_OWNER_CODE.to_vec()),
+            ),
+            (WRAPPER, U256::zero(), 0, wrapper_code()),
+        ]
+    }
+
+    fn default_frame(target: Address, data: Bytes) -> Frame {
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0,
+            target: Some(target),
+            gas_limit: 400_000,
+            state_gas_limit: 1_000_000,
+            value: U256::zero(),
+            data,
+        }
+    }
+
+    fn word(value: u8) -> Bytes {
+        let mut bytes = [0u8; 32];
+        bytes[31] = value;
+        Bytes::from(bytes.to_vec())
+    }
+
+    #[test]
+    fn a_caught_child_failure_keeps_an_earlier_frames_state_charge() {
+        let (result, db) = run_frame_tx(
+            &accounts(),
+            frame_tx_with_frames(vec![
+                verify_frame(FUNDED_SENDER),
+                // Frame 1 creates slot 0 and is charged for it.
+                default_frame(SLOT_OWNER, word(1)),
+                // Frame 2 calls a wrapper whose child clears that slot and then fails;
+                // the wrapper catches the failure and the frame succeeds.
+                default_frame(WRAPPER, Bytes::new()),
+            ]),
+        );
+
+        let report = result.expect("valid tx");
+        assert!(
+            matches!(report.result, TxResult::Success),
+            "the caught child failure must leave the transaction successful, got {:?}",
+            report.result
+        );
+        let frame_results = report.frame_results.as_ref().expect("per-frame results");
+        assert_eq!(frame_results[2].0, FRAME_RECEIPT_STATUS_SUCCESS);
+        assert_eq!(
+            storage_slot(&db, SLOT_OWNER, ethrex_common::H256::zero()),
+            U256::one(),
+            "the caught child's clear must be rolled back with its frame"
+        );
+        assert_eq!(
+            frame_results[1].2, SSTORE_SET_STATE_GAS,
+            "the creating frame keeps its charge when the refill was rolled back, got {}",
+            frame_results[1].2
+        );
+        assert_eq!(
+            report.state_gas_used, SSTORE_SET_STATE_GAS,
+            "a slot that survives the transaction must leave its state gas accounted, got {}",
+            report.state_gas_used
+        );
+    }
+
+    /// A guard rather than a proof: the buggy path reaches these same figures by a
+    /// different route (it zeroes frame 1's attribution at the caught clear, then finds
+    /// no charge owner for the real one). What it pins is the end of the sequence, so a
+    /// future change that restores one half of the rollback without the other is caught.
+    #[test]
+    fn a_caught_child_failure_leaves_the_charge_owner_findable() {
+        let (result, db) = run_frame_tx(
+            &accounts(),
+            frame_tx_with_frames(vec![
+                verify_frame(FUNDED_SENDER),
+                default_frame(SLOT_OWNER, word(1)),
+                // The caught failure above consumed the slot's charge-owner entry.
+                default_frame(WRAPPER, Bytes::new()),
+                // So this clear, which does stand, must still find frame 1 as the payer:
+                // a lost entry sends the refill to the transaction-wide refund instead and
+                // leaves frame 1 billed for state that no longer exists.
+                default_frame(SLOT_OWNER, word(0)),
+            ]),
+        );
+
+        let report = result.expect("valid tx");
+        let frame_results = report.frame_results.as_ref().expect("per-frame results");
+        assert_eq!(
+            storage_slot(&db, SLOT_OWNER, ethrex_common::H256::zero()),
+            U256::zero(),
+            "the last frame's clear stands"
+        );
+        assert_eq!(
+            frame_results[1].2, 0,
+            "the refill must land on the frame that paid the charge, got {}",
+            frame_results[1].2
+        );
+        assert_eq!(
+            frame_results[3].2, 0,
+            "the clearing frame created no state and must report none, got {}",
+            frame_results[3].2
+        );
+        assert_eq!(
+            report.state_gas_used, 0,
+            "a slot created and cleared inside one transaction leaves no net state gas, got {}",
+            report.state_gas_used
+        );
+    }
+}
+
 // ==================== atomic batch / EIP-7928 BAL ====================
 
 /// EIP-7928 requires the block access list to describe the block's actual state

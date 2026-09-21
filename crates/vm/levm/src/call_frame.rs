@@ -335,6 +335,15 @@ pub struct CallFrameBackup {
     /// EIP-8141 approval context at entry to this ordinary EVM child call.
     /// It must roll back with nonce/payment state if this child later fails.
     pub approval_context_snapshot: Option<(bool, Option<Address>, bool)>,
+    /// EIP-8141 state-gas refills this call frame credited, as
+    /// `(owner frame, amount, the slot whose charge it settled)`. A failing frame's own
+    /// state-gas journal is rolled back by `refill_frame_state_gas`, which covers the
+    /// transaction total and the gas pools; what it does not cover is the attribution a
+    /// refill moved, the owning frame's recorded `gas_used.state` and the slot's
+    /// `outstanding_charge_owners` entry. Recorded here so `undo_frame_state_gas_refill`
+    /// can put those back: the slot the frame cleared is still there afterwards, so the
+    /// frame that created it is still owed the charge.
+    pub frame_state_gas_refills: Vec<(usize, u64, (Address, H256))>,
     /// Code hashes this frame inserted into the by-hash code cache
     /// (`GeneralizedDatabase::codes`) for codes it deployed. Removed from the
     /// cache on revert: a stale entry would make a later read of the same
@@ -367,6 +376,7 @@ impl CallFrameBackup {
         self.original_account_storage_slots.clear();
         self.bal_checkpoint = None;
         self.approval_context_snapshot = None;
+        self.frame_state_gas_refills.clear();
         self.inserted_code_hashes.clear();
     }
 
@@ -617,6 +627,19 @@ impl<'a> VM<'a> {
             .call_frame_backup
             .inserted_code_hashes
             .extend(child_call_frame_backup.inserted_code_hashes.iter().copied());
+
+        // Same for the state-gas refills the child credited: they stand while the child
+        // stands, and a later failure of this frame has to undo the child's along with
+        // its own.
+        self.current_call_frame
+            .call_frame_backup
+            .frame_state_gas_refills
+            .extend(
+                child_call_frame_backup
+                    .frame_state_gas_refills
+                    .iter()
+                    .copied(),
+            );
 
         Ok(())
     }

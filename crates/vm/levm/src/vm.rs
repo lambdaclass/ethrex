@@ -1207,6 +1207,40 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
+    /// Undo one `credit_frame_state_gas_refill`, for a call frame that failed after
+    /// earning it.
+    ///
+    /// The failing frame's state-gas journal is rolled back by `refill_frame_state_gas`:
+    /// the refill made the frame's `frame_used` negative by exactly this amount, and the
+    /// reservoir and `gas_remaining` take it back, so the transaction total and the pools
+    /// need nothing here. What sits outside that journal is the attribution: a cross-frame
+    /// refill lowered the *owning* frame's recorded `gas_used.state`, and the clear
+    /// consumed the slot's `outstanding_charge_owners` entry. The clear goes away with the
+    /// frame, so the slot is there again, the owner is owed its charge again, and a later
+    /// clear must still find who paid.
+    pub fn undo_frame_state_gas_refill(
+        &mut self,
+        owner: usize,
+        amount: u64,
+        slot: (Address, H256),
+    ) {
+        let current = self
+            .frame_tx_context
+            .as_ref()
+            .map(|ctx| ctx.current_frame_index);
+        if let Some(ctx) = self.frame_tx_context.as_mut() {
+            // Mirrors the credit: only a refill charged to an EARLIER frame touched a
+            // receipt. When the executing frame owned the charge the credit went to its
+            // pool, which the state-gas rollback has already reclaimed.
+            if current != Some(owner)
+                && let Some(result) = ctx.frame_results.get_mut(owner)
+            {
+                result.2 = result.2.saturating_add(amount);
+            }
+            ctx.outstanding_charge_owners.insert(slot, owner);
+        }
+    }
+
     /// EIP-8141: credit a state-gas refill to the frame that paid the charge.
     ///
     /// The refill lowers the owner's attribution: back into the executing frame's
