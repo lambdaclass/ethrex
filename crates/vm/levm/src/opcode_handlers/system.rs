@@ -1356,6 +1356,19 @@ impl<'a> VM<'a> {
     ///
     /// Returns the pc increment.
     pub fn handle_return(&mut self, ctx_result: &ContextResult) -> Result<(), VMError> {
+        if !ctx_result.is_success()
+            && let Some((sender_approved, payer, approve_called)) = self
+                .current_call_frame
+                .call_frame_backup
+                .approval_context_snapshot
+            && let Some(ctx) = self.frame_tx_context.as_mut()
+        {
+            // A caller may catch this child's failure and let the outer 8141
+            // frame succeed. Restore approval alongside the child's state,
+            // before handle_state_backup consumes its journal.
+            ctx.restore_approvals((sender_approved, payer));
+            ctx.approve_called_in_current_frame = approve_called;
+        }
         // The frame is popped immediately below and its backup is not read again on
         // the revert path, so move it out instead of cloning.
         self.handle_state_backup(ctx_result, true)?;
