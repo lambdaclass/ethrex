@@ -791,6 +791,14 @@ mod estimate_gas_call_object_tests {
             Some("0x77359400"),
             "the fees the transaction will pay are still sent: {data}"
         );
+        // Dropping the tip would leave the cap alone and still suppress gasPrice, so the
+        // assertions above would hold while the server simulated at a different price:
+        // it resolves the pair through `min(tip + basefee, cap)`.
+        assert_eq!(
+            object.get("maxPriorityFeePerGas").and_then(|v| v.as_str()),
+            Some("0x3b9aca00"),
+            "the tip is half of the price the server resolves: {data}"
+        );
         assert!(
             object.get("gasPrice").is_none(),
             "gasPrice must not accompany the 1559 fee fields: {data}"
