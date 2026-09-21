@@ -204,6 +204,21 @@ impl LevmOpcodeTracer {
         self.logs.push(step);
     }
 
+    /// Pushes a synthetic step and makes it the target of the next `finalize_step`.
+    ///
+    /// Used when the synthetic step is the one that faulted, so the dispatch
+    /// loop's post-step hook patches the error onto it rather than onto the
+    /// parent opcode that fused it. Returns `false` when the `limit` cap dropped
+    /// the push, leaving the previous finalize target intact.
+    pub fn synthesize_faulting_step(&mut self, step: OpcodeStep) -> bool {
+        if self.cfg.limit > 0 && self.logs.len() >= self.cfg.limit {
+            return false;
+        }
+        self.last_step_index = Some(self.logs.len());
+        self.logs.push(step);
+        true
+    }
+
     /// Assembles the final `OpcodeTraceResult` after the transaction finishes.
     pub fn take_result(&mut self) -> OpcodeTraceResult {
         OpcodeTraceResult {
