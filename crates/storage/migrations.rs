@@ -30,13 +30,13 @@ const BACKFILL_BATCH_SIZE: usize = 10_000;
 /// early on RocksDB.
 ///
 /// Idempotent: re-running rewrites the same keys.
-pub(crate) fn migrate_3_to_4(backend: &dyn StorageBackend) -> Result<(), StoreError> {
-    migrate_3_to_4_with_batch_size(backend, BACKFILL_BATCH_SIZE)
+pub(crate) fn migrate_4_to_5(backend: &dyn StorageBackend) -> Result<(), StoreError> {
+    migrate_4_to_5_with_batch_size(backend, BACKFILL_BATCH_SIZE)
 }
 
-/// Same as [`migrate_3_to_4`] but with a configurable batch size, so tests
+/// Same as [`migrate_4_to_5`] but with a configurable batch size, so tests
 /// can exercise the flush-boundary path without 10,001 headers.
-fn migrate_3_to_4_with_batch_size(
+fn migrate_4_to_5_with_batch_size(
     backend: &dyn StorageBackend,
     batch_size: usize,
 ) -> Result<(), StoreError> {
@@ -193,10 +193,16 @@ pub type MigrationFn = fn(backend: &dyn StorageBackend) -> Result<(), StoreError
 /// - `MIGRATIONS[0]` upgrades v1 → v2
 /// - `MIGRATIONS[1]` upgrades v2 → v3
 /// - `MIGRATIONS[2]` upgrades v3 → v4
+/// - `MIGRATIONS[3]` upgrades v4 → v5
 ///
 /// **Invariant**: `MIGRATIONS.len() == (STORE_SCHEMA_VERSION - 1) as usize`
 /// (empty when `STORE_SCHEMA_VERSION == 1`, one entry when it's 2, etc.)
-pub const MIGRATIONS: &[MigrationFn] = &[migrate_1_to_2, migrate_2_to_3, migrate_3_to_4];
+pub const MIGRATIONS: &[MigrationFn] = &[
+    migrate_1_to_2,
+    migrate_2_to_3,
+    migrate_3_to_4,
+    migrate_4_to_5,
+];
 
 // Compile-time check: the number of migration functions must match the number
 // of version gaps (i.e. STORE_SCHEMA_VERSION - 1).
@@ -208,6 +214,19 @@ const _: () = assert!(
 /// Returns the migration function that upgrades from `version` to `version + 1`.
 fn migration_for_version(version: u64) -> MigrationFn {
     MIGRATIONS[(version - 1) as usize]
+}
+
+/// v3 → v4: no data change.
+///
+/// `ACCOUNT_CODES` values carry their JUMPDEST positions as a bitmap rather than an RLP
+/// list of `u32` offsets. Both forms are readable, so a v3 database needs no rewriting
+/// and this migration only moves the version marker.
+///
+/// The bump exists for the other direction: a v3 binary cannot decode a bitmap, so the
+/// store refuses to open a v4 database (`IncompatibleDBVersion`) instead of letting it
+/// fail on the first code read.
+fn migrate_3_to_4(_backend: &dyn StorageBackend) -> Result<(), StoreError> {
+    Ok(())
 }
 
 /// Minimum interval between migration progress log lines.
@@ -227,20 +246,22 @@ fn entries_per_second(count: u64, elapsed: Duration) -> f64 {
 ///
 /// Returns `Ok(())` if `current_version == STORE_SCHEMA_VERSION` (no-op).
 /// If `current_version > STORE_SCHEMA_VERSION` (older binary against a newer
-/// database), it warns and returns `Ok(())` without migrating.
+/// database), it returns `IncompatibleDBVersion` without touching the database:
+/// there is no downgrade path, and continuing would fail on the first read of a
+/// format this binary cannot decode.
 pub fn run_pending_migrations(
     backend: &dyn StorageBackend,
     db_path: &Path,
     current_version: u64,
 ) -> Result<(), StoreError> {
     if current_version > STORE_SCHEMA_VERSION {
-        tracing::warn!(
-            "Database schema is at v{current_version}, ahead of this binary's v{STORE_SCHEMA_VERSION}; \
-             running an older binary against a newer database is unsupported. Upgrade the binary"
-        );
+        return Err(StoreError::IncompatibleDBVersion {
+            found: current_version,
+            expected: STORE_SCHEMA_VERSION,
+        });
     }
 
-    let pending = STORE_SCHEMA_VERSION.saturating_sub(current_version);
+    let pending = STORE_SCHEMA_VERSION - current_version;
     if pending == 0 {
         return Ok(());
     }
@@ -494,7 +515,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn migrate_3_to_4_backfills_block_hashes_index() {
+    fn migrate_4_to_5_backfills_block_hashes_index() {
         use crate::api::tables::{BLOCK_HASHES_BY_NUMBER, HEADERS};
         use crate::rlp::BlockHeaderRLP;
         use ethrex_common::types::BlockHeader;
@@ -523,7 +544,7 @@ mod tests {
         }
 
         // Run the migration
-        super::migrate_3_to_4(&backend).unwrap();
+        super::migrate_4_to_5(&backend).unwrap();
 
         // Assert index entries exist for every header
         let txn = backend.begin_read().unwrap();
@@ -543,13 +564,13 @@ mod tests {
     }
 
     #[test]
-    fn migrate_3_to_4_empty_headers_is_noop() {
+    fn migrate_4_to_5_empty_headers_is_noop() {
         // 0-header v2 DB (e.g. a fresh genesis with no blocks yet): the
         // migration must succeed without writing anything.
         use crate::api::tables::BLOCK_HASHES_BY_NUMBER;
 
         let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
-        super::migrate_3_to_4(&backend).unwrap();
+        super::migrate_4_to_5(&backend).unwrap();
 
         let txn = backend.begin_read().unwrap();
         let count = txn.full_scan(BLOCK_HASHES_BY_NUMBER).unwrap().count();
@@ -560,7 +581,7 @@ mod tests {
     }
 
     #[test]
-    fn migrate_3_to_4_exercises_batch_boundary() {
+    fn migrate_4_to_5_exercises_batch_boundary() {
         // Force the mid-loop flush + final flush paths by using a tiny
         // batch size and a count that straddles a boundary
         // (batch_size + 1 = 11 entries with batch_size = 10).
@@ -590,7 +611,7 @@ mod tests {
             txn.commit().unwrap();
         }
 
-        super::migrate_3_to_4_with_batch_size(&backend, 10).unwrap();
+        super::migrate_4_to_5_with_batch_size(&backend, 10).unwrap();
 
         let txn = backend.begin_read().unwrap();
         for h in &headers {
@@ -609,7 +630,7 @@ mod tests {
     }
 
     #[test]
-    fn migrate_3_to_4_is_idempotent() {
+    fn migrate_4_to_5_is_idempotent() {
         // Re-running after a crash must not error. The final state must be
         // identical to a single-run state.
         use crate::api::tables::{BLOCK_HASHES_BY_NUMBER, HEADERS};
@@ -640,9 +661,9 @@ mod tests {
             txn.commit().unwrap();
         }
 
-        super::migrate_3_to_4(&backend).unwrap();
+        super::migrate_4_to_5(&backend).unwrap();
         // Second invocation should overwrite the same keys without error.
-        super::migrate_3_to_4(&backend).unwrap();
+        super::migrate_4_to_5(&backend).unwrap();
 
         let txn = backend.begin_read().unwrap();
         let total = txn.full_scan(BLOCK_HASHES_BY_NUMBER).unwrap().count();
@@ -650,7 +671,7 @@ mod tests {
     }
 
     #[test]
-    fn migrate_3_to_4_fixes_earliest_block_number_on_snap_synced_state() {
+    fn migrate_4_to_5_fixes_earliest_block_number_on_snap_synced_state() {
         use crate::api::tables::{BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, HEADERS};
         use crate::rlp::{BlockBodyRLP, BlockHeaderRLP};
         use crate::utils::{ChainDataIndex, chain_data_key};
@@ -697,7 +718,7 @@ mod tests {
             txn.commit().unwrap();
         }
 
-        super::migrate_3_to_4(&backend).unwrap();
+        super::migrate_4_to_5(&backend).unwrap();
 
         // EarliestBlockNumber should now be 5 (lowest block with a body).
         let txn = backend.begin_read().unwrap();
@@ -717,7 +738,7 @@ mod tests {
     }
 
     #[test]
-    fn migrate_3_to_4_leaves_earliest_unset_when_only_genesis_body() {
+    fn migrate_4_to_5_leaves_earliest_unset_when_only_genesis_body() {
         // Snap sync still in flight at migration time: headers and canonical
         // hashes exist, but the only body on disk is the genesis one written
         // at init. The migration must not touch EarliestBlockNumber —
@@ -759,7 +780,7 @@ mod tests {
             txn.commit().unwrap();
         }
 
-        super::migrate_3_to_4(&backend).unwrap();
+        super::migrate_4_to_5(&backend).unwrap();
 
         let txn = backend.begin_read().unwrap();
         let earliest_bytes = txn
@@ -775,7 +796,7 @@ mod tests {
     }
 
     #[test]
-    fn migrate_3_to_4_preserves_earliest_block_number_on_full_synced_state() {
+    fn migrate_4_to_5_preserves_earliest_block_number_on_full_synced_state() {
         use crate::api::tables::{BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, HEADERS};
         use crate::rlp::{BlockBodyRLP, BlockHeaderRLP};
         use crate::utils::{ChainDataIndex, chain_data_key};
@@ -812,7 +833,7 @@ mod tests {
             txn.commit().unwrap();
         }
 
-        super::migrate_3_to_4(&backend).unwrap();
+        super::migrate_4_to_5(&backend).unwrap();
 
         // EarliestBlockNumber should be 0 (genesis body present → no fix).
         let txn = backend.begin_read().unwrap();
@@ -852,6 +873,34 @@ mod tests {
 
         let result = run_pending_migrations(&backend, temp_dir.path(), STORE_SCHEMA_VERSION);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_pending_migrations_rejects_a_database_ahead_of_the_binary() {
+        // A database stamped by a newer ethrex must be refused, not "migrated"
+        // downwards or silently opened: this binary cannot decode formats
+        // introduced after its schema version.
+        let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let newer = STORE_SCHEMA_VERSION + 1;
+        write_metadata_version(temp_dir.path(), newer).unwrap();
+
+        let result = run_pending_migrations(&backend, temp_dir.path(), newer);
+
+        assert!(
+            matches!(
+                result,
+                Err(StoreError::IncompatibleDBVersion { found, expected })
+                    if found == newer && expected == STORE_SCHEMA_VERSION
+            ),
+            "expected IncompatibleDBVersion, got {result:?}"
+        );
+        // The marker is left as the newer binary wrote it, so that binary can
+        // still open the database.
+        let contents =
+            std::fs::read_to_string(temp_dir.path().join(STORE_METADATA_FILENAME)).unwrap();
+        let metadata: StoreMetadata = serde_json::from_str(&contents).unwrap();
+        assert_eq!(metadata.schema_version, newer);
     }
 
     #[test]

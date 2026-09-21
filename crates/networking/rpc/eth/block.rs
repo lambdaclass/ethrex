@@ -108,20 +108,10 @@ impl RpcHandler for GetBlockByHashRequest {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         debug!("Requested block with hash: {:#x}", self.block);
-        let block_number = match storage.get_block_number(self.block).await? {
-            Some(number) => number,
-            _ => return Ok(Value::Null),
+        let Some(block) = storage.get_block_by_hash(self.block).await? else {
+            return Ok(Value::Null);
         };
-        let header = storage.get_block_header(block_number)?;
-        let body = storage.get_block_body(block_number).await?;
-        let (header, body) = match (header, body) {
-            (Some(header), Some(body)) => (header, body),
-            // Block not found — including blocks whose body was pruned below
-            // EarliestBlockNumber (see GetBlockByNumberRequest::handle).
-            _ => return Ok(Value::Null),
-        };
-        let hash = header.hash();
-        let block = RpcBlock::build(header, body, hash, self.hydrated)?;
+        let block = RpcBlock::build(block.header, block.body, self.block, self.hydrated)?;
         serde_json::to_value(&block).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -471,7 +461,29 @@ pub async fn get_all_block_receipts(
         return Ok(Vec::new());
     }
     let block_hash = header.hash();
-    Ok(storage.get_receipts_for_block(&block_hash).await?)
+    let receipts = storage.get_receipts_for_block(&block_hash).await?;
+    // `get_receipts_for_block` returns a bare Vec, so a block whose receipts are
+    // absent is indistinguishable from a block that genuinely has none. Returning
+    // the empty list would be a wrong answer rather than a reported failure, so
+    // check it against the block's own transaction count. This mirrors the
+    // mismatch check the by-index receipt path already performs.
+    let expected = match storage.get_block_body_by_hash(block_hash).await? {
+        Some(body) => body.transactions.len(),
+        // No body means the block's history is not retained; without it there is
+        // nothing to validate the receipt count against.
+        None => {
+            return Err(RpcErr::Internal(format!(
+                "Body unavailable for block {block_hash:#x}, cannot serve its receipts"
+            )));
+        }
+    };
+    if receipts.len() != expected {
+        return Err(RpcErr::Internal(format!(
+            "Expected {expected} receipts for block {block_hash:#x}, got {}",
+            receipts.len()
+        )));
+    }
+    Ok(receipts)
 }
 
 #[cfg(test)]
@@ -527,7 +539,7 @@ mod pruning_rpc_tests {
             hydrated: true,
         };
         let context = default_context_with_storage(storage.clone()).await;
-        let result = req_full.handle(context).await.unwrap();
+        let result = req_full.handle(context.clone()).await.unwrap();
         assert_eq!(result, Value::Null, "expected null for pruned block");
 
         // --- include_full_tx = false (hashes only) ---
@@ -536,7 +548,7 @@ mod pruning_rpc_tests {
             hydrated: false,
         };
         let context2 = default_context_with_storage(storage).await;
-        let result_hashes = req_hashes.handle(context2).await.unwrap();
+        let result_hashes = req_hashes.handle(context2.clone()).await.unwrap();
         assert_eq!(
             result_hashes,
             Value::Null,
@@ -558,7 +570,7 @@ mod pruning_rpc_tests {
             block: BlockIdentifier::Number(10),
             hydrated: true,
         };
-        let result = req.handle(context).await.unwrap();
+        let result = req.handle(context.clone()).await.unwrap();
         assert_eq!(
             result,
             Value::Null,
@@ -578,7 +590,7 @@ mod pruning_rpc_tests {
             block: hash,
             hydrated: true,
         };
-        let result = req.handle(context).await.unwrap();
+        let result = req.handle(context.clone()).await.unwrap();
         assert_eq!(
             result,
             Value::Null,
@@ -607,7 +619,7 @@ mod pruning_rpc_tests {
             block: BlockIdentifierOrHash::Identifier(BlockIdentifier::Number(9)),
         };
         let context = default_context_with_storage(storage).await;
-        let result = req.handle(context).await.unwrap();
+        let result = req.handle(context.clone()).await.unwrap();
         assert_eq!(
             result,
             serde_json::Value::Null,

@@ -1,5 +1,5 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
-		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
+		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs run-hive-snap2 \
 		load-test-fibonacci load-test-io run-hive-eels-blobs run-hive-eels-amsterdam \
 		run-hive-eels-bal-quick run-hive-build-block bench-rlp zkevm-bench-setup
 
@@ -61,6 +61,17 @@ build-image: ## 🐳 Build the Docker image (override tag with TAG=foo)
 		--build-arg GIT_BRANCH=$(GIT_BRANCH) \
 		--build-arg VERSION=$(VERSION) \
 		-t $(IMAGE) .
+
+# Enables the `sync-test` feature, which lets MIN_FULL_BLOCKS, SNAP_LIMIT and
+# SECONDS_PER_BLOCK be set from the environment. A devnet cannot reach snap
+# sync at their production values. Never deploy this image.
+build-image-sync-test: ## 🐳 Build a Docker image whose sync thresholds can be overridden
+	docker build \
+		--build-arg GIT_SHA=$(GIT_SHA) \
+		--build-arg GIT_BRANCH=$(GIT_BRANCH) \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg BUILD_FLAGS="--features sync-test" \
+		-t ethrex:sync-test .
 
 run-image: build-image ## 🏃 Run the Docker image
 	docker run --rm -p 127.0.0.1:8545:8545 $(IMAGE) --http.addr 0.0.0.0
@@ -151,6 +162,9 @@ run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug m
 TEST_PATTERN_EELS ?= .*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*
 run-hive-eels: build-image setup-hive ## 🧪 Generic command for running Hive EELS tests. Specify EELS_SIM
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(EELS_SIM) --sim.limit "$(TEST_PATTERN_EELS)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(shell cat tooling/ef_tests/.fixtures_url)
+
+run-hive-snap2: build-image ## 🧪 Run the hive devp2p snap/2 (EIP-8189) conformance suite
+	cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim devp2p --sim.limit "snap2" --sim.loglevel $(SIM_LOG_LEVEL)
 
 run-hive-eels-engine: ## Run hive EELS Engine tests
 	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/consume-engine
@@ -266,11 +280,21 @@ update-cargo-lock: ## 📦 Update Cargo.lock files
 	# (v2.1.7-risczero.0), so its lockfile can't resolve. Re-add once a >=2.1.8 tag exists.
 	cargo tree --manifest-path crates/guest-program/bin/zisk/Cargo.toml
 	cargo tree --manifest-path crates/guest-program/bin/openvm/Cargo.toml
+	cargo tree --manifest-path crates/guest-program/stateless-validator/Cargo.toml
+	cargo tree --manifest-path crates/guest-program/stateless-validator/bin/sp1/Cargo.toml
+	cargo tree --manifest-path crates/guest-program/stateless-validator/bin/zisk/Cargo.toml
+	cargo tree --manifest-path crates/guest-program/stateless-validator/bin/openvm/Cargo.toml
 	cargo tree --manifest-path crates/l2/tee/quote-gen/Cargo.toml
 	cargo tree --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml
 	cargo tree --manifest-path tooling/zkevm_bench/Cargo.toml
 	cargo tree --manifest-path tooling/Cargo.toml
 	cargo tree --manifest-path tooling/ef_tests/state/Cargo.toml
+
+check-ere-pins: ## 🔍 Check the stateless-validator guests agree on one ere release
+	# Prints the tag on success. Fails if any manifest has moved off it, including
+	# to a bare rev -- a rev cannot be matched against the ere compiler/server
+	# image tags the release workflow pulls.
+	@tag=$$(.github/scripts/zkvm-version.sh --ere-tag) && echo "ere pins agree: $$tag"
 
 check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
 	cargo metadata --locked > /dev/null
@@ -281,11 +305,12 @@ check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
 	# if changes made to the source code CI will run with the toolchain
 	cargo metadata --locked --manifest-path crates/guest-program/bin/zisk/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/guest-program/bin/openvm/Cargo.toml > /dev/null
-	# The stateless-validator guest bins are each their own workspace, and
+	# The stateless-validator crate and guest bins are each their own workspace, and
 	# tag_release builds + signs them with `--guest-dir`. Without a committed
 	# lock the published ELF/VK bytes are not pinned. openvm is checked too:
 	# `cargo metadata` only resolves, so the newer-rustc requirement that keeps
 	# it out of the pr_nostd build matrix does not apply here.
+	cargo metadata --locked --manifest-path crates/guest-program/stateless-validator/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/guest-program/stateless-validator/bin/sp1/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/guest-program/stateless-validator/bin/zisk/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/guest-program/stateless-validator/bin/openvm/Cargo.toml > /dev/null

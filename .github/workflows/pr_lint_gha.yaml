@@ -129,7 +129,7 @@ jobs:
           make_tree() {
             local root="$1"
             rm -rf "$root"
-            for name in stateless-validator-ethrex-sp1-v6.3.1 stateless-validator-ethrex-zisk-v1.0.0-alpha; do
+            for name in stateless-validator-ethrex-sp1-v6.4.0 stateless-validator-ethrex-zisk-v1.1.0-alpha; do
               mkdir -p "$root/$name"
               head -c 256 /dev/urandom > "$root/$name/$name.elf"
               head -c 64 /dev/urandom > "$root/$name/$name.vk"
@@ -178,7 +178,7 @@ jobs:
           # PR: `dry-run-release-assets` is `workflow_dispatch`-only, so on the
           # pull_request path this is the only check that a .minisig is bound to
           # its payload at all.
-          elf="$work/bin/stateless-validator-ethrex-sp1-v6.3.1/stateless-validator-ethrex-sp1-v6.3.1.elf"
+          elf="$work/bin/stateless-validator-ethrex-sp1-v6.4.0/stateless-validator-ethrex-sp1-v6.4.0.elf"
           printf 'x' >> "$elf"
           if minisign -V -m "$elf" -p "$work/pub" -x "$elf.minisig" > /dev/null 2>&1; then
             echo "::error::a tampered artifact still verified"

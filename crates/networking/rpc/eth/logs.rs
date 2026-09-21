@@ -210,10 +210,16 @@ pub(crate) async fn fetch_logs_with_filter(
                 .resolve_block_number(&storage)
                 .await?
                 .ok_or(RpcErr::WrongParam("toBlock".to_string()))?;
-            // Malformed user range (e.g. fromBlock=100, toBlock=50) — reject before
-            // anything else so we don't silently accept inverted ranges.
+            let latest = storage.get_latest_block_number()?;
             if from > to {
-                return Err(RpcErr::BadParams("Empty range".to_string()));
+                return Err(RpcErr::InvalidParams(
+                    "invalid block range params".to_string(),
+                ));
+            }
+            if to > latest {
+                return Err(RpcErr::InvalidParams(
+                    "block range extends beyond current head block".to_string(),
+                ));
             }
             // Any part of the range below the prune cutoff makes the answer
             // incomplete, and an incomplete log set is indistinguishable from a
@@ -604,6 +610,10 @@ mod pruning_log_tests {
     async fn get_logs_entire_range_below_earliest_is_rejected() {
         let storage = setup_store().await;
 
+        // A pruned range sits below a head far above it, so build a real chain
+        // first: without it the range would trip the "beyond head" check instead,
+        // which is a different rejection than the one under test.
+        add_empty_canonical_blocks(&storage, 20).await;
         // Set earliest to 10; ask for 0..=5 — entirely pruned.
         storage.advance_earliest_block_number(10).await.unwrap();
 
@@ -622,7 +632,7 @@ mod pruning_log_tests {
     }
 
     /// A malformed inverted range (fromBlock > toBlock) must still be rejected with
-    /// `BadParams`, and must take precedence over the prune check — it is
+    /// `InvalidParams`, and must take precedence over the prune check — it is
     /// user-supplied nonsense regardless of what the node retains.
     #[tokio::test]
     async fn get_logs_rejects_malformed_inverted_range() {
@@ -637,8 +647,8 @@ mod pruning_log_tests {
         };
         let result = fetch_logs_with_filter(&filter, storage).await;
         assert!(
-            matches!(result, Err(RpcErr::BadParams(_))),
-            "expected BadParams, got {:?}",
+            matches!(result, Err(RpcErr::InvalidParams(_))),
+            "expected InvalidParams, got {:?}",
             result
         );
     }
@@ -732,6 +742,72 @@ mod tests {
     /// canonical number index would instead return the logs of whatever block
     /// replaced it at the same height after a reorg, silently, which is the
     /// substitution EIP-234 exists to prevent.
+    #[tokio::test]
+    async fn test_get_logs_rejects_out_of_range_blocks() {
+        use ethrex_common::types::{Block, BlockBody};
+        use ethrex_storage::EngineType;
+
+        let storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        let block = Block::new(
+            BlockHeader {
+                number: 1,
+                ..Default::default()
+            },
+            BlockBody::default(),
+        );
+        let hash = block.hash();
+        storage.add_block(block).await.unwrap();
+        storage
+            .forkchoice_update(vec![(1, hash)], 1, hash, None, None)
+            .await
+            .unwrap();
+
+        let filter_for = |from_block, to_block| LogsFilter {
+            from_block,
+            to_block,
+            block_hash: None,
+            address_filters: None,
+            topics: vec![],
+        };
+
+        let err = fetch_logs_with_filter(
+            &filter_for(BlockIdentifier::Number(1), BlockIdentifier::Number(3)),
+            storage.clone(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, RpcErr::InvalidParams(ref m) if m == "block range extends beyond current head block"),
+            "{err:?}"
+        );
+
+        let err = fetch_logs_with_filter(
+            &filter_for(
+                BlockIdentifier::Number(2),
+                BlockIdentifier::Tag(BlockTag::Latest),
+            ),
+            storage.clone(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, RpcErr::InvalidParams(ref m) if m == "invalid block range params"),
+            "{err:?}"
+        );
+
+        let err = fetch_logs_with_filter(
+            &filter_for(BlockIdentifier::Number(1), BlockIdentifier::Number(0)),
+            storage,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, RpcErr::InvalidParams(ref m) if m == "invalid block range params"),
+            "{err:?}"
+        );
+    }
+
     #[tokio::test]
     async fn test_get_logs_by_block_hash_survives_reorg() {
         use ethrex_common::types::{Block, BlockBody, LegacyTransaction, Log, Receipt, TxType};

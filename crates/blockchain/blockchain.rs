@@ -48,6 +48,7 @@ pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
 pub mod prewarm;
+pub mod sampling;
 pub mod stateless;
 pub mod tracing;
 pub mod vm;
@@ -64,6 +65,7 @@ use ethrex_common::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_
 
 use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
+use crate::vm::{OverlaidVmDatabase, StateOverride, precompile_moves};
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::EIP4844Transaction;
 #[cfg(feature = "c-kzg")]
@@ -100,6 +102,7 @@ use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieLogger, TrieNode}
 #[cfg(feature = "rayon")]
 use ethrex_vm::backends::BLOATED_BATCH_THRESHOLD;
 use ethrex_vm::backends::CachingDatabase;
+use ethrex_vm::backends::VMType;
 #[cfg(feature = "rayon")]
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
@@ -113,6 +116,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
+use std::sync::OnceLock;
 use std::sync::mpsc::Sender;
 use std::sync::{
     Arc, RwLock,
@@ -135,6 +139,28 @@ use ethrex_common::types::BlobsBundle;
 
 const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
+// Below this many touched storage slots the BFS prefetch's own overhead (one
+// `multi_get` per trie level) isn't worth it; the serial insert loop's
+// per-slot lazy resolution is cheap enough on its own. Shared by the Stage B
+// worker, `serial_storage_root`, and `compute_sharded_storage_root`'s
+// serial fallbacks.
+const STORAGE_PREFETCH_THRESHOLD: usize = 64;
+// Per-shard gate for the Stage C state-trie update. Each of the 16 shards holds
+// ~1/16 of the block's touched accounts, so the threshold is scaled down like
+// the storage shard path.
+const STATE_SHARD_PREFETCH_THRESHOLD: usize = 4;
+// Streaming merkleizer (`handle_subtrie`): a single storage trie's touched slots
+// are sharded across the 16 workers by key nibble, so each worker holds only
+// ~1/16 of them. The prefetch gate is therefore scaled down from
+// `STORAGE_PREFETCH_THRESHOLD` by 16 (same reasoning as
+// `STATE_SHARD_PREFETCH_THRESHOLD`): a trie with ~64 total touched slots then
+// clears the gate on each of its shards. Used only on the BAL-less / pre-Amsterdam
+// streaming path.
+const STREAM_STORAGE_PREFETCH_THRESHOLD: usize = 4;
+// Cap on the per-worker, per-trie slot buffer before an opportunistic mid-routing
+// flush (one sorted `prefetch_sorted` + the inserts). Bounds transient memory for
+// very heavy single-account blocks; smaller buffers just flush once at RoutingDone.
+const STREAM_STORAGE_FLUSH_BATCH: usize = 1024;
 /// Default mempool occupancy percentage (0-100) at which gapped-nonce
 /// transaction admission is denied. Set to 100 to disable the check.
 pub const DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD: u8 = 90;
@@ -231,6 +257,8 @@ pub struct Blockchain {
     /// Set to true after initial sync completes, never reset to false.
     /// Does not reflect whether an ongoing sync is in progress.
     is_synced: AtomicBool,
+    /// Whether a snap state sync is currently in progress.
+    snap_syncing: AtomicBool,
     /// Set while a deep-reorg apply pass is in flight. Concurrent
     /// FCUs from the engine API short-circuit to SYNCING while this is set,
     /// and journal pruning in `forkchoice_update_inner` defers until the apply
@@ -247,10 +275,12 @@ pub struct Blockchain {
     /// Persistent thread pool for merkleization workers.
     /// 17 threads: 16 shard workers + 1 watcher/coordination.
     ///
-    /// `Arc` for sharing in test harnesses that build many `Blockchain`s; the
-    /// production path keeps the original semantics (one fresh pool per call
-    /// to `Blockchain::new` / `default_with_store`).
-    merkle_pool: Arc<rayon::ThreadPool>,
+    /// Built on first merkleization, so a `Blockchain` that never merkleizes pays
+    /// nothing; node startup seeds it eagerly via
+    /// [`Self::preinitialize_merkle_pool`], and harnesses where every instance
+    /// merkleizes seed a shared one via [`Self::for_test_harness_with_pool`].
+    /// Use [`Self::merkle_pool`] to read it.
+    merkle_pool: OnceLock<Arc<rayon::ThreadPool>>,
     /// Cache handoff slot from the mempool prewarmer to
     /// `execute_block_pipeline`; see `PrewarmedCache` and `crate::prewarm`.
     prewarmed: PrewarmedCache,
@@ -366,6 +396,15 @@ pub struct BlockchainOptions {
     /// `--no-bal-parallel-trie`) to fall back to streaming `AccountUpdate`s from
     /// the executor and merkleizing post-execution.
     pub bal_parallel_trie_enabled: bool,
+    /// EIP-8070: when true, activate the sampler/provider state machine.
+    /// When false (default), the node always acts as provider (p=1.0).
+    pub blob_sampling_enabled: bool,
+    /// EIP-8070: when true, always act as provider (p=1.0) regardless of role
+    /// randomization, as block builders SHOULD (EIP-8070, "Execution clients ::
+    /// Local block builders"). Enabled via `--blob-eager-provider`; a node that
+    /// builds payloads latches it at runtime regardless. Only meaningful when
+    /// `blob_sampling_enabled` is also true.
+    pub blob_eager_provider: bool,
     /// Optional operator override for the maximum reorg depth. `None` ; cap is purely
     /// physical (layer-cache retention plus journal reach; bounded indirectly by finality
     /// because finality advances prune the journal). `Some(d)` ; reject reorgs of
@@ -377,6 +416,17 @@ pub struct BlockchainOptions {
     /// transactions with a nonce gap relative to the sender's on-chain nonce
     /// are rejected. Setting to 100 disables the check.
     pub gap_admit_occupancy_threshold: u8,
+    /// If true (default), a `Blockchain` driving block import may spawn a mempool
+    /// prewarmer: an OS thread plus a rayon pool at half the available cores, both
+    /// holding a strong reference to this `Blockchain`.
+    ///
+    /// Test harnesses set this to false. The prewarmer thread does exit on its own
+    /// once its `PrewarmHandle` drops and closes the channel -- nothing is leaked
+    /// -- but it is never joined, so a large test binary creates such threads
+    /// faster than the OS reaps them. No test exercises prewarming, so not
+    /// spawning it is both cheaper and simpler than plumbing a `JoinHandle`
+    /// through `PrewarmHandle` to join it. See `for_test_harness`.
+    pub mempool_prewarm_enabled: bool,
 }
 
 impl Default for BlockchainOptions {
@@ -396,8 +446,11 @@ impl Default for BlockchainOptions {
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
             bal_parallel_trie_enabled: true,
+            blob_sampling_enabled: false,
+            blob_eager_provider: false,
             max_reorg_depth: None,
             gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
+            mempool_prewarm_enabled: true,
         }
     }
 }
@@ -496,9 +549,11 @@ struct BalStateWorkItem {
 }
 
 impl Blockchain {
-    /// Build a fresh 17-thread merkleization pool. Used by the default
-    /// constructors; tests that build many `Blockchain`s should share one pool
-    /// via `default_with_store_and_pool` to avoid spawning the pool repeatedly.
+    /// Build a fresh 17-thread merkleization pool.
+    ///
+    /// The size is load-bearing, not a tuning knob: 16 shard workers plus one
+    /// watcher, and all 16 must be resident at once because they cross-communicate
+    /// over channels. A smaller pool deadlocks rather than running slower.
     pub fn build_merkle_pool() -> Arc<rayon::ThreadPool> {
         Arc::new(
             rayon::ThreadPoolBuilder::new()
@@ -509,39 +564,95 @@ impl Blockchain {
         )
     }
 
+    /// This `Blockchain`'s merkleization pool, building it on first use.
+    fn merkle_pool(&self) -> &rayon::ThreadPool {
+        self.merkle_pool.get_or_init(Self::build_merkle_pool)
+    }
+
+    /// Builds the merkleization pool now, unless it is already seeded.
+    ///
+    /// Node startup calls this so a pool that cannot be created fails the process at
+    /// boot, rather than panicking inside the merkleizer during the first block.
+    pub fn preinitialize_merkle_pool(&self) {
+        let _ = self.merkle_pool();
+    }
+
+    /// Whether the merkleization pool has been built yet.
+    ///
+    /// Exposed so tests can assert that a `Blockchain` which never merkleizes does
+    /// not pay for the pool.
+    pub fn merkle_pool_initialized(&self) -> bool {
+        self.merkle_pool.get().is_some()
+    }
+
     pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
+        let mempool = if blockchain_opts.blob_eager_provider {
+            Mempool::new_with_eager_provider(blockchain_opts.max_mempool_size)
+        } else if blockchain_opts.blob_sampling_enabled {
+            Mempool::new_with_sampling(blockchain_opts.max_mempool_size)
+        } else {
+            Mempool::new(blockchain_opts.max_mempool_size)
+        };
         Self {
             storage: store,
-            mempool: Mempool::new(blockchain_opts.max_mempool_size),
+            mempool,
             is_synced: AtomicBool::new(false),
+            snap_syncing: AtomicBool::new(false),
             reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
-            merkle_pool: Self::build_merkle_pool(),
+            merkle_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
         }
     }
 
-    /// Like `default_with_store`, but reuses an externally-owned merkleization
-    /// pool. Intended for test harnesses that build many short-lived
-    /// `Blockchain` instances; sharing the pool avoids spawning 17 fresh OS
-    /// threads per instance.
+    /// `Blockchain` for a test harness that builds many short-lived instances.
     ///
-    /// SAFETY: the caller must ensure each pool has only one concurrent
-    /// `in_place_scope` user at a time. The internal merkle protocol requires
-    /// all 16 worker jobs to run concurrently (they cross-communicate via
-    /// channels); sharing a pool across simultaneous callers deadlocks.
-    pub fn default_with_store_and_pool(store: Store, pool: Arc<rayon::ThreadPool>) -> Self {
+    /// Keeps `BlockchainOptions::default()` but disables the mempool prewarmer,
+    /// whose threads would otherwise outlive the test that created them. The
+    /// merkleization pool is lazy (see the `merkle_pool` field), so an instance
+    /// that never merkleizes costs no threads at all.
+    ///
+    /// Use [`Self::for_test_harness_with_pool`] instead in a harness where every
+    /// instance *does* merkleize, so laziness saves nothing.
+    pub fn for_test_harness(store: Store) -> Self {
         Self {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
+            snap_syncing: AtomicBool::new(false),
             reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
-            options: BlockchainOptions::default(),
-            merkle_pool: pool,
+            options: BlockchainOptions {
+                // No test exercises prewarming, and its threads would outlive the
+                // test that created them.
+                mempool_prewarm_enabled: false,
+                ..Default::default()
+            },
+            merkle_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
         }
+    }
+
+    /// Like [`Self::for_test_harness`], but seeds the merkleization pool with an
+    /// externally-owned one rather than leaving it to be built on first use.
+    ///
+    /// For the ef_tests runners, which build one `Blockchain` per fixture and
+    /// merkleize with every one, so a per-instance pool would spawn a pool per
+    /// fixture. See their `thread_local!` pools for the accounting.
+    ///
+    /// SAFETY: the caller must ensure each pool has only one concurrent
+    /// `in_place_scope` user at a time. The internal merkle protocol requires all
+    /// 16 worker jobs to run concurrently (they cross-communicate via channels), so
+    /// sharing a pool between simultaneous callers deadlocks rather than running
+    /// slower. Keying the pool by `thread_local!` in the runner, and driving each
+    /// pool's blocks from its own thread, is what gives that exclusivity.
+    pub fn for_test_harness_with_pool(store: Store, pool: Arc<rayon::ThreadPool>) -> Self {
+        let blockchain = Self::for_test_harness(store);
+        if blockchain.merkle_pool.set(pool).is_err() {
+            unreachable!("a freshly built Blockchain has an empty merkle pool cell");
+        }
+        blockchain
     }
 
     /// Test-permissive `Blockchain` constructor. Mirrors `BlockchainOptions::default`
@@ -555,16 +666,20 @@ impl Blockchain {
     pub fn default_with_store(store: Store) -> Self {
         let options = BlockchainOptions {
             min_tip_wei: 0,
+            // Every caller is a test harness, so match `for_test_harness`: the
+            // prewarmer's threads would outlive the test that created them.
+            mempool_prewarm_enabled: false,
             ..BlockchainOptions::default()
         };
         Self {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
+            snap_syncing: AtomicBool::new(false),
             reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options,
-            merkle_pool: Self::build_merkle_pool(),
+            merkle_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
         }
     }
@@ -1237,7 +1352,7 @@ impl Blockchain {
         // (dispatching messages, collecting results) runs on the calling thread
         // via in_place_scope, so it executes concurrently with the pool tasks.
         let watcher_error: Arc<std::sync::Mutex<Option<StoreError>>> = Default::default();
-        let result = self.merkle_pool.in_place_scope(|s| {
+        let result = self.merkle_pool().in_place_scope(|s| {
             // Spawn 16 unified workers (each gets clone of all 16 senders)
             for (i, rx) in workers_rx.into_iter().enumerate() {
                 let all_senders = workers_tx.clone();
@@ -1564,6 +1679,20 @@ impl Blockchain {
                                             .map(|(k, v)| (keccak(k), *v))
                                             .collect();
                                         hashed_storage.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+
+                                        // Warm the touched subtrie breadth-first before the
+                                        // serial insert/remove loop below, using the same
+                                        // sorted key set/order the loop iterates. Hash-preserving
+                                        // (see `Trie::prefetch_sorted`); does not affect the
+                                        // resulting root or persisted node set.
+                                        if hashed_storage.len() >= STORAGE_PREFETCH_THRESHOLD {
+                                            let paths: Vec<Nibbles> = hashed_storage
+                                                .iter()
+                                                .map(|(k, _)| Nibbles::from_bytes(k.as_bytes()))
+                                                .collect();
+                                            trie.prefetch_sorted(&paths)?;
+                                        }
+
                                         for (hashed_key, value) in &hashed_storage {
                                             if value.is_zero() {
                                                 trie.remove(hashed_key.as_bytes())?;
@@ -1666,6 +1795,22 @@ impl Blockchain {
                             move || -> Result<(Box<BranchNode>, Vec<TrieNode>), StoreError> {
                                 let mut state_trie =
                                     self.storage.open_state_trie(parent_state_root)?;
+
+                                // Breadth-first batch-prefetch the account-trie nodes for
+                                // this shard's accounts before the serial get/insert loop,
+                                // so cold state-trie reads are issued per level instead of
+                                // one dependent read at a time. Sorted so adjacent paths
+                                // share fetched nodes; warming only, root is unchanged.
+                                if shard_items.len() >= STATE_SHARD_PREFETCH_THRESHOLD {
+                                    let mut addrs: Vec<H256> =
+                                        shard_items.iter().map(|i| i.hashed_address).collect();
+                                    addrs.sort_unstable();
+                                    let paths: Vec<Nibbles> = addrs
+                                        .iter()
+                                        .map(|a| Nibbles::from_bytes(a.as_bytes()))
+                                        .collect();
+                                    state_trie.prefetch_sorted(&paths)?;
+                                }
 
                                 for item in &shard_items {
                                     let path = item.hashed_address.as_bytes();
@@ -1936,15 +2081,23 @@ impl Blockchain {
                 }
             }
 
-            // Store all the accessed evm bytecodes
-            for code_hash in logger
-                .code_accessed
-                .lock()
-                .map_err(|_e| {
+            // Store all the accessed evm bytecodes. `code_accessed` records one entry
+            // per read, and a contract read for both its bytecode and its length is
+            // recorded twice, so dedup before embedding: a repeated hash would put the
+            // same (up to 24KB) bytecode in the witness more than once.
+            let accessed_codes: Vec<H256> = {
+                let accessed = logger.code_accessed.lock().map_err(|_e| {
                     ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
-                })?
-                .iter()
-            {
+                })?;
+                let mut seen =
+                    FxHashSet::with_capacity_and_hasher(accessed.len(), Default::default());
+                accessed
+                    .iter()
+                    .copied()
+                    .filter(|h| seen.insert(*h))
+                    .collect()
+            };
+            for code_hash in &accessed_codes {
                 let code = self
                     .storage
                     .get_account_code(*code_hash)
@@ -2201,15 +2354,22 @@ impl Blockchain {
             }
         }
 
-        // Store all the accessed evm bytecodes
-        for code_hash in logger
-            .code_accessed
-            .lock()
-            .map_err(|_e| {
+        // Store all the accessed evm bytecodes. `code_accessed` records one entry
+        // per read, and a contract read for both its bytecode and its length is
+        // recorded twice, so dedup before embedding: a repeated hash would put the
+        // same (up to 24KB) bytecode in the witness more than once.
+        let accessed_codes: Vec<H256> = {
+            let accessed = logger.code_accessed.lock().map_err(|_e| {
                 ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
-            })?
-            .iter()
-        {
+            })?;
+            let mut seen = FxHashSet::with_capacity_and_hasher(accessed.len(), Default::default());
+            accessed
+                .iter()
+                .copied()
+                .filter(|h| seen.insert(*h))
+                .collect()
+        };
+        for code_hash in &accessed_codes {
             let code = self
                 .storage
                 .get_account_code(*code_hash)
@@ -2339,7 +2499,7 @@ impl Blockchain {
         Ok(ExecutionWitness {
             codes,
             block_headers_bytes,
-            first_block_number: parent_header.number,
+            first_block_number: block.header.number,
             chain_config: self.storage.get_chain_config(),
             state_trie_root,
             storage_trie_roots,
@@ -3073,7 +3233,13 @@ impl Blockchain {
 
         // Validate blobs bundle after checking if it's already added.
         if let Transaction::EIP4844Transaction(transaction) = &transaction {
-            blobs_bundle.validate(transaction, fork)?;
+            // eth/72 elided bundles carry commitments + cell proofs but no blobs;
+            // full KZG verification is deferred until cells are fetched via GetCells.
+            if blobs_bundle.blobs.is_empty() && !blobs_bundle.commitments.is_empty() {
+                blobs_bundle.validate_elided(transaction, fork)?;
+            } else {
+                blobs_bundle.validate(transaction, fork)?;
+            }
         }
 
         let sender = transaction.sender(&NativeCrypto)?;
@@ -3467,10 +3633,20 @@ impl Blockchain {
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config();
 
+        // Every fork gate below must resolve the fork exactly like execution does,
+        // i.e. through the fork ordinal. A per-field activation check
+        // (`is_amsterdam_activated`) is not equivalent: on a chain that schedules a
+        // fork after Amsterdam without setting an explicit `amsterdamTime`, the
+        // ordinal is already `>= Fork::Amsterdam` while the field is unset, so a
+        // field-based gate diverges from execution in whichever direction the gate
+        // points, over-rejecting transactions execution accepts or admitting ones it
+        // rejects.
+        let fork = config.fork(header.timestamp);
+
         // EIP-8141 fork gating: reject frame transactions before Hegota activates.
         // Prevents FrameTransaction (type 0x06) from entering the mempool or being
         // forwarded over P2P on chains where EIP-8141 has not yet activated.
-        if is_frame_tx && !config.is_hegota_activated(header.timestamp) {
+        if is_frame_tx && fork < Fork::Hegota {
             return Err(MempoolError::FrameTxPreFork);
         }
 
@@ -3535,7 +3711,7 @@ impl Blockchain {
                 &frame_tx.signatures,
                 sig_hash,
                 frame_tx.sender,
-                config.fork(header.timestamp),
+                fork,
                 &NativeCrypto,
             ) {
                 return Err(MempoolError::InvalidFrameSignature);
@@ -3568,21 +3744,24 @@ impl Blockchain {
         }
 
         // Check init code size
-        // [EIP-7954] - Amsterdam increases the limit
-        let max_initcode_size = if config.is_amsterdam_activated(header.timestamp) {
+        // [EIP-7954] - Amsterdam increases the limit.
+        // Mirrors levm's `validate_init_code_size`.
+        let max_initcode_size = if fork >= Fork::Amsterdam {
             AMSTERDAM_MAX_INITCODE_SIZE
         } else {
             MAX_INITCODE_SIZE
         };
-        if config.is_shanghai_activated(header.timestamp)
+        if fork >= Fork::Shanghai
             && tx.is_contract_creation()
             && tx.data().len() > max_initcode_size as usize
         {
             return Err(MempoolError::TxMaxInitCodeSizeError);
         }
 
-        if config.is_osaka_activated(header.timestamp)
-            && !config.is_amsterdam_activated(header.timestamp)
+        // EIP-7825's flat per-tx gas cap applies from Osaka until Amsterdam, which
+        // supersedes it with the EIP-8037 gas model. Mirrors levm's `default_hook`.
+        if fork >= Fork::Osaka
+            && fork < Fork::Amsterdam
             && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
         {
             // https://eips.ethereum.org/EIPS/eip-7825
@@ -3630,7 +3809,7 @@ impl Blockchain {
         // at admission so invalid type-4 txs never enter the pool.
         if let Transaction::EIP7702Transaction(eip7702) = tx {
             // Type-4 txs only exist from Prague onward.
-            if !config.is_prague_activated(header.timestamp) {
+            if fork < Fork::Prague {
                 return Err(MempoolError::Eip7702TxPreFork);
             }
             // An empty authorization_list makes the tx invalid.
@@ -3979,6 +4158,25 @@ impl Blockchain {
         self.is_synced.load(Ordering::Relaxed)
     }
 
+    /// Records whether this node's state sync still depends on `GetTrieNodes`.
+    pub fn set_state_sync_needs_trie_nodes(&self, needs: bool) {
+        self.snap_syncing.store(needs, Ordering::Relaxed);
+    }
+
+    /// Returns whether this node's state sync still depends on `GetTrieNodes`.
+    ///
+    /// This is what decides whether snap/2 may be offered to a peer. snap/2
+    /// removes `GetTrieNodes`, so negotiating it costs a node the only trie
+    /// reconciliation snap/1 has. A snap sync therefore starts out withholding
+    /// snap/2 and only offers it once it has committed to the snap/2 path,
+    /// which never asks for trie nodes.
+    ///
+    /// Unlike [`Self::is_synced`], which only says whether the chain is up to
+    /// date, this tracks the state sync itself.
+    pub fn state_sync_needs_trie_nodes(&self) -> bool {
+        self.snap_syncing.load(Ordering::Relaxed)
+    }
+
     pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {
         // --mempool.private: never serve private txs over P2P, even if a peer
         // somehow learned the hash. The spec for `GetPooledTransactions`
@@ -4029,8 +4227,39 @@ impl Blockchain {
         Ok(result)
     }
 
-    pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
+    pub fn new_evm<D: VmDatabase + 'static>(&self, vm_db: D) -> Result<Evm, EvmError> {
         new_evm(&self.options.r#type, vm_db)
+    }
+
+    /// The [`VMType`] this chain executes with. Exposed so the RPC layer can answer
+    /// fork-and-VM-dependent questions — whether an address is a precompile, say — without
+    /// having to build an [`Evm`] first.
+    pub fn vm_type(&self) -> Result<VMType, EvmError> {
+        vm_type_for(&self.options.r#type)
+    }
+
+    /// [`Blockchain::new_evm`] for the RPC simulation paths that honor geth's State
+    /// Override Set (`eth_call`, `eth_estimateGas`, `eth_createAccessList`,
+    /// `debug_traceCall`).
+    ///
+    /// A State Override Set has two independent effects and they must be installed
+    /// together: the per-account overlay ([`OverlaidVmDatabase`]) and the
+    /// `movePrecompileToAddress` relocations, which live in the EVM rather than the
+    /// database because they change dispatch, not state. This constructor is the only
+    /// way to build the overlay, so the relocations can't be forgotten at a call site.
+    ///
+    /// `base_block_number` is the number of the real header the call is made against;
+    /// see [`OverlaidVmDatabase::new`].
+    pub fn new_overlaid_evm<D: VmDatabase + Clone + 'static>(
+        &self,
+        inner: D,
+        overrides: Arc<BTreeMap<Address, StateOverride>>,
+        base_block_number: BlockNumber,
+    ) -> Result<Evm, EvmError> {
+        let moves = precompile_moves(&overrides);
+        let mut evm = self.new_evm(OverlaidVmDatabase::new(inner, overrides, base_block_number))?;
+        evm.set_precompile_moves(moves);
+        Ok(evm)
     }
 
     /// Get the current fork of the chain, based on the latest block's timestamp
@@ -4151,6 +4380,52 @@ fn get_or_open_storage_trie<'a>(
     }
 }
 
+/// Flush one storage trie's buffered slots (streaming merkleizer path). Opens the
+/// trie if needed, breadth-first prefetches the touched nodes in one batch when
+/// the slice clears the threshold, then applies the inserts/removes. Warming-only:
+/// `prefetch_sorted` installs decoded nodes hash-preservingly, so the resulting
+/// storage root is byte-identical to the per-slot path.
+fn flush_storage_buffer(
+    storage_tries: &mut FxHashMap<H256, Trie>,
+    storage: &Store,
+    parent_state_root: H256,
+    prefix: H256,
+    storage_root: H256,
+    mut slots: Vec<(H256, U256)>,
+) -> Result<(), StoreError> {
+    let trie = get_or_open_storage_trie(
+        storage_tries,
+        storage,
+        parent_state_root,
+        prefix,
+        storage_root,
+    )?;
+    // `prefetch_sorted` requires ascending paths; slots arrive in routing order.
+    // H256 sorts bytewise, matching nibble order, so sorting by key gives the
+    // order `Nibbles::from_bytes` needs. The sort MUST be stable: the streaming
+    // path buffers per-tx updates, so the same slot can appear more than once
+    // (written by successive txs in the block) and the last write must win, as it
+    // does in the per-slot insert path. A stable sort keeps equal keys in arrival
+    // (tx) order so the final insert below applies the latest value last. Use
+    // `sort_by` (stable), NOT `sort_unstable_by`, or duplicate slots regress.
+    if slots.len() >= STREAM_STORAGE_PREFETCH_THRESHOLD {
+        slots.sort_by(|a, b| a.0.cmp(&b.0));
+        let paths: Vec<Nibbles> = slots
+            .iter()
+            .map(|(k, _)| Nibbles::from_bytes(k.as_bytes()))
+            .collect();
+        trie.prefetch_sorted(&paths)?;
+    }
+    for (hashed_key, value) in slots {
+        if value.is_zero() {
+            trie.remove(hashed_key.as_bytes())?;
+        } else {
+            trie.insert(hashed_key.as_bytes().to_vec(), value.encode_to_vec())?;
+        }
+    }
+    Ok(())
+}
+
 fn handle_subtrie(
     storage: Store,
     rx: cb::Receiver<WorkerRequest>,
@@ -4170,6 +4445,10 @@ fn handle_subtrie(
     let mut pre_collected_state: Vec<TrieNode> = vec![];
     let mut storage_tries: FxHashMap<H256, Trie> = Default::default();
     let mut pre_collected_storage: FxHashMap<H256, Vec<TrieNode>> = Default::default();
+    // Per storage trie, slots buffered until they can be flushed as a prefetched
+    // batch (see `flush_storage_buffer`). Value is (storage_root, pending slots).
+    // Cleared on delete; fully drained before storage collection begins.
+    let mut storage_buffer: FxHashMap<H256, (H256, Vec<(H256, U256)>)> = Default::default();
 
     // Held until collection finishes to keep cross-worker channels open.
     let mut worker_senders: Option<Vec<cb::Sender<WorkerRequest>>> = Some(worker_senders);
@@ -4314,8 +4593,11 @@ fn handle_subtrie(
                 }
 
                 if removed || removed_storage {
-                    // Delete locally + send DeleteStorage to other 15 workers
+                    // Delete locally + send DeleteStorage to other 15 workers.
+                    // Drop any slots buffered for this trie: the reset wipes them,
+                    // exactly as the per-slot path's inserts would have been.
                     pre_collected_storage.remove(&prefix);
+                    storage_buffer.remove(&prefix);
                     storage_tries.insert(prefix, Trie::new_temp());
                     for (i, tx) in senders.iter().enumerate() {
                         if i as u8 != index {
@@ -4345,18 +4627,23 @@ fn handle_subtrie(
                         let bucket = hashed_key.as_fixed_bytes()[0] >> 4;
                         *expected_shards.entry(prefix).or_insert(0u16) |= 1 << bucket;
                         if bucket == index {
-                            // Local storage: insert directly
-                            let trie = get_or_open_storage_trie(
-                                &mut storage_tries,
-                                &storage,
-                                parent_state_root,
-                                prefix,
-                                storage_root,
-                            )?;
-                            if value.is_zero() {
-                                trie.remove(hashed_key.as_bytes())?;
-                            } else {
-                                trie.insert(hashed_key.as_bytes().to_vec(), value.encode_to_vec())?;
+                            // Local storage: buffer for a prefetched batch flush.
+                            let buf = storage_buffer
+                                .entry(prefix)
+                                .or_insert_with(|| (storage_root, Vec::new()));
+                            buf.1.push((hashed_key, value));
+                            if buf.1.len() >= STREAM_STORAGE_FLUSH_BATCH {
+                                let (root, slots) = storage_buffer
+                                    .remove(&prefix)
+                                    .expect("buffer just inserted");
+                                flush_storage_buffer(
+                                    &mut storage_tries,
+                                    &storage,
+                                    parent_state_root,
+                                    prefix,
+                                    root,
+                                    slots,
+                                )?;
                             }
                         } else {
                             senders[bucket as usize]
@@ -4381,22 +4668,30 @@ fn handle_subtrie(
                 value,
                 storage_root,
             } => {
-                let trie = get_or_open_storage_trie(
-                    &mut storage_tries,
-                    &storage,
-                    parent_state_root,
-                    prefix,
-                    storage_root,
-                )?;
-                if value.is_zero() {
-                    trie.remove(key.as_bytes())?;
-                } else {
-                    trie.insert(key.as_bytes().to_vec(), value.encode_to_vec())?;
+                // Buffer for a prefetched batch flush (see local-storage path).
+                let buf = storage_buffer
+                    .entry(prefix)
+                    .or_insert_with(|| (storage_root, Vec::new()));
+                buf.1.push((key, value));
+                if buf.1.len() >= STREAM_STORAGE_FLUSH_BATCH {
+                    let (root, slots) = storage_buffer
+                        .remove(&prefix)
+                        .expect("buffer just inserted");
+                    flush_storage_buffer(
+                        &mut storage_tries,
+                        &storage,
+                        parent_state_root,
+                        prefix,
+                        root,
+                        slots,
+                    )?;
                 }
                 dirty = true;
             }
             WorkerRequest::DeleteStorage(prefix) => {
+                // Reset wipes any buffered slots for this trie (see ProcessAccount).
                 pre_collected_storage.remove(&prefix);
+                storage_buffer.remove(&prefix);
                 storage_tries.insert(prefix, Trie::new_temp());
                 dirty = true;
             }
@@ -4414,6 +4709,19 @@ fn handle_subtrie(
             WorkerRequest::RoutingDone { from } => {
                 routing_done_mask |= 1u16 << from;
                 if routing_done_mask == 0xFFFF && !collecting_storages && !routing_complete {
+                    // Routing is done: no more slots will arrive, so flush every
+                    // remaining buffer into its storage trie before draining for
+                    // collection. Missing this would silently drop buffered slots.
+                    for (prefix, (root, slots)) in storage_buffer.drain() {
+                        flush_storage_buffer(
+                            &mut storage_tries,
+                            &storage,
+                            parent_state_root,
+                            prefix,
+                            root,
+                            slots,
+                        )?;
+                    }
                     collecting_storages = true;
                     routing_complete = true;
                     storage_to_collect = storage_tries.drain().collect();
@@ -4515,7 +4823,23 @@ fn handle_subtrie(
     Ok(())
 }
 
-pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
+/// The [`VMType`] a given [`BlockchainType`] executes with.
+pub fn vm_type_for(blockchain_type: &BlockchainType) -> Result<VMType, EvmError> {
+    Ok(match blockchain_type {
+        BlockchainType::L1 => VMType::L1,
+        BlockchainType::L2(l2_config) => VMType::L2(
+            *l2_config
+                .fee_config
+                .read()
+                .map_err(|_| EvmError::Custom("Fee config lock was poisoned".to_string()))?,
+        ),
+    })
+}
+
+pub fn new_evm<D: VmDatabase + 'static>(
+    blockchain_type: &BlockchainType,
+    vm_db: D,
+) -> Result<Evm, EvmError> {
     let mut evm = match blockchain_type {
         BlockchainType::L1 => Evm::new_for_l1(vm_db, Arc::new(NativeCrypto)),
         BlockchainType::L2(l2_config) => {
@@ -4654,6 +4978,18 @@ fn serial_storage_root(
     hashed_storage: &[(H256, U256)],
 ) -> Result<(H256, Vec<TrieNode>), StoreError> {
     let mut trie = storage.open_storage_trie(hashed_address, parent_state_root, storage_root)?;
+
+    // Both call sites (`compute_sharded_storage_root`'s `occupied <= 1` and
+    // "storage emptied" fallbacks) pass an already key-sorted slice, so it is
+    // safe to reuse that order directly for prefetch.
+    if hashed_storage.len() >= STORAGE_PREFETCH_THRESHOLD {
+        let paths: Vec<Nibbles> = hashed_storage
+            .iter()
+            .map(|(k, _)| Nibbles::from_bytes(k.as_bytes()))
+            .collect();
+        trie.prefetch_sorted(&paths)?;
+    }
+
     for (hashed_key, value) in hashed_storage {
         if value.is_zero() {
             trie.remove(hashed_key.as_bytes())?;
@@ -4762,6 +5098,22 @@ pub fn compute_sharded_storage_root(
                                 parent_state_root,
                                 storage_root,
                             )?;
+
+                            // `bucket` is a nibble-filtered split of `hashed_storage`,
+                            // which is sorted by the caller, so per-shard order is
+                            // already ascending: reuse it directly for prefetch.
+                            // Shard-scaled gate: each shard holds ~1/16 of the
+                            // account's slots, so the whole-account 64 threshold
+                            // would almost never fire here.
+                            const SHARD_PREFETCH_THRESHOLD: usize = 4;
+                            if bucket.len() >= SHARD_PREFETCH_THRESHOLD {
+                                let paths: Vec<Nibbles> = bucket
+                                    .iter()
+                                    .map(|(k, _)| Nibbles::from_bytes(k.as_bytes()))
+                                    .collect();
+                                trie.prefetch_sorted(&paths)?;
+                            }
+
                             for (hashed_key, value) in &bucket {
                                 if value.is_zero() {
                                     trie.remove(hashed_key.as_bytes())?;
@@ -4855,6 +5207,21 @@ mod tests {
         let block_template = create_payload(&args, &store, Bytes::new()).unwrap();
         let result = blockchain.build_payload(block_template).unwrap();
         (blockchain, vec![result.payload])
+    }
+
+    #[tokio::test]
+    async fn imported_block_witness_supports_stateless_validation() {
+        let (blockchain, blocks) = build_test_blockchain_with_one_block().await;
+        let witness = blockchain
+            .add_block_pipeline_with_witness(blocks[0].clone(), None)
+            .expect("import block with witness");
+
+        ethrex_guest_program::l1::validate_blocks_statelessly(
+            &blocks,
+            witness,
+            Arc::new(NativeCrypto),
+        )
+        .expect("imported block witness must support stateless validation");
     }
 
     #[tokio::test]

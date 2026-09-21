@@ -319,7 +319,7 @@ mod pruned_range_tests {
 
         // The assertion that matters is that this returns at all rather than
         // panicking; the shape is the same empty response `block_count == 0` gives.
-        let response = request.handle(context).await.unwrap();
+        let response = request.handle(context.clone()).await.unwrap();
         let expected = serde_json::to_value(FeeHistoryResponse::default()).unwrap();
         assert_eq!(response, expected);
     }
@@ -340,7 +340,7 @@ mod pruned_range_tests {
             reward_percentiles: vec![],
         };
 
-        let response = request.handle(context).await.unwrap();
+        let response = request.handle(context.clone()).await.unwrap();
         assert_eq!(response["oldestBlock"], serde_json::json!("0xf"));
         // 4 blocks (15..=18) plus the projected next-block value.
         assert_eq!(response["baseFeePerGas"].as_array().unwrap().len(), 5);

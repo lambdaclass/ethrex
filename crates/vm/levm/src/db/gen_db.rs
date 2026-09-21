@@ -19,6 +19,7 @@ use crate::account::LevmAccount;
 use crate::call_frame::CallFrameBackup;
 use crate::errors::InternalError;
 use crate::errors::VMError;
+use crate::precompiles::PrecompileMoves;
 use crate::utils::account_to_levm_account;
 use crate::utils::restore_cache_state;
 use crate::vm::VM;
@@ -228,6 +229,9 @@ pub struct GeneralizedDatabase {
     /// Optional BAL cursor for lazy per-read prefix materialization.
     /// When set, account loads and storage reads consult the BAL before hitting the store.
     pub lazy_bal: Option<LazyBalCursor>,
+    /// Simulation-only precompile relocations (`movePrecompileToAddress`).
+    /// `None` on every consensus path, where dispatch is unchanged.
+    pub precompile_moves: Option<Arc<PrecompileMoves>>,
 }
 
 impl GeneralizedDatabase {
@@ -244,6 +248,7 @@ impl GeneralizedDatabase {
             skip_initial_tracking: false,
             accessed_accounts: None,
             lazy_bal: None,
+            precompile_moves: None,
         }
     }
 
@@ -277,6 +282,7 @@ impl GeneralizedDatabase {
             skip_initial_tracking: true,
             accessed_accounts: None,
             lazy_bal: None,
+            precompile_moves: None,
         }
     }
 
@@ -336,6 +342,7 @@ impl GeneralizedDatabase {
             skip_initial_tracking: false,
             accessed_accounts: None,
             lazy_bal: None,
+            precompile_moves: None,
         }
     }
 
@@ -492,29 +499,18 @@ impl GeneralizedDatabase {
         match self.code_metadata.entry(code_hash) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
-                // First ensure code is loaded into cache by calling get_code
-                // This handles witness fallbacks and other code loading logic correctly
+                // Answer from the size-only store lookup rather than the bytecode: a
+                // contract's code is up to 24KB and lives out-of-line, so materializing it
+                // to return a length is the dominant cost of EXTCODESIZE. Code already
+                // loaded for another reason answers for free.
                 #[expect(clippy::as_conversions, reason = "same sized types (on 64bit)")]
-                let code_length = {
-                    // Note: `self.get_code(code_hash)` has been inlined due to mutability borrow issues.
-                    //   To avoid this inlinement, self.get_code has to be moved into `self.codes` so that it's called
-                    //   like this: `self.codes.get(code_hash)`.
-                    let code = match self.codes.entry(code_hash) {
-                        Entry::Occupied(entry) => entry.into_mut(),
-                        Entry::Vacant(entry) => {
-                            entry.insert(self.store.get_account_code(code_hash)?)
-                        }
-                    };
-
-                    code.len() as u64
-                };
-
-                let metadata = CodeMetadata {
-                    length: code_length,
+                let length = match self.codes.get(&code_hash) {
+                    Some(code) => code.len() as u64,
+                    None => self.store.get_code_metadata(code_hash)?.length,
                 };
 
                 // Insert into cache and return reference
-                Ok(entry.insert(metadata))
+                Ok(entry.insert(CodeMetadata { length }))
             }
         }
     }

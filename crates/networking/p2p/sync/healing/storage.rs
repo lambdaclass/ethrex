@@ -3,7 +3,7 @@ use crate::{
     peer_handler::PeerHandler,
     peer_table::PeerTableServerProtocol as _,
     rlpx::{
-        p2p::SUPPORTED_SNAP_CAPABILITIES,
+        p2p::SNAP1_ONLY_CAPABILITIES,
         snap::{GetTrieNodes, TrieNodes},
     },
     snap::{
@@ -223,7 +223,7 @@ pub async fn heal_storage_trie(
             state.last_update = Instant::now();
             let snap_peer_count = peers
                 .peer_table
-                .peer_count_by_capabilities(SUPPORTED_SNAP_CAPABILITIES.to_vec())
+                .peer_count_by_capabilities(SNAP1_ONLY_CAPABILITIES.to_vec())
                 .await
                 .unwrap_or(0);
             debug!(
@@ -395,7 +395,7 @@ async fn ask_peers_for_nodes(
     if (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
         let Some((peer_id, connection, permit)) = peers
             .peer_table
-            .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
+            .get_best_peer(SNAP1_ONLY_CAPABILITIES.to_vec())
             .await
             .inspect_err(|err| debug!(?err, "Error requesting a peer to perform storage healing"))
             .unwrap_or(None)

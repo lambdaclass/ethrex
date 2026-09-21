@@ -41,7 +41,7 @@ matched, since `calc_excess_blob_gas` reads the parent unconditionally.
 | Item | Why it matters |
 |------|----------------|
 | **EIP-8070 (eth/72)** | Mandatory for all ELs on devnet-8. In review at [#6776]. Ships no fixtures and hive covers it execute-only ([hive#1365]), so the bundle gives it zero coverage either way — needs an `execute` sim wired up. |
-| **`debug_getRawBlockAccessList`** | Protocol-side requirement per [execution-apis#794](https://github.com/ethereum/execution-apis/pull/794), along with `-32001` for the BAL getters. In review at [#7069]. |
+| **`debug_getRawBlockAccessList`** | Protocol-side requirement per [execution-apis#851](https://github.com/ethereum/execution-apis/pull/851) (merged), along with `-32001`/`4444` for the BAL getters. Implemented by [#7069]. |
 | **EIP-8038 spec text** | The v8.0.0 access-list repricing landed in the tests ahead of its EIPs PR. Confirm the EIP matches once that merges. |
 | **`eth_simulateV1`** | Still unimplemented. Tracked at [#6212]. |
 | **EIP-8189 (snap/2)** | BAL-based state healing, newly listed in [EIP-7773]. Not evaluated. |
@@ -108,8 +108,10 @@ Glamsterdam declined 47 EIPs per [EIP-7773], including EIP-7692 (EOF) and EIP-79
 
 The fork enum lives in `crates/common/types/genesis.rs`, ending at `Amsterdam`;
 activation timestamps are `ChainConfig` fields, with `bpo1_time`..`bpo5_time` already
-defined for the BPOs and Hegotá. Amsterdam timestamps are wired into the holesky, sepolia
-and hoodi genesis files under `cmd/ethrex/networks/`.
+defined for the BPOs and Hegotá. Amsterdam is scheduled on Sepolia (`amsterdamTime`
+1791294816, 2026-10-06 13:53:36 UTC, epoch 353024; ethereum/pm#2205, EIP-7773) in
+`cmd/ethrex/networks/sepolia/genesis.json`. Hoodi and mainnet dates are still TBD upstream, so
+their presets carry no `amsterdamTime` yet.
 
 ---
 

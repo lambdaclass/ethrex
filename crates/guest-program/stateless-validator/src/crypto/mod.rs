@@ -1,7 +1,7 @@
 //! Crypto provider selection for the guest: zisk/sp1 route through the
 //! zkvm-standards `zkvm-interface` syscalls, openvm through its guest libraries.
 //! This keeps guest crypto decoupled from per-SDK patched-crate stacks — ere pins
-//! sp1 v6.3.1 / openvm v2.0.0, which the ethrex first-party providers in
+//! sp1 v6.4.0 / openvm v2.1.0-preview, which the ethrex first-party providers in
 //! `ethrex_guest_program::crypto` do not target.
 
 #[cfg(feature = "openvm")]

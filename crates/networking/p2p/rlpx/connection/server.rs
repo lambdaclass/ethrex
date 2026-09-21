@@ -5,6 +5,7 @@ use crate::rlpx::l2::{
         self, L2Cast, L2ConnState, handle_based_capability_message, handle_l2_broadcast,
     },
 };
+use crate::utils::{node_id, public_key_from_signing_key};
 use crate::{
     backend,
     metrics::METRICS,
@@ -17,6 +18,14 @@ use crate::{
         eth::{
             block_access_lists::{BlockAccessLists, GetBlockAccessLists},
             blocks::{BlockBodies, BlockHeaders},
+            cells::{
+                CellsResponseError, GET_CELLS_SOFT_LIMIT_HASHES, GetCells, MAX_CELLS_SERVED,
+                cells_per_hash,
+            },
+            eth72::{
+                status::StatusMessage72,
+                transactions::{NewPooledTransactionHashes72, PooledTransactions72},
+            },
             receipts::{
                 GetReceipts68, GetReceipts70, Receipts68, Receipts69, Receipts70,
                 SOFT_RESPONSE_LIMIT,
@@ -25,13 +34,14 @@ use crate::{
             transactions::{GetPooledTransactions, NewPooledTransactionHashes},
             update::BlockRangeUpdate,
         },
-        message::EthCapVersion,
+        message::{EthCapVersion, SnapCapVersion},
         p2p::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
-            SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
+            SUPPORTED_ETH_CAPABILITIES, advertised_snap_capabilities,
         },
-        snap::TrieNodes,
+        snap::{Snap2BlockAccessLists, Snap2GetBlockAccessLists, TrieNodes},
     },
+    snap::constants::{BAL_MAX_REQUEST_HASHES, BAL_RESPONSE_SOFT_CAP_BYTES},
     snap::{
         process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
         process_trie_nodes_request,
@@ -39,7 +49,10 @@ use crate::{
     tx_broadcaster::{TxBroadcaster, TxBroadcasterProtocol as _, send_tx_hashes},
     types::Node,
 };
-use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::{
+    Blockchain,
+    sampling::{is_provider_role, pick_random_extra_column},
+};
 use ethrex_common::H256;
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
@@ -246,6 +259,20 @@ pub struct Receiver {
     pub(crate) stream: Arc<TcpStream>,
 }
 
+/// One announced transaction as flattened for an eth/72 `GetPooledTransactions`:
+/// hash, type, announced size and the availability its announcer claimed.
+type AnnouncedTx = (H256, u8, usize, Option<u128>);
+
+/// EIP-8070 role this node took for the hashes in one `GetPooledTransactions`
+/// request, deciding what happens once the bodies arrive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BlobFetchRole {
+    /// Full blob payload is fetched alongside the body, so nothing follows.
+    Provider,
+    /// Body only; custody-aligned cells are requested once the body validates.
+    Sampler,
+}
+
 #[derive(Debug)]
 pub struct Established {
     pub(crate) signer: SecretKey,
@@ -270,9 +297,36 @@ pub struct Established {
     /// Maps request ID to (original announcement, actually requested hashes, request time).
     /// The announcement is kept for response validation; the hashes track in-flight state.
     pub(crate) requested_pooled_txs: HashMap<u64, (NewPooledTransactionHashes, Vec<H256>, Instant)>,
+    /// eth/72 variant of requested_pooled_txs, also carrying the EIP-8070 role we
+    /// took for the requested hashes.
+    pub(crate) requested_pooled_txs_72: HashMap<
+        u64,
+        (
+            NewPooledTransactionHashes72,
+            Vec<H256>,
+            BlobFetchRole,
+            Instant,
+        ),
+    >,
     /// Buffered transaction requests waiting to be flushed as a single batch.
     /// Accumulated between flush ticks (TX_REQUEST_BATCH_INTERVAL).
     pub(crate) pending_tx_requests: Vec<(NewPooledTransactionHashes, Vec<H256>)>,
+    /// eth/72 variant of pending_tx_requests.
+    pub(crate) pending_tx_requests_72:
+        Vec<(NewPooledTransactionHashes72, Vec<H256>, BlobFetchRole)>,
+    /// EIP-8070: buffered cell requests (tx_hashes, cell_mask) waiting to be
+    /// flushed as a single batched GetCells message.
+    pub(crate) pending_cell_requests: Vec<(Vec<H256>, u128)>,
+    /// EIP-8070: in-flight `GetCells` requests, keyed by request id, holding the
+    /// hashes and cell mask we asked for plus the request time. devp2p requires a
+    /// `Cells` response to answer an outstanding request, with a hash set and cell
+    /// bitmap that are subsets of what was requested; anything else is a
+    /// subprotocol violation. Swept on the same tick as the tx requests.
+    pub(crate) requested_cells: HashMap<u64, (Vec<H256>, u128, Instant)>,
+    /// EIP-8070: last custody generation this connection acted on. When the
+    /// mempool's custody generation advances (Engine API FCU v4 changed the
+    /// custody set), the sweep re-samples pending blob txs for the new columns.
+    pub(crate) last_custody_generation: u64,
     pub(crate) client_version: String,
     //// Send end of the channel used to broadcast messages
     //// to other connected peers, is ok to have it here,
@@ -325,12 +379,37 @@ impl Established {
             }
             retry_on_alternates(&self.blockchain, &self.peer_table, &requested_hashes).await;
         }
+        for (_, (_announced, requested_hashes, _, _)) in self.requested_pooled_txs_72.drain() {
+            if let Err(e) = self
+                .blockchain
+                .mempool
+                .clear_in_flight_txs(&requested_hashes)
+            {
+                warn!(error = %e, "clear_in_flight_txs failed during teardown");
+            }
+            retry_on_alternates(&self.blockchain, &self.peer_table, &requested_hashes).await;
+        }
         // Also clear hashes that were buffered but not yet sent.
         for (_announced, pending_hashes) in self.pending_tx_requests.drain(..) {
             if let Err(e) = self.blockchain.mempool.clear_in_flight_txs(&pending_hashes) {
                 warn!(error = %e, "Failed to clear in-flight transaction tracking during peer teardown");
             }
             retry_on_alternates(&self.blockchain, &self.peer_table, &pending_hashes).await;
+        }
+        for (_announced, pending_hashes, _) in self.pending_tx_requests_72.drain(..) {
+            if let Err(e) = self.blockchain.mempool.clear_in_flight_txs(&pending_hashes) {
+                warn!(error = %e, "clear_in_flight_txs failed during teardown");
+            }
+            retry_on_alternates(&self.blockchain, &self.peer_table, &pending_hashes).await;
+        }
+        // EIP-8070: forget this peer's advertised cell availability so the map
+        // does not grow unbounded across reconnects.
+        if let Err(e) = self
+            .blockchain
+            .mempool
+            .clear_peer_cell_availability(self.node.node_id())
+        {
+            warn!(error = %e, "clear_peer_cell_availability failed during teardown");
         }
         // The socket sink is owned by the per-connection writer task (`spawn_outbound_writer`),
         // which closes it when this `Established` is dropped (its `outbound_tx` is the only sender).
@@ -358,9 +437,11 @@ pub struct PeerConnectionServer {
 impl PeerConnectionServer {
     #[started]
     async fn started(&mut self, ctx: &Context<Self>) {
-        // Set a default eth version that we can update after we negotiate peer capabilities
+        // Set a default eth version that we can update after we negotiate peer capabilities.
         // This eth version will only be used to encode & decode the initial `Hello` messages.
         let eth_version = Arc::new(RwLock::new(EthCapVersion::default()));
+        // snap_version starts as None; set after hello-exchange to the negotiated snap version.
+        let snap_version: Arc<RwLock<Option<SnapCapVersion>>> = Arc::new(RwLock::new(None));
         // Take ownership of the state, replacing with HandshakeFailed as placeholder
         let state = std::mem::replace(&mut self.state, ConnectionState::HandshakeFailed);
         // Bound the handshake: a peer that opens TCP and then stalls must not park this
@@ -368,7 +449,7 @@ impl PeerConnectionServer {
         // target). On timeout the handshake future is dropped, closing the socket.
         let handshake_result = match tokio::time::timeout(
             HANDSHAKE_TIMEOUT,
-            handshake::perform(state, eth_version.clone()),
+            handshake::perform(state, eth_version.clone(), snap_version.clone()),
         )
         .await
         {
@@ -383,8 +464,14 @@ impl PeerConnectionServer {
         match handshake_result {
             Ok((mut established_state, stream)) => {
                 trace!(peer=%established_state.node, "Starting RLPx connection");
-                if let Err(reason) =
-                    initialize_connection(ctx, &mut established_state, stream, eth_version).await
+                if let Err(reason) = initialize_connection(
+                    ctx,
+                    &mut established_state,
+                    stream,
+                    eth_version,
+                    snap_version,
+                )
+                .await
                 {
                     match &reason {
                         PeerConnectionError::NoMatchingCapabilities
@@ -626,6 +713,73 @@ impl PeerConnectionServer {
                     retry_on_alternates(&state.blockchain, &state.peer_table, &hashes).await;
                 }
             }
+            // Sweep eth/72 in-flight requests.
+            let stale_ids_72: Vec<u64> = state
+                .requested_pooled_txs_72
+                .iter()
+                .filter(|(_, (_, _, _, ts))| now.duration_since(*ts) > INFLIGHT_TX_TIMEOUT)
+                .map(|(id, _)| *id)
+                .collect();
+            for id in stale_ids_72 {
+                if let Some((_announced, hashes, _, _)) = state.requested_pooled_txs_72.remove(&id)
+                {
+                    if let Err(e) = state.blockchain.mempool.clear_in_flight_txs(&hashes) {
+                        warn!(error = %e, "clear_in_flight_txs failed while sweeping stale v72 requests");
+                    }
+                    retry_on_alternates(&state.blockchain, &state.peer_table, &hashes).await;
+                }
+            }
+            // EIP-8070: drop in-flight GetCells entries the peer never answered, so
+            // the map can't grow unbounded on a peer that silently ignores requests.
+            // Unlike tx requests there is nothing to retry: the sampler re-requests
+            // cells on the next announcement or custody change.
+            state
+                .requested_cells
+                .retain(|_, (_, _, ts)| now.duration_since(*ts) <= INFLIGHT_TX_TIMEOUT);
+            // EIP-8070: prune cell entries for txs that left the pool.
+            if let Err(e) = state.blockchain.mempool.prune_cells() {
+                warn!(error = %e, "prune_cells failed during sweep");
+            }
+            if let Err(e) = state
+                .blockchain
+                .mempool
+                .prune_alternates(INFLIGHT_TX_TIMEOUT)
+            {
+                warn!(error = %e, "prune_alternates failed during sweep");
+            }
+            // EIP-8070: when the custody set changed (Engine API FCU v4) or eager
+            // mode latched on, fetch the now-wanted columns this peer can serve for
+            // pending blob txs. Inert unless sampling is enabled, and only ever
+            // asked of an eth/72 peer.
+            if state.blockchain.mempool.blob_sampling_enabled && supports_eth72(state) {
+                let generation = state.blockchain.mempool.custody_generation();
+                if generation != state.last_custody_generation {
+                    state.last_custody_generation = generation;
+                    // Unknown availability => assume the peer can serve any column
+                    // (matches the sampler-fetch default).
+                    let peer_available = state
+                        .blockchain
+                        .mempool
+                        .peer_cell_mask(state.node.node_id())
+                        .unwrap_or(None)
+                        .unwrap_or(u128::MAX);
+                    match state.blockchain.mempool.blob_txs_missing_cells() {
+                        Ok(missing_list) => {
+                            for (tx_hash, missing) in missing_list {
+                                let fetch_mask = missing & peer_available;
+                                if fetch_mask != 0 {
+                                    state
+                                        .pending_cell_requests
+                                        .push((vec![tx_hash], fetch_mask));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "blob_txs_missing_cells failed during sweep")
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -637,7 +791,11 @@ impl PeerConnectionServer {
     ) {
         if let ConnectionState::Established(ref mut established_state) = self.state {
             let result = flush_pending_tx_requests(established_state).await;
+            let result72 = flush_pending_tx_requests_72(established_state).await;
+            let result_cells = flush_pending_cell_requests(established_state).await;
             Self::process_cast_error(&self.state, result, ctx);
+            Self::process_cast_error(&self.state, result72, ctx);
+            Self::process_cast_error(&self.state, result_cells, ctx);
         }
     }
 
@@ -788,6 +946,7 @@ async fn initialize_connection<S>(
     state: &mut Established,
     mut stream: S,
     eth_version: Arc<RwLock<EthCapVersion>>,
+    snap_version: Arc<RwLock<Option<SnapCapVersion>>>,
 ) -> Result<(), PeerConnectionError>
 where
     S: Unpin + Send + Stream<Item = Result<Message, PeerConnectionError>> + 'static,
@@ -798,17 +957,28 @@ where
     }
     exchange_hello_messages(state, &mut stream).await?;
 
-    // Update eth capability version to the negotiated version for further message decoding
+    // Update eth capability version to the negotiated version for further message decoding.
     let version = match &state.negotiated_eth_capability {
         Some(cap) if cap == &Capability::eth(68) => EthCapVersion::V68,
         Some(cap) if cap == &Capability::eth(69) => EthCapVersion::V69,
         Some(cap) if cap == &Capability::eth(70) => EthCapVersion::V70,
         Some(cap) if cap == &Capability::eth(71) => EthCapVersion::V71,
+        Some(cap) if cap == &Capability::eth(72) => EthCapVersion::V72,
         _ => EthCapVersion::default(),
     };
     *eth_version
         .write()
         .map_err(|err| PeerConnectionError::InternalError(err.to_string()))? = version;
+
+    // Update snap capability version to the negotiated version.
+    let snap_ver = match &state.negotiated_snap_capability {
+        Some(cap) if cap == &Capability::snap(1) => Some(SnapCapVersion::V1),
+        Some(cap) if cap == &Capability::snap(2) => Some(SnapCapVersion::V2),
+        _ => None,
+    };
+    *snap_version
+        .write()
+        .map_err(|err| PeerConnectionError::InternalError(err.to_string()))? = snap_ver;
 
     init_capabilities(state, &mut stream).await?;
 
@@ -816,10 +986,19 @@ where
         handle: ctx.actor_ref(),
     };
 
+    let negotiated_capabilities: Vec<Capability> = state
+        .negotiated_eth_capability
+        .iter()
+        .chain(state.negotiated_snap_capability.iter())
+        .cloned()
+        .collect();
+
     state.peer_table.new_connected_peer(
         state.node.clone(),
         connection.clone(),
         state.capabilities.clone(),
+        negotiated_capabilities,
+        state.negotiated_eth_capability.clone(),
         state.is_inbound,
     )?;
 
@@ -918,7 +1097,7 @@ async fn send_all_pooled_tx_hashes(
             .map_err(|e| PeerConnectionError::BroadcastError(e.to_string()))?;
         send_tx_hashes(
             txs,
-            state.capabilities.clone(),
+            state.negotiated_eth_capability.clone(),
             connection,
             state.node.node_id(),
             &state.blockchain,
@@ -966,9 +1145,10 @@ where
     if let Some(eth) = state.negotiated_eth_capability.clone() {
         let status = match eth.version {
             68 => Message::Status68(StatusMessage68::new(&state.storage)?),
-            69 => Message::Status69(StatusMessage69::new(&state.storage)?),
-            70 => Message::Status70(StatusMessage70::new(&state.storage)?),
-            71 => Message::Status71(StatusMessage71::new(&state.storage)?),
+            69 => Message::Status69(StatusMessage69::new(&state.storage).await?),
+            70 => Message::Status70(StatusMessage70::new(&state.storage).await?),
+            71 => Message::Status71(StatusMessage71::new(&state.storage).await?),
+            72 => Message::Status72(StatusMessage72::new(&state.storage).await?),
             ver => {
                 return Err(PeerConnectionError::HandshakeError(format!(
                     "Invalid eth version {ver}"
@@ -999,6 +1179,10 @@ where
             }
             Message::Status71(msg_data) => {
                 trace!(peer=%state.node, "Received Status(71)");
+                backend::validate_status(msg_data, &state.storage, &eth)?
+            }
+            Message::Status72(msg_data) => {
+                trace!(peer=%state.node, "Received Status(72)");
                 backend::validate_status(msg_data, &state.storage, &eth)?
             }
             Message::Disconnect(disconnect) => {
@@ -1085,14 +1269,24 @@ async fn exchange_hello_messages<S>(
 where
     S: Unpin + Stream<Item = Result<Message, PeerConnectionError>>,
 {
+    // eth/72 (EIP-8070) is only safe to negotiate when blob sampling is enabled:
+    // it always elides blob payloads in PooledTransactions, and a node that does
+    // not run the sampler/provider cell-fetch loop would receive blob txs it can
+    // never reconstruct. With sampling off we cap at eth/71 so default nodes keep
+    // full-blob propagation unchanged. The EIP's Backwards Compatibility section
+    // explicitly supports this gradual, version-gated rollout.
+    let offer_eth72 = state.blockchain.mempool.blob_sampling_enabled;
     // This allow is because in l2 we mut the capabilities
     // to include the l2 cap
+    let snap_capabilities =
+        advertised_snap_capabilities(state.blockchain.state_sync_needs_trie_nodes());
     #[allow(unused_mut)]
-    let mut supported_capabilities: Vec<Capability> = [
-        &SUPPORTED_ETH_CAPABILITIES[..],
-        &SUPPORTED_SNAP_CAPABILITIES[..],
-    ]
-    .concat();
+    let mut supported_capabilities: Vec<Capability> = SUPPORTED_ETH_CAPABILITIES
+        .iter()
+        .filter(|cap| offer_eth72 || cap.version < 72)
+        .chain(snap_capabilities.iter())
+        .cloned()
+        .collect();
     #[cfg(feature = "l2")]
     if state.l2_state.is_supported() {
         supported_capabilities.push(crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
@@ -1126,15 +1320,20 @@ where
             for cap in &hello_message.capabilities {
                 match cap.protocol() {
                     "eth" => {
+                        // Don't negotiate a version we didn't advertise: eth/72 is
+                        // only offered when blob sampling is enabled (see above).
                         if SUPPORTED_ETH_CAPABILITIES.contains(cap)
+                            && (offer_eth72 || cap.version < 72)
                             && cap.version > negotiated_eth_version
                         {
                             negotiated_eth_version = cap.version;
                         }
                     }
                     "snap" => {
-                        if SUPPORTED_SNAP_CAPABILITIES.contains(cap)
-                            && cap.version > negotiated_snap_version
+                        // Match against what this connection actually advertised, not the
+                        // full set: negotiating a version we withheld would hand back the
+                        // snap/2 the sync gate above deliberately kept off the wire.
+                        if snap_capabilities.contains(cap) && cap.version > negotiated_snap_version
                         {
                             negotiated_snap_version = cap.version;
                         }
@@ -1308,6 +1507,8 @@ async fn handle_incoming_message(
             | Message::GetStorageRanges(_)
             | Message::GetByteCodes(_)
             | Message::GetTrieNodes(_)
+            | Message::Snap2GetBlockAccessLists(_)
+            | Message::GetCells(_)
     );
     if is_data_request && !check_serve_request_rate(state) {
         debug!(
@@ -1362,6 +1563,11 @@ async fn handle_incoming_message(
             };
         }
         Message::Status71(msg_data) => {
+            if let Some(eth) = &state.negotiated_eth_capability {
+                backend::validate_status(msg_data, &state.storage, eth)?
+            };
+        }
+        Message::Status72(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
                 backend::validate_status(msg_data, &state.storage, eth)?
             };
@@ -1581,6 +1787,162 @@ async fn handle_incoming_message(
                 }
             }
         }
+        // eth/72 (EIP-8070): provider/sampler split based on blob_sampling_enabled.
+        Message::NewPooledTransactionHashes72(announcement) if peer_supports_eth => {
+            if state.blockchain.is_synced() {
+                let peer_id = state.node.node_id();
+                // Record peer cell availability from the announced mask, but only when
+                // the announcement carries a blob tx: otherwise a peer sending an
+                // all-zero mask on a non-blob announcement would overwrite its real
+                // availability with an empty set and stop us sampling from it for good.
+                // See `NewPooledTransactionHashes72::announces_blob_tx`.
+                if announcement.announces_blob_tx()
+                    && let Some(mask) = announcement.cell_mask
+                    && let Err(e) = state
+                        .blockchain
+                        .mempool
+                        .record_peer_cell_availability(peer_id, mask)
+                {
+                    warn!(error = %e, "record_peer_cell_availability failed");
+                }
+
+                let hashes =
+                    announcement.get_transactions_to_request(&state.blockchain, peer_id)?;
+
+                if !hashes.is_empty() {
+                    if !state.blockchain.mempool.blob_sampling_enabled {
+                        // Sampling disabled: always provider — request everything.
+                        // Trim to the truly-requested subset so the flush does not
+                        // re-request hashes already in-flight from another peer.
+                        state.pending_tx_requests_72.push((
+                            announcement.filter_to(&hashes),
+                            hashes,
+                            BlobFetchRole::Provider,
+                        ));
+                    } else {
+                        // Sampling enabled: decide per-hash whether we are provider or sampler.
+                        let epoch_seed = match state.storage.get_latest_block_number() {
+                            Ok(n) => n / 32,
+                            Err(e) => {
+                                warn!(error = %e, "eth/72: head block unavailable; using epoch 0 for role split");
+                                0
+                            }
+                        };
+
+                        // Compute the local node id once per announcement (per-node entropy).
+                        let local_pubkey = public_key_from_signing_key(&state.signer);
+                        let local_node_id = node_id(&local_pubkey);
+                        let eager = state.blockchain.mempool.is_eager_provider();
+
+                        let mut provider_hashes: Vec<H256> = Vec::new();
+                        let mut sampler_hashes: Vec<H256> = Vec::new();
+
+                        for &hash in &hashes {
+                            // Check if this is a blob tx (has a bit in cell_mask or
+                            // was in a type-3 announcement). We use cell_mask presence
+                            // as the signal — non-blob txs always go through provider flow.
+                            let is_blob = announcement.cell_mask.is_some()
+                                && announcement
+                                    .transaction_types
+                                    .iter()
+                                    .zip(announcement.transaction_hashes.iter())
+                                    .any(|(&ty, &h)| h == hash && ty == 3);
+
+                            // provider path only when is_provider_role AND peer advertised
+                            // full availability (all-ones mask). Otherwise sampler path.
+                            let peer_is_full_provider = announcement.cell_mask == Some(u128::MAX);
+                            if !is_blob
+                                || (peer_is_full_provider
+                                    && is_provider_role(local_node_id, hash, epoch_seed, eager))
+                            {
+                                provider_hashes.push(hash);
+                            } else {
+                                sampler_hashes.push(hash);
+                            }
+                        }
+
+                        // Provider hashes: request full tx (and cells at u128::MAX).
+                        if !provider_hashes.is_empty() {
+                            let trimmed = announcement.filter_to(&provider_hashes);
+                            // For provider role, request cells with all-ones mask.
+                            let provider_ann = NewPooledTransactionHashes72::from_raw(
+                                trimmed.transaction_types.clone(),
+                                trimmed.transaction_sizes.clone(),
+                                trimmed.transaction_hashes,
+                                Some(u128::MAX),
+                            );
+                            state.pending_tx_requests_72.push((
+                                provider_ann,
+                                provider_hashes,
+                                BlobFetchRole::Provider,
+                            ));
+                        }
+
+                        // Sampler hashes: record the announcing peer as a provider
+                        // ONLY if it signaled full availability (all-ones mask);
+                        // a partially-available peer is not a provider observation.
+                        // if recording this provider hits the threshold and we already
+                        // have the tx body, retrigger cell-fetch immediately rather than
+                        // waiting for the tx-body response path.
+                        if announcement.cell_mask == Some(u128::MAX) {
+                            let mempool = &state.blockchain.mempool;
+                            for &hash in &sampler_hashes {
+                                let count = match mempool
+                                    .record_provider_announcement(hash, peer_id)
+                                {
+                                    Ok(n) => n,
+                                    Err(e) => {
+                                        warn!(error = %e, "record_provider_announcement failed");
+                                        continue;
+                                    }
+                                };
+                                // retrigger: threshold just reached and tx body already known.
+                                if count
+                                    == ethrex_blockchain::mempool::MIN_PROVIDERS_BEFORE_SAMPLING
+                                    && mempool.contains_tx(hash).unwrap_or(false)
+                                {
+                                    let custody = match mempool.get_custody_columns() {
+                                        Ok(c) => c,
+                                        Err(e) => {
+                                            warn!(error = %e, "get_custody_columns failed (D6b)");
+                                            continue;
+                                        }
+                                    };
+                                    // only add C_extra when this peer is a provider.
+                                    let mut target = custody;
+                                    if let Some(extra_col) =
+                                        pick_random_extra_column(custody, local_node_id, hash)
+                                    {
+                                        target |= 1u128 << extra_col;
+                                    }
+                                    // A provider holds every column, so the whole
+                                    // target can be requested from it.
+                                    if target != 0 {
+                                        state.pending_cell_requests.push((vec![hash], target));
+                                    }
+                                }
+                            }
+                        }
+                        if !sampler_hashes.is_empty() {
+                            // Request the tx body (no cells) from this peer.
+                            let trimmed = announcement.filter_to(&sampler_hashes);
+                            // No cell_mask: a sampler request carries no availability claim.
+                            let sampler_ann = NewPooledTransactionHashes72::from_raw(
+                                trimmed.transaction_types,
+                                trimmed.transaction_sizes,
+                                trimmed.transaction_hashes,
+                                None,
+                            );
+                            state.pending_tx_requests_72.push((
+                                sampler_ann,
+                                sampler_hashes,
+                                BlobFetchRole::Sampler,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
         Message::GetPooledTransactions(msg) => {
             let response = msg.handle(&state.blockchain)?;
             let batch_size = response.pooled_transactions.len() as u64;
@@ -1598,7 +1960,31 @@ async fn handle_incoming_message(
                     DisconnectReason::UselessPeer,
                 ));
             }
-            send(state, Message::PooledTransactions(response)).await?;
+            // eth/72: respond with PooledTransactions72 (elided blob payload).
+            let is_eth72 = state
+                .negotiated_eth_capability
+                .as_ref()
+                .is_some_and(|cap| cap.version == 72);
+            if is_eth72 {
+                let response72 =
+                    PooledTransactions72::new(response.id, response.pooled_transactions);
+                send(state, Message::PooledTransactions72(response72)).await?;
+            } else {
+                // A blob tx ingested over eth/72 may sit in the pool with an
+                // empty bundle (cells fetched separately). Pre-72 responses
+                // carry blob txs with their full payload, and a wrapper whose
+                // blob count disagrees with its commitments is a protocol
+                // violation the peer disconnects us for — skip those instead,
+                // which `GetPooledTransactions` explicitly allows.
+                let mut response = response;
+                response.pooled_transactions.retain(|tx| match tx {
+                    P2PTransaction::EIP4844TransactionWithBlobs(wrapped) => {
+                        wrapped.blobs_bundle.blobs.len() == wrapped.blobs_bundle.commitments.len()
+                    }
+                    _ => true,
+                });
+                send(state, Message::PooledTransactions(response)).await?;
+            }
             state.txs_sent_to_peer += batch_size;
         }
         Message::PooledTransactions(msg) if peer_supports_eth => {
@@ -1688,6 +2074,269 @@ async fn handle_incoming_message(
                 }
             }
         }
+        // eth/72 (EIP-8070): PooledTransactions72 handler.
+        // Blob txs arrive with elided blobs — do NOT trigger the missing-blob disconnect.
+        Message::PooledTransactions72(msg) if peer_supports_eth => {
+            if !msg.pooled_transactions.is_empty() {
+                state.received_txs_from_peer = true;
+            }
+            let removed_request = state.requested_pooled_txs_72.remove(&msg.id);
+            if let Some((_, ref requested_hashes, _, _)) = removed_request {
+                state
+                    .blockchain
+                    .mempool
+                    .clear_in_flight_txs(requested_hashes)?;
+            }
+            if state.blockchain.is_synced() {
+                if let Some((announced, requested_hashes, _, _)) = &removed_request {
+                    let fork = state.blockchain.current_fork()?;
+                    if let Err(error) = msg.validate_requested(announced, fork) {
+                        warn!(
+                            peer=%state.node,
+                            reason=%error,
+                            "disconnected from peer (eth/72 PooledTransactions72)",
+                        );
+                        retry_on_alternates(&state.blockchain, &state.peer_table, requested_hashes)
+                            .await;
+                        send_disconnect_message(state, Some(DisconnectReason::SubprotocolError))
+                            .await;
+                        return Err(PeerConnectionError::DisconnectSent(
+                            DisconnectReason::SubprotocolError,
+                        ));
+                    }
+                }
+                #[cfg(feature = "l2")]
+                let is_l2_mode = state.l2_state.is_supported();
+                #[cfg(not(feature = "l2"))]
+                let is_l2_mode = false;
+                if let Err(error) = msg.handle(&state.node, &state.blockchain, is_l2_mode).await {
+                    if matches!(
+                        error,
+                        ethrex_blockchain::error::MempoolError::BlobsBundleError(_)
+                    ) {
+                        warn!(
+                            peer=%state.node,
+                            reason=%error,
+                            "disconnected from peer (eth/72 blob error)",
+                        );
+                        if let Some((_announced, requested_hashes, _, _)) = &removed_request {
+                            retry_on_alternates(
+                                &state.blockchain,
+                                &state.peer_table,
+                                requested_hashes,
+                            )
+                            .await;
+                        }
+                        send_disconnect_message(state, Some(DisconnectReason::SubprotocolError))
+                            .await;
+                        return Err(PeerConnectionError::DisconnectSent(
+                            DisconnectReason::SubprotocolError,
+                        ));
+                    }
+                    return Err(error.into());
+                }
+                // EIP-8070 sampler: after tx validation, check if we have enough provider
+                // announcements to start fetching cells.
+                if state.blockchain.mempool.blob_sampling_enabled {
+                    let peer_id = state.node.node_id();
+                    let mempool = &state.blockchain.mempool;
+                    let local_pubkey = public_key_from_signing_key(&state.signer);
+                    let local_node_id = node_id(&local_pubkey);
+                    if let Some((announced, requested_hashes, role, _)) = &removed_request {
+                        // Provider role: the eth/72 PooledTransactions response is
+                        // always elided, so the blobs never arrive with the body.
+                        // A provider must end up holding the full payload (EIP-8070),
+                        // and the only way to obtain it on an eth/72 connection is
+                        // GetCells — request every column from this peer, which
+                        // advertised full availability. Cells already held are
+                        // subtracted at flush time.
+                        if *role == BlobFetchRole::Provider {
+                            let blob_hashes: Vec<H256> = announced
+                                .transaction_types
+                                .iter()
+                                .zip(announced.transaction_hashes.iter())
+                                .filter(|&(&ty, hash)| ty == 3 && requested_hashes.contains(hash))
+                                .map(|(_, &hash)| hash)
+                                .collect();
+                            if !blob_hashes.is_empty() {
+                                state.pending_cell_requests.push((blob_hashes, u128::MAX));
+                            }
+                        }
+                        if *role == BlobFetchRole::Sampler {
+                            for &tx_hash in requested_hashes.iter() {
+                                // Providers were recorded at announce time (provider-gated);
+                                // here we only read the distinct-provider count to decide
+                                // whether the 2-provider sampling threshold is met.
+                                let count = match mempool.provider_announcer_count(tx_hash) {
+                                    Ok(n) => n,
+                                    Err(e) => {
+                                        warn!(error = %e, "provider_announcer_count failed");
+                                        continue;
+                                    }
+                                };
+                                if count
+                                    >= ethrex_blockchain::mempool::MIN_PROVIDERS_BEFORE_SAMPLING
+                                {
+                                    // Compute target columns = custody | extra.
+                                    let custody = match mempool.get_custody_columns() {
+                                        Ok(c) => c,
+                                        Err(e) => {
+                                            warn!(error = %e, "get_custody_columns failed");
+                                            continue;
+                                        }
+                                    };
+                                    // C_extra is only added when the target peer
+                                    // is a provider (advertised full availability).
+                                    let peer_mask = mempool
+                                        .peer_cell_mask(peer_id)
+                                        .unwrap_or(None)
+                                        .unwrap_or(u128::MAX);
+                                    let mut target = custody;
+                                    if peer_mask == u128::MAX
+                                        && let Some(extra_col) = pick_random_extra_column(
+                                            custody,
+                                            local_node_id,
+                                            tx_hash,
+                                        )
+                                    {
+                                        target |= 1u128 << extra_col;
+                                    }
+                                    let fetch_mask = target & peer_mask;
+                                    if fetch_mask != 0 {
+                                        state
+                                            .pending_cell_requests
+                                            .push((vec![tx_hash], fetch_mask));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // eth/72 (EIP-8070): GetCells handler — serve cells we hold.
+        Message::GetCells(req) if peer_supports_eth => {
+            let response = req.handle(&state.blockchain.mempool);
+            send(state, Message::Cells(response)).await?;
+        }
+        // eth/72 (EIP-8070): Cells ingest — verify received cells against the
+        // sidecar KZG proofs (carried in the elided PooledTransactions72), then
+        // store. Cells that fail verification, or lack a matching sidecar proof,
+        // cause a disconnect: accepting unverified cells would defeat DAS.
+        ref message @ Message::Cells(_) if peer_supports_eth => {
+            #[allow(unused_mut)]
+            let mut verify_failed = false;
+            // devp2p `caps/eth.md`: a `Cells` response must answer an outstanding
+            // `GetCells`, and both its hash list and its `cells` bitmap must be
+            // subsets of that request's. A peer sending unrequested elements must be
+            // disconnected — unlike a KZG failure this is checkable without c-kzg,
+            // and it stops a peer from pushing cells we never asked for.
+            if let Message::Cells(cells_msg) = message {
+                let outcome = match state.requested_cells.remove(&cells_msg.id) {
+                    Some((requested_hashes, requested_mask, _)) => {
+                        cells_msg.validate_requested(&requested_hashes, requested_mask)
+                    }
+                    None => Err(CellsResponseError::UnknownRequestId),
+                };
+                if let Err(error) = outcome {
+                    debug!(
+                        peer = %state.node,
+                        id = cells_msg.id,
+                        %error,
+                        "Rejecting Cells response",
+                    );
+                    verify_failed = true;
+                }
+            }
+            // Skip the KZG pass when the response already failed the framing checks:
+            // nothing from an unrequested response should reach the cell store.
+            #[cfg(feature = "c-kzg")]
+            if let Message::Cells(cells_msg) = message
+                && !verify_failed
+            {
+                use ethrex_common::types::{BYTES_PER_CELL, CELLS_PER_EXT_BLOB, Commitment, Proof};
+                use ethrex_crypto::kzg::verify_cell_kzg_proof_batch_partial;
+                let mempool = &state.blockchain.mempool;
+                // Columns carried in this response (ascending order of set bits).
+                let cols: Vec<u64> = (0..CELLS_PER_EXT_BLOB as u64)
+                    .filter(|bit| (cells_msg.cell_mask >> bit) & 1 == 1)
+                    .collect();
+
+                'txs: for (tx_idx, tx_hash) in cells_msg.transaction_hashes.iter().enumerate() {
+                    let Some(bundle) = mempool.get_blobs_bundle(*tx_hash).unwrap_or(None) else {
+                        continue;
+                    };
+                    // Cells are packed index-major per devp2p `caps/eth.md`:
+                    // [col0 over blobs, col1 over blobs, ...].
+                    let tx_cells = cells_msg.cells.get(tx_idx).cloned().unwrap_or_default();
+                    let blob_count = bundle.commitments.len();
+
+                    let mut to_store: Vec<(usize, usize, Box<[u8; BYTES_PER_CELL]>)> = Vec::new();
+                    let mut v_commitments: Vec<Commitment> = Vec::new();
+                    let mut v_cols: Vec<u64> = Vec::new();
+                    let mut v_cells: Vec<[u8; BYTES_PER_CELL]> = Vec::new();
+                    let mut v_proofs: Vec<Proof> = Vec::new();
+
+                    for blob_idx in 0..blob_count {
+                        for (col_pos, &col) in cols.iter().enumerate() {
+                            let cell_pos = col_pos * blob_count + blob_idx;
+                            let Some(&cell) = tx_cells.get(cell_pos) else {
+                                continue;
+                            };
+                            // Sidecar cell proof for (blob_idx, col).
+                            let proof_idx = blob_idx * CELLS_PER_EXT_BLOB + col as usize;
+                            match (
+                                bundle.proofs.get(proof_idx),
+                                bundle.commitments.get(blob_idx),
+                            ) {
+                                (Some(&proof), Some(&commitment)) => {
+                                    v_commitments.push(commitment);
+                                    v_cols.push(col);
+                                    v_cells.push(cell);
+                                    v_proofs.push(proof);
+                                    to_store.push((blob_idx, col as usize, Box::new(cell)));
+                                }
+                                // A received cell with no matching sidecar proof can't be trusted.
+                                _ => {
+                                    verify_failed = true;
+                                    break 'txs;
+                                }
+                            }
+                        }
+                    }
+
+                    if v_cells.is_empty() {
+                        continue;
+                    }
+                    match verify_cell_kzg_proof_batch_partial(
+                        &v_commitments,
+                        &v_cols,
+                        &v_cells,
+                        &v_proofs,
+                    ) {
+                        Ok(true) => {}
+                        Ok(false) | Err(_) => {
+                            verify_failed = true;
+                            break;
+                        }
+                    }
+                    if let Err(e) = mempool.store_cells(*tx_hash, blob_count, to_store) {
+                        warn!(error = %e, "store_cells failed");
+                    }
+                }
+            }
+            if verify_failed {
+                warn!(peer=%state.node, "disconnected: invalid cell KZG proofs");
+                if let Message::Cells(c) = message {
+                    let hashes = c.transaction_hashes.clone();
+                    retry_on_alternates(&state.blockchain, &state.peer_table, &hashes).await;
+                }
+                send_disconnect_message(state, Some(DisconnectReason::SubprotocolError)).await;
+                return Err(PeerConnectionError::DisconnectSent(
+                    DisconnectReason::SubprotocolError,
+                ));
+            }
+        }
         Message::GetStorageRanges(req) => {
             let response = process_storage_ranges_request(req, state.storage.clone()).await?;
             send(state, Message::StorageRanges(response)).await?
@@ -1710,6 +2359,27 @@ async fn handle_incoming_message(
                 Err(_) => send(state, Message::TrieNodes(TrieNodes { id, nodes: vec![] })).await?,
             }
         }
+        Message::Snap2GetBlockAccessLists(req) => {
+            // Defense-in-depth: only serve if the peer negotiated snap/2.
+            if state.negotiated_snap_capability != Some(Capability::snap(2)) {
+                warn!(
+                    peer = %state.node,
+                    "Received Snap2GetBlockAccessLists from peer that did not negotiate snap/2; disconnecting"
+                );
+                send_disconnect_message(state, Some(DisconnectReason::ProtocolError)).await;
+                return Err(PeerConnectionError::DisconnectSent(
+                    DisconnectReason::ProtocolError,
+                ));
+            }
+            // Offload synchronous storage/RLP work off the connection task
+            // so other peers/messages keep flowing on this tokio worker.
+            let storage = state.storage.clone();
+            let response =
+                tokio::task::spawn_blocking(move || build_snap2_bal_response(req, &storage))
+                    .await
+                    .map_err(|e| PeerConnectionError::InternalError(e.to_string()))??;
+            send(state, Message::Snap2BlockAccessLists(response)).await?
+        }
         #[cfg(feature = "l2")]
         Message::L2(req) if peer_supports_l2 => {
             handle_based_capability_message(state, req).await?;
@@ -1724,7 +2394,8 @@ async fn handle_incoming_message(
         | message @ Message::Receipts68(_)
         | message @ Message::Receipts69(_)
         | message @ Message::Receipts70(_)
-        | message @ Message::BlockAccessLists(_) => {
+        | message @ Message::BlockAccessLists(_)
+        | message @ Message::Snap2BlockAccessLists(_) => {
             if let Some((_, tx)) = message
                 .request_id()
                 .and_then(|id| state.current_requests.remove(&id))
@@ -1739,6 +2410,61 @@ async fn handle_incoming_message(
         message => return Err(PeerConnectionError::MessageNotHandled(format!("{message}"))),
     };
     Ok(())
+}
+
+/// Build a `Snap2BlockAccessLists` response for a `Snap2GetBlockAccessLists` request.
+///
+/// Per EIP-8189:
+/// - §50: always respond; push `None` for unknown/pruned/pre-Amsterdam blocks.
+/// - §51: truncate from tail (preserve order) once the byte budget is exceeded.
+/// - §52: orphaned blocks are served the same way as canonical blocks (keyed by hash).
+/// - §60: enforce `min(response_bytes, 2 MiB)`; `0` means 2 MiB.
+/// - §100: push `None` for blocks whose header has `block_access_list_hash == None`.
+pub fn build_snap2_bal_response(
+    req: Snap2GetBlockAccessLists,
+    storage: &ethrex_storage::Store,
+) -> Result<Snap2BlockAccessLists, PeerConnectionError> {
+    let cap = if req.response_bytes == 0 {
+        BAL_RESPONSE_SOFT_CAP_BYTES
+    } else {
+        req.response_bytes.min(BAL_RESPONSE_SOFT_CAP_BYTES)
+    };
+
+    // Defend against tiny-BAL flood DoS: truncate hash list before doing any
+    // storage work. Matches go-ethereum's `maxAccessListLookups`.
+    let hashes: &[H256] = if req.block_hashes.len() > BAL_MAX_REQUEST_HASHES {
+        &req.block_hashes[..BAL_MAX_REQUEST_HASHES]
+    } else {
+        &req.block_hashes
+    };
+
+    // Batched BAL fetch (`Store::iter_block_access_lists_by_hashes`). No per-hash
+    // header lookup is needed to satisfy §100: a stored BAL implies the block was
+    // admitted post-Amsterdam (BAL storage is gated on the Amsterdam fork), so a
+    // present entry is served directly. When no BAL is stored — pre-Amsterdam,
+    // pruned, or unknown block — the slot is `None` regardless.
+    let raw_bals = storage
+        .iter_block_access_lists_by_hashes(hashes)
+        .map_err(|e| PeerConnectionError::InternalError(e.to_string()))?;
+
+    let mut bals: Vec<Option<ethrex_common::types::block_access_list::BlockAccessList>> =
+        Vec::with_capacity(hashes.len());
+    let mut bytes_used: u64 = 0;
+
+    for raw_bal in raw_bals.into_iter() {
+        // Keep at least one entry then stop once cap is exceeded.
+        if !bals.is_empty() && bytes_used >= cap {
+            break;
+        }
+
+        bytes_used += match &raw_bal {
+            Some(bal) => bal.length() as u64,
+            None => 1, // RLP empty string (0x80) = 1 byte
+        };
+        bals.push(raw_bal);
+    }
+
+    Ok(Snap2BlockAccessLists { id: req.id, bals })
 }
 
 async fn handle_outgoing_message(
@@ -1866,6 +2592,169 @@ async fn flush_pending_tx_requests(state: &mut Established) -> Result<(), PeerCo
     }
 
     Ok(())
+}
+
+/// eth/72 variant of flush_pending_tx_requests.
+/// Sends GetPooledTransactions for v72 announcements and stores them in
+/// requested_pooled_txs_72 for validation when PooledTransactions72 arrives.
+///
+/// Hashes are grouped by [`BlobFetchRole`] before chunking: the role decides
+/// whether cells are fetched once the bodies arrive, so provider and sampler
+/// hashes must never share a request.
+///
+/// Per-announcement cell_mask tracking: each hash carries the availability its
+/// announcer claimed. When hashes are chunked across multiple requests, each
+/// chunk's mask is the union of only the masks relevant to the hashes in that
+/// chunk (not a global OR across all announcements).
+async fn flush_pending_tx_requests_72(state: &mut Established) -> Result<(), PeerConnectionError> {
+    if state.pending_tx_requests_72.is_empty() {
+        return Ok(());
+    }
+
+    let pending = std::mem::take(&mut state.pending_tx_requests_72);
+
+    // Flatten per-hash metadata into one run per role.
+    let mut by_role: Vec<(BlobFetchRole, Vec<AnnouncedTx>)> = vec![
+        (BlobFetchRole::Provider, Vec::new()),
+        (BlobFetchRole::Sampler, Vec::new()),
+    ];
+    for (announcement, _hashes, role) in &pending {
+        let Some((_, entries)) = by_role.iter_mut().find(|(r, _)| r == role) else {
+            continue;
+        };
+        for (i, hash) in announcement.transaction_hashes.iter().enumerate() {
+            entries.push((
+                *hash,
+                announcement.transaction_types[i],
+                announcement.transaction_sizes[i],
+                announcement.cell_mask,
+            ));
+        }
+    }
+
+    // Every hash still to be sent, in send order, so a failed write can release the
+    // in-flight reservation for all of them and not just the current role's tail.
+    let mut unsent: Vec<H256> = by_role
+        .iter()
+        .flat_map(|(_, entries)| entries.iter().map(|(hash, ..)| *hash))
+        .collect();
+
+    const MAX_HASHES_PER_REQUEST: usize = 256;
+    for (role, entries) in &by_role {
+        for chunk in entries.chunks(MAX_HASHES_PER_REQUEST) {
+            let chunk_hashes: Vec<H256> = chunk.iter().map(|(hash, ..)| *hash).collect();
+            // Compute the mask for this chunk only: OR of masks for hashes in this chunk.
+            let chunk_cell_mask: Option<u128> =
+                chunk
+                    .iter()
+                    .fold(None, |acc, (.., mask)| match (acc, mask) {
+                        (None, None) => None,
+                        (Some(a), None) => Some(a),
+                        (None, Some(b)) => Some(*b),
+                        (Some(a), Some(b)) => Some(a | b),
+                    });
+
+            let announcement = NewPooledTransactionHashes72::from_raw(
+                chunk
+                    .iter()
+                    .map(|(_, ty, ..)| *ty)
+                    .collect::<Vec<_>>()
+                    .into(),
+                chunk.iter().map(|(_, _, size, _)| *size).collect(),
+                chunk_hashes.clone(),
+                chunk_cell_mask,
+            );
+            let request = GetPooledTransactions::new(random(), chunk_hashes.clone());
+            let request_id = request.id;
+            if let Err(e) = send(state, Message::GetPooledTransactions(request)).await {
+                if !unsent.is_empty() {
+                    if let Err(clear_err) = state.blockchain.mempool.clear_in_flight_txs(&unsent) {
+                        warn!(error = %clear_err, "clear_in_flight_txs failed after send error (v72)");
+                    }
+                    retry_on_alternates(&state.blockchain, &state.peer_table, &unsent).await;
+                }
+                return Err(e);
+            }
+            // Chunks are emitted in the order `unsent` was built, so the sent ones
+            // are always its prefix.
+            unsent.drain(..chunk_hashes.len());
+            state.requested_pooled_txs_72.insert(
+                request_id,
+                (announcement, chunk_hashes, *role, Instant::now()),
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// EIP-8070: flush buffered cell requests as batched GetCells messages.
+/// Mirrors flush_pending_tx_requests_72 but sends GetCells instead of
+/// GetPooledTransactions.
+async fn flush_pending_cell_requests(state: &mut Established) -> Result<(), PeerConnectionError> {
+    if state.pending_cell_requests.is_empty() {
+        return Ok(());
+    }
+    let pending = std::mem::take(&mut state.pending_cell_requests);
+    // GetCells (0x14) only exists in eth/72; on an older negotiated version that
+    // message id lands outside the eth range and the peer drops the connection.
+    if !supports_eth72(state) {
+        return Ok(());
+    }
+
+    // Merge all pending requests into a flat list of hashes with their masks,
+    // dropping the columns already held: requests are queued from several
+    // triggers (announce retrigger, tx-body response, custody sweep) and by
+    // every connection, so without this the same cells are re-requested after
+    // another peer already delivered them.
+    let mut all_hashes: Vec<H256> = Vec::new();
+    let mut all_masks: Vec<u128> = Vec::new();
+    for (hashes, mask) in &pending {
+        for &h in hashes {
+            let missing = mask & !state.blockchain.mempool.available_cell_mask(h);
+            if missing != 0 {
+                all_hashes.push(h);
+                all_masks.push(missing);
+            }
+        }
+    }
+    if all_hashes.is_empty() {
+        return Ok(());
+    }
+
+    // Stay under the devp2p `caps/eth.md` soft limit of 64 hashes per GetCells, and
+    // tighten it further so a peer applying the `MAX_CELLS_SERVED` budget can answer
+    // in full: it omits trailing transactions, and an omitted tail is not re-requested
+    // until the next announcement or custody change. The widest mask in the batch
+    // bounds every chunk's mask, so this is conservative.
+    let widest_mask = all_masks.iter().fold(0u128, |acc, &m| acc | m);
+    let hashes_per_request =
+        (MAX_CELLS_SERVED / cells_per_hash(widest_mask)).clamp(1, GET_CELLS_SOFT_LIMIT_HASHES);
+    for (i, chunk) in all_hashes.chunks(hashes_per_request).enumerate() {
+        let offset = i * hashes_per_request;
+        let chunk_len = chunk.len();
+        let chunk_masks = &all_masks[offset..offset + chunk_len];
+        // Merge masks for this chunk.
+        let merged_mask = chunk_masks.iter().fold(0u128, |acc, &m| acc | m);
+        let id = random();
+        let request = GetCells::new(id, chunk.to_vec(), merged_mask);
+        send(state, Message::GetCells(request)).await?;
+        // Register only after a successful send, so a failed write doesn't leave a
+        // phantom in-flight entry (mirrors `flush_pending_tx_requests`).
+        state
+            .requested_cells
+            .insert(id, (chunk.to_vec(), merged_mask, Instant::now()));
+    }
+    Ok(())
+}
+
+/// EIP-8070 messages (`GetCells`, `Cells`) exist only in eth/72, so they may only
+/// be sent once eth/72 is the negotiated version for this connection.
+fn supports_eth72(state: &Established) -> bool {
+    state
+        .negotiated_eth_capability
+        .as_ref()
+        .is_some_and(|cap| cap.version >= 72)
 }
 
 /// For each hash that has a remaining alternate announcer, look up that

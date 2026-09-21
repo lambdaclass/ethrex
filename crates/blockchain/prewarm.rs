@@ -227,6 +227,9 @@ impl MempoolPrewarmer {
         if !matches!(blockchain.options.r#type, BlockchainType::L1) {
             return None;
         }
+        if !blockchain.options.mempool_prewarm_enabled {
+            return None;
+        }
         #[cfg(not(feature = "rayon"))]
         {
             warn!("Mempool prewarm requires the rayon feature; disabled");
