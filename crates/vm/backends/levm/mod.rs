@@ -78,6 +78,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
 /// EIP-7928 `block_access_index` of the pre-block system calls.
+/// Only the parallel BAL path reads it, and that path is rayon-gated.
+#[cfg(feature = "rayon")]
 const PRE_BLOCK_BAL_INDEX: u32 = 0;
 
 /// EIP-8079 `burned_fees` for an LStar block: `base_fee · post_refund_gas +
