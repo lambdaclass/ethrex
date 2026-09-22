@@ -28,10 +28,11 @@ AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 AMSTERDAM_SUBTREES := for_amsterdam for_bpo2toamsterdamattime15k
 AMSTERDAM_STAMP := $(SPECTEST_VECTORS_DIR)/.amsterdam_overlay
 
-# zkevm@v0.8.2 is filled against the same tests-glamsterdam-devnet@v8.1.0 content
-# as v0.8.0 (its upstream delta is release CI and Python renames only) — the same
-# base line as the Amsterdam bundle — and additionally carries the EIP-8025 stateless
-# witness fields (executionWitness / statelessInputBytes / statelessOutputBytes).
+# The zkevm bundle is the Amsterdam fixtures plus the EIP-8025 stateless witness
+# fields (executionWitness / statelessInputBytes / statelessOutputBytes). Bump it
+# to a release filled against the same tests-glamsterdam-devnet content the
+# Amsterdam pin above names: when the two drift, the bundles describe slightly
+# different chains.
 # Both bundles extract a `for_amsterdam/` subtree, so we keep the zkevm bundle in
 # a separate root that only the stateless harness reads, to avoid overlaying the
 # regular Amsterdam fixtures.
