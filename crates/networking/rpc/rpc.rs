@@ -73,9 +73,9 @@ use axum_extra::{
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
-use ethrex_common::types::Block;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
+use ethrex_common::types::{Block, BlockHeader};
 use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
@@ -197,6 +197,8 @@ type BlockWorkerMessage = (
     Block,
     Option<BlockAccessList>,
     bool,
+    // The block's parent header when the caller already has it.
+    Option<BlockHeader>,
     // When the request was handed off; lets the executor measure the wake-up hop.
     std::time::Instant,
 );
@@ -483,7 +485,7 @@ pub fn start_block_executor(
     let executor = std::thread::Builder::new()
         .name("block_executor".to_string())
         .spawn(move || {
-            while let Some((notify, block, bal, make_witness, sent_at)) =
+            while let Some((notify, block, bal, make_witness, parent_header, sent_at)) =
                 block_receiver.blocking_recv()
             {
                 let received_at = std::time::Instant::now();
@@ -494,16 +496,12 @@ pub fn start_block_executor(
                     handle.cancel_current();
                 }
                 let imported_header = prewarmer.as_ref().map(|_| block.header.clone());
-                let result = (|| {
-                    let bal = bal.map(Arc::new);
-                    if make_witness {
-                        let witness = blockchain.add_block_pipeline_with_witness(block, bal)?;
-                        Ok(Some(witness))
-                    } else {
-                        blockchain.add_block_pipeline(block, bal)?;
-                        Ok(None)
-                    }
-                })();
+                let result = blockchain.add_block_pipeline_from_payload(
+                    block,
+                    bal.map(Arc::new),
+                    parent_header,
+                    make_witness,
+                );
                 // One pass per cleanly imported block, only when synced and
                 // idle (no queued blocks): warm the child of the new head.
                 let executed_at = std::time::Instant::now();
