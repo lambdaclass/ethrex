@@ -1,14 +1,14 @@
 //! BAL lazy-cursor regression tests.
 //!
-//! All three tests exercise the helper functions directly (unit level) because
+//! All five tests exercise the helper functions directly (unit level) because
 //! `seed_one_storage_slot_from_bal` and `seed_one_address_info_from_bal` are
-//! `#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]`-gated; reaching
+//! `#[cfg(feature = "rayon")]`-gated; reaching
 //! `execute_block_parallel` from the test crate would require enabling that
 //! feature pair and wiring up a full Amsterdam chain config, block, and signed
 //! transactions. The helper-level tests cover the same off-by-one boundary and
 //! storage-injection invariants that the lazy cursor relies on.
 
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+#[cfg(feature = "rayon")]
 mod inner {
     use ethereum_types::H160;
     use ethrex_common::{
@@ -105,6 +105,7 @@ mod inner {
     /// at indices 1 and 2), the cursor boundary semantics are correct:
     /// - `max_idx = 1` returns `V0` (only tx 0's write is visible)
     /// - `max_idx = 2` returns `V1` (tx 1's write is also visible)
+    ///
     /// This mirrors the pre-write value tx 1 and tx 2 would observe respectively.
     #[test]
     fn sstore_sees_prior_write() {

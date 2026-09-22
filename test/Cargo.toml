@@ -15,7 +15,6 @@ rocksdb = ["ethrex-storage/rocksdb"]
 l2 = ["ethrex/l2", "ethrex/l2-sql"]
 c-kzg = ["ethrex-common/c-kzg"]
 rayon = ["ethrex-levm/rayon"]
-eip-8025 = ["ethrex-levm/eip-8025"]
 
 [dependencies]
 ethrex-common.workspace = true
@@ -70,8 +69,9 @@ jsonwebtoken.workspace = true
 serde.workspace = true
 # Shared by the engine REST/SSZ tests and the EIP-8025 stateless tests from main.
 libssz.workspace = true
-libssz-types.workspace = true
 libssz-derive.workspace = true
+libssz-merkle.workspace = true
+libssz-types.workspace = true
 ethrex-guest-program = { workspace = true, default-features = false }
 ethrex-crypto.workspace = true
 ethrex-metrics = { workspace = true, features = ["metrics"] }

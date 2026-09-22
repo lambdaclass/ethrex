@@ -45,7 +45,7 @@ pub(crate) async fn blobs_v1(
     // whole-blob proof — reject instead of returning a proof that fails KZG
     // verification at the CL. Before a canonical tip exists there is no timestamp
     // to compare against, so the node is treated as pre-Osaka.
-    let latest = match ctx.storage.get_latest_block_number().await {
+    let latest = match ctx.storage.get_latest_block_number() {
         Ok(n) => n,
         Err(e) => return ProblemJson::internal(&format!("storage: {e}")).into_response(),
     };

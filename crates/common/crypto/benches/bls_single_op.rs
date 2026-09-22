@@ -13,8 +13,9 @@ use blst::{
     blst_p2_from_affine, blst_p2_generator, blst_p2_mult, blst_p2_to_affine, blst_scalar,
     blst_scalar_from_bendian,
 };
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use ethrex_crypto::{Crypto, NativeCrypto};
+use std::hint::black_box;
 
 fn scalar_bytes(seed: u64) -> [u8; 32] {
     let mut s = [0u8; 32];

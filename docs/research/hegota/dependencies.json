@@ -1,0 +1,6380 @@
+{
+  "edge_direction": "prerequisite -> dependent",
+  "scope": "Declared requires relationships, not implicit semantic dependencies",
+  "transitive_source_note": "Forkcast metadata for external nodes, overridden by pinned specs where available; cyclic co-designed bundles are preserved",
+  "nodes": [
+    {
+      "id": 2,
+      "title": "Homestead Hard-fork Changes",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 7,
+      "title": "DELEGATECALL",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 8,
+      "title": "devp2p Forward Compatibility Requirements for Homestead",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 20,
+      "title": "ERC-20 Token Standard",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Leaf; metadata unavailable",
+      "fork_relationships": []
+    },
+    {
+      "id": 100,
+      "title": "Change difficulty adjustment to target mean block time including uncles",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 140,
+      "title": "REVERT instruction",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 141,
+      "title": "Designated invalid EVM instruction",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 145,
+      "title": "Bitwise shifting instructions in EVM",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 150,
+      "title": "Gas cost changes for IO-heavy operations",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 152,
+      "title": "Add BLAKE2 compression function `F` precompile",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 155,
+      "title": "Simple replay attack protection",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 160,
+      "title": "EXP cost increase",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 161,
+      "title": "State trie clearing (invariant-preserving alternative)",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 170,
+      "title": "Contract code size limit",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 196,
+      "title": "Precompiled contracts for addition and scalar multiplication on the elliptic curve alt_bn128",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 197,
+      "title": "Precompiled contracts for optimal ate pairing check on the elliptic curve alt_bn128",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 198,
+      "title": "Big integer modular exponentiation",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 211,
+      "title": "\"New opcodes: RETURNDATASIZE and RETURNDATACOPY\"",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 214,
+      "title": "New opcode STATICCALL",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 606,
+      "title": "\"Hardfork Meta: Homestead\"",
+      "in_roster": false,
+      "requires": [
+        2,
+        7,
+        8
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 607,
+      "title": "\"Hardfork Meta: Spurious Dragon\"",
+      "in_roster": false,
+      "requires": [
+        155,
+        160,
+        161,
+        170,
+        608
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 608,
+      "title": "\"Hardfork Meta: Tangerine Whistle\"",
+      "in_roster": false,
+      "requires": [
+        150,
+        779
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 609,
+      "title": "\"Hardfork Meta: Byzantium\"",
+      "in_roster": false,
+      "requires": [
+        100,
+        140,
+        196,
+        197,
+        198,
+        211,
+        214,
+        607,
+        649,
+        658
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 649,
+      "title": "Metropolis Difficulty Bomb Delay and Block Reward Reduction",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 658,
+      "title": "Embedding transaction status code in receipts",
+      "in_roster": false,
+      "requires": [
+        140
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 684,
+      "title": "Revert creation in case of collision",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 779,
+      "title": "\"Hardfork Meta: DAO Fork\"",
+      "in_roster": false,
+      "requires": [
+        606
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 1013,
+      "title": "\"Hardfork Meta: Constantinople\"",
+      "in_roster": false,
+      "requires": [
+        145,
+        609,
+        1014,
+        1052,
+        1234,
+        1283
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 1014,
+      "title": "Skinny CREATE2",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 1052,
+      "title": "EXTCODEHASH opcode",
+      "in_roster": false,
+      "requires": [
+        161
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 1108,
+      "title": "Reduce alt_bn128 precompile gas costs",
+      "in_roster": false,
+      "requires": [
+        196,
+        197
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 1153,
+      "title": "Transient storage opcodes",
+      "in_roster": false,
+      "requires": [
+        2200,
+        3529
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 1234,
+      "title": "Constantinople Difficulty Bomb Delay and Block Reward Adjustment",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 1283,
+      "title": "Net gas metering for SSTORE without dirty maps",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 1344,
+      "title": "ChainID opcode",
+      "in_roster": false,
+      "requires": [
+        155
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 1559,
+      "title": "Fee market change for ETH 1.0 chain",
+      "in_roster": false,
+      "requires": [
+        2718,
+        2930
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 1679,
+      "title": "\"Hardfork Meta: Istanbul\"",
+      "in_roster": false,
+      "requires": [
+        152,
+        1108,
+        1344,
+        1716,
+        1884,
+        2028,
+        2200
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 1716,
+      "title": "\"Hardfork Meta: Petersburg\"",
+      "in_roster": false,
+      "requires": [
+        1013,
+        1283
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 1884,
+      "title": "Repricing for trie-size-dependent opcodes",
+      "in_roster": false,
+      "requires": [
+        150,
+        1052
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 2028,
+      "title": "Transaction data gas cost reduction",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 2070,
+      "title": "\"Hardfork Meta: Berlin\"",
+      "in_roster": false,
+      "requires": [
+        1679
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 2124,
+      "title": "Fork identifier for chain compatibility checks",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 2200,
+      "title": "Structured Definitions for Net Gas Metering",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 2364,
+      "title": "\"eth/64: forkid-extended protocol handshake\"",
+      "in_roster": false,
+      "requires": [
+        2124
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 2384,
+      "title": "Muir Glacier Difficulty Bomb Delay",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 2387,
+      "title": "\"Hardfork Meta: Muir Glacier\"",
+      "in_roster": false,
+      "requires": [
+        1679,
+        2384
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 2464,
+      "title": "\"eth/65: transaction announcements and retrievals\"",
+      "in_roster": false,
+      "requires": [
+        2364
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 2481,
+      "title": "eth/66 request identifier",
+      "in_roster": false,
+      "requires": [
+        2464
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 2488,
+      "title": "Deprecate the CALLCODE opcode",
+      "in_roster": true,
+      "requires": [
+        7
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/239",
+              "date": "2026-06-18"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2537,
+      "title": "Precompile for BLS12-381 curve operations",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Pectra",
+          "statusHistory": [
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2565,
+      "title": "ModExp Gas Cost",
+      "in_roster": false,
+      "requires": [
+        198
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 2681,
+      "title": "Limit account nonce to 2^64-1",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 2718,
+      "title": "Typed Transaction Envelope",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 2780,
+      "title": "Resource-based intrinsic transaction gas",
+      "in_roster": false,
+      "requires": [
+        2718,
+        2929,
+        2930,
+        6780,
+        7623,
+        7702,
+        7708,
+        7928,
+        8037,
+        8038
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Glamsterdam",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Considered",
+              "call": "acde/226",
+              "date": "2025-12-18"
+            },
+            {
+              "status": "Scheduled",
+              "call": null,
+              "date": "2026-08-04"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Ben Adams",
+              "discord": "ben_a_adams"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2929,
+      "title": "Gas cost increases for state access opcodes",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 2930,
+      "title": "Optional access lists",
+      "in_roster": false,
+      "requires": [
+        2718,
+        2929
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 2935,
+      "title": "Serve historical block hashes from state",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Pectra",
+          "statusHistory": [
+            {
+              "status": "Scheduled",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2982,
+      "title": "Serenity Phase 0",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 3198,
+      "title": "BASEFEE opcode",
+      "in_roster": false,
+      "requires": [
+        1559
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 3298,
+      "title": "Remove storage-clear refund and refund cap",
+      "in_roster": true,
+      "requires": [
+        2780,
+        3529,
+        7778,
+        8037,
+        8038
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/243",
+              "date": "2026-08-13"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Jochem Brouwer",
+              "discord": "jochembrouwer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 3529,
+      "title": "Reduction in refunds",
+      "in_roster": false,
+      "requires": [
+        2200,
+        2929,
+        2930
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 3541,
+      "title": "Reject new contract code starting with the 0xEF byte",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 3607,
+      "title": "Reject transactions from senders with deployed code",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 3675,
+      "title": "Upgrade consensus to Proof-of-Stake",
+      "in_roster": false,
+      "requires": [
+        2124
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 3855,
+      "title": "PUSH0 instruction",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 4758,
+      "title": "Deactivate SELFDESTRUCT",
+      "in_roster": true,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/237",
+              "date": "2026-05-21",
+              "timestamp": 4148
+            }
+          ],
+          "champions": [
+            {
+              "name": "Peter Miller"
+            }
+          ],
+          "presentationHistory": [
+            {
+              "type": "presentation",
+              "call": "acde/237",
+              "date": "2026-05-21",
+              "timestamp": 3352
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 4788,
+      "title": "Beacon block root in the EVM",
+      "in_roster": false,
+      "requires": [
+        1559
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 4844,
+      "title": "Shard Blob Transactions",
+      "in_roster": false,
+      "requires": [
+        1559,
+        2718,
+        2930,
+        4895
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Dencun",
+          "statusHistory": [
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 4895,
+      "title": "Beacon chain push withdrawals as operations",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 4938,
+      "title": "\"eth/67 - Removal of GetNodeData\"",
+      "in_roster": false,
+      "requires": [
+        2464,
+        2481
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 5656,
+      "title": "MCOPY - Memory copying instruction",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 5793,
+      "title": "eth/68 - Add tx type to tx announcement",
+      "in_roster": false,
+      "requires": [
+        2464,
+        2481,
+        4938
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 5920,
+      "title": "PAY opcode",
+      "in_roster": true,
+      "requires": [
+        214,
+        2929,
+        7523
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Fusaka",
+          "statusHistory": [
+            {
+              "status": "Declined",
+              "call": null,
+              "date": null
+            }
+          ]
+        },
+        {
+          "forkName": "Glamsterdam",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Declined",
+              "call": "acde/228",
+              "date": "2026-01-15"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Charles Cooper",
+              "telegram": "big_tech_sux"
+            }
+          ]
+        },
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/243",
+              "date": "2026-08-13"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Jochem Brouwer",
+              "discord": "jochembrouwer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 6110,
+      "title": "Supply validator deposits on chain",
+      "in_roster": false,
+      "requires": [
+        7685
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Pectra",
+          "statusHistory": [
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 6122,
+      "title": "Forkid checks based on timestamps",
+      "in_roster": false,
+      "requires": [
+        2124
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 6780,
+      "title": "SELFDESTRUCT only in same transaction",
+      "in_roster": false,
+      "requires": [
+        2681,
+        2929,
+        3529
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 6953,
+      "title": "Network Upgrade Activation Triggers",
+      "in_roster": false,
+      "requires": [
+        2982,
+        3675,
+        6122
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 7002,
+      "title": "Execution layer triggerable withdrawals",
+      "in_roster": false,
+      "requires": [
+        7685
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Pectra",
+          "statusHistory": [
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7044,
+      "title": "Perpetually Valid Signed Voluntary Exits",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 7045,
+      "title": "Increase max attestation inclusion slot",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 7251,
+      "title": "Increase the MAX_EFFECTIVE_BALANCE",
+      "in_roster": false,
+      "requires": [
+        7002,
+        7685
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Pectra",
+          "statusHistory": [
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7495,
+      "title": "SSZ ProgressiveContainer",
+      "in_roster": false,
+      "requires": [
+        7916
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 7514,
+      "title": "Add Max Epoch Churn Limit",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 7516,
+      "title": "BLOBBASEFEE instruction",
+      "in_roster": false,
+      "requires": [
+        3198,
+        4844
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 7523,
+      "title": "Empty accounts deprecation",
+      "in_roster": false,
+      "requires": [
+        161
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 7549,
+      "title": "Move committee index outside Attestation",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Pectra",
+          "statusHistory": [
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7568,
+      "title": "Hardfork Meta Backfill - Berlin to Shapella",
+      "in_roster": false,
+      "requires": [
+        2070,
+        2387,
+        2982,
+        6122,
+        6953
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 7569,
+      "title": "Hardfork Meta - Dencun",
+      "in_roster": false,
+      "requires": [
+        1153,
+        4788,
+        4844,
+        5656,
+        6780,
+        7044,
+        7045,
+        7514,
+        7516,
+        7568
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 7594,
+      "title": "PeerDAS - Peer Data Availability Sampling",
+      "in_roster": false,
+      "requires": [
+        4844
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Fusaka",
+          "statusHistory": [
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ],
+          "isHeadliner": true
+        }
+      ]
+    },
+    {
+      "id": 7600,
+      "title": "Hardfork Meta - Pectra",
+      "in_roster": false,
+      "requires": [
+        2537,
+        2935,
+        6110,
+        7002,
+        7251,
+        7549,
+        7569,
+        7623,
+        7685,
+        7691,
+        7702
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 7607,
+      "title": "Hardfork Meta - Fusaka",
+      "in_roster": false,
+      "requires": [
+        7594,
+        7600,
+        7642,
+        7823,
+        7825,
+        7883,
+        7892,
+        7910,
+        7917,
+        7918,
+        7934,
+        7935,
+        7939,
+        7951
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 7610,
+      "title": "Revert creation in case of non-empty storage",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Glamsterdam",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Considered",
+              "call": "acde/229",
+              "date": "2026-01-29"
+            },
+            {
+              "status": "Scheduled",
+              "call": null,
+              "date": "2026-08-04"
+            },
+            {
+              "status": "Declined",
+              "call": "acdc/185",
+              "date": "2026-08-20"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Jochem Brouwer",
+              "discord": "jochembrouwer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7623,
+      "title": "Increase calldata cost",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Pectra",
+          "statusHistory": [
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7642,
+      "title": "eth/69 - history expiry and simpler receipts",
+      "in_roster": false,
+      "requires": [
+        5793
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Pectra",
+          "statusHistory": [
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        },
+        {
+          "forkName": "Fusaka",
+          "statusHistory": [
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7645,
+      "title": "Alias ORIGIN to SENDER",
+      "in_roster": true,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/239",
+              "date": "2026-06-18"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Cyrus Adkisson"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7666,
+      "title": "EVM-ify the identity precompile",
+      "in_roster": true,
+      "requires": [
+        3855
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Fusaka",
+          "statusHistory": [
+            {
+              "status": "Declined",
+              "call": null,
+              "date": null
+            }
+          ]
+        },
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/242",
+              "date": "2026-07-30"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7668,
+      "title": "Remove bloom filters",
+      "in_roster": true,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Fusaka",
+          "statusHistory": [
+            {
+              "status": "Declined",
+              "call": null,
+              "date": null
+            }
+          ]
+        },
+        {
+          "forkName": "Glamsterdam",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Declined",
+              "call": "acde/227",
+              "date": "2026-01-05"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Jochem Brouwer",
+              "discord": "jochembrouwer"
+            }
+          ]
+        },
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/242",
+              "date": "2026-07-30"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Jochem Brouwer",
+              "discord": "jochembrouwer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7685,
+      "title": "General purpose execution layer requests",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Pectra",
+          "statusHistory": [
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7688,
+      "title": "Forward compatible consensus data structures",
+      "in_roster": false,
+      "requires": [
+        7495,
+        7607,
+        7916
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Fusaka",
+          "statusHistory": [
+            {
+              "status": "Declined",
+              "call": null,
+              "date": null
+            }
+          ]
+        },
+        {
+          "forkName": "Glamsterdam",
+          "statusHistory": [
+            {
+              "status": "Considered",
+              "call": "acdc/171",
+              "date": "2025-12-11"
+            },
+            {
+              "status": "Scheduled",
+              "call": null,
+              "date": "2026-08-04"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Etan Kissling",
+              "discord": "etan_status"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7691,
+      "title": "Blob throughput increase",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Pectra",
+          "statusHistory": [
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7702,
+      "title": "Set Code for EOAs",
+      "in_roster": false,
+      "requires": [
+        2,
+        161,
+        1052,
+        2718,
+        2929,
+        2930,
+        3541,
+        3607,
+        4844
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Pectra",
+          "statusHistory": [
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7708,
+      "title": "ETH transfers emit a log",
+      "in_roster": false,
+      "requires": [
+        1559,
+        4788,
+        6780,
+        8246
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Glamsterdam",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Considered",
+              "call": "acde/225",
+              "date": "2025-12-04"
+            },
+            {
+              "status": "Scheduled",
+              "call": "acde/236",
+              "date": "2026-05-07",
+              "timestamp": 804
+            }
+          ],
+          "champions": [
+            {
+              "name": "Carl Beekhuizen",
+              "discord": "carlbeek"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7709,
+      "title": "Read BLOCKHASH from Storage and Update Cost",
+      "in_roster": true,
+      "requires": [
+        2935
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/236",
+              "date": "2026-05-07",
+              "timestamp": 4379
+            }
+          ],
+          "isHeadliner": false,
+          "presentationHistory": [
+            {
+              "type": "presentation",
+              "call": "acde/236",
+              "date": "2026-05-07",
+              "timestamp": 4356
+            }
+          ],
+          "champions": [
+            {
+              "name": "Ignacio Hagopian",
+              "discord": "jsign"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7716,
+      "title": "Anti-correlation attestation penalties",
+      "in_roster": true,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acdc/177",
+              "date": "2026-04-16",
+              "timestamp": 3532
+            }
+          ],
+          "champions": [
+            {
+              "name": "Oisin Kyne"
+            }
+          ],
+          "presentationHistory": [
+            {
+              "type": "presentation",
+              "call": "acdc/177",
+              "date": "2026-04-16",
+              "timestamp": 3532
+            },
+            {
+              "type": "presentation",
+              "call": "acdc/184",
+              "date": "2026-08-06",
+              "timestamp": 5156
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7723,
+      "title": "Network Upgrade Inclusion Stages",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 7732,
+      "title": "Enshrined Proposer-Builder Separation",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Fusaka",
+          "statusHistory": [
+            {
+              "status": "Declined",
+              "call": null,
+              "date": null
+            }
+          ]
+        },
+        {
+          "forkName": "Glamsterdam",
+          "statusHistory": [
+            {
+              "status": "Scheduled",
+              "call": null,
+              "date": null
+            }
+          ],
+          "isHeadliner": true,
+          "wasHeadlinerCandidate": true,
+          "presentationHistory": [
+            {
+              "type": "headliner_proposal",
+              "link": "https://ethereum-magicians.org/t/eip-7732-the-case-for-inclusion-in-glamsterdam/24306",
+              "date": "2025-05-22"
+            },
+            {
+              "date": "2025-05-29",
+              "type": "headliner_presentation",
+              "call": "acdc/158"
+            }
+          ],
+          "champions": [
+            {
+              "name": "potuz",
+              "discord": "potuz"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7773,
+      "title": "Hardfork Meta - Glamsterdam",
+      "in_roster": false,
+      "requires": [
+        7607,
+        7723
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 7778,
+      "title": "Block Gas Accounting without Refunds",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Glamsterdam",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Considered",
+              "call": "acde/225",
+              "date": "2025-12-04"
+            },
+            {
+              "status": "Scheduled",
+              "call": "acde/236",
+              "date": "2026-05-07",
+              "timestamp": 804
+            }
+          ],
+          "champions": [
+            {
+              "name": "Toni Wahrstätter",
+              "discord": "nero_eth"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7805,
+      "title": "Fork-choice enforced Inclusion Lists (FOCIL)",
+      "in_roster": true,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Glamsterdam",
+          "statusHistory": [
+            {
+              "status": "Considered",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Declined",
+              "call": "acdc/171",
+              "date": "2025-12-11"
+            }
+          ],
+          "isHeadliner": false,
+          "wasHeadlinerCandidate": true,
+          "presentationHistory": [
+            {
+              "type": "headliner_proposal",
+              "link": "https://ethereum-magicians.org/t/eip-7805-fork-choice-inclusion-lists-focil-as-a-candidate-for-glamsterdam/24342",
+              "date": "2025-05-26"
+            },
+            {
+              "date": "2025-05-29",
+              "type": "headliner_presentation",
+              "call": "acdc/158"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Jihoon Song",
+              "discord": "jih2nn"
+            },
+            {
+              "name": "soispoke",
+              "discord": "soispoke"
+            }
+          ]
+        },
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Considered",
+              "call": "acdc/171",
+              "date": "2025-12-11"
+            },
+            {
+              "status": "Scheduled",
+              "call": "acdc/175",
+              "date": "2026-02-19"
+            }
+          ],
+          "isHeadliner": true,
+          "wasHeadlinerCandidate": true,
+          "presentationHistory": [
+            {
+              "type": "headliner_proposal",
+              "link": "https://ethereum-magicians.org/t/hegota-headliner-proposal-focil-eip-7805/27604",
+              "date": "2026-01-27"
+            },
+            {
+              "type": "headliner_presentation",
+              "call": "acdc/174",
+              "date": "2026-02-05"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Jihoon Song",
+              "discord": "jih2nn"
+            },
+            {
+              "name": "soispoke",
+              "discord": "soispoke"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7807,
+      "title": "SSZ execution blocks",
+      "in_roster": true,
+      "requires": [
+        7495,
+        7773,
+        7916
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Declined",
+              "call": "acde/232",
+              "date": "2026-03-12"
+            },
+            {
+              "status": "Proposed",
+              "call": "acde/242",
+              "date": "2026-07-30"
+            }
+          ],
+          "isHeadliner": false,
+          "wasHeadlinerCandidate": true,
+          "presentationHistory": [
+            {
+              "type": "headliner_proposal",
+              "link": "https://ethereum-magicians.org/t/hegota-headliner-proposal-ssz-execution-blocks/27619",
+              "date": "2026-01-29"
+            },
+            {
+              "type": "headliner_presentation",
+              "call": "acde/229",
+              "date": "2026-01-29"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Etan Kissling",
+              "discord": "etan-status"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7819,
+      "title": "SETDELEGATE instruction",
+      "in_roster": true,
+      "requires": [
+        7702
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Fusaka",
+          "statusHistory": [
+            {
+              "status": "Declined",
+              "call": null,
+              "date": null
+            }
+          ]
+        },
+        {
+          "forkName": "Glamsterdam",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Declined",
+              "call": "acde/225",
+              "date": "2025-12-04"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Hadrien Croubois",
+              "discord": "hadriencroubois"
+            }
+          ]
+        },
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/242",
+              "date": "2026-07-30"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Derek Chiang",
+              "discord": "derekchiang"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7823,
+      "title": "Set upper bounds for MODEXP",
+      "in_roster": false,
+      "requires": [
+        198
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Fusaka",
+          "statusHistory": [
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7825,
+      "title": "Transaction Gas Limit Cap",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Fusaka",
+          "statusHistory": [
+            {
+              "status": "Scheduled",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7840,
+      "title": "Add blob schedule to EL config files",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Pectra",
+          "statusHistory": [
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7843,
+      "title": "SLOTNUM opcode",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Fusaka",
+          "statusHistory": [
+            {
+              "status": "Declined",
+              "call": null,
+              "date": null
+            }
+          ]
+        },
+        {
+          "forkName": "Glamsterdam",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Considered",
+              "call": "acde/225",
+              "date": "2025-12-04"
+            },
+            {
+              "status": "Scheduled",
+              "call": "acde/236",
+              "date": "2026-05-07",
+              "timestamp": 804
+            }
+          ],
+          "champions": [
+            {
+              "name": "Marc Harvey-Hill",
+              "discord": "marchhill"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7851,
+      "title": "Code-Controlled EOA Delegation",
+      "in_roster": true,
+      "requires": [
+        7702
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/238",
+              "date": "2026-06-04"
+            }
+          ],
+          "champions": [
+            {
+              "name": "lightclient",
+              "discord": "lightclient"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7862,
+      "title": "Delayed State Root",
+      "in_roster": true,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/240",
+              "date": "2026-07-02"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Toni Wahrstätter",
+              "discord": "nero_eth"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7883,
+      "title": "ModExp Gas Cost Increase",
+      "in_roster": false,
+      "requires": [
+        2565
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Fusaka",
+          "statusHistory": [
+            {
+              "status": "Scheduled",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7892,
+      "title": "Blob Parameter Only Hardforks",
+      "in_roster": false,
+      "requires": [
+        7840
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Fusaka",
+          "statusHistory": [
+            {
+              "status": "Scheduled",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7906,
+      "title": "Transaction Assertions via State Diff Opcode",
+      "in_roster": true,
+      "requires": [
+        2929,
+        8141
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/242",
+              "date": "2026-07-30"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Alex Forshtat",
+              "discord": "alexf5200"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7910,
+      "title": "eth_config JSON-RPC Method",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Fusaka",
+          "statusHistory": [
+            {
+              "status": "Scheduled",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7916,
+      "title": "SSZ ProgressiveList",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": []
+    },
+    {
+      "id": 7917,
+      "title": "Deterministic proposer lookahead",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Fusaka",
+          "statusHistory": [
+            {
+              "status": "Scheduled",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7918,
+      "title": "Blob base fee bounded by execution cost",
+      "in_roster": false,
+      "requires": [
+        4844,
+        7840
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Fusaka",
+          "statusHistory": [
+            {
+              "status": "Scheduled",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7923,
+      "title": "Linear, Page-Based Memory Costing",
+      "in_roster": true,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Glamsterdam",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Declined",
+              "call": "acde/226",
+              "date": "2025-12-18"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Charles Cooper",
+              "telegram": "big_tech_sux"
+            }
+          ]
+        },
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/243",
+              "date": "2026-08-13"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Jochem Brouwer",
+              "discord": "jochembrouwer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7928,
+      "title": "Block-Level Access Lists",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Glamsterdam",
+          "statusHistory": [
+            {
+              "status": "Scheduled",
+              "call": null,
+              "date": null
+            }
+          ],
+          "isHeadliner": true,
+          "wasHeadlinerCandidate": true,
+          "presentationHistory": [
+            {
+              "type": "headliner_proposal",
+              "link": "https://ethereum-magicians.org/t/eip-7928-block-level-access-lists-the-case-for-glamsterdam/24343",
+              "date": "2025-05-26"
+            },
+            {
+              "date": "2025-06-05",
+              "type": "headliner_presentation",
+              "call": "acde/213"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Toni Wahrstätter",
+              "discord": "nero_eth"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7934,
+      "title": "RLP Execution Block Size Limit",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Fusaka",
+          "statusHistory": [
+            {
+              "status": "Scheduled",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7935,
+      "title": "Set default gas limit to 60M",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Fusaka",
+          "statusHistory": [
+            {
+              "status": "Scheduled",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7939,
+      "title": "Count leading zeros (CLZ) opcode",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Fusaka",
+          "statusHistory": [
+            {
+              "status": "Scheduled",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7951,
+      "title": "Precompile for secp256r1 Curve Support",
+      "in_roster": false,
+      "requires": [],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Pectra",
+          "statusHistory": [
+            {
+              "status": "Considered",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Declined",
+              "call": null,
+              "date": null
+            }
+          ]
+        },
+        {
+          "forkName": "Fusaka",
+          "statusHistory": [
+            {
+              "status": "Scheduled",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Included",
+              "call": null,
+              "date": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7976,
+      "title": "Increase Calldata Floor Cost",
+      "in_roster": false,
+      "requires": [
+        7623
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Glamsterdam",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Considered",
+              "call": "acde/226",
+              "date": "2025-12-18"
+            },
+            {
+              "status": "Scheduled",
+              "call": "acde/236",
+              "date": "2026-05-07",
+              "timestamp": 804
+            }
+          ],
+          "champions": [
+            {
+              "name": "Toni Wahrstätter",
+              "discord": "nero_eth"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7979,
+      "title": "Call and Return Opcodes for the EVM",
+      "in_roster": true,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Glamsterdam",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Declined",
+              "call": "acde/225",
+              "date": "2025-12-04"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Greg Colvin",
+              "email": "greg@colvin.org"
+            }
+          ]
+        },
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/238",
+              "date": "2026-06-04"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Greg Colvin"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7981,
+      "title": "Increase Access List Cost",
+      "in_roster": false,
+      "requires": [
+        2930,
+        7623,
+        7976
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Glamsterdam",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Considered",
+              "call": "acde/226",
+              "date": "2025-12-18"
+            },
+            {
+              "status": "Scheduled",
+              "call": "acde/236",
+              "date": "2026-05-07",
+              "timestamp": 804
+            }
+          ],
+          "champions": [
+            {
+              "name": "Toni Wahrstätter",
+              "discord": "nero_eth"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8015,
+      "title": "Remove `deposit` and `eth1data` fields",
+      "in_roster": true,
+      "requires": [
+        6110,
+        7688,
+        7773
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acdc/183",
+              "date": "2026-07-23"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Etan Kissling",
+              "discord": "etan-status"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8025,
+      "title": "Optional Execution Proofs",
+      "in_roster": true,
+      "requires": [
+        4844,
+        6110,
+        7002,
+        7251,
+        7688,
+        7732,
+        7928,
+        8282
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acdc/178",
+              "date": "2026-05-14",
+              "timestamp": 4125
+            }
+          ],
+          "presentationHistory": [
+            {
+              "type": "presentation",
+              "call": "acdc/178",
+              "date": "2026-05-14",
+              "timestamp": 4125
+            }
+          ],
+          "champions": [
+            {
+              "name": "Francesco Risitano",
+              "discord": "taulepton_"
+            },
+            {
+              "name": "Ignacio Hagopian",
+              "discord": "jsign"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8037,
+      "title": "State Creation Gas Cost Increase",
+      "in_roster": false,
+      "requires": [
+        161,
+        684,
+        2780,
+        6780,
+        7610,
+        7623,
+        7702,
+        7825,
+        7928,
+        7976,
+        8038
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Glamsterdam",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Considered",
+              "call": "acdt/66",
+              "date": "2026-01-19",
+              "timestamp": 3188
+            },
+            {
+              "status": "Scheduled",
+              "call": "acde/236",
+              "date": "2026-05-07",
+              "timestamp": 804
+            }
+          ],
+          "champions": [
+            {
+              "name": "Maria Silva",
+              "discord": "misilva73"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8038,
+      "title": "State-access gas cost update",
+      "in_roster": false,
+      "requires": [
+        8037
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Glamsterdam",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Considered",
+              "call": "acde/226",
+              "date": "2025-12-18"
+            },
+            {
+              "status": "Scheduled",
+              "call": null,
+              "date": "2026-08-04"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Maria Silva",
+              "discord": "misilva73"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8077,
+      "title": "eth/XX - announce transactions with nonce",
+      "in_roster": true,
+      "requires": [
+        7642
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/243",
+              "date": "2026-08-13"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Csaba Kiraly"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8094,
+      "title": "eth/vhash - Blob-Aware Mempool",
+      "in_roster": true,
+      "requires": [
+        7642
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/243",
+              "date": "2026-08-13"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Csaba Kiraly"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8105,
+      "title": "Universal Enshrined Encrypted Mempool",
+      "in_roster": true,
+      "requires": [
+        7732
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": null,
+              "date": null
+            },
+            {
+              "status": "Withdrawn",
+              "call": null,
+              "date": "2026-02-23"
+            }
+          ],
+          "isHeadliner": false,
+          "wasHeadlinerCandidate": true,
+          "champions": [
+            {
+              "name": "Jannik Luhn",
+              "discord": "jannik031153"
+            }
+          ],
+          "presentationHistory": [
+            {
+              "type": "headliner_proposal",
+              "link": "https://ethereum-magicians.org/t/hegota-headliner-proposal-eip-8105-universal-enshrined-encrypted-mempool-eem/27448",
+              "date": "2026-01-16"
+            },
+            {
+              "type": "headliner_presentation",
+              "call": "acde/229",
+              "date": "2026-01-29"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8115,
+      "title": "Batch priority fees at end of block",
+      "in_roster": true,
+      "requires": [
+        1559,
+        4895
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/242",
+              "date": "2026-07-30"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Etan Kissling",
+              "discord": "etan-status"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8116,
+      "title": "Replace cumulative receipt fields",
+      "in_roster": true,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/242",
+              "date": "2026-07-30"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Etan Kissling",
+              "discord": "etan-status"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8131,
+      "title": "Unified Transaction Content Floor",
+      "in_roster": true,
+      "requires": [
+        2028,
+        4844,
+        7623,
+        7702,
+        7976,
+        7981
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/238",
+              "date": "2026-06-04"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Toni Wahrstätter",
+              "discord": "nero_eth"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8136,
+      "title": "Cell-Level Deltas for Data Column Broadcast",
+      "in_roster": false,
+      "requires": [
+        7594
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Glamsterdam",
+          "statusHistory": [
+            {
+              "status": "Considered",
+              "call": "acdc/177",
+              "date": "2026-04-16",
+              "timestamp": 2729
+            },
+            {
+              "status": "Networking",
+              "call": null,
+              "date": null
+            }
+          ],
+          "champions": [
+            {
+              "name": "Marco Munizaga",
+              "discord": "marcopolo"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8141,
+      "title": "Frame Transaction",
+      "in_roster": true,
+      "requires": [
+        1559,
+        2718,
+        2780,
+        3529,
+        3607,
+        4844,
+        7594,
+        7623,
+        7702,
+        7708,
+        7778,
+        7825,
+        8037
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Considered",
+              "call": "acde/233",
+              "date": "2026-03-26",
+              "timestamp": 5871
+            },
+            {
+              "status": "Scheduled",
+              "call": "acde/244",
+              "date": "2026-08-27"
+            }
+          ],
+          "isHeadliner": false,
+          "wasHeadlinerCandidate": true,
+          "champions": [
+            {
+              "name": "Felix Lange",
+              "discord": "fjl"
+            },
+            {
+              "name": "lightclient",
+              "discord": "lightclient"
+            }
+          ],
+          "presentationHistory": [
+            {
+              "type": "headliner_proposal",
+              "link": "https://ethereum-magicians.org/t/hegota-headliner-proposal-frame-transaction/27618",
+              "date": "2026-01-29"
+            },
+            {
+              "type": "headliner_presentation",
+              "call": "acde/229",
+              "date": "2026-01-29"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8142,
+      "title": "Block-in-Blobs (BiB)",
+      "in_roster": true,
+      "requires": [
+        4844,
+        7594,
+        7732,
+        7892,
+        7928
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acdc/184",
+              "date": "2026-08-06"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Kamil Salakhiev"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8146,
+      "title": "Block Access List Sidecars",
+      "in_roster": true,
+      "requires": [
+        7732,
+        7928
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/240",
+              "date": "2026-07-02"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Toni Wahrstätter",
+              "discord": "nero_eth"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8148,
+      "title": "Custom sweep threshold for validators",
+      "in_roster": true,
+      "requires": [
+        7251,
+        7685
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acdc/179",
+              "date": "2026-05-28",
+              "timestamp": 2068
+            }
+          ],
+          "presentationHistory": [
+            {
+              "type": "presentation",
+              "call": "acdc/179",
+              "date": "2026-05-28",
+              "timestamp": 2068
+            }
+          ],
+          "champions": [
+            {
+              "name": "Dmitry Gusakov",
+              "discord": "dgusakov"
+            },
+            {
+              "name": "Greg Koumoutsos",
+              "discord": "gkoumout"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8151,
+      "title": "Account Code Restricted ecRecover",
+      "in_roster": true,
+      "requires": [
+        2929,
+        3607,
+        7702
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/238",
+              "date": "2026-06-04"
+            }
+          ],
+          "champions": [
+            {
+              "name": "lightclient",
+              "discord": "lightclient"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8163,
+      "title": "Reserve `EXTENSION (0xae)` opcode",
+      "in_roster": true,
+      "requires": [
+        141
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/235",
+              "date": "2026-04-23"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Piotr Dobaczewski"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8173,
+      "title": "Foundations of EVM Control Flow",
+      "in_roster": true,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/238",
+              "date": "2026-06-04"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Greg Colvin"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8182,
+      "title": "Private ETH and ERC-20 Transfers",
+      "in_roster": true,
+      "requires": [
+        20
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/237",
+              "date": "2026-05-21",
+              "timestamp": 2172
+            }
+          ],
+          "champions": [
+            {
+              "name": "Tom Lehman"
+            }
+          ],
+          "presentationHistory": [
+            {
+              "type": "presentation",
+              "call": "acde/237",
+              "date": "2026-05-21",
+              "timestamp": 2172
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8184,
+      "title": "LUCID encrypted mempool",
+      "in_roster": true,
+      "requires": [
+        2718,
+        7805
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/230",
+              "date": "2026-02-12"
+            },
+            {
+              "status": "Declined",
+              "call": "acde/232",
+              "date": "2026-03-12"
+            }
+          ],
+          "isHeadliner": false,
+          "wasHeadlinerCandidate": true,
+          "champions": [
+            {
+              "name": "Justin Florentine",
+              "discord": "robocopsgonemad"
+            }
+          ],
+          "presentationHistory": [
+            {
+              "type": "headliner_proposal",
+              "link": "https://ethereum-magicians.org/t/hegota-headliner-lucid-encrypted-mempool/27658",
+              "date": "2026-02-05"
+            },
+            {
+              "type": "headliner_presentation",
+              "call": "acde/230",
+              "date": "2026-02-12"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8188,
+      "title": "Last-Written Block for Accounts and Slots",
+      "in_roster": true,
+      "requires": [
+        8037
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/237",
+              "date": "2026-05-21",
+              "timestamp": 1269
+            }
+          ],
+          "presentationHistory": [
+            {
+              "type": "presentation",
+              "call": "acde/237",
+              "date": "2026-05-21",
+              "timestamp": 1269
+            }
+          ],
+          "champions": [
+            {
+              "name": "Wei Han Ng",
+              "discord": "weiihannng"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8198,
+      "title": "Quick Slots",
+      "in_roster": true,
+      "requires": [
+        7892
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acdc/184",
+              "date": "2026-08-06"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Barnabé Monnot"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8200,
+      "title": "EVMification",
+      "in_roster": true,
+      "requires": [
+        152,
+        7666,
+        7823,
+        7883
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/242",
+              "date": "2026-07-30"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Kevaundray Wedderburn",
+              "discord": "kevaundray"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8205,
+      "title": "Withdrawal credentials preregistration",
+      "in_roster": true,
+      "requires": [
+        6110,
+        7685,
+        7732
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acdc/177",
+              "date": "2026-04-16",
+              "timestamp": 3853
+            }
+          ],
+          "presentationHistory": [
+            {
+              "type": "presentation",
+              "call": "acdc/177",
+              "date": "2026-04-16",
+              "timestamp": 3853
+            }
+          ],
+          "champions": [
+            {
+              "name": "George Avsetsin",
+              "discord": "george_avs"
+            },
+            {
+              "name": "Greg Koumoutsos",
+              "discord": "gkoumout"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8219,
+      "title": "Checked Arithmetic Opcodes",
+      "in_roster": true,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/243",
+              "date": "2026-08-13"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Hubert Ritzdorf"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8237,
+      "title": "Independent CL/EL Sync",
+      "in_roster": true,
+      "requires": [
+        7732
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "champions": [
+            {
+              "name": "Potuz",
+              "discord": "potuz"
+            }
+          ],
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/235",
+              "date": "2026-04-23"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8243,
+      "title": "Batching Attestations at Source",
+      "in_roster": true,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "champions": [
+            {
+              "name": "Raúl Kripalani",
+              "discord": "raulk"
+            }
+          ],
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acdc/180",
+              "date": "2026-06-11"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8246,
+      "title": "Remove SELFDESTRUCT Burn",
+      "in_roster": false,
+      "requires": [
+        161,
+        6780
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Glamsterdam",
+          "statusHistory": [
+            {
+              "status": "Considered",
+              "call": "acde/236",
+              "date": "2026-05-07",
+              "timestamp": 4319
+            },
+            {
+              "status": "Scheduled",
+              "call": null,
+              "date": "2026-08-04"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Paweł Bylica",
+              "discord": "chfast"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8250,
+      "title": "Keyed Nonces for Frame Transactions",
+      "in_roster": true,
+      "requires": [
+        7623,
+        8037,
+        8141
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/240",
+              "date": "2026-07-02"
+            }
+          ],
+          "champions": [
+            {
+              "name": "soispoke",
+              "discord": "soispoke"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8253,
+      "title": "Bump nonce of zero-nonce storage accounts",
+      "in_roster": true,
+      "requires": [
+        161,
+        684
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/236",
+              "date": "2026-05-07",
+              "timestamp": 4879
+            }
+          ],
+          "champions": [
+            {
+              "name": "Jochem Brouwer",
+              "discord": "jochembrouwer"
+            }
+          ],
+          "presentationHistory": [
+            {
+              "type": "presentation",
+              "call": "acde/236",
+              "date": "2026-05-07",
+              "timestamp": 4879
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8272,
+      "title": "Recent Roots for Frame Transactions",
+      "in_roster": true,
+      "requires": [
+        7843,
+        8141
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/240",
+              "date": "2026-07-02"
+            }
+          ],
+          "champions": [
+            {
+              "name": "soispoke",
+              "discord": "soispoke"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8279,
+      "title": "Block Access List Byte Floor",
+      "in_roster": true,
+      "requires": [
+        7623,
+        7702,
+        7928,
+        7976,
+        7981,
+        8131
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/238",
+              "date": "2026-06-04"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Toni Wahrstätter",
+              "discord": "nero_eth"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8282,
+      "title": "Builder Execution Requests",
+      "in_roster": false,
+      "requires": [
+        1559,
+        7685,
+        7732
+      ],
+      "requires_source": "Forkcast snapshot metadata",
+      "fork_relationships": [
+        {
+          "forkName": "Glamsterdam",
+          "statusHistory": [
+            {
+              "status": "Considered",
+              "call": "acde/239",
+              "date": "2026-06-18"
+            },
+            {
+              "status": "Scheduled",
+              "call": null,
+              "date": "2026-08-04"
+            }
+          ],
+          "isHeadliner": false,
+          "wasHeadlinerCandidate": false,
+          "presentationHistory": [
+            {
+              "type": "presentation",
+              "call": "acdc/180",
+              "date": "2026-06-11"
+            },
+            {
+              "type": "debate",
+              "call": "acdt/83",
+              "date": "2026-06-15"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Cayman"
+            },
+            {
+              "name": "Nico Flaig"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8298,
+      "title": "SETCODEFROM Code Reuse Instruction",
+      "in_roster": true,
+      "requires": [
+        3529,
+        3607,
+        6780,
+        7702,
+        8037,
+        8038
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/240",
+              "date": "2026-07-02"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Ben Adams",
+              "discord": "ben_a_adams"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8304,
+      "title": "Trustless log and transaction index",
+      "in_roster": true,
+      "requires": [
+        4788
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/239",
+              "date": "2026-06-18"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Zsolt Felföldi",
+              "discord": "zsfelfoldi"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8321,
+      "title": "Hash-Chain RANDAO",
+      "in_roster": true,
+      "requires": [
+        7916
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acdc/183",
+              "date": "2026-07-23"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Kevaundray Wedderburn",
+              "discord": "kevaundray"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8333,
+      "title": "Align Checkpoint with Epoch Boundary Block",
+      "in_roster": true,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "champions": [
+            {
+              "name": "Cayman",
+              "discord": "wemeetagain"
+            }
+          ],
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acdc/184",
+              "date": "2026-08-06"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8334,
+      "title": "Bundled Attestation Propagation",
+      "in_roster": true,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acdc/183",
+              "date": "2026-07-23"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Sukun Tarachandani"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8341,
+      "title": "Partial Execution Payload Commitments",
+      "in_roster": true,
+      "requires": [
+        7732
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acdc/183",
+              "date": "2026-07-23"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Toni Wahrstätter",
+              "discord": "nero_eth"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8355,
+      "title": "Precompiles for ML-DSA Verification",
+      "in_roster": true,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/243",
+              "date": "2026-08-13"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Danno Ferrin",
+              "discord": "_shemnon"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8358,
+      "title": "Net Gas Metering for Account Changes",
+      "in_roster": true,
+      "requires": [
+        161,
+        2200,
+        2780,
+        2929,
+        3529,
+        7702,
+        7708,
+        8037,
+        8038
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/243",
+              "date": "2026-08-13"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Dragan Rakita"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8359,
+      "title": "Beacon Block Reporting Field",
+      "in_roster": true,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acdc/184",
+              "date": "2026-08-06"
+            }
+          ],
+          "champions": [
+            {
+              "name": "hanniabu"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8363,
+      "title": "Tapered Issuance Burn",
+      "in_roster": true,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acdc/184",
+              "date": "2026-08-06"
+            }
+          ],
+          "champions": [
+            {
+              "name": "pintail"
+            },
+            {
+              "name": "Jérôme de Tychey"
+            },
+            {
+              "name": "dapplion"
+            }
+          ],
+          "presentationHistory": [
+            {
+              "type": "presentation",
+              "call": "acdc/184",
+              "date": "2026-08-06"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8365,
+      "title": "BLS withdrawal credential retirement",
+      "in_roster": true,
+      "requires": [
+        6110,
+        7251,
+        7732
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acdc/184",
+              "date": "2026-08-06"
+            }
+          ],
+          "champions": [
+            {
+              "name": "NC"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8367,
+      "title": "Balance sunset for retired BLS validators",
+      "in_roster": true,
+      "requires": [
+        8365
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acdc/184",
+              "date": "2026-08-06"
+            }
+          ],
+          "champions": [
+            {
+              "name": "NC"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8368,
+      "title": "CPSB Recalibration for New Gas Limit",
+      "in_roster": true,
+      "requires": [
+        8037
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/243",
+              "date": "2026-08-13"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Maria Silva",
+              "discord": "misilva73"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8369,
+      "title": "VOPS Profiles for FOCIL Eligibility",
+      "in_roster": true,
+      "requires": [
+        1559,
+        2718,
+        2930,
+        3607,
+        4844,
+        7702,
+        7732,
+        7805,
+        7843,
+        7928,
+        8141,
+        8250,
+        8272
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acdc/184",
+              "date": "2026-08-06"
+            }
+          ],
+          "champions": [
+            {
+              "name": "soispoke",
+              "discord": "soispoke"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8371,
+      "title": "RowDAS - Distributed Blob Reconstruction",
+      "in_roster": true,
+      "requires": [
+        7594,
+        8136
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acdc/184",
+              "date": "2026-08-06"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Csaba Kiraly"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8372,
+      "title": "Normalized state gas limit",
+      "in_roster": true,
+      "requires": [
+        8037
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/243",
+              "date": "2026-08-13"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Anders Elowsson",
+              "discord": "anderselowsson"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8374,
+      "title": "Persist Warm Access Sets Across Reverts",
+      "in_roster": true,
+      "requires": [
+        2929
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/243",
+              "date": "2026-08-13"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Dragan Rakita"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8375,
+      "title": "ePBS Mandatory Burn of Execution Rewards",
+      "in_roster": true,
+      "requires": [
+        7732
+      ],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acde/243",
+              "date": "2026-08-13"
+            }
+          ],
+          "champions": [
+            {
+              "name": "Ben Adams",
+              "discord": "ben_a_adams"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8379,
+      "title": "Top-up Sync",
+      "in_roster": true,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "champions": [
+            {
+              "name": "Dustin"
+            }
+          ],
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acdc/185",
+              "date": "2026-08-20"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8383,
+      "title": "Reduce CL Block Retention Window",
+      "in_roster": true,
+      "requires": [],
+      "requires_source": "Pinned specification",
+      "fork_relationships": [
+        {
+          "forkName": "Hegota",
+          "champions": [
+            {
+              "name": "Kevaundray Wedderburn",
+              "discord": "kevaundray"
+            }
+          ],
+          "statusHistory": [
+            {
+              "status": "Proposed",
+              "call": "acdc/185",
+              "date": "2026-08-20"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "prerequisite": 2,
+      "dependent": 606
+    },
+    {
+      "prerequisite": 7,
+      "dependent": 606
+    },
+    {
+      "prerequisite": 8,
+      "dependent": 606
+    },
+    {
+      "prerequisite": 155,
+      "dependent": 607
+    },
+    {
+      "prerequisite": 160,
+      "dependent": 607
+    },
+    {
+      "prerequisite": 161,
+      "dependent": 607
+    },
+    {
+      "prerequisite": 170,
+      "dependent": 607
+    },
+    {
+      "prerequisite": 608,
+      "dependent": 607
+    },
+    {
+      "prerequisite": 150,
+      "dependent": 608
+    },
+    {
+      "prerequisite": 779,
+      "dependent": 608
+    },
+    {
+      "prerequisite": 100,
+      "dependent": 609
+    },
+    {
+      "prerequisite": 140,
+      "dependent": 609
+    },
+    {
+      "prerequisite": 196,
+      "dependent": 609
+    },
+    {
+      "prerequisite": 197,
+      "dependent": 609
+    },
+    {
+      "prerequisite": 198,
+      "dependent": 609
+    },
+    {
+      "prerequisite": 211,
+      "dependent": 609
+    },
+    {
+      "prerequisite": 214,
+      "dependent": 609
+    },
+    {
+      "prerequisite": 607,
+      "dependent": 609
+    },
+    {
+      "prerequisite": 649,
+      "dependent": 609
+    },
+    {
+      "prerequisite": 658,
+      "dependent": 609
+    },
+    {
+      "prerequisite": 140,
+      "dependent": 658
+    },
+    {
+      "prerequisite": 606,
+      "dependent": 779
+    },
+    {
+      "prerequisite": 145,
+      "dependent": 1013
+    },
+    {
+      "prerequisite": 609,
+      "dependent": 1013
+    },
+    {
+      "prerequisite": 1014,
+      "dependent": 1013
+    },
+    {
+      "prerequisite": 1052,
+      "dependent": 1013
+    },
+    {
+      "prerequisite": 1234,
+      "dependent": 1013
+    },
+    {
+      "prerequisite": 1283,
+      "dependent": 1013
+    },
+    {
+      "prerequisite": 161,
+      "dependent": 1052
+    },
+    {
+      "prerequisite": 196,
+      "dependent": 1108
+    },
+    {
+      "prerequisite": 197,
+      "dependent": 1108
+    },
+    {
+      "prerequisite": 2200,
+      "dependent": 1153
+    },
+    {
+      "prerequisite": 3529,
+      "dependent": 1153
+    },
+    {
+      "prerequisite": 155,
+      "dependent": 1344
+    },
+    {
+      "prerequisite": 2718,
+      "dependent": 1559
+    },
+    {
+      "prerequisite": 2930,
+      "dependent": 1559
+    },
+    {
+      "prerequisite": 152,
+      "dependent": 1679
+    },
+    {
+      "prerequisite": 1108,
+      "dependent": 1679
+    },
+    {
+      "prerequisite": 1344,
+      "dependent": 1679
+    },
+    {
+      "prerequisite": 1716,
+      "dependent": 1679
+    },
+    {
+      "prerequisite": 1884,
+      "dependent": 1679
+    },
+    {
+      "prerequisite": 2028,
+      "dependent": 1679
+    },
+    {
+      "prerequisite": 2200,
+      "dependent": 1679
+    },
+    {
+      "prerequisite": 1013,
+      "dependent": 1716
+    },
+    {
+      "prerequisite": 1283,
+      "dependent": 1716
+    },
+    {
+      "prerequisite": 150,
+      "dependent": 1884
+    },
+    {
+      "prerequisite": 1052,
+      "dependent": 1884
+    },
+    {
+      "prerequisite": 1679,
+      "dependent": 2070
+    },
+    {
+      "prerequisite": 2124,
+      "dependent": 2364
+    },
+    {
+      "prerequisite": 1679,
+      "dependent": 2387
+    },
+    {
+      "prerequisite": 2384,
+      "dependent": 2387
+    },
+    {
+      "prerequisite": 2364,
+      "dependent": 2464
+    },
+    {
+      "prerequisite": 2464,
+      "dependent": 2481
+    },
+    {
+      "prerequisite": 7,
+      "dependent": 2488
+    },
+    {
+      "prerequisite": 198,
+      "dependent": 2565
+    },
+    {
+      "prerequisite": 2718,
+      "dependent": 2780
+    },
+    {
+      "prerequisite": 2929,
+      "dependent": 2780
+    },
+    {
+      "prerequisite": 2930,
+      "dependent": 2780
+    },
+    {
+      "prerequisite": 6780,
+      "dependent": 2780
+    },
+    {
+      "prerequisite": 7623,
+      "dependent": 2780
+    },
+    {
+      "prerequisite": 7702,
+      "dependent": 2780
+    },
+    {
+      "prerequisite": 7708,
+      "dependent": 2780
+    },
+    {
+      "prerequisite": 7928,
+      "dependent": 2780
+    },
+    {
+      "prerequisite": 8037,
+      "dependent": 2780
+    },
+    {
+      "prerequisite": 8038,
+      "dependent": 2780
+    },
+    {
+      "prerequisite": 2718,
+      "dependent": 2930
+    },
+    {
+      "prerequisite": 2929,
+      "dependent": 2930
+    },
+    {
+      "prerequisite": 1559,
+      "dependent": 3198
+    },
+    {
+      "prerequisite": 2780,
+      "dependent": 3298
+    },
+    {
+      "prerequisite": 3529,
+      "dependent": 3298
+    },
+    {
+      "prerequisite": 7778,
+      "dependent": 3298
+    },
+    {
+      "prerequisite": 8037,
+      "dependent": 3298
+    },
+    {
+      "prerequisite": 8038,
+      "dependent": 3298
+    },
+    {
+      "prerequisite": 2200,
+      "dependent": 3529
+    },
+    {
+      "prerequisite": 2929,
+      "dependent": 3529
+    },
+    {
+      "prerequisite": 2930,
+      "dependent": 3529
+    },
+    {
+      "prerequisite": 2124,
+      "dependent": 3675
+    },
+    {
+      "prerequisite": 1559,
+      "dependent": 4788
+    },
+    {
+      "prerequisite": 1559,
+      "dependent": 4844
+    },
+    {
+      "prerequisite": 2718,
+      "dependent": 4844
+    },
+    {
+      "prerequisite": 2930,
+      "dependent": 4844
+    },
+    {
+      "prerequisite": 4895,
+      "dependent": 4844
+    },
+    {
+      "prerequisite": 2464,
+      "dependent": 4938
+    },
+    {
+      "prerequisite": 2481,
+      "dependent": 4938
+    },
+    {
+      "prerequisite": 2464,
+      "dependent": 5793
+    },
+    {
+      "prerequisite": 2481,
+      "dependent": 5793
+    },
+    {
+      "prerequisite": 4938,
+      "dependent": 5793
+    },
+    {
+      "prerequisite": 214,
+      "dependent": 5920
+    },
+    {
+      "prerequisite": 2929,
+      "dependent": 5920
+    },
+    {
+      "prerequisite": 7523,
+      "dependent": 5920
+    },
+    {
+      "prerequisite": 7685,
+      "dependent": 6110
+    },
+    {
+      "prerequisite": 2124,
+      "dependent": 6122
+    },
+    {
+      "prerequisite": 2681,
+      "dependent": 6780
+    },
+    {
+      "prerequisite": 2929,
+      "dependent": 6780
+    },
+    {
+      "prerequisite": 3529,
+      "dependent": 6780
+    },
+    {
+      "prerequisite": 2982,
+      "dependent": 6953
+    },
+    {
+      "prerequisite": 3675,
+      "dependent": 6953
+    },
+    {
+      "prerequisite": 6122,
+      "dependent": 6953
+    },
+    {
+      "prerequisite": 7685,
+      "dependent": 7002
+    },
+    {
+      "prerequisite": 7002,
+      "dependent": 7251
+    },
+    {
+      "prerequisite": 7685,
+      "dependent": 7251
+    },
+    {
+      "prerequisite": 7916,
+      "dependent": 7495
+    },
+    {
+      "prerequisite": 3198,
+      "dependent": 7516
+    },
+    {
+      "prerequisite": 4844,
+      "dependent": 7516
+    },
+    {
+      "prerequisite": 161,
+      "dependent": 7523
+    },
+    {
+      "prerequisite": 2070,
+      "dependent": 7568
+    },
+    {
+      "prerequisite": 2387,
+      "dependent": 7568
+    },
+    {
+      "prerequisite": 2982,
+      "dependent": 7568
+    },
+    {
+      "prerequisite": 6122,
+      "dependent": 7568
+    },
+    {
+      "prerequisite": 6953,
+      "dependent": 7568
+    },
+    {
+      "prerequisite": 1153,
+      "dependent": 7569
+    },
+    {
+      "prerequisite": 4788,
+      "dependent": 7569
+    },
+    {
+      "prerequisite": 4844,
+      "dependent": 7569
+    },
+    {
+      "prerequisite": 5656,
+      "dependent": 7569
+    },
+    {
+      "prerequisite": 6780,
+      "dependent": 7569
+    },
+    {
+      "prerequisite": 7044,
+      "dependent": 7569
+    },
+    {
+      "prerequisite": 7045,
+      "dependent": 7569
+    },
+    {
+      "prerequisite": 7514,
+      "dependent": 7569
+    },
+    {
+      "prerequisite": 7516,
+      "dependent": 7569
+    },
+    {
+      "prerequisite": 7568,
+      "dependent": 7569
+    },
+    {
+      "prerequisite": 4844,
+      "dependent": 7594
+    },
+    {
+      "prerequisite": 2537,
+      "dependent": 7600
+    },
+    {
+      "prerequisite": 2935,
+      "dependent": 7600
+    },
+    {
+      "prerequisite": 6110,
+      "dependent": 7600
+    },
+    {
+      "prerequisite": 7002,
+      "dependent": 7600
+    },
+    {
+      "prerequisite": 7251,
+      "dependent": 7600
+    },
+    {
+      "prerequisite": 7549,
+      "dependent": 7600
+    },
+    {
+      "prerequisite": 7569,
+      "dependent": 7600
+    },
+    {
+      "prerequisite": 7623,
+      "dependent": 7600
+    },
+    {
+      "prerequisite": 7685,
+      "dependent": 7600
+    },
+    {
+      "prerequisite": 7691,
+      "dependent": 7600
+    },
+    {
+      "prerequisite": 7702,
+      "dependent": 7600
+    },
+    {
+      "prerequisite": 7594,
+      "dependent": 7607
+    },
+    {
+      "prerequisite": 7600,
+      "dependent": 7607
+    },
+    {
+      "prerequisite": 7642,
+      "dependent": 7607
+    },
+    {
+      "prerequisite": 7823,
+      "dependent": 7607
+    },
+    {
+      "prerequisite": 7825,
+      "dependent": 7607
+    },
+    {
+      "prerequisite": 7883,
+      "dependent": 7607
+    },
+    {
+      "prerequisite": 7892,
+      "dependent": 7607
+    },
+    {
+      "prerequisite": 7910,
+      "dependent": 7607
+    },
+    {
+      "prerequisite": 7917,
+      "dependent": 7607
+    },
+    {
+      "prerequisite": 7918,
+      "dependent": 7607
+    },
+    {
+      "prerequisite": 7934,
+      "dependent": 7607
+    },
+    {
+      "prerequisite": 7935,
+      "dependent": 7607
+    },
+    {
+      "prerequisite": 7939,
+      "dependent": 7607
+    },
+    {
+      "prerequisite": 7951,
+      "dependent": 7607
+    },
+    {
+      "prerequisite": 5793,
+      "dependent": 7642
+    },
+    {
+      "prerequisite": 3855,
+      "dependent": 7666
+    },
+    {
+      "prerequisite": 7495,
+      "dependent": 7688
+    },
+    {
+      "prerequisite": 7607,
+      "dependent": 7688
+    },
+    {
+      "prerequisite": 7916,
+      "dependent": 7688
+    },
+    {
+      "prerequisite": 2,
+      "dependent": 7702
+    },
+    {
+      "prerequisite": 161,
+      "dependent": 7702
+    },
+    {
+      "prerequisite": 1052,
+      "dependent": 7702
+    },
+    {
+      "prerequisite": 2718,
+      "dependent": 7702
+    },
+    {
+      "prerequisite": 2929,
+      "dependent": 7702
+    },
+    {
+      "prerequisite": 2930,
+      "dependent": 7702
+    },
+    {
+      "prerequisite": 3541,
+      "dependent": 7702
+    },
+    {
+      "prerequisite": 3607,
+      "dependent": 7702
+    },
+    {
+      "prerequisite": 4844,
+      "dependent": 7702
+    },
+    {
+      "prerequisite": 1559,
+      "dependent": 7708
+    },
+    {
+      "prerequisite": 4788,
+      "dependent": 7708
+    },
+    {
+      "prerequisite": 6780,
+      "dependent": 7708
+    },
+    {
+      "prerequisite": 8246,
+      "dependent": 7708
+    },
+    {
+      "prerequisite": 2935,
+      "dependent": 7709
+    },
+    {
+      "prerequisite": 7607,
+      "dependent": 7773
+    },
+    {
+      "prerequisite": 7723,
+      "dependent": 7773
+    },
+    {
+      "prerequisite": 7495,
+      "dependent": 7807
+    },
+    {
+      "prerequisite": 7773,
+      "dependent": 7807
+    },
+    {
+      "prerequisite": 7916,
+      "dependent": 7807
+    },
+    {
+      "prerequisite": 7702,
+      "dependent": 7819
+    },
+    {
+      "prerequisite": 198,
+      "dependent": 7823
+    },
+    {
+      "prerequisite": 7702,
+      "dependent": 7851
+    },
+    {
+      "prerequisite": 2565,
+      "dependent": 7883
+    },
+    {
+      "prerequisite": 7840,
+      "dependent": 7892
+    },
+    {
+      "prerequisite": 2929,
+      "dependent": 7906
+    },
+    {
+      "prerequisite": 8141,
+      "dependent": 7906
+    },
+    {
+      "prerequisite": 4844,
+      "dependent": 7918
+    },
+    {
+      "prerequisite": 7840,
+      "dependent": 7918
+    },
+    {
+      "prerequisite": 7623,
+      "dependent": 7976
+    },
+    {
+      "prerequisite": 2930,
+      "dependent": 7981
+    },
+    {
+      "prerequisite": 7623,
+      "dependent": 7981
+    },
+    {
+      "prerequisite": 7976,
+      "dependent": 7981
+    },
+    {
+      "prerequisite": 6110,
+      "dependent": 8015
+    },
+    {
+      "prerequisite": 7688,
+      "dependent": 8015
+    },
+    {
+      "prerequisite": 7773,
+      "dependent": 8015
+    },
+    {
+      "prerequisite": 4844,
+      "dependent": 8025
+    },
+    {
+      "prerequisite": 6110,
+      "dependent": 8025
+    },
+    {
+      "prerequisite": 7002,
+      "dependent": 8025
+    },
+    {
+      "prerequisite": 7251,
+      "dependent": 8025
+    },
+    {
+      "prerequisite": 7688,
+      "dependent": 8025
+    },
+    {
+      "prerequisite": 7732,
+      "dependent": 8025
+    },
+    {
+      "prerequisite": 7928,
+      "dependent": 8025
+    },
+    {
+      "prerequisite": 8282,
+      "dependent": 8025
+    },
+    {
+      "prerequisite": 161,
+      "dependent": 8037
+    },
+    {
+      "prerequisite": 684,
+      "dependent": 8037
+    },
+    {
+      "prerequisite": 2780,
+      "dependent": 8037
+    },
+    {
+      "prerequisite": 6780,
+      "dependent": 8037
+    },
+    {
+      "prerequisite": 7610,
+      "dependent": 8037
+    },
+    {
+      "prerequisite": 7623,
+      "dependent": 8037
+    },
+    {
+      "prerequisite": 7702,
+      "dependent": 8037
+    },
+    {
+      "prerequisite": 7825,
+      "dependent": 8037
+    },
+    {
+      "prerequisite": 7928,
+      "dependent": 8037
+    },
+    {
+      "prerequisite": 7976,
+      "dependent": 8037
+    },
+    {
+      "prerequisite": 8038,
+      "dependent": 8037
+    },
+    {
+      "prerequisite": 8037,
+      "dependent": 8038
+    },
+    {
+      "prerequisite": 7642,
+      "dependent": 8077
+    },
+    {
+      "prerequisite": 7642,
+      "dependent": 8094
+    },
+    {
+      "prerequisite": 7732,
+      "dependent": 8105
+    },
+    {
+      "prerequisite": 1559,
+      "dependent": 8115
+    },
+    {
+      "prerequisite": 4895,
+      "dependent": 8115
+    },
+    {
+      "prerequisite": 2028,
+      "dependent": 8131
+    },
+    {
+      "prerequisite": 4844,
+      "dependent": 8131
+    },
+    {
+      "prerequisite": 7623,
+      "dependent": 8131
+    },
+    {
+      "prerequisite": 7702,
+      "dependent": 8131
+    },
+    {
+      "prerequisite": 7976,
+      "dependent": 8131
+    },
+    {
+      "prerequisite": 7981,
+      "dependent": 8131
+    },
+    {
+      "prerequisite": 7594,
+      "dependent": 8136
+    },
+    {
+      "prerequisite": 1559,
+      "dependent": 8141
+    },
+    {
+      "prerequisite": 2718,
+      "dependent": 8141
+    },
+    {
+      "prerequisite": 2780,
+      "dependent": 8141
+    },
+    {
+      "prerequisite": 3529,
+      "dependent": 8141
+    },
+    {
+      "prerequisite": 3607,
+      "dependent": 8141
+    },
+    {
+      "prerequisite": 4844,
+      "dependent": 8141
+    },
+    {
+      "prerequisite": 7594,
+      "dependent": 8141
+    },
+    {
+      "prerequisite": 7623,
+      "dependent": 8141
+    },
+    {
+      "prerequisite": 7702,
+      "dependent": 8141
+    },
+    {
+      "prerequisite": 7708,
+      "dependent": 8141
+    },
+    {
+      "prerequisite": 7778,
+      "dependent": 8141
+    },
+    {
+      "prerequisite": 7825,
+      "dependent": 8141
+    },
+    {
+      "prerequisite": 8037,
+      "dependent": 8141
+    },
+    {
+      "prerequisite": 4844,
+      "dependent": 8142
+    },
+    {
+      "prerequisite": 7594,
+      "dependent": 8142
+    },
+    {
+      "prerequisite": 7732,
+      "dependent": 8142
+    },
+    {
+      "prerequisite": 7892,
+      "dependent": 8142
+    },
+    {
+      "prerequisite": 7928,
+      "dependent": 8142
+    },
+    {
+      "prerequisite": 7732,
+      "dependent": 8146
+    },
+    {
+      "prerequisite": 7928,
+      "dependent": 8146
+    },
+    {
+      "prerequisite": 7251,
+      "dependent": 8148
+    },
+    {
+      "prerequisite": 7685,
+      "dependent": 8148
+    },
+    {
+      "prerequisite": 2929,
+      "dependent": 8151
+    },
+    {
+      "prerequisite": 3607,
+      "dependent": 8151
+    },
+    {
+      "prerequisite": 7702,
+      "dependent": 8151
+    },
+    {
+      "prerequisite": 141,
+      "dependent": 8163
+    },
+    {
+      "prerequisite": 20,
+      "dependent": 8182
+    },
+    {
+      "prerequisite": 2718,
+      "dependent": 8184
+    },
+    {
+      "prerequisite": 7805,
+      "dependent": 8184
+    },
+    {
+      "prerequisite": 8037,
+      "dependent": 8188
+    },
+    {
+      "prerequisite": 7892,
+      "dependent": 8198
+    },
+    {
+      "prerequisite": 152,
+      "dependent": 8200
+    },
+    {
+      "prerequisite": 7666,
+      "dependent": 8200
+    },
+    {
+      "prerequisite": 7823,
+      "dependent": 8200
+    },
+    {
+      "prerequisite": 7883,
+      "dependent": 8200
+    },
+    {
+      "prerequisite": 6110,
+      "dependent": 8205
+    },
+    {
+      "prerequisite": 7685,
+      "dependent": 8205
+    },
+    {
+      "prerequisite": 7732,
+      "dependent": 8205
+    },
+    {
+      "prerequisite": 7732,
+      "dependent": 8237
+    },
+    {
+      "prerequisite": 161,
+      "dependent": 8246
+    },
+    {
+      "prerequisite": 6780,
+      "dependent": 8246
+    },
+    {
+      "prerequisite": 7623,
+      "dependent": 8250
+    },
+    {
+      "prerequisite": 8037,
+      "dependent": 8250
+    },
+    {
+      "prerequisite": 8141,
+      "dependent": 8250
+    },
+    {
+      "prerequisite": 161,
+      "dependent": 8253
+    },
+    {
+      "prerequisite": 684,
+      "dependent": 8253
+    },
+    {
+      "prerequisite": 7843,
+      "dependent": 8272
+    },
+    {
+      "prerequisite": 8141,
+      "dependent": 8272
+    },
+    {
+      "prerequisite": 7623,
+      "dependent": 8279
+    },
+    {
+      "prerequisite": 7702,
+      "dependent": 8279
+    },
+    {
+      "prerequisite": 7928,
+      "dependent": 8279
+    },
+    {
+      "prerequisite": 7976,
+      "dependent": 8279
+    },
+    {
+      "prerequisite": 7981,
+      "dependent": 8279
+    },
+    {
+      "prerequisite": 8131,
+      "dependent": 8279
+    },
+    {
+      "prerequisite": 1559,
+      "dependent": 8282
+    },
+    {
+      "prerequisite": 7685,
+      "dependent": 8282
+    },
+    {
+      "prerequisite": 7732,
+      "dependent": 8282
+    },
+    {
+      "prerequisite": 3529,
+      "dependent": 8298
+    },
+    {
+      "prerequisite": 3607,
+      "dependent": 8298
+    },
+    {
+      "prerequisite": 6780,
+      "dependent": 8298
+    },
+    {
+      "prerequisite": 7702,
+      "dependent": 8298
+    },
+    {
+      "prerequisite": 8037,
+      "dependent": 8298
+    },
+    {
+      "prerequisite": 8038,
+      "dependent": 8298
+    },
+    {
+      "prerequisite": 4788,
+      "dependent": 8304
+    },
+    {
+      "prerequisite": 7916,
+      "dependent": 8321
+    },
+    {
+      "prerequisite": 7732,
+      "dependent": 8341
+    },
+    {
+      "prerequisite": 161,
+      "dependent": 8358
+    },
+    {
+      "prerequisite": 2200,
+      "dependent": 8358
+    },
+    {
+      "prerequisite": 2780,
+      "dependent": 8358
+    },
+    {
+      "prerequisite": 2929,
+      "dependent": 8358
+    },
+    {
+      "prerequisite": 3529,
+      "dependent": 8358
+    },
+    {
+      "prerequisite": 7702,
+      "dependent": 8358
+    },
+    {
+      "prerequisite": 7708,
+      "dependent": 8358
+    },
+    {
+      "prerequisite": 8037,
+      "dependent": 8358
+    },
+    {
+      "prerequisite": 8038,
+      "dependent": 8358
+    },
+    {
+      "prerequisite": 6110,
+      "dependent": 8365
+    },
+    {
+      "prerequisite": 7251,
+      "dependent": 8365
+    },
+    {
+      "prerequisite": 7732,
+      "dependent": 8365
+    },
+    {
+      "prerequisite": 8365,
+      "dependent": 8367
+    },
+    {
+      "prerequisite": 8037,
+      "dependent": 8368
+    },
+    {
+      "prerequisite": 1559,
+      "dependent": 8369
+    },
+    {
+      "prerequisite": 2718,
+      "dependent": 8369
+    },
+    {
+      "prerequisite": 2930,
+      "dependent": 8369
+    },
+    {
+      "prerequisite": 3607,
+      "dependent": 8369
+    },
+    {
+      "prerequisite": 4844,
+      "dependent": 8369
+    },
+    {
+      "prerequisite": 7702,
+      "dependent": 8369
+    },
+    {
+      "prerequisite": 7732,
+      "dependent": 8369
+    },
+    {
+      "prerequisite": 7805,
+      "dependent": 8369
+    },
+    {
+      "prerequisite": 7843,
+      "dependent": 8369
+    },
+    {
+      "prerequisite": 7928,
+      "dependent": 8369
+    },
+    {
+      "prerequisite": 8141,
+      "dependent": 8369
+    },
+    {
+      "prerequisite": 8250,
+      "dependent": 8369
+    },
+    {
+      "prerequisite": 8272,
+      "dependent": 8369
+    },
+    {
+      "prerequisite": 7594,
+      "dependent": 8371
+    },
+    {
+      "prerequisite": 8136,
+      "dependent": 8371
+    },
+    {
+      "prerequisite": 8037,
+      "dependent": 8372
+    },
+    {
+      "prerequisite": 2929,
+      "dependent": 8374
+    },
+    {
+      "prerequisite": 7732,
+      "dependent": 8375
+    }
+  ],
+  "strongly_connected_components": [
+    [
+      2780,
+      8037,
+      8038
+    ]
+  ],
+  "roster_closure": {
+    "2488": [
+      7
+    ],
+    "3298": [
+      2,
+      161,
+      684,
+      1052,
+      1559,
+      2200,
+      2681,
+      2718,
+      2780,
+      2929,
+      2930,
+      3529,
+      3541,
+      3607,
+      4788,
+      4844,
+      4895,
+      6780,
+      7610,
+      7623,
+      7702,
+      7708,
+      7778,
+      7825,
+      7928,
+      7976,
+      8037,
+      8038,
+      8246
+    ],
+    "4758": [],
+    "5920": [
+      161,
+      214,
+      2929,
+      7523
+    ],
+    "7645": [],
+    "7666": [
+      3855
+    ],
+    "7668": [],
+    "7709": [
+      2935
+    ],
+    "7716": [],
+    "7805": [],
+    "7807": [
+      2,
+      7,
+      8,
+      100,
+      140,
+      145,
+      150,
+      152,
+      155,
+      160,
+      161,
+      170,
+      196,
+      197,
+      198,
+      211,
+      214,
+      606,
+      607,
+      608,
+      609,
+      649,
+      658,
+      779,
+      1013,
+      1014,
+      1052,
+      1108,
+      1153,
+      1234,
+      1283,
+      1344,
+      1559,
+      1679,
+      1716,
+      1884,
+      2028,
+      2070,
+      2124,
+      2200,
+      2364,
+      2384,
+      2387,
+      2464,
+      2481,
+      2537,
+      2565,
+      2681,
+      2718,
+      2929,
+      2930,
+      2935,
+      2982,
+      3198,
+      3529,
+      3541,
+      3607,
+      3675,
+      4788,
+      4844,
+      4895,
+      4938,
+      5656,
+      5793,
+      6110,
+      6122,
+      6780,
+      6953,
+      7002,
+      7044,
+      7045,
+      7251,
+      7495,
+      7514,
+      7516,
+      7549,
+      7568,
+      7569,
+      7594,
+      7600,
+      7607,
+      7623,
+      7642,
+      7685,
+      7691,
+      7702,
+      7723,
+      7773,
+      7823,
+      7825,
+      7840,
+      7883,
+      7892,
+      7910,
+      7916,
+      7917,
+      7918,
+      7934,
+      7935,
+      7939,
+      7951
+    ],
+    "7819": [
+      2,
+      161,
+      1052,
+      1559,
+      2718,
+      2929,
+      2930,
+      3541,
+      3607,
+      4844,
+      4895,
+      7702
+    ],
+    "7851": [
+      2,
+      161,
+      1052,
+      1559,
+      2718,
+      2929,
+      2930,
+      3541,
+      3607,
+      4844,
+      4895,
+      7702
+    ],
+    "7862": [],
+    "7906": [
+      2,
+      161,
+      684,
+      1052,
+      1559,
+      2200,
+      2681,
+      2718,
+      2780,
+      2929,
+      2930,
+      3529,
+      3541,
+      3607,
+      4788,
+      4844,
+      4895,
+      6780,
+      7594,
+      7610,
+      7623,
+      7702,
+      7708,
+      7778,
+      7825,
+      7928,
+      7976,
+      8037,
+      8038,
+      8141,
+      8246
+    ],
+    "7923": [],
+    "7979": [],
+    "8015": [
+      2,
+      7,
+      8,
+      100,
+      140,
+      145,
+      150,
+      152,
+      155,
+      160,
+      161,
+      170,
+      196,
+      197,
+      198,
+      211,
+      214,
+      606,
+      607,
+      608,
+      609,
+      649,
+      658,
+      779,
+      1013,
+      1014,
+      1052,
+      1108,
+      1153,
+      1234,
+      1283,
+      1344,
+      1559,
+      1679,
+      1716,
+      1884,
+      2028,
+      2070,
+      2124,
+      2200,
+      2364,
+      2384,
+      2387,
+      2464,
+      2481,
+      2537,
+      2565,
+      2681,
+      2718,
+      2929,
+      2930,
+      2935,
+      2982,
+      3198,
+      3529,
+      3541,
+      3607,
+      3675,
+      4788,
+      4844,
+      4895,
+      4938,
+      5656,
+      5793,
+      6110,
+      6122,
+      6780,
+      6953,
+      7002,
+      7044,
+      7045,
+      7251,
+      7495,
+      7514,
+      7516,
+      7549,
+      7568,
+      7569,
+      7594,
+      7600,
+      7607,
+      7623,
+      7642,
+      7685,
+      7688,
+      7691,
+      7702,
+      7723,
+      7773,
+      7823,
+      7825,
+      7840,
+      7883,
+      7892,
+      7910,
+      7916,
+      7917,
+      7918,
+      7934,
+      7935,
+      7939,
+      7951
+    ],
+    "8025": [
+      2,
+      7,
+      8,
+      100,
+      140,
+      145,
+      150,
+      152,
+      155,
+      160,
+      161,
+      170,
+      196,
+      197,
+      198,
+      211,
+      214,
+      606,
+      607,
+      608,
+      609,
+      649,
+      658,
+      779,
+      1013,
+      1014,
+      1052,
+      1108,
+      1153,
+      1234,
+      1283,
+      1344,
+      1559,
+      1679,
+      1716,
+      1884,
+      2028,
+      2070,
+      2124,
+      2200,
+      2364,
+      2384,
+      2387,
+      2464,
+      2481,
+      2537,
+      2565,
+      2681,
+      2718,
+      2929,
+      2930,
+      2935,
+      2982,
+      3198,
+      3529,
+      3541,
+      3607,
+      3675,
+      4788,
+      4844,
+      4895,
+      4938,
+      5656,
+      5793,
+      6110,
+      6122,
+      6780,
+      6953,
+      7002,
+      7044,
+      7045,
+      7251,
+      7495,
+      7514,
+      7516,
+      7549,
+      7568,
+      7569,
+      7594,
+      7600,
+      7607,
+      7623,
+      7642,
+      7685,
+      7688,
+      7691,
+      7702,
+      7732,
+      7823,
+      7825,
+      7840,
+      7883,
+      7892,
+      7910,
+      7916,
+      7917,
+      7918,
+      7928,
+      7934,
+      7935,
+      7939,
+      7951,
+      8282
+    ],
+    "8077": [
+      2124,
+      2364,
+      2464,
+      2481,
+      4938,
+      5793,
+      7642
+    ],
+    "8094": [
+      2124,
+      2364,
+      2464,
+      2481,
+      4938,
+      5793,
+      7642
+    ],
+    "8105": [
+      7732
+    ],
+    "8115": [
+      1559,
+      2718,
+      2929,
+      2930,
+      4895
+    ],
+    "8116": [],
+    "8131": [
+      2,
+      161,
+      1052,
+      1559,
+      2028,
+      2718,
+      2929,
+      2930,
+      3541,
+      3607,
+      4844,
+      4895,
+      7623,
+      7702,
+      7976,
+      7981
+    ],
+    "8141": [
+      2,
+      161,
+      684,
+      1052,
+      1559,
+      2200,
+      2681,
+      2718,
+      2780,
+      2929,
+      2930,
+      3529,
+      3541,
+      3607,
+      4788,
+      4844,
+      4895,
+      6780,
+      7594,
+      7610,
+      7623,
+      7702,
+      7708,
+      7778,
+      7825,
+      7928,
+      7976,
+      8037,
+      8038,
+      8246
+    ],
+    "8142": [
+      1559,
+      2718,
+      2929,
+      2930,
+      4844,
+      4895,
+      7594,
+      7732,
+      7840,
+      7892,
+      7928
+    ],
+    "8146": [
+      7732,
+      7928
+    ],
+    "8148": [
+      7002,
+      7251,
+      7685
+    ],
+    "8151": [
+      2,
+      161,
+      1052,
+      1559,
+      2718,
+      2929,
+      2930,
+      3541,
+      3607,
+      4844,
+      4895,
+      7702
+    ],
+    "8163": [
+      141
+    ],
+    "8173": [],
+    "8182": [
+      20
+    ],
+    "8184": [
+      2718,
+      7805
+    ],
+    "8188": [
+      2,
+      161,
+      684,
+      1052,
+      1559,
+      2200,
+      2681,
+      2718,
+      2780,
+      2929,
+      2930,
+      3529,
+      3541,
+      3607,
+      4788,
+      4844,
+      4895,
+      6780,
+      7610,
+      7623,
+      7702,
+      7708,
+      7825,
+      7928,
+      7976,
+      8037,
+      8038,
+      8246
+    ],
+    "8198": [
+      7840,
+      7892
+    ],
+    "8200": [
+      152,
+      198,
+      2565,
+      3855,
+      7666,
+      7823,
+      7883
+    ],
+    "8205": [
+      6110,
+      7685,
+      7732
+    ],
+    "8219": [],
+    "8237": [
+      7732
+    ],
+    "8243": [],
+    "8250": [
+      2,
+      161,
+      684,
+      1052,
+      1559,
+      2200,
+      2681,
+      2718,
+      2780,
+      2929,
+      2930,
+      3529,
+      3541,
+      3607,
+      4788,
+      4844,
+      4895,
+      6780,
+      7594,
+      7610,
+      7623,
+      7702,
+      7708,
+      7778,
+      7825,
+      7928,
+      7976,
+      8037,
+      8038,
+      8141,
+      8246
+    ],
+    "8253": [
+      161,
+      684
+    ],
+    "8272": [
+      2,
+      161,
+      684,
+      1052,
+      1559,
+      2200,
+      2681,
+      2718,
+      2780,
+      2929,
+      2930,
+      3529,
+      3541,
+      3607,
+      4788,
+      4844,
+      4895,
+      6780,
+      7594,
+      7610,
+      7623,
+      7702,
+      7708,
+      7778,
+      7825,
+      7843,
+      7928,
+      7976,
+      8037,
+      8038,
+      8141,
+      8246
+    ],
+    "8279": [
+      2,
+      161,
+      1052,
+      1559,
+      2028,
+      2718,
+      2929,
+      2930,
+      3541,
+      3607,
+      4844,
+      4895,
+      7623,
+      7702,
+      7928,
+      7976,
+      7981,
+      8131
+    ],
+    "8298": [
+      2,
+      161,
+      684,
+      1052,
+      1559,
+      2200,
+      2681,
+      2718,
+      2780,
+      2929,
+      2930,
+      3529,
+      3541,
+      3607,
+      4788,
+      4844,
+      4895,
+      6780,
+      7610,
+      7623,
+      7702,
+      7708,
+      7825,
+      7928,
+      7976,
+      8037,
+      8038,
+      8246
+    ],
+    "8304": [
+      1559,
+      2718,
+      2929,
+      2930,
+      4788
+    ],
+    "8321": [
+      7916
+    ],
+    "8333": [],
+    "8334": [],
+    "8341": [
+      7732
+    ],
+    "8355": [],
+    "8358": [
+      2,
+      161,
+      684,
+      1052,
+      1559,
+      2200,
+      2681,
+      2718,
+      2780,
+      2929,
+      2930,
+      3529,
+      3541,
+      3607,
+      4788,
+      4844,
+      4895,
+      6780,
+      7610,
+      7623,
+      7702,
+      7708,
+      7825,
+      7928,
+      7976,
+      8037,
+      8038,
+      8246
+    ],
+    "8359": [],
+    "8363": [],
+    "8365": [
+      6110,
+      7002,
+      7251,
+      7685,
+      7732
+    ],
+    "8367": [
+      6110,
+      7002,
+      7251,
+      7685,
+      7732,
+      8365
+    ],
+    "8368": [
+      2,
+      161,
+      684,
+      1052,
+      1559,
+      2200,
+      2681,
+      2718,
+      2780,
+      2929,
+      2930,
+      3529,
+      3541,
+      3607,
+      4788,
+      4844,
+      4895,
+      6780,
+      7610,
+      7623,
+      7702,
+      7708,
+      7825,
+      7928,
+      7976,
+      8037,
+      8038,
+      8246
+    ],
+    "8369": [
+      2,
+      161,
+      684,
+      1052,
+      1559,
+      2200,
+      2681,
+      2718,
+      2780,
+      2929,
+      2930,
+      3529,
+      3541,
+      3607,
+      4788,
+      4844,
+      4895,
+      6780,
+      7594,
+      7610,
+      7623,
+      7702,
+      7708,
+      7732,
+      7778,
+      7805,
+      7825,
+      7843,
+      7928,
+      7976,
+      8037,
+      8038,
+      8141,
+      8246,
+      8250,
+      8272
+    ],
+    "8371": [
+      1559,
+      2718,
+      2929,
+      2930,
+      4844,
+      4895,
+      7594,
+      8136
+    ],
+    "8372": [
+      2,
+      161,
+      684,
+      1052,
+      1559,
+      2200,
+      2681,
+      2718,
+      2780,
+      2929,
+      2930,
+      3529,
+      3541,
+      3607,
+      4788,
+      4844,
+      4895,
+      6780,
+      7610,
+      7623,
+      7702,
+      7708,
+      7825,
+      7928,
+      7976,
+      8037,
+      8038,
+      8246
+    ],
+    "8374": [
+      2929
+    ],
+    "8375": [
+      7732
+    ],
+    "8379": [],
+    "8383": []
+  }
+}

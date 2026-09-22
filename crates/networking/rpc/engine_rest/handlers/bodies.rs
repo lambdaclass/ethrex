@@ -80,7 +80,7 @@ pub(crate) async fn bodies_by_range(
         .into_response();
     }
 
-    let latest = match ctx.storage.get_latest_block_number().await {
+    let latest = match ctx.storage.get_latest_block_number() {
         Ok(n) => n,
         Err(e) => return ProblemJson::internal(&format!("storage: {e}")).into_response(),
     };

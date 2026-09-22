@@ -148,7 +148,7 @@ impl NativeBlockProducer {
 
         // 2. Create initial payload (same as L2 block producer)
         let head_header = {
-            let current_block_number = self.store.get_latest_block_number().await?;
+            let current_block_number = self.store.get_latest_block_number()?;
             self.store
                 .get_block_header(current_block_number)?
                 .ok_or(NativeBlockProducerError::MissingParentHeader)?
@@ -298,7 +298,7 @@ impl NativeBlockProducer {
         let relayer_address = self.config.relayer_signer.address();
 
         // Get relayer nonce from store
-        let latest_block_number = self.store.get_latest_block_number().await?;
+        let latest_block_number = self.store.get_latest_block_number()?;
         let start_nonce = self
             .store
             .get_account_state(latest_block_number, relayer_address)

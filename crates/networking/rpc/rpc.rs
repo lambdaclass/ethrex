@@ -4,7 +4,7 @@ use crate::debug::chain_config::ChainConfigRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
 use crate::debug::set_head::SetHeadRequest;
-use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
+use crate::engine::blobs::{BlobsV2Request, BlobsV3Request, BlobsV4Request};
 use crate::engine::client_version::GetClientVersionV1Request;
 use crate::engine::payload::{
     GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request, NewPayloadWithWitnessV5Request,
@@ -32,24 +32,30 @@ use crate::eth::{
     block::{
         BlockNumberRequest, GetBlobBaseFee, GetBlockByHashRequest, GetBlockByNumberRequest,
         GetBlockReceiptsRequest, GetBlockTransactionCountRequest, GetRawBlockRequest,
-        GetRawHeaderRequest, GetRawReceipts,
+        GetRawHeaderRequest, GetRawReceipts, GetUncleCountRequest,
     },
-    block_access_list::BlockAccessListRequest,
+    block_access_list::{BlockAccessListRequest, RawBlockAccessListRequest},
     client::{ChainId, Syncing},
     fee_market::FeeHistoryRequest,
-    filter::{self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, NewFilterRequest},
+    filter::{
+        self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, NewBlockFilterRequest,
+        NewFilterRequest,
+    },
     gas_price::GasPrice,
     gas_tip_estimator::GasTipEstimator,
     logs::LogsFilter,
     transaction::{
         CallRequest, CreateAccessListRequest, EstimateGasRequest, GetRawTransaction,
-        GetTransactionByBlockHashAndIndexRequest, GetTransactionByBlockNumberAndIndexRequest,
-        GetTransactionByHashRequest, GetTransactionReceiptRequest,
+        GetRawTransactionByBlockAndIndex, GetTransactionByBlockHashAndIndexRequest,
+        GetTransactionByBlockNumberAndIndexRequest, GetTransactionByHashRequest,
+        GetTransactionReceiptRequest,
     },
 };
 use crate::subscription_manager::{SubscriptionManager, SubscriptionManagerProtocol};
 use crate::testing::BuildBlockV1Request;
-use crate::tracing::{TraceBlockByNumberRequest, TraceTransactionRequest};
+use crate::tracing::{
+    TraceBlockByHashRequest, TraceBlockByNumberRequest, TraceCallRequest, TraceTransactionRequest,
+};
 use crate::types::transaction::SendRawTransactionRequest;
 use crate::utils::{
     RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
@@ -73,8 +79,7 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
-use ethrex_p2p::types::Node;
-use ethrex_p2p::types::NodeRecord;
+use ethrex_p2p::types::SharedLocalNode;
 use ethrex_storage::Store;
 use serde::Deserialize;
 use serde_json::Value;
@@ -314,10 +319,10 @@ impl std::fmt::Display for ClientVersion {
 pub struct NodeData {
     /// JWT secret for authenticating Engine API requests from consensus clients.
     pub jwt_secret: Bytes,
-    /// Local P2P node identity (public key and address).
-    pub local_p2p_node: Node,
-    /// ENR (Ethereum Node Record) for node discovery.
-    pub local_node_record: NodeRecord,
+    /// Live-updated local node identity (public key, address, and ENR).
+    /// Guarded by a std RwLock; callers must clone values out and drop the guard
+    /// before any `.await` to avoid holding a !Send guard across await points.
+    pub shared_local_node: SharedLocalNode,
     /// Client version information.
     pub client_version: ClientVersion,
     /// Extra data included in mined blocks.
@@ -398,8 +403,10 @@ pub trait RpcHandler: Sized {
 fn get_error_kind(err: &RpcErr) -> &'static str {
     match err {
         RpcErr::MethodNotFound(_) => "MethodNotFound",
+        RpcErr::MethodNotServedHere { .. } => "MethodNotServedHere",
         RpcErr::WrongParam(_) => "WrongParam",
         RpcErr::BadParams(_) => "BadParams",
+        RpcErr::InvalidParams(_) => "InvalidParams",
         RpcErr::InvalidRequest(_) => "InvalidRequest",
         RpcErr::MissingParam(_) => "MissingParam",
         RpcErr::TooLargeRequest => "TooLargeRequest",
@@ -418,6 +425,8 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::InvalidHeaderFormat(_) => "InvalidHeaderFormat",
         RpcErr::InvalidPayload(_) => "InvalidPayload",
         RpcErr::ProofGenerationUnavailable(_) => "ProofGenerationUnavailable",
+        RpcErr::ResourceNotFound(_) => "ResourceNotFound",
+        RpcErr::PrunedHistoryUnavailable(_) => "PrunedHistoryUnavailable",
     }
 }
 
@@ -448,16 +457,27 @@ pub const FILTER_DURATION: Duration = {
 ///
 /// # Returns
 ///
-/// An unbounded channel sender for submitting blocks. Each submission includes
-/// a oneshot channel for receiving the execution result.
+/// An unbounded channel sender for submitting blocks (each submission includes
+/// a oneshot channel for receiving the execution result), plus the executor
+/// thread's `JoinHandle`.
+///
+/// The thread runs until every sender is dropped. Long-lived callers (the node)
+/// drop the handle and leave it detached; callers that must reclaim the thread
+/// deterministically drop the sender first and then join, which is what
+/// `test_utils::TestContext` does so a test's threads do not outlive it.
 ///
 /// # Panics
 ///
 /// Panics if the worker thread cannot be spawned.
-pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<BlockWorkerMessage> {
+pub fn start_block_executor(
+    blockchain: Arc<Blockchain>,
+) -> (
+    UnboundedSender<BlockWorkerMessage>,
+    std::thread::JoinHandle<()>,
+) {
     let (block_worker_channel, mut block_receiver) = unbounded_channel::<BlockWorkerMessage>();
     let prewarmer = ethrex_blockchain::prewarm::MempoolPrewarmer::spawn(blockchain.clone());
-    std::thread::Builder::new()
+    let executor = std::thread::Builder::new()
         .name("block_executor".to_string())
         .spawn(move || {
             while let Some((notify, block, bal, make_witness)) = block_receiver.blocking_recv() {
@@ -492,7 +512,7 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
             }
         })
         .expect("Falied to spawn block_executor thread");
-    block_worker_channel
+    (block_worker_channel, executor)
 }
 
 /// Binds the JSON-RPC API listeners and returns them ready to serve.
@@ -529,8 +549,7 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
 /// * `storage` - Database storage instance
 /// * `blockchain` - Blockchain instance for block operations
 /// * `jwt_secret` - JWT secret for Engine API authentication
-/// * `local_p2p_node` - Local node identity for P2P networking
-/// * `local_node_record` - ENR for node discovery
+/// * `shared_local_node` - Live-updated local node identity (public key, address, and ENR)
 /// * `syncer` - Sync manager for block synchronization
 /// * `peer_handler` - Handler for P2P peer operations
 /// * `client_version` - Client version information for `web3_clientVersion` and `engine_getClientVersionV1`
@@ -553,8 +572,7 @@ pub async fn bind_api(
     storage: Store,
     blockchain: Arc<Blockchain>,
     jwt_secret: Bytes,
-    local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    shared_local_node: SharedLocalNode,
     syncer: SyncManager,
     peer_handler: PeerHandler,
     client_version: ClientVersion,
@@ -566,7 +584,9 @@ pub async fn bind_api(
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
-    let block_worker_channel = start_block_executor(blockchain.clone());
+    // The node runs for the lifetime of the process, so the executor thread is
+    // left detached; only test harnesses join it (see `test_utils::TestContext`).
+    let (block_worker_channel, _executor) = start_block_executor(blockchain.clone());
     let service_context = RpcApiContext {
         storage,
         blockchain,
@@ -575,8 +595,7 @@ pub async fn bind_api(
         peer_handler: Some(peer_handler),
         node_data: NodeData {
             jwt_secret,
-            local_p2p_node,
-            local_node_record,
+            shared_local_node,
             client_version,
             extra_data: extra_data.into(),
         },
@@ -800,8 +819,7 @@ pub async fn start_api(
     storage: Store,
     blockchain: Arc<Blockchain>,
     jwt_secret: Bytes,
-    local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    shared_local_node: SharedLocalNode,
     syncer: SyncManager,
     peer_handler: PeerHandler,
     client_version: ClientVersion,
@@ -819,8 +837,7 @@ pub async fn start_api(
         storage,
         blockchain,
         jwt_secret,
-        local_p2p_node,
-        local_node_record,
+        shared_local_node,
         syncer,
         peer_handler,
         client_version,
@@ -1216,7 +1233,8 @@ where
             // a node started with e.g. `--http.api web3` would still expose
             // `eth_subscribe("newHeads")` over WS.
             if !context.allowed_namespaces.contains(&RpcNamespace::Eth) {
-                let err: Result<Value, RpcErr> = Err(RpcErr::MethodNotFound(req.method.clone()));
+                let err: Result<Value, RpcErr> =
+                    Err(namespace_not_enabled(&req.method, RpcNamespace::Eth));
                 return rpc_response(req.id, err).ok();
             }
             let result = if req.method == "eth_subscribe" {
@@ -1334,14 +1352,49 @@ pub async fn handle_eth_unsubscribe(
     Ok(Value::Bool(removed))
 }
 
+/// `-32601` for a method whose namespace ethrex implements but this endpoint is
+/// not configured to serve. Naming the namespace and the flag keeps a disabled
+/// allowlist from reading like an unimplemented method.
+fn namespace_not_enabled(method: &str, namespace: RpcNamespace) -> RpcErr {
+    RpcErr::MethodNotServedHere {
+        method: method.to_string(),
+        reason: format!(
+            "the '{}' namespace is not enabled on this endpoint; add it to --http.api",
+            namespace.as_prefix()
+        ),
+    }
+}
+
+/// `-32601` for `engine_*` reaching the public HTTP port. Distinct from
+/// [`namespace_not_enabled`]: `--http.api` refuses `engine` outright, so telling
+/// the caller to add it there would send them down a dead end.
+fn engine_not_on_http(method: &str) -> RpcErr {
+    RpcErr::MethodNotServedHere {
+        method: method.to_string(),
+        reason: "the 'engine' namespace is served on the authenticated RPC port \
+                 (--authrpc.port), not on the public HTTP port"
+            .to_string(),
+    }
+}
+
 /// Handle requests that can come from either clients or other users
 pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     let namespace = match req.namespace() {
         Ok(ns) => ns,
         Err(rpc_err) => return Err(rpc_err),
     };
+    // Engine is served on the authenticated port only. The CLI parser already
+    // rejects `--http.api engine`, but `allowed_namespaces` can also be built
+    // programmatically (e.g. in tests or future call sites), so HTTP dispatch
+    // must refuse Engine even if it ends up in the set. This runs *before* the
+    // allowlist check because `engine` is never in the allowlist on a real node:
+    // otherwise every `engine_*` call over HTTP would be told to add `engine` to
+    // a flag that rejects it.
+    if namespace == RpcNamespace::Engine {
+        return Err(engine_not_on_http(&req.method));
+    }
     if !context.allowed_namespaces.contains(&namespace) {
-        return Err(RpcErr::MethodNotFound(req.method.clone()));
+        return Err(namespace_not_enabled(&req.method, namespace));
     }
     match namespace {
         RpcNamespace::Eth => map_eth_requests(req, context).await,
@@ -1351,11 +1404,10 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         RpcNamespace::Net => map_net_requests(req, context).await,
         RpcNamespace::Mempool => map_mempool_requests(req, context),
         RpcNamespace::Testing => map_testing_requests(req, context).await,
-        // Engine is served on the authenticated port only. The CLI parser
-        // already rejects `--http.api engine`, but `allowed_namespaces` can
-        // also be built programmatically (e.g. in tests or future call sites),
-        // so HTTP dispatch must refuse Engine even if it ends up in the set.
-        RpcNamespace::Engine => Err(RpcErr::MethodNotFound(req.method.clone())),
+        // Unreachable: the guard above already returned. Kept so the match stays
+        // exhaustive without a catch-all arm that would silently route a
+        // namespace added later.
+        RpcNamespace::Engine => Err(engine_not_on_http(&req.method)),
     }
 }
 
@@ -1367,7 +1419,14 @@ pub async fn map_authrpc_requests(
     match req.namespace() {
         Ok(RpcNamespace::Engine) => map_engine_requests(req, context).await,
         Ok(RpcNamespace::Eth) => map_eth_requests(req, context).await,
-        _ => Err(RpcErr::MethodNotFound(req.method.clone())),
+        // A known namespace that this port does not serve is not the same as an
+        // unparseable method name, which `namespace()` already rejects.
+        Ok(_) => Err(RpcErr::MethodNotServedHere {
+            method: req.method.clone(),
+            reason: "the authenticated RPC port only serves the 'engine' and 'eth' namespaces"
+                .to_string(),
+        }),
+        Err(rpc_err) => Err(rpc_err),
     }
 }
 
@@ -1395,6 +1454,18 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_getBlockTransactionCountByHash" => {
             GetBlockTransactionCountRequest::call(req, context).await
         }
+        "eth_getUncleCountByBlockNumber" => GetUncleCountRequest::call(req, context).await,
+        "eth_getUncleCountByBlockHash" => GetUncleCountRequest::call(req, context).await,
+        // `eth_`-namespace spellings of the raw-transaction getters. geth,
+        // nethermind, reth and erigon all serve these; only the `debug_` form
+        // existed here, so tooling probing the `eth_` names saw them as missing.
+        "eth_getRawTransactionByHash" => GetRawTransaction::call(req, context).await,
+        "eth_getRawTransactionByBlockHashAndIndex" => {
+            GetRawTransactionByBlockAndIndex::call(req, context).await
+        }
+        "eth_getRawTransactionByBlockNumberAndIndex" => {
+            GetRawTransactionByBlockAndIndex::call(req, context).await
+        }
         "eth_getTransactionByBlockNumberAndIndex" => {
             GetTransactionByBlockNumberAndIndexRequest::call(req, context).await
         }
@@ -1415,6 +1486,9 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_getLogs" => LogsFilter::call(req, context).await,
         "eth_newFilter" => {
             NewFilterRequest::stateful_call(req, context.storage, context.active_filters).await
+        }
+        "eth_newBlockFilter" => {
+            NewBlockFilterRequest::stateful_call(req, context.storage, context.active_filters).await
         }
         "eth_uninstallFilter" => {
             DeleteFilterRequest::stateful_call(req, context.storage, context.active_filters)
@@ -1450,15 +1524,16 @@ pub async fn map_testing_requests(
 /// Routes `debug_*` namespace requests to their handlers.
 ///
 /// Handles debugging and introspection methods:
-/// - Raw data: `debug_getRawHeader`, `debug_getRawBlock`, `debug_getRawTransaction`, `debug_getRawReceipts`
+/// - Raw data: `debug_getRawHeader`, `debug_getRawBlock`, `debug_getRawTransaction`, `debug_getRawReceipts`, `debug_getRawBlockAccessList`
 /// - Execution witness: `debug_executionWitness` (for stateless validation)
-/// - Tracing: `debug_traceTransaction`, `debug_traceBlockByNumber`
+/// - Tracing: `debug_traceTransaction`, `debug_traceBlockByNumber`, `debug_traceBlockByHash`, `debug_traceCall`
 pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "debug_getRawHeader" => GetRawHeaderRequest::call(req, context).await,
         "debug_getRawBlock" => GetRawBlockRequest::call(req, context).await,
         "debug_getRawTransaction" => GetRawTransaction::call(req, context).await,
         "debug_getRawReceipts" => GetRawReceipts::call(req, context).await,
+        "debug_getRawBlockAccessList" => RawBlockAccessListRequest::call(req, context).await,
         "debug_executionWitness" => ExecutionWitnessRequest::call(req, context).await,
         "debug_executionWitnessByBlockHash" => {
             ExecutionWitnessByBlockHashRequest::call(req, context).await
@@ -1468,6 +1543,8 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_setHead" => SetHeadRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
+        "debug_traceBlockByHash" => TraceBlockByHashRequest::call(req, context).await,
+        "debug_traceCall" => TraceCallRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
     }
 }
@@ -1482,7 +1559,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
 /// - Payload submission: `engine_newPayloadV1/V2/V3/V4/V5`, `engine_newPayloadWithWitnessV5`
 /// - Payload retrieval: `engine_getPayloadV1/V2/V3/V4/V5/V6`
 /// - Payload bodies: `engine_getPayloadBodiesByHashV1`, `engine_getPayloadBodiesByRangeV1`
-/// - Blob retrieval: `engine_getBlobsV1/V2/V3`
+/// - Blob retrieval: `engine_getBlobsV1/V2/V3/V4`
 /// - Capabilities: `engine_exchangeCapabilities`, `engine_exchangeTransitionConfigurationV1`
 pub async fn map_engine_requests(
     req: &RpcRequest,
@@ -1533,6 +1610,7 @@ pub async fn map_engine_requests(
         "engine_getBlobsV1" => BlobsV1Request::call(req, context).await,
         "engine_getBlobsV2" => BlobsV2Request::call(req, context).await,
         "engine_getBlobsV3" => BlobsV3Request::call(req, context).await,
+        "engine_getBlobsV4" => BlobsV4Request::call(req, context).await,
         "engine_getClientVersionV1" => GetClientVersionV1Request::call(req, context).await,
         unknown_engine_method => Err(RpcErr::MethodNotFound(unknown_engine_method.to_owned())),
     }
@@ -1563,6 +1641,7 @@ pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Val
 pub async fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "net_version" => net::version(req, contex),
+        "net_listening" => net::listening(req, contex),
         "net_peerCount" => net::peer_count(req, contex).await,
         unknown_net_method => Err(RpcErr::MethodNotFound(unknown_net_method.to_owned())),
     }
@@ -1625,8 +1704,10 @@ mod tests {
     use std::{fs::File, path::Path};
 
     /// With the default `--http.api` allowlist (`eth,net,web3`), requests for
-    /// disabled namespaces like `debug_*` must return MethodNotFound and never
-    /// reach the handler.
+    /// disabled namespaces like `debug_*` must be refused before the handler and
+    /// must say *why*: a bare "Method not found" reads as "ethrex does not
+    /// implement `debug_traceTransaction`", which is what operators kept
+    /// concluding.
     #[tokio::test]
     async fn http_api_allowlist_blocks_debug_namespace_by_default() {
         let body = r#"{"jsonrpc":"2.0","method":"debug_traceTransaction","params":["0x0"],"id":1}"#;
@@ -1640,13 +1721,41 @@ mod tests {
         let mut context = default_context_with_storage(storage).await;
         context.allowed_namespaces = Arc::new(crate::DEFAULT_HTTP_API.iter().copied().collect());
 
-        let result = map_http_requests(&request, context).await;
+        let result = map_http_requests(&request, context.clone()).await;
         match result {
-            Err(RpcErr::MethodNotFound(method)) => {
+            Err(RpcErr::MethodNotServedHere { method, reason }) => {
                 assert_eq!(method, "debug_traceTransaction");
+                assert!(reason.contains("'debug'"), "names the namespace: {reason}");
+                assert!(reason.contains("--http.api"), "names the flag: {reason}");
             }
-            other => panic!("expected MethodNotFound, got {other:?}"),
+            other => panic!("expected MethodNotServedHere, got {other:?}"),
         }
+    }
+
+    /// The reason must reach the wire under the spec's `-32601`, so a client that
+    /// keys on the code is unaffected while a human (or an agent) reading the
+    /// message learns the method exists.
+    #[test]
+    fn namespace_not_enabled_serializes_as_method_not_found() {
+        let meta: RpcErrorMetadata =
+            namespace_not_enabled("txpool_content", RpcNamespace::Mempool).into();
+        assert_eq!(meta.code, -32601);
+        assert!(
+            meta.message.contains("txpool_content"),
+            "names the method: {}",
+            meta.message
+        );
+        // The CLI spelling, not the enum variant name: `--http.api txpool`.
+        assert!(
+            meta.message.contains("'txpool'"),
+            "names the CLI namespace: {}",
+            meta.message
+        );
+        assert!(
+            meta.message.contains("--http.api"),
+            "names the flag: {}",
+            meta.message
+        );
     }
 
     /// A bind conflict must surface as a typed `RpcStartupError` naming the role and the
@@ -1686,7 +1795,10 @@ mod tests {
             let request: RpcRequest = serde_json::from_str(&body).unwrap();
             let result = map_http_requests(&request, context.clone()).await;
             assert!(
-                !matches!(result, Err(RpcErr::MethodNotFound(_))),
+                !matches!(
+                    result,
+                    Err(RpcErr::MethodNotFound(_) | RpcErr::MethodNotServedHere { .. })
+                ),
                 "default allowlist should route {method}, got {result:?}"
             );
         }
@@ -1743,6 +1855,40 @@ mod tests {
         );
     }
 
+    /// On a normally-configured node `engine` is simply absent from the
+    /// allowlist, so this is the path every real `engine_*` call over HTTP takes.
+    /// It must point at the authenticated port rather than at `--http.api`, which
+    /// refuses `engine`.
+    #[tokio::test]
+    async fn engine_namespace_on_http_points_at_the_authenticated_port() {
+        let body = r#"{"jsonrpc":"2.0","method":"engine_forkchoiceUpdatedV3","params":[],"id":1}"#;
+        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        let mut storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        storage
+            .set_chain_config(&example_chain_config())
+            .await
+            .unwrap();
+        let mut context = default_context_with_storage(storage).await;
+        context.allowed_namespaces = Arc::new(crate::DEFAULT_HTTP_API.iter().copied().collect());
+
+        let result = map_http_requests(&request, context.clone()).await;
+        match result {
+            Err(RpcErr::MethodNotServedHere { method, reason }) => {
+                assert_eq!(method, "engine_forkchoiceUpdatedV3");
+                assert!(
+                    reason.contains("--authrpc.port"),
+                    "points at the authenticated port: {reason}"
+                );
+                assert!(
+                    !reason.contains("--http.api"),
+                    "must not send the caller to a flag that rejects `engine`: {reason}"
+                );
+            }
+            other => panic!("expected MethodNotServedHere, got {other:?}"),
+        }
+    }
+
     /// The Engine namespace must never be served over the public HTTP endpoint,
     /// even if an operator passes `engine` to `--http.api` (the CLI rejects it,
     /// but defense-in-depth: the dispatcher still refuses).
@@ -1762,8 +1908,17 @@ mod tests {
         all_with_engine.insert(RpcNamespace::Engine);
         context.allowed_namespaces = Arc::new(all_with_engine);
 
-        let result = map_http_requests(&request, context).await;
-        assert!(matches!(result, Err(RpcErr::MethodNotFound(_))));
+        let result = map_http_requests(&request, context.clone()).await;
+        match result {
+            Err(RpcErr::MethodNotServedHere { method, reason }) => {
+                assert_eq!(method, "engine_forkchoiceUpdatedV3");
+                assert!(
+                    reason.contains("--authrpc.port"),
+                    "points at the authenticated port: {reason}"
+                );
+            }
+            other => panic!("expected MethodNotServedHere, got {other:?}"),
+        }
     }
 
     // Maps string rpc response to RpcSuccessResponse as serde Value
@@ -1783,10 +1938,13 @@ mod tests {
             .await
             .unwrap();
         let context = default_context_with_storage(storage).await;
-        let local_p2p_node = context.node_data.local_p2p_node.clone();
-
-        let enr_url = context.node_data.local_node_record.enr_url().unwrap();
-        let result = map_http_requests(&request, context).await;
+        let (local_p2p_node, enr_url) = {
+            let guard = context.node_data.shared_local_node.read().unwrap();
+            let node = guard.node.clone();
+            let enr_url = guard.record.enr_url().unwrap();
+            (node, enr_url)
+        };
+        let result = map_http_requests(&request, context.clone()).await;
         let rpc_response = rpc_response(request.id, result).unwrap();
         let blob_schedule = serde_json::json!({
             "cancun": { "baseFeeUpdateFraction": 3338477, "max": 6, "target": 3,  },
@@ -1885,7 +2043,7 @@ mod tests {
             .expect("Failed to add genesis block to DB");
         // Process request
         let context = default_context_with_storage(storage).await;
-        let result = map_http_requests(&request, context).await;
+        let result = map_http_requests(&request, context.clone()).await;
         let response = rpc_response(request.id, result).unwrap();
         let expected_response = to_rpc_response_success_value(
             r#"{"jsonrpc":"2.0","id":1,"result":{"accessList":[],"gasUsed":"0x5208"}}"#,
@@ -1936,7 +2094,7 @@ mod tests {
         storage.set_chain_config(&config).await.unwrap();
         let context = default_context_with_storage(storage).await;
 
-        let result = map_http_requests(&request, context).await;
+        let result = map_http_requests(&request, context.clone()).await;
         assert!(
             result.is_ok(),
             "admin_nodeInfo should not fail with large terminal_total_difficulty"
@@ -1964,11 +2122,29 @@ mod tests {
         let chain_id = storage.get_chain_config().chain_id.to_string();
         let context = default_context_with_storage(storage).await;
         // Process request
-        let result = map_http_requests(&request, context).await;
+        let result = map_http_requests(&request, context.clone()).await;
         let response = rpc_response(request.id, result).unwrap();
         let expected_response_string =
             format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{chain_id}"}}"#);
         let expected_response = to_rpc_response_success_value(&expected_response_string);
+        assert_eq!(response.to_string(), expected_response.to_string());
+    }
+
+    #[tokio::test]
+    async fn net_listening_test() {
+        let body = r#"{"jsonrpc":"2.0","method":"net_listening","params":[],"id":67}"#;
+        let request: RpcRequest = serde_json::from_str(body).expect("serde serialization failed");
+        let mut storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        storage
+            .set_chain_config(&example_chain_config())
+            .await
+            .unwrap();
+        let context = default_context_with_storage(storage).await;
+        let result = map_http_requests(&request, context.clone()).await;
+        let response = rpc_response(request.id, result).unwrap();
+        let expected_response =
+            to_rpc_response_success_value(r#"{"id":67,"jsonrpc": "2.0","result": true}"#);
         assert_eq!(response.to_string(), expected_response.to_string());
     }
 
@@ -1984,7 +2160,7 @@ mod tests {
         .await
         .expect("Failed to create test DB");
         let context = default_context_with_storage(storage).await;
-        let result = map_http_requests(&request, context).await;
+        let result = map_http_requests(&request, context.clone()).await;
         let rpc_response = rpc_response(request.id, result).unwrap();
         let json = serde_json::json!({
             "id": 1,

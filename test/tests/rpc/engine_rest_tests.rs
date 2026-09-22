@@ -477,7 +477,7 @@ mod router_tests {
         let mut ctx = default_context_with_storage(storage).await;
         let secret = bytes::Bytes::from(vec![0xAB; 32]);
         ctx.node_data.jwt_secret = secret.clone();
-        let app = router(ctx);
+        let app = router(ctx.into_detached());
         (app, secret)
     }
 
@@ -581,7 +581,7 @@ mod coexistence_tests {
         // Merge in the same way rpc.rs will after this task.
         let authrpc: Router = Router::new()
             .route("/", post(fake_jsonrpc_handler))
-            .merge(engine_rest_router(ctx));
+            .merge(engine_rest_router(ctx.clone()));
 
         // JSON-RPC POST / works without engine REST's auth (existing flow handles it).
         let req = axum::http::Request::builder()
@@ -627,7 +627,7 @@ mod coexistence_tests {
 
         let authrpc: Router = Router::new()
             .route("/", post(fake_jsonrpc_handler))
-            .merge(engine_rest_router(ctx));
+            .merge(engine_rest_router(ctx.clone()));
 
         let req = axum::http::Request::builder()
             .method("POST")
@@ -1596,7 +1596,7 @@ mod submit_payload_tests {
         let mut ctx = default_context_with_storage(storage).await;
         let secret = Bytes::from(vec![0xAB; 32]);
         ctx.node_data.jwt_secret = secret.clone();
-        let app = router(ctx);
+        let app = router(ctx.clone());
         let token = auth_token(&secret).await;
 
         let env = empty_cancun_envelope();
@@ -1623,7 +1623,7 @@ mod submit_payload_tests {
         let mut ctx = default_context_with_storage(storage).await;
         let secret = Bytes::from(vec![0xAB; 32]);
         ctx.node_data.jwt_secret = secret.clone();
-        let app = router(ctx);
+        let app = router(ctx.clone());
         let token = auth_token(&secret).await;
 
         let req = axum::http::Request::builder()
@@ -1658,7 +1658,7 @@ mod get_payload_tests {
         let mut ctx = default_context_with_storage(storage).await;
         let secret = Bytes::from(vec![0xAB; 32]);
         ctx.node_data.jwt_secret = secret.clone();
-        let app = router(ctx);
+        let app = router(ctx.clone());
         let token = auth_token(&secret).await;
 
         let req = axum::http::Request::builder()
@@ -1681,7 +1681,7 @@ mod get_payload_tests {
         let mut ctx = default_context_with_storage(storage).await;
         let secret = Bytes::from(vec![0xAB; 32]);
         ctx.node_data.jwt_secret = secret.clone();
-        let app = router(ctx);
+        let app = router(ctx.clone());
         let token = auth_token(&secret).await;
 
         let req = axum::http::Request::builder()
@@ -1716,7 +1716,7 @@ mod forkchoice_handler_tests {
         let mut ctx = default_context_with_storage(storage).await;
         let secret = Bytes::from(vec![0xAB; 32]);
         ctx.node_data.jwt_secret = secret.clone();
-        let app = router(ctx);
+        let app = router(ctx.clone());
         let token = auth_token(&secret).await;
 
         let update = CancunForkchoiceUpdate {
@@ -1754,7 +1754,7 @@ mod forkchoice_handler_tests {
         let mut ctx = default_context_with_storage(storage).await;
         let secret = Bytes::from(vec![0xAB; 32]);
         ctx.node_data.jwt_secret = secret.clone();
-        let app = router(ctx);
+        let app = router(ctx.clone());
         let token = auth_token(&secret).await;
 
         let req = axum::http::Request::builder()
@@ -1834,7 +1834,7 @@ mod forkchoice_handler_tests {
         let mut ctx = default_context_with_storage(storage.clone()).await;
         let secret = Bytes::from(vec![0xAB; 32]);
         ctx.node_data.jwt_secret = secret.clone();
-        let app = router(ctx);
+        let app = router(ctx.clone());
         let token = auth_token(&secret).await;
 
         // head advances to block_1; attrs.timestamp == block_1.timestamp is stale
@@ -2094,7 +2094,7 @@ mod bodies_by_hash_tests {
         let mut ctx = default_context_with_storage(storage.clone()).await;
         let secret = Bytes::from(vec![0xAB; 32]);
         ctx.node_data.jwt_secret = secret.clone();
-        let app = router(ctx);
+        let app = router(ctx.clone());
         let token = auth_token(&secret).await;
 
         // Look up block 1's hash.
@@ -2136,7 +2136,7 @@ mod bodies_by_hash_tests {
         let mut ctx = default_context_with_storage(storage).await;
         let secret = Bytes::from(vec![0xAB; 32]);
         ctx.node_data.jwt_secret = secret.clone();
-        let app = router(ctx);
+        let app = router(ctx.clone());
         let token = auth_token(&secret).await;
 
         let req_body = BodiesByHashRequest {
@@ -2162,7 +2162,7 @@ mod bodies_by_hash_tests {
         let mut ctx = default_context_with_storage(storage).await;
         let secret = Bytes::from(vec![0xAB; 32]);
         ctx.node_data.jwt_secret = secret.clone();
-        let app = router(ctx);
+        let app = router(ctx.clone());
         let token = auth_token(&secret).await;
 
         let req_body = BodiesByHashRequest {
@@ -2222,7 +2222,7 @@ mod bodies_by_range_tests {
         let mut ctx = default_context_with_storage(storage).await;
         let secret = Bytes::from(vec![0xAB; 32]);
         ctx.node_data.jwt_secret = secret.clone();
-        let app = router(ctx);
+        let app = router(ctx.clone());
         let token = auth_token(&secret).await;
 
         let req = axum::http::Request::builder()
@@ -2254,7 +2254,7 @@ mod bodies_by_range_tests {
         let mut ctx = default_context_with_storage(storage).await;
         let secret = Bytes::from(vec![0xAB; 32]);
         ctx.node_data.jwt_secret = secret.clone();
-        let app = router(ctx);
+        let app = router(ctx.clone());
         let token = auth_token(&secret).await;
 
         // Blocks are Osaka-era on the test genesis, so `cancun` is out of range.
@@ -2280,7 +2280,7 @@ mod bodies_by_range_tests {
         let mut ctx = default_context_with_storage(storage).await;
         let secret = Bytes::from(vec![0xAB; 32]);
         ctx.node_data.jwt_secret = secret.clone();
-        let app = router(ctx);
+        let app = router(ctx.clone());
         let token = auth_token(&secret).await;
 
         let req = axum::http::Request::builder()
@@ -2300,7 +2300,7 @@ mod bodies_by_range_tests {
         let mut ctx = default_context_with_storage(storage).await;
         let secret = Bytes::from(vec![0xAB; 32]);
         ctx.node_data.jwt_secret = secret.clone();
-        let app = router(ctx);
+        let app = router(ctx.clone());
         let token = auth_token(&secret).await;
 
         let req = axum::http::Request::builder()
@@ -2320,7 +2320,7 @@ mod bodies_by_range_tests {
         let mut ctx = default_context_with_storage(storage).await;
         let secret = Bytes::from(vec![0xAB; 32]);
         ctx.node_data.jwt_secret = secret.clone();
-        let app = router(ctx);
+        let app = router(ctx.clone());
         let token = auth_token(&secret).await;
 
         let req = axum::http::Request::builder()
@@ -2462,7 +2462,7 @@ mod blobs_v1_tests {
         let mut ctx = default_context_with_storage(storage).await;
         let secret = Bytes::from(vec![0xAB; 32]);
         ctx.node_data.jwt_secret = secret.clone();
-        let app = router(ctx);
+        let app = router(ctx.clone());
         let token = auth_token(&secret).await;
 
         let req_body = BlobsV1Request {
@@ -2490,7 +2490,7 @@ mod blobs_v1_tests {
         let mut ctx = default_context_with_storage(storage).await;
         let secret = Bytes::from(vec![0xAB; 32]);
         ctx.node_data.jwt_secret = secret.clone();
-        let app = router(ctx);
+        let app = router(ctx.clone());
         let token = auth_token(&secret).await;
 
         let req_body = BlobsV1Request {
@@ -2523,7 +2523,7 @@ mod blobs_v2v3_tests {
         let mut ctx = default_context_with_storage(storage).await;
         let secret = Bytes::from(vec![0xAB; 32]);
         ctx.node_data.jwt_secret = secret.clone();
-        (router(ctx), secret)
+        (router(ctx.into_detached()), secret)
     }
 
     #[tokio::test]
@@ -2605,7 +2605,7 @@ mod blobs_v4_tests {
         let mut ctx = default_context_with_storage(storage).await;
         let secret = Bytes::from(vec![0xAB; 32]);
         ctx.node_data.jwt_secret = secret.clone();
-        (router(ctx), secret)
+        (router(ctx.into_detached()), secret)
     }
 
     // The mempool stores no per-cell data, so the EL cannot serve /blobs/v4 at
@@ -2672,7 +2672,7 @@ mod sp3_smoke_tests {
         let mut ctx = default_context_with_storage(storage).await;
         let secret = Bytes::from(vec![0xAB; 32]);
         ctx.node_data.jwt_secret = secret.clone();
-        let app = router(ctx);
+        let app = router(ctx.clone());
         let token = auth_token(&secret).await;
 
         // Fork-scoped endpoints select the fork via Eth-Execution-Version; the

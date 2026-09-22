@@ -8,4 +8,4 @@ mod program;
 pub use error::L2ExecutionError;
 pub use input::ProgramInput;
 pub use output::ProgramOutput;
-pub use program::execution_program;
+pub use program::{execution_program, run_guest};

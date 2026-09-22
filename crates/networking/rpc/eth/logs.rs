@@ -201,8 +201,16 @@ pub(crate) async fn fetch_logs_with_filter(
                 .resolve_block_number(&storage)
                 .await?
                 .ok_or(RpcErr::WrongParam("toBlock".to_string()))?;
-            if (from..=to).is_empty() {
-                return Err(RpcErr::BadParams("Empty range".to_string()));
+            let latest = storage.get_latest_block_number()?;
+            if from > to {
+                return Err(RpcErr::InvalidParams(
+                    "invalid block range params".to_string(),
+                ));
+            }
+            if to > latest {
+                return Err(RpcErr::InvalidParams(
+                    "block range extends beyond current head block".to_string(),
+                ));
             }
             // The idea here is to fetch every log and filter by address, if given.
             // For that, we'll need each block in range, and its transactions,
@@ -316,6 +324,7 @@ async fn collect_block_logs(
                         transaction_index: tx_index as u64,
                         block_number: block_num,
                         block_hash,
+                        block_timestamp: block_header.timestamp,
                         removed: false,
                     });
                 }
@@ -499,6 +508,72 @@ mod tests {
     /// canonical number index would instead return the logs of whatever block
     /// replaced it at the same height after a reorg, silently, which is the
     /// substitution EIP-234 exists to prevent.
+    #[tokio::test]
+    async fn test_get_logs_rejects_out_of_range_blocks() {
+        use ethrex_common::types::{Block, BlockBody};
+        use ethrex_storage::EngineType;
+
+        let storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        let block = Block::new(
+            BlockHeader {
+                number: 1,
+                ..Default::default()
+            },
+            BlockBody::default(),
+        );
+        let hash = block.hash();
+        storage.add_block(block).await.unwrap();
+        storage
+            .forkchoice_update(vec![(1, hash)], 1, hash, None, None)
+            .await
+            .unwrap();
+
+        let filter_for = |from_block, to_block| LogsFilter {
+            from_block,
+            to_block,
+            block_hash: None,
+            address_filters: None,
+            topics: vec![],
+        };
+
+        let err = fetch_logs_with_filter(
+            &filter_for(BlockIdentifier::Number(1), BlockIdentifier::Number(3)),
+            storage.clone(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, RpcErr::InvalidParams(ref m) if m == "block range extends beyond current head block"),
+            "{err:?}"
+        );
+
+        let err = fetch_logs_with_filter(
+            &filter_for(
+                BlockIdentifier::Number(2),
+                BlockIdentifier::Tag(BlockTag::Latest),
+            ),
+            storage.clone(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, RpcErr::InvalidParams(ref m) if m == "invalid block range params"),
+            "{err:?}"
+        );
+
+        let err = fetch_logs_with_filter(
+            &filter_for(BlockIdentifier::Number(1), BlockIdentifier::Number(0)),
+            storage,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, RpcErr::InvalidParams(ref m) if m == "invalid block range params"),
+            "{err:?}"
+        );
+    }
+
     #[tokio::test]
     async fn test_get_logs_by_block_hash_survives_reorg() {
         use ethrex_common::types::{Block, BlockBody, LegacyTransaction, Log, Receipt, TxType};

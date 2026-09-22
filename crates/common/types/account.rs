@@ -18,11 +18,11 @@ use ethrex_rlp::{
 use super::GenesisAccount;
 use crate::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH};
 
-/// Shared empty jump-target table. `Code::default()` and any bytecode without a
+/// Shared empty jumpdest bitmap. `Code::default()` and any bytecode without a
 /// `JUMPDEST` clone this (a refcount bump) instead of allocating a fresh empty
 /// `Arc` header each time. This matters because the per-tx `Code::default()`
 /// placeholder and every EOA / empty-code load would otherwise each allocate.
-static EMPTY_JUMP_TARGETS: LazyLock<Arc<[u32]>> = LazyLock::new(|| Arc::from(Vec::new()));
+static EMPTY_JUMPDESTS: LazyLock<Arc<[u8]>> = LazyLock::new(|| Arc::from(Vec::new()));
 
 /// Trailing STOP bytes appended to every bytecode so the dispatch loop can read
 /// the next opcode without a bounds check. 33 is the widest single-opcode advance
@@ -42,13 +42,19 @@ pub struct Code {
     bytecode: Bytes,
     /// The real bytecode length, needed for some opcodes, `bytecode` is padded with 33 STOPs to avoid checked adds on hot loop.
     bytecode_len: usize,
-    // `Arc<[u32]>` so cloning `Code` (hot: every message-call resolves and clones
-    // the callee's code) is a refcount bump instead of deep-copying the table.
+    /// One bit per bytecode byte, set when that offset holds a `JUMPDEST` that is not
+    /// part of a `PUSH` immediate. Costs `ceil(len / 8)` bytes regardless of how dense
+    /// the jump destinations are, and validating a jump is a bit test rather than a
+    /// search.
+    ///
+    /// Bytecode with no jump destination stores a zero-length bitmap ([`EMPTY_JUMPDESTS`])
+    /// rather than an all-zero one, so this is not always `ceil(len / 8)` bytes long;
+    /// [`Code::is_valid_jumpdest`] reads a missing byte as "no jump destination".
+    //
+    // `Arc<[u8]>` so cloning `Code` (hot: every message-call resolves and clones
+    // the callee's code) is a refcount bump instead of deep-copying the bitmap.
     // Serializes via serde's `rc` feature (enabled workspace-wide).
-    // The valid addresses are 32-bit because, despite EIP-3860 restricting initcode size,
-    // this does not apply to previous forks. This is tested in the EEST tests, which would
-    // panic in debug mode.
-    pub jump_targets: Arc<[u32]>,
+    jumpdests: Arc<[u8]>,
 }
 
 impl Code {
@@ -59,26 +65,26 @@ impl Code {
     // `code` is the logical, unpadded bytecode; `BYTECODE_PADDING` STOP bytes are
     // appended internally by `from_parts_unchecked`.
     pub fn from_bytecode_unchecked(code: Bytes, hash: H256) -> Self {
-        let jump_targets = Self::compute_jump_targets(&code);
-        Self::from_parts_unchecked(hash, &code, jump_targets)
+        let jumpdests = Self::compute_jumpdests(&code);
+        Self::from_parts_unchecked(hash, &code, jumpdests)
     }
 
     /// `code` is the logical, unpadded bytecode; `BYTECODE_PADDING` STOP bytes are
     /// appended internally by `from_parts_unchecked`.
     pub fn from_bytecode(code: Bytes, crypto: &dyn Crypto) -> Self {
-        let jump_targets = Self::compute_jump_targets(&code);
+        let jumpdests = Self::compute_jumpdests(&code);
         let hash = H256(crypto.keccak256(code.as_ref()));
-        Self::from_parts_unchecked(hash, &code, jump_targets)
+        Self::from_parts_unchecked(hash, &code, jumpdests)
     }
 
     /// Builds a `Code` from precomputed parts. The caller must guarantee `hash`
-    /// and `jump_targets` correspond to `code`; neither is recomputed or validated.
+    /// and `jumpdests` correspond to `code`; neither is recomputed or validated.
     ///
     /// `code` is the logical, unpadded bytecode: this function appends
     /// `BYTECODE_PADDING` STOP bytes and records the original length in
     /// `bytecode_len`. Never pass a pre-padded buffer, or the logical length and
     /// every `JUMPDEST`/`PUSH` offset derived from it would be wrong.
-    pub fn from_parts_unchecked(hash: H256, code: &[u8], jump_targets: Arc<[u32]>) -> Self {
+    pub fn from_parts_unchecked(hash: H256, code: &[u8], jumpdests: Arc<[u8]>) -> Self {
         let bytecode_len = code.len();
         let mut padded_code = Vec::with_capacity(bytecode_len + BYTECODE_PADDING);
         padded_code.extend_from_slice(code);
@@ -87,20 +93,38 @@ impl Code {
             hash,
             bytecode: Bytes::from_owner(padded_code),
             bytecode_len,
-            jump_targets,
+            jumpdests,
         }
     }
 
-    fn compute_jump_targets(code: &[u8]) -> Arc<[u32]> {
-        debug_assert!(code.len() <= u32::MAX as usize);
-        let mut targets = Vec::new();
+    /// Builds the [`Code::jumpdests`] bitmap: one pass over the bytecode, setting the
+    /// bit for every `JUMPDEST` while skipping `PUSH` immediates.
+    ///
+    /// The bits of a byte are accumulated in a register and written once the scan leaves
+    /// that byte, which the monotonic `i` makes safe. Reading the bitmap back inside the
+    /// loop instead would turn each `JUMPDEST` into a read-modify-write, and indexing it
+    /// would put a bounds-check panic path in the loop body, which inhibits optimization
+    /// of every iteration rather than only the ones that find a destination.
+    pub fn compute_jumpdests(code: &[u8]) -> Arc<[u8]> {
+        let mut bitmap = vec![0u8; code.len().div_ceil(8)];
+        let mut any = false;
+        let mut current_byte = usize::MAX;
+        let mut bits = 0u8;
         let mut i = 0;
         while i < code.len() {
             // TODO: we don't use the constants from the vm module to avoid a circular dependency
             match code[i] {
                 // OP_JUMPDEST
                 0x5B => {
-                    targets.push(i as u32);
+                    if i / 8 != current_byte {
+                        if let Some(byte) = bitmap.get_mut(current_byte) {
+                            *byte = bits;
+                        }
+                        current_byte = i / 8;
+                        bits = 0;
+                    }
+                    bits |= 1 << (i % 8);
+                    any = true;
                 }
                 // OP_PUSH1..32
                 c @ 0x60..0x80 => {
@@ -111,13 +135,32 @@ impl Code {
             }
             i += 1;
         }
-        // Share the single empty table for jumpless bytecode (very common: EOAs,
-        // tiny contracts) so we don't allocate an `Arc` header for an empty slice.
-        if targets.is_empty() {
-            EMPTY_JUMP_TARGETS.clone()
-        } else {
-            Arc::from(targets)
+        if let Some(byte) = bitmap.get_mut(current_byte) {
+            *byte = bits;
         }
+        // Share the single empty bitmap for jumpless bytecode (very common: EOAs,
+        // tiny contracts) so we don't allocate for an all-zero map; `is_valid_jumpdest`
+        // reads a missing byte as "no jump destination".
+        if any {
+            Arc::from(bitmap)
+        } else {
+            EMPTY_JUMPDESTS.clone()
+        }
+    }
+
+    /// Whether `offset` is a valid jump destination, i.e. it holds a `JUMPDEST` that is
+    /// not part of a `PUSH` immediate. Offsets past the bytecode are not valid.
+    #[inline]
+    pub fn is_valid_jumpdest(&self, offset: usize) -> bool {
+        self.jumpdests
+            .get(offset / 8)
+            .is_some_and(|byte| byte & (1 << (offset % 8)) != 0)
+    }
+
+    /// The raw [`Code::jumpdests`] bitmap, for persisting it alongside the bytecode.
+    #[inline]
+    pub fn jumpdests(&self) -> &[u8] {
+        &self.jumpdests
     }
 
     #[inline]
@@ -151,16 +194,18 @@ impl Code {
     /// Estimates the size of the Code struct in bytes
     /// (including stack size and heap allocation).
     ///
-    /// Note: This is an estimation and may not be exact.
+    /// Note: an estimate. It ignores allocator overhead and the `Arc`/`Bytes` control
+    /// blocks, so it slightly under-counts, and a shared allocation is attributed in
+    /// full to every entry holding it.
     ///
     /// # Returns
     ///
     /// usize - Estimated size in bytes
     pub fn size(&self) -> usize {
         let hash_size = size_of::<H256>();
-        let bytes_size = size_of::<Bytes>();
-        let vec_size = size_of::<Arc<[u32]>>() + self.jump_targets.len() * size_of::<u32>();
-        hash_size + bytes_size + vec_size
+        let bytes_size = size_of::<Bytes>() + self.bytecode.len();
+        let bitmap_size = size_of::<Arc<[u8]>>() + self.jumpdests.len();
+        hash_size + bytes_size + bitmap_size
     }
 }
 
@@ -170,6 +215,17 @@ impl Code {
 /// `Code` is padded with [`BYTECODE_PADDING`] trailing STOPs) sound regardless of
 /// where the bytes came from. Deserializing the padded buffer directly would
 /// otherwise let unpadded input through and cause OOB reads during execution.
+/// The jump destinations are deliberately absent: they are a pure function of the
+/// bytecode, so carrying them would put a derived value in the wire format of everything
+/// that embeds a `Code` (notably `AccountUpdate`, which the L2 rollup store persists with
+/// bincode) and couple that format to how they happen to be represented.
+/// Wire form of [`Code`]. Jump destinations are recomputed from `code` on
+/// deserialize, never read from here — but the `jump_targets` field is kept so
+/// the layout stays byte-identical to the pre-bitmap `Code` serialization.
+/// `Code` is embedded in `AccountUpdate`, which is persisted with bincode (a
+/// non-self-describing, positional codec) in the L2 rollup store; dropping the
+/// field would shift every following field and make existing rows undecodable.
+/// It is always serialized empty and ignored on read.
 #[derive(Serialize, Deserialize)]
 struct CodeSerde {
     hash: H256,
@@ -182,7 +238,7 @@ impl Serialize for Code {
         CodeSerde {
             hash: self.hash,
             code: self.code_bytes(),
-            jump_targets: self.jump_targets.clone(),
+            jump_targets: Arc::from([]),
         }
         .serialize(serializer)
     }
@@ -190,12 +246,18 @@ impl Serialize for Code {
 
 impl<'de> Deserialize<'de> for Code {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // `jump_targets` is read only to consume its bytes (layout compatibility);
+        // the bitmap is always recomputed from `code`.
         let CodeSerde {
             hash,
             code,
-            jump_targets,
+            jump_targets: _,
         } = CodeSerde::deserialize(deserializer)?;
-        Ok(Self::from_parts_unchecked(hash, &code, jump_targets))
+        Ok(Self::from_parts_unchecked(
+            hash,
+            &code,
+            Self::compute_jumpdests(&code),
+        ))
     }
 }
 
@@ -263,7 +325,7 @@ impl Default for Code {
             bytecode: Bytes::from_static(&[0u8; BYTECODE_PADDING]),
             bytecode_len: 0,
             hash: *EMPTY_KECCAK_HASH,
-            jump_targets: EMPTY_JUMP_TARGETS.clone(),
+            jumpdests: EMPTY_JUMPDESTS.clone(),
         }
     }
 }
@@ -498,6 +560,65 @@ mod test {
     use std::str::FromStr;
 
     use super::*;
+
+    // Pre-bitmap on-wire layout of `Code`: `{hash, code, jump_targets}`. `AccountUpdate`
+    // embeds `Code` and is persisted with bincode (positional) in the L2 rollup store,
+    // so a row written before the bitmap change carries a non-empty `jump_targets`.
+    #[derive(serde::Serialize)]
+    struct OldCodeSerde {
+        hash: H256,
+        code: Bytes,
+        jump_targets: Vec<u32>,
+    }
+
+    // `Code` is never persisted alone — it sits inside `AccountUpdate`, which has fields
+    // AFTER `code`. These wrappers mirror that: a field following the code. A standalone
+    // `Code` would tolerate trailing bytes, hiding the bug; only an embedded field
+    // exposes the positional shift.
+    #[derive(serde::Serialize)]
+    struct OldWrap {
+        code: OldCodeSerde,
+        tail: u64,
+    }
+    #[derive(serde::Deserialize)]
+    struct NewWrap {
+        code: Code,
+        tail: u64,
+    }
+
+    // A row serialized under the old three-field layout must still decode with the field
+    // following `code` intact: the current `Code` deserializer reads and discards
+    // `jump_targets`, keeping the layout aligned. Without the retained field, bincode
+    // reads `tail` from the `jump_targets` bytes and every following field is corrupt —
+    // exactly the `store_account_updates_by_block_number` break.
+    #[test]
+    fn embedded_code_decodes_an_old_layout_bincode_row() {
+        // PUSH1 0x00 JUMPDEST STOP — offset 2 is a real JUMPDEST, offset 1 a PUSH immediate.
+        let bytecode = Bytes::from(vec![0x60, 0x00, 0x5b, 0x00]);
+        let hash = H256::from_low_u64_be(0xabc);
+        const SENTINEL: u64 = 0x0123_4567_89ab_cdef;
+        let old = OldWrap {
+            code: OldCodeSerde {
+                hash,
+                code: bytecode.clone(),
+                jump_targets: vec![2], // non-empty, as an old row would hold
+            },
+            tail: SENTINEL,
+        };
+        let bytes = bincode::serialize(&old).expect("serialize old layout");
+
+        let decoded: NewWrap = bincode::deserialize(&bytes).expect("decode old row under new Code");
+        assert_eq!(decoded.code.hash, hash);
+        assert_eq!(decoded.code.code_bytes(), bytecode);
+        // The field after `code` must survive — this is what breaks if the layout shifts.
+        assert_eq!(
+            decoded.tail, SENTINEL,
+            "field after Code corrupted by layout shift"
+        );
+        // Jump destinations recomputed from code, not read from the row.
+        assert!(decoded.code.is_valid_jumpdest(2));
+        assert!(!decoded.code.is_valid_jumpdest(1));
+    }
 
     #[test]
     fn test_code_hash() {

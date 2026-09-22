@@ -9,7 +9,7 @@ async fn http_rejects_empty_batch() {
     let storage = Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
     let context = default_context_with_storage(storage).await;
 
-    let value = call_http(context, "[]".to_string()).await;
+    let value = call_http(&context, "[]".to_string()).await;
     let err = value
         .get("error")
         .expect("empty batch must produce an error response");
@@ -30,7 +30,7 @@ async fn http_rejects_oversize_batch() {
         .collect();
     let body = format!("[{}]", reqs.join(","));
 
-    let value = call_http(context, body).await;
+    let value = call_http(&context, body).await;
     let err = value
         .get("error")
         .expect("oversize batch must produce an error response");

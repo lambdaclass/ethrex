@@ -1,6 +1,6 @@
 use crate::api::tables::{
-    ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
-    CANONICAL_BLOCK_HASHES, FULLSYNC_HEADERS, HEADERS, RECEIPTS_V2, STORAGE_FLATKEYVALUE,
+    ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS,
+    BODIES, CANONICAL_BLOCK_HASHES, FULLSYNC_HEADERS, HEADERS, RECEIPTS_V2, STORAGE_FLATKEYVALUE,
     STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
 };
 use crate::api::{
@@ -21,6 +21,11 @@ use tracing::{info, warn};
 
 use crate::store::tx_locations_merge;
 
+/// Number of LSM levels to poll for per-level file counts. RocksDB's default
+/// `num_levels` is 7 and we don't override it; a larger configured value would
+/// otherwise be silently undercounted.
+const ROCKSDB_NUM_LEVELS: usize = 7;
+
 /// Adapter wrapping `tx_locations_merge` to match RocksDB's expected signature.
 fn tx_locations_merge_op(
     _new_key: &[u8],
@@ -31,10 +36,34 @@ fn tx_locations_merge_op(
 }
 
 /// RocksDB backend
-#[derive(Debug)]
 pub struct RocksDBBackend {
     /// Optimistric transaction database
     db: Arc<DBWithThreadMode<MultiThreaded>>,
+    /// Retained DB `Options` when RocksDB statistics are enabled, so block-cache
+    /// hit/miss tickers can be read for observability. `None` when disabled.
+    db_opts: Option<std::sync::Mutex<Options>>,
+}
+
+// `rocksdb::Options` does not implement `Debug`, so we derive it manually and
+// skip that field.
+impl std::fmt::Debug for RocksDBBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RocksDBBackend")
+            .field("statistics_enabled", &self.db_opts.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Extracts a RocksDB statistics ticker value from a `get_statistics()` dump.
+/// Ticker lines look like `rocksdb.block.cache.hit COUNT : 12345`.
+fn parse_stats_ticker(stats: &str, ticker: &str) -> u64 {
+    stats
+        .lines()
+        .find(|l| l.split_whitespace().next() == Some(ticker))
+        .and_then(|l| l.rsplit("COUNT :").next())
+        .and_then(|tail| tail.split_whitespace().next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0)
 }
 
 impl RocksDBBackend {
@@ -74,6 +103,34 @@ impl RocksDBBackend {
         opts.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
         opts.set_advise_random_on_open(false);
         opts.set_compression_type(rocksdb::DBCompressionType::None);
+
+        // Opt-in RocksDB statistics (block-cache hit/miss tickers) for DB
+        // observability. Off by default to avoid the per-operation counter
+        // overhead; enable with ETHREX_ROCKSDB_STATISTICS=1 on observability
+        // nodes. Per-CF size/key/file properties below need no statistics.
+        // Parse the value rather than testing presence, so `=0` disables instead of
+        // enabling. Accepts a number (`1`/`0`) or a bool (`true`/`false`), since both
+        // are what an operator reaches for; anything else warns instead of silently
+        // choosing a behaviour.
+        let stats_enabled = match std::env::var("ETHREX_ROCKSDB_STATISTICS") {
+            Err(_) => false,
+            Ok(raw) => {
+                let value = raw.trim();
+                match value.parse::<u64>().map(|n| n != 0) {
+                    Ok(enabled) => enabled,
+                    Err(_) => value.parse::<bool>().unwrap_or_else(|_| {
+                        warn!(
+                            value,
+                            "Ignoring unparseable ETHREX_ROCKSDB_STATISTICS; expected 1/0 or true/false"
+                        );
+                        false
+                    }),
+                }
+            }
+        };
+        if stats_enabled {
+            opts.enable_statistics();
+        }
 
         let compressible_tables = [
             BLOCK_NUMBERS,
@@ -208,18 +265,40 @@ impl RocksDBBackend {
                     configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                ACCOUNT_CODES => {
+                ACCOUNT_CODES | ACCOUNT_CODE_METADATA => {
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
                     cf_opts.set_max_write_buffer_number(3);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB
 
-                    cf_opts.set_enable_blob_files(true);
-                    // Small bytecodes should go inline (mainly for delegation indicators)
-                    cf_opts.set_min_blob_size(32);
-                    cf_opts.set_blob_compression_type(rocksdb::DBCompressionType::Lz4);
+                    if cf_name == ACCOUNT_CODES {
+                        cf_opts.set_enable_blob_files(true);
+                        // Small bytecodes should go inline (mainly for delegation indicators)
+                        cf_opts.set_min_blob_size(32);
+                        cf_opts.set_blob_compression_type(rocksdb::DBCompressionType::Lz4);
+                    }
 
                     let mut block_opts = BlockBasedOptions::default();
-                    block_opts.set_block_size(32 * 1024); // 32KB
+                    // Both CFs answer exact-key point lookups on the execution read path:
+                    // EXT*/CALL* resolve a code hash to its bytecode or its length. The
+                    // filter is what pays here, pruning the levels that cannot hold the
+                    // hash instead of reading a data block per level to find out.
+                    block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    if cf_name == ACCOUNT_CODES {
+                        // With blob files the SST value is only a blob reference, so a
+                        // large block buys nothing; page-sized keeps per-get read
+                        // amplification down.
+                        block_opts.set_block_size(4 * 1024); // 4KB
+                        // Lookups here are almost always positive, since the hash comes
+                        // from an account that references it. Dropping the last level's
+                        // filter is most of the filter memory for no hit-rate loss.
+                        cf_opts.set_optimize_filters_for_hits(true);
+                    } else {
+                        // Metadata rows are 32-byte key + 8-byte length with no blob
+                        // indirection, so ~100 of them share a 4KB block and shrinking
+                        // the block only multiplies index entries. Keep the 16KB this CF
+                        // used before it had an arm of its own.
+                        block_opts.set_block_size(16 * 1024); // 16KB
+                    }
                     configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
@@ -256,7 +335,10 @@ impl RocksDBBackend {
         )
         .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB with all CFs: {}", e)))?;
 
-        Ok(Self { db: Arc::new(db) })
+        Ok(Self {
+            db: Arc::new(db),
+            db_opts: stats_enabled.then(|| std::sync::Mutex::new(opts)),
+        })
     }
 
     /// Drops column families that exist on disk but are no longer listed in
@@ -315,6 +397,65 @@ impl StorageBackend for RocksDBBackend {
         Ok(Arc::new(RocksDBReadTx {
             db: self.db.clone(),
         }))
+    }
+
+    fn db_stats(&self) -> Option<crate::api::RocksDbStats> {
+        use crate::api::{CfStats, RocksDbStats, tables::TABLES};
+
+        let db_int =
+            |name: &str| -> u64 { self.db.property_int_value(name).ok().flatten().unwrap_or(0) };
+
+        let mut cfs = Vec::with_capacity(TABLES.len());
+        for &name in TABLES.iter() {
+            let Some(cf) = self.db.cf_handle(name) else {
+                continue;
+            };
+            let cf_int = |prop: &str| -> u64 {
+                self.db
+                    .property_int_value_cf(&cf, prop)
+                    .ok()
+                    .flatten()
+                    .unwrap_or(0)
+            };
+            let num_files = (0..ROCKSDB_NUM_LEVELS)
+                .map(|lvl| cf_int(&format!("rocksdb.num-files-at-level{lvl}")))
+                .sum();
+            cfs.push(CfStats {
+                name: name.to_string(),
+                live_sst_bytes: cf_int("rocksdb.live-sst-files-size"),
+                total_sst_bytes: cf_int("rocksdb.total-sst-files-size"),
+                live_data_bytes: cf_int("rocksdb.estimate-live-data-size"),
+                num_keys: cf_int("rocksdb.estimate-num-keys"),
+                num_files,
+                blob_bytes: cf_int("rocksdb.live-blob-file-size"),
+                pending_compaction_bytes: cf_int("rocksdb.estimate-pending-compaction-bytes"),
+                memtable_bytes: cf_int("rocksdb.size-all-mem-tables"),
+            });
+        }
+
+        // Block-cache hit/miss come from RocksDB statistics, only populated when
+        // enabled (ETHREX_ROCKSDB_STATISTICS); zero otherwise.
+        let (block_cache_hits, block_cache_misses) = self
+            .db_opts
+            .as_ref()
+            .and_then(|o| o.lock().ok().and_then(|o| o.get_statistics()))
+            .map(|s| {
+                (
+                    parse_stats_ticker(&s, "rocksdb.block.cache.hit"),
+                    parse_stats_ticker(&s, "rocksdb.block.cache.miss"),
+                )
+            })
+            .unwrap_or((0, 0));
+
+        Some(RocksDbStats {
+            cfs,
+            block_cache_usage_bytes: db_int("rocksdb.block-cache-usage"),
+            block_cache_capacity_bytes: db_int("rocksdb.block-cache-capacity"),
+            block_cache_pinned_bytes: db_int("rocksdb.block-cache-pinned-usage"),
+            running_compactions: db_int("rocksdb.num-running-compactions"),
+            block_cache_hits,
+            block_cache_misses,
+        })
     }
 
     fn begin_write(&self) -> Result<Box<dyn StorageWriteBatch + 'static>, StoreError> {
@@ -586,11 +727,9 @@ mod tests {
     #[test]
     fn merge_operator_survives_flush_and_compaction() {
         let dir = tempfile::tempdir().unwrap();
-        let backend = RocksDBBackend::open(
-            dir.path(),
-            crate::store::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
-        )
-        .unwrap();
+        let backend =
+            RocksDBBackend::open(dir.path(), crate::store::MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES)
+                .unwrap();
         let cf = backend.db.cf_handle(TRANSACTION_LOCATIONS).unwrap();
 
         let tx_hash = H256::from_low_u64_be(0xabcd);
@@ -633,11 +772,9 @@ mod tests {
     #[test]
     fn merge_operator_dedupes_across_compaction() {
         let dir = tempfile::tempdir().unwrap();
-        let backend = RocksDBBackend::open(
-            dir.path(),
-            crate::store::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
-        )
-        .unwrap();
+        let backend =
+            RocksDBBackend::open(dir.path(), crate::store::MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES)
+                .unwrap();
         let cf = backend.db.cf_handle(TRANSACTION_LOCATIONS).unwrap();
 
         let tx_hash = H256::from_low_u64_be(0x1234);
