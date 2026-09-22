@@ -1143,8 +1143,15 @@ async fn handle_new_payload_v1_v2(
     }
 
     // All checks passed, execute payload
-    let payload_status =
-        try_execute_payload(block, &context, latest_valid_hash, bal, make_witness).await?;
+    let payload_status = try_execute_payload(
+        payload,
+        block,
+        &context,
+        latest_valid_hash,
+        bal,
+        make_witness,
+    )
+    .await?;
     Ok(payload_status)
 }
 
@@ -1262,6 +1269,7 @@ pub async fn add_block(
 }
 
 async fn try_execute_payload(
+    payload: &ExecutionPayload,
     block: Block,
     context: &RpcApiContext,
     latest_valid_hash: H256,
@@ -1369,7 +1377,27 @@ async fn try_execute_payload(
     // Retain a copy so we can record it via `debug_getBadBlocks` if it turns out
     // to be invalid. `add_block` consumes the block, so we must clone beforehand;
     // this happens once per newPayload and is negligible next to block execution.
-    let bad_block_candidate = block.clone();
+    // A block that turns out invalid is recorded for debug_getBadBlocks. Rebuilding
+    // it from the payload on that path is far cheaper than cloning every block on
+    // the way in, since almost all of them are valid.
+    let (parent_beacon_block_root, requests_hash, block_access_list_hash) = (
+        block.header.parent_beacon_block_root,
+        block.header.requests_hash,
+        block.header.block_access_list_hash,
+    );
+    let rebuild_bad_block = || {
+        get_block_from_payload(
+            payload,
+            parent_beacon_block_root,
+            requests_hash,
+            block_access_list_hash,
+        )
+        .map_err(|e| {
+            RpcErr::Internal(format!(
+                "failed to rebuild the invalid block from its payload: {e}"
+            ))
+        })
+    };
 
     match add_block(context, block, bal, make_witness).await {
         Err(ChainError::ParentNotFound) => {
@@ -1392,7 +1420,7 @@ async fn try_execute_payload(
                 .storage
                 .set_latest_valid_ancestor(block_hash, latest_valid_hash)
                 .await?;
-            context.storage.add_bad_block(bad_block_candidate).await?;
+            context.storage.add_bad_block(rebuild_bad_block()?).await?;
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
                 error.to_string(),
@@ -1404,7 +1432,7 @@ async fn try_execute_payload(
                 .storage
                 .set_latest_valid_ancestor(block_hash, latest_valid_hash)
                 .await?;
-            context.storage.add_bad_block(bad_block_candidate).await?;
+            context.storage.add_bad_block(rebuild_bad_block()?).await?;
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
                 error.to_string(),
