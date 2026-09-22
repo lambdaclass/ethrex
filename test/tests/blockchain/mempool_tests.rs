@@ -5315,8 +5315,11 @@ async fn self_pay_and_non_canonical_paymasters_never_spend_payer_width() {
     };
     let sender_a = Address::from_low_u64_be(0xA2);
     let sender_b = Address::from_low_u64_be(0xB2);
-    let tx_a = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
-    let tx_b = keyed_frame_tx(vec![U256::from(2u64)], 0, 1_000_000_000);
+    // Key sets the self-paid half did not use: the helper's transaction carries a fixed
+    // sender, so two of them with one key set are the same bytes and the same hash, which
+    // the pool rightly treats as one transaction re-announced.
+    let tx_a = keyed_frame_tx(vec![U256::from(3u64)], 0, 1_000_000_000);
+    let tx_b = keyed_frame_tx(vec![U256::from(4u64)], 0, 1_000_000_000);
     mempool
         .add_transaction(
             tx_a.hash(&NativeCrypto),
@@ -5411,6 +5414,161 @@ async fn matcha_admission_mirrors_the_locked_decision_without_spending() {
     assert_eq!(
         (view.width, view.pending_frame_txs, view.pending_charges),
         (1_000, 1, 0)
+    );
+}
+
+/// A re-announce of a pending transaction must change nothing about it. The same bytes
+/// are the same transaction and share one pool record, so the charge it already paid has
+/// to survive: if the re-announce dropped the record, every later revalidation of that
+/// transaction would be free, which is the cost the mechanism exists to impose.
+#[tokio::test]
+async fn a_re_announce_keeps_the_charge_the_transaction_already_paid() {
+    let mempool = Mempool::new(64);
+    let sender = frame_self_sender();
+    let charge = Some(MatchaCharge {
+        charge: 1_000,
+        effective_priority_fee: 0,
+        meets_validity_floor: true,
+    });
+    let mut gas = FxHashMap::default();
+    gas.insert(sender, 10_000u64);
+    mempool.credit_finalized_block(1, &gas).expect("credit");
+
+    let baseline = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
+    mempool
+        .add_transaction(
+            baseline.hash(&NativeCrypto),
+            sender,
+            MempoolTransaction::new(baseline, sender),
+            None,
+            None,
+            KeyedConcurrency::Allowed,
+            charge,
+        )
+        .expect("baseline admitted");
+
+    let additional = keyed_frame_tx(vec![U256::from(2u64)], 0, 1_000_000_000);
+    let hash = additional.hash(&NativeCrypto);
+    let admit = || {
+        mempool.add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(additional.clone(), sender),
+            None,
+            None,
+            KeyedConcurrency::Allowed,
+            charge,
+        )
+    };
+    admit().expect("additional admitted");
+    let after_first = mempool.matcha_sender_view(sender).expect("view");
+    assert_eq!(
+        (after_first.width, after_first.pending_charges),
+        (9_000, 1_000)
+    );
+
+    admit().expect("the re-announce is accepted");
+
+    let after_re_announce = mempool.matcha_sender_view(sender).expect("view");
+    assert_eq!(
+        (
+            after_re_announce.width,
+            after_re_announce.pending_charges,
+            after_re_announce.load,
+            after_re_announce.pending_frame_txs
+        ),
+        (9_000, 1_000, 1_000, 2),
+        "a re-announce must spend nothing and lose nothing"
+    );
+    assert!(
+        matches!(
+            mempool.charge_revalidation(hash).expect("charge"),
+            RevalidationCharge::Paid
+        ),
+        "the re-announced transaction must still pay to be revalidated"
+    );
+    assert_eq!(mempool.width_of(sender).expect("width"), 8_000);
+}
+
+/// Replacing a pending additional transaction is judged against the pressure its
+/// predecessor is not part of: the predecessor leaves with its charge, so counting it
+/// would price the sender's second attempt at one slot a step above its first.
+#[tokio::test]
+async fn replacing_an_additional_does_not_pay_for_the_slot_it_frees() {
+    let store = setup_hegota_store_funded_with_slots().await;
+    let blockchain = blockchain_with_matcha(
+        store,
+        MatchaConfig {
+            base_price: 7,
+            ..MatchaConfig::default()
+        },
+    );
+    let mempool = &blockchain.mempool;
+    let sender = frame_self_sender();
+    let mut gas = FxHashMap::default();
+    gas.insert(sender, 10_000u64);
+    mempool.credit_finalized_block(1, &gas).expect("credit");
+
+    let baseline = keyed_frame_tx(vec![U256::one()], 0, 1_000_000_000);
+    mempool
+        .add_transaction(
+            baseline.hash(&NativeCrypto),
+            sender,
+            MempoolTransaction::new(baseline, sender),
+            None,
+            None,
+            KeyedConcurrency::Allowed,
+            None,
+        )
+        .expect("baseline admitted");
+
+    // The first additional faces an empty pool: one step, `base_price`.
+    let first = keyed_frame_tx(vec![U256::from(2u64)], 0, 1_000_000_000);
+    mempool
+        .add_transaction(
+            first.hash(&NativeCrypto),
+            sender,
+            MempoolTransaction::new(first.clone(), sender),
+            None,
+            None,
+            KeyedConcurrency::Allowed,
+            Some(MatchaCharge {
+                charge: 1_000,
+                effective_priority_fee: 7,
+                meets_validity_floor: true,
+            }),
+        )
+        .expect("the first additional pays one step");
+
+    // Its replacement frees that slot as it takes it, so it faces one step too. Charged
+    // against the load with the predecessor still in it, this would need two.
+    let replacement = keyed_frame_tx(vec![U256::from(2u64)], 0, 2_000_000_000);
+    mempool
+        .add_transaction(
+            replacement.hash(&NativeCrypto),
+            sender,
+            MempoolTransaction::new(replacement.clone(), sender),
+            None,
+            None,
+            KeyedConcurrency::Allowed,
+            Some(MatchaCharge {
+                charge: 1_000,
+                effective_priority_fee: 7,
+                meets_validity_floor: true,
+            }),
+        )
+        .expect("a replacement must not pay for the slot it is freeing");
+
+    let view = mempool.matcha_sender_view(sender).expect("view");
+    assert_eq!(
+        (view.pending_frame_txs, view.pending_charges, view.load),
+        (2, 1_000, 1_000),
+        "the predecessor left with its charge; only the replacement's stands"
+    );
+    assert_eq!(
+        mempool.width_of(sender).expect("width"),
+        8_000,
+        "both attempts at the slot are charged; width is never refunded"
     );
 }
 

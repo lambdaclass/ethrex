@@ -204,41 +204,66 @@ impl WidthLedger {
     /// the policy is off, otherwise `base_price` times one more than the number of
     /// charges of this size already pending.
     pub fn fee_floor(&self, charge: u64) -> u64 {
+        self.fee_floor_replacing(charge, 0)
+    }
+
+    /// The same floor for a transaction that displaces one already pending.
+    ///
+    /// `displaced` is the charge the outgoing transaction is holding in `load`. It leaves
+    /// with it, so a replacement faces the pressure its predecessor is not part of:
+    /// counting it would price the sender's second attempt at the same slot a step higher
+    /// than its first.
+    pub fn fee_floor_replacing(&self, charge: u64, displaced: u64) -> u64 {
         if self.config.base_price == 0 || charge == 0 {
             return 0;
         }
-        let steps = self.load / charge;
+        let steps = self.load.saturating_sub(displaced) / charge;
         self.config
             .base_price
             .saturating_mul(steps.saturating_add(1))
     }
 
-    /// Spend `charge` to admit an additional transaction, after checking the fee floor.
-    pub fn spend(
-        &mut self,
-        sender: Address,
+    /// Whether `account` can pay `charge` for an additional transaction, without spending.
+    ///
+    /// Read-only so admission can decide before it mutates anything: a refusal must leave
+    /// the pool exactly as it found it, including the transaction a replacement would have
+    /// displaced. `effective_priority_fee` is judged against the floor only for the
+    /// sender; a sponsored transaction's fee is a property of the transaction and is
+    /// judged once, on the sender's side.
+    pub fn check_spend(
+        &self,
+        account: Address,
         charge: u64,
-        effective_priority_fee: u64,
+        effective_priority_fee: Option<u64>,
+        displaced: u64,
     ) -> Result<(), WidthError> {
-        let floor = self.fee_floor(charge);
-        if effective_priority_fee < floor {
-            return Err(WidthError::BelowFloor {
-                offered: effective_priority_fee,
-                floor,
-            });
+        if let Some(offered) = effective_priority_fee {
+            let floor = self.fee_floor_replacing(charge, displaced);
+            if offered < floor {
+                return Err(WidthError::BelowFloor { offered, floor });
+            }
         }
-        self.debit(sender, charge)?;
-        self.load = self.load.saturating_add(charge);
+        let have = self.width_of(account);
+        if have < charge {
+            return Err(WidthError::Insufficient { have, need: charge });
+        }
         Ok(())
     }
 
-    /// Spend `charge` from the payer of an additional sponsored transaction. The fee floor
-    /// is a property of the transaction and was judged once already, so this only debits
-    /// and records the load.
-    pub fn spend_as_payer(&mut self, payer: Address, charge: u64) -> Result<(), WidthError> {
-        self.debit(payer, charge)?;
+    /// Debit a spend [`Self::check_spend`] has already allowed.
+    ///
+    /// Infallible by construction: nothing between the check and here credits or debits
+    /// width, so the balance still covers the charge. It saturates rather than failing on
+    /// the impossible case, because a spend that reached this point has a transaction
+    /// going into the pool and no caller left to reject it.
+    pub fn commit_spend(&mut self, account: Address, charge: u64) {
+        let left = self.width_of(account).saturating_sub(charge);
+        if left == 0 {
+            self.width.remove(&account);
+        } else {
+            self.width.insert(account, left);
+        }
         self.load = self.load.saturating_add(charge);
-        Ok(())
     }
 
     /// Spend a pending transaction's stored charge again before revalidating it. A sender
@@ -275,6 +300,19 @@ impl WidthLedger {
 mod tests {
     use super::*;
 
+    /// `check_spend` then `commit_spend`, the pair admission runs, for the tests that
+    /// exercise the ledger directly.
+    fn spend(
+        ledger: &mut WidthLedger,
+        account: Address,
+        charge: u64,
+        fee: u64,
+    ) -> Result<(), WidthError> {
+        ledger.check_spend(account, charge, Some(fee), 0)?;
+        ledger.commit_spend(account, charge);
+        Ok(())
+    }
+
     fn addr(byte: u8) -> Address {
         Address::from_low_u64_be(byte as u64)
     }
@@ -297,7 +335,7 @@ mod tests {
         let mut l = ledger(1_000_000);
         assert_eq!(l.width_of(addr(1)), 0);
         assert_eq!(
-            l.spend(addr(1), 1, 0),
+            spend(&mut l, addr(1), 1, 0),
             Err(WidthError::Insufficient { have: 0, need: 1 })
         );
     }
@@ -324,7 +362,7 @@ mod tests {
     fn spent_width_is_never_returned() {
         let mut l = ledger(1_000_000);
         credit(&mut l, 1, addr(1), 100);
-        l.spend(addr(1), 40, 0).unwrap();
+        spend(&mut l, addr(1), 40, 0).unwrap();
         assert_eq!(l.width_of(addr(1)), 60);
         l.release_load(40);
         assert_eq!(l.width_of(addr(1)), 60, "removal releases load, not width");
@@ -335,7 +373,7 @@ mod tests {
     fn revalidation_spends_the_stored_charge_and_can_exhaust_a_sender() {
         let mut l = ledger(1_000_000);
         credit(&mut l, 1, addr(1), 100);
-        l.spend(addr(1), 30, 0).unwrap();
+        spend(&mut l, addr(1), 30, 0).unwrap();
         l.spend_for_revalidation(addr(1), 30).unwrap();
         l.spend_for_revalidation(addr(1), 30).unwrap();
         assert_eq!(l.width_of(addr(1)), 10);
@@ -349,7 +387,7 @@ mod tests {
     fn a_sender_spent_to_zero_is_forgotten() {
         let mut l = ledger(1_000_000);
         credit(&mut l, 1, addr(1), 30);
-        l.spend(addr(1), 30, 0).unwrap();
+        spend(&mut l, addr(1), 30, 0).unwrap();
         assert_eq!(l.width_of(addr(1)), 0);
         assert!(!l.width.contains_key(&addr(1)));
     }
@@ -371,12 +409,12 @@ mod tests {
         });
         credit(&mut l, 1, addr(1), 1_000);
         assert_eq!(l.fee_floor(10), 7);
-        l.spend(addr(1), 10, 7).unwrap();
+        spend(&mut l, addr(1), 10, 7).unwrap();
         assert_eq!(l.fee_floor(10), 14);
-        l.spend(addr(1), 10, 14).unwrap();
+        spend(&mut l, addr(1), 10, 14).unwrap();
         assert_eq!(l.fee_floor(10), 21);
         assert_eq!(
-            l.spend(addr(1), 10, 20),
+            spend(&mut l, addr(1), 10, 20),
             Err(WidthError::BelowFloor {
                 offered: 20,
                 floor: 21
@@ -392,8 +430,8 @@ mod tests {
             ..Default::default()
         });
         credit(&mut l, 1, addr(1), 1_000);
-        l.spend(addr(1), 10, 5).unwrap();
-        l.spend(addr(1), 10, 10).unwrap();
+        spend(&mut l, addr(1), 10, 5).unwrap();
+        spend(&mut l, addr(1), 10, 10).unwrap();
         assert_eq!(l.fee_floor(10), 15);
         l.release_load(10);
         assert_eq!(l.fee_floor(10), 10);
@@ -405,13 +443,13 @@ mod tests {
         let mut l = ledger(1_000_000);
         credit(&mut l, 1, addr(1), 100);
         assert_eq!(l.width_of(addr(2)), 0);
-        assert!(l.spend(addr(2), 1, 0).is_err());
+        assert!(spend(&mut l, addr(2), 1, 0).is_err());
     }
 
     #[test]
     fn the_fee_floor_is_optional_but_width_is_not() {
         let mut l = ledger(1_000_000);
         assert_eq!(l.fee_floor(10), 0);
-        assert!(l.spend(addr(1), 1, 0).is_err());
+        assert!(spend(&mut l, addr(1), 1, 0).is_err());
     }
 }

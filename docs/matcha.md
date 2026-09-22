@@ -74,6 +74,27 @@ be opened the prefix is not re-simulated, so there is no work and nothing is spe
 charge is taken after the cheap drops (expiry, recent-root window, structure) and before
 any EVM is built, which is what "before the work begins" means in practice.
 
+Three properties hold around the spend, and each is a thing the mechanism loses if it
+does not.
+
+A transaction that is refused spends nothing, and neither does it disturb what the pool
+already holds: the decision is taken before any of the pool is mutated, so a fee bump that
+cannot pay leaves the transaction it would have replaced exactly where it was. The debit
+itself happens once the insertion is certain, after every step that could still fail, so
+width is never spent on a transaction the pool did not take.
+
+A re-announce is not a new transaction. The same bytes are the same transaction and share
+one pool record, so a second submission of something already pending changes nothing:
+not its charge, not its contribution to the load, not its place in the eviction queue, and
+not its maximum-lifetime clock. Treating it as an arrival would let a sender re-announce
+its way out of paying for its own revalidations, which is the cost this mechanism exists
+to impose.
+
+A replacement is judged against the pressure its predecessor is not part of. The outgoing
+transaction leaves with its charge, so the optional fee floor is computed without it;
+otherwise a sender's second attempt at one slot would be priced a step above its first.
+Both attempts are charged, because width is never refunded.
+
 ## Where it lives
 
 `crates/blockchain/matcha.rs` holds the ledger and is pure bookkeeping: no I/O, no locks.
@@ -82,11 +103,11 @@ and the insert are atomic. Two concurrent additional transactions from one sende
 both pass against the same balance.
 
 The charge is computed before the lock, where the validation prefix has just been
-validated, and carried into the locked section as a `MatchaCharge`. The decision about
-whether a transaction is *additional* is made under the lock, because it depends on what
-else the sender has pending at that instant, and the spend is the last check before any
-insertion or removal, so a transaction the lock rejects for any other reason has spent
-nothing. The effective priority fee the optional floor is judged against is computed
+validated, and carried into the locked section as a `MatchaCharge`. Whether a transaction
+is *additional* is decided under the lock, because it depends on what else the sender has
+pending at that instant. The decision is the last check before the pool is touched and the
+debit is the last step before the insert, which is what gives the section above its three
+properties. The effective priority fee the optional floor is judged against is computed
 against the *next* block's base fee, since that is the block the transaction is admitted
 for.
 
@@ -193,6 +214,12 @@ author. In summary:
   two blocks at one height after a reorg cannot both mint width.
 - Finalized gas is the transaction's `cumulative_gas_used` delta, which for a frame
   transaction sums both gas dimensions. Width is earned from what was paid for.
+- The post tracks capacity per sender. A canonical paymaster earns and spends width here
+  too, in its own role, which is the extension the proposal's author describes in the
+  thread: it earns from the gas it paid for in finalized transactions, and its additional
+  admissions and revalidations across every sender it sponsors spend that width. Without
+  it the sender-only ledger cannot see a sponsor that spreads one attack across many fresh
+  senders, each of them holding a free baseline. See the paymaster section above.
 - Width is required for additional transactions regardless of whether the prefix is
   structurally independent, following the post's reply that the balance-drain vector
   applies independently of mass invalidation. The structural EIP-8250 eligibility test is

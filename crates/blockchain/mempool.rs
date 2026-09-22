@@ -1020,63 +1020,73 @@ impl MempoolInner {
             .map(|reservation| reservation.paymaster)
     }
 
-    /// Spend width for an additional frame transaction, from the sender when it already
-    /// has one pending and from the canonical paymaster when it already sponsors one;
-    /// `(None, None)` when it is a baseline in both roles.
+    /// What admitting this frame transaction would spend, decided without spending it.
     ///
-    /// Runs under the write lock so the pending counts and the spends are atomic with the
-    /// insert, and after every other admission check so a rejected transaction never
-    /// spends anything. Both ledgers are checked before either is debited, for the same
-    /// reason: a refusal for the payer must not have cost the sender.
-    fn charge_width(
-        &mut self,
+    /// Runs under the write lock, before anything is mutated, so a refusal leaves the pool
+    /// exactly as it found it: a fee bump that cannot pay must not have removed the
+    /// transaction it was replacing. The debit itself is [`Self::commit_width_spend`],
+    /// which runs once the insertion is certain, so no failure between the two can leave
+    /// width spent on a transaction the pool never took.
+    ///
+    /// The sender pays when it already has one pending, the canonical paymaster when it
+    /// already sponsors one, and a transaction that is additional in both roles pays both.
+    /// Both are checked before either is debited: a refusal for one must not cost the
+    /// other.
+    fn plan_width_spend(
+        &self,
         sender: Address,
         incoming_hash: H256,
         replacing: Option<H256>,
         charge: Option<MatchaCharge>,
         reservation: Option<&FramePaymasterReservation>,
-    ) -> Result<(Option<u64>, Option<u64>), MempoolError> {
+    ) -> Result<WidthSpend, MempoolError> {
         if !self.width.config().enabled {
-            return Ok((None, None));
+            return Ok(WidthSpend::default());
         }
         let Some(charge) = charge else {
-            return Ok((None, None));
+            return Ok(WidthSpend::default());
         };
-        if self.transaction_pool.contains_key(&incoming_hash) {
-            return Ok((None, None));
-        }
         let excluding = replacing.or(Some(incoming_hash));
         let sender_due = self.sender_pending_frame_count(sender, excluding) > 0;
         let payer_due = Self::matcha_payer(reservation)
             .filter(|payer| self.sponsored_pending_count(*payer, excluding) > 0);
         if !sender_due && payer_due.is_none() {
-            return Ok((None, None));
+            return Ok(WidthSpend::default());
         }
         if !charge.meets_validity_floor {
             return Err(MempoolError::FrameTxValidityTooShort {
                 min_slots: self.width.config().min_validity_slots,
             });
         }
-        let floor = self.width.fee_floor(charge.charge);
-        if charge.effective_priority_fee < floor {
-            return Err(MempoolError::FrameTxBelowWidthFeeFloor {
-                offered: charge.effective_priority_fee,
-                floor,
-            });
-        }
+        // A replacement's predecessor leaves the pool with its charge, so the floor it
+        // faces is the one without it.
+        let displaced = replacing
+            .and_then(|hash| self.frame_tx_charge.get(&hash).copied())
+            .unwrap_or(0);
         if let Some(payer) = payer_due {
-            let have = self.width.width_of(payer);
-            if have < charge.charge {
-                return Err(MempoolError::FrameTxPayerWidthExhausted {
-                    paymaster: payer,
-                    have,
-                    need: charge.charge,
-                });
-            }
-        }
-        let sender_charge = if sender_due {
             self.width
-                .spend(sender, charge.charge, charge.effective_priority_fee)
+                .check_spend(payer, charge.charge, None, displaced)
+                .map_err(|err| match err {
+                    WidthError::Insufficient { have, need } => {
+                        MempoolError::FrameTxPayerWidthExhausted {
+                            paymaster: payer,
+                            have,
+                            need,
+                        }
+                    }
+                    WidthError::BelowFloor { offered, floor } => {
+                        MempoolError::FrameTxBelowWidthFeeFloor { offered, floor }
+                    }
+                })?;
+        }
+        if sender_due {
+            self.width
+                .check_spend(
+                    sender,
+                    charge.charge,
+                    Some(charge.effective_priority_fee),
+                    displaced,
+                )
                 .map_err(|err| match err {
                     WidthError::Insufficient { have, need } => {
                         MempoolError::FrameTxWidthExhausted { have, need }
@@ -1085,25 +1095,25 @@ impl MempoolInner {
                         MempoolError::FrameTxBelowWidthFeeFloor { offered, floor }
                     }
                 })?;
-            Some(charge.charge)
-        } else {
-            None
-        };
-        let payer_charge = match payer_due {
-            Some(payer) => {
-                // Checked above; the sender's debit cannot have touched the payer's balance.
-                self.width
-                    .spend_as_payer(payer, charge.charge)
-                    .map_err(|_| MempoolError::FrameTxPayerWidthExhausted {
-                        paymaster: payer,
-                        have: self.width.width_of(payer),
-                        need: charge.charge,
-                    })?;
-                Some(charge.charge)
-            }
-            None => None,
-        };
-        Ok((sender_charge, payer_charge))
+        }
+        Ok(WidthSpend {
+            sender: sender_due.then_some((sender, charge.charge)),
+            payer: payer_due.map(|payer| (payer, charge.charge)),
+        })
+    }
+
+    /// Debit a spend [`Self::plan_width_spend`] allowed, once the insertion is certain.
+    ///
+    /// Returns what to record against the transaction, so a later revalidation spends the
+    /// same charge again and its departure releases the same load.
+    fn commit_width_spend(&mut self, spend: WidthSpend) -> (Option<u64>, Option<u64>) {
+        for (account, charge) in [spend.sender, spend.payer].into_iter().flatten() {
+            self.width.commit_spend(account, charge);
+        }
+        (
+            spend.sender.map(|(_, charge)| charge),
+            spend.payer.map(|(_, charge)| charge),
+        )
     }
 
     fn check_keyed_frame_pending(
@@ -1182,6 +1192,15 @@ pub struct MatchaSenderView {
     pub pending_sponsored_charges: u64,
     /// Sum of every pending additional transaction's charge, the linear fee's load term.
     pub load: u64,
+}
+
+/// What admitting one frame transaction will debit, decided before the pool is touched
+/// and paid once the insertion is certain. Empty when the transaction is a baseline in
+/// both roles, or when the mechanism is off.
+#[derive(Clone, Copy, Debug, Default)]
+struct WidthSpend {
+    sender: Option<(Address, u64)>,
+    payer: Option<(Address, u64)>,
 }
 
 /// What admission would decide for a transaction, judged without spending.
@@ -1588,6 +1607,24 @@ impl Mempool {
         broadcast: bool,
     ) -> Result<(), MempoolError> {
         let mut inner = self.write()?;
+        // A re-announce of a transaction already pooled is the same transaction: same
+        // bytes, same hash, same paymaster reservation, and under EIP-8141 the same one
+        // pool record. It must change nothing. Falling through would remove the pending
+        // copy and re-insert it, which returns its MATCHA charge to nobody (the duplicate
+        // is not charged again, so nothing re-records it), releases its load, restarts its
+        // maximum-lifetime clock and moves it to the back of the eviction queue: a sender
+        // could re-announce its way out of paying for revalidations and out of the sweep.
+        // Two concurrent admissions of one transaction both clear the unlocked
+        // `contains_tx` pre-filter and arrive here, so this is the only place that can
+        // settle it.
+        if inner.transaction_pool.contains_key(&hash) {
+            // The one thing a re-announce may still do is publish a transaction that was
+            // submitted privately: it is already out in the open if a peer sent it back.
+            if broadcast && inner.private_pool.remove(&hash) {
+                inner.broadcast_pool.insert(hash);
+            }
+            return Ok(());
+        }
         let is_frame = matches!(transaction.tx_type(), TxType::Frame);
         // A blob-carrying frame transaction occupies a blob-pool slot too: its
         // bundle is counted by `blob_tx_count`, so it must be evicted against the
@@ -1634,8 +1671,7 @@ impl Mempool {
             _ => None,
         };
 
-        let mut spent_charge: Option<u64> = None;
-        let mut spent_payer_charge: Option<u64> = None;
+        let mut width_spend = WidthSpend::default();
 
         // One-pending-frame-tx-per-sender gate (EIP-8141 §Mempool, review fix 1.6).
         // Must run under the write lock so the check and insert are atomic.
@@ -1741,7 +1777,7 @@ impl Mempool {
             // paymaster reservation net-zero, exactly as the linear slot removal
             // does; keying off `existing_frame_hash` here would skip the removal
             // and double-count the reservation.
-            (spent_charge, spent_payer_charge) = inner.charge_width(
+            width_spend = inner.plan_width_spend(
                 sender,
                 hash,
                 existing_frame_hash,
@@ -1803,6 +1839,10 @@ impl Mempool {
         if is_frame {
             inner.frame_tx_admitted_at.insert(hash, Instant::now());
         }
+        // The debit lands here, past every fallible step above: the transaction is going
+        // into the pool, so width is spent exactly when a record of the spend survives to
+        // be charged again at revalidation and released on departure.
+        let (spent_charge, spent_payer_charge) = inner.commit_width_spend(width_spend);
         if let Some(charge) = spent_charge {
             inner.frame_tx_charge.insert(hash, charge);
         }
