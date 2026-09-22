@@ -763,9 +763,24 @@ impl PeerConnectionServer {
                         .peer_cell_mask(state.node.node_id())
                         .unwrap_or(None)
                         .unwrap_or(u128::MAX);
+                    let peer_id = state.node.node_id();
                     match state.blockchain.mempool.blob_txs_missing_cells() {
                         Ok(missing_list) => {
                             for (tx_hash, missing) in missing_list {
+                                // `blob_txs_missing_cells` spans the whole pool, but a
+                                // peer may only be asked for cells it advertised: devp2p
+                                // `caps/eth.md` fetches "from peers that announced
+                                // overlapping availability". Without this the sweep asks
+                                // every eth/72 peer for every pending blob tx, including
+                                // ones it never announced.
+                                if !state
+                                    .blockchain
+                                    .mempool
+                                    .peer_announced_tx(tx_hash, peer_id)
+                                    .unwrap_or(false)
+                                {
+                                    continue;
+                                }
                                 let fetch_mask = missing & peer_available;
                                 if fetch_mask != 0 {
                                     state

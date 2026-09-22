@@ -1802,6 +1802,20 @@ impl Mempool {
             .unwrap_or(0))
     }
 
+    /// Whether `peer_id` announced availability for `tx_hash` via
+    /// `NewPooledTransactionHashes72`.
+    ///
+    /// devp2p `caps/eth.md` only permits fetching cells "from peers that announced
+    /// overlapping availability", so any path that picks a peer for a transaction
+    /// it did not learn from that peer's own announcement must consult this first.
+    pub fn peer_announced_tx(&self, tx_hash: H256, peer_id: H256) -> Result<bool, StoreError> {
+        Ok(self
+            .read()?
+            .provider_announcers
+            .get(&tx_hash)
+            .is_some_and(|peers| peers.contains(&peer_id)))
+    }
+
     /// Forget a peer's last-advertised cell availability (called on disconnect).
     pub fn clear_peer_cell_availability(&self, peer_id: H256) -> Result<(), StoreError> {
         self.write()?.peer_cell_availability.remove(&peer_id);

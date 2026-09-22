@@ -396,6 +396,14 @@ pub struct BlockchainOptions {
     /// `--no-bal-parallel-trie`) to fall back to streaming `AccountUpdate`s from
     /// the executor and merkleizing post-execution.
     pub bal_parallel_trie_enabled: bool,
+    /// Whether this chain accepts blob transactions at all.
+    ///
+    /// False for rollups, which reject them outright, so the EIP-8070 blobpool
+    /// state machine must not switch itself on when their fork schedule reaches
+    /// Amsterdam. `BlockchainType` alone cannot carry this: native rollups run as
+    /// [`BlockchainType::L1`] on purpose, because their blocks must re-execute
+    /// under an unmodified L1 environment.
+    pub blob_txs_supported: bool,
     /// EIP-8070: when true, activate the sampler/provider state machine at
     /// startup regardless of the chain's fork schedule (`--blob-sampling`).
     ///
@@ -452,6 +460,7 @@ impl Default for BlockchainOptions {
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
             bal_parallel_trie_enabled: true,
+            blob_txs_supported: true,
             force_blob_sampling: false,
             blob_eager_provider: false,
             max_reorg_depth: None,
@@ -4204,9 +4213,11 @@ impl Blockchain {
         if self.mempool.blob_sampling_enabled() {
             return true;
         }
-        // L2 rejects blob txs outright, so its fork schedule must not drag the
-        // blobpool state machine in.
-        if !matches!(self.options.r#type, BlockchainType::L1) {
+        // Rollups reject blob txs outright, so their fork schedule must not drag
+        // the blobpool state machine in. The explicit flag carries native rollups,
+        // which run as `BlockchainType::L1`; the type check stays as a backstop for
+        // any L2 that forgets to set it.
+        if !self.options.blob_txs_supported || !matches!(self.options.r#type, BlockchainType::L1) {
             return false;
         }
         let head = self.storage.latest_block_timestamp();
