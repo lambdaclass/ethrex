@@ -58,7 +58,7 @@ pub fn init_tracing(
     opts: &Options,
 ) -> (
     reload::Handle<EnvFilter, Registry>,
-    Option<tracing_appender::non_blocking::WorkerGuard>,
+    Vec<tracing_appender::non_blocking::WorkerGuard>,
 ) {
     let log_filter = EnvFilter::builder()
         .with_default_directive(Directive::from(opts.log_level))
@@ -75,11 +75,23 @@ pub fn init_tracing(
 
     let include_target = matches!(opts.log_level, Level::DEBUG | Level::TRACE);
 
+    // Hand stdout writes to a dedicated thread. Block import emits several lines
+    // per block from the executor thread, and a synchronous write to stdout is a
+    // syscall whose cost is set by whatever sits on the other end of the pipe; on
+    // a node tee'ing its output that showed up on the block-latency path. Not
+    // lossy: should the buffer ever fill, the caller waits rather than dropping
+    // lines, so the log stays complete.
+    let (stdout_writer, stdout_guard) =
+        tracing_appender::non_blocking::NonBlockingBuilder::default()
+            .lossy(false)
+            .finish(std::io::stdout());
+    let mut guards = vec![stdout_guard];
     let fmt_layer = fmt::layer()
         .with_target(include_target)
-        .with_ansi(use_color);
+        .with_ansi(use_color)
+        .with_writer(stdout_writer);
 
-    let (file_layer, guard) = if let Some(log_dir) = &opts.log_dir {
+    let file_layer = if let Some(log_dir) = &opts.log_dir {
         if !log_dir.exists() {
             std::fs::create_dir_all(log_dir).expect("Failed to create log directory");
         }
@@ -102,9 +114,10 @@ pub fn init_tracing(
             .with_target(include_target)
             .with_ansi(false)
             .with_writer(non_blocking);
-        (Some(file_layer), Some(guard))
+        guards.push(guard);
+        Some(file_layer)
     } else {
-        (None, None)
+        None
     };
 
     let profiling_layer = opts.metrics_enabled.then_some(FunctionProfilingLayer);
@@ -115,7 +128,7 @@ pub fn init_tracing(
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
-    (filter_handle, guard)
+    (filter_handle, guards)
 }
 
 pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
