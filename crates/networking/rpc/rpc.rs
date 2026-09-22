@@ -197,6 +197,8 @@ type BlockWorkerMessage = (
     Block,
     Option<BlockAccessList>,
     bool,
+    // When the request was handed off; lets the executor measure the wake-up hop.
+    std::time::Instant,
 );
 
 /// This struct contains all the dependencies that RPC handlers need to process requests,
@@ -481,7 +483,11 @@ pub fn start_block_executor(
     let executor = std::thread::Builder::new()
         .name("block_executor".to_string())
         .spawn(move || {
-            while let Some((notify, block, bal, make_witness)) = block_receiver.blocking_recv() {
+            while let Some((notify, block, bal, make_witness, sent_at)) =
+                block_receiver.blocking_recv()
+            {
+                let received_at = std::time::Instant::now();
+                let block_number = block.header.number;
                 // Kill any in-flight warming before touching the executor's
                 // resources.
                 if let Some(handle) = &prewarmer {
@@ -500,12 +506,22 @@ pub fn start_block_executor(
                 })();
                 // One pass per cleanly imported block, only when synced and
                 // idle (no queued blocks): warm the child of the new head.
+                let executed_at = std::time::Instant::now();
                 if let (Some(handle), Some(header), true) =
                     (&prewarmer, imported_header, result.is_ok())
                     && blockchain.is_synced()
                     && block_receiver.is_empty()
                 {
                     handle.trigger(header);
+                }
+                {
+                    let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+                    tracing::info!(
+                        "[METRIC] EXECUTOR {block_number} | wait {:.3} ms | exec_thread {:.3} ms | trigger {:.3} ms",
+                        ms(received_at.duration_since(sent_at)),
+                        ms(executed_at.duration_since(received_at)),
+                        ms(executed_at.elapsed()),
+                    );
                 }
                 let _ = notify
                     .send(result)
