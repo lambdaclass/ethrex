@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-09-22
+
+- Deserialize `engine_newPayloadV5` params in a single pass: from the borrowed `Value`, with the block access list RLP-decoded once inside serde and hashed from the wire bytes; RPC dispatch to handler 0.39 → 0.34 ms per block on Plataberget [#7301](https://github.com/lambdaclass/ethrex/pull/7301)
+
 ### 2026-09-14
 
 - Stop copying the stateless input one byte at a time, hash the block access list once instead of twice, and route `validate_public_keys` through the injected `Crypto`: −8.81% guest instructions on mainnet block 25453112 [#7277](https://github.com/lambdaclass/ethrex/pull/7277)
