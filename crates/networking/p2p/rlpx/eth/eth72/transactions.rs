@@ -428,13 +428,21 @@ impl PooledTransactions72 {
                     );
                     continue;
                 }
+                // A type-3 transaction declaring no blob versioned hashes is invalid
+                // on its own terms (EIP-4844 requires at least one), and an empty
+                // sidecar is consistent with it. That is a bad transaction, not a peer
+                // misrepresenting one, so it is dropped like any other invalid tx
+                // instead of costing the connection. A sidecar that disagrees with the
+                // transaction still does.
+                let consistently_blobless = itx.tx.blob_versioned_hashes.is_empty()
+                    && itx.blobs_bundle.commitments.is_empty();
                 // Blobs are elided in eth/72; store commitments+proofs.
                 // Full KZG validation deferred until blobs are fetched via GetCells.
                 if let Err(e) = blockchain
                     .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
                     .await
                 {
-                    if matches!(e, MempoolError::BlobsBundleError(_)) {
+                    if matches!(e, MempoolError::BlobsBundleError(_)) && !consistently_blobless {
                         return Err(e);
                     }
                     debug!(
