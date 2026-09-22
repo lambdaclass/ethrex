@@ -398,6 +398,7 @@ mod tests {
                 transactions,
                 ommers: vec![],
                 withdrawals: Some(vec![]),
+                ..Default::default()
             },
         }
     }

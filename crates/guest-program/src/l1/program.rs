@@ -121,6 +121,7 @@ pub fn new_payload_request_to_block(
         transactions: transactions.clone(),
         ommers: vec![],
         withdrawals: Some(withdrawals.clone()),
+        ..Default::default()
     };
 
     let mut header = BlockHeader {
