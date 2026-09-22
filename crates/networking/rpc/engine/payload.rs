@@ -1274,7 +1274,7 @@ pub async fn add_block(
 ) -> Result<Option<ExecutionWitness>, ChainError> {
     let (notify_send, notify_recv) = oneshot::channel();
     ctx.block_worker_channel
-        .send((notify_send, block, bal, make_witness))
+        .send((notify_send, block, bal, make_witness, Instant::now()))
         .map_err(|e| {
             ChainError::Custom(format!(
                 "failed to send block execution request to worker: {e}"
@@ -1292,6 +1292,7 @@ async fn try_execute_payload(
     bal: Option<BlockAccessList>,
     make_witness: bool,
 ) -> Result<PayloadStatus, RpcErr> {
+    let entered_at = Instant::now();
     let Some(syncer) = &context.syncer else {
         return Err(RpcErr::Internal(
             "New payload requested but syncer is not initialized".to_string(),
@@ -1395,7 +1396,17 @@ async fn try_execute_payload(
     // this happens once per newPayload and is negligible next to block execution.
     let bad_block_candidate = block.clone();
 
-    match add_block(context, block, bal, make_witness).await {
+    let handoff_at = Instant::now();
+    let add_block_result = add_block(context, block, bal, make_witness).await;
+    {
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+        info!(
+            "[METRIC] HANDOFF {block_number} | pre {:.3} ms | roundtrip {:.3} ms",
+            ms(handoff_at.duration_since(entered_at)),
+            ms(handoff_at.elapsed()),
+        );
+    }
+    match add_block_result {
         Err(ChainError::ParentNotFound) => {
             // Start sync
             syncer.sync_to_head(block_hash);
