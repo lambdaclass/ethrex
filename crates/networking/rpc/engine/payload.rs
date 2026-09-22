@@ -336,7 +336,12 @@ impl RpcHandler for NewPayloadV5Request {
         // for every block, so it is walked once: the BAL is RLP-decoded inside serde
         // and nowhere else.
         let (payload, undecodable_bal) = match ExecutionPayload::deserialize(payload_value) {
-            Ok(payload) => (payload, false),
+            // Serde's BAL deserializer reads an empty `"0x"` as absent, while the
+            // strict decoder that governs the header hash rejects empty input. Keep
+            // the strict verdict: a BAL that is present but empty is undecodable,
+            // not missing, so the payload is answered INVALID rather than rejected
+            // as malformed params.
+            Ok(payload) => (payload, raw_bal.as_deref().is_some_and(<[u8]>::is_empty)),
             Err(_) => {
                 // The one failure tolerated here is a BAL that does not RLP-decode: the
                 // block must still be rebuilt so it can be answered INVALID under its
@@ -1649,6 +1654,32 @@ mod tests {
 
         assert_eq!(request.0.payload.slot_number, Some(0));
         assert!(request.0.raw_bal_hash.is_some());
+    }
+
+    /// `"0x"` must be treated as an undecodable BAL, not an absent one: the strict
+    /// decoder rejects empty input, and the engine answer for that is INVALID.
+    #[test]
+    fn new_payload_v5_empty_bal_string_is_undecodable_not_missing() {
+        let mut payload = serde_json::json!(v5_payload());
+        payload["blockAccessList"] = serde_json::Value::String("0x".to_string());
+        let params = Some(vec![
+            payload,
+            serde_json::json!(Vec::<H256>::new()),
+            serde_json::json!(H256::zero()),
+            serde_json::json!(Vec::<EncodedRequests>::new()),
+        ]);
+
+        let parsed = NewPayloadV5Request::parse(&params).expect("an empty BAL must still parse");
+
+        assert!(
+            parsed.undecodable_bal,
+            "an empty BAL must be flagged undecodable"
+        );
+        assert!(parsed.payload.block_access_list.is_none());
+        assert!(
+            parsed.raw_bal_hash.is_some(),
+            "the empty bytes are still hashed"
+        );
     }
 
     #[test]
