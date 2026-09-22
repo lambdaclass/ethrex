@@ -82,14 +82,23 @@ impl OpcodeHandler for OpMLoadHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         // Stack-neutral: replace the top (the offset) with the loaded word in place.
         let offset = u256_to_usize(*vm.current_call_frame.stack.top_mut()?)?;
+        let new_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::mload(
-                calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?,
+                new_size,
                 vm.current_call_frame.memory.len(),
             )?)?;
 
-        let word = vm.current_call_frame.memory.load_word(offset)?;
-        *vm.current_call_frame.stack.top_mut()? = word;
+        let word = vm
+            .current_call_frame
+            .memory
+            .load_word_prerounded(offset, new_size)?;
+        // MLOAD is stack-neutral: the top was validated by the `top_mut()?` read
+        // above and the depth is unchanged, so skip the redundant bounds check.
+        #[expect(unsafe_code, reason = "top validated above; MLOAD is stack-neutral")]
+        unsafe {
+            vm.current_call_frame.stack.set_top_unchecked(word);
+        }
 
         Ok(OpcodeResult::Continue)
     }
@@ -108,13 +117,18 @@ impl OpcodeHandler for OpMStoreHandler {
         }
 
         let offset = u256_to_usize(offset)?;
+        // Round the new memory size up to a word once, then reuse it for both the
+        // gas charge and the store (store_word would otherwise re-round it).
+        let new_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::mstore(
-                calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?,
+                new_size,
                 vm.current_call_frame.memory.len(),
             )?)?;
 
-        vm.current_call_frame.memory.store_word(offset, value)?;
+        vm.current_call_frame
+            .memory
+            .store_word_prerounded(offset, value, new_size)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -465,7 +479,9 @@ impl OpcodeHandler for OpJumpIHandler {
 /// a JUMPDEST entry in the trace log: `parent_gas_cost` is recorded as the
 /// override for the parent JUMP/JUMPI step (so its `gasCost` doesn't absorb the
 /// JUMPDEST charge), and the JUMPDEST step is pushed directly via
-/// `synthesize_step` after the gas is charged.
+/// `synthesize_step` after the gas is charged — including when that charge is
+/// what runs the frame out of gas, so the trace keeps the step an unfused
+/// dispatch would have logged.
 fn jump(vm: &mut VM<'_>, target: usize, parent_gas_cost: u64) -> Result<(), VMError> {
     // Check target address validity: the target has to be a JUMPDEST that is not part
     // of a literal (aka. a PUSH immediate). Both are answered by the bitmap, which only
@@ -481,8 +497,25 @@ fn jump(vm: &mut VM<'_>, target: usize, parent_gas_cost: u64) -> Result<(), VMEr
 
             // Fuse: charge JUMPDEST + advance PC past it.
             vm.current_call_frame.pc = target.wrapping_add(1);
-            vm.current_call_frame
-                .increase_consumed_gas(gas_cost::JUMPDEST)?;
+            if let Err(err) = vm
+                .current_call_frame
+                .increase_consumed_gas(gas_cost::JUMPDEST)
+            {
+                // The JUMPDEST charge emptied the frame. An unfused dispatch
+                // reaches JUMPDEST as its own step and logs it carrying the
+                // fault, so bailing out here would silently drop the frame's
+                // last opcode from the trace. The fault is the JUMPDEST's, not
+                // the JUMP's: close the parent step out clean, then hand the
+                // pending finalize to the JUMPDEST so the dispatch loop's
+                // post-step hook patches the error onto it.
+                let refund = vm.substate.refunded_gas;
+                vm.opcode_tracer
+                    .finalize_step(parent_gas_cost, refund, None);
+                if vm.opcode_tracer.synthesize_faulting_step(synth) {
+                    vm.opcode_tracer.last_opcode_gas_cost = Some(gas_cost::JUMPDEST);
+                }
+                return Err(err.into());
+            }
 
             vm.opcode_tracer.synthesize_step(synth);
         } else {
