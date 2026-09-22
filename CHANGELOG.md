@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-09-22
+
+- Write stdout logs through a non-blocking appender (`lossy(false)`, nothing dropped), taking the pipe write off the block executor's path [#7303](https://github.com/lambdaclass/ethrex/pull/7303)
+
 ### 2026-09-14
 
 - Stop copying the stateless input one byte at a time, hash the block access list once instead of twice, and route `validate_public_keys` through the injected `Crypto`: −8.81% guest instructions on mainnet block 25453112 [#7277](https://github.com/lambdaclass/ethrex/pull/7277)
