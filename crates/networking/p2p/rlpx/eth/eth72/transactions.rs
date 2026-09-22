@@ -374,7 +374,13 @@ impl PooledTransactions72 {
                 .iter()
                 .position(|&hash| hash == tx_hash)
             else {
-                return Err(MempoolError::RequestedPooledTxNotFound);
+                // Not part of this request: ignore the transaction rather than
+                // dropping the peer. `requested` is the announcement trimmed to the
+                // hashes this request asked for, so a peer that answers the whole
+                // announcement it originally sent — which devp2p allows, and which
+                // go-ethereum does — lands here through no fault of its own.
+                // `retain_requested` drops them before they reach the pool.
+                continue;
             };
 
             let expected_type = requested.transaction_types[pos];
@@ -395,6 +401,15 @@ impl PooledTransactions72 {
             }
         }
         Ok(())
+    }
+
+    /// Drop transactions that were not part of `requested`.
+    ///
+    /// Pairs with [`Self::validate_requested`], which tolerates unsolicited entries
+    /// instead of dropping the peer: tolerated, but never stored.
+    pub fn retain_requested(&mut self, requested: &NewPooledTransactionHashes72) {
+        self.pooled_transactions
+            .retain(|tx| requested.transaction_hashes.contains(&tx.compute_hash()));
     }
 
     /// Stores transactions; blob txs are stored with commitments+proofs, blobs elided.

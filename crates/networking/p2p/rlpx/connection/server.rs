@@ -2092,7 +2092,7 @@ async fn handle_incoming_message(
         }
         // eth/72 (EIP-8070): PooledTransactions72 handler.
         // Blob txs arrive with elided blobs — do NOT trigger the missing-blob disconnect.
-        Message::PooledTransactions72(msg) if peer_supports_eth => {
+        Message::PooledTransactions72(mut msg) if peer_supports_eth => {
             if !msg.pooled_transactions.is_empty() {
                 state.received_txs_from_peer = true;
             }
@@ -2120,6 +2120,11 @@ async fn handle_incoming_message(
                             DisconnectReason::SubprotocolError,
                         ));
                     }
+                }
+                if let Some((announced, _, _, _)) = &removed_request {
+                    // Tolerated by `validate_requested`, but not admitted: only the
+                    // transactions this request asked for reach the pool.
+                    msg.retain_requested(announced);
                 }
                 #[cfg(feature = "l2")]
                 let is_l2_mode = state.l2_state.is_supported();
