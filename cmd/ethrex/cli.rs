@@ -774,7 +774,7 @@ impl Subcommand {
         // L2 has its own init_tracing because of the ethrex monitor
         let _guard = match &self {
             #[cfg(feature = "l2")]
-            Self::L2(_) => None,
+            Self::L2(_) => Vec::new(),
             _ => {
                 let (_, guard) = init_tracing(opts);
                 guard
