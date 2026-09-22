@@ -10,10 +10,11 @@ use ethrex_common::{
     },
 };
 use ethrex_rlp::encode::PayloadRLPEncode;
-use reqwest::{Client, StatusCode, Url};
+use reqwest::{Certificate, Client, Identity, StatusCode, Url};
 use rustc_hex::FromHexError;
 use secp256k1::{Message, PublicKey, SECP256K1, SecretKey};
 use serde::Serialize;
+use std::path::{Path, PathBuf};
 use url::ParseError;
 
 #[derive(Clone, Debug)]
@@ -113,21 +114,117 @@ impl LocalSigner {
     }
 }
 
+/// Files used to connect to a remote signer over TLS.
+///
+/// A Web3Signer started with `--tls-known-clients-file` or `--tls-allow-ca-clients`
+/// only accepts clients that present a certificate it trusts, so the keystore holding
+/// that certificate must be provided.
+#[derive(Clone, Debug, Default)]
+pub struct RemoteSignerTlsConfig {
+    /// PKCS#12 keystore with the client certificate and private key.
+    pub keystore_file: Option<PathBuf>,
+    /// File containing the password of `keystore_file`.
+    pub keystore_password_file: Option<PathBuf>,
+    /// PEM certificate to trust as a root when verifying the server, needed when the
+    /// remote signer uses a self-signed certificate.
+    pub ca_cert_file: Option<PathBuf>,
+}
+
+impl RemoteSignerTlsConfig {
+    fn build_client(&self) -> Result<Client, SignerError> {
+        let mut builder = Client::builder();
+
+        match (&self.keystore_file, &self.keystore_password_file) {
+            (Some(keystore_file), Some(password_file)) => {
+                let keystore = read_tls_file(keystore_file)?;
+                let password = String::from_utf8(read_tls_file(password_file)?).map_err(|_| {
+                    SignerError::TlsConfig(format!(
+                        "password file {} is not valid UTF-8",
+                        password_file.display()
+                    ))
+                })?;
+                // Password files are usually written with a trailing newline that is not
+                // part of the password.
+                let password = password.trim_end_matches(['\r', '\n']);
+                let identity = Identity::from_pkcs12_der(&keystore, password).map_err(|e| {
+                    SignerError::TlsConfig(format!(
+                        "failed to load PKCS#12 keystore {}: {}",
+                        keystore_file.display(),
+                        error_with_sources(&e)
+                    ))
+                })?;
+                // PKCS#12 identities are only supported by the native TLS backend.
+                builder = builder.use_native_tls().identity(identity);
+            }
+            (None, None) => {}
+            _ => {
+                return Err(SignerError::TlsConfig(
+                    "the TLS keystore and its password file must be provided together".to_string(),
+                ));
+            }
+        }
+
+        if let Some(ca_cert_file) = &self.ca_cert_file {
+            let certificate =
+                Certificate::from_pem(&read_tls_file(ca_cert_file)?).map_err(|e| {
+                    SignerError::TlsConfig(format!(
+                        "failed to load CA certificate {}: {}",
+                        ca_cert_file.display(),
+                        error_with_sources(&e)
+                    ))
+                })?;
+            builder = builder.add_root_certificate(certificate);
+        }
+
+        builder.build().map_err(|e| {
+            SignerError::TlsConfig(format!(
+                "failed to build HTTP client: {}",
+                error_with_sources(&e)
+            ))
+        })
+    }
+}
+
+/// reqwest reports TLS setup failures as a bare "builder error" and keeps the actual
+/// cause in the error source chain.
+fn error_with_sources(error: &reqwest::Error) -> String {
+    let mut message = error.to_string();
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        message.push_str(&format!(": {cause}"));
+        source = cause.source();
+    }
+    message
+}
+
+fn read_tls_file(path: &Path) -> Result<Vec<u8>, SignerError> {
+    std::fs::read(path)
+        .map_err(|e| SignerError::TlsConfig(format!("failed to read {}: {e}", path.display())))
+}
+
 #[derive(Clone, Debug)]
 pub struct RemoteSigner {
     pub url: Url,
     pub public_key: PublicKey,
     pub address: Address,
+    client: Client,
 }
 
 impl RemoteSigner {
-    pub fn new(url: Url, public_key: PublicKey) -> Self {
+    /// Creates a remote signer, loading the TLS files in `tls` so that a bad keystore or
+    /// certificate is reported at startup instead of on the first signature.
+    pub fn new(
+        url: Url,
+        public_key: PublicKey,
+        tls: &RemoteSignerTlsConfig,
+    ) -> Result<Self, SignerError> {
         let address = Address::from(keccak(&public_key.serialize_uncompressed()[1..]));
-        Self {
+        Ok(Self {
             url,
             public_key,
             address,
-        }
+            client: tls.build_client()?,
+        })
     }
 
     pub async fn sign(&self, data: Bytes) -> Result<Signature, SignerError> {
@@ -137,8 +234,8 @@ impl RemoteSigner {
             .join(&hex::encode(&self.public_key.serialize_uncompressed()[1..]))?;
         let body = format!("{{\"data\": \"0x{}\"}}", hex::encode(data));
 
-        let client = Client::new();
-        let response = client
+        let response = self
+            .client
             .post(url)
             .body(body)
             .header("content-type", "application/json")
@@ -172,8 +269,7 @@ impl RemoteSigner {
             return serde_json::Value::String(format!("Failed to create url from {}", self.url));
         };
 
-        let client = Client::new();
-        match client.get(url.clone()).send().await {
+        match self.client.get(url.clone()).send().await {
             Err(e) => serde_json::Value::String(format!("GET {} returned an error: {e}", url)),
             Ok(ok) => match ok.status() {
                 StatusCode::OK | StatusCode::SERVICE_UNAVAILABLE => ok
@@ -202,6 +298,8 @@ pub enum SignerError {
     FrameTxUnsupported,
     #[error("Web3signer error: {0}")]
     Web3SignerError(String),
+    #[error("Invalid remote signer TLS configuration: {0}")]
+    TlsConfig(String),
 }
 
 fn parse_signature(signature: Signature) -> (U256, U256, bool) {
