@@ -54,11 +54,14 @@ use ethrex_levm::db::gen_db::{
 #[cfg(feature = "rayon")]
 use ethrex_levm::db::{Database, gen_db::CacheDB};
 use ethrex_levm::errors::{InternalError, TxValidationError};
+#[cfg(feature = "rayon")]
+use ethrex_levm::gas_cost::LOGN_DYNAMIC_BYTE_BASE;
 use ethrex_levm::memory::Memory;
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::utils::get_base_fee_per_blob_gas;
+use ethrex_levm::utils::intrinsic_gas_floor;
 use ethrex_levm::validation_observer::FrameSimViolation;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
@@ -74,6 +77,8 @@ use std::cmp::min;
 use std::sync::Arc;
 #[cfg(feature = "rayon")]
 use std::sync::atomic::AtomicBool;
+#[cfg(feature = "rayon")]
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
@@ -167,6 +172,50 @@ fn check_gas_limit(
 /// because our `report.gas_used` already reflects `max(raw_regular, calldata_floor)`
 /// per-tx — i.e. the floor is applied before aggregation, not after. Keep this in
 /// sync with the aggregation loop in [`execute_block_parallel`].
+/// Upper bound on the gas a block can legitimately spend across all its transactions.
+///
+/// Per transaction `gas_used = regular + state`, so
+/// `sum(gas_used) = sum(regular) + sum(state) <= 2 * max(sum(regular), sum(state))`.
+/// That max is exactly the block's reported `gas_used`, which a valid block keeps
+/// within its gas limit, so no valid block spends more than twice its limit in total.
+pub fn block_work_budget(block_gas_limit: u64) -> u64 {
+    block_gas_limit.saturating_mul(2)
+}
+
+/// Reject a block whose transactions cannot all be admitted, before executing any of
+/// them.
+///
+/// Ordered gas admission ([`check_2d_gas_allowance`]) needs each transaction's real
+/// gas, so on the parallel path it can only run once every transaction has executed
+/// and its report is held in memory. This bound needs none of that: every transaction
+/// spends at least its EIP-7623/7976 floor, so a block whose floors already exceed
+/// [`block_work_budget`] cannot pass admission whatever it executes to.
+///
+/// Sound in the accepting direction: for any block that could be valid,
+/// `sum(floor) <= sum(gas_used) <= block_work_budget`, so this never rejects a block
+/// ordered admission would have accepted.
+pub fn check_minimum_block_work<'a>(
+    txs_with_sender: impl IntoIterator<Item = (&'a Transaction, Address)>,
+    fork: Fork,
+    block_gas_limit: u64,
+) -> Result<(), EvmError> {
+    let budget = block_work_budget(block_gas_limit);
+    let mut floor_total = 0_u64;
+    for (tx, sender) in txs_with_sender {
+        let floor = intrinsic_gas_floor(tx, sender, fork)
+            .map_err(|e| EvmError::Custom(format!("intrinsic gas floor: {e}")))?;
+        floor_total = floor_total.saturating_add(floor);
+        if floor_total > budget {
+            return Err(EvmError::Transaction(format!(
+                "Gas allowance exceeded: minimum gas of the block's transactions \
+                 {floor_total} exceeds the block work budget {budget} \
+                 (block_gas_limit={block_gas_limit})"
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub fn check_2d_gas_allowance(
     tx: &Transaction,
     block_gas_used_regular: u64,
@@ -1476,6 +1525,35 @@ impl LEVM {
             Option<EvmError>,     // deferred BAL validation error
         );
 
+        // Ordered gas admission (step 3 below) can only reject a block once every
+        // transaction has been executed and its report retained. Two bounds make the
+        // hopeless cases cheap, and both hold for any block that could be valid.
+        //
+        let work_budget = block_work_budget(header.gas_limit);
+
+        // Bound 1, before any execution.
+        check_minimum_block_work(
+            txs_with_sender.iter().map(|(tx, sender)| (*tx, *sender)),
+            chain_config.fork(header.timestamp),
+            header.gas_limit,
+        )?;
+
+        // Bound 2, during execution: `LOG*` data costs `LOGN_DYNAMIC_BYTE_BASE` gas per
+        // byte, so logs emitted by the EVM can never exceed `work_budget / 8` bytes.
+        // Two sources sit outside that charge and are covered by headroom rather than
+        // by the division: EIP-7708 synthesizes a 32-byte Transfer log per ETH
+        // transfer, and every transaction can carry one such transfer on top of its
+        // intrinsic cost. Transfers are far less byte-efficient than `LOG*` (32 bytes
+        // per ~9000 gas against 1 byte per 8), so they cannot dominate, and the
+        // per-transaction allowance is bounded by `work_budget / 21000` transactions —
+        // together under 2% of the budget. The factor of four leaves ample room for
+        // both while still bounding retention to half the block gas limit in bytes.
+        //
+        // Passing the budget proves the block exceeds its gas limit, so stop instead of
+        // materialising reports that ordered admission will throw away.
+        let log_budget = work_budget / (LOGN_DYNAMIC_BYTE_BASE / 2);
+        let logs_retained = AtomicU64::new(0);
+
         let exec_results: Result<Vec<TxExecResult>, EvmError> = (0..n_txs)
             .into_par_iter()
             .map(|tx_idx| -> Result<_, EvmError> {
@@ -1532,6 +1610,40 @@ impl LEVM {
                     chain_id,
                     stateless_validator,
                 )?;
+                let mut report = report;
+
+                // Block validation builds receipts from `logs` and never reads the
+                // top-level return data, so holding it until the collect below would
+                // retain a per-transaction buffer nothing downstream consumes.
+                report.output = Bytes::new();
+
+                // Charge this transaction's logs against the block-wide budget. Going
+                // over proves the block exceeds its gas limit (see `log_budget`), so
+                // report it the same way ordered admission would and let the remaining
+                // work unwind instead of collecting reports that cannot be used.
+                let tx_log_bytes: u64 = report
+                    .logs
+                    .iter()
+                    .map(|log| log.data.len() as u64)
+                    .sum::<u64>()
+                    .saturating_add(
+                        report
+                            .frame_results
+                            .iter()
+                            .flatten()
+                            .flat_map(|(_, _, logs)| logs.iter())
+                            .map(|log| log.data.len() as u64)
+                            .sum(),
+                    );
+                if logs_retained.fetch_add(tx_log_bytes, Ordering::Relaxed) + tx_log_bytes
+                    > log_budget
+                {
+                    return Err(EvmError::Transaction(format!(
+                        "Gas allowance exceeded: block log data exceeds the {log_budget} \
+                         bytes reachable within the block gas limit {}",
+                        header.gas_limit
+                    )));
+                }
 
                 let current_state = std::mem::take(&mut tx_db.current_accounts_state);
                 let codes = std::mem::take(&mut tx_db.codes);
