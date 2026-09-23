@@ -4805,3 +4805,114 @@ fn unrepresentable_max_cost_reports_the_product_overflow() {
         "expected GasLimitPriceProductOverflow, got {result:?}"
     );
 }
+
+// ==================== frames devnet block 41 repros ====================
+
+fn sender_frame(target: Address, value: U256, gas_limit: u64) -> Frame {
+    Frame {
+        mode: u8::from(FrameMode::Sender),
+        flags: 0,
+        target: Some(target),
+        gas_limit,
+        state_gas_limit: 1_000_000,
+        value,
+        data: Bytes::new(),
+    }
+}
+
+/// A frame that halts with items on its stack must not hand them to the next frame:
+/// every frame is a fresh top-level call with an empty stack (EELS `create_evm_from_frame`).
+#[test]
+fn stack_does_not_leak_across_frames() {
+    // JUMPDEST; PUSH0; PUSH1 0; JUMP -- grows the stack until it overflows.
+    let overflow = Address::from_low_u64_be(0x0F10);
+    let store = Address::from_low_u64_be(0x0F11);
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        sender_frame(overflow, U256::zero(), 100_000),
+        sender_frame(store, U256::zero(), 100_000),
+    ]);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (
+            overflow,
+            U256::zero(),
+            1,
+            Bytes::from(vec![0x5b, 0x5f, 0x60, 0x00, 0x56]),
+        ),
+        (
+            store,
+            U256::zero(),
+            1,
+            Bytes::from(SSTORE_THEN_STOP_CODE.to_vec()),
+        ),
+    ];
+    let (result, db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("tx is valid");
+    let frames = report.frame_results.as_ref().expect("frame results");
+    assert_ne!(
+        frames[1].0, FRAME_RECEIPT_STATUS_SUCCESS,
+        "overflow frame must fail"
+    );
+    assert_eq!(
+        frames[2].0, FRAME_RECEIPT_STATUS_SUCCESS,
+        "frame 2 inherited frame 1's stack"
+    );
+    assert_eq!(storage_slot(&db, store, H256::zero()), U256::one());
+}
+
+/// A successful frame targeting a precompile after an earlier frame logged must not panic
+/// in the per-frame log slicing (vm.rs `split_off(substate_logs_before)`).
+#[test]
+fn precompile_frame_after_logging_frame_does_not_panic() {
+    let eoa = Address::from_low_u64_be(0xE0C);
+    let identity = Address::from_low_u64_be(0x04);
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        sender_frame(eoa, U256::from(1u64), 50_000),
+        sender_frame(identity, U256::zero(), 50_000),
+    ]);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (eoa, U256::one(), 0, Bytes::new()),
+    ];
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("tx is valid");
+    let frames = report.frame_results.as_ref().expect("frame results");
+    assert_eq!(frames[2].0, FRAME_RECEIPT_STATUS_SUCCESS);
+}
+
+/// The target access charge comes before the balance check (EIP-8141 Behavior): a frame
+/// that cannot pay the access halts with its whole limit even if `value` is also unfundable.
+#[test]
+fn unaffordable_access_wins_over_unfunded_value() {
+    let dead = Address::from_low_u64_be(0xDEAD);
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        sender_frame(dead, U256::MAX, 1),
+    ]);
+    let accounts = [(
+        FUNDED_SENDER,
+        U256::from(10u64).pow(U256::from(18u64)),
+        0,
+        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+    )];
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("tx is valid");
+    let frames = report.frame_results.as_ref().expect("frame results");
+    assert_ne!(frames[1].0, FRAME_RECEIPT_STATUS_SUCCESS);
+    assert_eq!(
+        frames[1].1, 1,
+        "frame must be billed its limit, not the access cost"
+    );
+}

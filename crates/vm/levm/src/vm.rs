@@ -2226,7 +2226,13 @@ impl<'a> VM<'a> {
                 .map(|c| c.frame_results.iter().map(|r| r.2).collect())
                 .unwrap_or_default();
 
-            let (frame_success, frame_gas_used, frame_logs) = if value_transfer_reverted {
+            // The access charge precedes the balance check: a frame that cannot pay it halts
+            // with its whole limit, even when the sender also cannot fund `value`.
+            let (frame_success, frame_gas_used, frame_logs) = if frame_entry_gas > frame.gas_limit {
+                self.substate.revert_backup();
+                self.restore_cache_state()?;
+                (false, frame.gas_limit, Vec::new())
+            } else if value_transfer_reverted {
                 // EIP-8141 orders the target's access charge before the balance check,
                 // so a frame whose sender cannot fund its `value` still "reverts,
                 // consuming the gas charged so far" -- the access was already paid for
@@ -2289,9 +2295,9 @@ impl<'a> VM<'a> {
                 // (invoked after the frame swap) owns the transfer — the inner
                 // CALL machinery must not move the funds a second time.
                 let call_frame = CallFrame::new(
-                    caller,                                    // msg_sender
-                    target,                                    // to (delegator; ADDRESS/storage)
-                    code_address,                              // code_address (delegatee when 7702)
+                    caller,                // msg_sender
+                    target,                // to (delegator; ADDRESS/storage)
+                    code_address,          // code_address (delegatee when 7702)
                     bytecode,              // bytecode (delegatee's code when 7702)
                     frame.value,           // msg_value -- CALLVALUE
                     frame.data.clone(),    // calldata
@@ -2302,7 +2308,12 @@ impl<'a> VM<'a> {
                     false, // is_create
                     0,     // ret_offset
                     0,     // ret_size
-                    self.stack_pool.pop().unwrap_or_default(), // stack
+                    {
+                        // A pooled stack keeps the previous frame's items; each frame starts empty.
+                        let mut stack = self.stack_pool.pop().unwrap_or_default();
+                        stack.clear();
+                        stack
+                    }, // stack
                     Memory::default(), // memory
                 );
 
@@ -2316,6 +2327,10 @@ impl<'a> VM<'a> {
                 do_frame_value_transfer!();
 
                 let frame_result = self.run_execution();
+                // run_execution returns early for a precompile target, before handle_state_backup.
+                if target_is_precompile && let Ok(ctx_result) = &frame_result {
+                    self.handle_state_backup(ctx_result, false)?;
+                }
 
                 let result = match frame_result {
                     Ok(ctx_result) => {
