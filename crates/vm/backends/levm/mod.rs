@@ -54,8 +54,6 @@ use ethrex_levm::db::gen_db::{
 #[cfg(feature = "rayon")]
 use ethrex_levm::db::{Database, gen_db::CacheDB};
 use ethrex_levm::errors::{InternalError, TxValidationError};
-#[cfg(feature = "rayon")]
-use ethrex_levm::gas_cost::LOGN_DYNAMIC_BYTE_BASE;
 use ethrex_levm::memory::Memory;
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
@@ -77,9 +75,7 @@ use std::cmp::min;
 use std::sync::Arc;
 #[cfg(feature = "rayon")]
 use std::sync::atomic::AtomicBool;
-#[cfg(feature = "rayon")]
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
 /// EIP-7928 `block_access_index` of the pre-block system calls.
@@ -154,24 +150,6 @@ fn check_gas_limit(
     Ok(())
 }
 
-/// EIP-8037 (Amsterdam+, execution-specs PR #2703) per-tx 2D inclusion check.
-///
-/// A tx is rejected (block invalid) if its worst-case contribution to either
-/// dimension exceeds the remaining budget at tx inclusion time:
-///
-/// - regular dim: `min(TX_MAX_GAS_LIMIT, tx.gas) > block_gas_limit - block_regular_gas_used`
-/// - state dim:   `tx.gas > block_gas_limit - block_state_gas_used`
-///
-/// The full `tx.gas` is used in both dimensions (only the regular dimension is
-/// capped at `TX_MAX_GAS_LIMIT`); intrinsic underfunding is rejected separately
-/// in transaction validation, not here. Mirrors
-/// `src/ethereum/forks/amsterdam/fork.py` `check_transaction` at the
-/// `tests-glamsterdam-devnet@v7.1.0` spec.
-///
-/// Note: `block_gas_used_regular` here equals EELS's `block_output.block_gas_used`
-/// because our `report.gas_used` already reflects `max(raw_regular, calldata_floor)`
-/// per-tx — i.e. the floor is applied before aggregation, not after. Keep this in
-/// sync with the aggregation loop in [`execute_block_parallel`].
 /// Upper bound on the gas a block can legitimately spend across all its transactions.
 ///
 /// Per transaction `gas_used = regular + state`, so
@@ -216,6 +194,67 @@ pub fn check_minimum_block_work<'a>(
     Ok(())
 }
 
+/// Gas spent so far by the transactions parallel execution has finished, per EIP-8037
+/// dimension, so it can stop once the block is over its gas limit.
+///
+/// Ordered admission ([`check_2d_gas_allowance`]) only runs after every transaction
+/// has executed, so without this a block that is over its gas limit still costs its
+/// full execution, which can be many times the work of any valid block.
+///
+/// Sound in the accepting direction: a valid block keeps the sum of each dimension
+/// within its gas limit, and the transactions finished so far are a subset of the
+/// block, so their sums cannot exceed the limit either.
+#[derive(Default)]
+pub struct CompletedGas {
+    regular: AtomicU64,
+    state: AtomicU64,
+}
+
+impl CompletedGas {
+    /// Rejects once the finished transactions exceed the gas limit in either dimension.
+    pub fn check(&self, block_gas_limit: u64) -> Result<(), EvmError> {
+        let regular = self.regular.load(Ordering::Relaxed);
+        let state = self.state.load(Ordering::Relaxed);
+        if regular > block_gas_limit || state > block_gas_limit {
+            return Err(EvmError::Transaction(format!(
+                "Gas allowance exceeded: transactions completed during parallel execution \
+                 used regular={regular} state={state}, over block_gas_limit={block_gas_limit}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Adds one finished transaction's gas, then applies [`Self::check`].
+    pub fn record(
+        &self,
+        regular_gas: u64,
+        state_gas: u64,
+        block_gas_limit: u64,
+    ) -> Result<(), EvmError> {
+        self.regular.fetch_add(regular_gas, Ordering::Relaxed);
+        self.state.fetch_add(state_gas, Ordering::Relaxed);
+        self.check(block_gas_limit)
+    }
+}
+
+/// EIP-8037 (Amsterdam+, execution-specs PR #2703) per-tx 2D inclusion check.
+///
+/// A tx is rejected (block invalid) if its worst-case contribution to either
+/// dimension exceeds the remaining budget at tx inclusion time:
+///
+/// - regular dim: `min(TX_MAX_GAS_LIMIT, tx.gas) > block_gas_limit - block_regular_gas_used`
+/// - state dim:   `tx.gas > block_gas_limit - block_state_gas_used`
+///
+/// The full `tx.gas` is used in both dimensions (only the regular dimension is
+/// capped at `TX_MAX_GAS_LIMIT`); intrinsic underfunding is rejected separately
+/// in transaction validation, not here. Mirrors
+/// `src/ethereum/forks/amsterdam/fork.py` `check_transaction` at the
+/// `tests-glamsterdam-devnet@v7.1.0` spec.
+///
+/// Note: `block_gas_used_regular` here equals EELS's `block_output.block_gas_used`
+/// because our `report.gas_used` already reflects `max(raw_regular, calldata_floor)`
+/// per-tx — i.e. the floor is applied before aggregation, not after. Keep this in
+/// sync with the aggregation loop in [`execute_block_parallel`].
 pub fn check_2d_gas_allowance(
     tx: &Transaction,
     block_gas_used_regular: u64,
@@ -1526,37 +1565,26 @@ impl LEVM {
         );
 
         // Ordered gas admission (step 3 below) can only reject a block once every
-        // transaction has been executed and its report retained. Two bounds make the
-        // hopeless cases cheap, and both hold for any block that could be valid.
+        // transaction has been executed and its report retained. Two checks make an
+        // over-limit block cheap to reject, and both hold for any block that could be
+        // valid.
         //
-        let work_budget = block_work_budget(header.gas_limit);
-
-        // Bound 1, before any execution.
+        // Before any execution: the transactions' minimum gas alone may already rule
+        // the block out.
         check_minimum_block_work(
             txs_with_sender.iter().map(|(tx, sender)| (*tx, *sender)),
             chain_config.fork(header.timestamp),
             header.gas_limit,
         )?;
 
-        // Bound 2, during execution: `LOG*` data costs `LOGN_DYNAMIC_BYTE_BASE` gas per
-        // byte, so logs emitted by the EVM can never exceed `work_budget / 8` bytes.
-        // Two sources sit outside that charge and are covered by headroom rather than
-        // by the division: EIP-7708 synthesizes a 32-byte Transfer log per ETH
-        // transfer, and every transaction can carry one such transfer on top of its
-        // intrinsic cost. Transfers are far less byte-efficient than `LOG*` (32 bytes
-        // per ~9000 gas against 1 byte per 8), so they cannot dominate, and the
-        // per-transaction allowance is bounded by `work_budget / 21000` transactions —
-        // together under 2% of the budget. The factor of four leaves ample room for
-        // both while still bounding retention to half the block gas limit in bytes.
-        //
-        // Passing the budget proves the block exceeds its gas limit, so stop instead of
-        // materialising reports that ordered admission will throw away.
-        let log_budget = work_budget / (LOGN_DYNAMIC_BYTE_BASE / 2);
-        let logs_retained = AtomicU64::new(0);
+        // During execution: stop starting transactions once the finished ones are over
+        // the gas limit, which bounds both the work done and the reports retained.
+        let completed_gas = CompletedGas::default();
 
         let exec_results: Result<Vec<TxExecResult>, EvmError> = (0..n_txs)
             .into_par_iter()
             .map(|tx_idx| -> Result<_, EvmError> {
+                completed_gas.check(header.gas_limit)?;
                 let (tx, sender) = &txs_with_sender[tx_idx];
                 // Small capacity hint — per-tx DBs materialize only touched accounts via lazy_bal cursor.
                 let mut tx_db = GeneralizedDatabase::new_with_shared_base_and_capacity(
@@ -1617,33 +1645,12 @@ impl LEVM {
                 // retain a per-transaction buffer nothing downstream consumes.
                 report.output = Bytes::new();
 
-                // Charge this transaction's logs against the block-wide budget. Going
-                // over proves the block exceeds its gas limit (see `log_budget`), so
-                // report it the same way ordered admission would and let the remaining
-                // work unwind instead of collecting reports that cannot be used.
-                let tx_log_bytes: u64 = report
-                    .logs
-                    .iter()
-                    .map(|log| log.data.len() as u64)
-                    .sum::<u64>()
-                    .saturating_add(
-                        report
-                            .frame_results
-                            .iter()
-                            .flatten()
-                            .flat_map(|(_, _, logs)| logs.iter())
-                            .map(|log| log.data.len() as u64)
-                            .sum(),
-                    );
-                if logs_retained.fetch_add(tx_log_bytes, Ordering::Relaxed) + tx_log_bytes
-                    > log_budget
-                {
-                    return Err(EvmError::Transaction(format!(
-                        "Gas allowance exceeded: block log data exceeds the {log_budget} \
-                         bytes reachable within the block gas limit {}",
-                        header.gas_limit
-                    )));
-                }
+                // Same regular/state split as the ordered admission loop below.
+                completed_gas.record(
+                    report.gas_used.saturating_sub(report.state_gas_used),
+                    report.state_gas_used,
+                    header.gas_limit,
+                )?;
 
                 let current_state = std::mem::take(&mut tx_db.current_accounts_state);
                 let codes = std::mem::take(&mut tx_db.codes);

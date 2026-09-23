@@ -1,18 +1,18 @@
-//! Bounds that let the parallel Amsterdam pipeline reject a hopeless block without
-//! executing it.
+//! Bounds that let the parallel Amsterdam pipeline reject an over-limit block without
+//! executing all of it.
 //!
 //! Ordered gas admission (`check_2d_gas_allowance`) needs each transaction's real gas,
 //! so on the parallel path it can only run after every transaction has executed and its
-//! report is held in memory. A block can therefore declare far more transactions than it
-//! could ever admit and still be executed in full first. These bounds close that gap
-//! using only what is knowable up front, and must never reject a block that ordered
-//! admission would have accepted.
+//! report is held in memory. An over-limit block would therefore be executed in full
+//! first. `check_minimum_block_work` rejects some such blocks before any execution, and
+//! `CompletedGas` stops execution once the finished transactions are over the limit.
+//! Neither may reject a block that ordered admission would have accepted.
 
 use ethrex_common::{
     Address, U256,
     types::{EIP1559Transaction, Fork, Transaction, TxKind},
 };
-use ethrex_vm::{block_work_budget, check_minimum_block_work};
+use ethrex_vm::{CompletedGas, block_work_budget, check_minimum_block_work};
 
 const BLOCK_GAS_LIMIT: u64 = 30_000_000;
 
@@ -96,4 +96,51 @@ fn test_rejection_is_cumulative_not_per_transaction() {
     let fits = (block_work_budget(BLOCK_GAS_LIMIT) / 21_000) as usize;
     check(&block_of(fits)).expect("boundary block must pass");
     check(&block_of(fits * 2)).expect_err("twice the boundary must fail on the sum alone");
+}
+
+/// A valid block may spend its whole gas limit in both dimensions at once (it is charged
+/// their max), so reaching the limit exactly must not stop execution.
+#[test]
+fn test_completed_gas_at_the_limit_is_accepted() {
+    let gas = CompletedGas::default();
+    gas.record(BLOCK_GAS_LIMIT, BLOCK_GAS_LIMIT, BLOCK_GAS_LIMIT)
+        .expect("a block that fills both dimensions exactly can be valid");
+    gas.check(BLOCK_GAS_LIMIT)
+        .expect("a later check must agree with the record that reached the limit");
+}
+
+/// Going over in either dimension proves the block is over its gas limit.
+#[test]
+fn test_completed_gas_over_either_dimension_is_rejected() {
+    let regular = CompletedGas::default();
+    let err = regular
+        .record(BLOCK_GAS_LIMIT + 1, 0, BLOCK_GAS_LIMIT)
+        .expect_err("regular gas over the limit must stop execution")
+        .to_string();
+    assert!(
+        err.contains("Gas allowance exceeded"),
+        "must reject as a gas-allowance failure so it maps like ordered admission, got: {err}"
+    );
+
+    let state = CompletedGas::default();
+    state
+        .record(0, BLOCK_GAS_LIMIT + 1, BLOCK_GAS_LIMIT)
+        .expect_err("state gas over the limit must stop execution");
+}
+
+/// The counter sums across transactions: each one fits on its own, but together they
+/// pass the limit, and every check after that point must also fail so no further
+/// transaction starts.
+#[test]
+fn test_completed_gas_is_cumulative_and_stays_rejected() {
+    let gas = CompletedGas::default();
+    let per_tx = BLOCK_GAS_LIMIT / 10;
+    for _ in 0..10 {
+        gas.record(per_tx, 0, BLOCK_GAS_LIMIT)
+            .expect("ten tenths fit in the limit");
+    }
+    gas.record(per_tx, 0, BLOCK_GAS_LIMIT)
+        .expect_err("the eleventh tenth is over the limit");
+    gas.check(BLOCK_GAS_LIMIT)
+        .expect_err("once over the limit, no further transaction may start");
 }

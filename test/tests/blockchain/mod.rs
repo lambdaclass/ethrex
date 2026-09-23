@@ -16,6 +16,7 @@ mod mempool_cells_tests;
 mod mempool_tests;
 mod merkle_pool_tests;
 mod parallel_admission_bounds_tests;
+mod parallel_gas_early_stop_tests;
 mod payload_build_loop_tests;
 mod payload_tests;
 mod sampling_tests;
