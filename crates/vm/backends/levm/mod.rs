@@ -180,8 +180,11 @@ pub fn check_minimum_block_work<'a>(
     let budget = block_work_budget(block_gas_limit);
     let mut floor_total = 0_u64;
     for (tx, sender) in txs_with_sender {
+        // The floor is computed from the transaction's own fields, so failing to
+        // compute it (an overflow) makes the block invalid rather than a transient
+        // error to retry.
         let floor = intrinsic_gas_floor(tx, sender, fork)
-            .map_err(|e| EvmError::Custom(format!("intrinsic gas floor: {e}")))?;
+            .map_err(|e| EvmError::Transaction(format!("intrinsic gas floor: {e}")))?;
         floor_total = floor_total.saturating_add(floor);
         if floor_total > budget {
             return Err(EvmError::Transaction(format!(

@@ -2,10 +2,13 @@
 //! finished are over the block gas limit.
 //!
 //! Ordered gas admission can only run after every transaction has executed, so without
-//! that stop an over-limit block is executed in full before it is rejected. Here each
-//! transaction burns its whole gas limit in a loop and emits nothing, so nothing but
-//! the gas spent bounds the work: the block holds twenty times what its gas limit
-//! allows, yet is small enough to pass the pre-execution minimum-work check.
+//! that stop an over-limit block is executed in full, and every transaction's report is
+//! held, before it is rejected. Each block below holds many times what its gas limit
+//! allows, yet is small enough to pass the pre-execution minimum-work check, so only
+//! the stop during execution can reject it early. Two shapes:
+//!
+//! - transactions that each emit a 1 MiB `LOG0`, so the cost is the logs retained;
+//! - transactions that loop until out of gas and emit nothing, so the cost is the work.
 
 use std::{fs::File, io::BufReader, path::PathBuf, sync::Arc};
 
@@ -35,9 +38,16 @@ const LOOP_CONTRACT: Address = H160([
 ]);
 const LOOP_CODE: [u8; 4] = [0x5b, 0x60, 0x00, 0x56];
 
-/// Each transaction gets a tenth of the gas limit, so the eleventh to finish is over it.
-const GAS_LIMIT_FRACTION: u64 = 10;
-/// Twenty gas limits' worth of transactions.
+/// `PUSH3 0x100000 PUSH1 0 LOG0 STOP`: logs 1 MiB of zeroed memory, costing about
+/// 10.6M gas (8 per byte plus memory expansion).
+const LOG_CONTRACT: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x10, 0x60,
+]);
+const LOG_CODE: [u8; 8] = [0x62, 0x10, 0x00, 0x00, 0x60, 0x00, 0xa0, 0x00];
+/// Enough for the 1 MiB `LOG0` above, under the EIP-7825 per-transaction cap.
+const LOG_TX_GAS_LIMIT: u64 = 11_000_000;
+
 const TX_COUNT: usize = 200;
 
 const MAX_FEE_PER_GAS: u64 = 10_000_000_000;
@@ -59,15 +69,20 @@ async fn setup_store(senders: &[Address]) -> Store {
         .expect("open l1-bal genesis");
     let mut genesis: Genesis =
         serde_json::from_reader(BufReader::new(file)).expect("parse l1-bal genesis");
-    genesis.alloc.insert(
-        LOOP_CONTRACT,
-        GenesisAccount {
-            code: Bytes::from_static(&LOOP_CODE),
-            storage: Default::default(),
-            balance: U256::zero(),
-            nonce: 0,
-        },
-    );
+    for (address, code) in [
+        (LOOP_CONTRACT, &LOOP_CODE[..]),
+        (LOG_CONTRACT, &LOG_CODE[..]),
+    ] {
+        genesis.alloc.insert(
+            address,
+            GenesisAccount {
+                code: Bytes::copy_from_slice(code),
+                storage: Default::default(),
+                balance: U256::zero(),
+                nonce: 0,
+            },
+        );
+    }
     for sender in senders {
         genesis.alloc.insert(
             *sender,
@@ -112,8 +127,10 @@ async fn build_empty_block(store: &Store) -> (Block, BlockAccessList) {
     (result.payload, bal)
 }
 
-#[tokio::test]
-async fn parallel_path_stops_once_completed_transactions_exceed_the_gas_limit() {
+/// Imports a block of `TX_COUNT` calls to `contract` down the parallel path and returns
+/// the rejection. `tx_gas_limit` gets the block's gas limit, which the empty block built
+/// here decides.
+async fn import_over_limit_block(contract: Address, tx_gas_limit: impl Fn(u64) -> u64) -> String {
     let signers: Vec<Signer> = (0..TX_COUNT)
         .map(|index| LocalSigner::new(sender_key(index)).into())
         .collect();
@@ -131,8 +148,8 @@ async fn parallel_path_stops_once_completed_transactions_exceed_the_gas_limit() 
             nonce: 0,
             max_priority_fee_per_gas: 0,
             max_fee_per_gas: MAX_FEE_PER_GAS,
-            gas_limit: gas_limit / GAS_LIMIT_FRACTION,
-            to: TxKind::Call(LOOP_CONTRACT),
+            gas_limit: tx_gas_limit(gas_limit),
+            to: TxKind::Call(contract),
             value: U256::zero(),
             ..Default::default()
         });
@@ -161,14 +178,32 @@ async fn parallel_path_stops_once_completed_transactions_exceed_the_gas_limit() 
         },
     );
     let result = blockchain.add_block_pipeline_bal(block, Some(Arc::new(bal)));
-
-    let err = format!(
+    format!(
         "{:?}",
         result.expect_err("an over-limit block must be rejected")
-    );
+    )
+}
+
+fn assert_stopped_early(err: &str) {
     assert!(
         err.contains("transactions completed during parallel execution"),
         "must be rejected by the early stop, not by ordered admission after executing \
          every transaction, got: {err}"
     );
+}
+
+/// 200 MiB of logs if every transaction ran; the third to finish is over the limit, so
+/// only a few MiB are ever held.
+#[tokio::test]
+async fn parallel_path_stops_before_retaining_every_large_log() {
+    let err = import_over_limit_block(LOG_CONTRACT, |_| LOG_TX_GAS_LIMIT).await;
+    assert_stopped_early(&err);
+}
+
+/// Each transaction burns a tenth of the gas limit, so the eleventh to finish is over it;
+/// twenty gas limits' worth of work if every transaction ran.
+#[tokio::test]
+async fn parallel_path_stops_once_completed_transactions_exceed_the_gas_limit() {
+    let err = import_over_limit_block(LOOP_CONTRACT, |gas_limit| gas_limit / 10).await;
+    assert_stopped_early(&err);
 }
