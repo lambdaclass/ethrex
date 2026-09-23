@@ -7,10 +7,11 @@ use ethereum_types::Signature;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::fork_choice::apply_fork_choice;
+use ethrex_common::H256;
 use ethrex_common::types::Block;
 use ethrex_common::types::batch::Batch;
 use ethrex_crypto::{Crypto as _, NativeCrypto};
-use ethrex_storage::Store;
+use ethrex_storage::{Store, error::StoreError};
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::{Message as SecpMessage, SecretKey};
 use std::collections::BTreeMap;
@@ -20,6 +21,10 @@ use tracing::{debug, error, info, warn};
 
 use super::messages::batch_hash;
 use super::{PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL};
+
+/// Batches carry their blobs, so a peer catching up on them is sent at most this many per
+/// broadcast tick, to bound what it can hold in its outbound queue.
+const MAX_BATCHES_PER_BROADCAST: usize = 16;
 
 #[derive(Debug, Clone)]
 pub struct L2ConnectedState {
@@ -118,6 +123,57 @@ impl L2ConnState {
             Self::Connected(_) => Ok(()),
         }
     }
+
+    /// Starts broadcasting blocks from the head the peer advertised in its eth `Status`, instead
+    /// of from genesis, so a reconnect doesn't re-send the whole chain.
+    ///
+    /// Batches still start from the first one: the peer's head says nothing about which batches
+    /// it has sealed, and a batch it misses can never be sealed afterwards.
+    pub(crate) fn set_peer_head(&mut self, storage: &Store, status: &Message) {
+        let Self::Connected(state) = self else {
+            return;
+        };
+        let (number, hash) = match status {
+            Message::Status68(msg) => (None, msg.block_hash),
+            Message::Status69(msg) => (Some(msg.0.latest_block), msg.0.latest_block_hash),
+            Message::Status70(msg) => (Some(msg.latest_block), msg.latest_block_hash),
+            Message::Status71(msg) => (Some(msg.0.latest_block), msg.0.latest_block_hash),
+            _ => return,
+        };
+        state.latest_block_sent = peer_head_on_local_chain(storage, number, hash)
+            .inspect_err(|err| {
+                warn!("Could not look up the peer's head, broadcasting blocks from genesis: {err}")
+            })
+            .ok()
+            .flatten()
+            .unwrap_or(0);
+    }
+}
+
+/// The number of the peer's head block, if the peer already has every block up to it that we
+/// could send: the head is on our canonical chain, or ahead of our own head. `number` is `None`
+/// for eth/68 peers, which only advertise the head's hash.
+pub fn peer_head_on_local_chain(
+    storage: &Store,
+    number: Option<u64>,
+    hash: H256,
+) -> Result<Option<u64>, StoreError> {
+    let number = match number {
+        Some(number) if number > storage.get_latest_block_number()? => return Ok(Some(number)),
+        Some(number) => number,
+        None => match storage.get_block_header_by_hash(hash)? {
+            Some(header) => header.number,
+            None => return Ok(None),
+        },
+    };
+    Ok((storage.get_canonical_block_hash_sync(number)? == Some(hash)).then_some(number))
+}
+
+/// Whether there's room to queue more catch-up messages for this peer. `send` drops a peer whose
+/// outbound queue is full, so catching up a peer that is far behind must leave room for the rest
+/// of its traffic. Whatever isn't sent now goes out on a later tick.
+fn has_outbound_headroom(established: &Established) -> bool {
+    established.outbound_tx.capacity() >= established.outbound_tx.max_capacity() / 2
 }
 
 fn validate_signature(_recovered_lead_sequencer: Address) -> bool {
@@ -234,6 +290,9 @@ pub(crate) async fn send_new_block(
         .connection_state_mut()?
         .latest_block_sent;
     for block_number in latest_block_sent + 1..=latest_block_number {
+        if !has_outbound_headroom(established) {
+            break;
+        }
         let new_block_msg = {
             let l2_state = established.l2_state.connection_state_mut()?;
             debug!(
@@ -509,58 +568,69 @@ fn filter_potential_old_blocks(l2_state: &mut L2ConnectedState, next_block_to_ad
     }
 }
 
+/// Sends the batches the peer hasn't been sent yet, a few per tick: every connection starts from
+/// the first batch, and one per tick would delay new batches by minutes on a long chain.
 pub(crate) async fn send_sealed_batch(
     established: &mut Established,
 ) -> Result<(), PeerConnectionError> {
-    let batch_sealed_msg = {
-        let l2_state = established.l2_state.connection_state_mut()?;
-        let next_batch_to_send = l2_state.latest_batch_sent + 1;
-        if !l2_state
-            .store_rollup
-            .contains_batch(&next_batch_to_send)
-            .await?
-        {
-            return Ok(());
+    for _ in 0..MAX_BATCHES_PER_BROADCAST {
+        if !has_outbound_headroom(established) {
+            break;
         }
-        let l1_fork = established.blockchain.current_fork()?;
-        let Some(batch) = l2_state
-            .store_rollup
-            .get_batch(next_batch_to_send, l1_fork)
-            .await?
-        else {
-            return Ok(());
+        let Some(batch_sealed_msg) = next_batch_sealed_msg(established).await? else {
+            break;
         };
-        match l2_state
-            .store_rollup
-            .get_signature_by_batch(next_batch_to_send)
-            .await
-            .inspect_err(|err| {
-                warn!(
-                    "Fetching signature from store returned an error, \
+        send(established, batch_sealed_msg.into()).await?;
+        established
+            .l2_state
+            .connection_state_mut()?
+            .latest_batch_sent += 1;
+    }
+    Ok(())
+}
+
+async fn next_batch_sealed_msg(
+    established: &mut Established,
+) -> Result<Option<BatchSealed>, PeerConnectionError> {
+    let l2_state = established.l2_state.connection_state_mut()?;
+    let next_batch_to_send = l2_state.latest_batch_sent + 1;
+    if !l2_state
+        .store_rollup
+        .contains_batch(&next_batch_to_send)
+        .await?
+    {
+        return Ok(None);
+    }
+    let l1_fork = established.blockchain.current_fork()?;
+    let Some(batch) = l2_state
+        .store_rollup
+        .get_batch(next_batch_to_send, l1_fork)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let msg = match l2_state
+        .store_rollup
+        .get_signature_by_batch(next_batch_to_send)
+        .await
+        .inspect_err(|err| {
+            warn!(
+                "Fetching signature from store returned an error, \
              defaulting to signing with committer key: {err}"
-                )
-            }) {
-            Ok(Some(recovered_sig)) => BatchSealed::new(batch, recovered_sig),
-            Ok(None) | Err(_) => {
-                let msg = BatchSealed::from_batch_and_key(
-                    batch,
-                    l2_state.committer_key.clone().as_ref(),
-                )?;
-                l2_state
-                    .store_rollup
-                    .store_signature_by_batch(msg.batch.number, msg.signature)
-                    .await?;
-                msg
-            }
+            )
+        }) {
+        Ok(Some(recovered_sig)) => BatchSealed::new(batch, recovered_sig),
+        Ok(None) | Err(_) => {
+            let msg =
+                BatchSealed::from_batch_and_key(batch, l2_state.committer_key.clone().as_ref())?;
+            l2_state
+                .store_rollup
+                .store_signature_by_batch(msg.batch.number, msg.signature)
+                .await?;
+            msg
         }
     };
-    let batch_sealed_msg: Message = batch_sealed_msg.into();
-    send(established, batch_sealed_msg).await?;
-    established
-        .l2_state
-        .connection_state_mut()?
-        .latest_batch_sent += 1;
-    Ok(())
+    Ok(Some(msg))
 }
 
 pub async fn process_batches_on_queue(

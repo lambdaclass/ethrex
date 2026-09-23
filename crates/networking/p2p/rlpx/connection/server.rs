@@ -1180,6 +1180,8 @@ where
             Some(msg) => msg?,
             None => return Err(PeerConnectionError::Disconnected),
         };
+        #[cfg(feature = "l2")]
+        state.l2_state.set_peer_head(&state.storage, &msg);
         match msg {
             Message::Status68(msg_data) => {
                 trace!(peer=%state.node, "Received Status(68)");
