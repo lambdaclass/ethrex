@@ -289,33 +289,46 @@ fn block_jumpdests(block: &[u8; BLOCK], carry: &mut usize) -> u64 {
         *carry = last_is_push1 as usize;
         return jumpdests & !immediates;
     }
+    jumpdests & !push_immediates(block, pushes, carry)
+}
 
-    // Otherwise walk the PUSH opcodes in order. `ends[i]` is where the next opcode
-    // starts if byte `i` is a PUSH: past the opcode and its `byte - PUSH1 + 1`
-    // immediates. It is only read for PUSH bytes, so the wrapped values elsewhere
-    // don't matter.
+/// The immediates of the PUSH opcodes in `block`, found by walking them in order from
+/// the first byte after `carry`, which is updated for the next block.
+///
+/// Kept out of line so that the layout of this loop, and with it how well its branches
+/// are predicted, doesn't depend on the code it would otherwise be inlined into.
+/// Inlined, the same loop measured anywhere from 78 to 97 us per 128 KiB of `PUSH2`
+/// code on Zen 2, depending on the build.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[inline(never)]
+fn push_immediates(block: &[u8; BLOCK], pushes: u64, carry: &mut usize) -> u64 {
+    // `ends[i]` is where the next opcode starts if byte `i` is a PUSH: past the opcode
+    // and its `byte - PUSH1 + 1` immediates. It is only read for PUSH bytes, so the
+    // wrapped values elsewhere don't matter.
     let mut ends = *block;
     for (i, end) in ends.iter_mut().enumerate() {
         *end = end.wrapping_sub(OP_PUSH1 - 2).wrapping_add(i as u8);
     }
-    let mut immediates = carried;
+    let mut immediates = low_bits(*carry);
     // The first byte that can be an opcode. Always below BLOCK: a carry is at most 32
     // bytes, and the loop stops at the first PUSH whose immediates leave the block.
     let mut next = *carry;
     loop {
-        // In PUSH-dense code the next opcode is usually another PUSH. Checking that
-        // first keeps `trailing_zeros` out of the dependency chain between PUSHes when
-        // it holds, and it holds consistently in exactly that code, so the branch
-        // predicts well.
-        let at = if (pushes >> next) & 1 != 0 {
+        // In PUSH-dense code the next PUSH usually starts right at `next`, or one byte
+        // later, after a single other opcode (`PUSH2 x JUMPDEST ...`). Checking those
+        // first keeps `trailing_zeros` out of the dependency chain between PUSHes, and
+        // in such code the gap repeats, so the branches predict well.
+        let ahead = pushes >> next;
+        let at = if ahead & 1 != 0 {
             next
+        } else if ahead & 0b10 != 0 {
+            next + 1
         } else {
-            let rest = pushes & (u64::MAX << next);
-            if rest == 0 {
+            if ahead == 0 {
                 *carry = 0;
                 break;
             }
-            rest.trailing_zeros() as usize
+            next + ahead.trailing_zeros() as usize
         };
         let end = usize::from(ends[at % BLOCK]);
         immediates |= low_bits(end) & ((u64::MAX << at) << 1);
@@ -325,7 +338,7 @@ fn block_jumpdests(block: &[u8; BLOCK], carry: &mut usize) -> u64 {
         }
         next = end;
     }
-    jumpdests & !immediates
+    immediates
 }
 
 /// One bit per byte of a block: which bytes are `JUMPDEST`, `PUSH1`, and any of
