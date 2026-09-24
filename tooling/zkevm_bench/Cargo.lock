@@ -3682,7 +3682,6 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
- "indexmap 2.14.0",
  "libssz",
  "malachite",
  "rayon",

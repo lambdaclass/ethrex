@@ -5,9 +5,9 @@ use ethrex_common::{
     Address, H256, U256, types::Fork, types::Fork::*, utils::u256_from_big_endian,
 };
 use ethrex_crypto::{Crypto, CryptoError};
-use indexmap::IndexMap;
+use rustc_hash::FxHashMap;
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, hash_map::Entry};
 use std::sync::RwLock;
 
 use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
@@ -371,30 +371,27 @@ pub fn effective_precompile_address(address: Address, moves: Option<&PrecompileM
         .unwrap_or(address)
 }
 
+/// Upper bound on the memory one [`PrecompileCache`] may hold. A cache lives for a
+/// single block, and a block's working set sits far below this, so in normal operation
+/// no result is ever turned away.
 const PRECOMPILE_CACHE_MAX_BYTES: usize = 128 * 1024 * 1024;
 
-struct PrecompileCacheInner {
-    entries: IndexMap<(Address, Bytes), (Bytes, u64)>,
+#[derive(Default)]
+struct PrecompileCacheEntries {
+    map: FxHashMap<(Address, Bytes), (Bytes, u64)>,
+    /// Sum of [`PrecompileCache::entry_size`] over `map`.
     used_bytes: usize,
 }
 
-impl PrecompileCacheInner {
-    fn new() -> Self {
-        Self {
-            entries: IndexMap::new(),
-            used_bytes: 0,
-        }
-    }
-
-    fn entry_size(calldata_len: usize, output_len: usize) -> usize {
-        calldata_len.saturating_add(output_len)
-    }
-}
-
 /// Per-block cache for precompile results shared between warmer and executor.
+///
+/// Holds at most `max_bytes`, as counted by [`PrecompileCache::entry_size`]; once full,
+/// further results are simply not cached. Nothing is evicted: the cache is dropped
+/// with its block, so there is no recency worth tracking, and lookups stay on the
+/// shared read lock.
 pub struct PrecompileCache {
-    cache: RwLock<PrecompileCacheInner>,
-    max_size_bytes: usize,
+    cache: RwLock<PrecompileCacheEntries>,
+    max_bytes: usize,
 }
 
 impl Default for PrecompileCache {
@@ -408,62 +405,50 @@ impl PrecompileCache {
         Self::default()
     }
 
-    pub fn with_max_bytes(max_size_bytes: usize) -> Self {
+    pub fn with_max_bytes(max_bytes: usize) -> Self {
         Self {
-            cache: RwLock::new(PrecompileCacheInner::new()),
-            max_size_bytes,
+            cache: RwLock::new(PrecompileCacheEntries::default()),
+            max_bytes,
         }
+    }
+
+    /// Bytes one entry is charged against the budget: its calldata and output, plus
+    /// the fixed size of the key and value it is stored as. Hash-table slack is not
+    /// counted, so the budget is approximate, not an exact resident size.
+    pub fn entry_size(calldata_len: usize, output_len: usize) -> usize {
+        calldata_len
+            .saturating_add(output_len)
+            .saturating_add(size_of::<((Address, Bytes), (Bytes, u64))>())
     }
 
     pub fn get(&self, address: &Address, calldata: &Bytes) -> Option<(Bytes, u64)> {
         // Graceful degradation: if the lock is poisoned (a thread panicked while
-        // holding it), recover the inner state and keep operating. The cache is
-        // a pure optimization, so this can never affect correctness.
-        let mut cache = self
-            .cache
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let key = (*address, calldata.clone());
-        let (output, gas_cost) = cache.entries.shift_remove(&key)?;
-        let result = (output.clone(), gas_cost);
-        cache.entries.insert(key, (output, gas_cost));
-        Some(result)
+        // holding it), skip the cache rather than propagating the panic. The cache
+        // is a pure optimization — missing it only costs a recomputation.
+        self.cache
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .map
+            .get(&(*address, calldata.clone()))
+            .cloned()
     }
 
     pub fn insert(&self, address: Address, calldata: Bytes, output: Bytes, gas_cost: u64) {
-        if self.max_size_bytes == 0 {
-            return;
-        }
-
-        let entry_size = PrecompileCacheInner::entry_size(calldata.len(), output.len());
-        if entry_size > self.max_size_bytes {
-            return;
-        }
-
-        let mut cache = self
+        let entry_size = Self::entry_size(calldata.len(), output.len());
+        let mut guard = self
             .cache
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-
-        let key = (address, calldata);
-
-        if let Some((existing_output, _)) = cache.entries.shift_remove(&key) {
-            let existing_entry_size =
-                PrecompileCacheInner::entry_size(key.1.len(), existing_output.len());
-            cache.used_bytes = cache.used_bytes.saturating_sub(existing_entry_size);
+        let entries = &mut *guard;
+        let used_bytes = entries.used_bytes.saturating_add(entry_size);
+        if used_bytes > self.max_bytes {
+            return;
         }
-
-        cache.entries.insert(key, (output, gas_cost));
-        cache.used_bytes = cache.used_bytes.saturating_add(entry_size);
-
-        while cache.used_bytes > self.max_size_bytes {
-            let Some((lru_key, (lru_output, _))) = cache.entries.shift_remove_index(0) else {
-                cache.used_bytes = 0;
-                break;
-            };
-            let lru_entry_size =
-                PrecompileCacheInner::entry_size(lru_key.1.len(), lru_output.len());
-            cache.used_bytes = cache.used_bytes.saturating_sub(lru_entry_size);
+        // The warmer and the executor can both compute the same call; the result is
+        // identical, so keep the first one and charge it once.
+        if let Entry::Vacant(slot) = entries.map.entry((address, calldata)) {
+            slot.insert((output, gas_cost));
+            entries.used_bytes = used_bytes;
         }
     }
 }

@@ -2,70 +2,77 @@ use bytes::Bytes;
 use ethrex_common::Address;
 use ethrex_levm::precompiles::PrecompileCache;
 
-fn entry_size(calldata_len: usize, output_len: usize) -> usize {
-    calldata_len.saturating_add(output_len)
+const PAYLOAD_LEN: usize = 16;
+
+fn payload(seed: u8) -> Bytes {
+    Bytes::from(vec![seed; PAYLOAD_LEN])
 }
 
-fn sample_calldata(seed: u8) -> Bytes {
-    Bytes::from(vec![seed; 16])
+fn address(seed: u64) -> Address {
+    Address::from_low_u64_be(seed)
 }
 
-fn sample_output(seed: u8) -> Bytes {
-    Bytes::from(vec![seed; 16])
-}
-
-#[test]
-fn precompile_cache_evicts_lru_entry_when_max_size_is_reached() {
-    let capacity = entry_size(16, 16).saturating_mul(2);
-    let cache = PrecompileCache::with_max_bytes(capacity);
-
-    let address_a = Address::from_low_u64_be(1);
-    let address_b = Address::from_low_u64_be(2);
-    let address_c = Address::from_low_u64_be(3);
-
-    let calldata_a = sample_calldata(1);
-    let calldata_b = sample_calldata(2);
-    let calldata_c = sample_calldata(3);
-
-    cache.insert(address_a, calldata_a.clone(), sample_output(1), 1);
-    cache.insert(address_b, calldata_b.clone(), sample_output(2), 2);
-
-    // Touch A so B becomes LRU.
-    assert!(cache.get(&address_a, &calldata_a).is_some());
-
-    // Third insert should evict B.
-    cache.insert(address_c, calldata_c.clone(), sample_output(3), 3);
-
-    assert!(cache.get(&address_a, &calldata_a).is_some());
-    assert!(cache.get(&address_b, &calldata_b).is_none());
-    assert!(cache.get(&address_c, &calldata_c).is_some());
+/// Room for exactly `n` entries of `PAYLOAD_LEN`-byte calldata and output.
+fn budget_for(n: usize) -> usize {
+    PrecompileCache::entry_size(PAYLOAD_LEN, PAYLOAD_LEN).saturating_mul(n)
 }
 
 #[test]
-fn precompile_cache_skips_entries_larger_than_capacity() {
-    let capacity = entry_size(16, 16).saturating_mul(2);
-    let cache = PrecompileCache::with_max_bytes(capacity);
+fn precompile_cache_stops_caching_once_the_budget_is_full() {
+    let cache = PrecompileCache::with_max_bytes(budget_for(2));
 
-    let small_address = Address::from_low_u64_be(1);
-    let small_calldata = sample_calldata(7);
-    cache.insert(small_address, small_calldata.clone(), sample_output(7), 7);
+    cache.insert(address(1), payload(1), payload(1), 1);
+    cache.insert(address(2), payload(2), payload(2), 2);
+    cache.insert(address(3), payload(3), payload(3), 3);
 
-    let huge_address = Address::from_low_u64_be(2);
-    let huge_calldata = Bytes::from(vec![9; capacity]);
-    let huge_output = sample_output(9);
-    cache.insert(huge_address, huge_calldata.clone(), huge_output, 9);
+    // Entries cached before the budget filled stay available for the rest of the block.
+    assert_eq!(cache.get(&address(1), &payload(1)), Some((payload(1), 1)));
+    assert_eq!(cache.get(&address(2), &payload(2)), Some((payload(2), 2)));
+    // The one that would have gone over is not cached; callers just recompute it.
+    assert_eq!(cache.get(&address(3), &payload(3)), None);
+}
 
-    assert!(cache.get(&small_address, &small_calldata).is_some());
-    assert!(cache.get(&huge_address, &huge_calldata).is_none());
+/// The warmer and the executor can both insert the same call. Charging it twice would
+/// fill the budget early and turn away results that fit.
+#[test]
+fn precompile_cache_charges_a_repeated_key_once() {
+    let cache = PrecompileCache::with_max_bytes(budget_for(2));
+
+    cache.insert(address(1), payload(1), payload(1), 1);
+    cache.insert(address(1), payload(1), payload(1), 1);
+    cache.insert(address(2), payload(2), payload(2), 2);
+
+    assert!(cache.get(&address(1), &payload(1)).is_some());
+    assert!(cache.get(&address(2), &payload(2)).is_some());
 }
 
 #[test]
-fn precompile_cache_can_be_disabled_with_zero_capacity() {
+fn precompile_cache_skips_an_entry_larger_than_the_budget() {
+    let budget = budget_for(2);
+    let cache = PrecompileCache::with_max_bytes(budget);
+
+    let oversized = Bytes::from(vec![9; budget]);
+    cache.insert(address(1), oversized.clone(), payload(9), 9);
+    cache.insert(address(2), payload(2), payload(2), 2);
+
+    assert_eq!(cache.get(&address(1), &oversized), None);
+    // Skipping the oversized entry must not use up any of the budget.
+    assert!(cache.get(&address(2), &payload(2)).is_some());
+}
+
+#[test]
+fn precompile_cache_can_be_disabled_with_zero_budget() {
     let cache = PrecompileCache::with_max_bytes(0);
-    let address = Address::from_low_u64_be(1);
-    let calldata = sample_calldata(5);
 
-    cache.insert(address, calldata.clone(), sample_output(5), 5);
+    cache.insert(address(1), payload(5), payload(5), 5);
 
-    assert!(cache.get(&address, &calldata).is_none());
+    assert_eq!(cache.get(&address(1), &payload(5)), None);
+}
+
+/// The budget counts each entry's fixed storage, not only its payload, so many tiny
+/// entries cannot hold far more memory than the budget says.
+#[test]
+fn precompile_cache_charges_fixed_overhead_per_entry() {
+    assert!(PrecompileCache::entry_size(0, 0) > 0);
+    assert!(PrecompileCache::entry_size(10, 20) > 30);
 }

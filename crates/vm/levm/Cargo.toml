@@ -24,7 +24,6 @@ rustc-hash.workspace = true
 rayon = { workspace = true, optional = true }
 
 libssz = { workspace = true }
-indexmap.workspace = true
 
 [features]
 default = []
