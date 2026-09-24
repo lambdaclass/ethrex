@@ -15,20 +15,51 @@ only possible value or they don't, but nothing else.
 
 - `block_numbers`
 - `transaction_locations`
-These tables are only written to in the `apply_updates` function, which means there are no concurrent writes to them.
+
+Written by `apply_updates` during block import, and **also deleted from by the
+history pruner** (`Store::prune_block_heights`) when `--history.retention` is
+enabled. The pruner is a background task, so on such a node these tables do have
+concurrent writers.
+
+For `transaction_locations` this is a known, accepted race, documented on
+`prune_block_heights`: the pruner trims a transaction's location list with a
+read-modify-write that is not serialized against block imports, which append via the
+merge operator. A merge committed between the pruner's read and its commit is
+overwritten. Reaching that window requires a transaction whose only prior inclusions
+were orphans old enough to be pruned being re-included mid-pass; the consequence is a
+lost location entry for such a transaction, not corruption of unrelated data.
+
+For `block_numbers` the pruner only deletes rows belonging to non-canonical
+(orphaned) hashes at heights below the finalized point, which no other writer touches.
 
 ### `canonical_block_hashes`
 
 Written to only in `forkchoice_update` and `remove_blocks`, but the last one is used to revert batches from a CLI
-option, not in runtime.
+option, not in runtime. The history pruner reads this table but never writes it.
+
+### `block_hashes_by_number`
+
+Indexes every known block hash per height (`BE block_number || block_hash`), so the
+pruner can enumerate canonical and orphaned blocks at a height. Written on every
+header-insertion path alongside `headers`, and range-deleted by the pruner. Values are
+empty, so a concurrent re-write of the same key is a no-op and the only observable
+race is a stray entry surviving a pass (see `prune_block_heights`), which readers
+tolerate because they gate on `EarliestBlockNumber`.
 
 ## `chain_data`
 
 Written to during ethrex initialization and then read on forkchoice_update.
 
+`EarliestBlockNumber` is the exception: it is a monotonic high-water mark advanced at
+runtime by snap-sync completion and by each history-pruner pass. Writers must never
+lower it (`Store::advance_earliest_block_number` enforces this, and the pruner's own
+write is gated inside its atomic batch), because readers use it to decide whether
+missing history is "pruned" or "not yet known".
+
 ## `receipts`
 
-Written to only in `apply_updates`.
+Written to in `apply_updates`, and deleted from by the history pruner alongside the
+corresponding block bodies.
 
 ## `snap_state`
 

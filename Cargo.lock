@@ -4346,6 +4346,7 @@ dependencies = [
  "bytes",
  "ethrex-common",
  "ethrex-crypto",
+ "ethrex-metrics",
  "ethrex-rlp",
  "ethrex-trie",
  "fastbloom",
@@ -4359,6 +4360,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 

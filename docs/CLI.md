@@ -3,7 +3,6 @@
 ## ethrex
 
 <!-- BEGIN_CLI_HELP -->
-
 ```
 ethrex Execution client
 
@@ -113,34 +112,36 @@ Node options:
 
       --mempool.min-tip <MIN_TIP_WEI>
           Minimum priority-fee cap (in wei) required for a transaction to be admitted into the mempool. Compared against the raw tip cap: `max_priority_fee_per_gas` for typed transactions, `gas_price` for legacy transactions (independent of current base fee, so admission stays stable as base fee oscillates). Set to 0 to disable the floor.
-
+          
           [env: ETHREX_MEMPOOL_MIN_TIP=]
           [default: 1]
+
       --mempool.private
           Node-level config (not a protocol/EIP behavior): keep RPC-submitted transactions private. They enter the mempool and may be included in blocks built locally, but are not propagated to peers. P2P-received transactions are unaffected.
-
+          
           [env: ETHREX_MEMPOOL_PRIVATE=]
+
       --mempool.price-bump <PERCENT>
           Minimum fee bump (in percent) required to replace a non-blob pooled transaction at the same (sender, nonce).
-
+          
           [env: ETHREX_MEMPOOL_PRICE_BUMP=]
           [default: 10]
 
       --mempool.blob-price-bump <PERCENT>
           Minimum fee bump (in percent) required to replace an EIP-4844 blob pooled transaction.
-
+          
           [env: ETHREX_MEMPOOL_BLOB_PRICE_BUMP=]
           [default: 100]
 
       --mempool.gap-admit-occupancy-threshold <PERCENTAGE>
           Mempool occupancy percentage (0-100) at or above which incoming transactions with a nonce gap relative to the sender's on-chain nonce are rejected. Setting to 100 disables the check.
-
+          
           [env: ETHREX_MEMPOOL_GAP_ADMIT_OCCUPANCY_THRESHOLD=]
           [default: 90]
 
       --mempool.max-queued-txs-per-account <MAX_QUEUED_TXS_PER_ACCOUNT>
           Maximum number of queued (future/nonce-gapped) transactions a single sender may hold in the mempool. Executable (contiguous-nonce) txs are not capped (geth AccountQueue-style).
-
+          
           [env: ETHREX_MEMPOOL_MAX_QUEUED_TXS_PER_ACCOUNT=]
           [default: 64]
 
@@ -233,6 +234,20 @@ P2P options:
           [env: ETHREX_P2P_LOOKUP_INTERVAL=]
           [default: 100]
 
+      --history.retention <RETENTION>
+          How much block history to keep. `cl-window` (default) keeps the CL block-retention window of 33024 epochs, the longest range a consensus client is required to serve and therefore the least an execution client should hold. `all` never prunes. `<N>epochs` keeps N epochs exactly. `<N>d`/`<N>h`/`<N>m` keep a wall-clock window, converted to a block distance once at startup assuming 12s slots — convenient, but `<N>epochs` is exact and survives a slot-time change. Bodies, receipts and transaction locations below the window are deleted permanently; canonical headers are always kept.
+          
+          [env: ETHREX_HISTORY_RETENTION=]
+
+      --history.retention.dry-run
+          Resolve the retention policy, report what pruning would delete, and exit without deleting anything. Use this before enabling pruning on a datadir you cannot replace: pruning is irreversible without a resync.
+          
+          [env: ETHREX_HISTORY_RETENTION_DRY_RUN=]
+
+      --history.retention.below-cl-window
+          Permit a --history.retention below the CL block-retention window. Such a node cannot serve the range its peers are entitled to ask for; intended for devnets and short-lived chains.
+          
+          [env: ETHREX_HISTORY_RETENTION_BELOW_CL_WINDOW=]
       --blob-sampling
           Enable EIP-8070 PeerDAS blob sampling (sampler/provider state machine). Disabled by default; when off the node always acts as provider (p=1.0).
 
@@ -319,7 +334,6 @@ Block building options:
           
           [env: ETHREX_BUILDER_MAX_BLOBS=]
 ```
-
 <!-- END_CLI_HELP -->
 
 ## ethrex l2

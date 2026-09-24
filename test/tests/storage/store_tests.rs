@@ -410,7 +410,7 @@ async fn test_store_block_tags(store: Store) {
         .unwrap();
 
     store
-        .update_earliest_block_number(earliest_block_number)
+        .advance_earliest_block_number(earliest_block_number)
         .await
         .unwrap();
     store
