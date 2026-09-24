@@ -36,7 +36,7 @@ The `cpu_profiling` feature is opt-in (not in `default`) so normal builds are un
 1. Start the node as usual:
 
    ```bash
-   ./target/release/ethrex --authrpc.jwtsecret ./secrets/jwt.hex --network holesky
+   ./target/release/ethrex --authrpc.jwtsecret ./secrets/jwt.hex --network hoodi
    ```
 
    You should see this log line near startup:

@@ -3,15 +3,15 @@ use crate::{
     utils::{self},
 };
 use clap::Parser;
-use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
+use ethrex_common::Address;
 use ethrex_l2::sequencer::utils::resolve_aligned_network;
 use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
     sequencer::configs::{AdminConfig, AlignedConfig, MonitorConfig},
 };
+use ethrex_l2_prover::{backend::BackendType, config::ProverConfig};
 use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
-use ethrex_prover_lib::{backend::BackendType, config::ProverConfig};
 use ethrex_rpc::clients::eth::{
     BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
 };
@@ -23,7 +23,10 @@ use std::{
 };
 use tracing::Level;
 
+use clap::ArgAction;
+
 pub const DEFAULT_PROOF_COORDINATOR_QPL_TOOL_PATH: &str = "./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool";
+pub const DEFAULT_SPONSORED_GAS_LIMIT: u64 = 500_000;
 
 #[derive(Parser, Debug)]
 #[group(id = "L2Options")]
@@ -43,6 +46,25 @@ pub struct Options {
     //TODO: make optional when the the sponsored feature is complete
     #[arg(long, default_value = "0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192", value_parser = utils::parse_private_key, env = "SPONSOR_PRIVATE_KEY", help = "The private key of ethrex L2 transactions sponsor.", help_heading = "L2 options")]
     pub sponsor_private_key: SecretKey,
+    #[arg(
+        long = "sponsored-gas-limit",
+        default_value_t = DEFAULT_SPONSORED_GAS_LIMIT,
+        value_name = "GAS_LIMIT",
+        env = "ETHREX_SPONSORED_GAS_LIMIT",
+        help = "Maximum gas limit for sponsored transactions. Transactions that estimate more gas than this will be rejected.",
+        help_heading = "L2 options"
+    )]
+    pub sponsored_gas_limit: u64,
+    #[arg(
+        long = "http.api.ethrex",
+        default_value_t = true,
+        action = clap::ArgAction::Set,
+        value_name = "BOOLEAN",
+        env = "ETHREX_HTTP_API_ETHREX",
+        help = "Expose L2-specific ethrex_* RPC methods over HTTP/WS. Enabled by default for L2 nodes.",
+        help_heading = "L2 options"
+    )]
+    pub http_api_ethrex: bool,
 }
 
 impl Default for Options {
@@ -55,6 +77,8 @@ impl Default for Options {
                 "0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192",
             )
             .unwrap(),
+            sponsored_gas_limit: DEFAULT_SPONSORED_GAS_LIMIT,
+            http_api_ethrex: true,
         }
     }
 }
@@ -106,6 +130,81 @@ pub struct SequencerOptions {
         help_heading = "Monitor options"
     )]
     pub no_monitor: bool,
+    #[arg(
+        id = "native_rollups",
+        long = "native-rollups",
+        default_value = "false",
+        value_name = "BOOLEAN",
+        env = "ETHREX_NATIVE_ROLLUPS",
+        action = ArgAction::SetTrue,
+        help_heading = "Native rollups options",
+        help = "Enable native rollup L2 mode."
+    )]
+    pub native_rollups: bool,
+    #[command(flatten)]
+    pub native_rollup_opts: NativeRollupOptions,
+}
+
+#[derive(Parser, Debug)]
+pub struct NativeRollupOptions {
+    #[arg(
+        long = "native-rollups.contract-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS",
+        help_heading = "Native rollups options",
+        help = "Address of NativeRollup.sol on L1."
+    )]
+    pub contract_address: Option<Address>,
+    #[arg(
+        long = "native-rollups.relayer-pk",
+        value_name = "PRIVATE_KEY",
+        value_parser = utils::parse_private_key,
+        env = "ETHREX_NATIVE_ROLLUPS_RELAYER_PK",
+        help_heading = "Native rollups options",
+        help = "Private key for the relayer account (signs processL1Message txs on L2). Required with --native-rollups."
+    )]
+    pub relayer_private_key: Option<SecretKey>,
+    #[arg(
+        long = "native-rollups.l1-pk",
+        value_name = "PRIVATE_KEY",
+        value_parser = utils::parse_private_key,
+        env = "ETHREX_NATIVE_ROLLUPS_L1_PK",
+        help_heading = "Native rollups options",
+        help = "Private key for L1 transactions (advance() calls). Required with --native-rollups."
+    )]
+    pub l1_private_key: Option<SecretKey>,
+    #[arg(
+        long = "native-rollups.block-time",
+        id = "native_rollups_block_time_ms",
+        default_value = "10000",
+        value_name = "UINT64",
+        env = "ETHREX_NATIVE_ROLLUPS_BLOCK_TIME",
+        help_heading = "Native rollups options",
+        help = "Block production interval in milliseconds."
+    )]
+    pub block_time_ms: u64,
+    #[arg(
+        long = "native-rollups.advance-interval",
+        id = "native_rollups_advance_interval_ms",
+        default_value = "3000",
+        value_name = "UINT64",
+        env = "ETHREX_NATIVE_ROLLUPS_ADVANCE_INTERVAL",
+        help_heading = "Native rollups options",
+        help = "L1 advance interval in milliseconds."
+    )]
+    pub advance_interval_ms: u64,
+}
+
+impl Default for NativeRollupOptions {
+    fn default() -> Self {
+        Self {
+            contract_address: None,
+            relayer_private_key: None,
+            l1_private_key: None,
+            block_time_ms: 10000,
+            advance_interval_ms: 3000,
+        }
+    }
 }
 
 pub fn parse_signer(
@@ -166,7 +265,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 base_fee_vault_address: opts.block_producer_opts.base_fee_vault_address,
                 operator_fee_vault_address: opts.block_producer_opts.operator_fee_vault_address,
                 elasticity_multiplier: opts.block_producer_opts.elasticity_multiplier,
-                block_gas_limit: opts.block_producer_opts.block_gas_limit,
             },
             l1_committer: CommitterConfig {
                 on_chain_proposer_address: opts
@@ -233,6 +331,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     &opts.aligned_opts.aligned_network.unwrap_or_default(),
                 ),
                 from_block: opts.aligned_opts.from_block,
+                resubmission_timeout_secs: opts.aligned_opts.resubmission_timeout_secs.unwrap_or(0),
             },
             monitor: MonitorConfig {
                 enabled: !opts.no_monitor,
@@ -390,7 +489,9 @@ pub struct WatcherOptions {
         value_name = "ADDRESS",
         env = "ETHREX_WATCHER_BRIDGE_ADDRESS",
         help_heading = "L1 Watcher options",
-        required_unless_present = "dev"
+        required_unless_present = "dev",
+        required_unless_present = "native_rollups",
+        conflicts_with = "native_rollups"
     )]
     pub bridge_address: Option<Address>,
     #[arg(
@@ -490,7 +591,9 @@ pub struct BlockProducerOptions {
         value_name = "ADDRESS",
         env = "ETHREX_BLOCK_PRODUCER_COINBASE_ADDRESS",
         help_heading = "Block producer options",
-        required_unless_present = "dev"
+        required_unless_present = "dev",
+        required_unless_present = "native_rollups",
+        conflicts_with = "native_rollups"
     )]
     pub coinbase_address: Option<Address>,
     #[arg(
@@ -532,15 +635,6 @@ pub struct BlockProducerOptions {
         help_heading = "Proposer options"
     )]
     pub elasticity_multiplier: u64,
-    #[arg(
-        long = "block-producer.block-gas-limit",
-        default_value = "30000000",
-        value_name = "UINT64",
-        env = "ETHREX_BLOCK_PRODUCER_BLOCK_GAS_LIMIT",
-        help = "Maximum gas limit for the L2 blocks.",
-        help_heading = "Block producer options"
-    )]
-    pub block_gas_limit: u64,
 }
 
 impl Default for BlockProducerOptions {
@@ -557,7 +651,6 @@ impl Default for BlockProducerOptions {
             operator_fee_per_gas: None,
             l1_fee_vault_address: None,
             elasticity_multiplier: 2,
-            block_gas_limit: DEFAULT_BUILDER_GAS_CEIL,
         }
     }
 }
@@ -579,7 +672,9 @@ pub struct CommitterOptions {
         help = "Private key of a funded account that the sequencer will use to send commit txs to the L1.",
         conflicts_with_all = &["committer_remote_signer_url", "committer_remote_signer_public_key"],
         required_unless_present = "committer_remote_signer_url",
-        required_unless_present = "dev"
+        required_unless_present = "dev",
+        required_unless_present = "native_rollups",
+        conflicts_with = "native_rollups"
     )]
     pub committer_l1_private_key: Option<SecretKey>,
     #[arg(
@@ -590,7 +685,9 @@ pub struct CommitterOptions {
         help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
         requires = "committer_remote_signer_public_key",
         required_unless_present = "committer_l1_private_key",
-        required_unless_present = "dev"
+        required_unless_present = "dev",
+        required_unless_present = "native_rollups",
+        conflicts_with = "native_rollups"
     )]
     pub committer_remote_signer_url: Option<Url>,
     #[arg(
@@ -608,7 +705,9 @@ pub struct CommitterOptions {
         value_name = "ADDRESS",
         env = "ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS",
         help_heading = "L1 Committer options",
-        required_unless_present = "dev"
+        required_unless_present = "dev",
+        required_unless_present = "native_rollups",
+        conflicts_with = "native_rollups"
     )]
     pub on_chain_proposer_address: Option<Address>,
     #[arg(
@@ -708,7 +807,9 @@ pub struct ProofCoordinatorOptions {
         long_help = "Private key of of a funded account that the sequencer will use to send verify txs to the L1. Has to be a different account than --committer-l1-private-key.",
         conflicts_with_all = &["remote_signer_url", "remote_signer_public_key"],
         required_unless_present = "remote_signer_url",
-        required_unless_present = "dev"
+        required_unless_present = "dev",
+        required_unless_present = "native_rollups",
+        conflicts_with = "native_rollups"
     )]
     pub proof_coordinator_l1_private_key: Option<SecretKey>,
     #[arg(
@@ -738,7 +839,9 @@ pub struct ProofCoordinatorOptions {
         help = "URL of a Web3Signer-compatible server to remote sign instead of a local private key.",
         requires = "remote_signer_public_key",
         required_unless_present = "proof_coordinator_l1_private_key",
-        required_unless_present = "dev"
+        required_unless_present = "dev",
+        required_unless_present = "native_rollups",
+        conflicts_with = "native_rollups"
     )]
     pub remote_signer_url: Option<Url>,
     #[arg(
@@ -880,6 +983,15 @@ pub struct AlignedOptions {
         help_heading = "Aligned options"
     )]
     pub from_block: Option<u64>,
+    #[arg(
+        long = "aligned.resubmission-timeout",
+        required_if_eq("aligned", "true"),
+        value_name = "SECONDS",
+        env = "ETHREX_ALIGNED_RESUBMISSION_TIMEOUT_SECS",
+        help = "Timeout in seconds before resending a proof not yet verified on-chain. Required when --aligned is enabled. Aligned typically aggregates once per day, so this value should be set accordingly (e.g. 86400 for 24h).",
+        help_heading = "Aligned options"
+    )]
+    pub resubmission_timeout_secs: Option<u64>,
 }
 
 impl Default for AlignedOptions {
@@ -890,6 +1002,7 @@ impl Default for AlignedOptions {
             beacon_url: None,
             aligned_network: Some("devnet".to_string()),
             from_block: None,
+            resubmission_timeout_secs: None,
         }
     }
 }

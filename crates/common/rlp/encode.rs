@@ -1,6 +1,8 @@
+use alloc::string::String;
+use alloc::vec::Vec;
 use bytes::{BufMut, Bytes};
+use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use ethereum_types::U256;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use super::constants::RLP_NULL;
 

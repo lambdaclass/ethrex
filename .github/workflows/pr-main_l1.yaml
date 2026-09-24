@@ -27,27 +27,24 @@ jobs:
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/detect-changes
+        id: changes
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
             run_tests:
               - '!crates/l2/**'
-            non_docs:
-              - "!docs/**"
-            code_changed:
-              - "**/*.rs"
-              - "**/*.toml"
-              - "**/*.lock"
       - name: finish
         id: finish
         run: |
-          if [[ "${{ steps.filter.outputs.non_docs_count }}" == 0 ]]; then
+          if [[ "${{ steps.changes.outputs.inert_only }}" == "true" ]]; then
+            # Documentation and repository metadata only: no job here builds it.
             echo "run_tests=false" >> "$GITHUB_OUTPUT"
           elif [[ "${GITHUB_EVENT_NAME}" == "merge_group" ]]; then
               # In merge queue, only run lint if code files changed
-              echo "run_tests=${{ steps.filter.outputs.code_changed }}" >> "$GITHUB_OUTPUT"
+              echo "run_tests=${{ steps.changes.outputs.code_changed }}" >> "$GITHUB_OUTPUT"
           elif [[ "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
               echo "run_tests=true" >> "$GITHUB_OUTPUT"
           else
@@ -64,7 +61,7 @@ jobs:
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -72,6 +69,7 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
+          cache-pool: l1
           components: rustfmt, clippy
 
       # We don't run with workspace, as members of the workspace require l2. We run it with workspace
@@ -109,22 +107,122 @@ jobs:
         runner: [ubuntu-22.04, ubuntu-22.04-arm, macos-15]
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1
+          save-cache: 'true'
 
+      # `rocksdb` gates the test files that need the RocksDB backend's commit
+      # cadence. It has to be `ethrex-test`'s own feature: another crate turning
+      # on `ethrex-storage/rocksdb` does not satisfy that cfg, so without it here
+      # those files compile to nothing.
       - name: Run unit tests
         run: |
-          cargo test --workspace --exclude 'ethrex-l2*' --exclude ethrex-prover --exclude ethrex-guest-program
+          cargo test --workspace --features rocksdb --exclude 'ethrex-l2*' --exclude ethrex-prover --exclude ethrex-guest-program
 
       - name: Run Blockchain EF tests
         if: ${{ github.event_name != 'merge_group' }}
         run: |
           make -C tooling/ef_tests/blockchain test
+
+      - name: Append Known Issues to job summary
+        if: ${{ always() && github.event_name != 'merge_group' && hashFiles('docs/known_issues.md') != '' }}
+        shell: bash
+        run: |
+          {
+            echo "## Known Issues (intentionally skipped)"
+            echo ""
+            echo "_Source: [\`docs/known_issues.md\`](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/docs/known_issues.md)_"
+            echo ""
+            cat docs/known_issues.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  engine-ef-tests:
+    name: Engine EF tests
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1
+
+      - name: Run Engine EF tests
+        run: make -C tooling/ef_tests/engine test
+
+  known-issues-comment:
+    name: Post Known Issues sticky comment
+    runs-on: ubuntu-latest
+    # Only on PRs from the same repo (forks lack write perms for comments).
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false }}
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          sparse-checkout: |
+            docs/known_issues.md
+          sparse-checkout-cone-mode: false
+
+      - name: Check if known_issues.md exists
+        id: check
+        shell: bash
+        run: |
+          if [ -s docs/known_issues.md ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build comment body
+        if: steps.check.outputs.exists == 'true'
+        shell: bash
+        run: |
+          {
+            echo "<!-- known-issues-comment -->"
+            echo "## :warning: Known Issues — intentionally skipped tests"
+            echo ""
+            echo "_Source: [\`docs/known_issues.md\`](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/docs/known_issues.md)_"
+            echo ""
+            cat docs/known_issues.md
+          } > known_issues_comment.md
+
+      - name: Find existing comment
+        if: steps.check.outputs.exists == 'true'
+        continue-on-error: true
+        uses: peter-evans/find-comment@v4
+        id: fc
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "<!-- known-issues-comment -->"
+
+      - name: Create or update comment
+        if: steps.check.outputs.exists == 'true'
+        uses: peter-evans/create-or-update-comment@v5
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body-path: known_issues_comment.md
+          edit-mode: replace
 
   docker_build:
     name: Build Docker
@@ -132,7 +230,7 @@ jobs:
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -149,7 +247,7 @@ jobs:
           variant: l1
           cache_write: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true }}
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ethrex_image
           path: /tmp/ethrex_image.tar
@@ -175,10 +273,10 @@ jobs:
           #   ethereum_package_args: "./.github/config/assertoor/network_params_ethrex_multiple_cl.yaml"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download etherex image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: ethrex_image
           path: /tmp
@@ -214,7 +312,7 @@ jobs:
             artifact_prefix: rpc_compat
           - name: "Devp2p tests"
             simulation: devp2p
-            limit: discv4|eth|snap
+            limit: discv4|discv5|eth|snap
             artifact_prefix: devp2p
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
@@ -232,6 +330,12 @@ jobs:
             simulation: ethereum/engine
             limit: "engine-withdrawals"
             artifact_prefix: engine_withdrawals
+          # Amsterdam config is loaded from .github/config/hive/amsterdam.yaml
+          - name: "Consume Engine Amsterdam"
+            simulation: ethereum/eels/consume-engine
+            limit: ".*(2780|7708|7732|7778|7843|7928|7954|7975|7976|7981|7997|8024|8037|8038|8045|8061|8070|8159|8246|8282).*"
+            amsterdam: true
+            artifact_prefix: consume_engine_amsterdam
           # Investigate this test
           # - name: "Sync"
           #   simulation: ethereum/sync
@@ -239,10 +343,13 @@ jobs:
           #   artifact_prefix: sync
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
 
       - name: Download ethrex image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: ethrex_image
           path: /tmp
@@ -261,26 +368,41 @@ jobs:
             echo "EOF"
           } >>"$GITHUB_OUTPUT"
 
+      - name: Load Amsterdam config
+        id: amsterdam-config
+        shell: bash
+        run: |
+          echo "fixtures=$(yq -r '.fixtures' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
+          echo "eels_commit=$(yq -r '.eels_commit' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
+
       - name: Determine hive flags
         id: hive-flags
         shell: bash
         env:
           SIM_LIMIT: ${{ matrix.limit }}
           SIM_BUILDARG: ${{ matrix.buildarg }}
+          AMSTERDAM: ${{ matrix.amsterdam || 'false' }}
+          AMSTERDAM_FIXTURES: ${{ steps.amsterdam-config.outputs.fixtures }}
+          AMSTERDAM_EELS_COMMIT: ${{ steps.amsterdam-config.outputs.eels_commit }}
         run: |
           FLAGS='--sim.parallelism 4 --sim.loglevel 3'
           if [[ -n "$SIM_LIMIT" ]]; then
             escaped_limit=${SIM_LIMIT//\'/\'\\\'\'}
             FLAGS+=" --sim.limit '$escaped_limit'"
           fi
-          if [[ -n "$SIM_BUILDARG" ]]; then
-            FLAGS+=" --sim.buildarg $SIM_BUILDARG"
+          if [[ "$AMSTERDAM" == "true" ]]; then
+            FLAGS+=" --sim.buildarg fixtures=$AMSTERDAM_FIXTURES"
+            FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
+          else
+            for arg in $SIM_BUILDARG; do
+              FLAGS+=" --sim.buildarg $arg"
+            done
           fi
           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
       - name: Log in to the Container registry
         if: ${{ env.DOCKERHUB_TOKEN != '' }}
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ env.DOCKERHUB_TOKEN }}
@@ -290,7 +412,8 @@ jobs:
         uses: ethpandaops/hive-github-action@v0.5.0
         with:
           hive_repository: ethereum/hive
-          hive_version: 0921fb7833e3de180eacdc9f26de6e51dcab0dba
+          # ethereum/hive#1530 merge (deposit contract address mapper fix)
+          hive_version: 7c4c99ebb79955f23e1952fb0282a0dadcb6e181
           simulator: ${{ matrix.simulation }}
           client: ethrex
           client_config: ${{ steps.client-config.outputs.config }}
@@ -304,7 +427,7 @@ jobs:
 
       - name: Upload Hive Failure Logs
         if: ${{ failure() && steps.verify-hive-results.conclusion == 'failure' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: hive_failed_logs_${{ matrix.artifact_prefix }}
           path: src/results/failed_logs
@@ -317,12 +440,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: [detect-changes, test]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() }}
     steps:
       - name: Check if any job failed
         run: |
           if [ "${{ needs.test.result }}" != "success" ]; then
-            echo "Job Assertoor Tx Check failed"
+            echo "Job Test failed"
             exit 1
           fi
 
@@ -333,7 +456,7 @@ jobs:
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -343,12 +466,19 @@ jobs:
         run: |
           make check-cargo-lock
 
+      # The compiler and server images are pulled at the tag the manifests pin, so
+      # a disagreement between them is only visible at release time and produces an
+      # ELF built against a different ere than it executes under. Catch it here.
+      - name: Check the ere pins agree
+        run: |
+          make check-ere-pins
+
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
     runs-on: ubuntu-latest
-    needs: [detect-changes, run-assertoor, run-hive, check-cargo-locks]
+    needs: [detect-changes, run-assertoor, run-hive, check-cargo-locks, engine-ef-tests]
     # Make sure this job runs even if the previous jobs failed or were skipped
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.run-assertoor.result != 'skipped' && needs.run-hive.result != 'skipped' }}
     steps:
@@ -364,6 +494,12 @@ jobs:
             exit 1
           fi
 
+          # engine-ef-tests is skipped in the merge queue (merge_group), which is OK.
+          if [ "${{ needs.engine-ef-tests.result }}" != "success" ] && [ "${{ needs.engine-ef-tests.result }}" != "skipped" ]; then
+            echo "Job Engine EF tests failed"
+            exit 1
+          fi
+
   reorg-tests:
     name: Reorg Tests
     runs-on: ubuntu-latest
@@ -371,16 +507,28 @@ jobs:
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
 
+      # Its own pool: this is the only job on main that builds the root
+      # workspace at `release-fast`, so the `l1` entry (dev profile) carries
+      # nothing it can link against.
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1-reorg
+          save-cache: 'true'
 
+      # Built with release-grade optimization: an unoptimized ethrex overflows
+      # the 2 MiB tokio worker stack while building a payload, since every
+      # `.await` in the block-building chain keeps its locals live in a future
+      # that no inlining collapses. `release-fast` carries debug-assertions and
+      # overflow checks, so reorg invariants guarded by `debug_assert!` still
+      # panic here instead of being skipped.
       - name: Compile ethrex binary
-        run: cargo build --bin ethrex
+        run: cargo build --profile release-fast --bin ethrex
 
       - name: Run reorg tests
-        run: cd tooling/reorgs && cargo run
+        run: cd tooling/reorgs && cargo run -- ../../target/release-fast/ethrex

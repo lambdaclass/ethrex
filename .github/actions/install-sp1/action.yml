@@ -1,0 +1,16 @@
+name: "Install SP1"
+description: "Install SP1 Toolchain"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install SP1
+      shell: bash
+      run: |
+        source "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
+
+        # -f matters as much as the retry here: without it curl exits 0 on an
+        # HTTP error, `retry` sees success, and bash then runs the error page.
+        retry curl -fsSL https://sp1.succinct.xyz -o /tmp/sp1_install.sh
+        bash /tmp/sp1_install.sh
+        retry ~/.sp1/bin/sp1up --version 5.0.8

@@ -1,0 +1,76 @@
+name: Release promotion smoke test
+
+# Validates the release version-string promotion (the channel is decided at
+# promotion, not at build) end-to-end, without cutting a release and without
+# touching any production tag:
+#   1. build a throwaway RC image (as a vX.Y.Z-rc.W build would: GIT_BRANCH=rc.smoke)
+#   2. run the SAME `FROM <rc> / ENV ETHREX_CHANNEL=stable` promote as tag_latest.yaml
+#   3. assert `ethrex --version` flips from the baked `-rc.smoke-` channel to
+#      `-stable-` on the otherwise-identical binary.
+# Nothing is pushed; the images live only in the runner's docker daemon.
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "Dockerfile"
+      - ".github/actions/build-docker/**"
+      - ".github/workflows/tag_latest.yaml"
+      - ".github/workflows/pr_release_promotion_smoke.yaml"
+      - "cmd/ethrex/utils.rs"
+      - "cmd/ethrex/initializers.rs"
+      - "cmd/ethrex/l2/initializers.rs"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  promote-smoke:
+    name: Promote smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+
+      - name: Free disk space
+        uses: ./.github/actions/free-disk
+
+      - name: Build a throwaway RC image (simulates a vX.Y.Z-rc.W build)
+        run: |
+          set -euo pipefail
+          docker build -f Dockerfile \
+            --build-arg GIT_BRANCH=rc.smoke \
+            --build-arg VERSION=0.0.0 \
+            --build-arg GIT_SHA="$(git rev-parse HEAD)" \
+            -t ethrex:smoke-rc .
+
+      - name: Promote it (identical FROM/ENV step to tag_latest.yaml)
+        run: |
+          set -euo pipefail
+          printf 'FROM ethrex:smoke-rc\nENV ETHREX_CHANNEL=stable\n' > Dockerfile.promote
+          docker build -f Dockerfile.promote -t ethrex:smoke-stable .
+
+      - name: Assert the channel flips at promotion (same binary)
+        run: |
+          set -euo pipefail
+          rc="$(docker run --rm ethrex:smoke-rc --version)"
+          st="$(docker run --rm ethrex:smoke-stable --version)"
+          echo "RC image       : $rc"
+          echo "promoted image : $st"
+          if ! echo "$rc" | grep -q -- '-rc.smoke-'; then
+            echo "::error::RC image must report the baked '-rc.smoke-' channel"
+            exit 1
+          fi
+          if ! echo "$st" | grep -q -- '-stable-'; then
+            echo "::error::promoted image must report '-stable-'"
+            exit 1
+          fi
+          if echo "$st" | grep -q -- '-rc.smoke-'; then
+            echo "::error::promoted image still reports the RC channel"
+            exit 1
+          fi
+          echo "OK: channel flips rc.smoke -> stable on the same binary."

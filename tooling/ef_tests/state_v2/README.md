@@ -9,7 +9,7 @@ This module includes a runner for the EF state tests. The main steps it performs
 ## What are EF State Tests?
 The Ethereum Foundation State Tests are individual transactions not related to one another that test particular behavior of the EVM. Tests are usually run for multiple forks and the result of execution may vary between forks.
 
-For more information on these tests check [the docs](https://eest.ethereum.org/main/running_tests/test_formats/state_test/#fixtureconfig).
+For more information on these tests check [the docs](https://steel.ethereum.foundation/docs/execution-specs/mainnet/running_tests/test_formats/state_test/#fixtureconfig).
 
 ## How to run the tests?
 

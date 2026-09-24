@@ -25,16 +25,13 @@ jobs:
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            run_tests:
-              - '!docs/**'
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/detect-changes
+        id: changes
       - name: finish
         id: finish
-        run: echo "run_tests=${{ steps.filter.outputs.run_tests }}" >> "$GITHUB_OUTPUT"
+        # Documentation and repository metadata only: no job here builds it.
+        run: echo "run_tests=${{ steps.changes.outputs.inert_only == 'false' }}" >> "$GITHUB_OUTPUT"
       - name: Print result
         run: echo "run_tests=${{ steps.finish.outputs.run_tests }}"
 
@@ -46,10 +43,13 @@ jobs:
     strategy:
       matrix:
         # Note: openvm backend linting is disabled due to a problem in the installation https://github.com/lambdaclass/ethrex/issues/5509
-        backend: ["sp1", "risc0", "zisk"]
+        # Note: risc0 backend linting is temporarily disabled: the c-kzg 2.1.8 floor exceeds the
+        # highest risc0 c-kzg fork tag (v2.1.7-risczero.0), so the guest workspace can't resolve.
+        # Re-add "risc0" once risc0/c-kzg-4844 publishes a >=2.1.8 tag.
+        backend: ["sp1", "zisk"]
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -63,24 +63,18 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         uses: ./.github/actions/install-risc0
 
-      - name: RISC-V SP1 toolchain install
+      - name: Install SP1
         if: matrix.backend == 'sp1'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 5.0.8
+        uses: ./.github/actions/install-sp1
 
-      - name: ZisK toolchain install
+      - name: Install ZisK
         if: matrix.backend == 'zisk'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SETUP_KEY: none
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xz-utils jq curl build-essential qemu-system libomp-dev libgmp-dev nlohmann-json3-dev protobuf-compiler uuid-dev libgrpc++-dev libsecp256k1-dev libsodium-dev libpqxx-dev nasm libopenmpi-dev openmpi-bin openmpi-common libclang-dev clang gcc-riscv64-unknown-elf
-          curl https://raw.githubusercontent.com/0xPolygonHermez/zisk/main/ziskup/install.sh | bash
-          echo "$HOME/.zisk/bin" >> $GITHUB_PATH
+        uses: ./.github/actions/install-zisk
 
       - name: RISC-V OpenVM toolchain install
         if: matrix.backend == 'openvm'
@@ -103,6 +97,20 @@ jobs:
         run: |
           git diff --exit-code -- crates/guest-program/bin/${{ matrix.backend }}/Cargo.lock
 
+      # zkevm_bench is a standalone workspace excluded from the root workspace
+      # (it hard-depends on x86-64-only zisk), so it must be linted explicitly.
+      # --all-targets compiles the smoke test without running it (the test needs
+      # a full guest ELF, which CI skips). --locked doubles as a lockfile check.
+      - name: Clippy zkevm_bench
+        if: matrix.backend == 'zisk'
+        run: |
+          cargo clippy --locked --manifest-path tooling/zkevm_bench/Cargo.toml --all-targets
+
+      - name: Check zkevm_bench Cargo.lock modified but not committed
+        if: matrix.backend == 'zisk'
+        run: |
+          git diff --exit-code -- tooling/zkevm_bench/Cargo.lock
+
   lint_exec:
     name: Lint exec backend
     needs: detect-changes
@@ -110,7 +118,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
 
@@ -128,7 +136,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
       - name: Check tdx

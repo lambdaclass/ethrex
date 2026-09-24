@@ -66,7 +66,10 @@ impl PrivilegedTransactionData {
             "Failed to parse calldata_len from log: log.data[192..224] out of bounds".to_owned(),
         )?);
 
-        let calldata = log.data.get(224..224 + calldata_len.as_usize()).ok_or(
+        let calldata_len = usize::try_from(calldata_len).map_err(|_| {
+            "Failed to parse calldata_len from log: value overflows usize".to_owned()
+        })?;
+        let calldata = log.data.get(224..224 + calldata_len).ok_or(
             "Failed to parse calldata from log: log.data[224..224 + calldata_len] out of bounds"
                 .to_owned(),
         )?;
@@ -86,29 +89,34 @@ impl PrivilegedTransactionData {
         chain_id: u64,
         gas_price: u64,
     ) -> Result<PrivilegedL2Transaction, EthClientError> {
-        let generic_tx = build_generic_tx(
-            eth_client,
-            TxType::Privileged,
-            self.to_address,
-            self.from,
-            Bytes::copy_from_slice(&self.calldata),
-            Overrides {
-                chain_id: Some(chain_id),
-                // Using the transaction_id as nonce.
-                // If we make a transaction on the L2 with this address, we may break the
-                // privileged transaction workflow.
-                nonce: Some(self.transaction_id.as_u64()),
-                value: Some(self.value),
-                gas_limit: Some(self.gas_limit.as_u64()),
-                // TODO(CHECK): Seems that when we start the L2, we need to set the gas.
-                // Otherwise, the transaction is not included in the mempool.
-                // We should override the blockchain to always include the transaction.
-                max_fee_per_gas: Some(gas_price),
-                max_priority_fee_per_gas: Some(gas_price),
-                ..Default::default()
-            },
-        )
-        .await?;
+        let generic_tx =
+            build_generic_tx(
+                eth_client,
+                TxType::Privileged,
+                self.to_address,
+                self.from,
+                Bytes::copy_from_slice(&self.calldata),
+                Overrides {
+                    chain_id: Some(chain_id),
+                    // Using the transaction_id as nonce.
+                    // If we make a transaction on the L2 with this address, we may break the
+                    // privileged transaction workflow.
+                    nonce: Some(u64::try_from(self.transaction_id).map_err(|_| {
+                        EthClientError::Custom("transaction_id overflows u64".to_owned())
+                    })?),
+                    value: Some(self.value),
+                    gas_limit: Some(u64::try_from(self.gas_limit).map_err(|_| {
+                        EthClientError::Custom("gas_limit overflows u64".to_owned())
+                    })?),
+                    // TODO(CHECK): Seems that when we start the L2, we need to set the gas.
+                    // Otherwise, the transaction is not included in the mempool.
+                    // We should override the blockchain to always include the transaction.
+                    max_fee_per_gas: Some(gas_price),
+                    max_priority_fee_per_gas: Some(gas_price),
+                    ..Default::default()
+                },
+            )
+            .await?;
         Ok(generic_tx.try_into()?)
     }
 }

@@ -14,12 +14,17 @@ use ethrex_rlp::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{BYTES_PER_BLOB, SAFE_BYTES_PER_BLOB};
+#[cfg(feature = "c-kzg")]
+use super::BYTES_PER_CELL;
+use super::{BYTES_PER_BLOB, CELLS_PER_EXT_BLOB, SAFE_BYTES_PER_BLOB};
+#[cfg(feature = "c-kzg")]
+use super::{MAX_BLOB_COUNT, MAX_BLOB_COUNT_ELECTRA};
 
 pub type Bytes48 = [u8; 48];
 pub type Blob = [u8; BYTES_PER_BLOB];
 pub type Commitment = Bytes48;
 pub type Proof = Bytes48;
+pub type BlobTuple = (Box<Blob>, Commitment, Vec<Proof>);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -124,6 +129,19 @@ impl BlobsBundle {
             .collect()
     }
 
+    /// Given an index returns all or nothing `BlobTuple` if either of the commitment, proof or
+    /// blob is not found then it will return None instead of Partial data.
+    pub fn get_blob_tuple_by_index(&self, index: usize) -> Option<BlobTuple> {
+        let blob = Box::new(*self.blobs.get(index)?);
+        let commitment = *self.commitments.get(index)?;
+        let proofs = if self.version == 0 {
+            vec![*self.proofs.get(index)?]
+        } else {
+            self.proofs.chunks(CELLS_PER_EXT_BLOB).nth(index)?.to_vec()
+        };
+        Some((blob, commitment, proofs))
+    }
+
     /// Full blob bundle validation: structural checks + KZG cryptographic proof verification.
     #[cfg(feature = "c-kzg")]
     pub fn validate(
@@ -177,11 +195,32 @@ impl BlobsBundle {
             return Err(BlobsBundleError::MaxBlobsExceeded);
         }
 
+        // EIP-7594: a single transaction may carry at most MAX_BLOB_COUNT (6) blobs,
+        // independent of the higher per-block limit.
+        if fork >= Fork::Osaka && blob_count > MAX_BLOB_COUNT {
+            return Err(BlobsBundleError::MaxBlobsExceeded);
+        }
+
         if blob_count == 0 {
             return Err(BlobsBundleError::BlobBundleEmptyError);
         }
 
-        if (self.version == 0 && fork >= Fork::Osaka) || (self.version != 0 && fork < Fork::Osaka) {
+        // Blob sidecar wrapper version: 0 = EIP-4844 blob proofs, 1 = EIP-7594 cell proofs.
+        // The sidecar is a mempool/propagation-only artifact (never included in a block) and
+        // both formats are cryptographically verifiable at any fork.
+        //
+        // Acceptance criteria:
+        //   - pre-Osaka: accept BOTH v0 and v1. Peers are migrating to cell proofs at
+        //     different times (e.g. post go-ethereum#35191 geth sends v1 even pre-Osaka,
+        //     while older peers still send v0), so rejecting either would needlessly
+        //     disconnect otherwise-valid peers.
+        //   - Osaka+: only v1 (cell proofs) is valid.
+        let version_ok = if fork >= Fork::Osaka {
+            self.version == 1
+        } else {
+            self.version <= 1
+        };
+        if !version_ok {
             return Err(BlobsBundleError::InvalidBlobVersionForFork);
         }
 
@@ -196,6 +235,64 @@ impl BlobsBundle {
         self.validate_blob_commitment_hashes(&tx.blob_versioned_hashes)?;
 
         Ok(())
+    }
+
+    /// Structural validation for eth/72 elided bundles: blobs are omitted while
+    /// commitments and cell proofs are present. Skips the empty-blob check and
+    /// KZG proof verification (proofs are verified once cells are fetched via
+    /// `GetCells`). The commitment list defines the blob count.
+    #[cfg(feature = "c-kzg")]
+    pub fn validate_elided(
+        &self,
+        tx: &super::EIP4844Transaction,
+        fork: super::Fork,
+    ) -> Result<(), BlobsBundleError> {
+        use super::CELLS_PER_EXT_BLOB;
+
+        let blob_count = self.commitments.len();
+
+        if blob_count == 0 {
+            return Err(BlobsBundleError::BlobBundleEmptyError);
+        }
+        if blob_count > max_blobs_per_block(fork) {
+            return Err(BlobsBundleError::MaxBlobsExceeded);
+        }
+        // The elided form only exists on eth/72 (Osaka+) with the cell-proof wrapper.
+        if self.version == 0 || fork < Fork::Osaka {
+            return Err(BlobsBundleError::InvalidBlobVersionForFork);
+        }
+        if blob_count != tx.blob_versioned_hashes.len()
+            || blob_count * CELLS_PER_EXT_BLOB != self.proofs.len()
+        {
+            return Err(BlobsBundleError::BlobsBundleWrongLen);
+        }
+
+        self.validate_blob_commitment_hashes(&tx.blob_versioned_hashes)
+    }
+
+    /// Return cells for the requested column indices (one inner Vec per blob).
+    /// `column_mask` is a 128-bit bitmask; bit i set means column i is requested.
+    /// Returns an error if blobs are missing (elided) or the c-kzg feature is absent.
+    #[cfg(feature = "c-kzg")]
+    pub fn cells_for_columns(
+        &self,
+        column_mask: u128,
+    ) -> Result<Vec<Vec<[u8; BYTES_PER_CELL]>>, BlobsBundleError> {
+        let mut result = Vec::with_capacity(self.blobs.len());
+        for blob in &self.blobs {
+            let all_cells = ethrex_crypto::kzg::compute_cells(blob)?;
+            let mut blob_cells = vec![];
+            for col in 0..128u32 {
+                if (column_mask >> col) & 1 == 1 {
+                    let cell = all_cells
+                        .get(col as usize)
+                        .ok_or(BlobsBundleError::BlobToCommitmentAndProofError)?;
+                    blob_cells.push(*cell);
+                }
+            }
+            result.push(blob_cells);
+        }
+        Ok(result)
     }
 
     pub fn validate_blob_commitment_hashes(
@@ -252,13 +349,10 @@ impl AddAssign for BlobsBundle {
         self.blobs.extend_from_slice(&rhs.blobs);
         self.commitments.extend_from_slice(&rhs.commitments);
         self.proofs.extend_from_slice(&rhs.proofs);
+        // Never downgrade: accumulator must track the highest version seen.
+        self.version = self.version.max(rhs.version);
     }
 }
-
-#[cfg(feature = "c-kzg")]
-const MAX_BLOB_COUNT: usize = 6;
-#[cfg(feature = "c-kzg")]
-const MAX_BLOB_COUNT_ELECTRA: usize = 9;
 
 #[cfg(feature = "c-kzg")]
 fn max_blobs_per_block(fork: crate::types::Fork) -> usize {
@@ -374,9 +468,12 @@ mod tests {
         ));
     }
 
+    // v1 (cell-proof) sidecars are accepted pre-Osaka (network is mid-migration to cell
+    // proofs; some peers send v1 even before Osaka), but v0 (blob-proof) sidecars are
+    // rejected on Osaka+.
     #[test]
     #[cfg(feature = "c-kzg")]
-    fn transaction_with_invalid_fork_should_fail() {
+    fn v1_sidecar_is_accepted_pre_osaka() {
         let blobs = vec!["Hello, world!".as_bytes(), "Goodbye, world!".as_bytes()]
             .into_iter()
             .map(|data| {
@@ -404,8 +501,44 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(!matches!(
+        assert!(matches!(
             blobs_bundle.validate(&tx, crate::types::Fork::Prague),
+            Ok(())
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "c-kzg")]
+    fn v0_sidecar_is_rejected_on_osaka() {
+        let blobs = vec!["Hello, world!".as_bytes(), "Goodbye, world!".as_bytes()]
+            .into_iter()
+            .map(|data| {
+                crate::types::blobs_bundle::blob_from_bytes(data.into())
+                    .expect("Failed to create blob")
+            })
+            .collect();
+
+        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs, Some(0))
+            .expect("Failed to create blobs bundle");
+
+        let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+
+        let tx = crate::types::transaction::EIP4844Transaction {
+            nonce: 3,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            max_fee_per_blob_gas: 0.into(),
+            gas: 15_000_000,
+            to: crate::Address::from_low_u64_be(1), // Normal tx
+            value: crate::U256::zero(),             // Value zero
+            data: crate::Bytes::default(),          // No data
+            access_list: Default::default(),        // No access list
+            blob_versioned_hashes,
+            ..Default::default()
+        };
+
+        assert!(!matches!(
+            blobs_bundle.validate(&tx, crate::types::Fork::Osaka),
             Ok(())
         ));
     }

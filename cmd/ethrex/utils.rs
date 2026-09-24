@@ -3,8 +3,8 @@ use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
-    peer_table::PeerTable,
-    sync::SyncMode,
+    peer_table::{PeerTable, PeerTableServerProtocol as _},
+    sync::{HistoryChain, SyncMode},
     types::{Node, NodeRecord},
 };
 use hex::FromHexError;
@@ -25,7 +25,7 @@ pub struct NodeConfigFile {
 }
 
 impl NodeConfigFile {
-    pub async fn new(mut peer_table: PeerTable, node_record: NodeRecord) -> Self {
+    pub async fn new(peer_table: PeerTable, node_record: NodeRecord) -> Self {
         let connected_peers = peer_table.get_connected_nodes().await.unwrap_or(Vec::new());
 
         NodeConfigFile {
@@ -70,6 +70,23 @@ pub fn read_chain_file(chain_rlp_path: &str) -> Vec<Block> {
     decode::chain_file(chain_file).expect("Failed to decode chain rlp file")
 }
 
+pub fn parse_http_namespace(s: &str) -> eyre::Result<ethrex_rpc::RpcNamespace> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Err(eyre::eyre!("empty namespace in --http.api"));
+    }
+    if trimmed.eq_ignore_ascii_case("engine") {
+        return Err(eyre::eyre!(
+            "`engine` cannot be enabled on --http.api; it is served on the authenticated RPC port"
+        ));
+    }
+    ethrex_rpc::RpcNamespace::from_prefix(&trimmed.to_ascii_lowercase()).ok_or_else(|| {
+        eyre::eyre!(
+            "unknown RPC namespace {trimmed:?}; expected one of eth, net, web3, debug, admin, txpool, testing"
+        )
+    })
+}
+
 pub fn parse_sync_mode(s: &str) -> eyre::Result<SyncMode> {
     match s {
         "full" => Ok(SyncMode::Full),
@@ -77,6 +94,21 @@ pub fn parse_sync_mode(s: &str) -> eyre::Result<SyncMode> {
         other => Err(eyre::eyre!(
             "Invalid syncmode {other:?} expected either snap or full",
         )),
+    }
+}
+
+pub fn parse_history_chain(s: &str) -> eyre::Result<HistoryChain> {
+    match s {
+        "off" => Ok(HistoryChain::Off),
+        "postmerge" => Ok(HistoryChain::PostMerge),
+        "all" => Ok(HistoryChain::All),
+        // A bare block number backfills down to that block, for operators who
+        // want only a recent slice of history.
+        other => other.parse::<u64>().map(HistoryChain::Block).map_err(|_| {
+            eyre::eyre!(
+                "Invalid history.chain {other:?}, expected one of off, postmerge, all, or a block number",
+            )
+        }),
     }
 }
 
@@ -158,12 +190,24 @@ pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {
     }
 }
 
+/// The release channel reported in the client version. The published release
+/// image sets `ETHREX_CHANNEL=stable` on its config at promotion time; otherwise
+/// this falls back to the value baked at build time — the git branch, or the RC
+/// suffix (e.g. `rc.1`) for release-tag builds. Promotion only stamps the env on
+/// the image config, so the tested binary itself is byte-for-byte unchanged.
+pub fn get_channel() -> String {
+    std::env::var("ETHREX_CHANNEL")
+        .ok()
+        .filter(|channel| !channel.is_empty())
+        .unwrap_or_else(|| env!("VERGEN_GIT_BRANCH").to_string())
+}
+
 /// Returns a detailed client version struct with git info.
 pub fn get_client_version() -> ethrex_rpc::ClientVersion {
     ethrex_rpc::ClientVersion::new(
         env!("CARGO_PKG_NAME").to_string(),
         env!("CARGO_PKG_VERSION").to_string(),
-        env!("VERGEN_GIT_BRANCH").to_string(),
+        get_channel(),
         env!("VERGEN_GIT_SHA").to_string(),
         env!("VERGEN_RUSTC_HOST_TRIPLE").to_string(),
         env!("VERGEN_RUSTC_SEMVER").to_string(),

@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Assign PR author
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             await github.rest.issues.addAssignees({
@@ -36,10 +36,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Apply labels from PR title
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const run = require('./.github/scripts/set-pr-labels.js');

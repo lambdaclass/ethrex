@@ -2,6 +2,7 @@
 use cita_trie::{MemoryDB as CitaMemoryDB, PatriciaTrie as CitaTrie, Trie as CitaTrieTrait};
 use std::sync::Arc;
 
+use ethrex_crypto::NativeCrypto;
 use ethrex_trie::Trie;
 
 use hasher::HasherKeccak;
@@ -19,7 +20,7 @@ fn compute_hash() {
     trie.insert(b"second".to_vec(), b"value".to_vec()).unwrap();
 
     assert_eq!(
-        trie.hash().unwrap().as_ref(),
+        trie.hash(&NativeCrypto).unwrap().as_ref(),
         hex!("f7537e7f4b313c426440b7fface6bff76f51b3eb0d127356efbe6f2b3c891501")
     );
 }
@@ -33,7 +34,7 @@ fn compute_hash_long() {
     trie.insert(b"fourth".to_vec(), b"value".to_vec()).unwrap();
 
     assert_eq!(
-        trie.hash().unwrap().0.to_vec(),
+        trie.hash(&NativeCrypto).unwrap().0.to_vec(),
         hex!("e2ff76eca34a96b68e6871c74f2a5d9db58e59f82073276866fdd25e560cedea")
     );
 }
@@ -198,7 +199,7 @@ fn compute_hash_a() {
     trie.insert(b"dog".to_vec(), b"puppy".to_vec()).unwrap();
 
     assert_eq!(
-        trie.hash().unwrap().0.as_slice(),
+        trie.hash(&NativeCrypto).unwrap().0.as_slice(),
         hex!("5991bb8c6514148a29db676a14ac506cd2cd5775ace63c30a4fe457715e9ac84").as_slice()
     );
 }
@@ -207,7 +208,7 @@ fn compute_hash_a() {
 fn compute_hash_b() {
     let mut trie = Trie::new_temp();
     assert_eq!(
-        trie.hash().unwrap().0.as_slice(),
+        trie.hash(&NativeCrypto).unwrap().0.as_slice(),
         hex!("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421").as_slice(),
     );
 }
@@ -259,7 +260,7 @@ fn compute_hash_c() {
     }
 
     assert_eq!(
-        trie.hash().unwrap().0.as_slice(),
+        trie.hash(&NativeCrypto).unwrap().0.as_slice(),
         hex!("9f6221ebb8efe7cff60a716ecb886e67dd042014be444669f0159d8e68b42100").as_slice(),
     );
 }
@@ -291,7 +292,7 @@ fn compute_hash_d() {
     }
 
     assert_eq!(
-        trie.hash().unwrap().0.as_slice(),
+        trie.hash(&NativeCrypto).unwrap().0.as_slice(),
         hex!("cb65032e2f76c48b82b5c24b3db8f670ce73982869d38cd39a624f23d62a9e89").as_slice(),
     );
 }
@@ -304,7 +305,7 @@ fn compute_hash_e() {
     trie.insert(b"abc".to_vec(), b"abc".to_vec()).unwrap();
 
     assert_eq!(
-        trie.hash().unwrap().0.as_slice(),
+        trie.hash(&NativeCrypto).unwrap().0.as_slice(),
         hex!("7a320748f780ad9ad5b0837302075ce0eeba6c26e3d8562c67ccc0f1b273298a").as_slice(),
     );
 }
@@ -395,7 +396,7 @@ proptest! {
             cita_trie.insert(val.clone(), val.clone()).unwrap();
         }
 
-        let hash = trie.hash().unwrap().0.to_vec();
+        let hash = trie.hash(&NativeCrypto).unwrap().0.to_vec();
         let cita_hash = cita_trie.root().unwrap();
         prop_assert_eq!(hash, cita_hash);
     }
@@ -418,7 +419,7 @@ proptest! {
                 trie.remove(val).unwrap();
                 cita_trie.remove(val).unwrap();
                 // Compare hashes
-                let hash = trie.hash().unwrap().0.to_vec();
+                let hash = trie.hash(&NativeCrypto).unwrap().0.to_vec();
                 let cita_hash = cita_trie.root().unwrap();
                 prop_assert_eq!(hash, cita_hash);
             }
@@ -446,7 +447,7 @@ proptest! {
                 trie.remove(val).unwrap();
                 cita_trie.remove(val).unwrap();
                 // Compare hashes
-                let hash = trie.hash().unwrap().0.to_vec();
+                let hash = trie.hash(&NativeCrypto).unwrap().0.to_vec();
                 let cita_hash = cita_trie.root().unwrap();
                 prop_assert_eq!(hash, cita_hash);
             }
@@ -461,7 +462,7 @@ proptest! {
         for val in data.iter(){
             trie.insert(val.clone(), val.clone()).unwrap();
             cita_trie.insert(val.clone(), val.clone()).unwrap();
-            let hash = trie.hash().unwrap().0.to_vec();
+            let hash = trie.hash(&NativeCrypto).unwrap().0.to_vec();
             let cita_hash = cita_trie.root().unwrap();
             prop_assert_eq!(hash, cita_hash);
         }

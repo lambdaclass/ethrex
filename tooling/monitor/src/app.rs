@@ -19,11 +19,10 @@ use ratatui::{
 };
 use reqwest::Url;
 use spawned_concurrency::{
-    messages::Unused,
-    tasks::{
-        CastResponse, GenServer, GenServerHandle, InitResult, Success, send_interval,
-        spawn_listener,
-    },
+    actor,
+    error::ActorError,
+    protocol,
+    tasks::{Actor, ActorStart as _, Context, Handler, send_after, spawn_listener},
 };
 use std::io;
 use std::sync::Arc;
@@ -71,17 +70,13 @@ pub struct EthrexMonitorWidget {
     pub overview_selected_widget: usize,
 
     pub osaka_activation_time: Option<u64>,
+    pub mouse_captured: bool,
 }
 
-#[derive(Clone, Debug)]
-pub enum CastInMessage {
-    Tick,
-    Event(Event),
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub enum OutMessage {
-    Done,
+#[protocol]
+pub trait MonitorProtocol: Send + Sync {
+    fn tick(&self) -> Result<(), ActorError>;
+    fn event(&self, event: Event) -> Result<(), ActorError>;
 }
 
 pub struct EthrexMonitor {
@@ -90,6 +85,7 @@ pub struct EthrexMonitor {
     cancellation_token: CancellationToken,
 }
 
+#[actor(protocol = MonitorProtocol)]
 impl EthrexMonitor {
     pub async fn spawn(
         sequencer_state: SequencerState,
@@ -97,84 +93,85 @@ impl EthrexMonitor {
         rollup_store: StoreRollup,
         cfg: &MonitorConfig,
         cancellation_token: CancellationToken,
-    ) -> Result<GenServerHandle<EthrexMonitor>, MonitorError> {
+    ) -> Result<(), MonitorError> {
         let widget = EthrexMonitorWidget::new(sequencer_state, store, rollup_store, cfg).await?;
-        let ethrex_monitor = EthrexMonitor {
+        let monitor = EthrexMonitor {
             widget,
             terminal: Arc::new(Mutex::new(setup_terminal()?)),
             cancellation_token,
         };
-        Ok(ethrex_monitor.start())
+        monitor.start();
+        Ok(())
     }
-}
 
-impl GenServer for EthrexMonitor {
-    type CallMsg = Unused;
-    type CastMsg = CastInMessage;
-    type OutMsg = OutMessage;
-    type Error = MonitorError;
-
-    async fn init(self, handle: &GenServerHandle<Self>) -> Result<InitResult<Self>, Self::Error> {
-        // Tick handling
-        send_interval(
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        // Use send_after (not send_interval) so the next tick is only
+        // scheduled after the current one finishes. This prevents tick
+        // backlog from blocking keyboard events when on_tick() is slow.
+        send_after(
             Duration::from_millis(self.widget.tick_rate),
-            handle.clone(),
-            Self::CastMsg::Tick,
+            ctx.clone(),
+            monitor_protocol::Tick,
         );
-        // Event handling
         spawn_listener(
-            handle.clone(),
-            EventStream::new()
-                .filter_map(|result| async move { result.ok().map(Self::CastMsg::Event) }),
+            ctx.clone(),
+            EventStream::new().filter_map(|result| async move {
+                result.ok().map(|e| monitor_protocol::Event { event: e })
+            }),
         );
-        Ok(Success(self))
     }
 
-    async fn handle_cast(
-        &mut self,
-        message: Self::CastMsg,
-        _handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        match message {
-            // On event
-            CastInMessage::Event(event) => {
-                let widget = &mut self.widget;
-                if let Some(key) = event.as_key_press_event() {
-                    widget.on_key_event(key.code);
-                }
-                if let Some(mouse) = event.as_mouse_event() {
-                    widget.on_mouse_event(mouse.kind);
-                }
-            }
-            // Tick received
-            CastInMessage::Tick => {
-                let _ = self
-                    .widget
-                    .on_tick()
-                    .await
-                    .inspect_err(|err| error!("Monitor error: {err}"));
-            }
-        }
-
-        if !self.widget.should_quit {
-            let _ = self
-                .widget
-                .draw(&mut *self.terminal.lock().await)
-                .inspect_err(|err| error!("Render error: {err}"));
-            CastResponse::NoReply
-        } else {
-            CastResponse::Stop
-        }
-    }
-
-    async fn teardown(self, _handle: &GenServerHandle<Self>) -> Result<(), Self::Error> {
+    #[stopped]
+    async fn stopped(&mut self, _ctx: &Context<Self>) {
         let mut terminal = self.terminal.lock().await;
-        let _ = restore_terminal(&mut terminal).inspect_err(|err| {
-            error!("Error restoring terminal: {err}");
-        });
+        let _ = restore_terminal(&mut terminal)
+            .inspect_err(|err| error!("Error restoring terminal: {err}"));
         info!("Monitor has been cancelled");
         self.cancellation_token.cancel();
-        Ok(())
+    }
+
+    #[send_handler]
+    async fn handle_tick(&mut self, _msg: monitor_protocol::Tick, ctx: &Context<Self>) {
+        let _ = self
+            .widget
+            .on_tick()
+            .await
+            .inspect_err(|err| error!("Monitor error: {err}"));
+
+        if self.widget.should_quit {
+            ctx.stop();
+            return;
+        }
+        let _ = self
+            .widget
+            .draw(&mut *self.terminal.lock().await)
+            .inspect_err(|err| error!("Render error: {err}"));
+        // Schedule next tick only after this one finishes
+        send_after(
+            Duration::from_millis(self.widget.tick_rate),
+            ctx.clone(),
+            monitor_protocol::Tick,
+        );
+    }
+
+    #[send_handler]
+    async fn handle_event(&mut self, msg: monitor_protocol::Event, ctx: &Context<Self>) {
+        if let Some(key) = msg.event.as_key_press_event() {
+            self.widget.on_key_event(key.code);
+        }
+        if let Some(mouse) = msg.event.as_mouse_event() {
+            self.widget.on_mouse_event(mouse.kind);
+        }
+
+        if self.widget.should_quit {
+            ctx.stop();
+            return;
+        }
+        let _ = self
+            .widget
+            .draw(&mut *self.terminal.lock().await)
+            .inspect_err(|err| error!("Render error: {err}"));
     }
 }
 
@@ -225,6 +222,7 @@ impl EthrexMonitorWidget {
             last_scroll: Instant::now(),
             overview_selected_widget: 0,
             osaka_activation_time: cfg.osaka_activation_time,
+            mouse_captured: true,
         };
         monitor_widget.selected_table().selected(true);
         monitor_widget.on_tick().await?;
@@ -293,6 +291,20 @@ impl EthrexMonitorWidget {
                 TabsState::Overview | TabsState::Logs | TabsState::RichAccounts,
                 KeyCode::Char('Q'),
             ) => self.should_quit = true,
+            (
+                TabsState::Overview | TabsState::Logs | TabsState::RichAccounts,
+                KeyCode::Char('m'),
+            ) => {
+                let new_state = !self.mouse_captured;
+                let result = if new_state {
+                    execute!(io::stdout(), EnableMouseCapture)
+                } else {
+                    execute!(io::stdout(), DisableMouseCapture)
+                };
+                if result.is_ok() {
+                    self.mouse_captured = new_state;
+                }
+            }
             (TabsState::Overview | TabsState::Logs | TabsState::RichAccounts, KeyCode::Tab) => {
                 self.tabs.next()
             }
@@ -350,6 +362,14 @@ impl EthrexMonitorWidget {
         self.rich_accounts.on_tick(&self.rollup_client).await?;
 
         Ok(())
+    }
+
+    fn mouse_label(&self) -> &str {
+        if self.mouse_captured {
+            "m: mouse [ON]"
+        } else {
+            "m: mouse [OFF]"
+        }
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer) -> Result<(), MonitorError>
@@ -464,9 +484,11 @@ impl EthrexMonitorWidget {
                     &mut l2_to_l1_messages_state,
                 );
 
-                let help =
-                    Line::raw("↑/↓: select table | w/s: scroll table | tab: switch tab | Q: quit")
-                        .centered();
+                let help = Line::raw(format!(
+                    "↑/↓: select table | w/s: scroll table | {} | tab: switch tab | Q: quit",
+                    self.mouse_label()
+                ))
+                .centered();
 
                 help.render(*chunks.get(6).ok_or(MonitorError::Chunks)?, buf);
             }
@@ -490,7 +512,7 @@ impl EthrexMonitorWidget {
 
                 log_widget.render(*chunks.first().ok_or(MonitorError::Chunks)?, buf);
 
-                let help = Line::raw("↑/↓: select target | f: focus target | ←/→: display level | +/-: filter level | h: hide target selector | tab: switch tab | Q: quit").centered();
+                let help = Line::raw(format!("↑/↓: select target | f: focus target | ←/→: display level | +/-: filter level | h: hide target selector | {} | tab: switch tab | Q: quit", self.mouse_label())).centered();
 
                 help.render(*chunks.get(1).ok_or(MonitorError::Chunks)?, buf);
             }
@@ -503,7 +525,11 @@ impl EthrexMonitorWidget {
                     buf,
                     &mut accounts,
                 );
-                let help = Line::raw("w/s: scroll table | tab: switch tab | Q: quit").centered();
+                let help = Line::raw(format!(
+                    "w/s: scroll table | {} | tab: switch tab | Q: quit",
+                    self.mouse_label()
+                ))
+                .centered();
                 help.render(*chunks.get(1).ok_or(MonitorError::Chunks)?, buf);
             }
         };

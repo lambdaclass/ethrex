@@ -14,7 +14,7 @@ This guide assumes you've read the dev [installation guide](../installing.md)
 ethrex --network fixtures/genesis/perf-ci.json import  fixtures/blockchain/l2-1k-erc20.rlp
 ```
 
-- The network argument is common to all ethrex commands. It specifies the genesis file, or a public network like holesky. This is the starting state of the blockchain.
+- The network argument is common to all ethrex commands. It specifies the genesis file, or a public network like hoodi. This is the starting state of the blockchain.
 - The import command means that this node will not start rpc endpoints or peer to peer communication. It will just read a file, parse the blocks, execute them, and save the EVM state (accounts info and storage) after each execution.
 - The file is an RLP encoded file with a list of blocks.
 

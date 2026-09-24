@@ -8,14 +8,95 @@ use rustyline::{Context, Helper};
 
 use crate::commands::CommandRegistry;
 use crate::parser::UTILITY_NAMES;
+use crate::variables::VariableStore;
 
 pub struct ReplHelper {
     registry: Arc<CommandRegistry>,
+    variables: VariableStore,
 }
 
 impl ReplHelper {
-    pub fn new(registry: Arc<CommandRegistry>) -> Self {
-        Self { registry }
+    pub fn new(registry: Arc<CommandRegistry>, variables: VariableStore) -> Self {
+        Self {
+            registry,
+            variables,
+        }
+    }
+}
+
+impl ReplHelper {
+    /// Complete variable references starting with `$`.
+    ///
+    /// Handles three cases:
+    /// - `$` or `$par` → complete variable names
+    /// - `$name.` or `$name.fi` → complete top-level field names
+    /// - `$name.field.` or `$name.field.sub` → complete nested field names
+    ///
+    /// Returns `None` if the current word doesn't contain a `$` reference.
+    fn complete_variable(&self, input: &str) -> Option<Vec<Pair>> {
+        // Find the last '$' that could be the start of a variable reference.
+        // It must be preceded by whitespace, '(' , ',' , or be at position 0
+        // of the current "word" (i.e. not inside a quoted string).
+        let dollar_pos = input.rfind('$')?;
+        if dollar_pos > 0 {
+            let before = input.as_bytes()[dollar_pos - 1];
+            if before != b' ' && before != b'(' && before != b',' && before != b'\t' {
+                return None;
+            }
+        }
+
+        let var_text = &input[dollar_pos + 1..]; // everything after '$'
+
+        // Split into segments by '.'
+        let segments: Vec<&str> = var_text.split('.').collect();
+
+        match segments.len() {
+            // `$` or `$par` → complete variable names
+            0 | 1 => {
+                let partial = segments.first().unwrap_or(&"");
+                let names = self.variables.names();
+                let matches: Vec<Pair> = names
+                    .iter()
+                    .filter(|n| n.starts_with(partial))
+                    .map(|n| Pair {
+                        display: format!("${n}"),
+                        replacement: format!("${n}"),
+                    })
+                    .collect();
+                if matches.is_empty() {
+                    None
+                } else {
+                    Some(matches)
+                }
+            }
+            // `$name.field...partial` → complete field at the deepest level
+            _ => {
+                let var_name = segments[0];
+                let partial = segments.last().unwrap_or(&"");
+                let path: Vec<&str> = segments[1..segments.len() - 1].to_vec();
+
+                let field_names = self.variables.nested_field_names(var_name, &path);
+                let prefix = if path.is_empty() {
+                    format!("${var_name}.")
+                } else {
+                    format!("${var_name}.{}.", path.join("."))
+                };
+
+                let matches: Vec<Pair> = field_names
+                    .iter()
+                    .filter(|f| f.starts_with(partial))
+                    .map(|f| Pair {
+                        display: format!("{prefix}{f}"),
+                        replacement: format!("{prefix}{f}"),
+                    })
+                    .collect();
+                if matches.is_empty() {
+                    None
+                } else {
+                    Some(matches)
+                }
+            }
+        }
     }
 }
 
@@ -34,7 +115,9 @@ impl Completer for ReplHelper {
 
         // Built-in dot commands
         if input.starts_with('.') {
-            let builtins = [".help", ".exit", ".quit", ".clear", ".connect", ".history"];
+            let builtins = [
+                ".help", ".exit", ".quit", ".clear", ".connect", ".history", ".vars",
+            ];
             let matches: Vec<Pair> = builtins
                 .iter()
                 .filter(|b| b.starts_with(input))
@@ -44,6 +127,13 @@ impl Completer for ReplHelper {
                 })
                 .collect();
             return Ok((0, matches));
+        }
+
+        // Variable completion: find the current word containing '$'
+        if let Some(var_completions) = self.complete_variable(input) {
+            // The replacement starts at the '$' position
+            let dollar_pos = input.rfind('$').unwrap_or(0);
+            return Ok((dollar_pos, var_completions));
         }
 
         // If we have "namespace." pattern, complete methods
@@ -128,7 +218,30 @@ mod tests {
     use super::*;
 
     fn make_helper() -> ReplHelper {
-        ReplHelper::new(Arc::new(CommandRegistry::new()))
+        ReplHelper::new(Arc::new(CommandRegistry::new()), VariableStore::new())
+    }
+
+    fn make_helper_with_vars() -> ReplHelper {
+        let vars = VariableStore::new();
+        vars.insert(
+            "head".to_string(),
+            serde_json::json!({
+                "hash": "0xabc123",
+                "number": "0x1",
+                "nested": { "deep": "value" }
+            }),
+        );
+        vars.insert(
+            "payload".to_string(),
+            serde_json::json!({
+                "executionPayload": {
+                    "blockHash": "0xdef456",
+                    "stateRoot": "0x789"
+                }
+            }),
+        );
+        vars.insert("ts".to_string(), serde_json::json!("0x69b9a63d"));
+        ReplHelper::new(Arc::new(CommandRegistry::new()), vars)
     }
 
     /// Get completions without needing a rustyline Context.
@@ -136,12 +249,19 @@ mod tests {
     fn get_completions(helper: &ReplHelper, input: &str) -> Vec<String> {
         // Dot commands
         if input.starts_with('.') {
-            let builtins = [".help", ".exit", ".quit", ".clear", ".connect", ".history"];
+            let builtins = [
+                ".help", ".exit", ".quit", ".clear", ".connect", ".history", ".vars",
+            ];
             return builtins
                 .iter()
                 .filter(|b| b.starts_with(input))
                 .map(|b| b.to_string())
                 .collect();
+        }
+
+        // Variable completion
+        if let Some(completions) = helper.complete_variable(input) {
+            return completions.into_iter().map(|p| p.replacement).collect();
         }
 
         // Method completion after namespace.
@@ -347,5 +467,84 @@ mod tests {
         let helper = make_helper();
         let hint = get_hint(&helper, "unknown.method");
         assert!(hint.is_none());
+    }
+
+    // --- Variable completion tests ---
+
+    #[test]
+    fn complete_dollar_lists_all_vars() {
+        let helper = make_helper_with_vars();
+        let matches = get_completions(&helper, "$");
+        assert!(matches.contains(&"$head".to_string()));
+        assert!(matches.contains(&"$payload".to_string()));
+        assert!(matches.contains(&"$ts".to_string()));
+    }
+
+    #[test]
+    fn complete_dollar_partial_name() {
+        let helper = make_helper_with_vars();
+        let matches = get_completions(&helper, "$he");
+        assert_eq!(matches, vec!["$head"]);
+    }
+
+    #[test]
+    fn complete_dollar_name_dot_lists_fields() {
+        let helper = make_helper_with_vars();
+        let matches = get_completions(&helper, "$head.");
+        assert!(matches.contains(&"$head.hash".to_string()));
+        assert!(matches.contains(&"$head.number".to_string()));
+        assert!(matches.contains(&"$head.nested".to_string()));
+    }
+
+    #[test]
+    fn complete_dollar_name_dot_partial_field() {
+        let helper = make_helper_with_vars();
+        let matches = get_completions(&helper, "$head.ha");
+        assert_eq!(matches, vec!["$head.hash"]);
+    }
+
+    #[test]
+    fn complete_nested_field() {
+        let helper = make_helper_with_vars();
+        let matches = get_completions(&helper, "$payload.executionPayload.");
+        assert!(matches.contains(&"$payload.executionPayload.blockHash".to_string()));
+        assert!(matches.contains(&"$payload.executionPayload.stateRoot".to_string()));
+    }
+
+    #[test]
+    fn complete_deeply_nested() {
+        let helper = make_helper_with_vars();
+        let matches = get_completions(&helper, "$head.nested.");
+        assert_eq!(matches, vec!["$head.nested.deep"]);
+    }
+
+    #[test]
+    fn complete_var_no_fields_on_string() {
+        let helper = make_helper_with_vars();
+        // $ts is a string, not an object — no field completions
+        let matches = get_completions(&helper, "$ts.");
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn complete_var_unknown_name() {
+        let helper = make_helper_with_vars();
+        let matches = get_completions(&helper, "$zzz");
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn complete_var_mid_command() {
+        let helper = make_helper_with_vars();
+        // Variable completion in the middle of a command line
+        let matches = get_completions(&helper, "engine.newPayloadV4 $pay");
+        assert_eq!(matches, vec!["$payload"]);
+    }
+
+    #[test]
+    fn complete_var_mid_command_field() {
+        let helper = make_helper_with_vars();
+        let matches = get_completions(&helper, "engine.newPayloadV4 $payload.execution");
+        assert_eq!(matches, vec!["$payload.executionPayload"]);
     }
 }

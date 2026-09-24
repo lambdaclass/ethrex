@@ -5,8 +5,9 @@ use ethereum_types::Address;
 use ethereum_types::Signature;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::fork_choice::apply_fork_choice;
+use ethrex_common::types::Block;
 use ethrex_common::types::batch::Batch;
-use ethrex_common::types::{Block, recover_address};
+use ethrex_crypto::{Crypto as _, NativeCrypto};
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::{Message as SecpMessage, SecretKey};
 use std::collections::BTreeMap;
@@ -226,7 +227,7 @@ pub(crate) fn broadcast_l2_message(
 pub(crate) async fn send_new_block(
     established: &mut Established,
 ) -> Result<(), PeerConnectionError> {
-    let latest_block_number = established.storage.get_latest_block_number().await?;
+    let latest_block_number = established.storage.get_latest_block_number()?;
     let latest_block_sent = established
         .l2_state
         .connection_state_mut()?
@@ -348,20 +349,22 @@ async fn should_process_new_block(
     let block_hash = msg.block.hash();
 
     let msg_signature = msg.signature;
-    let recovered_lead_sequencer =
-        tokio::task::spawn_blocking(move || recover_address(msg_signature, block_hash))
-            .await
-            .map_err(|_| {
-                PeerConnectionError::InternalError("Recover Address task failed".to_string())
-            })?
-            .map_err(|e| {
-                error!(
-                    peer=%established.node,
-                    error=%e,
-                    "Failed to recover lead sequencer",
-                );
-                PeerConnectionError::CryptographyError(e.to_string())
-            })?;
+    let recovered_lead_sequencer = tokio::task::spawn_blocking(move || {
+        NativeCrypto.recover_signer(
+            &msg_signature.to_fixed_bytes(),
+            &block_hash.to_fixed_bytes(),
+        )
+    })
+    .await
+    .map_err(|_| PeerConnectionError::InternalError("Recover Address task failed".to_string()))?
+    .map_err(|e| {
+        error!(
+            peer=%established.node,
+            error=%e,
+            "Failed to recover lead sequencer",
+        );
+        PeerConnectionError::CryptographyError(e.to_string())
+    })?;
 
     if !validate_signature(recovered_lead_sequencer) {
         return Ok(false);
@@ -392,14 +395,16 @@ async fn should_process_batch_sealed(
     }
     let hash = batch_hash(&msg.batch);
 
-    let recovered_lead_sequencer = recover_address(msg.signature, hash).map_err(|e| {
-        error!(
-            peer=%established.node,
-            error=%e,
-            "Failed to recover lead sequencer",
-        );
-        PeerConnectionError::CryptographyError(e.to_string())
-    })?;
+    let recovered_lead_sequencer = NativeCrypto
+        .recover_signer(&msg.signature.to_fixed_bytes(), &hash.to_fixed_bytes())
+        .map_err(|e| {
+            error!(
+                peer=%established.node,
+                error=%e,
+                "Failed to recover lead sequencer",
+            );
+            PeerConnectionError::CryptographyError(e.to_string())
+        })?;
 
     if !validate_signature(recovered_lead_sequencer) {
         return Ok(false);
@@ -452,14 +457,20 @@ pub async fn process_blocks_on_queue(
                 );
             })?;
 
-        apply_fork_choice(&established.storage, block_hash, block_hash, block_hash)
-            .await
-            .map_err(|e| {
-                PeerConnectionError::BlockchainError(ChainError::Custom(format!(
-                    "Error adding new block {} with hash {:?}, error: {e}",
-                    block_number, block_hash
-                )))
-            })?;
+        apply_fork_choice(
+            &established.storage,
+            block_hash,
+            block_hash,
+            block_hash,
+            None,
+        )
+        .await
+        .map_err(|e| {
+            PeerConnectionError::BlockchainError(ChainError::Custom(format!(
+                "Error adding new block {} with hash {:?}, error: {e}",
+                block_number, block_hash
+            )))
+        })?;
 
         l2_state
             .store_rollup
@@ -509,7 +520,7 @@ pub(crate) async fn send_sealed_batch(
         {
             return Ok(());
         }
-        let l1_fork = established.blockchain.current_fork().await?;
+        let l1_fork = established.blockchain.current_fork()?;
         let Some(batch) = l2_state
             .store_rollup
             .get_batch(next_batch_to_send, l1_fork)
@@ -586,10 +597,3 @@ pub async fn process_batches_on_queue(
 
     Ok(())
 }
-
-// These tests are disabled because they previously assumed
-// the connection used the old struct RLPxConnection, but
-// the new GenServer approach changes a lot of things,
-// this will be eventually addressed (#3563)
-#[cfg(test)]
-mod tests {}

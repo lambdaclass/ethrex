@@ -12,7 +12,7 @@ use crate::{
     utils::RpcErr,
 };
 use ethrex_common::types::{
-    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Receipt, calculate_base_fee_per_blob_gas,
+    Block, BlockBody, BlockHash, BlockHeader, Receipt, calculate_base_fee_per_blob_gas,
 };
 use ethrex_storage::Store;
 
@@ -45,6 +45,11 @@ pub struct GetRawBlockRequest {
 
 pub struct GetRawReceipts {
     pub block: BlockIdentifier,
+}
+
+/// `eth_getUncleCountByBlockHash` / `eth_getUncleCountByBlockNumber`.
+pub struct GetUncleCountRequest {
+    pub block: BlockIdentifierOrHash,
 }
 
 pub struct BlockNumberRequest;
@@ -100,19 +105,10 @@ impl RpcHandler for GetBlockByHashRequest {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         debug!("Requested block with hash: {:#x}", self.block);
-        let block_number = match storage.get_block_number(self.block).await? {
-            Some(number) => number,
-            _ => return Ok(Value::Null),
+        let Some(block) = storage.get_block_by_hash(self.block).await? else {
+            return Ok(Value::Null);
         };
-        let header = storage.get_block_header(block_number)?;
-        let body = storage.get_block_body(block_number).await?;
-        let (header, body) = match (header, body) {
-            (Some(header), Some(body)) => (header, body),
-            // Block not found
-            _ => return Ok(Value::Null),
-        };
-        let hash = header.hash();
-        let block = RpcBlock::build(header, body, hash, self.hydrated)?;
+        let block = RpcBlock::build(block.header, block.body, self.block, self.hydrated)?;
         serde_json::to_value(&block).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -150,6 +146,40 @@ impl RpcHandler for GetBlockTransactionCountRequest {
     }
 }
 
+impl RpcHandler for GetUncleCountRequest {
+    fn parse(params: &Option<Vec<Value>>) -> Result<GetUncleCountRequest, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 1 {
+            return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
+        };
+        Ok(GetUncleCountRequest {
+            block: BlockIdentifierOrHash::parse(params[0].clone(), 0)?,
+        })
+    }
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        debug!("Requested uncle count for block: {}", self.block);
+        // Post-merge every canonical block has an empty ommers list, so this is
+        // always `0x0` in practice. It is still derived from the stored body
+        // rather than hardcoded, so pre-merge history read from a synced archive
+        // answers truthfully. An unknown block yields `null`, matching the
+        // transaction-count getters and the other clients.
+        let block_number = match self.block.resolve_block_number(&context.storage).await? {
+            Some(block_number) => block_number,
+            _ => return Ok(Value::Null),
+        };
+        let block_body = match context.storage.get_block_body(block_number).await? {
+            Some(block_body) => block_body,
+            _ => return Ok(Value::Null),
+        };
+        let uncle_count = block_body.ommers.len();
+
+        serde_json::to_value(format!("{uncle_count:#x}"))
+            .map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
 impl RpcHandler for GetBlockReceiptsRequest {
     fn parse(params: &Option<Vec<Value>>) -> Result<GetBlockReceiptsRequest, RpcErr> {
         let params = params
@@ -177,7 +207,7 @@ impl RpcHandler for GetBlockReceiptsRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
-        let receipts = get_all_block_rpc_receipts(block_number, header, body, storage).await?;
+        let receipts = get_all_block_rpc_receipts(header, body, storage, None).await?;
 
         serde_json::to_value(&receipts).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -268,16 +298,19 @@ impl RpcHandler for GetRawReceipts {
             Some(block_number) => block_number,
             _ => return Ok(Value::Null),
         };
-        let header = storage.get_block_header(block_number)?;
-        let body = storage.get_block_body(block_number).await?;
-        let (header, body) = match (header, body) {
-            (Some(header), Some(body)) => (header, body),
-            _ => return Ok(Value::Null),
+        let header = match storage.get_block_header(block_number)? {
+            Some(header) => header,
+            None => return Ok(Value::Null),
         };
-        let receipts: Vec<String> = get_all_block_receipts(block_number, header, body, storage)
+        let receipts: Vec<String> = get_all_block_receipts(header, storage)
             .await?
             .iter()
-            .map(|receipt| format!("0x{}", hex::encode(receipt.encode_inner_with_bloom())))
+            .map(|receipt| {
+                format!(
+                    "0x{}",
+                    hex::encode(receipt.encode_inner_with_bloom(&ethrex_crypto::NativeCrypto))
+                )
+            })
             .collect();
         serde_json::to_value(receipts).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -290,11 +323,8 @@ impl RpcHandler for BlockNumberRequest {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Requested latest block number");
-        serde_json::to_value(format!(
-            "{:#x}",
-            context.storage.get_latest_block_number().await?
-        ))
-        .map_err(|error| RpcErr::Internal(error.to_string()))
+        serde_json::to_value(format!("{:#x}", context.storage.get_latest_block_number()?))
+            .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
@@ -305,7 +335,7 @@ impl RpcHandler for GetBlobBaseFee {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Requested blob gas price");
-        let block_number = context.storage.get_latest_block_number().await?;
+        let block_number = context.storage.get_latest_block_number()?;
         let header = match context.storage.get_block_header(block_number)? {
             Some(header) => header,
             _ => return Err(RpcErr::Internal("Could not get block header".to_owned())),
@@ -324,11 +354,18 @@ impl RpcHandler for GetBlobBaseFee {
     }
 }
 
+/// Fetches RPC receipts for a block, optionally stopping after `target_index`.
+///
+/// When `target_index` is `Some(n)`, only receipts 0..=n are fetched using a
+/// cursor pass — this is the fast path for `eth_getTransactionReceipt` which
+/// only needs one receipt but requires preceding cumulative gas values.
+///
+/// When `target_index` is `None`, all receipts are fetched (for `eth_getBlockReceipts`).
 pub async fn get_all_block_rpc_receipts(
-    block_number: BlockNumber,
     header: BlockHeader,
     body: BlockBody,
     storage: &Store,
+    target_index: Option<u64>,
 ) -> Result<Vec<RpcReceipt>, RpcErr> {
     let mut receipts = Vec::new();
     // Check if this is the genesis block
@@ -344,23 +381,44 @@ pub async fn get_all_block_rpc_receipts(
             .unwrap_or_default(),
     );
     let base_fee_per_gas = header.base_fee_per_gas;
+    let blob_base_fee_u64: u64 = blob_base_fee
+        .try_into()
+        .map_err(|_| RpcErr::Internal("blob_base_fee does not fit in u64".to_owned()))?;
     // Fetch receipt info from block
+    let block_hash = header.hash();
+    let block_timestamp = header.timestamp;
     let block_info = RpcReceiptBlockInfo::from_block_header(header);
-    // Fetch receipt for each tx in the block and add block and tx info
+    // Fetch receipts: only up to target_index+1 when set, otherwise all
+    let fetch_count = target_index
+        .map(|ti| (ti + 1) as usize)
+        .unwrap_or(body.transactions.len());
+    let all_receipts = storage
+        .get_receipts_for_block_from_index(&block_hash, 0, Some(fetch_count))
+        .await?;
+    // Return 500 on receipt count mismatch — this indicates data corruption
+    // (missing receipts for a block that exists).
+    if all_receipts.len() != fetch_count {
+        return Err(RpcErr::Internal(format!(
+            "Expected {} receipts, got {}",
+            fetch_count,
+            all_receipts.len()
+        )));
+    }
     let mut last_cumulative_gas_used = 0;
     let mut current_log_index = 0;
-    for (index, tx) in body.transactions.iter().enumerate() {
+    for (index, (tx, receipt)) in body
+        .transactions
+        .iter()
+        .zip(all_receipts.iter())
+        .enumerate()
+    {
         let index = index as u64;
-        let receipt = match storage.get_receipt(block_number, index).await? {
-            Some(receipt) => receipt,
-            _ => return Err(RpcErr::Internal("Could not get receipt".to_owned())),
-        };
         let gas_used = receipt.cumulative_gas_used - last_cumulative_gas_used;
         let tx_info = RpcReceiptTxInfo::from_transaction(
             tx.clone(),
             index,
             gas_used,
-            blob_base_fee,
+            blob_base_fee_u64,
             base_fee_per_gas,
         )?;
         let receipt = RpcReceipt::new(
@@ -368,6 +426,7 @@ pub async fn get_all_block_rpc_receipts(
             tx_info,
             block_info.clone(),
             current_log_index,
+            block_timestamp,
         );
         last_cumulative_gas_used += gas_used;
         current_log_index += receipt.logs.len() as u64;
@@ -377,23 +436,35 @@ pub async fn get_all_block_rpc_receipts(
 }
 
 pub async fn get_all_block_receipts(
-    block_number: BlockNumber,
     header: BlockHeader,
-    body: BlockBody,
     storage: &Store,
 ) -> Result<Vec<Receipt>, RpcErr> {
-    let mut receipts = Vec::new();
     // Check if this is the genesis block
     if header.parent_hash.is_zero() {
-        return Ok(receipts);
+        return Ok(Vec::new());
     }
-    for (index, _) in body.transactions.iter().enumerate() {
-        let index = index as u64;
-        let receipt = match storage.get_receipt(block_number, index).await? {
-            Some(receipt) => receipt,
-            _ => return Err(RpcErr::Internal("Could not get receipt".to_owned())),
-        };
-        receipts.push(receipt);
+    let block_hash = header.hash();
+    let receipts = storage.get_receipts_for_block(&block_hash).await?;
+    // `get_receipts_for_block` returns a bare Vec, so a block whose receipts are
+    // absent is indistinguishable from a block that genuinely has none. Returning
+    // the empty list would be a wrong answer rather than a reported failure, so
+    // check it against the block's own transaction count. This mirrors the
+    // mismatch check the by-index receipt path already performs.
+    let expected = match storage.get_block_body_by_hash(block_hash).await? {
+        Some(body) => body.transactions.len(),
+        // No body means the block's history is not retained; without it there is
+        // nothing to validate the receipt count against.
+        None => {
+            return Err(RpcErr::Internal(format!(
+                "Body unavailable for block {block_hash:#x}, cannot serve its receipts"
+            )));
+        }
+    };
+    if receipts.len() != expected {
+        return Err(RpcErr::Internal(format!(
+            "Expected {expected} receipts for block {block_hash:#x}, got {}",
+            receipts.len()
+        )));
     }
     Ok(receipts)
 }

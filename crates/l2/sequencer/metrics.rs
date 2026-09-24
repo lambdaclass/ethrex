@@ -10,26 +10,19 @@ use ethrex_metrics::{
 use ethrex_rpc::clients::eth::EthClient;
 use reqwest::Url;
 use serde::Serialize;
-use spawned_concurrency::tasks::{
-    CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
+use spawned_concurrency::{
+    actor,
+    error::ActorError,
+    protocol,
+    tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response, send_after},
 };
 use std::{collections::BTreeMap, time::Duration};
 use tracing::{debug, error};
 
-#[derive(Clone)]
-pub enum CallMessage {
-    Health,
-}
-
-#[derive(Clone)]
-pub enum InMessage {
-    Gather,
-}
-
-#[derive(Clone)]
-pub enum OutMessage {
-    Done,
-    Health(MetricsGathererHealth),
+#[protocol]
+pub trait MetricsGathererProtocol: Send + Sync {
+    fn gather(&self) -> Result<(), ActorError>;
+    fn health(&self) -> Response<MetricsGathererHealth>;
 }
 
 pub struct MetricsGatherer {
@@ -48,6 +41,7 @@ pub struct MetricsGathererHealth {
     pub check_interval: Duration,
 }
 
+#[actor(protocol = MetricsGathererProtocol)]
 impl MetricsGatherer {
     pub fn new(
         rollup_store: StoreRollup,
@@ -70,14 +64,50 @@ impl MetricsGatherer {
         cfg: &SequencerConfig,
         rollup_store: StoreRollup,
         l2_url: Url,
-    ) -> Result<GenServerHandle<MetricsGatherer>, MetricsGathererError> {
-        let mut metrics =
-            Self::new(rollup_store, &(cfg.l1_committer.clone()), &cfg.eth, l2_url)?.start();
-        metrics
-            .cast(InMessage::Gather)
+    ) -> Result<ActorRef<MetricsGatherer>, MetricsGathererError> {
+        let metrics = Self::new(rollup_store, &cfg.l1_committer, &cfg.eth, l2_url)?;
+        Ok(metrics.start())
+    }
+
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        let _ = ctx
+            .send(metrics_gatherer_protocol::Gather)
+            .inspect_err(|e| error!("Failed to send initial Gather: {e}"));
+    }
+
+    #[send_handler]
+    async fn handle_gather(
+        &mut self,
+        _msg: metrics_gatherer_protocol::Gather,
+        ctx: &Context<Self>,
+    ) {
+        let _ = self
+            .gather_metrics()
             .await
-            .map_err(MetricsGathererError::InternalError)?;
-        Ok(metrics)
+            .inspect_err(|err| error!("Metrics Gatherer Error: {}", err));
+        send_after(
+            self.check_interval,
+            ctx.clone(),
+            metrics_gatherer_protocol::Gather,
+        );
+    }
+
+    #[request_handler]
+    async fn handle_health(
+        &mut self,
+        _msg: metrics_gatherer_protocol::Health,
+        _ctx: &Context<Self>,
+    ) -> MetricsGathererHealth {
+        let l1_rpc_healthcheck = self.l1_eth_client.test_urls().await;
+        let l2_rpc_healthcheck = self.l2_eth_client.test_urls().await;
+
+        MetricsGathererHealth {
+            l1_rpc_healthcheck,
+            l2_rpc_healthcheck,
+            on_chain_proposer_address: self.on_chain_proposer_address,
+            check_interval: self.check_interval,
+        }
     }
 
     async fn gather_metrics(&self) -> Result<(), MetricsGathererError> {
@@ -137,49 +167,5 @@ impl MetricsGatherer {
 
         debug!("L2 Metrics Gathered");
         Ok(())
-    }
-
-    async fn health(&self) -> CallResponse<Self> {
-        let l1_rpc_healthcheck = self.l1_eth_client.test_urls().await;
-        let l2_rpc_healthcheck = self.l2_eth_client.test_urls().await;
-
-        CallResponse::Reply(OutMessage::Health(MetricsGathererHealth {
-            l1_rpc_healthcheck,
-            l2_rpc_healthcheck,
-            on_chain_proposer_address: self.on_chain_proposer_address,
-            check_interval: self.check_interval,
-        }))
-    }
-}
-
-impl GenServer for MetricsGatherer {
-    type CallMsg = CallMessage;
-    type CastMsg = InMessage;
-    type OutMsg = OutMessage;
-
-    type Error = MetricsGathererError;
-
-    async fn handle_call(
-        &mut self,
-        message: Self::CallMsg,
-        _handle: &GenServerHandle<Self>,
-    ) -> CallResponse<Self> {
-        match message {
-            CallMessage::Health => self.health().await,
-        }
-    }
-
-    async fn handle_cast(
-        &mut self,
-        _message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        // Right now we only have the Gather message, so we ignore the message
-        let _ = self
-            .gather_metrics()
-            .await
-            .inspect_err(|err| error!("Metrics Gatherer Error: {}", err));
-        send_after(self.check_interval, handle.clone(), Self::CastMsg::Gather);
-        CastResponse::NoReply
     }
 }

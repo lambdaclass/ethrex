@@ -1,226 +1,157 @@
 # Forks Team Roadmap - ethrex
 
-## Amsterdam / Glamsterdam → Mainnet June 2026
-
-## Glossary
+Next fork: **Glamsterdam** (CL Gloas, EL Amsterdam). Mainnet date not yet scheduled.
 
 | Acronym | Meaning |
 |---------|---------|
-| **SFI** | Scheduled for Inclusion - Will be in the fork |
-| **CFI** | Considered for Inclusion - Likely, under discussion |
-| **DFI** | Declined for Inclusion - Won't be included |
-| **PFI** | Proposed for Inclusion - Proposed |
+| **SFI** | Scheduled for Inclusion - will be in the fork |
+| **CFI** | Considered for Inclusion - likely, under discussion |
+| **PFI** | Proposed for Inclusion - proposed |
+| **DFI** | Declined for Inclusion - won't be included |
 | **BAL** | Block-Level Access Lists (EIP-7928) |
 
 ---
 
-## Current Implementation Status
+## Current Devnet
 
-### Core Devnet EIPs (Priority)
+**glamsterdam-devnet-8**
 
-| EIP | Title | Code Status | Tests | devnet-bal | SFI/CFI | Owner |
-|-----|-------|-------------|-------|------------|---------|-------|
-| **7928** | Block-Level Access Lists | ✅ Merged ([#6020], [#6024], fix [#6149]) · Types, engine_newPayloadV5, execution tracking, hash validation, recorder fixes | Amsterdam state tests: 250/250 | ✅ | SFI | Edgar |
-| **7708** | ETH Transfers Emit Logs | ✅ Merged ([#6074], fix [#6104], fix [#6149]) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1879) | Amsterdam state tests: 250/250 | ✅ | CFI | Edgar |
-| **7778** | Block Gas Accounting without Refunds | ✅ Merged ([#5996], fix [#6128]) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1940) | 7 unit tests in `eip7778_tests.rs` | ✅ | CFI | Edgar |
-| **7843** | SLOTNUM Opcode | ✅ Merged ([#5973]) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/2028) | ~7 tests (skipped) | ✅ | CFI | Esteve |
-| **8024** | DUPN/SWAPN/EXCHANGE | ✅ Merged ([#5970], fix [#6118]) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1942) | Blockchain tests passing ✅ | ✅ | CFI | Esteve |
+- Spec baseline: [`devnets/glamsterdam/8`](https://github.com/ethereum/execution-specs/tree/devnets/glamsterdam/8)
+- Fixtures: [`tests-glamsterdam-devnet@v8.1.1`](https://github.com/ethereum/execution-specs/releases/tag/tests-glamsterdam-devnet@v8.1.1)
+- EELS commit: `32f597f7e56e3843198a83c7cf437a0b49aa6c0e` (the v8.1.1 tag, also the tip of `devnets/glamsterdam/8`)
+- Status: 🟢 aligned — blockchain, state and engine ef-tests green on the v8.1.1 bundle
+- Tracking: [#6583]
 
-### Gas Repricing EIPs (New - not on devnet-bal yet)
+**Bumping to a new bundle:** edit `tooling/ef_tests/.fixtures_url_amsterdam` and
+`.github/config/hive/amsterdam.yaml` (`fixtures` + `eels_commit`) — both, always, since
+grading one release's client against another's bundle fails every fixture the releases
+disagree on — then re-run the three ef-test suites and hive `eels/consume-engine`
+Amsterdam. Upstream expects at least two follow-up releases on this devnet; v8.1.0 and
+v8.1.1 have shipped, carrying coverage rather than new semantics.
 
-| EIP | Title | Code Status | Nethermind | Reth | SFI/CFI |
-|-----|-------|-------------|------------|------|---------|
-| **2780** | Reduce Intrinsic Transaction Gas | 🔴 Not implemented (21000 → 4500) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1940) | 🔴 | 🔴 | CFI |
-| **7904** | General Repricing | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1879) | ⚠️ PR #9619 (Draft) | 🔴 | CFI |
-| **7954** | Increase Max Contract Size | 🔴 Not implemented (24KiB → 32KiB) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/2028) | ⚠️ PR #8760 (Draft) | 🔴 | CFI |
-| **7976** | Increase Calldata Floor Cost | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1942) | 🔴 | 🔴 | CFI |
-| **7981** | Increase Access List Cost | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1943) | 🔴 | 🔴 | CFI |
-| **8037** | State Creation Gas Cost Increase | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/2040) | 🔴 | 🔴 | CFI |
-| **8038** | State-Access Gas Cost Update | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1941) | 🔴 | 🔴 | CFI |
+v8.1.1 was announced as coverage-only, which holds for the numbers: the amsterdam fork
+diff is a `Uint` -> `ExecutionGas` type-wrapper refactor with every value unchanged. One
+behaviour did change — `calculate_excess_blob_gas` now reads the blob fields from a
+`PreviousHeader` as well as a `Header` ([specs#3352]), so accumulated excess blob gas
+survives a fork transition instead of resetting to zero at the fork block. ethrex already
+matched, since `calc_excess_blob_gas` reads the parent unconditionally.
 
-> **Priority note:** All core devnet EIPs are merged, EF state tests pass, and hive tests are updated (PR [#6009] merged). bal-devnet-2 is validated (PR [#6201] merged). **Up next for devnet-3:** EIP-8037 ([#6213]) and EIP-7954 ([#6214]) now have issues filed. Gas repricing EIPs are **low priority** — no other client has started them. EIP-7904 and EIP-7954 are **medium priority** (Nethermind has draft PRs). Monitor CFI decisions at ACDE calls.
+## Next up
 
-### Other Amsterdam EIPs
-
-| EIP | Title | Code Status | Nethermind | Reth | SFI/CFI |
-|-----|-------|-------------|------------|------|---------|
-| **7997** | Deterministic Factory Predeploy | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1988) | 🔴 | 🔴 | CFI |
-| **8070** | Sparse Blobpool | 🔴 Not implemented (ROADMAP.md: Priority —) | 🔴 | 🔴 | CFI |
-| **7610** | Revert Creation on Non-empty Storage | 🔴 Not implemented | 🔴 | 🔴 | PFI |
-| **7872** | Max Blob Flag for Local Builders | ✅ Merged ([#5769]) | 🔴 | 🔴 | PFI |
-
----
-
-## February 10 Status Update
-
-### All Core Devnet EIPs Merged ✅
-- [x] **EIP-7928** (Block-Level Access Lists) - [#6020](https://github.com/lambdaclass/ethrex/pull/6020), [#6024](https://github.com/lambdaclass/ethrex/pull/6024), fix [#6149](https://github.com/lambdaclass/ethrex/pull/6149) → Edgar
-  - Types + `engine_newPayloadV5` (Part 1)
-  - Execution tracking + hash validation (Part 2, merged Feb 9)
-  - BAL recorder fixes: SYSTEM_ADDRESS handling, selfdestruct cleanup, storage write-to-read reversion, gas-check gating for CALL/CREATE opcodes ([#6149](https://github.com/lambdaclass/ethrex/pull/6149))
-- [x] **EIP-7708** (ETH Transfer Logs) - [#6074](https://github.com/lambdaclass/ethrex/pull/6074), fix [#6104](https://github.com/lambdaclass/ethrex/pull/6104), fix [#6149](https://github.com/lambdaclass/ethrex/pull/6149) → Edgar
-  - Fix: selfdestruct-to-self and CALLCODE self-transfer log emission ([#6149](https://github.com/lambdaclass/ethrex/pull/6149))
-- [x] **EIP-7778** (Gas Accounting) - [#5996](https://github.com/lambdaclass/ethrex/pull/5996), fix [#6128](https://github.com/lambdaclass/ethrex/pull/6128) → Edgar
-- [x] **EIP-8024** (DUPN/SWAPN/EXCHANGE) - [#5970](https://github.com/lambdaclass/ethrex/pull/5970), fix [#6118](https://github.com/lambdaclass/ethrex/pull/6118) → Esteve
-- [x] **EIP-7843** (SLOTNUM) - [#5973](https://github.com/lambdaclass/ethrex/pull/5973) → Esteve
-- [x] **EIP-7872** (Max Blob Flag) - [#5769](https://github.com/lambdaclass/ethrex/pull/5769) → Edgar
-
-### EF Tests ✅
-- [x] **Amsterdam state tests: 250/250 passing**
-- [x] **Prague, Cancun, Shanghai, Paris state tests: 51,728/51,728 passing**
-- [x] Removed 150+ line Amsterdam skip list from `tooling/ef_tests/blockchain/tests/all.rs` ([#6149](https://github.com/lambdaclass/ethrex/pull/6149))
-- [x] Added `run-ef-tests.py` script for running EF state tests across forks ([#6149](https://github.com/lambdaclass/ethrex/pull/6149))
-- [x] Added Amsterdam to default forks in state test runner ([#6149](https://github.com/lambdaclass/ethrex/pull/6149))
-
-### Remaining
-- [x] Update hive tests for Amsterdam (PR [#6009] merged ✅)
-- [x] bal-devnet-2 fixes (PR [#6201] merged ✅)
-- [ ] Monitor EEST test changes / EIP spec changes
-- [ ] Start gas repricing EIPs — EIP-8037 ([#6213]) and EIP-7954 ([#6214]) filed for devnet-3
-- [ ] BAL optimizations: parallel execution ([#6209]), parallel state root ([#6210]), batched reads ([#6211])
-- [ ] RPC: eth_simulateV1 ([#6212])
+| Item | Why it matters |
+|------|----------------|
+| **EIP-8070 (eth/72)** | Mandatory for all ELs on devnet-8. In review at [#6776]. Ships no fixtures and hive covers it execute-only ([hive#1365]), so the bundle gives it zero coverage either way — needs an `execute` sim wired up. |
+| **`debug_getRawBlockAccessList`** | Protocol-side requirement per [execution-apis#851](https://github.com/ethereum/execution-apis/pull/851) (merged), along with `-32001`/`4444` for the BAL getters. Implemented by [#7069]. |
+| **EIP-8038 spec text** | The v8.0.0 access-list repricing landed in the tests ahead of its EIPs PR. Confirm the EIP matches once that merges. |
+| **`eth_simulateV1`** | Still unimplemented. Tracked at [#6212]. |
+| **EIP-8189 (snap/2)** | BAL-based state healing, newly listed in [EIP-7773]. Not evaluated. |
+| **EIP-7904** | Informational compute-gas analysis; only a Nethermind draft ([#9619]) exists. Revisit if it reaches SFI. |
 
 ---
 
-## February 16 Status Update
+## Implementation Status
 
-### bal-devnet-2 ✅
-PR [#6201] merged — ethrex proposes and validates blocks post-Gloas in bal-devnet-2 kurtosis network:
-- `engine_getPayloadV6` + `engine_newPayloadV5` capability
-- Fix BAL hash validation (hash raw RLP bytes, not re-encoded)
-- Fix EIP-7778 receipt gas tracking in block building
-- Distinguish gas allowance exceeded vs block gas overflow
-- Fix `engine_getClientVersionV1` commit hash
-- bal-devnet-2 kurtosis fixture + ethereum-package update
+### Amsterdam EL — devnet-8 scope (16 EIPs per [EIP-7773])
 
-### Hive Tests ✅
-PR [#6009] merged — Amsterdam hive test support.
+15 implemented, EIP-8070 in review. The gas EIPs repriced in v8.0.0:
 
-### Next Priorities Filed
-- **devnet-3 EIPs:** EIP-8037 State Creation Gas Cost ([#6213]), EIP-7954 Max Contract Size ([#6214])
-- **BAL optimizations:** Parallel block execution ([#6209]), parallel state root calculation ([#6210]), batched state reads ([#6211])
-- **RPC:** eth_simulateV1 ([#6212])
+| EIP | Title | devnet-8 pricing | Owner |
+|-----|-------|------------------|-------|
+| **2780** | Resource-based Intrinsic Transaction Gas | transfer log cost folded into a flat `TX_VALUE_COST` of 6000; a creation carrying value pays no value charge | Edgar |
+| **8038** | State-Access Gas Cost Update | access-list entries cost the cold access minus `WARM_ACCESS` (2900), so prepaying is gas neutral | Edgar |
+| **8037** | State Creation Gas Cost (2D gas) | flat two-dimensional inclusion gate; only the execution dimension is capped at `TX_MAX_GAS_LIMIT` | Edgar |
+| **7928** | Block-Level Access Lists | unchanged in v8.0.0 | Edgar |
+
+Also implemented and passing: **7708** ETH transfers emit logs (Edgar), **7778** block gas
+accounting without refunds (Edgar), **7843** SLOTNUM (Esteve), **8024**
+DUPN/SWAPN/EXCHANGE (Esteve), **7976** calldata floor cost, **7981** access list cost,
+**7954** max contract size (24→32 KiB), **7610** revert creation on non-empty storage,
+**8246** remove SELFDESTRUCT burn, **8282** builder execution requests, **7997**
+deterministic factory (genesis predeploy, no client code).
+
+Outside the devnet-8 set: **8159** eth/71 BAL exchange, **7975** eth/70 partial receipt
+lists, **7872** max blob flag (PFI), **8025** optional execution proofs ([#6361], #6516,
+#6549, #6560 — Hegotá PFI per [EIP-8081], may end up Hegotá-only).
+
+### Not implemented — EL candidates
+
+| EIP | Title | Stage |
+|-----|-------|-------|
+| **7904** | Compute Gas Cost Analysis | CFI (Informational) |
+| **7979** | Call/Return Opcodes | PFI |
+| **8163** | Reserve Opcode | PFI |
+| **8189** | snap/2 BAL-Based State Healing | listed in [EIP-7773], not evaluated |
+
+### CL-side
+
+No EL work; tracked so ACDE outcomes are visible. **7732** ePBS (SFI, CL headliner),
+**7688** forward-compatible consensus structures, **8045** exclude slashed validators from
+proposing, **8061** exit/consolidation churn, **8080** exits via the consolidation queue,
+**8136** cell-level deltas for data column broadcast.
+
+Glamsterdam declined 47 EIPs per [EIP-7773], including EIP-7692 (EOF) and EIP-7937
+(64-bit EVM). EIP-7805 (FOCIL) was re-targeted at Hegotá.
+
+### Would reopen if re-proposed
+
+- **Deferred-on-success state-gas charging** for `CREATE`/`CREATE2`/`CALL*` — misilva73
+  audit point #3 in [specs#2804](https://github.com/ethereum/execution-specs/issues/2804),
+  declined for the BAL devnets.
+- **Debug receipt fields** — extending `debug_getBlockReceipts` with `regularGasUsed` /
+  `stateGasCharged` / `stateGasRefunded` / `cumulative*`
+  ([PM #2033](https://github.com/ethereum/pm/issues/2033#issuecomment-4397074196)). A
+  cross-client debug aid, not fork scope.
 
 ---
 
 ## Fork Infrastructure
 
-The codebase already has Amsterdam support in the fork system:
-
-```rust
-// crates/common/types/genesis.rs
-pub enum Fork {
-    // ... 25 earlier forks ...
-    Amsterdam  // Fork 26
-}
-
-// Timestamp activation
-pub amsterdam_time: Option<u64>
-pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool
-```
-
-**Network configs with Amsterdam timestamps:**
-- `cmd/ethrex/networks/holesky/genesis.json`
-- `cmd/ethrex/networks/sepolia/genesis.json`
-- `cmd/ethrex/networks/hoodi/genesis.json`
+The fork enum lives in `crates/common/types/genesis.rs`, ending at `Amsterdam`;
+activation timestamps are `ChainConfig` fields, with `bpo1_time`..`bpo5_time` already
+defined for the BPOs and Hegotá. Amsterdam is scheduled on Sepolia (`amsterdamTime`
+1791294816, 2026-10-06 13:53:36 UTC, epoch 353024; ethereum/pm#2205, EIP-7773) in
+`cmd/ethrex/networks/sepolia/genesis.json`. Hoodi and mainnet dates are still TBD upstream, so
+their presets carry no `amsterdamTime` yet.
 
 ---
 
-## Ongoing: EIP Evaluation
+## Next Fork: Hegotá (H2 2026)
 
-Read and evaluate new EIPs proposed for Glamsterdam:
+CL = **Heka**, EL = **Bogotá**; primary source [EIP-8081].
 
-- [**EL PFI'd EIPs (Ansgar)**](https://notes.ethereum.org/@ansgar/glamsterdam-el-pfi-eips) - Live progress
-
-**Key areas to watch:**
-- Gas repricing changes (affects economics significantly)
-- Any new opcodes beyond current set
-- State growth mitigations
-
----
-
-## Next Fork: Hegota (H2 2026)
-
-Post-Glamsterdam fork, execution layer = **Bogota**
-
-| Topic | Details |
-|-------|---------|
-| **FOCIL (EIP-7805)** | Inclusion lists for censorship resistance |
-| **Deferred EIPs** | Whatever doesn't make Glamsterdam |
-| **BPO sequence** | `bpo1_time` through `bpo5_time` already defined in ChainConfig |
-
-> Headliner EIP to be decided February 2026
+- **SFI:** **7805** FOCIL — headliner, promoted after being declined from Glamsterdam.
+- **CFI:** **8141** Frame Transaction (account abstraction) — lost the headliner debate,
+  retained as a non-headliner.
+- **PFI:** **4758** deactivate `SELFDESTRUCT`, **7709** read `BLOCKHASH` from storage,
+  **7716** anti-correlation attestation penalties, **8025** optional execution proofs,
+  **8188** state tiering by write age, **8205** withdrawal credentials preregistration,
+  **8253** bump nonce of zero-nonce storage accounts.
 
 ---
 
-## BAL Optimizations (Non-EIP)
+## Meetings
 
-| Issue | Title | Status |
-|-------|-------|--------|
-| [#6209] | Parallel block execution | Not started |
-| [#6210] | Parallel state root calculation | Not started |
-| [#6211] | Batched state reads | Not started |
-| [#6212] | eth_simulateV1 RPC | Not started |
+- **ACDE** — Thursdays. Attend live, or review the recording and transcript afterwards for
+  CFI/SFI status changes.
+- **ACDT** (testing) — Mondays, followed by Edgar.
 
----
-
-## Technical Debt / Action Items
-
-| Item | Location | Priority | Status |
-|------|----------|----------|--------|
-| Update `docs/eip.md` supported status | `docs/eip.md` | High | ✅ Done |
-| Complete BAL execution integration | PR [#6024](https://github.com/lambdaclass/ethrex/pull/6024) | High | ✅ Merged |
-| BAL recorder + EIP-7708 fixes | PR [#6149](https://github.com/lambdaclass/ethrex/pull/6149) | High | ✅ Done |
-| Enable Amsterdam EIP tests | `tooling/ef_tests/blockchain/tests/all.rs` | Medium | ✅ Done (skip list removed) |
-| Update hive tests for Amsterdam | PR [#6009] | Medium | ✅ Done (merged) |
-| bal-devnet-2 fixes | PR [#6201] | High | ✅ Done (merged) |
-| EIP-8037 State Creation Gas Cost (devnet-3) | [#6213] | High | Not started |
-| EIP-7954 Max Contract Size (devnet-3) | [#6214] | Medium | Not started |
-| BAL optimizations (parallel exec, state root, batched reads) | [#6209], [#6210], [#6211] | Medium | Not started |
-| eth_simulateV1 RPC | [#6212] | Medium | Not started |
-| Gas repricing EIPs | Various | Low | Not started (no other client has either) |
-
----
+Agendas and notes for both: [ethereum/pm](https://github.com/ethereum/pm).
 
 ## Links
 
-- [EIP-7773 Meta Glamsterdam](https://eips.ethereum.org/EIPS/eip-7773)
-- [BAL Info](https://blockaccesslist.xyz)
-- [ethrex docs/eip.md](../eip.md) - EIP tracking
-- [ethrex ROADMAP.md](../../ROADMAP.md) - General roadmap
+- [EIP-7773 Meta Glamsterdam][EIP-7773] · [EIP-8081 Meta Hegotá][EIP-8081]
+- [Upstream tracker — execution-specs#2804](https://github.com/ethereum/execution-specs/issues/2804)
+- [Reth Amsterdam tracking issue](https://github.com/paradigmxyz/reth/issues/18783)
+- [ethrex docs/eip.md](../eip.md) — EIP tracking
+- [ethrex ROADMAP.md](../../ROADMAP.md) — general roadmap
 
-### Other Client References
-- [Nethermind PR #9619](https://github.com/NethermindEth/nethermind/pull/9619) - EIP-7904 General Repricing (Draft)
-- [Nethermind PR #8760](https://github.com/NethermindEth/nethermind/pull/8760) - EIP-7954 Contract Size (Draft)
-- [Reth Issue #18783](https://github.com/paradigmxyz/reth/issues/18783) - Amsterdam Hardfork Tracking
-
----
-
-## ACDE Follow-up
-
-Meetings on **Thursdays**. Track agendas and notes at [ethereum/pm](https://github.com/ethereum/pm). Options:
-
-1. **Attend live** - Direct participation
-2. **Post-call review** - YouTube + transcript with Claude:
-   - Timestamps for specific topics
-   - Summary of relevant EIP discussions
-   - Track CFI/SFI status changes
-
-[#5769]: https://github.com/lambdaclass/ethrex/pull/5769
-[#5970]: https://github.com/lambdaclass/ethrex/pull/5970
-[#5973]: https://github.com/lambdaclass/ethrex/pull/5973
-[#5996]: https://github.com/lambdaclass/ethrex/pull/5996
-[#6020]: https://github.com/lambdaclass/ethrex/pull/6020
-[#6024]: https://github.com/lambdaclass/ethrex/pull/6024
-[#6074]: https://github.com/lambdaclass/ethrex/pull/6074
-[#6104]: https://github.com/lambdaclass/ethrex/pull/6104
-[#6118]: https://github.com/lambdaclass/ethrex/pull/6118
-[#6128]: https://github.com/lambdaclass/ethrex/pull/6128
-[#6149]: https://github.com/lambdaclass/ethrex/pull/6149
-[#6201]: https://github.com/lambdaclass/ethrex/pull/6201
-[#6209]: https://github.com/lambdaclass/ethrex/issues/6209
-[#6210]: https://github.com/lambdaclass/ethrex/issues/6210
-[#6211]: https://github.com/lambdaclass/ethrex/issues/6211
+[#9619]: https://github.com/NethermindEth/nethermind/pull/9619
+[hive#1365]: https://github.com/ethereum/hive/pull/1365
+[specs#3352]: https://github.com/ethereum/execution-specs/pull/3352
 [#6212]: https://github.com/lambdaclass/ethrex/issues/6212
-[#6213]: https://github.com/lambdaclass/ethrex/issues/6213
-[#6214]: https://github.com/lambdaclass/ethrex/issues/6214
+[#6361]: https://github.com/lambdaclass/ethrex/pull/6361
+[#6583]: https://github.com/lambdaclass/ethrex/issues/6583
+[#6776]: https://github.com/lambdaclass/ethrex/pull/6776
+[#7069]: https://github.com/lambdaclass/ethrex/pull/7069
+[EIP-7773]: https://eips.ethereum.org/EIPS/eip-7773
+[EIP-8081]: https://eips.ethereum.org/EIPS/eip-8081

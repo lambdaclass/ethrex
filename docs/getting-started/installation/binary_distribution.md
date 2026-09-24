@@ -18,10 +18,10 @@ curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-li
 
 #### Linux x86_64 with GPU support (for L2 prover)
 
-If you want to run an L2 prover with GPU acceleration, download the GPU-enabled binary:
+If you want to run an L2 prover with GPU acceleration, download the GPU-enabled L2 binary:
 
 ```sh
-curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux-x86_64-gpu -o ethrex
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-l2-linux-x86_64-gpu -o ethrex
 ```
 
 ### Linux ARM (aarch64)
@@ -32,10 +32,10 @@ curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-li
 
 #### Linux ARM (aarch64) with GPU support (for L2 prover)
 
-If you want to run an L2 prover with GPU acceleration, download the GPU-enabled binary:
+If you want to run an L2 prover with GPU acceleration, download the GPU-enabled L2 binary:
 
 ```sh
-curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-linux-aarch64-gpu -o ethrex
+curl -L https://github.com/lambdaclass/ethrex/releases/latest/download/ethrex-l2-linux-aarch64-gpu -o ethrex
 ```
 
 ### macOS (Apple Silicon, aarch64)

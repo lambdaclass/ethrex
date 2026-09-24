@@ -8,9 +8,9 @@ use crate::constants::{
     MAX_BLOB_COUNT_ELECTRA, TARGET_BLOB_GAS_PER_BLOCK, TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
 };
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 /// [EIP-1153]: https://eips.ethereum.org/EIPS/eip-1153#reference-implementation
-pub type TransientStorage = HashMap<(Address, U256), U256>;
+pub type TransientStorage = FxHashMap<(Address, U256), U256>;
 
 #[derive(Debug, Default, Clone)]
 /// Environmental information that the execution agent must provide.
@@ -20,10 +20,10 @@ pub struct Environment {
     /// Gas limit of the Transaction
     pub gas_limit: u64,
     pub config: EVMConfig,
-    pub block_number: U256,
-    /// Coinbase is the block's beneficiary - the address that receives the block rewards (priority fees).
+    pub block_number: u64,
+    /// Coinbase is the block's beneficiary - the address that receives the block rewards and fees.
     pub coinbase: Address,
-    pub timestamp: U256,
+    pub timestamp: u64,
     pub prev_randao: Option<H256>,
     pub difficulty: U256,
     pub slot_number: U256,
@@ -31,8 +31,8 @@ pub struct Environment {
     pub base_fee_per_gas: U256,
     pub base_blob_fee_per_gas: U256,
     pub gas_price: U256, // Effective gas price
-    pub block_excess_blob_gas: Option<U256>,
-    pub block_blob_gas_used: Option<U256>,
+    pub block_excess_blob_gas: Option<u64>,
+    pub block_blob_gas_used: Option<u64>,
     pub tx_blob_hashes: Vec<H256>,
     pub tx_max_priority_fee_per_gas: Option<U256>,
     pub tx_max_fee_per_gas: Option<U256>,
@@ -44,6 +44,38 @@ pub struct Environment {
     /// When true, skip balance deduction in `deduct_caller`. Used by the prewarmer
     /// to avoid early reverts on insufficient balance so that warming touches more storage.
     pub disable_balance_check: bool,
+    /// When true, skip the sender nonce-mismatch validation. Used by the simulation
+    /// RPCs (eth_call, eth_estimateGas, eth_createAccessList): call objects may omit
+    /// the nonce, and no client enforces it there. The account nonce still increments
+    /// during execution. `debug_traceCall` relies on it too (geth's
+    /// `ToMessage(_, skipNonceCheck=true)`): the synthetic call may run on top of a
+    /// mid-block state (`txIndex`) whose nonce differs from the value the caller
+    /// supplied, so enforcing the check would spuriously reject the trace.
+    pub disable_nonce_check: bool,
+    /// When true, skip the gas limits that gate a transaction's *admission* rather than
+    /// its execution: the block-level gas allowance and the EIP-7825 per-transaction cap.
+    /// Used by every simulation RPC (eth_call, eth_estimateGas, eth_createAccessList,
+    /// debug_traceCall), whose callers routinely pass a `gas` above either bound — tools
+    /// commonly pass the block gas limit — and still expect an answer, since nothing is
+    /// being submitted.
+    /// This exists so `block_gas_limit` can keep the block's real value: that field is
+    /// observable through the GASLIMIT opcode and feeds the EIP-8037 cost-per-state-byte
+    /// formula, so raising it to bypass the allowance corrupts both.
+    pub disable_gas_allowance_check: bool,
+    /// When true, skip the EIP-3607 validation that rejects a sender carrying code.
+    /// Used by every simulation RPC (eth_call, eth_estimateGas, eth_createAccessList,
+    /// debug_traceCall). EIP-3607 exists because a contract has no private key, so no
+    /// valid signature should exist for its address; a simulated call carries no
+    /// signature at all and its `from` is just an assertion by the caller, so the rule
+    /// has nothing to protect there. Enforcing it breaks the common practice of
+    /// simulating a call whose sender is a contract, such as a smart contract wallet
+    /// previewing its own transaction. Transaction admission keeps enforcing it: the
+    /// mempool rejects such a sender outright, and block execution never sets this flag.
+    pub disable_sender_eoa_check: bool,
+    /// When true, the tx is a pre-execution system contract call (EIP-2935, EIP-4788,
+    /// EIP-7002, EIP-7251 etc.). Skips the block-level gas-allowance check since system
+    /// calls are allowed to exceed `block_gas_limit` (their 30M cap is a separate rule).
+    pub is_system_call: bool,
 }
 
 /// This struct holds special configuration variables specific to the

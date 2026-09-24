@@ -67,7 +67,7 @@ For example, if batches 5, 6, 7 are fully proven but batch 8 is missing a proof,
 
 On **any** multi-batch error (gas limit exceeded, calldata too large, invalid proof, etc.), the proof sender falls back to sending each batch individually. Since on-chain verification is sequential (`batchNumber == lastVerifiedBatch + 1`), the fallback stops at the first failing batch — remaining batches are retried on the next tick.
 
-During single-batch fallback, if the error indicates an invalid proof (e.g. "Invalid SP1 proof"), that proof is deleted from the store so a prover can re-prove it.
+During single-batch fallback, if the revert indicates an invalid proof, that proof is deleted from the store so a prover can re-prove it.
 
 ## Configuration reference
 

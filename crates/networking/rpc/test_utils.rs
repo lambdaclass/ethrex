@@ -7,8 +7,15 @@
 
 use crate::{
     eth::gas_tip_estimator::GasTipEstimator,
-    rpc::{ClientVersion, NodeData, RpcApiContext, start_api, start_block_executor},
+    rpc::{
+        ClientVersion, NodeData, RpcApiContext, handle_authrpc_request, handle_http_request,
+        start_api, start_block_executor,
+    },
+    utils::RpcNamespace,
 };
+use axum::extract::State;
+use axum_extra::TypedHeader;
+use axum_extra::headers::{Authorization, authorization::Bearer};
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{
@@ -22,20 +29,23 @@ use ethrex_common::{
 use ethrex_p2p::{
     network::P2PContext,
     peer_handler::PeerHandler,
-    peer_table::{PeerTable, TARGET_PEERS},
+    peer_table::{PeerTable, PeerTableServer, TARGET_PEERS},
     rlpx::initiator::RLPxInitiator,
-    sync::SyncMode,
+    sync::{BackfillConfig, HistoryChain, SyncMode},
     sync_manager::SyncManager,
-    types::{Node, NodeRecord},
+    types::{LocalNode, NetworkConfig, Node, NodeRecord, SharedLocalNode},
 };
 use ethrex_storage::{EngineType, Store};
 use hex_literal::hex;
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use secp256k1::SecretKey;
-use spawned_concurrency::tasks::{GenServer, GenServerHandle};
-use std::{net::SocketAddr, str::FromStr, sync::Arc};
+use serde_json::Value;
+use spawned_concurrency::tasks::ActorRef;
+use std::sync::{Arc, RwLock};
+use std::time::{SystemTime, UNIX_EPOCH};
+use std::{collections::HashSet, net::SocketAddr, str::FromStr};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::info;
 // Base price for each test transaction.
 pub const BASE_PRICE_IN_WEI: u64 = 10_u64.pow(9);
 pub const TEST_GENESIS: &str = include_str!("../../../fixtures/genesis/l1.json");
@@ -212,6 +222,12 @@ pub fn example_local_node_record() -> NodeRecord {
     NodeRecord::from_node(&node, 1, &signer).unwrap()
 }
 
+pub fn example_shared_local_node() -> SharedLocalNode {
+    let node = example_p2p_node();
+    let record = example_local_node_record();
+    Arc::new(RwLock::new(LocalNode { node, record }))
+}
+
 // Util to start an api for testing on ports 8500 and 8501,
 // mostly for when hive is missing some endpoints to test
 // like eth_uninstallFilter.
@@ -225,7 +241,6 @@ pub fn example_local_node_record() -> NodeRecord {
 // ```
 pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
     let http_addr: SocketAddr = "127.0.0.1:8500".parse().unwrap();
-    let ws_addr: SocketAddr = "127.0.0.1:8546".parse().unwrap();
     let authrpc_addr: SocketAddr = "127.0.0.1:8501".parse().unwrap();
     let mut storage =
         Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
@@ -233,20 +248,18 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
         .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
         .await
         .expect("Failed to build test genesis");
-    let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+    let blockchain = Arc::new(Blockchain::for_test_harness(storage.clone()));
     let jwt_secret = Default::default();
-    let local_p2p_node = example_p2p_node();
-    let local_node_record = example_local_node_record();
+    let shared_local_node = example_shared_local_node();
     tokio::spawn(async move {
         start_api(
             http_addr,
-            Some(ws_addr),
+            None,
             authrpc_addr,
             storage.clone(),
             blockchain.clone(),
             jwt_secret,
-            local_p2p_node,
-            local_node_record,
+            shared_local_node,
             dummy_sync_manager().await,
             dummy_peer_handler(storage).await,
             ClientVersion::new(
@@ -260,17 +273,138 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             None,
             DEFAULT_BUILDER_GAS_CEIL,
             String::new(),
+            all_namespaces_for_tests(),
+            tokio_util::sync::CancellationToken::new(),
         )
         .await
         .unwrap()
     })
 }
 
-pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
-    let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
-    let local_node_record = example_local_node_record();
-    let block_worker_channel = start_block_executor(blockchain.clone());
-    RpcApiContext {
+/// All known namespaces, used in tests so handlers from any namespace can be exercised.
+pub fn all_namespaces_for_tests() -> HashSet<RpcNamespace> {
+    HashSet::from([
+        RpcNamespace::Eth,
+        RpcNamespace::Net,
+        RpcNamespace::Web3,
+        RpcNamespace::Debug,
+        RpcNamespace::Admin,
+        RpcNamespace::Mempool,
+        RpcNamespace::Testing,
+    ])
+}
+
+/// An [`RpcApiContext`] that reclaims its threads when it drops.
+///
+/// A context owns a `block_executor` OS thread, and that thread holds a strong
+/// reference to the `Blockchain` (and so to any merkleization pool it built). The
+/// thread does exit once every sender is dropped, but asynchronously: a full
+/// test-binary run creates threads faster than the OS reaps them, and the backlog
+/// can cross the macOS runner's per-task thread cap, aborting the whole process
+/// with `libc++abi: terminating`.
+///
+/// Dropping this guard is synchronous instead: it releases the context (dropping
+/// the last sender) and then joins the executor thread, so a test's threads are
+/// gone before the next test starts.
+///
+/// Derefs to [`RpcApiContext`], so field access and method calls work unchanged.
+/// Note that cloning the inner context out and storing it past the guard's own
+/// lifetime keeps a sender alive; the join is bounded by
+/// [`TEARDOWN_JOIN_TIMEOUT`] so that mistake panics with an explanation instead
+/// of hanging the test with no output.
+pub struct TestContext {
+    /// `Option` so `Drop` can release the context strictly before joining.
+    context: Option<RpcApiContext>,
+    executor: Option<std::thread::JoinHandle<()>>,
+}
+
+impl TestContext {
+    /// Consume the guard and return the inner context, leaving the
+    /// `block_executor` thread detached.
+    ///
+    /// For the rare test that must *own* an [`RpcApiContext`] by value — e.g. to
+    /// embed it in another struct — where holding the guard alongside it would
+    /// mean depending on drop order to avoid a hang. Teardown reverts to being
+    /// asynchronous here, so prefer holding the guard wherever a test can.
+    pub fn into_detached(mut self) -> RpcApiContext {
+        // Dropping the handle detaches the thread; `Drop` then has nothing to join.
+        self.executor = None;
+        self.context
+            .take()
+            .expect("TestContext is only taken apart in Drop")
+    }
+}
+
+impl std::ops::Deref for TestContext {
+    type Target = RpcApiContext;
+
+    fn deref(&self) -> &RpcApiContext {
+        self.context
+            .as_ref()
+            .expect("TestContext is only taken apart in Drop")
+    }
+}
+
+impl std::ops::DerefMut for TestContext {
+    fn deref_mut(&mut self) -> &mut RpcApiContext {
+        self.context
+            .as_mut()
+            .expect("TestContext is only taken apart in Drop")
+    }
+}
+
+/// How long [`TestContext`]'s drop waits for the `block_executor` thread before
+/// giving up and reporting a leaked context.
+///
+/// An idle executor exits as soon as its last sender drops, so the normal wait is
+/// microseconds; this only has to be longer than the slowest in-flight block
+/// import in the suite. Generous, because the cost is paid only when a test is
+/// already broken.
+pub const TEARDOWN_JOIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+impl Drop for TestContext {
+    fn drop(&mut self) {
+        // Order matters: the executor loop ends when its last sender goes away, so
+        // the context has to be released before the join can return.
+        drop(self.context.take());
+        let Some(executor) = self.executor.take() else {
+            return;
+        };
+        // An unbounded `join` here is a hang, not a failure: a surviving clone of the
+        // inner `RpcApiContext` holds a `block_worker_channel` sender open, so the
+        // executor loop never ends. On the default single-threaded `#[tokio::test]`
+        // runtime it can never end, because a spawned task holding that clone cannot
+        // be polled while this thread blocks. Bound the wait so the mistake reports
+        // itself with a diagnosis instead of a silent timeout.
+        let deadline = std::time::Instant::now() + TEARDOWN_JOIN_TIMEOUT;
+        while !executor.is_finished() {
+            if std::time::Instant::now() >= deadline {
+                // Already unwinding: a second panic would abort the process and bury
+                // the failure the test was actually reporting. Leave the thread
+                // detached and let the real error through.
+                if std::thread::panicking() {
+                    return;
+                }
+                panic!(
+                    "TestContext teardown timed out after {TEARDOWN_JOIN_TIMEOUT:?}: the \
+                     block_executor thread is still alive, so a clone of the inner \
+                     RpcApiContext outlived the guard and is holding its \
+                     block_worker_channel sender open. Keep the guard alive for the whole \
+                     test, or call `into_detached()` if the context must be owned by value."
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        // A panicking executor thread is reported by whatever test awaited its
+        // result; failing here would mask that with a teardown panic.
+        let _ = executor.join();
+    }
+}
+
+pub async fn default_context_with_storage(storage: Store) -> TestContext {
+    let blockchain = Arc::new(Blockchain::for_test_harness(storage.clone()));
+    let (block_worker_channel, executor) = start_block_executor(blockchain.clone());
+    let context = RpcApiContext {
         storage: storage.clone(),
         blockchain: blockchain.clone(),
         active_filters: Default::default(),
@@ -278,8 +412,7 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         peer_handler: Some(dummy_peer_handler(storage).await),
         node_data: NodeData {
             jwt_secret: Default::default(),
-            local_p2p_node: example_p2p_node(),
-            local_node_record,
+            shared_local_node: example_shared_local_node(),
             client_version: ClientVersion::new(
                 "ethrex".to_string(),
                 "0.1.0".to_string(),
@@ -294,6 +427,12 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         log_filter_handler: None,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
         block_worker_channel,
+        ws: None,
+        allowed_namespaces: Arc::new(all_namespaces_for_tests()),
+    };
+    TestContext {
+        context: Some(context),
+        executor: Some(executor),
     }
 }
 
@@ -301,7 +440,7 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
 /// This should only be used in tests as it won't be able to connect to the p2p network
 pub async fn dummy_sync_manager() -> SyncManager {
     let store = Store::new("", EngineType::InMemory).expect("Failed to start Store Engine");
-    let blockchain = Arc::new(Blockchain::default_with_store(store.clone()));
+    let blockchain = Arc::new(Blockchain::for_test_harness(store.clone()));
     SyncManager::new(
         dummy_peer_handler(store).await,
         &SyncMode::Full,
@@ -310,6 +449,11 @@ pub async fn dummy_sync_manager() -> SyncManager {
         Store::new("temp.db", ethrex_storage::EngineType::InMemory)
             .expect("Failed to start Storage Engine"),
         ".".into(),
+        BackfillConfig {
+            mode: HistoryChain::Off,
+            tx_index_horizon: 0,
+        },
+        TaskTracker::new(),
     )
     .await
 }
@@ -317,16 +461,14 @@ pub async fn dummy_sync_manager() -> SyncManager {
 /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
 /// This should only be used in tests as it won't be able to interact with the node's connected peers
 pub async fn dummy_peer_handler(store: Store) -> PeerHandler {
-    let peer_table = PeerTable::spawn(TARGET_PEERS, store);
-    PeerHandler::new(peer_table.clone(), dummy_gen_server(peer_table).await)
+    let peer_table = PeerTableServer::spawn(H256::random(), TARGET_PEERS, store);
+    PeerHandler::new(peer_table.clone(), dummy_actor(peer_table).await)
 }
 
-/// Creates a dummy GenServer for tests
+/// Creates a dummy RLPx initiator actor for tests
 /// This should only be used in tests
-pub async fn dummy_gen_server(peer_table: PeerTable) -> GenServerHandle<RLPxInitiator> {
-    info!("Starting RLPx Initiator");
-    let state = RLPxInitiator::new(dummy_p2p_context(peer_table).await);
-    RLPxInitiator::start_on_thread(state)
+pub async fn dummy_actor(peer_table: PeerTable) -> ActorRef<RLPxInitiator> {
+    RLPxInitiator::spawn_on_thread(dummy_p2p_context(peer_table).await)
 }
 
 /// Creates a dummy P2PContext for tests
@@ -335,19 +477,106 @@ pub async fn dummy_p2p_context(peer_table: PeerTable) -> P2PContext {
     let local_node = Node::from_enode_url(
         "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
     ).expect("Bad enode url");
+    let network_config = NetworkConfig::from_node(&local_node);
     let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
 
     P2PContext::new(
         local_node,
+        network_config,
         TaskTracker::default(),
         SecretKey::from_byte_array(&[0xcd; 32]).expect("32 bytes, within curve order"),
         peer_table,
         storage.clone(),
-        Arc::new(Blockchain::default_with_store(storage)),
+        Arc::new(Blockchain::for_test_harness(storage)),
         "".to_string(),
         None,
         1000,
         100.0,
     )
     .unwrap()
+}
+
+/// Mint a valid bearer header for the given context's JWT secret, with a
+/// fresh `iat` claim. For integration tests of the engine RPC port.
+pub fn jwt_auth_header_for(context: &RpcApiContext) -> Option<TypedHeader<Authorization<Bearer>>> {
+    let iat = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let token = encode(
+        &Header::new(Algorithm::HS256),
+        &serde_json::json!({ "iat": iat }),
+        &EncodingKey::from_secret(&context.node_data.jwt_secret),
+    )
+    .unwrap();
+    Some(TypedHeader(Authorization::bearer(&token).unwrap()))
+}
+
+/// Drive the auth RPC handler without needing axum extractor types at the
+/// call site.
+pub async fn call_authrpc(
+    context: &RpcApiContext,
+    auth_header: Option<TypedHeader<Authorization<Bearer>>>,
+    body: String,
+) -> Value {
+    handle_authrpc_request(State(context.clone()), auth_header, body)
+        .await
+        .expect("handle_authrpc_request should not return a status code error")
+        .0
+}
+
+/// Drive the public HTTP RPC handler without needing axum extractor types at
+/// the call site.
+pub async fn call_http(context: &RpcApiContext, body: String) -> Value {
+    handle_http_request(State(context.clone()), body)
+        .await
+        .expect("handle_http_request should not return a status code error")
+        .0
+}
+
+// ── eth/72 (EIP-8070) internal-fn shims ─────────────────────────────────────
+//
+// These re-expose crate-private parsing/handling internals to the integration
+// test crate WITHOUT widening the production public API: the whole `test_utils`
+// module is compiled only under `#[cfg(any(test, feature = "test-utils"))]`, so
+// these shims do not exist in a normal build.
+use crate::engine::blobs::BlobsV4Request;
+use crate::types::fork_choice::{ForkChoiceState, PayloadAttributesV4};
+use crate::utils::RpcErr;
+
+/// Max blob hashes per `engine_getBlobs*` request (mirror of the crate-private const).
+pub const GET_BLOBS_V1_REQUEST_MAX_SIZE: usize =
+    crate::engine::blobs::GET_BLOBS_V1_REQUEST_MAX_SIZE;
+
+/// Shim over the crate-private `engine::fork_choice::parse_v4`.
+pub fn parse_v4(
+    params: &Option<Vec<Value>>,
+) -> Result<(ForkChoiceState, Option<PayloadAttributesV4>, Option<u128>), RpcErr> {
+    crate::engine::fork_choice::parse_v4(params)
+}
+
+/// Shim over the crate-private `engine::fork_choice::parse_custody_columns`.
+pub fn parse_custody_columns(value: &Value) -> Result<Option<u128>, RpcErr> {
+    crate::engine::fork_choice::parse_custody_columns(value)
+}
+
+/// Shim over the crate-private `engine::fork_choice::apply_custody_update`.
+pub fn apply_custody_update(context: &RpcApiContext, custody_columns: Option<u128>) {
+    crate::engine::fork_choice::apply_custody_update(context, custody_columns)
+}
+
+/// Shim over the crate-private `engine::blobs::parse_indices_bitarray`.
+pub fn parse_indices_bitarray(value: &Value) -> Result<u128, RpcErr> {
+    crate::engine::blobs::parse_indices_bitarray(value)
+}
+
+/// Construct a `BlobsV4Request` from its parts (the struct fields are crate-private).
+pub fn blobs_v4_request(
+    versioned_blob_hashes: Vec<H256>,
+    indices_bitarray: u128,
+) -> BlobsV4Request {
+    BlobsV4Request {
+        versioned_blob_hashes,
+        indices_bitarray,
+    }
 }

@@ -29,9 +29,11 @@ jobs:
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1
 
       - name: Build ethrex binary
         run: cargo build --bin ethrex

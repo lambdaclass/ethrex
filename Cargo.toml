@@ -11,6 +11,7 @@ members = [
   "crates/l2/",
   "crates/l2/common",
   "crates/l2/prover",
+  "crates/prover",
   "crates/guest-program",
   "crates/l2/sdk",
   "crates/l2/sdk/contract_utils",
@@ -23,20 +24,28 @@ members = [
   "crates/vm/levm",
   "crates/vm/levm/runner",
   "crates/common/config",
+  "tooling/history_validator",
   "tooling/repl",
   "test",
 ]
-exclude = ["crates/vm/levm/bench/revm_comparison"]
+# zkevm_bench is a standalone workspace: it hard-depends on zisk (lib-c),
+# which is x86-64-only (nasm + x86 asm) and cannot build on arm/macos. Keeping
+# it out of the root workspace keeps default builds, lint and Docker portable.
+exclude = [
+  "crates/vm/levm/bench/revm_comparison",
+  "tooling/zkevm_bench",
+]
 resolver = "2"
 
 default-members = ["cmd/ethrex"]
 
 [workspace.package]
-version = "9.0.0"
+version = "27.0.0"
 edition = "2024"
 authors = ["LambdaClass"]
 documentation = "https://docs.ethrex.xyz"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/lambdaclass/ethrex"
 
 [profile.dev]
 debug = 2
@@ -54,27 +63,42 @@ debug = 2
 inherits = "release"
 debug-assertions = true
 
+# Used by test targets: keeps release-grade opt-level for the hot EVM / trie /
+# RLP paths but drops thin-LTO, raises codegen-units, and uses line-tables-only
+# debuginfo so cargo test rebuilds finish in a fraction of the time of
+# release-with-debug. Tests are the only consumer, so the `debug_assert!` and
+# overflow checks `release` turns off stay armed.
+[profile.release-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+debug = "line-tables-only"
+incremental = true
+debug-assertions = true
+overflow-checks = true
+
 [workspace.dependencies]
-ethrex-blockchain = { path = "./crates/blockchain", default-features = false }
-ethrex-common = { path = "./crates/common", default-features = false }
+ethrex-blockchain = { path = "./crates/blockchain", version = "27.0.0", default-features = false }
+ethrex-common = { path = "./crates/common", version = "27.0.0", default-features = false }
 ethrex-config = { path = "./crates/common/config" }
-ethrex-p2p = { path = "./crates/networking/p2p" }
-ethrex-rpc = { path = "./crates/networking/rpc" }
-ethrex-storage = { path = "./crates/storage" }
-ethrex-vm = { path = "./crates/vm", default-features = false }
-ethrex-levm = { path = "./crates/vm/levm" }
-ethrex-trie = { path = "./crates/common/trie" }
-ethrex-rlp = { path = "./crates/common/rlp" }
-ethrex-crypto = { path = "./crates/common/crypto" }
-ethrex-metrics = { path = "./crates/blockchain/metrics" }
+ethrex-p2p = { path = "./crates/networking/p2p", version = "27.0.0" }
+ethrex-rpc = { path = "./crates/networking/rpc", version = "27.0.0" }
+ethrex-storage = { path = "./crates/storage", version = "27.0.0" }
+ethrex-vm = { path = "./crates/vm", version = "27.0.0", default-features = false }
+ethrex-levm = { path = "./crates/vm/levm", version = "27.0.0" }
+ethrex-trie = { path = "./crates/common/trie", version = "27.0.0" }
+ethrex-rlp = { path = "./crates/common/rlp", version = "27.0.0" }
+ethrex-crypto = { path = "./crates/common/crypto", version = "27.0.0", default-features = false }
+ethrex-metrics = { path = "./crates/blockchain/metrics", version = "27.0.0" }
 ethrex-l2 = { path = "./crates/l2" }
-ethrex-l2-common = { path = "./crates/l2/common" }
-ethrex-sdk = { path = "./crates/l2/sdk" }
-ethrex-prover = { path = "./crates/l2/prover" }
-ethrex-guest-program = { path = "./crates/guest-program" }
-ethrex-storage-rollup = { path = "./crates/l2/storage" }
+ethrex-l2-common = { path = "./crates/l2/common", version = "27.0.0" }
+ethrex-sdk = { path = "./crates/l2/sdk", version = "27.0.0" }
+ethrex-l2-prover = { path = "./crates/l2/prover" }
+ethrex-prover = { path = "./crates/prover", default-features = false }
+ethrex-guest-program = { path = "./crates/guest-program", default-features = false }
+ethrex-storage-rollup = { path = "./crates/l2/storage", version = "27.0.0" }
 ethrex = { path = "./cmd/ethrex" }
-ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
+ethrex-l2-rpc = { path = "./crates/l2/networking/rpc", version = "27.0.0" }
 ethrex-monitor = { path = "./tooling/monitor" }
 ethrex-repl = { path = "./tooling/repl" }
 
@@ -93,6 +117,7 @@ hex = "0.4.3"
 hex-literal = "0.4.1"
 crc32fast = "1.4.2"
 lazy_static = "1.5.0"
+lru = "0.16.2"
 sha2 = "0.10.9"
 sha3 = "0.10.8"
 tokio-util = { version = "0.7.15", features = ["rt"] }
@@ -116,8 +141,8 @@ kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
 aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", rev = "54ca2471624700536561b6bd369ed9f4d327991e", package = "agg_mode_sdk" }
-spawned-concurrency = "0.4.2"
-spawned-rt = "0.4.2"
+spawned-concurrency = "0.5.0"
+spawned-rt = "0.5.0"
 lambdaworks-crypto = "0.13.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 crossbeam = "0.8.4"
@@ -134,6 +159,16 @@ rocksdb = { version = "0.24.0", default-features = false, features = [
   "bindgen-runtime",
   "lz4",
 ] }
+
+# libssz (EIP-8025 SSZ support)
+# 0.3.0 carries the EIP-7916 progressive child-order fix (subtree left,
+# remainder right). 0.2.2 had them swapped, which made every progressive
+# hash_tree_root disagree with remerkleable and the spec fixtures;
+# `test/tests/common/progressive_ssz_tests.rs` is what holds this floor.
+libssz = "0.3.0"
+libssz-types = "0.3.0"
+libssz-merkle = "0.3.0"
+libssz-derive = "0.3.0"
 
 [workspace.lints.clippy]
 redundant_clone = "warn"

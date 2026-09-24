@@ -709,18 +709,18 @@ impl fmt::Display for ComparisonReport {
                         writeln!(
                             f,
                             "\t\t\t\t\tCode: {} -> {}",
-                            if base_account.code.bytecode.is_empty() {
+                            if base_account.code.is_empty() {
                                 "empty".to_string()
                             } else {
-                                hex::encode(&base_account.code.bytecode)
+                                hex::encode(base_account.code.code())
                             },
                             account_update
                                 .code
                                 .as_ref()
-                                .map(|code| if code.bytecode.is_empty() {
+                                .map(|code| if code.is_empty() {
                                     "empty".to_string()
                                 } else {
-                                    hex::encode(&code.bytecode)
+                                    hex::encode(code.code())
                                 })
                                 .expect("If code hash changed then 'code' shouldn't be None.")
                         )?;

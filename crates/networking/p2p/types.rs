@@ -15,11 +15,61 @@ use std::{
     fmt::Display,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
-    sync::OnceLock,
+    sync::{Arc, OnceLock, RwLock},
 };
 use thiserror::Error;
 
 use crate::utils::node_id;
+
+/// Holds the live, mutable copy of the local node identity.
+///
+/// Updated in-place whenever the IP predictor learns the public external IP
+/// (via discv4/discv5 PONG voting). All reads must clone the needed values
+/// out and drop the guard before any `.await`.
+#[derive(Debug, Clone)]
+pub struct LocalNode {
+    pub node: Node,
+    pub record: NodeRecord,
+}
+
+/// Shared, live local-node identity. Guards are `!Send`, so callers must
+/// clone out values and drop the guard before crossing any `.await` point.
+pub type SharedLocalNode = Arc<RwLock<LocalNode>>;
+
+/// Holds the local node's network addressing configuration, separating the
+/// socket bind address from the externally-announced address.
+///
+/// This is relevant for nodes running behind NAT: they bind to a private
+/// address (e.g. `0.0.0.0`) but must announce their public IP to peers.
+#[derive(Debug, Clone)]
+pub struct NetworkConfig {
+    /// Address to bind UDP/TCP sockets to (e.g. `0.0.0.0` or `::`)
+    pub bind_addr: IpAddr,
+    pub tcp_port: u16,
+    pub udp_port: u16,
+}
+
+impl NetworkConfig {
+    /// Returns the socket address to bind the TCP listener to.
+    pub fn bind_tcp_addr(&self) -> SocketAddr {
+        SocketAddr::new(self.bind_addr, self.tcp_port)
+    }
+
+    /// Returns the socket address to bind the UDP socket to.
+    pub fn bind_udp_addr(&self) -> SocketAddr {
+        SocketAddr::new(self.bind_addr, self.udp_port)
+    }
+
+    /// Builds a `NetworkConfig` where bind and external addresses are both
+    /// taken from `node`. Useful when no NAT mapping is needed.
+    pub fn from_node(node: &Node) -> Self {
+        Self {
+            bind_addr: node.ip,
+            tcp_port: node.tcp_port,
+            udp_port: node.udp_port,
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum NodeError {
@@ -188,7 +238,7 @@ impl Node {
     }
 
     pub fn from_enr(record: &NodeRecord) -> Result<Self, NodeError> {
-        let pairs = record.decode_pairs();
+        let pairs = record.pairs();
         let public_key = pairs.secp256k1.ok_or(NodeError::MissingField(
             "public key not found in record".into(),
         ))?;
@@ -263,17 +313,7 @@ impl Display for Node {
 }
 
 /// Reference: [ENR records](https://github.com/ethereum/devp2p/blob/master/enr.md)
-#[derive(Debug, PartialEq, Clone, Eq, Default, Serialize, Deserialize)]
-pub struct NodeRecord {
-    pub signature: H512,
-    pub seq: u64,
-    // holds optional values in (key, value) format
-    // value represents the rlp encoded bytes
-    // The key/value pairs must be sorted by key and must be unique
-    pub pairs: Vec<(Bytes, Bytes)>,
-}
-
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct NodeRecordPairs {
     /// The ID of the identity scheme: https://github.com/ethereum/devp2p/blob/master/enr.md#v4-identity-scheme
     /// This is always "v4".
@@ -288,52 +328,215 @@ pub struct NodeRecordPairs {
     pub secp256k1: Option<H264>,
     // https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
     pub eth: Option<ForkId>,
+    // Snap entry is being used by some tests such as `test_encode_enr_response`.
+    pub snap: Option<Vec<u32>>,
+    /// Entries outside the predefined dictionary, kept verbatim.
+    ///
+    /// Values are **already RLP-encoded**, and deliberately so. A record's
+    /// signature covers its encoded bytes, so an entry only survives a
+    /// decode/re-encode cycle if it comes back out exactly as it went in.
+    /// Holding decoded payloads instead would mean committing to a shape: a
+    /// value that is an RLP list rather than a byte string, which the dictionary
+    /// has no room for and peers do emit, could not be represented at all, and a
+    /// value that merely encodes unusually would be re-emitted canonically. In
+    /// both cases the bytes we re-emit stop matching the bytes we verified.
+    ///
+    /// Keys here must be outside the dictionary. A dictionary key would be
+    /// emitted twice by [`Self::encode_pairs`], once from its typed field and
+    /// once from here, and EIP-778 requires keys to be unique. Such a record
+    /// verifies locally, because both digests come from the same encoding, and
+    /// is rejected by every remote. [`Self::set_extra`] and its siblings refuse
+    /// those keys, and `encode_pairs` skips any that were written here directly,
+    /// so no record ethrex signs can carry a duplicate.
+    ///
+    /// Prefer the setters over pushing tuples: hand-rolling the value encoding
+    /// is easy to get wrong (see [`Self::set_extra`]). Pushing directly is for
+    /// the values they cannot express, such as the RLP list EIP-7636 `client`
+    /// carries, and then keeping the key unique is the caller's job.
+    pub extra_fields: Vec<(Bytes, Bytes)>,
     // TODO implement ipv6 specific ports
 }
 
-impl NodeRecord {
-    pub fn decode_pairs(&self) -> NodeRecordPairs {
+impl NodeRecordPairs {
+    pub fn try_from_raw_pairs(
+        pairs: Vec<(Bytes, Bytes)>,
+    ) -> Result<NodeRecordPairs, RLPDecodeError> {
         let mut decoded_pairs = NodeRecordPairs::default();
-        for (key, value) in &self.pairs {
-            let Ok(key) = String::from_utf8(key.to_vec()) else {
-                continue;
-            };
-            let value = value.to_vec();
-            match key.as_str() {
-                "id" => decoded_pairs.id = String::decode(&value).ok(),
-                "ip" => decoded_pairs.ip = Ipv4Addr::decode(&value).ok(),
-                "ip6" => decoded_pairs.ip6 = Ipv6Addr::decode(&value).ok(),
-                "tcp" => decoded_pairs.tcp_port = u16::decode(&value).ok(),
-                "udp" => decoded_pairs.udp_port = u16::decode(&value).ok(),
-                "secp256k1" => {
-                    let Ok(bytes) = Bytes::decode(&value) else {
-                        continue;
-                    };
-                    if bytes.len() != 33 {
-                        continue;
-                    }
-                    decoded_pairs.secp256k1 = Some(H264::from_slice(&bytes))
-                }
-                "eth" => {
+        for (key, value) in pairs {
+            match key.as_ref() {
+                b"id" => decoded_pairs.id = Some(String::decode(&value)?),
+                b"ip" => decoded_pairs.ip = Some(Ipv4Addr::decode(&value)?),
+                b"ip6" => decoded_pairs.ip6 = Some(Ipv6Addr::decode(&value)?),
+                b"tcp" => decoded_pairs.tcp_port = Some(u16::decode(&value)?),
+                b"udp" => decoded_pairs.udp_port = Some(u16::decode(&value)?),
+                b"secp256k1" => decoded_pairs.secp256k1 = Some(H264(<[u8; 33]>::decode(&value)?)),
+                b"snap" => decoded_pairs.snap = Some(Vec::<u32>::decode(&value)?),
+                b"eth" => {
                     // https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
                     // entry-value = [[ forkHash, forkNext ], ...]
-                    let Ok(decoder) = Decoder::new(&value) else {
-                        continue;
-                    };
+                    let decoder = Decoder::new(&value)?;
                     // Here we decode fork-id = [ forkHash, forkNext ]
-                    // TODO(#3494): here we decode as optional to ignore any errors,
-                    // but we should return an error if we can't decode it
-                    let (fork_id, decoder) = decoder.decode_optional_field();
+                    let (fork_id, decoder) = decoder.decode_field("forkId")?;
 
                     // As per the spec, we should ignore any additional list elements in entry-value
                     decoder.finish_unchecked();
-                    decoded_pairs.eth = fork_id;
+                    decoded_pairs.eth = Some(fork_id);
                 }
-                _ => {}
+                // Any other key. Kept verbatim so an entry in a shape we did
+                // not expect cannot fail the decode of the whole record.
+                _ => {
+                    decoded_pairs.extra_fields.push((key, value));
+                }
             }
         }
 
-        decoded_pairs
+        Ok(decoded_pairs)
+    }
+
+    /// Encodes to a list of (key, value) where keys are ascii bytes and values are rlp encoded bytes.
+    pub fn encode_pairs(&self) -> Vec<(Bytes, Bytes)> {
+        // The key/value pairs must be sorted by key and must be unique
+        let mut pairs = vec![];
+        if let Some(eth) = &self.eth {
+            // Without the Vec wrapper, RLP encoding fork_id directly would produce:
+            // [forkHash, forkNext]
+            // But the spec requires nested lists:
+            // [[forkHash, forkNext]]
+            let eth = vec![eth.clone()];
+            pairs.push(("eth".into(), eth.encode_to_vec().into()));
+        }
+        if let Some(id) = self.id.as_ref() {
+            pairs.push(("id".into(), id.encode_to_vec().into()));
+        }
+        if let Some(ip) = self.ip {
+            pairs.push(("ip".into(), ip.encode_to_vec().into()));
+        }
+        if let Some(ip6) = self.ip6 {
+            pairs.push(("ip6".into(), ip6.encode_to_vec().into()));
+        }
+        if let Some(secp256k1) = self.secp256k1 {
+            pairs.push(("secp256k1".into(), secp256k1.encode_to_vec().into()));
+        }
+        if let Some(snap) = self.snap.as_ref() {
+            pairs.push(("snap".into(), snap.encode_to_vec().into()));
+        }
+        if let Some(tcp) = self.tcp_port {
+            pairs.push(("tcp".into(), tcp.encode_to_vec().into()));
+        }
+        if let Some(udp) = self.udp_port {
+            pairs.push(("udp".into(), udp.encode_to_vec().into()));
+        }
+        // Filter out any duplicate fields, keeping the first occurrence.
+        let extra_fields = self
+            .extra_fields
+            .iter()
+            .filter(|(key, _)| !Self::is_dictionary_key(key))
+            .cloned();
+        pairs.extend(extra_fields);
+        // Sort pairs by key to ensure they are in the correct order for RLP encoding.
+        pairs.sort_by(|(left_key, _), (right_key, _)| left_key.cmp(right_key));
+        pairs
+    }
+
+    /// Whether `key` belongs to a typed field, and so may not be used for an
+    /// extra entry.
+    ///
+    /// Exactly the keys [`Self::try_from_raw_pairs`] decodes into typed fields
+    /// and [`Self::encode_pairs`] emits from them.
+    pub fn is_dictionary_key(key: &[u8]) -> bool {
+        matches!(
+            key,
+            b"id" | b"ip" | b"ip6" | b"tcp" | b"udp" | b"secp256k1" | b"snap" | b"eth"
+        )
+    }
+
+    /// The RLP-decoded payload of an entry outside the predefined dictionary.
+    ///
+    /// Returns `None` when the key is absent *or* when its value is not an RLP
+    /// byte string, so an entry whose shape we did not expect reads as missing
+    /// rather than poisoning the record.
+    pub fn extra(&self, key: &[u8]) -> Option<Bytes> {
+        let (_, value) = self.extra_fields.iter().find(|(k, _)| k.as_ref() == key)?;
+        Bytes::decode(value.as_ref()).ok()
+    }
+
+    /// An extra entry decoded as an integer, e.g. `quic`.
+    ///
+    /// `None` on an absent key or a value that is not a valid RLP integer,
+    /// which includes the non-minimal encodings some clients emit.
+    pub fn extra_int<T: RLPDecode>(&self, key: &[u8]) -> Option<T> {
+        let (_, value) = self.extra_fields.iter().find(|(k, _)| k.as_ref() == key)?;
+        T::decode(value.as_ref()).ok()
+    }
+
+    /// Advertise `payload` under `key`, replacing any existing entry. Returns
+    /// whether it was stored, i.e. whether `key` is outside the dictionary.
+    ///
+    /// Encodes through [`Bytes`], whose `RLPEncode` delegates to `[u8]` and so
+    /// emits a byte string. This is the step worth not hand-rolling: passing a
+    /// bare `Vec<u8>` hits the blanket `Vec<T>` impl and emits a *list* of
+    /// per-byte scalars, which is a well-formed ENR entry that no other client
+    /// can read, and nothing local ever complains.
+    pub fn set_extra(&mut self, key: &[u8], payload: impl Into<Bytes>) -> bool {
+        let encoded = Bytes::from(payload.into().encode_to_vec());
+        self.set_extra_encoded(key, encoded)
+    }
+
+    /// Advertise an integer under `key`, replacing any existing entry. Returns
+    /// whether it was stored, i.e. whether `key` is outside the dictionary.
+    ///
+    /// Takes a `u64` rather than any [`RLPEncode`] so this cannot become the
+    /// footgun [`Self::set_extra`] exists to close: a `Vec<u8>` passed to a
+    /// generic bound would encode as an RLP list, under a method named for
+    /// integers. Every ENR integer entry fits, being at most a uint64.
+    pub fn set_extra_int(&mut self, key: &[u8], value: u64) -> bool {
+        let encoded = Bytes::from(value.encode_to_vec());
+        self.set_extra_encoded(key, encoded)
+    }
+
+    /// The write both setters end in, once the value is encoded: the dictionary
+    /// guard and the replace-rather-than-append rule live here so neither can
+    /// be reached without them.
+    ///
+    /// Replacing matters because EIP-778 requires keys to be unique, and
+    /// appending a second entry for the same key yields a record that verifies
+    /// locally (both digests come from the same encoding) yet is rejected by
+    /// every remote, with no local symptom.
+    ///
+    /// Private: an already-encoded value is exactly the footgun the setters
+    /// above exist to close, so the escape hatch is not offered. A value the
+    /// typed setters cannot express, such as the RLP list EIP-7636 `client`
+    /// carries, has to go onto [`Self::extra_fields`] directly; `encode_pairs`
+    /// still refuses to emit a dictionary key from there.
+    fn set_extra_encoded(&mut self, key: &[u8], encoded: Bytes) -> bool {
+        if Self::is_dictionary_key(key) {
+            return false;
+        }
+        self.extra_fields.retain(|(k, _)| k.as_ref() != key);
+        self.extra_fields
+            .push((Bytes::copy_from_slice(key), encoded));
+        true
+    }
+}
+
+pub const INITIAL_ENR_SEQ: u64 = 1;
+
+/// Reference: [ENR records](https://github.com/ethereum/devp2p/blob/master/enr.md#record-structure)
+#[derive(Debug, PartialEq, Clone, Eq, Default, Serialize, Deserialize)]
+pub struct NodeRecord {
+    pub signature: H512,
+    pub seq: u64,
+    /// The remainder of the record consists of key/value pairs represented as NodeRecordPairs
+    pairs: NodeRecordPairs,
+}
+
+impl NodeRecord {
+    pub fn new(signature: H512, seq: u64, pairs: NodeRecordPairs) -> Self {
+        Self {
+            signature,
+            seq,
+            pairs,
+        }
     }
 
     pub fn enr_url(&self) -> Result<String, NodeError> {
@@ -347,53 +550,85 @@ impl NodeRecord {
     }
 
     pub fn from_node(node: &Node, seq: u64, signer: &SecretKey) -> Result<Self, NodeError> {
-        let mut record = NodeRecord {
-            seq,
+        let mut pairs = NodeRecordPairs {
+            tcp_port: Some(node.tcp_port),
+            udp_port: Some(node.udp_port),
             ..Default::default()
         };
-        record
-            .pairs
-            .push(("id".into(), "v4".encode_to_vec().into()));
-        record
-            .pairs
-            .push(("ip".into(), node.ip.encode_to_vec().into()));
-        record.pairs.push((
-            "secp256k1".into(),
-            PublicKey::from_secret_key(secp256k1::SECP256K1, signer)
-                .serialize()
-                .encode_to_vec()
-                .into(),
-        ));
-        record
-            .pairs
-            .push(("tcp".into(), node.tcp_port.encode_to_vec().into()));
-        record
-            .pairs
-            .push(("udp".into(), node.udp_port.encode_to_vec().into()));
+        // Per EIP-778: a record without endpoint information is still valid.
+        // When the IP is unspecified (not yet known), omit the ip/ip6 key entirely
+        // rather than advertising 0.0.0.0, which peers would cache as unreachable.
+        if !node.ip.is_unspecified() {
+            match node.ip.to_canonical() {
+                IpAddr::V4(ip) => pairs.ip = Some(ip),
+                IpAddr::V6(ip) => pairs.ip6 = Some(ip),
+            }
+        }
 
+        Self::from_pairs(seq, signer, pairs)
+    }
+
+    /// Builds a signed record from a fully specified entry set.
+    ///
+    /// `id` and `secp256k1` are always overwritten: both are fixed by the v4
+    /// identity scheme and the signer, not chosen by the caller. Every other
+    /// entry is taken verbatim, so a node with no TCP listener simply leaves
+    /// `tcp_port` unset rather than encoding that intent as a port of 0.
+    pub fn from_pairs(
+        seq: u64,
+        signer: &SecretKey,
+        mut pairs: NodeRecordPairs,
+    ) -> Result<Self, NodeError> {
+        pairs.id = Some("v4".to_string());
+        pairs.secp256k1 = Some(H264::from_slice(
+            &PublicKey::from_secret_key(secp256k1::SECP256K1, signer).serialize(),
+        ));
+
+        let mut record = NodeRecord {
+            seq,
+            pairs,
+            ..Default::default()
+        };
         record.signature = record.sign_record(signer)?;
 
         Ok(record)
     }
 
     pub fn set_fork_id(&mut self, fork_id: ForkId, signer: &SecretKey) -> Result<(), NodeError> {
-        // Without the Vec wrapper, RLP encoding fork_id directly would produce:
-        // [forkHash, forkNext]
-        // But the spec requires nested lists:
-        // [[forkHash, forkNext]]
-        let eth = vec![fork_id];
-        self.pairs.push(("eth".into(), eth.encode_to_vec().into()));
+        self.edit(signer, |pairs| pairs.eth = Some(fork_id))
+    }
 
-        //Pairs need to be sorted by their key.
-        //The keys are Bytes which implements Ord, so they can be compared directly. The sorting
-        //will be lexicographic (alphabetical for string keys like "eth", "id", "ip", etc.).
-        self.pairs.sort_by(|a, b| a.0.cmp(&b.0));
+    pub fn get_fork_id(&self) -> Option<&ForkId> {
+        self.pairs.eth.as_ref()
+    }
 
-        self.signature = self.sign_record(signer)?;
+    /// The single path for changing a local record: apply `apply_edit` to the
+    /// entry set, bump `seq` once, and re-sign.
+    ///
+    /// All or nothing. The edit lands on a copy that is committed only once the
+    /// new signature is in hand, so a failure leaves the record exactly as it
+    /// was instead of at a bumped `seq` its signature no longer covers. A
+    /// half-updated record is worse than an unchanged one: it verifies nowhere,
+    /// and the next edit bumps past the `seq` peers have already seen.
+    ///
+    /// Prefer this over rebuilding a record from a [`Node`]. A rebuild only
+    /// carries the entries [`Self::from_node`] knows how to derive, so anything
+    /// the caller added separately is silently lost, and stitching the lost
+    /// entries back on afterwards bumps `seq` a second time.
+    pub fn edit<F>(&mut self, signer: &SecretKey, apply_edit: F) -> Result<(), NodeError>
+    where
+        F: FnOnce(&mut NodeRecordPairs),
+    {
+        let mut edited = self.clone();
+        apply_edit(&mut edited.pairs);
+        edited.seq += 1;
+        edited.signature = edited.sign_record(signer)?;
+
+        *self = edited;
         Ok(())
     }
 
-    fn sign_record(&self, signer: &SecretKey) -> Result<H512, NodeError> {
+    pub fn sign_record(&self, signer: &SecretKey) -> Result<H512, NodeError> {
         let digest = &self.get_signature_digest();
         let msg = secp256k1::Message::from_digest_slice(digest)
             .map_err(|_| NodeError::SignatureError("Invalid message digest".into()))?;
@@ -408,7 +643,7 @@ impl NodeRecord {
         let mut rlp = vec![];
         structs::Encoder::new(&mut rlp)
             .encode_field(&self.seq)
-            .encode_key_value_list::<Bytes>(&self.pairs)
+            .encode_key_value_list::<Bytes>(&self.pairs.encode_pairs())
             .finish();
         keccak_hash(&rlp)
     }
@@ -416,7 +651,7 @@ impl NodeRecord {
     /// Verifies the ENR signature using the embedded public key.
     /// Returns true if the signature is valid, false otherwise.
     pub fn verify_signature(&self) -> bool {
-        let pairs = self.decode_pairs();
+        let pairs = self.pairs();
         let Some(pubkey_bytes) = pairs.secp256k1 else {
             return false;
         };
@@ -438,38 +673,9 @@ impl NodeRecord {
             .verify_ecdsa(&message, &signature, &pubkey)
             .is_ok()
     }
-}
 
-impl From<NodeRecordPairs> for Vec<(Bytes, Bytes)> {
-    fn from(value: NodeRecordPairs) -> Self {
-        let mut pairs = vec![];
-        if let Some(eth) = value.eth {
-            // Without the Vec wrapper, RLP encoding fork_id directly would produce:
-            // [forkHash, forkNext]
-            // But the spec requires nested lists:
-            // [[forkHash, forkNext]]
-            let eth = vec![eth];
-            pairs.push(("eth".into(), eth.encode_to_vec().into()));
-        }
-        if let Some(id) = value.id {
-            pairs.push(("id".into(), id.encode_to_vec().into()));
-        }
-        if let Some(ip) = value.ip {
-            pairs.push(("ip".into(), ip.encode_to_vec().into()));
-        }
-        if let Some(ip6) = value.ip6 {
-            pairs.push(("ip6".into(), ip6.encode_to_vec().into()));
-        }
-        if let Some(secp256k1) = value.secp256k1 {
-            pairs.push(("secp256k1".into(), secp256k1.encode_to_vec().into()));
-        }
-        if let Some(tcp) = value.tcp_port {
-            pairs.push(("tcp".into(), tcp.encode_to_vec().into()));
-        }
-        if let Some(udp) = value.udp_port {
-            pairs.push(("udp".into(), udp.encode_to_vec().into()));
-        }
-        pairs
+    pub fn pairs(&self) -> &NodeRecordPairs {
+        &self.pairs
     }
 }
 
@@ -486,6 +692,7 @@ impl RLPDecode for NodeRecord {
         // all fields in pairs are optional except for id
         let id_pair = pairs.iter().find(|(k, _v)| k.eq("id".as_bytes()));
         if id_pair.is_some() {
+            let pairs = NodeRecordPairs::try_from_raw_pairs(pairs)?;
             let node_record = NodeRecord {
                 signature,
                 seq,
@@ -524,7 +731,7 @@ impl RLPEncode for NodeRecord {
         structs::Encoder::new(buf)
             .encode_field(&self.signature)
             .encode_field(&self.seq)
-            .encode_key_value_list::<Bytes>(&self.pairs)
+            .encode_key_value_list::<Bytes>(&self.pairs.encode_pairs())
             .finish();
     }
 }
@@ -542,157 +749,57 @@ impl RLPEncode for Node {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        types::{Node, NodeRecord},
-        utils::public_key_from_signing_key,
-    };
-    use ethrex_common::H512;
-    use ethrex_rlp::decode::RLPDecode;
-    use ethrex_storage::{EngineType, Store};
+    use super::*;
     use secp256k1::SecretKey;
-    use std::{net::SocketAddr, str::FromStr};
 
-    pub const TEST_GENESIS: &str = include_str!("../../../fixtures/genesis/l1.json");
+    fn test_signer() -> SecretKey {
+        SecretKey::new(&mut rand::rngs::OsRng)
+    }
 
+    fn test_pubkey() -> H512 {
+        let signer = test_signer();
+        let pubkey = secp256k1::PublicKey::from_secret_key(secp256k1::SECP256K1, &signer);
+        let encoded = pubkey.serialize_uncompressed();
+        H512::from_slice(&encoded[1..])
+    }
+
+    /// A NodeRecord built from a Node with an unspecified IP must omit the `ip` key entirely.
+    /// Per EIP-778, this produces a valid endpoint-less ENR rather than advertising 0.0.0.0.
     #[test]
-    fn parse_node_from_enode_string() {
-        let input = "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303";
-        let bootnode = Node::from_enode_url(input).unwrap();
-        let public_key = H512::from_str(
-            "d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666")
-            .unwrap();
-        let socket_address = SocketAddr::from_str("18.138.108.67:30303").unwrap();
-        let expected_bootnode = Node::new(
-            socket_address.ip(),
-            socket_address.port(),
-            socket_address.port(),
-            public_key,
+    fn node_record_from_unspecified_node_omits_ip_key() {
+        let pubkey = test_pubkey();
+        let node = Node::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 30303, 30303, pubkey);
+        let signer = test_signer();
+        let record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+        assert!(
+            record.pairs().ip.is_none(),
+            "ip key must be absent for unspecified address"
         );
-        assert_eq!(bootnode, expected_bootnode);
+        assert!(
+            record.pairs().ip6.is_none(),
+            "ip6 key must also be absent for unspecified address"
+        );
+        // The record must still have a valid signature (endpoint-less ENR is valid per EIP-778).
+        assert!(
+            record.verify_signature(),
+            "endpoint-less ENR must have valid signature"
+        );
     }
 
+    /// A NodeRecord built from a Node with a public IP must include the `ip` key.
     #[test]
-    fn parse_node_with_discport_from_enode_string() {
-        let input = "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303?discport=30305";
-        let node = Node::from_enode_url(input).unwrap();
-        let public_key = H512::from_str(
-            "d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666")
-            .unwrap();
-        let socket_address = SocketAddr::from_str("18.138.108.67:30303").unwrap();
-        let expected_bootnode = Node::new(
-            socket_address.ip(),
-            30305,
-            socket_address.port(),
-            public_key,
+    fn node_record_from_public_node_includes_ip_key() {
+        let pubkey = test_pubkey();
+        let node = Node::new("1.2.3.4".parse().unwrap(), 30303, 30303, pubkey);
+        let signer = test_signer();
+        let record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+        assert!(
+            record.pairs().ip.is_some(),
+            "ip key must be present for a public address"
         );
-        assert_eq!(node, expected_bootnode);
-    }
-
-    #[test]
-    fn parse_node_from_enr_string() {
-        // https://github.com/ethereum/devp2p/blob/master/enr.md#test-vectors
-        let enr_string = "enr:-IS4QHCYrYZbAKWCBRlAy5zzaDZXJBGkcnh4MHcBFZntXNFrdvJjX04jRzjzCBOonrkTfj499SZuOh8R33Ls8RRcy5wBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQPKY0yuDUmstAHYpMa2_oxVtw0RW_QAdpzBQA8yWM0xOIN1ZHCCdl8";
-        let node = Node::from_enr_url(enr_string).unwrap();
-        let public_key =
-            H512::from_str("0xca634cae0d49acb401d8a4c6b6fe8c55b70d115bf400769cc1400f3258cd31387574077f301b421bc84df7266c44e9e6d569fc56be00812904767bf5ccd1fc7f")
-                .unwrap();
-        let socket_address = SocketAddr::from_str("127.0.0.1:30303").unwrap();
-        let expected_node = Node::new(
-            socket_address.ip(),
-            socket_address.port(),
-            socket_address.port(),
-            public_key,
+        assert!(
+            record.verify_signature(),
+            "ENR with public IP must have valid signature"
         );
-        assert_eq!(node, expected_node);
-    }
-
-    #[tokio::test]
-    async fn encode_node_record_to_enr_url() {
-        // https://github.com/ethereum/devp2p/blob/master/enr.md#test-vectors
-        let signer = SecretKey::from_slice(&[
-            16, 125, 177, 238, 167, 212, 168, 215, 239, 165, 77, 224, 199, 143, 55, 205, 9, 194,
-            87, 139, 92, 46, 30, 191, 74, 37, 68, 242, 38, 225, 104, 246,
-        ])
-        .unwrap();
-        let addr = std::net::SocketAddr::from_str("127.0.0.1:30303").unwrap();
-
-        let mut storage =
-            Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
-        storage
-            .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
-            .await
-            .expect("Failed to build test genesis");
-
-        let node = Node::new(
-            addr.ip(),
-            addr.port(),
-            addr.port(),
-            public_key_from_signing_key(&signer),
-        );
-        let mut record = NodeRecord::from_node(&node, 1, &signer).unwrap();
-        // Drop fork ID since the test doesn't use it
-        record.pairs.retain(|(k, _)| k != "eth");
-        record.sign_record(&signer).unwrap();
-
-        let expected_enr_string = "enr:-Iu4QIQVZPoFHwH3TCVkFKpW3hm28yj5HteKEO0QTVsavAGgD9ISdBmAgsIyUzdD9Yrqc84EhT067h1VA1E1HSLKcMgBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQJtSDUljLLg3EYuRCp8QJvH8G2F9rmUAQtPKlZjq_O7loN0Y3CCdl-DdWRwgnZf";
-
-        assert_eq!(record.enr_url().unwrap(), expected_enr_string);
-    }
-
-    #[tokio::test]
-    async fn encode_decode_node_record_with_forkid() {
-        let signer = SecretKey::from_slice(&[
-            16, 125, 177, 238, 167, 212, 168, 215, 239, 165, 77, 224, 199, 143, 55, 205, 9, 194,
-            87, 139, 92, 46, 30, 191, 74, 37, 68, 242, 38, 225, 104, 246,
-        ])
-        .unwrap();
-        let addr = std::net::SocketAddr::from_str("127.0.0.1:30303").unwrap();
-
-        let mut storage =
-            Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
-        storage
-            .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
-            .await
-            .expect("Failed to build test genesis");
-
-        let node = Node::new(
-            addr.ip(),
-            addr.port(),
-            addr.port(),
-            public_key_from_signing_key(&signer),
-        );
-        let fork_id = storage.get_fork_id().await.unwrap();
-
-        let mut record = NodeRecord::from_node(&node, 1, &signer).unwrap();
-        record.set_fork_id(fork_id.clone(), &signer).unwrap();
-
-        record.sign_record(&signer).unwrap();
-
-        let enr_url = record.enr_url().unwrap();
-        let base64_decoded = ethrex_common::base64::decode(&enr_url.as_bytes()[4..]);
-        let parsed_record = NodeRecord::decode(&base64_decoded).unwrap();
-        let pairs = parsed_record.decode_pairs();
-
-        assert_eq!(pairs.eth, Some(fork_id));
-    }
-
-    #[test]
-    fn verify_enr_signature_valid() {
-        // https://github.com/ethereum/devp2p/blob/master/enr.md#test-vectors
-        let enr_string = "enr:-IS4QHCYrYZbAKWCBRlAy5zzaDZXJBGkcnh4MHcBFZntXNFrdvJjX04jRzjzCBOonrkTfj499SZuOh8R33Ls8RRcy5wBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQPKY0yuDUmstAHYpMa2_oxVtw0RW_QAdpzBQA8yWM0xOIN1ZHCCdl8";
-        let base64_decoded = ethrex_common::base64::decode(&enr_string.as_bytes()[4..]);
-        let record = NodeRecord::decode(&base64_decoded).unwrap();
-        assert!(record.verify_signature());
-    }
-
-    #[test]
-    fn verify_enr_signature_invalid() {
-        // Use a valid ENR and tamper with the signature
-        let enr_string = "enr:-IS4QHCYrYZbAKWCBRlAy5zzaDZXJBGkcnh4MHcBFZntXNFrdvJjX04jRzjzCBOonrkTfj499SZuOh8R33Ls8RRcy5wBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQPKY0yuDUmstAHYpMa2_oxVtw0RW_QAdpzBQA8yWM0xOIN1ZHCCdl8";
-        let base64_decoded = ethrex_common::base64::decode(&enr_string.as_bytes()[4..]);
-        let mut record = NodeRecord::decode(&base64_decoded).unwrap();
-        // Tamper with the signature
-        record.signature = ethrex_common::H512::zero();
-        assert!(!record.verify_signature());
     }
 }

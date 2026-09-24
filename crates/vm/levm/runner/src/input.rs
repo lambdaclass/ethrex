@@ -35,7 +35,7 @@ pub struct InputAccount {
 
 impl From<InputAccount> for Account {
     fn from(account: InputAccount) -> Self {
-        let code = Code::from_bytecode(account.code);
+        let code = Code::from_bytecode(account.code, &ethrex_crypto::NativeCrypto);
         Account {
             info: AccountInfo {
                 code_hash: code.hash,

@@ -1,6 +1,6 @@
 use ethrex_common::Bytes;
 use ethrex_common::H256;
-use ethrex_common::utils::keccak;
+use ethrex_common::utils::{decode_hex, keccak};
 use ethrex_common::{Address, H32, U256};
 use ethrex_l2_common::calldata::Value;
 use ethrex_rpc::clients::EthClientError;
@@ -521,7 +521,7 @@ fn copy_into(
 
 #[allow(clippy::indexing_slicing)]
 pub fn from_hex_string_to_h256_array(hex_string: &str) -> Result<Vec<H256>, EthClientError> {
-    let bytes = hex::decode(hex_string.strip_prefix("0x").unwrap_or(hex_string))
+    let bytes = decode_hex(hex_string)
         .map_err(|_| EthClientError::Custom("Invalid hex string".to_owned()))?;
 
     // The ABI encoding for dynamic arrays is:
@@ -533,10 +533,12 @@ pub fn from_hex_string_to_h256_array(hex_string: &str) -> Result<Vec<H256>, EthC
     }
 
     // Get the offset (should be 0x20 for simple arrays)
-    let offset = U256::from_big_endian(&bytes[0..32]).as_usize();
+    let offset = usize::try_from(U256::from_big_endian(&bytes[0..32]))
+        .map_err(|_| EthClientError::Custom("ABI offset overflows usize".to_owned()))?;
 
     // Get the length of the array
-    let length = U256::from_big_endian(&bytes[offset..offset + 32]).as_usize();
+    let length = usize::try_from(U256::from_big_endian(&bytes[offset..offset + 32]))
+        .map_err(|_| EthClientError::Custom("ABI array length overflows usize".to_owned()))?;
 
     // Calculate the start of the array data
     let data_start = offset + 32;

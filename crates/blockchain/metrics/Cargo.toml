@@ -5,6 +5,8 @@ edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
 license.workspace = true
+description = "Prometheus metrics collection and exposition for the ethrex Ethereum execution client"
+repository.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -18,7 +20,7 @@ serde.workspace = true
 ethrex-common.workspace = true
 
 
-prometheus = { version = "0.13.4", features = ["process"], optional = true }
+prometheus = { version = "0.14.0", features = ["process"], optional = true }
 axum = { workspace = true, optional = true }
 tracing-subscriber.workspace = true
 
@@ -30,7 +32,7 @@ path = "./mod.rs"
 default = ["api"]
 transactions = []
 api = ["dep:axum", "dep:prometheus", "dep:tokio", "dep:tracing"]
-metrics = ["dep:prometheus"]
+metrics = ["dep:prometheus", "dep:tracing"]
 
 [lints]
 workspace = true

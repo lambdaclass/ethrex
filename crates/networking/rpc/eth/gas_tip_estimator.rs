@@ -1,4 +1,4 @@
-use ethrex_common::{H256, types::MIN_GAS_TIP};
+use ethrex_common::{H256, U256, types::MIN_GAS_TIP};
 use ethrex_storage::Store;
 use tracing::error;
 
@@ -46,8 +46,18 @@ impl GasTipEstimator {
     // we can look into more sophisticated estimation methods, if needed.
     /// Estimate Gas Price based on already accepted transactions,
     /// as per the spec, this will be returned in wei.
-    pub async fn estimate_gas_tip(&mut self, storage: &Store) -> Result<u64, RpcErr> {
-        let latest_block_number = storage.get_latest_block_number().await?;
+    /// `min_tip_wei` is the node's mempool admission floor
+    /// (`--mempool.min-tip`). The estimate is clamped up to it so this RPC can
+    /// never suggest a tip our own admission would then reject: the samples are
+    /// historical effective tips, which can sit below the floor on a quiet
+    /// chain, right after an operator raises the floor, or via the empty-block
+    /// fallback to `last_tip`.
+    pub async fn estimate_gas_tip(
+        &mut self,
+        storage: &Store,
+        min_tip_wei: u64,
+    ) -> Result<u64, RpcErr> {
+        let latest_block_number = storage.get_latest_block_number()?;
         let latest_block_hash = storage
             .get_canonical_block_hash(latest_block_number)
             .await?
@@ -56,7 +66,7 @@ impl GasTipEstimator {
             )))?;
         // Check if we already estimated the gas tip for this block
         if self.last_hash == latest_block_hash {
-            return Ok(self.last_tip);
+            return Ok(self.last_tip.max(min_tip_wei));
         }
         let block_range_lower_bound =
             latest_block_number.saturating_sub(BLOCK_RANGE_LOWER_BOUND_DEC);
@@ -70,7 +80,7 @@ impl GasTipEstimator {
             );
             return Err(RpcErr::Internal("Error calculating gas price".to_string()));
         }
-        let mut results = vec![];
+        let mut results: Vec<U256> = vec![];
         // TODO: Estimating gas price involves querying multiple blocks
         // and doing some calculations with each of them, let's consider
         // caching this result, also we can have a specific DB method
@@ -97,7 +107,7 @@ impl GasTipEstimator {
                 .transactions
                 .into_iter()
                 .filter_map(|tx| tx.effective_gas_tip(base_fee))
-                .collect::<Vec<u64>>();
+                .collect::<Vec<U256>>();
 
             gas_tip_samples.sort();
             results.extend(gas_tip_samples.into_iter().take(TXS_SAMPLE_SIZE));
@@ -105,13 +115,18 @@ impl GasTipEstimator {
         results.sort();
 
         // If we cannot get a median sample due to blocks being empty, use the last calculated tip
-        let estimated_tip = *results.get(results.len() / 2).unwrap_or(&self.last_tip);
+        let last_tip_u256 = U256::from(self.last_tip);
+        let estimated_tip = *results.get(results.len() / 2).unwrap_or(&last_tip_u256);
+        // Gas tips in practice always fit in u64; clamp to u64::MAX if somehow larger
+        let estimated_tip = u64::try_from(estimated_tip).unwrap_or(u64::MAX);
 
         // Update last estimation results
         self.last_hash = latest_block_hash;
         self.last_tip = estimated_tip;
 
-        Ok(estimated_tip)
+        // Cache the raw estimate but return the floored value, so a later change
+        // to `--mempool.min-tip` is reflected without waiting for a new block.
+        Ok(estimated_tip.max(min_tip_wei))
     }
 }
 
@@ -135,7 +150,7 @@ mod tests {
         let storage = setup_store().await;
         add_legacy_tx_blocks(&storage, 20, 10).await;
         let gas_tip = GasTipEstimator::new()
-            .estimate_gas_tip(&storage)
+            .estimate_gas_tip(&storage, 0)
             .await
             .unwrap();
         assert_eq!(gas_tip, BASE_PRICE_IN_WEI);
@@ -146,7 +161,7 @@ mod tests {
         let storage = setup_store().await;
         add_eip1559_tx_blocks(&storage, 20, 10).await;
         let gas_tip = GasTipEstimator::new()
-            .estimate_gas_tip(&storage)
+            .estimate_gas_tip(&storage, 0)
             .await
             .unwrap();
         assert_eq!(gas_tip, BASE_PRICE_IN_WEI);
@@ -157,7 +172,7 @@ mod tests {
         let storage = setup_store().await;
         add_mixed_tx_blocks(&storage, 20, 10).await;
         let gas_tip = GasTipEstimator::new()
-            .estimate_gas_tip(&storage)
+            .estimate_gas_tip(&storage, 0)
             .await
             .unwrap();
         assert_eq!(gas_tip, BASE_PRICE_IN_WEI);
@@ -167,10 +182,36 @@ mod tests {
     async fn test_for_no_blocks() {
         let storage = setup_store().await;
         let gas_tip = GasTipEstimator::new()
-            .estimate_gas_tip(&storage)
+            .estimate_gas_tip(&storage, 0)
             .await
             .unwrap();
         assert_eq!(gas_tip, MIN_GAS_TIP);
+    }
+
+    #[tokio::test]
+    async fn estimate_is_floored_at_the_mempool_min_tip() {
+        // The suggestion this RPC returns must never sit below the node's own
+        // admission floor, or a client following it would have its tx rejected
+        // by our mempool. Samples here are far below the floor, and the
+        // empty-block fallback path is exercised too.
+        let storage = setup_store().await;
+        add_empty_blocks(&storage, 20).await;
+
+        const FLOOR: u64 = 1_000_000;
+        let mut estimator = GasTipEstimator::new();
+        let floored = estimator.estimate_gas_tip(&storage, FLOOR).await.unwrap();
+        assert!(
+            floored >= FLOOR,
+            "estimate {floored} must not be below the configured floor {FLOOR}"
+        );
+
+        // The cached value is the raw estimate, so lowering the floor on a
+        // later call returns the unfloored estimate rather than a stale clamp.
+        let unfloored = estimator.estimate_gas_tip(&storage, 0).await.unwrap();
+        assert_eq!(
+            unfloored, MIN_GAS_TIP,
+            "cache must hold the raw estimate, not the previously floored value"
+        );
     }
 
     #[tokio::test]
@@ -178,7 +219,7 @@ mod tests {
         let storage = setup_store().await;
         add_empty_blocks(&storage, 20).await;
         let gas_tip = GasTipEstimator::new()
-            .estimate_gas_tip(&storage)
+            .estimate_gas_tip(&storage, 0)
             .await
             .unwrap();
         assert_eq!(gas_tip, MIN_GAS_TIP);

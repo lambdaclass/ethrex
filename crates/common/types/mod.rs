@@ -9,19 +9,25 @@ mod fork_id;
 mod genesis;
 pub mod l2;
 pub mod payload;
+pub mod prover;
 mod receipt;
 pub mod requests;
+pub mod stateless_ssz;
 pub mod transaction;
 pub mod tx_fields;
+#[cfg(all(feature = "zisk", target_arch = "riscv64"))]
+pub(crate) mod unsync_cell;
 
 pub use account::*;
 pub use account_update::*;
 pub use blobs_bundle::*;
 pub use block::*;
+pub use block_access_list::{BalSynthesisItem, synthesize_bal_updates};
 pub use constants::*;
 pub use fork_id::*;
 pub use genesis::*;
 pub use l2::*;
+pub use prover::*;
 pub use receipt::*;
 pub use transaction::*;
 pub use tx_fields::*;

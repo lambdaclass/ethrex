@@ -1,11 +1,11 @@
 //! Tests for EIP-7708: ETH Transfers Emit a Log
 //!
-//! This module tests that ETH transfers correctly emit Transfer and Selfdestruct logs
+//! This module tests that ETH transfers correctly emit Transfer and Burn logs
 //! as specified in EIP-7708.
 //!
 //! Key behaviors tested:
 //! - Transfer logs (LOG3) emitted from system address for ETH transfers with value > 0
-//! - Selfdestruct logs (LOG2) emitted when a contract is destroyed
+//! - Burn logs (LOG2) emitted when ETH is burned (e.g. via SELFDESTRUCT)
 //! - No logs emitted for zero-value transfers
 //! - No logs emitted on pre-Amsterdam forks
 //! - Correct log format (topics, data, address)
@@ -19,8 +19,9 @@ use ethrex_common::{
         Transaction, TxKind,
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
-    constants::{SELFDESTRUCT_EVENT_TOPIC, TRANSFER_EVENT_TOPIC},
+    constants::{BURN_EVENT_TOPIC, TRANSFER_EVENT_TOPIC},
     db::{Database, gen_db::GeneralizedDatabase},
     environment::{EVMConfig, Environment},
     errors::{DatabaseError, ExecutionReport},
@@ -88,7 +89,7 @@ impl Database for TestDatabase {
         for acc in self.accounts.values() {
             if acc.info.code_hash == code_hash {
                 return Ok(CodeMetadata {
-                    length: acc.code.bytecode.len() as u64,
+                    length: acc.code.len() as u64,
                 });
             }
         }
@@ -114,7 +115,7 @@ fn eoa(balance: U256) -> Account {
 fn contract(code: Bytes) -> Account {
     Account::new(
         U256::zero(),
-        Code::from_bytecode(code),
+        Code::from_bytecode(code, &NativeCrypto),
         0,
         FxHashMap::default(),
     )
@@ -123,7 +124,7 @@ fn contract(code: Bytes) -> Account {
 fn contract_funded(balance: U256, code: Bytes, nonce: u64) -> Account {
     Account::new(
         balance,
-        Code::from_bytecode(code),
+        Code::from_bytecode(code, &NativeCrypto),
         nonce,
         FxHashMap::default(),
     )
@@ -180,9 +181,9 @@ impl TestBuilder {
             origin: self.sender,
             gas_limit: GAS_LIMIT,
             config: EVMConfig::new(self.fork, blob_schedule),
-            block_number: U256::from(1),
+            block_number: 1,
             coinbase: Address::from_low_u64_be(0xCCC),
-            timestamp: U256::from(1000),
+            timestamp: 1000,
             prev_randao: Some(H256::zero()),
             difficulty: U256::zero(),
             slot_number: U256::zero(),
@@ -201,6 +202,10 @@ impl TestBuilder {
             is_privileged: false,
             fee_token: None,
             disable_balance_check: false,
+            disable_nonce_check: false,
+            disable_gas_allowance_check: false,
+            disable_sender_eoa_check: false,
+            is_system_call: false,
         };
 
         let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
@@ -213,7 +218,16 @@ impl TestBuilder {
             ..Default::default()
         });
 
-        let mut vm = VM::new(env, &mut db, &tx, LevmCallTracer::disabled(), VMType::L1).unwrap();
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &tx,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &NativeCrypto,
+            None,
+        )
+        .unwrap();
         vm.execute().unwrap()
     }
 }
@@ -329,15 +343,15 @@ fn assert_transfer_log(log: &Log, from: Address, to: Address, value: U256) {
 }
 
 #[allow(dead_code)]
-fn assert_selfdestruct_log(log: &Log, contract: Address, balance: U256) {
+fn assert_burn_log(log: &Log, contract: Address, balance: U256) {
     assert_eq!(
         log.address, SYSTEM_ADDRESS,
         "Log should be from system address"
     );
-    assert_eq!(log.topics.len(), 2, "Selfdestruct log should have 2 topics");
+    assert_eq!(log.topics.len(), 2, "Burn log should have 2 topics");
     assert_eq!(
-        log.topics[0], SELFDESTRUCT_EVENT_TOPIC,
-        "First topic should be Selfdestruct event"
+        log.topics[0], BURN_EVENT_TOPIC,
+        "First topic should be Burn event"
     );
 
     let mut contract_topic = [0u8; 32];
@@ -757,11 +771,11 @@ fn test_topic_hash_and_system_address_constants() {
         "TRANSFER_EVENT_TOPIC should match keccak256('Transfer(address,address,uint256)')"
     );
 
-    // Verify Selfdestruct topic hash
-    let expected_selfdestruct_hash = ethrex_common::utils::keccak(b"Selfdestruct(address,uint256)");
+    // Verify Burn topic hash
+    let expected_burn_hash = ethrex_common::utils::keccak(b"Burn(address,uint256)");
     assert_eq!(
-        SELFDESTRUCT_EVENT_TOPIC, expected_selfdestruct_hash,
-        "SELFDESTRUCT_EVENT_TOPIC should match keccak256('Selfdestruct(address,uint256)')"
+        BURN_EVENT_TOPIC, expected_burn_hash,
+        "BURN_EVENT_TOPIC should match keccak256('Burn(address,uint256)')"
     );
 
     // Verify system address
@@ -915,8 +929,8 @@ fn create_and_call_bytecode(init_code: &[u8], create_value: U256, call_value: U2
 }
 
 /// When a contract created in the same transaction calls SELFDESTRUCT to a DIFFERENT address,
-/// only a Transfer log should be emitted (not a Selfdestruct log).
-/// Transfer and Selfdestruct logs are mutually exclusive per EIP-7708.
+/// only a Transfer log should be emitted (not a Burn log).
+/// Transfer and Burn logs are mutually exclusive per EIP-7708.
 #[test]
 fn test_created_contract_selfdestruct_to_other_only_transfer_log() {
     let sender = Address::from_low_u64_be(SENDER);
@@ -946,11 +960,11 @@ fn test_created_contract_selfdestruct_to_other_only_transfer_log() {
     // Should have exactly 2 Transfer logs:
     // 1. Transfer(factory -> child, 1000) from CREATE
     // 2. Transfer(child -> beneficiary, 1000) from SELFDESTRUCT
-    // NO Selfdestruct log should be emitted because beneficiary != child
+    // NO Burn log should be emitted because beneficiary != child
     assert_eq!(
         report.logs.len(),
         2,
-        "Should have exactly 2 logs (both Transfer, no Selfdestruct)"
+        "Should have exactly 2 logs (both Transfer, no Burn)"
     );
 
     // First log: CREATE transfer from factory to child
@@ -962,7 +976,7 @@ fn test_created_contract_selfdestruct_to_other_only_transfer_log() {
     // Second log: SELFDESTRUCT transfer from child to beneficiary
     assert_eq!(
         report.logs[1].topics[0], TRANSFER_EVENT_TOPIC,
-        "Second log should be Transfer event (not Selfdestruct)"
+        "Second log should be Transfer event (not Burn)"
     );
     // Verify the second log goes to beneficiary
     let mut beneficiary_topic = [0u8; 32];
@@ -974,10 +988,11 @@ fn test_created_contract_selfdestruct_to_other_only_transfer_log() {
     );
 }
 
-/// When a contract created in the same transaction calls SELFDESTRUCT to ITSELF,
-/// a Selfdestruct log should be emitted (balance is burned, not transferred).
+/// EIP-8246 (Amsterdam+): When a contract created in the same transaction calls SELFDESTRUCT to
+/// ITSELF, NO Burn log is emitted because no ETH is burned. Only a Transfer log from CREATE.
+/// Pre-Amsterdam (Cancun/Prague) behavior with ETH burn is tested in eip8246_tests.rs.
 #[test]
-fn test_created_contract_selfdestruct_to_self_emits_selfdestruct_log() {
+fn test_created_contract_selfdestruct_to_self_no_burn_log() {
     let sender = Address::from_low_u64_be(SENDER);
     let factory = Address::from_low_u64_be(CONTRACT);
     let create_value = U256::from(1000);
@@ -1004,20 +1019,19 @@ fn test_created_contract_selfdestruct_to_self_emits_selfdestruct_log() {
 
     assert!(report.is_success(), "Transaction should succeed");
 
-    // Should have exactly 2 logs:
+    // EIP-8246 (Amsterdam+): Should have exactly 1 log:
     // 1. Transfer(factory -> child, 1000) from CREATE
-    // 2. Selfdestruct(child, 1000) from SELFDESTRUCT to self (balance burned)
-    // NO Transfer log for the selfdestruct because beneficiary == child
+    // NO Burn log: selfdestruct-to-self preserves balance (EIP-8246 removes the burn).
     assert_eq!(
         report.logs.len(),
-        2,
-        "Should have exactly 2 logs (Transfer from CREATE, Selfdestruct from self-destruct)"
+        1,
+        "Should have exactly 1 log (Transfer from CREATE only; no Burn under EIP-8246)"
     );
 
-    // First log: CREATE transfer from factory to child
+    // Only log: CREATE transfer from factory to child
     assert_eq!(
         report.logs[0].topics[0], TRANSFER_EVENT_TOPIC,
-        "First log should be Transfer event"
+        "Only log should be Transfer event from CREATE"
     );
     // Verify child address in the transfer
     let mut child_topic = [0u8; 32];
@@ -1027,20 +1041,12 @@ fn test_created_contract_selfdestruct_to_self_emits_selfdestruct_log() {
         H256::from(child_topic),
         "Transfer should go to child address"
     );
-
-    // Second log: Selfdestruct log for the contract
-    assert_eq!(
-        report.logs[1].topics[0], SELFDESTRUCT_EVENT_TOPIC,
-        "Second log should be Selfdestruct event"
-    );
-    assert_selfdestruct_log(&report.logs[1], child_address, create_value);
 }
 
-/// When a contract is flagged for SELFDESTRUCT and then receives ETH,
-/// a Selfdestruct closure log should be emitted at end of transaction
-/// for the non-zero balance remaining at account closure.
+/// EIP-8246 (Amsterdam+): When a contract is flagged for SELFDESTRUCT and then receives ETH,
+/// the balance is PRESERVED at finalization (no burn). No closure Burn log is emitted.
 #[test]
-fn test_eth_received_after_selfdestruct_emits_closure_log() {
+fn test_eth_received_after_selfdestruct_no_closure_log() {
     let sender = Address::from_low_u64_be(SENDER);
     let factory = Address::from_low_u64_be(CONTRACT);
     let beneficiary = Address::from_low_u64_be(BENEFICIARY);
@@ -1070,15 +1076,15 @@ fn test_eth_received_after_selfdestruct_emits_closure_log() {
 
     assert!(report.is_success(), "Transaction should succeed");
 
-    // Expected logs:
+    // EIP-8246 (Amsterdam+): Expected logs (3 total, no Burn closure):
     // 1. Transfer(factory -> child, 1000) from CREATE
-    // 2. Transfer(child -> beneficiary, 1000) from SELFDESTRUCT
+    // 2. Transfer(child -> beneficiary, 1000) from SELFDESTRUCT to different address
     // 3. Transfer(factory -> child, 500) from CALL (child receives ETH after being flagged)
-    // 4. Selfdestruct(child, 500) - closure log at end of tx (non-zero balance at destruction)
+    // NO Burn closure log: EIP-8246 preserves the 500 wei balance instead of burning it.
     assert_eq!(
         report.logs.len(),
-        4,
-        "Should have 4 logs: 2 Transfers from CREATE+SELFDESTRUCT, 1 Transfer from CALL, 1 Selfdestruct closure"
+        3,
+        "Should have 3 logs: Transfers from CREATE, SELFDESTRUCT, and CALL; no Burn under EIP-8246"
     );
 
     // First log: CREATE transfer
@@ -1101,22 +1107,12 @@ fn test_eth_received_after_selfdestruct_emits_closure_log() {
         "Third log should be Transfer (CALL)"
     );
     assert_transfer_log(&report.logs[2], factory, child_address, call_value);
-
-    // Fourth log: Selfdestruct closure log (emitted at end of tx for non-zero balance)
-    assert_eq!(
-        report.logs[3].topics[0], SELFDESTRUCT_EVENT_TOPIC,
-        "Fourth log should be Selfdestruct (closure)"
-    );
-    assert_selfdestruct_log(&report.logs[3], child_address, call_value);
 }
 
-/// When multiple contracts are flagged for SELFDESTRUCT and receive ETH,
-/// their closure logs should be emitted in lexicographical order of address.
+/// EIP-8246 (Amsterdam+): When multiple contracts are flagged for SELFDESTRUCT and receive ETH,
+/// their balances are PRESERVED at finalization (no burn). No closure Burn logs are emitted.
 #[test]
-fn test_closure_logs_lexicographical_order() {
-    // This test creates two contracts with predictable addresses and verifies
-    // that their closure logs are emitted in lexicographical order.
-
+fn test_selfdestruct_receive_eth_no_closure_logs() {
     let sender = Address::from_low_u64_be(SENDER);
     let factory = Address::from_low_u64_be(CONTRACT);
     let beneficiary = Address::from_low_u64_be(BENEFICIARY);
@@ -1126,19 +1122,12 @@ fn test_closure_logs_lexicographical_order() {
     let child1 = ethrex_common::evm::calculate_create_address(factory, 1);
     let child2 = ethrex_common::evm::calculate_create_address(factory, 2);
 
-    // Determine which address is lower (lexicographically first)
-    let (lower_addr, higher_addr) = if child1 < child2 {
-        (child1, child2)
-    } else {
-        (child2, child1)
-    };
-
     // Create bytecode that:
     // 1. Creates child1 with 100 wei (selfdestructs to beneficiary)
     // 2. Creates child2 with 100 wei (selfdestructs to beneficiary)
     // 3. Calls child1 with 50 wei
     // 4. Calls child2 with 50 wei
-    // Both children should have closure logs, in lexicographical order
+    // Under EIP-8246, children retain the 50 wei balance; no Burn closure logs.
 
     let init_code = selfdestruct_init_code(beneficiary);
     let create_value = U256::from(100);
@@ -1176,7 +1165,6 @@ fn test_closure_logs_lexicographical_order() {
     factory_code.extend_from_slice(&[0x60, 132, 0x52]); // PUSH1 132, MSTORE
 
     // CALL child1 with 50 wei
-    // Load child1 from memory offset 100
     factory_code.extend_from_slice(&[
         0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60,
         0x00, // retSize, retOffset, argsSize, argsOffset
@@ -1210,40 +1198,44 @@ fn test_closure_logs_lexicographical_order() {
 
     assert!(report.is_success(), "Transaction should succeed");
 
-    // Expected logs (8 total):
+    // EIP-8246 (Amsterdam+): Expected logs (6 total, no Burn closure logs):
     // 1. Transfer(factory -> child1, 100) from CREATE
     // 2. Transfer(child1 -> beneficiary, 100) from SELFDESTRUCT
     // 3. Transfer(factory -> child2, 100) from CREATE
     // 4. Transfer(child2 -> beneficiary, 100) from SELFDESTRUCT
     // 5. Transfer(factory -> child1, 50) from CALL
     // 6. Transfer(factory -> child2, 50) from CALL
-    // 7. Selfdestruct(lower_addr, 50) - closure log in lex order
-    // 8. Selfdestruct(higher_addr, 50) - closure log in lex order
-    assert_eq!(report.logs.len(), 8, "Should have 8 logs");
-
-    // The last two logs should be Selfdestruct closure logs in lexicographical order
-    let log7 = &report.logs[6];
-    let log8 = &report.logs[7];
-
+    // NO Burn closure logs: EIP-8246 preserves the 50 wei balance in each child.
     assert_eq!(
-        log7.topics[0], SELFDESTRUCT_EVENT_TOPIC,
-        "7th log should be Selfdestruct"
-    );
-    assert_eq!(
-        log8.topics[0], SELFDESTRUCT_EVENT_TOPIC,
-        "8th log should be Selfdestruct"
+        report.logs.len(),
+        6,
+        "Should have 6 logs (all Transfer, no Burn under EIP-8246)"
     );
 
-    // Extract addresses from the logs
-    let addr7 = Address::from_slice(&log7.topics[1].as_bytes()[12..]);
-    let addr8 = Address::from_slice(&log8.topics[1].as_bytes()[12..]);
+    for log in &report.logs {
+        assert_eq!(
+            log.topics[0], TRANSFER_EVENT_TOPIC,
+            "All logs should be Transfer events under EIP-8246"
+        );
+    }
 
-    assert_eq!(
-        addr7, lower_addr,
-        "First closure log should be for lexicographically lower address"
+    // Verify child1 and child2 received the post-selfdestruct calls
+    let mut child1_topic = [0u8; 32];
+    child1_topic[12..].copy_from_slice(child1.as_bytes());
+    let mut child2_topic = [0u8; 32];
+    child2_topic[12..].copy_from_slice(child2.as_bytes());
+
+    // Logs 5 and 6 should be the CALL transfers to child1 and child2 (order depends on execution)
+    let call_log_addrs: Vec<Address> = report.logs[4..]
+        .iter()
+        .map(|l| Address::from_slice(&l.topics[2].as_bytes()[12..]))
+        .collect();
+    assert!(
+        call_log_addrs.contains(&child1),
+        "One CALL log should target child1"
     );
-    assert_eq!(
-        addr8, higher_addr,
-        "Second closure log should be for lexicographically higher address"
+    assert!(
+        call_log_addrs.contains(&child2),
+        "One CALL log should target child2"
     );
 }

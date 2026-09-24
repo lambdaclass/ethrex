@@ -28,6 +28,10 @@ pub enum Token {
     JsonObject(String),
     JsonArray(String),
     Colon,
+    Equals,
+    Plus,
+    Minus,
+    VarRef { name: String, path: Vec<String> },
 }
 
 pub const UTILITY_NAMES: &[&str] = &[
@@ -40,12 +44,33 @@ pub const UTILITY_NAMES: &[&str] = &[
     "isAddress",
 ];
 
+/// An argument to an RPC call — either a literal JSON value or a variable reference.
+#[derive(Debug, Clone)]
+pub enum RpcArg {
+    Literal(Value),
+    VarRef {
+        name: String,
+        path: Vec<String>,
+        /// Optional arithmetic offset: `$var + 1` or `$var - 5`.
+        offset: Option<i64>,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub enum ParsedCommand {
     RpcCall {
         namespace: String,
         method: String,
-        args: Vec<Value>,
+        args: Vec<RpcArg>,
+    },
+    Assignment {
+        var_name: String,
+        command: Box<ParsedCommand>,
+    },
+    PrintVar {
+        name: String,
+        path: Vec<String>,
+        offset: Option<i64>,
     },
     BuiltinCommand {
         name: String,
@@ -156,6 +181,49 @@ impl<'a> Tokenizer<'a> {
         String::from_utf8_lossy(&self.input[start..self.pos]).into_owned()
     }
 
+    /// Read a variable reference: `$name` or `$name.field.nested`
+    fn read_var_ref(&mut self) -> Result<Token, ParseError> {
+        // Read the variable name (must start with letter/underscore)
+        let name_start = self.pos;
+        while let Some(ch) = self.peek() {
+            if ch.is_ascii_alphanumeric() || ch == b'_' {
+                self.pos += 1;
+            } else {
+                break;
+            }
+        }
+        if self.pos == name_start {
+            return Err(ParseError::UnexpectedChar('$'));
+        }
+        let name = String::from_utf8_lossy(&self.input[name_start..self.pos]).into_owned();
+
+        // Read optional dot-separated path: .field.nested
+        let mut path = Vec::new();
+        while self.peek() == Some(b'.') {
+            // Check that the char after '.' is alphanumeric (not another dot or operator)
+            if self
+                .input
+                .get(self.pos + 1)
+                .is_some_and(|ch| ch.is_ascii_alphabetic() || *ch == b'_')
+            {
+                self.pos += 1; // consume '.'
+                let seg_start = self.pos;
+                while let Some(ch) = self.peek() {
+                    if ch.is_ascii_alphanumeric() || ch == b'_' {
+                        self.pos += 1;
+                    } else {
+                        break;
+                    }
+                }
+                path.push(String::from_utf8_lossy(&self.input[seg_start..self.pos]).into_owned());
+            } else {
+                break;
+            }
+        }
+
+        Ok(Token::VarRef { name, path })
+    }
+
     fn read_number_or_hex(&mut self, first: u8) -> String {
         let start = self.pos - 1;
         // Check for 0x prefix
@@ -197,6 +265,10 @@ impl<'a> Tokenizer<'a> {
                 b'"' | b'\'' => Token::String(self.read_string(ch)?),
                 b'{' => Token::JsonObject(self.read_json_block(b'{', b'}')?),
                 b'[' => Token::JsonArray(self.read_json_block(b'[', b']')?),
+                b'=' => Token::Equals,
+                b'+' => Token::Plus,
+                b'-' => Token::Minus,
+                b'$' => self.read_var_ref()?,
                 ch if ch.is_ascii_digit() => Token::Number(self.read_number_or_hex(ch)),
                 ch if ch.is_ascii_alphabetic() || ch == b'_' => {
                     let ident = self.read_ident();
@@ -211,6 +283,17 @@ impl<'a> Tokenizer<'a> {
             tokens.push(tok);
         }
         Ok(tokens)
+    }
+}
+
+fn token_to_rpc_arg(token: &Token) -> RpcArg {
+    match token {
+        Token::VarRef { name, path } => RpcArg::VarRef {
+            name: name.clone(),
+            path: path.clone(),
+            offset: None,
+        },
+        other => RpcArg::Literal(token_to_value(other)),
     }
 }
 
@@ -237,6 +320,16 @@ fn token_to_string(token: &Token) -> String {
         Token::RParen => ")".to_string(),
         Token::Comma => ",".to_string(),
         Token::Colon => ":".to_string(),
+        Token::Equals => "=".to_string(),
+        Token::Plus => "+".to_string(),
+        Token::Minus => "-".to_string(),
+        Token::VarRef { name, path } => {
+            if path.is_empty() {
+                format!("${name}")
+            } else {
+                format!("${name}.{}", path.join("."))
+            }
+        }
     }
 }
 
@@ -259,6 +352,49 @@ pub fn parse(input: &str) -> Result<ParsedCommand, ParseError> {
 
     if tokens.is_empty() {
         return Ok(ParsedCommand::Empty);
+    }
+
+    // Check for assignment: `name = command...`
+    if tokens.len() >= 2
+        && let Token::Ident(var_name) = &tokens[0]
+        && tokens[1] == Token::Equals
+    {
+        // The rest after `=` is the command to execute
+        let rest_tokens = &tokens[2..];
+        let inner_cmd = parse_tokens_as_command(rest_tokens)?;
+        return Ok(ParsedCommand::Assignment {
+            var_name: var_name.clone(),
+            command: Box::new(inner_cmd),
+        });
+    }
+
+    // Check for variable print: `$name`, `$name.path`, or `$name + N`
+    if let Some(Token::VarRef { name, path }) = tokens.first() {
+        if tokens.len() == 1 {
+            return Ok(ParsedCommand::PrintVar {
+                name: name.clone(),
+                path: path.clone(),
+                offset: None,
+            });
+        }
+        if tokens.len() == 3
+            && matches!(tokens[1], Token::Plus | Token::Minus)
+            && let Token::Number(n) = &tokens[2]
+        {
+            let sign: i64 = if matches!(tokens[1], Token::Minus) {
+                -1
+            } else {
+                1
+            };
+            let value: i64 = n.parse().map_err(|_| {
+                ParseError::InvalidJson(format!("invalid number in arithmetic: {n}"))
+            })?;
+            return Ok(ParsedCommand::PrintVar {
+                name: name.clone(),
+                path: path.clone(),
+                offset: Some(sign * value),
+            });
+        }
     }
 
     // Check for namespace.method pattern (RPC call)
@@ -307,14 +443,78 @@ pub fn parse(input: &str) -> Result<ParsedCommand, ParseError> {
     ))
 }
 
-fn parse_rpc_args(tokens: &[Token]) -> Result<Vec<Value>, ParseError> {
+/// Parse a sequence of already-tokenized tokens as a command (for assignment RHS).
+fn parse_tokens_as_command(tokens: &[Token]) -> Result<ParsedCommand, ParseError> {
+    if tokens.is_empty() {
+        return Ok(ParsedCommand::Empty);
+    }
+
+    // Check for variable expression: `$var`, `$var.path`, or `$var + N`
+    if let Some(Token::VarRef { name, path }) = tokens.first() {
+        if tokens.len() == 1 {
+            return Ok(ParsedCommand::PrintVar {
+                name: name.clone(),
+                path: path.clone(),
+                offset: None,
+            });
+        }
+        if tokens.len() == 3
+            && matches!(tokens[1], Token::Plus | Token::Minus)
+            && let Token::Number(n) = &tokens[2]
+        {
+            let sign: i64 = if matches!(tokens[1], Token::Minus) {
+                -1
+            } else {
+                1
+            };
+            let value: i64 = n.parse().map_err(|_| {
+                ParseError::InvalidJson(format!("invalid number in arithmetic: {n}"))
+            })?;
+            return Ok(ParsedCommand::PrintVar {
+                name: name.clone(),
+                path: path.clone(),
+                offset: Some(sign * value),
+            });
+        }
+    }
+
+    // Check for namespace.method pattern
+    if tokens.len() >= 3
+        && let (Token::Ident(ns), Token::Dot, Token::Ident(method)) =
+            (&tokens[0], &tokens[1], &tokens[2])
+    {
+        let args = parse_rpc_args(&tokens[3..])?;
+        return Ok(ParsedCommand::RpcCall {
+            namespace: ns.clone(),
+            method: method.clone(),
+            args,
+        });
+    }
+
+    // Check for utility call
+    if let Token::Ident(name) = &tokens[0] {
+        let args = tokens[1..]
+            .iter()
+            .filter(|t| !matches!(t, Token::LParen | Token::RParen | Token::Comma))
+            .map(token_to_string)
+            .collect();
+        return Ok(ParsedCommand::UtilityCall {
+            name: name.clone(),
+            args,
+        });
+    }
+
+    Err(ParseError::UnexpectedEof)
+}
+
+fn parse_rpc_args(tokens: &[Token]) -> Result<Vec<RpcArg>, ParseError> {
     if tokens.is_empty() {
         return Ok(Vec::new());
     }
 
-    let mut args = Vec::new();
+    // Collect raw args first (filtering parens/commas), then merge arithmetic.
+    let mut raw = Vec::new();
 
-    // Parenthesized syntax: (arg1, arg2, ...)
     if tokens.first() == Some(&Token::LParen) {
         let mut found_rparen = false;
         for token in &tokens[1..] {
@@ -324,28 +524,66 @@ fn parse_rpc_args(tokens: &[Token]) -> Result<Vec<Value>, ParseError> {
                     break;
                 }
                 Token::Comma => continue,
-                t => args.push(token_to_value(t)),
+                t => raw.push(t),
             }
         }
         if !found_rparen {
             return Err(ParseError::UnexpectedEof);
         }
-        return Ok(args);
-    }
-
-    // Space-separated syntax: arg1 arg2 ...
-    for token in tokens {
-        match token {
-            Token::Comma => continue,
-            t => args.push(token_to_value(t)),
+    } else {
+        for token in tokens {
+            match token {
+                Token::Comma => continue,
+                t => raw.push(t),
+            }
         }
     }
+
+    // Merge `VarRef +/- Number` sequences into a single VarRef with offset.
+    let mut args = Vec::new();
+    let mut i = 0;
+    while i < raw.len() {
+        if let Token::VarRef { name, path } = raw[i]
+            && i + 2 < raw.len()
+            && matches!(raw[i + 1], Token::Plus | Token::Minus)
+            && let Token::Number(n) = raw[i + 2]
+        {
+            let sign: i64 = if matches!(raw[i + 1], Token::Minus) {
+                -1
+            } else {
+                1
+            };
+            let value: i64 = n.parse().map_err(|_| {
+                ParseError::InvalidJson(format!("invalid number in arithmetic: {n}"))
+            })?;
+            args.push(RpcArg::VarRef {
+                name: name.clone(),
+                path: path.clone(),
+                offset: Some(sign * value),
+            });
+            i += 3;
+        } else {
+            args.push(token_to_rpc_arg(raw[i]));
+            i += 1;
+        }
+    }
+
     Ok(args)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Helper: extract the inner Value from an RpcArg::Literal, panicking if it's a VarRef.
+    fn lit(arg: &RpcArg) -> &Value {
+        match arg {
+            RpcArg::Literal(v) => v,
+            RpcArg::VarRef { name, path, .. } => {
+                panic!("expected Literal, got VarRef({name}, {path:?})")
+            }
+        }
+    }
 
     #[test]
     fn test_empty_input() {
@@ -436,7 +674,7 @@ mod tests {
         match result {
             ParsedCommand::RpcCall { args, .. } => {
                 assert_eq!(args.len(), 2);
-                assert!(args[0].is_object());
+                assert!(lit(&args[0]).is_object());
             }
             _ => panic!("expected RpcCall"),
         }
@@ -448,7 +686,7 @@ mod tests {
         match result {
             ParsedCommand::RpcCall { args, .. } => {
                 assert_eq!(args.len(), 2);
-                assert_eq!(args[1], Value::Bool(true));
+                assert_eq!(lit(&args[1]), &Value::Bool(true));
             }
             _ => panic!("expected RpcCall"),
         }
@@ -464,8 +702,8 @@ mod tests {
             ParsedCommand::RpcCall { args, .. } => {
                 assert_eq!(args.len(), 2);
                 assert_eq!(
-                    args[0],
-                    Value::String("0x1234567890abcdef1234567890abcdef12345678".to_string())
+                    lit(&args[0]),
+                    &Value::String("0x1234567890abcdef1234567890abcdef12345678".to_string())
                 );
             }
             _ => panic!("expected RpcCall"),
@@ -512,8 +750,8 @@ mod tests {
         match result {
             ParsedCommand::RpcCall { args, .. } => {
                 assert_eq!(args.len(), 2);
-                assert!(args[0].is_object());
-                assert_eq!(args[0]["a"]["b"], Value::Number(1.into()));
+                assert!(lit(&args[0]).is_object());
+                assert_eq!(lit(&args[0])["a"]["b"], Value::Number(1.into()));
             }
             _ => panic!("expected RpcCall"),
         }
@@ -526,7 +764,7 @@ mod tests {
         match result {
             ParsedCommand::RpcCall { args, .. } => {
                 assert_eq!(args.len(), 2);
-                assert!(args[0].is_array());
+                assert!(lit(&args[0]).is_array());
             }
             _ => panic!("expected RpcCall"),
         }
@@ -592,8 +830,8 @@ mod tests {
         match result {
             ParsedCommand::RpcCall { args, .. } => {
                 assert_eq!(args.len(), 2);
-                assert_eq!(args[0], Value::String("arg1".to_string()));
-                assert_eq!(args[1], Value::String("arg2".to_string()));
+                assert_eq!(lit(&args[0]), &Value::String("arg1".to_string()));
+                assert_eq!(lit(&args[1]), &Value::String("arg2".to_string()));
             }
             _ => panic!("expected RpcCall"),
         }
@@ -605,8 +843,8 @@ mod tests {
         match result {
             ParsedCommand::RpcCall { args, .. } => {
                 assert_eq!(args.len(), 2);
-                assert_eq!(args[0], Value::String("0x1".to_string()));
-                assert_eq!(args[1], Value::Bool(true));
+                assert_eq!(lit(&args[0]), &Value::String("0x1".to_string()));
+                assert_eq!(lit(&args[1]), &Value::Bool(true));
             }
             _ => panic!("expected RpcCall"),
         }
@@ -698,7 +936,7 @@ mod tests {
         match result {
             ParsedCommand::RpcCall { args, .. } => {
                 assert_eq!(args.len(), 1);
-                assert!(args[0].is_array());
+                assert!(lit(&args[0]).is_array());
             }
             _ => panic!("expected RpcCall"),
         }
@@ -744,5 +982,150 @@ mod tests {
         assert_eq!(token_to_string(&Token::Colon), ":");
         assert_eq!(token_to_string(&Token::Bool(true)), "true");
         assert_eq!(token_to_string(&Token::Bool(false)), "false");
+    }
+
+    // --- Variable assignment and reference ---
+
+    #[test]
+    fn test_assignment_rpc_call() {
+        let result = parse("head = eth.getBlockByNumber latest false").unwrap();
+        match result {
+            ParsedCommand::Assignment { var_name, command } => {
+                assert_eq!(var_name, "head");
+                match *command {
+                    ParsedCommand::RpcCall {
+                        namespace, method, ..
+                    } => {
+                        assert_eq!(namespace, "eth");
+                        assert_eq!(method, "getBlockByNumber");
+                    }
+                    _ => panic!("expected RpcCall inside assignment"),
+                }
+            }
+            _ => panic!("expected Assignment"),
+        }
+    }
+
+    #[test]
+    fn test_assignment_utility_call() {
+        let result = parse("x = toHex 255").unwrap();
+        match result {
+            ParsedCommand::Assignment { var_name, command } => {
+                assert_eq!(var_name, "x");
+                match *command {
+                    ParsedCommand::UtilityCall { name, args } => {
+                        assert_eq!(name, "toHex");
+                        assert_eq!(args, vec!["255"]);
+                    }
+                    _ => panic!("expected UtilityCall inside assignment"),
+                }
+            }
+            _ => panic!("expected Assignment"),
+        }
+    }
+
+    #[test]
+    fn test_var_ref_simple() {
+        let result = parse("eth.getBlockByNumber $blockNum false").unwrap();
+        match result {
+            ParsedCommand::RpcCall { args, .. } => {
+                assert_eq!(args.len(), 2);
+                match &args[0] {
+                    RpcArg::VarRef { name, path, .. } => {
+                        assert_eq!(name, "blockNum");
+                        assert!(path.is_empty());
+                    }
+                    _ => panic!("expected VarRef"),
+                }
+                assert_eq!(lit(&args[1]), &Value::Bool(false));
+            }
+            _ => panic!("expected RpcCall"),
+        }
+    }
+
+    #[test]
+    fn test_var_ref_nested() {
+        let result = parse("engine.newPayloadV4 $payload.executionPayload [] 0x00").unwrap();
+        match result {
+            ParsedCommand::RpcCall { args, .. } => {
+                assert_eq!(args.len(), 3);
+                match &args[0] {
+                    RpcArg::VarRef { name, path, .. } => {
+                        assert_eq!(name, "payload");
+                        assert_eq!(path, &["executionPayload"]);
+                    }
+                    _ => panic!("expected VarRef"),
+                }
+            }
+            _ => panic!("expected RpcCall"),
+        }
+    }
+
+    #[test]
+    fn test_var_ref_deeply_nested() {
+        let result = parse("eth.call $a.b.c.d").unwrap();
+        match result {
+            ParsedCommand::RpcCall { args, .. } => {
+                assert_eq!(args.len(), 1);
+                match &args[0] {
+                    RpcArg::VarRef { name, path, .. } => {
+                        assert_eq!(name, "a");
+                        assert_eq!(path, &["b", "c", "d"]);
+                    }
+                    _ => panic!("expected VarRef"),
+                }
+            }
+            _ => panic!("expected RpcCall"),
+        }
+    }
+
+    #[test]
+    fn test_dollar_without_ident_errors() {
+        let err = parse("eth.call $").unwrap_err();
+        assert!(matches!(err, ParseError::UnexpectedChar('$')));
+    }
+
+    #[test]
+    fn test_equals_token() {
+        let mut tokenizer = Tokenizer::new("=");
+        let tokens = tokenizer.tokenize().unwrap();
+        assert_eq!(tokens, vec![Token::Equals]);
+    }
+
+    #[test]
+    fn test_var_ref_token() {
+        let mut tokenizer = Tokenizer::new("$foo.bar");
+        let tokens = tokenizer.tokenize().unwrap();
+        assert_eq!(
+            tokens,
+            vec![Token::VarRef {
+                name: "foo".to_string(),
+                path: vec!["bar".to_string()],
+            }]
+        );
+    }
+
+    #[test]
+    fn test_assignment_with_var_ref_arg() {
+        let result = parse("id = engine.getPayloadV5 $fcu.payloadId").unwrap();
+        match result {
+            ParsedCommand::Assignment { var_name, command } => {
+                assert_eq!(var_name, "id");
+                match *command {
+                    ParsedCommand::RpcCall { args, .. } => {
+                        assert_eq!(args.len(), 1);
+                        match &args[0] {
+                            RpcArg::VarRef { name, path, .. } => {
+                                assert_eq!(name, "fcu");
+                                assert_eq!(path, &["payloadId"]);
+                            }
+                            _ => panic!("expected VarRef"),
+                        }
+                    }
+                    _ => panic!("expected RpcCall"),
+                }
+            }
+            _ => panic!("expected Assignment"),
+        }
     }
 }

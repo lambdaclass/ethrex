@@ -1,13 +1,15 @@
 use aligned_sdk::types::Network;
-use ethrex_common::types::Block;
 use ethrex_common::types::batch::Batch;
 use ethrex_common::types::fee_config::FeeConfig;
+use ethrex_common::types::normalize_legacy_withdrawals;
+use ethrex_common::types::{Block, BlockNumber};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, types::TxType};
-use ethrex_l2_common::prover::ProverType;
+use ethrex_l2_common::prover::{ProverType, verifier_getter};
 use ethrex_l2_rpc::signer::Signer;
 use ethrex_l2_sdk::{
-    build_generic_tx, get_last_committed_batch, send_tx_bump_gas_exponential_backoff,
+    build_generic_tx, get_l2_gas_limit as sdk_get_l2_gas_limit, get_last_committed_batch,
+    send_tx_bump_gas_exponential_backoff,
 };
 use ethrex_rpc::{
     EthClient,
@@ -21,6 +23,14 @@ use reqwest::Url;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::{info, warn};
+
+/// 4-byte ABI selectors for OnChainProposer custom errors.
+/// These are the first 4 bytes of keccak256 of the error signature.
+/// Used to detect specific revert reasons from the `data` field of RPC error responses.
+pub const INVALID_RISC0_PROOF_SELECTOR: &str = "0x14add973";
+pub const INVALID_SP1_PROOF_SELECTOR: &str = "0x7ff849b5";
+pub const INVALID_TDX_PROOF_SELECTOR: &str = "0x62013a95";
+pub const ALIGNED_PROOF_VERIFICATION_FAILED_SELECTOR: &str = "0x44602025";
 
 pub async fn sleep_random(sleep_amount: u64) {
     sleep(random_duration(sleep_amount)).await;
@@ -83,7 +93,7 @@ pub async fn get_needed_proof_types(
 
     let mut needed_proof_types = vec![];
     for prover_type in ProverType::all() {
-        let Some(getter) = prover_type.verifier_getter() else {
+        let Some(getter) = verifier_getter(prover_type) else {
             continue;
         };
         let calldata = keccak(getter)[..4].to_vec();
@@ -112,6 +122,29 @@ pub async fn get_needed_proof_types(
     }
 
     Ok(needed_proof_types)
+}
+
+const DEFAULT_L2_GAS_LIMIT: u64 = 30_000_000;
+
+pub async fn get_l2_gas_limit(
+    rpc_urls: Vec<Url>,
+    bridge_address: Address,
+) -> Result<u64, EthClientError> {
+    if bridge_address == Address::zero() {
+        warn!("Bridge address is zero, using default L2 gas limit: {DEFAULT_L2_GAS_LIMIT}");
+        return Ok(DEFAULT_L2_GAS_LIMIT);
+    }
+    let eth_client = EthClient::new_with_multiple_urls(rpc_urls)?;
+    let gas_limit = sdk_get_l2_gas_limit(&eth_client, bridge_address).await?;
+    if gas_limit == 0 {
+        return Err(EthClientError::Custom(
+            "L2 gas limit fetched from bridge is 0 — is the contract initialized? \
+             See docs/l2/deployment/upgrades.md for upgrade instructions."
+                .to_string(),
+        ));
+    }
+    info!("Fetched L2 gas limit from bridge contract: {gas_limit}");
+    Ok(gas_limit)
 }
 
 pub fn resolve_aligned_network(network: &str) -> Network {
@@ -147,6 +180,43 @@ where
     Ok(is_up_to_date)
 }
 
+/// Reads a block from immutable local history, normalizing the legacy
+/// omitted-withdrawals body shape that older ethrex versions stored (see
+/// [`normalize_legacy_withdrawals`]).
+///
+/// Every read of a stored block that can end up in a batch has to go through
+/// here, and the reason is byte-equality rather than canonicality: the guest
+/// re-encodes the blocks it is handed and KZG-checks the result against the
+/// committed blob, while `BlockBody`'s RLP omits an absent `withdrawals` field
+/// and writes `0xc0` for an empty one. A block read with normalization on the
+/// path that builds the blob and without it on the path that builds the prover
+/// input therefore differs by one byte, and the mismatch surfaces inside the
+/// zkVM as `InvalidBlobProof`.
+///
+/// Returns `Ok(None)` when the body is absent, which callers walking forward
+/// through the chain read as "no further block yet" rather than as an error.
+/// Never use this for blocks received from the network.
+pub async fn read_trusted_block(
+    store: &Store,
+    block_number: BlockNumber,
+) -> Result<Option<Block>, StoreError> {
+    let Some(body) = store.get_block_body(block_number).await? else {
+        return Ok(None);
+    };
+    let header = store.get_block_header(block_number)?.ok_or_else(|| {
+        StoreError::Custom(format!(
+            "found a body but no header for block {block_number} in storage"
+        ))
+    })?;
+
+    let mut block = Block::new(header, body);
+    normalize_legacy_withdrawals(&block.header, &mut block.body);
+
+    Ok(Some(block))
+}
+
+/// Reads a batch's blocks and their respective fee configs from the local
+/// stores, through [`read_trusted_block`].
 pub async fn fetch_blocks_with_respective_fee_configs<E>(
     batch: &Batch,
     store: &Store,
@@ -159,20 +229,11 @@ where
     let mut fee_configs = vec![];
 
     for block_number in batch.first_block..=batch.last_block {
-        let block_header = store
-            .get_block_header(block_number)?
-            .ok_or(StoreError::Custom(
-                "failed to retrieve block header from storage".to_string(),
-            ))?;
-
-        let block_body = store
-            .get_block_body(block_number)
+        let block = read_trusted_block(store, block_number)
             .await?
             .ok_or(StoreError::Custom(
                 "failed to retrieve block body from storage".to_string(),
             ))?;
-
-        let block = Block::new(block_header, block_body);
 
         blocks.push(block);
 
@@ -195,4 +256,18 @@ pub fn get_git_commit_hash() -> String {
 
 pub fn batch_checkpoint_name(batch_number: u64) -> String {
     format!("checkpoint_batch_{batch_number}")
+}
+
+/// Removes the checkpoint directory for the previous batch (`checkpoint_batch_{batch_number - 1}`).
+/// No-op when `batch_number` is 0.
+pub fn remove_batch_checkpoint(checkpoints_dir: &std::path::Path, batch_number: u64) {
+    let Some(prev) = batch_number.checked_sub(1) else {
+        return;
+    };
+    let cp = checkpoints_dir.join(batch_checkpoint_name(prev));
+    if cp.exists() {
+        let _ = std::fs::remove_dir_all(&cp).inspect_err(|e| {
+            tracing::error!("Failed to remove checkpoint {cp:?}: {e}");
+        });
+    }
 }

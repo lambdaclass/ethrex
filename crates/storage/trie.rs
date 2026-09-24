@@ -113,13 +113,29 @@ impl BackendTrieDB {
 
     /// Key might be for an account or storage slot
     fn table_for_key(&self, key: &[u8]) -> &'static str {
-        let is_leaf = key.len() == 65 || key.len() == 131;
+        let (is_leaf, _) = classify_trie_key(key.len());
         if is_leaf {
             self.fkv_table
         } else {
             self.nodes_table
         }
     }
+}
+
+/// Classifies an on-disk trie/flat-KV key by its length.
+///
+/// Returns `(is_leaf, is_account)`:
+/// - `is_leaf = true` iff the key is a flat-KV leaf (account leaf at 65 bytes, storage leaf at 131 bytes).
+/// - `is_account = true` iff the key targets account-space (length <= 65: account trie nodes and account leaves).
+///
+/// Used by every CF-dispatch site (write loop in `commit_to_disk`, read dispatch
+/// in `BackendTrieDBLocked::tx_for_key`, table selection in
+/// `BackendTrieDB::table_for_key`). Centralised here so a future change to the key
+/// layout only needs to touch one place.
+pub fn classify_trie_key(key_len: usize) -> (bool, bool) {
+    let is_leaf = key_len == 65 || key_len == 131;
+    let is_account = key_len <= 65;
+    (is_leaf, is_account)
 }
 
 impl TrieDB for BackendTrieDB {
@@ -134,6 +150,39 @@ impl TrieDB for BackendTrieDB {
         self.read_view
             .get(table, prefixed_key.as_ref())
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e)))
+    }
+
+    fn multi_get(&self, keys: &[Nibbles]) -> Vec<Result<Option<Vec<u8>>, TrieError>> {
+        // Compute the prefixed key and target table for every input key,
+        // preserving the original index so results can be scattered back
+        // in input order after being partitioned by table.
+        let prefixed_keys: Vec<Vec<u8>> = keys.iter().map(|k| self.make_key(k.clone())).collect();
+
+        // table -> (original index, key bytes)
+        let mut by_table: std::collections::HashMap<&'static str, Vec<(usize, &[u8])>> =
+            std::collections::HashMap::new();
+        for (idx, key) in prefixed_keys.iter().enumerate() {
+            let table = self.table_for_key(key);
+            by_table.entry(table).or_default().push((idx, key.as_ref()));
+        }
+
+        let mut results: Vec<Option<Result<Option<Vec<u8>>, TrieError>>> =
+            (0..keys.len()).map(|_| None).collect();
+
+        for (table, entries) in by_table {
+            let (indices, refs): (Vec<usize>, Vec<&[u8]>) = entries.into_iter().unzip();
+            let table_results = self.read_view.multi_get(table, &refs);
+            for (idx, res) in indices.into_iter().zip(table_results) {
+                results[idx] = Some(res.map_err(|e| {
+                    TrieError::DbError(anyhow::anyhow!("Failed to get from database: {}", e))
+                }));
+            }
+        }
+
+        results
+            .into_iter()
+            .map(|r| r.expect("every key is assigned to exactly one table"))
+            .collect()
     }
 
     fn put_batch(&self, key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
@@ -179,8 +228,7 @@ impl BackendTrieDBLocked {
 
     /// Key is already prefixed
     fn tx_for_key(&self, key: &Nibbles) -> &dyn StorageLockedView {
-        let is_leaf = key.len() == 65 || key.len() == 131;
-        let is_account = key.len() <= 65;
+        let (is_leaf, is_account) = classify_trie_key(key.len());
         if is_leaf {
             if is_account {
                 &*self.account_fkv_tx

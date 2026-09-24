@@ -75,26 +75,23 @@ pub fn write_failing_test_to_report(test: &Test, failing_test_cases: Vec<PostChe
         Cell::new("Path"),
         Cell::new(&test.path.display().to_string()),
     ]));
+    let description = test
+        ._info
+        .as_ref()
+        .and_then(|info| info.description.clone().or_else(|| info.comment.clone()))
+        .unwrap_or_else(|| "No description or comment".to_string());
     header_table.add_row(Row::new(vec![
         Cell::new("Description"),
-        Cell::new(
-            &test._info.description.clone().unwrap_or(
-                test._info
-                    .comment
-                    .clone()
-                    .unwrap_or("No description or comment".to_string()),
-            ),
-        ),
+        Cell::new(&description),
     ]));
+    let reference_spec = test
+        ._info
+        .as_ref()
+        .and_then(|info| info.reference_spec.clone())
+        .unwrap_or_else(|| "No reference spec".to_string());
     header_table.add_row(Row::new(vec![
         Cell::new("Reference"),
-        Cell::new(
-            &test
-                ._info
-                .reference_spec
-                .clone()
-                .unwrap_or("No reference spec".to_string()),
-        ),
+        Cell::new(&reference_spec),
     ]));
 
     let header_content = format!("{}\n", header_table);

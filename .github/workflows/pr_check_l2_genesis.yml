@@ -28,10 +28,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l2
 
       - name: Install solc
         uses: ./.github/actions/install-solc

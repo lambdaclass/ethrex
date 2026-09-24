@@ -5,6 +5,8 @@ edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
 license.workspace = true
+description = "JSON-RPC and Engine API server for the ethrex Ethereum execution client"
+repository.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -42,6 +44,10 @@ jemalloc_pprof = { version = "0.8.0", optional = true, features = [
 ] }
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
+# Used by test_utils to share a single merkleization pool across test contexts.
+rayon.workspace = true
+
+# EIP-8025 dependencies (optional)
 
 # Clients
 envy = "0.4.2"
@@ -62,3 +68,7 @@ redundant_clone = "warn"
 
 [features]
 jemalloc_profiling = ["dep:jemalloc_pprof"]
+c-kzg = ["ethrex-common/c-kzg", "ethrex-crypto/c-kzg"]
+# Exposes the `test_utils` module (test scaffolding) to other crates' test
+# builds. Off by default so it is excluded from the published library.
+test-utils = []

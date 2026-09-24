@@ -2,7 +2,7 @@ use ethrex_common::H256;
 use ethrex_common::constants::EMPTY_TRIE_HASH;
 use ethrex_common::types::{AccountState, GenesisAccount};
 use ethrex_common::utils::keccak;
-use ethrex_common::{U256, constants::EMPTY_KECCACK_HASH, types::AccountInfo};
+use ethrex_common::{U256, constants::EMPTY_KECCAK_HASH, types::AccountInfo};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
@@ -35,6 +35,11 @@ pub struct LevmAccount {
     pub has_storage: bool,
     /// Current status of the account.
     pub status: AccountStatus,
+    /// Whether this account exists in the state trie.
+    /// Used for EIP-7702 auth refund: `account_exists` (EELS) differs from `!is_empty()`.
+    /// An account can exist but be empty (e.g., has non-empty storage root only).
+    /// Default is `false` (non-existent); set to `true` when loaded from DB with actual state.
+    pub exists: bool,
 }
 
 // This is used only in state_v2 runner, storage is already fully filled in the genesis account.
@@ -55,11 +60,13 @@ impl From<GenesisAccount> for LevmAccount {
             has_storage: !storage.is_empty(),
             storage,
             status: AccountStatus::Unmodified,
+            exists: true,
         }
     }
 }
 impl From<AccountState> for LevmAccount {
     fn from(state: AccountState) -> Self {
+        let is_default = state == AccountState::default();
         LevmAccount {
             info: AccountInfo {
                 code_hash: state.code_hash,
@@ -69,6 +76,11 @@ impl From<AccountState> for LevmAccount {
             storage: Default::default(),
             status: AccountStatus::Unmodified,
             has_storage: state.storage_root != *EMPTY_TRIE_HASH,
+            // An account with all default fields was not found in the DB.
+            // Post-EIP-161, truly empty accounts are pruned from the trie,
+            // so default == non-existent. Accounts with non-empty storage root
+            // but empty balance/nonce/code DO exist (state != default).
+            exists: !is_default,
         }
     }
 }
@@ -85,6 +97,9 @@ impl LevmAccount {
         if self.status == AccountStatus::Destroyed {
             self.status = AccountStatus::DestroyedModified;
         }
+        // A modified account exists in the current state
+        // (even if it didn't exist in the trie before this tx).
+        self.exists = true;
     }
 
     pub fn has_nonce(&self) -> bool {
@@ -92,7 +107,7 @@ impl LevmAccount {
     }
 
     pub fn has_code(&self) -> bool {
-        self.info.code_hash != *EMPTY_KECCACK_HASH
+        self.info.code_hash != *EMPTY_KECCAK_HASH
     }
 
     pub fn create_would_collide(&self) -> bool {
@@ -106,6 +121,37 @@ impl LevmAccount {
     /// Checks if the account is unmodified.
     pub fn is_unmodified(&self) -> bool {
         matches!(self.status, AccountStatus::Unmodified)
+    }
+
+    /// Clones the account's metadata (info + flags) but leaves `storage` empty.
+    ///
+    /// Used on the streaming-executor read-fault path (`load_account`): when the streaming
+    /// merkleizer drains `current_accounts_state`, a hot account re-faulted on the next tx would
+    /// otherwise deep-copy its entire accumulated storage map (hundreds–thousands of slots) just
+    /// so the tx can read the ~3 it touches. Cloning info/flags only and faulting those slots in
+    /// lazily avoids that copy. Correctness relies on `get_storage_value` resolving a `current`
+    /// miss against `initial_accounts_state` (the committed in-block baseline) before the
+    /// pre-block store, which keeps the diff invariant "every key in `current.storage` is also in
+    /// `initial.storage`" intact.
+    ///
+    /// Destructured (not `..`) so adding a field to `LevmAccount` fails to compile here until it
+    /// is explicitly carried — a missing flag would silently corrupt the state-transition diff.
+    #[inline]
+    pub fn clone_without_storage(&self) -> Self {
+        let Self {
+            info,
+            storage: _,
+            has_storage,
+            status,
+            exists,
+        } = self;
+        Self {
+            info: info.clone(),
+            storage: FxHashMap::default(),
+            has_storage: *has_storage,
+            status: status.clone(),
+            exists: *exists,
+        }
     }
 }
 

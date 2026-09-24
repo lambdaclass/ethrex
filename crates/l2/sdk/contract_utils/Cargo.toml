@@ -5,6 +5,8 @@ edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
 license.workspace = true
+description = "Solidity contract compilation and git dependency helpers for the ethrex Ethereum execution client"
+repository.workspace = true
 
 [dependencies]
 thiserror.workspace = true

@@ -1,5 +1,10 @@
 pub use super::eth68::receipts::Receipts68;
 pub use super::eth69::receipts::Receipts69;
+pub use super::eth70::receipts::{GetReceipts70, Receipts70, SOFT_RESPONSE_LIMIT};
+
+/// Type alias: eth/68 and eth/69 share the same GetReceipts wire format.
+pub type GetReceipts68 = GetReceipts;
+pub type GetReceipts69 = GetReceipts;
 use crate::rlpx::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
@@ -48,56 +53,5 @@ impl RLPxMessage for GetReceipts {
         let (block_hashes, _): (Vec<BlockHash>, _) = decoder.decode_field("blockHashes")?;
 
         Ok(Self::new(id, block_hashes))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use ethrex_common::types::Receipt;
-
-    use super::*;
-
-    #[test]
-    fn get_receipts_empty_message() {
-        let blocks_hash = vec![];
-        let get_receipts = GetReceipts::new(1, blocks_hash.clone());
-
-        let mut buf = Vec::new();
-        get_receipts.encode(&mut buf).unwrap();
-
-        let decoded = GetReceipts::decode(&buf).unwrap();
-        assert_eq!(decoded.id, 1);
-        assert_eq!(decoded.block_hashes, blocks_hash);
-    }
-
-    #[test]
-    fn get_receipts_not_empty_message() {
-        let blocks_hash = vec![
-            BlockHash::from([0; 32]),
-            BlockHash::from([1; 32]),
-            BlockHash::from([2; 32]),
-        ];
-        let get_receipts = GetReceipts::new(1, blocks_hash.clone());
-
-        let mut buf = Vec::new();
-        get_receipts.encode(&mut buf).unwrap();
-
-        let decoded = GetReceipts::decode(&buf).unwrap();
-        assert_eq!(decoded.id, 1);
-        assert_eq!(decoded.block_hashes, blocks_hash);
-    }
-
-    #[test]
-    fn receipts_empty_message() {
-        let receipts = vec![];
-        let receipts = Receipts68::new(1, receipts);
-
-        let mut buf = Vec::new();
-        receipts.encode(&mut buf).unwrap();
-
-        let decoded = Receipts68::decode(&buf).unwrap();
-
-        assert_eq!(decoded.get_id(), 1);
-        assert_eq!(decoded.get_receipts(), Vec::<Vec<Receipt>>::new());
     }
 }

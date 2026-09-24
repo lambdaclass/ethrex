@@ -1,0 +1,1927 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "title": "Sync Overview",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "title": "Sync Stage",
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "text": "Idle"
+                },
+                "1": {
+                  "text": "Headers"
+                },
+                "2": {
+                  "text": "Account Ranges"
+                },
+                "3": {
+                  "text": "Account Insertion"
+                },
+                "4": {
+                  "text": "Storage Ranges"
+                },
+                "5": {
+                  "text": "Storage Insertion"
+                },
+                "6": {
+                  "text": "State Healing"
+                },
+                "7": {
+                  "text": "Storage Healing"
+                },
+                "8": {
+                  "text": "Bytecodes"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "orange",
+                "value": 3
+              },
+              {
+                "color": "blue",
+                "value": 6
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        }
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "ethrex_sync_stage{instance=~\"$instance\"}",
+          "legendFormat": "Stage"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "Pivot Block",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "ethrex_sync_pivot_block{instance=~\"$instance\"}",
+          "legendFormat": ""
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "Peers",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "ethrex_p2p_peer_count{instance=~\"$instance\"}",
+          "legendFormat": ""
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "Phase Elapsed",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "time() - ethrex_sync_phase_start_timestamp{phase=~\".+\",instance=~\"$instance\"} and ethrex_sync_phase_start_timestamp{phase=~\".+\",instance=~\"$instance\"} > 0",
+          "legendFormat": "{{phase}}"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "timeseries",
+      "title": "Sync Rates Overview",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          }
+        }
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(ethrex_sync_headers_downloaded{instance=~\"$instance\"}[5m])",
+          "legendFormat": "headers/s"
+        },
+        {
+          "expr": "rate(ethrex_sync_accounts_downloaded{instance=~\"$instance\"}[5m])",
+          "legendFormat": "accounts dl/s"
+        },
+        {
+          "expr": "rate(ethrex_sync_accounts_inserted{instance=~\"$instance\"}[5m])",
+          "legendFormat": "accounts ins/s"
+        },
+        {
+          "expr": "rate(ethrex_sync_storage_downloaded{instance=~\"$instance\"}[5m])",
+          "legendFormat": "storage dl/s"
+        },
+        {
+          "expr": "rate(ethrex_sync_storage_inserted{instance=~\"$instance\"}[5m])",
+          "legendFormat": "storage ins/s"
+        },
+        {
+          "expr": "rate(ethrex_sync_state_leaves_healed{instance=~\"$instance\"}[5m])",
+          "legendFormat": "state heals/s"
+        },
+        {
+          "expr": "rate(ethrex_sync_storage_leaves_healed{instance=~\"$instance\"}[5m])",
+          "legendFormat": "storage heals/s"
+        },
+        {
+          "expr": "rate(ethrex_sync_bytecodes_downloaded{instance=~\"$instance\"}[5m])",
+          "legendFormat": "bytecodes/s"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 12
+      },
+      "title": "Peer Health",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "Eligible Peers",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 13
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 5
+              },
+              {
+                "color": "green",
+                "value": 20
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "ethrex_sync_eligible_peers{instance=~\"$instance\"}"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "Pivot Age",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 13
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0,
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 600
+              },
+              {
+                "color": "red",
+                "value": 1200
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "time() - ethrex_sync_pivot_timestamp{instance=~\"$instance\"} and ethrex_sync_pivot_timestamp{instance=~\"$instance\"} > 0"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "Inflight Requests",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 13
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "ethrex_sync_inflight_requests{instance=~\"$instance\"}"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "Pivot Updates",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 13
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(ethrex_sync_pivot_updates_total{instance=~\"$instance\"})"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "title": "Headers",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "gauge",
+      "title": "Headers Progress",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 19
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 100,
+          "unit": "percent",
+          "decimals": 1,
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 33
+              },
+              {
+                "color": "green",
+                "value": 66
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {
+          "expr": "ethrex_sync_headers_downloaded{instance=~\"$instance\"} / clamp_min(ethrex_sync_headers_total{instance=~\"$instance\"}, 1) * 100",
+          "legendFormat": "progress"
+        },
+        {
+          "expr": "ethrex_sync_headers_downloaded{instance=~\"$instance\"}",
+          "legendFormat": "downloaded",
+          "hide": true
+        },
+        {
+          "expr": "ethrex_sync_headers_total{instance=~\"$instance\"}",
+          "legendFormat": "total",
+          "hide": true
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "",
+      "gridPos": {
+        "h": 2,
+        "w": 6,
+        "x": 0,
+        "y": 23
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {
+          "expr": "ethrex_sync_headers_downloaded{instance=~\"$instance\"}",
+          "legendFormat": "downloaded"
+        },
+        {
+          "expr": "ethrex_sync_headers_total{instance=~\"$instance\"}",
+          "legendFormat": "total"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "gauge",
+      "title": "Headers Rate",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 19
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "none",
+          "decimals": 0,
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 500
+              },
+              {
+                "color": "green",
+                "value": 1500
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {
+          "expr": "rate(ethrex_sync_headers_downloaded{instance=~\"$instance\"}[5m])",
+          "legendFormat": "/s"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "Headers ETA",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 19
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "(ethrex_sync_headers_total{instance=~\"$instance\"} - ethrex_sync_headers_downloaded{instance=~\"$instance\"}) / clamp_min(rate(ethrex_sync_headers_downloaded{instance=~\"$instance\"}[5m]), 0.001) and rate(ethrex_sync_headers_downloaded{instance=~\"$instance\"}[5m]) > 0",
+          "legendFormat": "ETA"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "Headers Elapsed",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 19
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "time() - ethrex_sync_phase_start_timestamp{phase=\"BLOCK HEADERS\",instance=~\"$instance\"} and ethrex_sync_phase_start_timestamp{phase=\"BLOCK HEADERS\",instance=~\"$instance\"} > 0",
+          "legendFormat": "Elapsed"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "timeseries",
+      "title": "Headers Rate Over Time",
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10
+          }
+        }
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(ethrex_sync_headers_downloaded{instance=~\"$instance\"}[5m])",
+          "legendFormat": "headers/s"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "title": "Accounts",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "gauge",
+      "title": "Accounts Progress",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 31
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 100,
+          "unit": "percent",
+          "decimals": 1,
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 33
+              },
+              {
+                "color": "green",
+                "value": 66
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {
+          "expr": "ethrex_sync_accounts_inserted{instance=~\"$instance\"} / clamp_min(ethrex_sync_accounts_downloaded{instance=~\"$instance\"}, 1) * 100",
+          "legendFormat": "progress"
+        },
+        {
+          "expr": "ethrex_sync_accounts_downloaded{instance=~\"$instance\"}",
+          "legendFormat": "downloaded",
+          "hide": true
+        },
+        {
+          "expr": "ethrex_sync_accounts_inserted{instance=~\"$instance\"}",
+          "legendFormat": "inserted",
+          "hide": true
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "",
+      "gridPos": {
+        "h": 2,
+        "w": 6,
+        "x": 0,
+        "y": 35
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {
+          "expr": "ethrex_sync_accounts_downloaded{instance=~\"$instance\"}",
+          "legendFormat": "downloaded"
+        },
+        {
+          "expr": "ethrex_sync_accounts_inserted{instance=~\"$instance\"}",
+          "legendFormat": "inserted"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "gauge",
+      "title": "Accounts Rate",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 31
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "none",
+          "decimals": 0,
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 100
+              },
+              {
+                "color": "green",
+                "value": 500
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {
+          "expr": "rate(ethrex_sync_accounts_inserted{instance=~\"$instance\"}[5m])",
+          "legendFormat": "/s"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "Accounts ETA",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 31
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "(ethrex_sync_accounts_downloaded{instance=~\"$instance\"} - ethrex_sync_accounts_inserted{instance=~\"$instance\"}) / clamp_min(rate(ethrex_sync_accounts_inserted{instance=~\"$instance\"}[5m]), 0.001) and rate(ethrex_sync_accounts_inserted{instance=~\"$instance\"}[5m]) > 0",
+          "legendFormat": "ETA"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "Accounts Elapsed",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 31
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "time() - ethrex_sync_phase_start_timestamp{phase=\"ACCOUNT RANGES\",instance=~\"$instance\"} and ethrex_sync_phase_start_timestamp{phase=\"ACCOUNT RANGES\",instance=~\"$instance\"} > 0",
+          "legendFormat": "Elapsed"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "timeseries",
+      "title": "Accounts Rate Over Time",
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 37
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10
+          }
+        }
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(ethrex_sync_accounts_downloaded{instance=~\"$instance\"}[5m])",
+          "legendFormat": "download/s"
+        },
+        {
+          "expr": "rate(ethrex_sync_accounts_inserted{instance=~\"$instance\"}[5m])",
+          "legendFormat": "insert/s"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 42
+      },
+      "title": "Storage",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "gauge",
+      "title": "Storage Progress",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 43
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 100,
+          "unit": "percent",
+          "decimals": 1,
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 33
+              },
+              {
+                "color": "green",
+                "value": 66
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {
+          "expr": "ethrex_sync_storage_inserted{instance=~\"$instance\"} / clamp_min(ethrex_sync_storage_downloaded{instance=~\"$instance\"}, 1) * 100",
+          "legendFormat": "progress"
+        },
+        {
+          "expr": "ethrex_sync_storage_downloaded{instance=~\"$instance\"}",
+          "legendFormat": "downloaded",
+          "hide": true
+        },
+        {
+          "expr": "ethrex_sync_storage_inserted{instance=~\"$instance\"}",
+          "legendFormat": "inserted",
+          "hide": true
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "",
+      "gridPos": {
+        "h": 2,
+        "w": 6,
+        "x": 0,
+        "y": 47
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {
+          "expr": "ethrex_sync_storage_downloaded{instance=~\"$instance\"}",
+          "legendFormat": "downloaded"
+        },
+        {
+          "expr": "ethrex_sync_storage_inserted{instance=~\"$instance\"}",
+          "legendFormat": "inserted"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "gauge",
+      "title": "Storage Rate",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 43
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "none",
+          "decimals": 0,
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 500
+              },
+              {
+                "color": "green",
+                "value": 2000
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {
+          "expr": "rate(ethrex_sync_storage_inserted{instance=~\"$instance\"}[5m])",
+          "legendFormat": "/s"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "Storage ETA",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 43
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "(ethrex_sync_storage_downloaded{instance=~\"$instance\"} - ethrex_sync_storage_inserted{instance=~\"$instance\"}) / clamp_min(rate(ethrex_sync_storage_inserted{instance=~\"$instance\"}[5m]), 0.001) and rate(ethrex_sync_storage_inserted{instance=~\"$instance\"}[5m]) > 0",
+          "legendFormat": "ETA"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "Storage Elapsed",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 43
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "time() - ethrex_sync_phase_start_timestamp{phase=\"STORAGE RANGES\",instance=~\"$instance\"} and ethrex_sync_phase_start_timestamp{phase=\"STORAGE RANGES\",instance=~\"$instance\"} > 0",
+          "legendFormat": "Elapsed"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "timeseries",
+      "title": "Storage Rate Over Time",
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 49
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10
+          }
+        }
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(ethrex_sync_storage_downloaded{instance=~\"$instance\"}[5m])",
+          "legendFormat": "download/s"
+        },
+        {
+          "expr": "rate(ethrex_sync_storage_inserted{instance=~\"$instance\"}[5m])",
+          "legendFormat": "insert/s"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 54
+      },
+      "title": "Healing",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "Leaves Healed",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 55
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "ethrex_sync_state_leaves_healed{instance=~\"$instance\"} + ethrex_sync_storage_leaves_healed{instance=~\"$instance\"}",
+          "legendFormat": "total"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "",
+      "gridPos": {
+        "h": 2,
+        "w": 6,
+        "x": 0,
+        "y": 59
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {
+          "expr": "ethrex_sync_state_leaves_healed{instance=~\"$instance\"}",
+          "legendFormat": "state"
+        },
+        {
+          "expr": "ethrex_sync_storage_leaves_healed{instance=~\"$instance\"}",
+          "legendFormat": "storage"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "gauge",
+      "title": "Healing Rate",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 55
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "none",
+          "decimals": 0,
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 100
+              },
+              {
+                "color": "green",
+                "value": 500
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {
+          "expr": "rate(ethrex_sync_state_leaves_healed{instance=~\"$instance\"}[5m]) + rate(ethrex_sync_storage_leaves_healed{instance=~\"$instance\"}[5m])",
+          "legendFormat": "/s"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "Healing Rate (avg)",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 55
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(ethrex_sync_state_leaves_healed{instance=~\"$instance\"}[5m]) + rate(ethrex_sync_storage_leaves_healed{instance=~\"$instance\"}[5m])",
+          "legendFormat": "heals/s"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "Healing Elapsed",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 55
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "time() - ethrex_sync_phase_start_timestamp{phase=\"STATE HEALING\",instance=~\"$instance\"} and ethrex_sync_phase_start_timestamp{phase=\"STATE HEALING\",instance=~\"$instance\"} > 0",
+          "legendFormat": "Elapsed"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "timeseries",
+      "title": "Healing Rate Over Time",
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 61
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10
+          }
+        }
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(ethrex_sync_state_leaves_healed{instance=~\"$instance\"}[5m])",
+          "legendFormat": "state heals/s"
+        },
+        {
+          "expr": "rate(ethrex_sync_storage_leaves_healed{instance=~\"$instance\"}[5m])",
+          "legendFormat": "storage heals/s"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 66
+      },
+      "title": "Bytecodes",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "gauge",
+      "title": "Bytecodes Progress",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 67
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 100,
+          "unit": "percent",
+          "decimals": 1,
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 33
+              },
+              {
+                "color": "green",
+                "value": 66
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {
+          "expr": "ethrex_sync_bytecodes_downloaded{instance=~\"$instance\"} / clamp_min(ethrex_sync_bytecodes_total{instance=~\"$instance\"}, 1) * 100",
+          "legendFormat": "progress"
+        },
+        {
+          "expr": "ethrex_sync_bytecodes_downloaded{instance=~\"$instance\"}",
+          "legendFormat": "downloaded",
+          "hide": true
+        },
+        {
+          "expr": "ethrex_sync_bytecodes_total{instance=~\"$instance\"}",
+          "legendFormat": "total",
+          "hide": true
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "",
+      "gridPos": {
+        "h": 2,
+        "w": 6,
+        "x": 0,
+        "y": 71
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {
+          "expr": "ethrex_sync_bytecodes_downloaded{instance=~\"$instance\"}",
+          "legendFormat": "downloaded"
+        },
+        {
+          "expr": "ethrex_sync_bytecodes_total{instance=~\"$instance\"}",
+          "legendFormat": "total"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "gauge",
+      "title": "Bytecodes Rate",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 67
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "none",
+          "decimals": 0,
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 50
+              },
+              {
+                "color": "green",
+                "value": 200
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "orientation": "horizontal"
+      },
+      "targets": [
+        {
+          "expr": "rate(ethrex_sync_bytecodes_downloaded{instance=~\"$instance\"}[5m])",
+          "legendFormat": "/s"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "Bytecodes ETA",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 67
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "(ethrex_sync_bytecodes_total{instance=~\"$instance\"} - ethrex_sync_bytecodes_downloaded{instance=~\"$instance\"}) / clamp_min(rate(ethrex_sync_bytecodes_downloaded{instance=~\"$instance\"}[5m]), 0.001) and rate(ethrex_sync_bytecodes_downloaded{instance=~\"$instance\"}[5m]) > 0",
+          "legendFormat": "ETA"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "stat",
+      "title": "Bytecodes Elapsed",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 67
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0
+        }
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "time() - ethrex_sync_phase_start_timestamp{phase=\"BYTECODES\",instance=~\"$instance\"} and ethrex_sync_phase_start_timestamp{phase=\"BYTECODES\",instance=~\"$instance\"} > 0",
+          "legendFormat": "Elapsed"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "type": "timeseries",
+      "title": "Bytecodes Rate Over Time",
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 73
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10
+          }
+        }
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(ethrex_sync_bytecodes_downloaded{instance=~\"$instance\"}[5m])",
+          "legendFormat": "codes/s"
+        }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": [
+    "ethrex",
+    "snapsync"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "text": "Prometheus",
+          "value": "${DS_PROMETHEUS}"
+        },
+        "hide": 2,
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      },
+      {
+        "current": {
+          "text": "localhost:3701",
+          "value": "localhost:3701"
+        },
+        "definition": "label_values(ethrex_sync_stage, instance)",
+        "includeAll": false,
+        "multi": false,
+        "name": "instance",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(ethrex_sync_stage, instance)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "ethrex Snap Sync",
+  "uid": "ethrex-snapsync",
+  "version": 1
+}

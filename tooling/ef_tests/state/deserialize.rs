@@ -41,7 +41,7 @@ where
                     "TransactionException.INTRINSIC_GAS_TOO_LOW" => {
                         TransactionExpectedException::IntrinsicGasTooLow
                     }
-                    "TransactionException.INTRINSIC_BELOW_FLOOR_GAS_COST" => {
+                    "TransactionException.INTRINSIC_GAS_BELOW_FLOOR_GAS_COST" => {
                         TransactionExpectedException::IntrinsicGasBelowFloorGasCost
                     }
                     "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS" => {
@@ -76,6 +76,12 @@ where
                     }
                     "TransactionException.GAS_LIMIT_EXCEEDS_MAXIMUM" => {
                         TransactionExpectedException::TxMaxGasLimitExceeded
+                    }
+                    "TransactionException.INVALID_SIGNATURE_VRS" => {
+                        TransactionExpectedException::InvalidSignatureVrs
+                    }
+                    "TransactionException.INVALID_CHAINID" => {
+                        TransactionExpectedException::InvalidChainId
                     }
                     _other => TransactionExpectedException::Other, //TODO: Support exceptions that enter here.
                 }
@@ -315,8 +321,8 @@ where
             "Osaka" => Fork::Osaka,
             "Amsterdam" => Fork::Amsterdam,
             "Byzantium" => Fork::Byzantium,
-            "EIP158" => Fork::SpuriousDragon,
-            "EIP150" => Fork::Tangerine,
+            "EIP158" | "SpuriousDragon" => Fork::SpuriousDragon,
+            "EIP150" | "TangerineWhistle" => Fork::Tangerine,
             other => {
                 return Err(serde::de::Error::custom(format!(
                     "Unknown fork name: {other}",

@@ -27,7 +27,7 @@ use ethrex_l2_sdk::{
 use ethrex_l2_sdk::{
     FEE_TOKEN_REGISTRY_ADDRESS, L1ToL2TransactionData, L2_WITHDRAW_SIGNATURE,
     REGISTER_FEE_TOKEN_SIGNATURE, SET_FEE_TOKEN_RATIO_SIGNATURE, build_generic_tx,
-    get_fee_token_ratio, get_last_verified_batch, send_generic_transaction,
+    get_fee_token_ratio, get_l2_gas_limit, get_last_verified_batch, send_generic_transaction,
     wait_for_l1_message_proof, wait_for_l2_deposit_receipt,
 };
 
@@ -101,6 +101,9 @@ const DEFAULT_ON_CHAIN_PROPOSER_ADDRESS: Address = H160([
 const DEFAULT_RICH_KEYS_FILE_PATH: &str = "fixtures/keys/private_keys_l1.txt";
 const DEFAULT_TEST_KEYS_FILE_PATH: &str = "fixtures/keys/private_keys_tests.txt";
 
+const PREFUNDING_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const PREFUNDING_MAX_ATTEMPTS: u32 = 60;
+
 #[tokio::test]
 async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     read_env_file_by_config();
@@ -112,6 +115,8 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     let withdrawals_count = std::env::var("INTEGRATION_TEST_WITHDRAW_COUNT")
         .map(|amount| amount.parse().expect("Invalid withdrawal amount value"))
         .unwrap_or(5);
+
+    wait_for_prefunded_accounts(&l2_client, &private_keys).await?;
 
     // Not thread-safe (fee vault and bridge balance checks).
     test_deposit(&l1_client, &l2_client, &private_keys.pop().unwrap()).await?;
@@ -223,6 +228,16 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
     set.spawn(test_erc20_withdraw_l1_address_mismatch(
         l1_client.clone(),
         l2_client.clone(),
+        private_keys.pop().unwrap(),
+    ));
+
+    set.spawn(test_ecmul_precompile(
+        l2_client.clone(),
+        private_keys.pop().unwrap(),
+    ));
+
+    set.spawn(test_send_to_l2_exceeding_gas_limit(
+        l1_client.clone(),
         private_keys.pop().unwrap(),
     ));
 
@@ -434,8 +449,8 @@ async fn test_privileged_tx_with_contract_call(
 
     while l2_client
         .get_logs(
-            first_block,
-            block_number,
+            U256::from(first_block),
+            U256::from(block_number),
             deployed_contract_address,
             vec![topic],
         )
@@ -443,7 +458,7 @@ async fn test_privileged_tx_with_contract_call(
         .is_ok_and(|logs| logs.is_empty())
     {
         println!("ptx_with_contract_call: Waiting for the event to be built");
-        block_number += U256::one();
+        block_number += 1;
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
@@ -451,8 +466,8 @@ async fn test_privileged_tx_with_contract_call(
 
     let logs = l2_client
         .get_logs(
-            first_block,
-            block_number,
+            U256::from(first_block),
+            U256::from(block_number),
             deployed_contract_address,
             vec![topic],
         )
@@ -517,6 +532,116 @@ async fn test_privileged_tx_with_contract_call_revert(
         "ptx_with_contract_call_revert",
     )
     .await?;
+
+    Ok(fees_details)
+}
+
+/// Test that the ECMUL precompile result is stored on-chain correctly.
+/// Deploys a contract that calls the ECMUL precompile (0x07) and writes
+/// the result to storage. This makes the precompile output affect the
+/// state root, so if the prover guest computes a different result than
+/// the sequencer (e.g. Jacobian vs affine coordinates), the proof will
+/// fail with a state root mismatch.
+async fn test_ecmul_precompile(
+    l2_client: EthClient,
+    deployer_pk: SecretKey,
+) -> Result<FeesDetails> {
+    let contracts_path = workspace_root().join("crates/l2/contracts/src/example");
+
+    println!("test_ecmul_precompile: Compiling EcmulStore contract");
+
+    compile_contract(
+        &contracts_path,
+        &contracts_path.join("EcmulStore.sol"),
+        false,
+        false,
+        None,
+        &[],
+        None,
+    )?;
+
+    let init_code = hex::decode(std::fs::read(
+        contracts_path.join("solc_out/EcmulStore.bin"),
+    )?)?;
+
+    println!("test_ecmul_precompile: Deploying EcmulStore contract on L2");
+
+    let (contract_address, mut fees_details) = test_deploy(
+        &l2_client,
+        &init_code,
+        &deployer_pk,
+        "test_ecmul_precompile",
+    )
+    .await?;
+
+    // Call ecmulAndStore(1, 2, 7) — BN254 G1 generator (1, 2) * scalar 7
+    let calldata: Bytes = encode_calldata(
+        "ecmulAndStore(uint256,uint256,uint256)",
+        &[
+            Value::Uint(U256::one()),
+            Value::Uint(U256::from(2)),
+            Value::Uint(U256::from(7)),
+        ],
+    )?
+    .into();
+
+    println!("test_ecmul_precompile: Calling ecmulAndStore(1, 2, 7)");
+
+    let signer: Signer = LocalSigner::new(deployer_pk).into();
+
+    let tx = build_generic_tx(
+        &l2_client,
+        TxType::EIP1559,
+        contract_address,
+        signer.address(),
+        calldata.clone(),
+        Overrides::default(),
+    )
+    .await?;
+
+    let tx_hash = send_generic_transaction(&l2_client, tx, &signer).await?;
+    let tx_receipt = wait_for_transaction_receipt(tx_hash, &l2_client, 50).await?;
+
+    assert!(
+        tx_receipt.receipt.status,
+        "test_ecmul_precompile: ecmulAndStore transaction failed"
+    );
+
+    let call_tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        to: TxKind::Call(contract_address),
+        data: calldata,
+        ..Default::default()
+    });
+    let transaction_size: u64 = call_tx.encode_to_vec().len().try_into().unwrap();
+    fees_details += get_fees_details_l2(&tx_receipt, &l2_client, transaction_size).await?;
+
+    // Read stored results from contract storage
+    let stored_x = l2_client
+        .get_storage_at(
+            contract_address,
+            U256::zero(), // slot 0: storedX
+            BlockIdentifier::Tag(BlockTag::Latest),
+        )
+        .await?;
+
+    let stored_y = l2_client
+        .get_storage_at(
+            contract_address,
+            U256::one(), // slot 1: storedY
+            BlockIdentifier::Tag(BlockTag::Latest),
+        )
+        .await?;
+
+    assert!(
+        !stored_x.is_zero(),
+        "test_ecmul_precompile: storedX is zero — ECMUL returned the point at infinity"
+    );
+    assert!(
+        !stored_y.is_zero(),
+        "test_ecmul_precompile: storedY is zero — ECMUL returned the point at infinity"
+    );
+
+    println!("test_ecmul_precompile: ECMUL result stored — x={stored_x:#x}, y={stored_y:#x}");
 
     Ok(fees_details)
 }
@@ -1589,6 +1714,58 @@ async fn test_gas_burning(
     Ok(FeesDetails::default())
 }
 
+/// Test that sendToL2 reverts on L1 when the requested gasLimit exceeds the on-chain l2GasLimit.
+/// 1. Send a sendToL2 transaction with gasLimit = l2GasLimit + 1 (just over the allowed limit).
+/// 2. Verify that the L1 transaction reverts (receipt status is false).
+async fn test_send_to_l2_exceeding_gas_limit(
+    l1_client: EthClient,
+    rich_wallet_private_key: SecretKey,
+) -> Result<FeesDetails> {
+    println!(
+        "test_send_to_l2_exceeding_gas_limit: Testing that sendToL2 reverts when gasLimit exceeds l2GasLimit"
+    );
+    let rich_address =
+        get_address_from_secret_key(&rich_wallet_private_key.secret_bytes()).unwrap();
+    let bridge = bridge_address()?;
+
+    // Fetch the current on-chain l2GasLimit
+    let on_chain_gas_limit = get_l2_gas_limit(&l1_client, bridge).await.unwrap();
+    println!("test_send_to_l2_exceeding_gas_limit: on-chain l2GasLimit = {on_chain_gas_limit}");
+
+    // Use gasLimit = on_chain_gas_limit + 1 to exceed the limit
+    let excessive_gas_limit = on_chain_gas_limit + 1;
+
+    // We must set a high L1 gas limit explicitly to avoid gas estimation failure
+    // (eth_estimateGas would fail because the tx reverts).
+    let l1_gas_limit = 500_000;
+
+    let l1_to_l2_tx_hash = ethrex_l2_sdk::send_l1_to_l2_tx(
+        rich_address,
+        Some(0),
+        Some(l1_gas_limit),
+        L1ToL2TransactionData::new(
+            rich_address,
+            excessive_gas_limit,
+            U256::zero(),
+            Bytes::new(),
+        ),
+        &rich_wallet_private_key,
+        bridge,
+        &l1_client,
+    )
+    .await?;
+
+    let receipt = wait_for_transaction_receipt(l1_to_l2_tx_hash, &l1_client, 50).await?;
+
+    assert!(
+        !receipt.receipt.status,
+        "test_send_to_l2_exceeding_gas_limit: sendToL2 should revert when gasLimit exceeds l2GasLimit"
+    );
+
+    println!("test_send_to_l2_exceeding_gas_limit: sendToL2 correctly reverted");
+    Ok(FeesDetails::default())
+}
+
 /// Test transferring ETH on L2 through a privileged transaction (deposit from L1) with insufficient balance
 /// 1. Fetch initial balance of receiver on L2.
 /// 2. Perform transfer through a deposit with value greater than sender's balance.
@@ -2429,7 +2606,7 @@ async fn test_fee_token(
         data: Bytes::new(),
         ..Default::default()
     });
-    let tx_size = tx.encode_canonical_to_vec().len().try_into().unwrap();
+    let tx_size = tx.encode_canonical_len().try_into().unwrap();
     let transfer_fees = get_fees_details_l2(&transfer_receipt, &l2_client, tx_size).await?;
 
     let sender_fee_token_spent = sender_token_balance_before_transfer
@@ -2812,6 +2989,43 @@ fn on_chain_proposer_address() -> Address {
     std::env::var("ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS")
         .map(|address| address.parse().expect("Invalid proposer address"))
         .unwrap_or(DEFAULT_ON_CHAIN_PROPOSER_ADDRESS)
+}
+
+/// Waits until every test account has been credited on L2.
+///
+/// A node started with `--dev` funds the rich accounts by depositing through the
+/// bridge, and the deployer only awaits the L1 receipts. The credits reach L2
+/// asynchronously through the L1 watcher, a batch or more after the RPC starts
+/// answering, so a balance read before that returns zero and every balance-delta
+/// assertion below it is off by the pre-funded amount.
+async fn wait_for_prefunded_accounts(
+    l2_client: &EthClient,
+    private_keys: &[SecretKey],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for private_key in private_keys {
+        let address = get_address_from_secret_key(&private_key.secret_bytes())?;
+
+        for attempt in 1..=PREFUNDING_MAX_ATTEMPTS {
+            let balance = l2_client
+                .get_balance(address, BlockIdentifier::Tag(BlockTag::Latest))
+                .await?;
+
+            if !balance.is_zero() {
+                break;
+            }
+
+            assert!(
+                attempt < PREFUNDING_MAX_ATTEMPTS,
+                "L2 balance of test account {address:#x} is still zero after \
+                 {PREFUNDING_MAX_ATTEMPTS} attempts; the --dev pre-funding deposits never landed"
+            );
+
+            println!("Waiting for the L2 pre-funding of {address:#x} (attempt {attempt})");
+            tokio::time::sleep(PREFUNDING_POLL_INTERVAL).await;
+        }
+    }
+
+    Ok(())
 }
 
 /// Waits until the batch containing L2->L1 message is verified on L1, and returns the proof for that message

@@ -3,26 +3,24 @@ use crate::rlpx::l2::l2_connection::P2PBasedContext;
 #[cfg(not(feature = "l2"))]
 #[derive(Clone, Debug)]
 pub struct P2PBasedContext;
-#[cfg(feature = "experimental-discv5")]
-use crate::discv5::server::{DiscoveryServer as Discv5Server, DiscoveryServerError as Discv5Error};
 use crate::{
-    discovery::{DiscoveryConfig, DiscoveryMultiplexer},
-    discv4::server::{DiscoveryServer as Discv4Server, DiscoveryServerError as Discv4Error},
+    discovery::{DiscoveryConfig, DiscoveryServer, DiscoveryServerError},
     metrics::{CurrentStepValue, METRICS},
-    peer_table::{PeerData, PeerTable},
+    peer_table::{PeerData, PeerTable, PeerTableServerProtocol as _},
     rlpx::{
         connection::server::{PeerConnBroadcastSender, PeerConnection},
         message::Message,
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
     tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
-    types::Node,
+    types::{INITIAL_ENR_SEQ, NetworkConfig, Node, NodeError, NodeRecord, SharedLocalNode},
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
+use ethrex_common::types::ForkId;
 use ethrex_storage::Store;
 use secp256k1::SecretKey;
-use spawned_concurrency::tasks::GenServerHandle;
+use spawned_concurrency::tasks::ActorRef;
 use std::{
     io,
     net::SocketAddr,
@@ -30,8 +28,9 @@ use std::{
     time::Duration,
 };
 use tokio::net::{TcpListener, TcpSocket, UdpSocket};
+use tokio::sync::watch;
 use tokio_util::task::TaskTracker;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 pub const MAX_MESSAGES_TO_BROADCAST: usize = 100000;
 
@@ -43,18 +42,31 @@ pub struct P2PContext {
     pub storage: Store,
     pub blockchain: Arc<Blockchain>,
     pub(crate) broadcast: PeerConnBroadcastSender,
+    /// Startup copy of the local node identity used only as the self-connection guard.
+    /// Not live-updated; use SharedLocalNode for the current identity.
     pub local_node: Node,
+    /// Network addressing configuration: bind vs. external addresses.
+    pub network_config: NetworkConfig,
     pub client_version: String,
     #[cfg(feature = "l2")]
     pub based_context: Option<P2PBasedContext>,
-    pub tx_broadcaster: GenServerHandle<TxBroadcaster>,
+    pub tx_broadcaster: ActorRef<TxBroadcaster>,
     pub initial_lookup_interval: f64,
+    /// Caps concurrent INBOUND connections (including pre-handshake) so a flood of inbound
+    /// dials can't accumulate connection actors/sockets without bound. Each inbound connection
+    /// actor holds a permit for its lifetime; the permit is released when the actor is dropped.
+    pub(crate) inbound_admission: Arc<tokio::sync::Semaphore>,
 }
+
+/// Max concurrent inbound connections (peer_table TARGET_PEERS = 100, plus headroom for
+/// pre-handshake churn and short-lived overlap).
+const MAX_INBOUND_CONNECTIONS: usize = 150;
 
 impl P2PContext {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         local_node: Node,
+        network_config: NetworkConfig,
         tracker: TaskTracker,
         signer: SecretKey,
         peer_table: PeerTable,
@@ -84,6 +96,7 @@ impl P2PContext {
 
         Ok(P2PContext {
             local_node,
+            network_config,
             tracker,
             signer,
             table: peer_table,
@@ -95,94 +108,85 @@ impl P2PContext {
             based_context,
             tx_broadcaster,
             initial_lookup_interval: lookup_interval,
+            inbound_admission: Arc::new(tokio::sync::Semaphore::new(MAX_INBOUND_CONNECTIONS)),
         })
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum NetworkError {
-    #[error("Failed to start discv4 server: {0}")]
-    Discv4Error(#[from] Discv4Error),
-    #[cfg(feature = "experimental-discv5")]
-    #[error("Failed to start discv5 server: {0}")]
-    Discv5Error(#[from] Discv5Error),
+    #[error("Failed to start discovery server: {0}")]
+    DiscoveryError(#[from] DiscoveryServerError),
     #[error("Failed to start Tx Broadcaster: {0}")]
     TxBroadcasterError(#[from] TxBroadcasterError),
     #[error("Failed to bind UDP socket: {0}")]
     UdpSocketError(std::io::Error),
+    #[error("Failed to build the local node record: {0}")]
+    LocalNodeRecordError(#[from] NodeError),
+}
+
+/// The ENR this node publishes: whatever `local_node` advertises, plus our own
+/// EIP-2124 fork id.
+///
+/// Built here rather than inside discovery, which has no say in what this node
+/// announces about itself.
+///
+/// A chain that cannot supply a fork id leaves the entry out instead of failing
+/// startup. The record is still usable for discovery, and a peer that requires
+/// `eth` simply passes us over until we republish with it. A record we cannot
+/// sign is different, and is reported.
+///
+/// Also returns the fork id the record was built with, so the refresh channel can
+/// be seeded with the exact value the ENR advertises: seeding from a second
+/// storage read could straddle a fork crossing, and a seed the ENR never carried
+/// is a change the refresh would never see.
+async fn build_local_node_record(
+    context: &P2PContext,
+) -> Result<(NodeRecord, Option<ForkId>), NodeError> {
+    let mut record = NodeRecord::from_node(&context.local_node, INITIAL_ENR_SEQ, &context.signer)?;
+    let fork_id = context.storage.get_fork_id().await.ok();
+    if let Some(fork_id) = fork_id.clone() {
+        record.set_fork_id(fork_id, &context.signer)?;
+    }
+    Ok((record, fork_id))
 }
 
 pub async fn start_network(
     context: P2PContext,
     bootnodes: Vec<Node>,
     config: DiscoveryConfig,
+    shared_local_node: SharedLocalNode,
 ) -> Result<(), NetworkError> {
     let udp_socket = Arc::new(
-        UdpSocket::bind(context.local_node.udp_addr())
+        UdpSocket::bind(context.network_config.bind_udp_addr())
             .await
             .map_err(NetworkError::UdpSocketError)?,
     );
 
-    // Warn if discv5 was requested but the feature is not compiled in
-    #[cfg(not(feature = "experimental-discv5"))]
-    if config.discv5_enabled {
-        tracing::warn!(
-            "discv5 was enabled via --p2p.discv5 but the 'experimental-discv5' feature is not compiled in; discv5 will not run"
-        );
-    }
+    let (local_node_record, initial_fork_id) = build_local_node_record(&context).await?;
 
-    // Start protocol servers first to get their handles
-    let discv4_handle = if config.discv4_enabled {
-        Some(
-            Discv4Server::spawn(
-                context.storage.clone(),
-                context.local_node.clone(),
-                context.signer,
-                udp_socket.clone(),
-                context.table.clone(),
-                bootnodes.clone(),
-                context.initial_lookup_interval,
-            )
-            .await
-            .inspect_err(|e| {
-                error!("Failed to start discv4 server: {e}");
-            })?,
-        )
-    } else {
-        None
-    };
+    // The ENR's `eth` entry is only correct for the fork the chain is on. Nothing
+    // recomputed it after startup, so once the chain crossed a fork we kept
+    // advertising the old fork id and geth's dial-candidate filter
+    // (`NewNodeFilter`) dropped us. Publish it on a channel instead: this layer
+    // decides what the node announces, discovery only republishes.
+    let fork_id_rx = spawn_fork_id_publisher(&context, initial_fork_id);
 
-    #[cfg(feature = "experimental-discv5")]
-    let discv5_handle = if config.discv5_enabled {
-        Some(
-            Discv5Server::spawn(
-                context.storage.clone(),
-                context.local_node.clone(),
-                context.signer,
-                udp_socket.clone(),
-                context.table.clone(),
-                bootnodes.clone(),
-                context.initial_lookup_interval,
-            )
-            .await
-            .inspect_err(|e| {
-                error!("Failed to start discv5 server: {e}");
-            })?,
-        )
-    } else {
-        None
-    };
-
-    // Start multiplexer GenServer with handles to protocol servers
-    DiscoveryMultiplexer::new(
+    DiscoveryServer::spawn(
+        context.local_node.clone(),
+        local_node_record,
+        context.signer,
         udp_socket,
-        context.local_node.node_id(),
+        context.table.clone(),
+        bootnodes,
         config,
-        discv4_handle,
-        #[cfg(feature = "experimental-discv5")]
-        discv5_handle,
+        shared_local_node,
+        fork_id_rx,
     )
-    .start();
+    .await
+    .inspect_err(|e| {
+        error!("Failed to start discovery server: {e}");
+    })?;
 
     context.tracker.spawn(serve_p2p_requests(context.clone()));
 
@@ -190,7 +194,8 @@ pub async fn start_network(
 }
 
 pub(crate) async fn serve_p2p_requests(context: P2PContext) {
-    let tcp_addr = context.local_node.tcp_addr();
+    let tcp_addr = context.network_config.bind_tcp_addr();
+    let external_tcp_addr = context.local_node.tcp_addr();
     let listener = match listener(tcp_addr) {
         Ok(result) => result,
         Err(e) => {
@@ -207,12 +212,23 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext) {
             }
         };
 
-        if tcp_addr == peer_addr {
+        if external_tcp_addr == peer_addr {
             // Ignore connections from self
             continue;
         }
 
-        let _ = PeerConnection::spawn_as_receiver(context.clone(), peer_addr, stream);
+        // Bound concurrent inbound connections: if we're at capacity, drop this one instead
+        // of letting connection actors/sockets accumulate. The permit is moved into the
+        // connection actor and released when the actor is dropped.
+        let permit = match context.inbound_admission.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                tracing::debug!(peer = %peer_addr, "Inbound connection cap reached, dropping connection");
+                continue;
+            }
+        };
+
+        let _ = PeerConnection::spawn_as_receiver(context.clone(), peer_addr, stream, permit);
     }
 }
 
@@ -228,9 +244,9 @@ fn listener(tcp_addr: SocketAddr) -> Result<TcpListener, io::Error> {
     tcp_socket.listen(50)
 }
 
-pub async fn periodically_show_peer_stats(blockchain: Arc<Blockchain>, mut peer_table: PeerTable) {
-    periodically_show_peer_stats_during_syncing(blockchain, &mut peer_table).await;
-    periodically_show_peer_stats_after_sync(&mut peer_table).await;
+pub async fn periodically_show_peer_stats(blockchain: Arc<Blockchain>, peer_table: PeerTable) {
+    periodically_show_peer_stats_during_syncing(blockchain, &peer_table).await;
+    periodically_show_peer_stats_after_sync(&peer_table).await;
 }
 
 /// Tracks metric values at phase start and from the previous interval for rate calculations
@@ -267,7 +283,7 @@ impl PhaseCounters {
 
 pub async fn periodically_show_peer_stats_during_syncing(
     blockchain: Arc<Blockchain>,
-    peer_table: &mut PeerTable,
+    peer_table: &PeerTable,
 ) {
     let start = std::time::Instant::now();
     let mut previous_step = CurrentStepValue::None;
@@ -281,6 +297,10 @@ pub async fn periodically_show_peer_stats_during_syncing(
 
     loop {
         if blockchain.is_synced() {
+            if !sync_started_logged {
+                info!("Node already has state; following chain via full sync");
+                return;
+            }
             // Log sync complete summary
             let total_elapsed = format_duration(start.elapsed());
             let headers_downloaded = METRICS.downloaded_headers.get();
@@ -397,10 +417,28 @@ pub async fn periodically_show_peer_stats_during_syncing(
                     phase_elapsed_str,
                     &phase_metrics(previous_step, &phase_start).await,
                 );
+
+                // Emit final metrics for completed phase
+                #[cfg(feature = "metrics")]
+                push_sync_prometheus_metrics(previous_step);
             }
 
             // Start new phase
             phase_start_time = std::time::Instant::now();
+
+            // Record phase start timestamp for Grafana elapsed panels
+            #[cfg(feature = "metrics")]
+            {
+                let (_, phase_name) = phase_info(current_step);
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                ethrex_metrics::sync::METRICS_SYNC
+                    .phase_start_timestamp
+                    .with_label_values(&[phase_name])
+                    .set(now as i64);
+            }
 
             // Capture metrics at phase start
             phase_start = PhaseCounters::capture_current();
@@ -422,6 +460,22 @@ pub async fn periodically_show_peer_stats_during_syncing(
             &prev_interval,
         )
         .await;
+
+        // Push progress + peer health to Prometheus
+        #[cfg(feature = "metrics")]
+        {
+            push_sync_prometheus_metrics(current_step);
+            let diag = peer_table.get_peer_diagnostics().await.unwrap_or_default();
+            let snap_peers = diag
+                .iter()
+                .filter(|p| p.capabilities.iter().any(|c| c.starts_with("snap/")))
+                .count();
+            let eligible = diag.iter().filter(|p| p.eligible).count();
+            let inflight: i64 = diag.iter().map(|p| p.inflight_requests).sum();
+            ethrex_metrics::sync::METRICS_SYNC.set_snap_peers(snap_peers as i64);
+            ethrex_metrics::sync::METRICS_SYNC.set_eligible_peers(eligible as i64);
+            ethrex_metrics::sync::METRICS_SYNC.set_inflight_requests(inflight);
+        }
 
         // Update previous interval counters for next rate calculation
         prev_interval = PhaseCounters::capture_current();
@@ -691,6 +745,78 @@ async fn log_phase_progress(
     }
 }
 
+/// Push snap sync progress to Prometheus gauges (from METRICS atomics).
+/// Called each polling cycle. Rates are NOT computed here — use rate() in Grafana.
+#[cfg(feature = "metrics")]
+fn push_sync_prometheus_metrics(step: CurrentStepValue) {
+    use ethrex_metrics::sync::METRICS_SYNC;
+    use std::sync::atomic::Ordering::Relaxed;
+
+    let (phase_num, _) = phase_info(step);
+    METRICS_SYNC.stage.set(phase_num as i64);
+    METRICS_SYNC
+        .pivot_block
+        .set(METRICS.sync_head_block.load(Relaxed) as i64);
+
+    // Push raw pivot timestamp — Grafana computes age via time() - timestamp
+    let pivot_ts = METRICS.pivot_timestamp.load(Relaxed);
+    if pivot_ts > 0 {
+        METRICS_SYNC.pivot_timestamp.set(pivot_ts as i64);
+    }
+    // Also update pivot_age_seconds for RPC/peer_top consumers
+    if pivot_ts > 0 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        METRICS_SYNC
+            .pivot_age_seconds
+            .set(now.saturating_sub(pivot_ts) as i64);
+    }
+
+    match step {
+        CurrentStepValue::DownloadingHeaders => {
+            let total = METRICS.sync_head_block.load(Relaxed);
+            let downloaded = u64::min(METRICS.downloaded_headers.get(), total);
+            METRICS_SYNC.headers_downloaded.set(downloaded as i64);
+            METRICS_SYNC.headers_total.set(total as i64);
+        }
+        CurrentStepValue::RequestingAccountRanges => {
+            let downloaded = METRICS.downloaded_account_tries.load(Relaxed);
+            METRICS_SYNC.accounts_downloaded.set(downloaded as i64);
+        }
+        CurrentStepValue::InsertingAccountRanges | CurrentStepValue::InsertingAccountRangesNoDb => {
+            let total = METRICS.downloaded_account_tries.load(Relaxed);
+            let inserted = METRICS.account_tries_inserted.load(Relaxed);
+            METRICS_SYNC.accounts_downloaded.set(total as i64);
+            METRICS_SYNC.accounts_inserted.set(inserted as i64);
+        }
+        CurrentStepValue::RequestingStorageRanges => {
+            let downloaded = METRICS.storage_leaves_downloaded.get();
+            METRICS_SYNC.storage_downloaded.set(downloaded as i64);
+        }
+        CurrentStepValue::InsertingStorageRanges => {
+            let inserted = METRICS.storage_leaves_inserted.get();
+            METRICS_SYNC.storage_inserted.set(inserted as i64);
+        }
+        CurrentStepValue::HealingState => {
+            let healed = METRICS.global_state_trie_leafs_healed.load(Relaxed);
+            METRICS_SYNC.state_leaves_healed.set(healed as i64);
+        }
+        CurrentStepValue::HealingStorage => {
+            let healed = METRICS.global_storage_tries_leafs_healed.load(Relaxed);
+            METRICS_SYNC.storage_leaves_healed.set(healed as i64);
+        }
+        CurrentStepValue::RequestingBytecodes => {
+            let total = METRICS.bytecodes_to_download.load(Relaxed);
+            let downloaded = METRICS.downloaded_bytecodes.load(Relaxed);
+            METRICS_SYNC.bytecodes_downloaded.set(downloaded as i64);
+            METRICS_SYNC.bytecodes_total.set(total as i64);
+        }
+        CurrentStepValue::None => {}
+    }
+}
+
 fn progress_bar(percentage: f64, width: usize) -> String {
     let clamped_percentage = percentage.clamp(0.0, 100.0);
     let filled = ((clamped_percentage / 100.0) * width as f64) as usize;
@@ -712,7 +838,7 @@ fn format_thousands(n: u64) -> String {
 }
 
 /// Shows the amount of connected peers, active peers, and peers suitable for snap sync on a set interval
-pub async fn periodically_show_peer_stats_after_sync(peer_table: &mut PeerTable) {
+pub async fn periodically_show_peer_stats_after_sync(peer_table: &PeerTable) {
     const INTERVAL_DURATION: tokio::time::Duration = tokio::time::Duration::from_secs(60);
     let mut interval = tokio::time::interval(INTERVAL_DURATION);
     loop {
@@ -731,7 +857,7 @@ pub async fn periodically_show_peer_stats_after_sync(peer_table: &mut PeerTable)
                         .any(|cap| peer.supported_capabilities.contains(cap))
             })
             .count();
-        info!("Snap Peers: {snap_active_peers} / Total Peers: {active_peers}");
+        info!("Peers: {active_peers} (snap-capable: {snap_active_peers})");
         interval.tick().await;
     }
 }
@@ -742,4 +868,47 @@ fn format_duration(duration: Duration) -> String {
     let minutes = (total_seconds % 3600) / 60;
     let seconds = total_seconds % 60;
     format!("{hours:02}:{minutes:02}:{seconds:02}")
+}
+
+/// How often to re-derive the fork id. A fork boundary is a timestamp, so the ENR
+/// can lag a crossing by at most this long; cheap enough to keep tight.
+const FORK_ID_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Publishes the current fork id, re-deriving it periodically.
+///
+/// `initial` is the fork id the initial ENR was built with — the channel must be
+/// seeded with what the record actually advertises, not a fresh storage read, or a
+/// fork crossed between the two reads would never register as a change. `None`
+/// (the chain could not supply one at startup) still spawns the publisher: the
+/// first successful derivation then counts as a change and gives the ENR its
+/// `eth` entry, instead of a transient startup failure disabling refresh for good.
+fn spawn_fork_id_publisher(
+    context: &P2PContext,
+    initial: Option<ForkId>,
+) -> watch::Receiver<Option<ForkId>> {
+    let storage = context.storage.clone();
+    let (tx, rx) = watch::channel(initial);
+    context.tracker.spawn(async move {
+        let mut interval = tokio::time::interval(FORK_ID_REFRESH_INTERVAL);
+        loop {
+            interval.tick().await;
+            match storage.get_fork_id().await {
+                // `send_if_modified` keeps the receiver's change flag clean when the
+                // chain has not moved across a fork, so discovery does no work.
+                Ok(fork_id) => {
+                    tx.send_if_modified(|current| {
+                        if current.as_ref() == Some(&fork_id) {
+                            false
+                        } else {
+                            *current = Some(fork_id);
+                            true
+                        }
+                    });
+                }
+                // Transient: the next tick retries. Logging every 30s would be noise.
+                Err(e) => debug!(error = ?e, "Could not derive the fork id for the local ENR"),
+            }
+        }
+    });
+    rx
 }

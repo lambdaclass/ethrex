@@ -13,7 +13,7 @@ build = "build.rs"
 ethrex-blockchain.workspace = true
 ethrex-common.workspace = true
 ethrex-config.workspace = true
-ethrex-crypto.workspace = true
+ethrex-crypto = { workspace = true, default-features = true }
 ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
 ethrex-l2 = { workspace = true, optional = true }
 ethrex-l2-common = { workspace = true, optional = true }
@@ -21,7 +21,7 @@ ethrex-l2-rpc = { workspace = true, optional = true }
 ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 ethrex-p2p.workspace = true
 ethrex-repl.workspace = true
-ethrex-prover = { workspace = true, optional = true, features = ["l2"] }
+ethrex-l2-prover = { workspace = true, optional = true, features = ["l2"] }
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
 ethrex-sdk = { workspace = true, optional = true }
@@ -37,7 +37,6 @@ hex.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 clap = { workspace = true, features = ["string"] }
-clap_complete.workspace = true
 eyre.workspace = true
 directories = "5.0.1"
 serde.workspace = true
@@ -81,12 +80,17 @@ path = "./lib.rs"
 
 [features]
 debug = ["ethrex-vm/debug"]
-default = ["rocksdb", "c-kzg", "secp256k1", "metrics", "jemalloc", "dev"]
+default = ["rocksdb", "c-kzg", "secp256k1", "metrics", "jemalloc", "dev", "rayon"]
 dev = ["dep:ethrex-dev"]
 secp256k1 = [
   "ethrex-vm/secp256k1",
   "ethrex-common/secp256k1",
   "ethrex-blockchain/secp256k1",
+]
+rayon = [
+  "ethrex-vm/rayon",
+  "ethrex-common/rayon",
+  "ethrex-blockchain/rayon",
 ]
 c-kzg = [
   "ethrex-vm/c-kzg",
@@ -94,6 +98,9 @@ c-kzg = [
   "ethrex-blockchain/c-kzg",
   "ethrex-p2p/c-kzg",
   "ethrex-crypto/c-kzg",
+  # forward to the RPC crate so engine_getBlobsV4 can derive blob cells; without
+  # it the handler compiles its no-KZG branch and serves null for every cell
+  "ethrex-rpc/c-kzg",
 ]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics", "ethrex-p2p/metrics"]
 rocksdb = ["ethrex-storage/rocksdb", "ethrex-p2p/rocksdb", "ethrex-l2?/rocksdb"]
@@ -105,8 +112,6 @@ jemalloc_profiling = [
   "ethrex-rpc/jemalloc_profiling",
 ]
 sync-test = ["ethrex-p2p/sync-test"]
-# discv5 is currently experimental and should only be enabled for development purposes
-experimental-discv5 = ["ethrex-p2p/experimental-discv5"]
 
 l2 = [
   "ethrex-l2",
@@ -114,7 +119,7 @@ l2 = [
   "ethrex-l2-rpc",
   "ethrex-sdk",
   "ethrex-p2p/l2",
-  "ethrex-prover",
+  "ethrex-l2-prover",
   "ethrex-storage-rollup",
   "dep:tui-logger",
   "dep:bytes",
@@ -123,15 +128,15 @@ l2 = [
   "dep:hex",
 ]
 l2-sql = ["ethrex-storage-rollup/sql"]
-sp1 = ["ethrex-prover/sp1", "ethrex-l2/sp1"]
-gpu = ["ethrex-prover/gpu"]
-risc0 = ["ethrex-prover/risc0", "ethrex-l2/risc0"]
+sp1 = ["ethrex-l2-prover/sp1", "ethrex-l2/sp1"]
+gpu = ["ethrex-l2-prover/gpu"]
+risc0 = ["ethrex-l2-prover/risc0", "ethrex-l2/risc0"]
 
 perf_opcode_timings = ["ethrex-vm/perf_opcode_timings"]
 cpu_profiling = ["dep:pprof"]
 
 [build-dependencies]
-vergen-git2 = { version = "1.0.7", features = ["rustc"] }
+vergen-git2 = { version = "9.1", features = ["rustc"] }
 ethrex-sdk = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }

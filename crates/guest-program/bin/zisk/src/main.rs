@@ -1,32 +1,31 @@
 #![no_main]
 
-#[cfg(feature = "l2")]
-use ethrex_guest_program::l2::{ProgramInput, execution_program};
-#[cfg(not(feature = "l2"))]
-use ethrex_guest_program::l1::{ProgramInput, execution_program};
+use std::sync::Arc;
 
-use rkyv::rancor::Error;
-use sha2::{Digest, Sha256};
+#[cfg(feature = "l2")]
+use ethrex_guest_program::l2::run_guest;
+#[cfg(not(feature = "l2"))]
+use ethrex_guest_program::l1::run_stateless_guest;
+
+use ethrex_guest_program::crypto::zisk::ZiskCrypto;
 
 ziskos::entrypoint!(main);
 
 pub fn main() {
     println!("start reading input");
-    let input = ziskos::read_input();
-    let input = rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap();
+    let input = ziskos::io::read_slice();
     println!("finish reading input");
 
+    let crypto = Arc::new(ZiskCrypto);
+
     println!("start execution");
-    let output = execution_program(input).unwrap();
+    #[cfg(not(feature = "l2"))]
+    let output = run_stateless_guest(&input, crypto);
+    #[cfg(feature = "l2")]
+    let output = run_guest(&input, crypto).unwrap();
     println!("finish execution");
 
-    println!("start hashing output");
-    let output = Sha256::digest(output.encode());
-    println!("finish hashing output");
-
     println!("start revealing output");
-    output.chunks_exact(4).enumerate().for_each(|(idx, bytes)| {
-        ziskos::set_output(idx, u32::from_le_bytes(bytes.try_into().unwrap()))
-    });
+    ziskos::io::commit_slice(&output);
     println!("finish revealing output");
 }

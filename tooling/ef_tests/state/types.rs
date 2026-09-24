@@ -45,9 +45,12 @@ impl From<&EFTest> for Genesis {
             difficulty: test.env.current_difficulty,
             gas_limit: test.env.current_gas_limit,
             mix_hash: test.env.current_random.unwrap_or_default(),
-            timestamp: test.env.current_timestamp.as_u64(),
-            base_fee_per_gas: test.env.current_base_fee.map(|v| v.as_u64()),
-            excess_blob_gas: test.env.current_excess_blob_gas.map(|v| v.as_u64()),
+            timestamp: test.env.current_timestamp.try_into().unwrap(),
+            base_fee_per_gas: test.env.current_base_fee.map(|v| v.try_into().unwrap()),
+            excess_blob_gas: test
+                .env
+                .current_excess_blob_gas
+                .map(|v| v.try_into().unwrap()),
             ..Default::default()
         }
     }
@@ -132,9 +135,9 @@ impl EFTestPost {
         values
             .iter()
             .find(|v| {
-                let data_index = v.indexes.get("data").unwrap().as_usize();
-                let gas_limit_index = v.indexes.get("gas").unwrap().as_usize();
-                let value_index = v.indexes.get("value").unwrap().as_usize();
+                let data_index: usize = (*v.indexes.get("data").unwrap()).try_into().unwrap();
+                let gas_limit_index: usize = (*v.indexes.get("gas").unwrap()).try_into().unwrap();
+                let value_index: usize = (*v.indexes.get("value").unwrap()).try_into().unwrap();
                 vector == &(data_index, gas_limit_index, value_index)
             })
             .cloned()
@@ -169,6 +172,8 @@ pub enum TransactionExpectedException {
     Type3TxPreFork,
     InsufficientMaxFeePerBlobGas,
     TxMaxGasLimitExceeded,
+    InvalidSignatureVrs,
+    InvalidChainId,
     Other, //TODO: Implement exceptions
 }
 
@@ -250,7 +255,10 @@ pub struct EFTestRawTransaction {
     pub gas_price: Option<U256>,
     #[serde(deserialize_with = "deserialize_u64_safe")]
     pub nonce: u64,
-    pub secret_key: H256,
+    // Absent in transaction-validation tests with a deliberately invalid signature
+    // (no private key can produce a bad signature); the signed tx lives in `post[].txbytes`.
+    #[serde(default)]
+    pub secret_key: Option<H256>,
     pub sender: Address,
     pub to: TxKind,
     #[serde(deserialize_with = "deserialize_u256_vec_safe")]
@@ -277,7 +285,7 @@ pub struct EFTestTransaction {
     pub gas_price: Option<U256>,
     #[serde(deserialize_with = "deserialize_u64_safe")]
     pub nonce: u64,
-    pub secret_key: H256,
+    pub secret_key: Option<H256>,
     pub sender: Address,
     pub to: TxKind,
     pub value: U256,

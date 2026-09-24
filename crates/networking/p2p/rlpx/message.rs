@@ -4,12 +4,18 @@ use std::fmt::Display;
 
 use crate::rlpx::snap::{
     AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
-    StorageRanges, TrieNodes,
+    Snap2BlockAccessLists, Snap2GetBlockAccessLists, StorageRanges, TrieNodes,
 };
 
+use super::eth::block_access_lists::{BlockAccessLists, GetBlockAccessLists};
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
-use super::eth::receipts::{GetReceipts, Receipts68, Receipts69};
-use super::eth::status::{StatusMessage68, StatusMessage69};
+use super::eth::cells::{Cells, GetCells};
+use super::eth::eth72::status::StatusMessage72;
+use super::eth::eth72::transactions::{NewPooledTransactionHashes72, PooledTransactions72};
+use super::eth::receipts::{
+    GetReceipts68, GetReceipts69, GetReceipts70, Receipts68, Receipts69, Receipts70,
+};
+use super::eth::status::{StatusMessage68, StatusMessage69, StatusMessage70, StatusMessage71};
 use super::eth::transactions::{
     GetPooledTransactions, NewPooledTransactionHashes, PooledTransactions, Transactions,
 };
@@ -25,14 +31,50 @@ use ethrex_rlp::encode::RLPEncode;
 const ETH_CAPABILITY_OFFSET: u8 = 0x10;
 const SNAP_CAPABILITY_OFFSET_ETH_68: u8 = 0x21;
 const SNAP_CAPABILITY_OFFSET_ETH_69: u8 = 0x22;
+// eth/70 (EIP-7975) reuses the same message codes as eth/69 — it only changes the
+// format of GetReceipts (0x0F) and Receipts (0x10), so offsets are identical.
+// GetReceipts68 and GetReceipts69 are type aliases for the same struct (identical wire format).
+const SNAP_CAPABILITY_OFFSET_ETH_70: u8 = 0x22;
+const SNAP_CAPABILITY_OFFSET_ETH_71: u8 = 0x24;
+// eth/72 (EIP-8070) adds GetCells (0x14) and Cells (0x15) in the eth namespace,
+// so the snap offset moves from 0x24 to 0x26.
+const SNAP_CAPABILITY_OFFSET_ETH_72: u8 = 0x26;
 const BASED_CAPABILITY_OFFSET_ETH_68: u8 = 0x30;
 const BASED_CAPABILITY_OFFSET_ETH_69: u8 = 0x31;
+const BASED_CAPABILITY_OFFSET_ETH_70: u8 = 0x31;
+const BASED_CAPABILITY_OFFSET_ETH_71: u8 = 0x33;
+const BASED_CAPABILITY_OFFSET_ETH_72: u8 = 0x35;
+
+// snap/2 max message id is 0x09; must not bleed into the based capability range.
+const _: () = assert!(SNAP_CAPABILITY_OFFSET_ETH_68 + 0x09 < BASED_CAPABILITY_OFFSET_ETH_68);
+const _: () = assert!(SNAP_CAPABILITY_OFFSET_ETH_69 + 0x09 < BASED_CAPABILITY_OFFSET_ETH_69);
+const _: () = assert!(SNAP_CAPABILITY_OFFSET_ETH_70 + 0x09 < BASED_CAPABILITY_OFFSET_ETH_70);
+const _: () = assert!(SNAP_CAPABILITY_OFFSET_ETH_71 + 0x09 < BASED_CAPABILITY_OFFSET_ETH_71);
 
 #[derive(Debug, Clone, Copy, Default)]
 pub enum EthCapVersion {
     #[default]
     V68,
     V69,
+    V70,
+    V71,
+    V72,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapCapVersion {
+    V1,
+    V2,
+}
+
+impl SnapCapVersion {
+    /// Returns true if `code` (offset-relative) is valid on this snap version.
+    pub const fn is_valid_code(self, code: u8) -> bool {
+        match self {
+            SnapCapVersion::V1 => code <= 0x07,
+            SnapCapVersion::V2 => code <= 0x05 || code == 0x08 || code == 0x09,
+        }
+    }
 }
 
 impl EthCapVersion {
@@ -44,6 +86,9 @@ impl EthCapVersion {
         match self {
             EthCapVersion::V68 => SNAP_CAPABILITY_OFFSET_ETH_68,
             EthCapVersion::V69 => SNAP_CAPABILITY_OFFSET_ETH_69,
+            EthCapVersion::V70 => SNAP_CAPABILITY_OFFSET_ETH_70,
+            EthCapVersion::V71 => SNAP_CAPABILITY_OFFSET_ETH_71,
+            EthCapVersion::V72 => SNAP_CAPABILITY_OFFSET_ETH_72,
         }
     }
 
@@ -51,6 +96,9 @@ impl EthCapVersion {
         match self {
             EthCapVersion::V68 => BASED_CAPABILITY_OFFSET_ETH_68,
             EthCapVersion::V69 => BASED_CAPABILITY_OFFSET_ETH_69,
+            EthCapVersion::V70 => BASED_CAPABILITY_OFFSET_ETH_70,
+            EthCapVersion::V71 => BASED_CAPABILITY_OFFSET_ETH_71,
+            EthCapVersion::V72 => BASED_CAPABILITY_OFFSET_ETH_72,
         }
     }
 }
@@ -70,6 +118,9 @@ pub enum Message {
     Pong(PongMessage),
     Status68(StatusMessage68),
     Status69(StatusMessage69),
+    Status70(StatusMessage70),
+    Status71(StatusMessage71),
+    Status72(StatusMessage72),
     // eth capability
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md
     GetBlockHeaders(GetBlockHeaders),
@@ -80,10 +131,20 @@ pub enum Message {
     NewPooledTransactionHashes(NewPooledTransactionHashes),
     GetPooledTransactions(GetPooledTransactions),
     PooledTransactions(PooledTransactions),
-    GetReceipts(GetReceipts),
+    // eth/72 (EIP-8070) variants
+    NewPooledTransactionHashes72(NewPooledTransactionHashes72),
+    PooledTransactions72(PooledTransactions72),
+    GetCells(GetCells),
+    Cells(Cells),
+    GetReceipts68(GetReceipts68),
+    GetReceipts69(GetReceipts69),
+    GetReceipts70(GetReceipts70),
     Receipts68(Receipts68),
     Receipts69(Receipts69),
+    Receipts70(Receipts70),
     BlockRangeUpdate(BlockRangeUpdate),
+    GetBlockAccessLists(GetBlockAccessLists),
+    BlockAccessLists(BlockAccessLists),
     // snap capability
     // https://github.com/ethereum/devp2p/blob/master/caps/snap.md
     GetAccountRange(GetAccountRange),
@@ -94,6 +155,8 @@ pub enum Message {
     ByteCodes(ByteCodes),
     GetTrieNodes(GetTrieNodes),
     TrieNodes(TrieNodes),
+    Snap2GetBlockAccessLists(Snap2GetBlockAccessLists),
+    Snap2BlockAccessLists(Snap2BlockAccessLists),
     // based capability
     #[cfg(feature = "l2")]
     L2(messages::L2Message),
@@ -110,6 +173,9 @@ impl Message {
             // eth capability
             Message::Status68(_) => eth_version.eth_capability_offset() + StatusMessage68::CODE,
             Message::Status69(_) => eth_version.eth_capability_offset() + StatusMessage69::CODE,
+            Message::Status70(_) => eth_version.eth_capability_offset() + StatusMessage70::CODE,
+            Message::Status71(_) => eth_version.eth_capability_offset() + StatusMessage71::CODE,
+            Message::Status72(_) => eth_version.eth_capability_offset() + StatusMessage72::CODE,
             Message::Transactions(_) => eth_version.eth_capability_offset() + Transactions::CODE,
             Message::GetBlockHeaders(_) => {
                 eth_version.eth_capability_offset() + GetBlockHeaders::CODE
@@ -128,11 +194,28 @@ impl Message {
             Message::PooledTransactions(_) => {
                 eth_version.eth_capability_offset() + PooledTransactions::CODE
             }
-            Message::GetReceipts(_) => eth_version.eth_capability_offset() + GetReceipts::CODE,
+            Message::NewPooledTransactionHashes72(_) => {
+                eth_version.eth_capability_offset() + NewPooledTransactionHashes72::CODE
+            }
+            Message::PooledTransactions72(_) => {
+                eth_version.eth_capability_offset() + PooledTransactions72::CODE
+            }
+            Message::GetCells(_) => eth_version.eth_capability_offset() + GetCells::CODE,
+            Message::Cells(_) => eth_version.eth_capability_offset() + Cells::CODE,
+            Message::GetReceipts68(_) => eth_version.eth_capability_offset() + GetReceipts68::CODE,
+            Message::GetReceipts69(_) => eth_version.eth_capability_offset() + GetReceipts69::CODE,
+            Message::GetReceipts70(_) => eth_version.eth_capability_offset() + GetReceipts70::CODE,
             Message::Receipts68(_) => eth_version.eth_capability_offset() + Receipts68::CODE,
             Message::Receipts69(_) => eth_version.eth_capability_offset() + Receipts69::CODE,
+            Message::Receipts70(_) => eth_version.eth_capability_offset() + Receipts70::CODE,
             Message::BlockRangeUpdate(_) => {
                 eth_version.eth_capability_offset() + BlockRangeUpdate::CODE
+            }
+            Message::GetBlockAccessLists(_) => {
+                eth_version.eth_capability_offset() + GetBlockAccessLists::CODE
+            }
+            Message::BlockAccessLists(_) => {
+                eth_version.eth_capability_offset() + BlockAccessLists::CODE
             }
             // snap capability
             Message::GetAccountRange(_) => {
@@ -147,6 +230,12 @@ impl Message {
             Message::ByteCodes(_) => eth_version.snap_capability_offset() + ByteCodes::CODE,
             Message::GetTrieNodes(_) => eth_version.snap_capability_offset() + GetTrieNodes::CODE,
             Message::TrieNodes(_) => eth_version.snap_capability_offset() + TrieNodes::CODE,
+            Message::Snap2GetBlockAccessLists(_) => {
+                eth_version.snap_capability_offset() + Snap2GetBlockAccessLists::CODE
+            }
+            Message::Snap2BlockAccessLists(_) => {
+                eth_version.snap_capability_offset() + Snap2BlockAccessLists::CODE
+            }
 
             #[cfg(feature = "l2")]
             // based capability
@@ -164,6 +253,7 @@ impl Message {
         msg_id: u8,
         data: &[u8],
         eth_version: EthCapVersion,
+        snap_version: Option<SnapCapVersion>,
     ) -> Result<Message, RLPDecodeError> {
         if msg_id < eth_version.eth_capability_offset() {
             match msg_id {
@@ -184,6 +274,15 @@ impl Message {
                 StatusMessage69::CODE if matches!(eth_version, EthCapVersion::V69) => {
                     Ok(Message::Status69(StatusMessage69::decode(data)?))
                 }
+                StatusMessage70::CODE if matches!(eth_version, EthCapVersion::V70) => {
+                    Ok(Message::Status70(StatusMessage70::decode(data)?))
+                }
+                StatusMessage71::CODE if matches!(eth_version, EthCapVersion::V71) => {
+                    Ok(Message::Status71(StatusMessage71::decode(data)?))
+                }
+                StatusMessage72::CODE if matches!(eth_version, EthCapVersion::V72) => {
+                    Ok(Message::Status72(StatusMessage72::decode(data)?))
+                }
                 Transactions::CODE => Ok(Message::Transactions(Transactions::decode(data)?)),
                 GetBlockHeaders::CODE => {
                     Ok(Message::GetBlockHeaders(GetBlockHeaders::decode(data)?))
@@ -191,30 +290,85 @@ impl Message {
                 BlockHeaders::CODE => Ok(Message::BlockHeaders(BlockHeaders::decode(data)?)),
                 GetBlockBodies::CODE => Ok(Message::GetBlockBodies(GetBlockBodies::decode(data)?)),
                 BlockBodies::CODE => Ok(Message::BlockBodies(BlockBodies::decode(data)?)),
-                NewPooledTransactionHashes::CODE => Ok(Message::NewPooledTransactionHashes(
-                    NewPooledTransactionHashes::decode(data)?,
-                )),
+                NewPooledTransactionHashes::CODE if !matches!(eth_version, EthCapVersion::V72) => {
+                    Ok(Message::NewPooledTransactionHashes(
+                        NewPooledTransactionHashes::decode(data)?,
+                    ))
+                }
+                NewPooledTransactionHashes72::CODE if matches!(eth_version, EthCapVersion::V72) => {
+                    Ok(Message::NewPooledTransactionHashes72(
+                        NewPooledTransactionHashes72::decode(data)?,
+                    ))
+                }
                 GetPooledTransactions::CODE => Ok(Message::GetPooledTransactions(
                     GetPooledTransactions::decode(data)?,
                 )),
-                PooledTransactions::CODE => Ok(Message::PooledTransactions(
-                    PooledTransactions::decode(data)?,
-                )),
-                GetReceipts::CODE => Ok(Message::GetReceipts(GetReceipts::decode(data)?)),
+                PooledTransactions::CODE if !matches!(eth_version, EthCapVersion::V72) => Ok(
+                    Message::PooledTransactions(PooledTransactions::decode(data)?),
+                ),
+                PooledTransactions72::CODE if matches!(eth_version, EthCapVersion::V72) => Ok(
+                    Message::PooledTransactions72(PooledTransactions72::decode(data)?),
+                ),
+                GetCells::CODE if matches!(eth_version, EthCapVersion::V72) => {
+                    Ok(Message::GetCells(GetCells::decode(data)?))
+                }
+                Cells::CODE if matches!(eth_version, EthCapVersion::V72) => {
+                    Ok(Message::Cells(Cells::decode(data)?))
+                }
+                GetReceipts68::CODE if matches!(eth_version, EthCapVersion::V68) => {
+                    Ok(Message::GetReceipts68(GetReceipts68::decode(data)?))
+                }
+                GetReceipts69::CODE if matches!(eth_version, EthCapVersion::V69) => {
+                    Ok(Message::GetReceipts69(GetReceipts69::decode(data)?))
+                }
+                // eth/71 (EIP-8159) and eth/72 (EIP-8070) build on the eth/70 receipt layout.
+                GetReceipts70::CODE
+                    if matches!(
+                        eth_version,
+                        EthCapVersion::V70 | EthCapVersion::V71 | EthCapVersion::V72
+                    ) =>
+                {
+                    Ok(Message::GetReceipts70(GetReceipts70::decode(data)?))
+                }
                 Receipts68::CODE if matches!(eth_version, EthCapVersion::V68) => {
                     Ok(Message::Receipts68(Receipts68::decode(data)?))
                 }
                 Receipts69::CODE if matches!(eth_version, EthCapVersion::V69) => {
                     Ok(Message::Receipts69(Receipts69::decode(data)?))
                 }
+                Receipts70::CODE
+                    if matches!(
+                        eth_version,
+                        EthCapVersion::V70 | EthCapVersion::V71 | EthCapVersion::V72
+                    ) =>
+                {
+                    Ok(Message::Receipts70(Receipts70::decode(data)?))
+                }
                 BlockRangeUpdate::CODE => {
                     Ok(Message::BlockRangeUpdate(BlockRangeUpdate::decode(data)?))
+                }
+                GetBlockAccessLists::CODE
+                    if matches!(eth_version, EthCapVersion::V71 | EthCapVersion::V72) =>
+                {
+                    Ok(Message::GetBlockAccessLists(GetBlockAccessLists::decode(
+                        data,
+                    )?))
+                }
+                BlockAccessLists::CODE
+                    if matches!(eth_version, EthCapVersion::V71 | EthCapVersion::V72) =>
+                {
+                    Ok(Message::BlockAccessLists(BlockAccessLists::decode(data)?))
                 }
                 _ => Err(RLPDecodeError::MalformedData),
             }
         } else if msg_id < eth_version.based_capability_offset() {
-            // snap capability
-            match msg_id - eth_version.snap_capability_offset() {
+            // snap capability — version-aware dispatch
+            let snap_code = msg_id - eth_version.snap_capability_offset();
+            let snap_v = snap_version.ok_or(RLPDecodeError::MalformedData)?;
+            if !snap_v.is_valid_code(snap_code) {
+                return Err(RLPDecodeError::MalformedData);
+            }
+            match snap_code {
                 GetAccountRange::CODE => {
                     Ok(Message::GetAccountRange(GetAccountRange::decode(data)?))
                 }
@@ -225,8 +379,16 @@ impl Message {
                 StorageRanges::CODE => Ok(Message::StorageRanges(StorageRanges::decode(data)?)),
                 GetByteCodes::CODE => Ok(Message::GetByteCodes(GetByteCodes::decode(data)?)),
                 ByteCodes::CODE => Ok(Message::ByteCodes(ByteCodes::decode(data)?)),
+                // 0x06, 0x07 are snap/1-only — is_valid_code already rejects them under V2
                 GetTrieNodes::CODE => Ok(Message::GetTrieNodes(GetTrieNodes::decode(data)?)),
                 TrieNodes::CODE => Ok(Message::TrieNodes(TrieNodes::decode(data)?)),
+                // 0x08, 0x09 are snap/2-only — is_valid_code already rejects them under V1
+                Snap2GetBlockAccessLists::CODE => Ok(Message::Snap2GetBlockAccessLists(
+                    Snap2GetBlockAccessLists::decode(data)?,
+                )),
+                Snap2BlockAccessLists::CODE => Ok(Message::Snap2BlockAccessLists(
+                    Snap2BlockAccessLists::decode(data)?,
+                )),
                 _ => Err(RLPDecodeError::MalformedData),
             }
         } else {
@@ -264,6 +426,9 @@ impl Message {
             Message::Pong(msg) => msg.encode(buf),
             Message::Status68(msg) => msg.encode(buf),
             Message::Status69(msg) => msg.encode(buf),
+            Message::Status70(msg) => msg.encode(buf),
+            Message::Status71(msg) => msg.encode(buf),
+            Message::Status72(msg) => msg.encode(buf),
             Message::Transactions(msg) => msg.encode(buf),
             Message::GetBlockHeaders(msg) => msg.encode(buf),
             Message::BlockHeaders(msg) => msg.encode(buf),
@@ -272,10 +437,19 @@ impl Message {
             Message::NewPooledTransactionHashes(msg) => msg.encode(buf),
             Message::GetPooledTransactions(msg) => msg.encode(buf),
             Message::PooledTransactions(msg) => msg.encode(buf),
-            Message::GetReceipts(msg) => msg.encode(buf),
+            Message::NewPooledTransactionHashes72(msg) => msg.encode(buf),
+            Message::PooledTransactions72(msg) => msg.encode(buf),
+            Message::GetCells(msg) => msg.encode(buf),
+            Message::Cells(msg) => msg.encode(buf),
+            Message::GetReceipts68(msg) => msg.encode(buf),
+            Message::GetReceipts69(msg) => msg.encode(buf),
+            Message::GetReceipts70(msg) => msg.encode(buf),
             Message::Receipts68(msg) => msg.encode(buf),
             Message::Receipts69(msg) => msg.encode(buf),
+            Message::Receipts70(msg) => msg.encode(buf),
             Message::BlockRangeUpdate(msg) => msg.encode(buf),
+            Message::GetBlockAccessLists(msg) => msg.encode(buf),
+            Message::BlockAccessLists(msg) => msg.encode(buf),
             Message::GetAccountRange(msg) => msg.encode(buf),
             Message::AccountRange(msg) => msg.encode(buf),
             Message::GetStorageRanges(msg) => msg.encode(buf),
@@ -284,6 +458,8 @@ impl Message {
             Message::ByteCodes(msg) => msg.encode(buf),
             Message::GetTrieNodes(msg) => msg.encode(buf),
             Message::TrieNodes(msg) => msg.encode(buf),
+            Message::Snap2GetBlockAccessLists(msg) => msg.encode(buf),
+            Message::Snap2BlockAccessLists(msg) => msg.encode(buf),
             #[cfg(feature = "l2")]
             Message::L2(l2_msg) => match l2_msg {
                 L2Message::BatchSealed(msg) => msg.encode(buf),
@@ -297,7 +473,9 @@ impl Message {
             Message::GetBlockHeaders(message) => Some(message.id),
             Message::GetBlockBodies(message) => Some(message.id),
             Message::GetPooledTransactions(message) => Some(message.id),
-            Message::GetReceipts(message) => Some(message.id),
+            Message::GetReceipts68(message) => Some(message.id),
+            Message::GetReceipts69(message) => Some(message.id),
+            Message::GetReceipts70(message) => Some(message.id),
             Message::GetAccountRange(message) => Some(message.id),
             Message::GetStorageRanges(message) => Some(message.id),
             Message::GetByteCodes(message) => Some(message.id),
@@ -307,10 +485,18 @@ impl Message {
             Message::PooledTransactions(message) => Some(message.id),
             Message::Receipts68(message) => Some(message.id),
             Message::Receipts69(message) => Some(message.id),
+            Message::Receipts70(message) => Some(message.id),
             Message::AccountRange(message) => Some(message.id),
             Message::StorageRanges(message) => Some(message.id),
             Message::ByteCodes(message) => Some(message.id),
             Message::TrieNodes(message) => Some(message.id),
+            Message::GetBlockAccessLists(message) => Some(message.id),
+            Message::BlockAccessLists(message) => Some(message.id),
+            Message::Snap2GetBlockAccessLists(message) => Some(message.id),
+            Message::Snap2BlockAccessLists(message) => Some(message.id),
+            Message::GetCells(message) => Some(message.id),
+            Message::Cells(message) => Some(message.id),
+            Message::PooledTransactions72(message) => Some(message.id),
             // The rest of the message types does not have a request id.
             Message::Hello(_)
             | Message::Disconnect(_)
@@ -318,11 +504,68 @@ impl Message {
             | Message::Pong(_)
             | Message::Status68(_)
             | Message::Status69(_)
+            | Message::Status70(_)
+            | Message::Status71(_)
+            | Message::Status72(_)
             | Message::Transactions(_)
             | Message::NewPooledTransactionHashes(_)
+            | Message::NewPooledTransactionHashes72(_)
             | Message::BlockRangeUpdate(_) => None,
             #[cfg(feature = "l2")]
             Message::L2(_) => None,
+        }
+    }
+}
+
+impl Message {
+    /// Returns a short, stable label suitable for use as a Prometheus metric label value.
+    pub fn metric_label(&self) -> &'static str {
+        match self {
+            Message::Hello(_) => "Hello",
+            Message::Disconnect(_) => "Disconnect",
+            Message::Ping(_) => "Ping",
+            Message::Pong(_) => "Pong",
+            Message::Status68(_) => "Status",
+            Message::Status69(_) => "Status",
+            Message::Status70(_) => "Status",
+            Message::Status71(_) => "Status",
+            Message::Status72(_) => "Status",
+            Message::GetBlockHeaders(_) => "GetBlockHeaders",
+            Message::BlockHeaders(_) => "BlockHeaders",
+            Message::Transactions(_) => "Transactions",
+            Message::GetBlockBodies(_) => "GetBlockBodies",
+            Message::BlockBodies(_) => "BlockBodies",
+            Message::NewPooledTransactionHashes(_) => "NewPooledTransactionHashes",
+            Message::GetPooledTransactions(_) => "GetPooledTransactions",
+            Message::PooledTransactions(_) => "PooledTransactions",
+            Message::NewPooledTransactionHashes72(_) => "NewPooledTransactionHashes",
+            Message::PooledTransactions72(_) => "PooledTransactions",
+            Message::GetCells(_) => "GetCells",
+            Message::Cells(_) => "Cells",
+            Message::GetReceipts68(_) => "GetReceipts",
+            Message::GetReceipts69(_) => "GetReceipts",
+            Message::GetReceipts70(_) => "GetReceipts",
+            Message::Receipts68(_) => "Receipts",
+            Message::Receipts69(_) => "Receipts",
+            Message::Receipts70(_) => "Receipts",
+            Message::BlockRangeUpdate(_) => "BlockRangeUpdate",
+            Message::GetBlockAccessLists(_) => "GetBlockAccessLists",
+            Message::BlockAccessLists(_) => "BlockAccessLists",
+            Message::GetAccountRange(_) => "GetAccountRange",
+            Message::AccountRange(_) => "AccountRange",
+            Message::GetStorageRanges(_) => "GetStorageRanges",
+            Message::StorageRanges(_) => "StorageRanges",
+            Message::GetByteCodes(_) => "GetByteCodes",
+            Message::ByteCodes(_) => "ByteCodes",
+            Message::GetTrieNodes(_) => "GetTrieNodes",
+            Message::TrieNodes(_) => "TrieNodes",
+            Message::Snap2GetBlockAccessLists(_) => "Snap2GetBlockAccessLists",
+            Message::Snap2BlockAccessLists(_) => "Snap2BlockAccessLists",
+            #[cfg(feature = "l2")]
+            Message::L2(l2_msg) => match l2_msg {
+                L2Message::NewBlock(_) => "L2NewBlock",
+                L2Message::BatchSealed(_) => "L2BatchSealed",
+            },
         }
     }
 }
@@ -336,18 +579,30 @@ impl Display for Message {
             Message::Pong(_) => "p2p:Pong".fmt(f),
             Message::Status68(_) => "eth:Status(68)".fmt(f),
             Message::Status69(_) => "eth:Status(69)".fmt(f),
+            Message::Status70(_) => "eth:Status(70)".fmt(f),
+            Message::Status71(_) => "eth:Status(71)".fmt(f),
+            Message::Status72(_) => "eth:Status(72)".fmt(f),
             Message::GetBlockHeaders(_) => "eth:getBlockHeaders".fmt(f),
             Message::BlockHeaders(_) => "eth:BlockHeaders".fmt(f),
             Message::BlockBodies(_) => "eth:BlockBodies".fmt(f),
             Message::NewPooledTransactionHashes(_) => "eth:NewPooledTransactionHashes".fmt(f),
             Message::GetPooledTransactions(_) => "eth::GetPooledTransactions".fmt(f),
             Message::PooledTransactions(_) => "eth::PooledTransactions".fmt(f),
+            Message::NewPooledTransactionHashes72(_) => "eth:NewPooledTransactionHashes(72)".fmt(f),
+            Message::PooledTransactions72(_) => "eth::PooledTransactions(72)".fmt(f),
+            Message::GetCells(_) => "eth:GetCells(72)".fmt(f),
+            Message::Cells(_) => "eth:Cells(72)".fmt(f),
             Message::Transactions(_) => "eth:TransactionsMessage".fmt(f),
             Message::GetBlockBodies(_) => "eth:GetBlockBodies".fmt(f),
-            Message::GetReceipts(_) => "eth:GetReceipts".fmt(f),
+            Message::GetReceipts68(_) => "eth:GetReceipts(68)".fmt(f),
+            Message::GetReceipts69(_) => "eth:GetReceipts(69)".fmt(f),
+            Message::GetReceipts70(_) => "eth:GetReceipts(70)".fmt(f),
             Message::Receipts68(_) => "eth:Receipts(68)".fmt(f),
             Message::Receipts69(_) => "eth:Receipts(69)".fmt(f),
+            Message::Receipts70(_) => "eth:Receipts(70)".fmt(f),
             Message::BlockRangeUpdate(_) => "eth:BlockRangeUpdate".fmt(f),
+            Message::GetBlockAccessLists(_) => "eth:GetBlockAccessLists".fmt(f),
+            Message::BlockAccessLists(_) => "eth:BlockAccessLists".fmt(f),
             Message::GetAccountRange(_) => "snap:GetAccountRange".fmt(f),
             Message::AccountRange(_) => "snap:AccountRange".fmt(f),
             Message::GetStorageRanges(_) => "snap:GetStorageRanges".fmt(f),
@@ -356,11 +611,132 @@ impl Display for Message {
             Message::ByteCodes(_) => "snap:ByteCodes".fmt(f),
             Message::GetTrieNodes(_) => "snap:GetTrieNodes".fmt(f),
             Message::TrieNodes(_) => "snap:TrieNodes".fmt(f),
+            Message::Snap2GetBlockAccessLists(_) => "snap2:GetBlockAccessLists".fmt(f),
+            Message::Snap2BlockAccessLists(_) => "snap2:BlockAccessLists".fmt(f),
             #[cfg(feature = "l2")]
             Message::L2(l2_msg) => match l2_msg {
                 L2Message::BatchSealed(_) => "based:BatchSealed".fmt(f),
                 L2Message::NewBlock(_) => "based:NewBlock".fmt(f),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EthCapVersion, Message, RLPxMessage};
+    use crate::rlpx::eth::receipts::{GetReceipts, GetReceipts70, Receipts70};
+    use ethrex_common::types::BlockHash;
+
+    /// Which `GetReceipts` wire form each eth version expects. eth/70 (EIP-7975)
+    /// introduced the paginated form and eth/71 (EIP-8159, `requires: [7928,
+    /// 7975]`) builds on it, so only eth/68 and eth/69 take the simple form.
+    /// Sending the wrong form to a peer is undetectable locally — it just fails to
+    /// decode on their side — so pin the mapping here.
+    #[test]
+    fn get_receipts_wire_form_per_version() {
+        for version in [EthCapVersion::V68, EthCapVersion::V69] {
+            let request = GetReceipts::new(7, vec![BlockHash::from([1; 32])]);
+            let mut encoded = Vec::new();
+            request.encode(&mut encoded).unwrap();
+            let decoded = Message::decode(
+                version.eth_capability_offset() + GetReceipts::CODE,
+                &encoded,
+                version,
+                None,
+            )
+            .unwrap_or_else(|e| panic!("{version:?} must decode the simple form: {e:?}"));
+            assert!(
+                matches!(
+                    decoded,
+                    Message::GetReceipts68(_) | Message::GetReceipts69(_)
+                ),
+                "{version:?} must use the simple GetReceipts form, got {decoded:?}"
+            );
+        }
+
+        for version in [EthCapVersion::V70, EthCapVersion::V71] {
+            let request = GetReceipts70::new(7, 0, vec![BlockHash::from([1; 32])]);
+            let mut encoded = Vec::new();
+            request.encode(&mut encoded).unwrap();
+            let decoded = Message::decode(
+                version.eth_capability_offset() + GetReceipts70::CODE,
+                &encoded,
+                version,
+                None,
+            )
+            .unwrap_or_else(|e| panic!("{version:?} must decode the paginated form: {e:?}"));
+            assert!(
+                matches!(decoded, Message::GetReceipts70(_)),
+                "{version:?} must use the paginated GetReceipts form, got {decoded:?}"
+            );
+        }
+    }
+
+    /// The mirror of the above for responses: an eth/70+ peer answers with
+    /// `Receipts70`, which a client that only matches `Receipts68`/`Receipts69`
+    /// would drop as unexpected.
+    #[test]
+    fn receipts_wire_form_per_version() {
+        for version in [EthCapVersion::V70, EthCapVersion::V71] {
+            let response = Receipts70::new(7, false, vec![]);
+            let mut encoded = Vec::new();
+            response.encode(&mut encoded).unwrap();
+            let decoded = Message::decode(
+                version.eth_capability_offset() + Receipts70::CODE,
+                &encoded,
+                version,
+                None,
+            )
+            .unwrap_or_else(|e| panic!("{version:?} must decode Receipts70: {e:?}"));
+            assert!(
+                matches!(decoded, Message::Receipts70(_)),
+                "{version:?} must answer with the paginated Receipts form, got {decoded:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn decodes_eth71_get_receipts_with_eth70_format() {
+        let request = GetReceipts70::new(7, 3, vec![BlockHash::from([1; 32])]);
+        let mut encoded = Vec::new();
+        request.encode(&mut encoded).unwrap();
+
+        let decoded = Message::decode(
+            EthCapVersion::V71.eth_capability_offset() + GetReceipts70::CODE,
+            &encoded,
+            EthCapVersion::V71,
+            None,
+        )
+        .unwrap();
+
+        let Message::GetReceipts70(decoded) = decoded else {
+            panic!("expected eth/70 GetReceipts message");
+        };
+        assert_eq!(decoded.id, 7);
+        assert_eq!(decoded.first_block_receipt_index, 3);
+        assert_eq!(decoded.block_hashes, vec![BlockHash::from([1; 32])]);
+    }
+
+    #[test]
+    fn decodes_eth71_receipts_with_eth70_format() {
+        let response = Receipts70::new(7, true, vec![]);
+        let mut encoded = Vec::new();
+        response.encode(&mut encoded).unwrap();
+
+        let decoded = Message::decode(
+            EthCapVersion::V71.eth_capability_offset() + Receipts70::CODE,
+            &encoded,
+            EthCapVersion::V71,
+            None,
+        )
+        .unwrap();
+
+        let Message::Receipts70(decoded) = decoded else {
+            panic!("expected eth/70 Receipts message");
+        };
+        assert_eq!(decoded.id, 7);
+        assert!(decoded.last_block_incomplete);
+        assert!(decoded.receipts.is_empty());
     }
 }

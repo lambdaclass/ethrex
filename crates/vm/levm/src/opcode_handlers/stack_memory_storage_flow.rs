@@ -1,389 +1,583 @@
+//! # Control flow and memory operations
+//!
+//! Includes the following opcodes:
+//!   - `POP`
+//!   - `GAS`
+//!   - `PC`
+//!   - `MLOAD`
+//!   - `MSTORE`
+//!   - `MSTORE8`
+//!   - `MCOPY`
+//!   - `MSIZE`
+//!   - `TLOAD`
+//!   - `TSTORE`
+//!   - `SLOAD`
+//!   - `SSTORE`
+//!   - `JUMPDEST`
+//!   - `JUMP`
+//!   - `JUMPI`
+
 use crate::{
-    call_frame::CallFrame,
-    constants::{WORD_SIZE, WORD_SIZE_IN_BYTES_USIZE},
+    constants::WORD_SIZE_IN_BYTES_USIZE,
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
-    gas_cost::{self, SSTORE_STIPEND},
+    gas_cost::{self, SSTORE_DEFAULT_DYNAMIC, SSTORE_STIPEND, STORAGE_CLEAR_REFUND_AMSTERDAM},
     memory::calculate_memory_size,
-    utils::u256_to_usize,
+    opcode_handlers::OpcodeHandler,
+    opcodes::Opcode,
+    utils::{size_offset_to_usize, u256_to_usize},
     vm::VM,
 };
-use ethrex_common::{
-    U256,
-    utils::{u256_to_big_endian, u256_to_h256},
-};
+use ethrex_common::{H256, U256, types::Fork};
+use std::{mem, slice};
 
-// Stack, Memory, Storage and Flow Operations (15)
-// Opcodes: POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST, TLOAD, TSTORE, MCOPY
+/// Implementation for the `POP` opcode.
+pub struct OpPopHandler;
+impl OpcodeHandler for OpPopHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::POP)?;
 
-pub const OUT_OF_BOUNDS: U256 = U256([u64::MAX, 0, 0, 0]);
-
-impl<'a> VM<'a> {
-    // POP operation
-    #[inline]
-    pub fn op_pop(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::POP)?;
-        current_call_frame.stack.pop1()?;
-        Ok(OpcodeResult::Continue)
-    }
-
-    // TLOAD operation
-    pub fn op_tload(&mut self) -> Result<OpcodeResult, VMError> {
-        let key = self.current_call_frame.stack.pop1()?;
-        let to = self.current_call_frame.to;
-        let value = self.substate.get_transient(&to, &key);
-
-        let current_call_frame = &mut self.current_call_frame;
-
-        current_call_frame.increase_consumed_gas(gas_cost::TLOAD)?;
-
-        current_call_frame.stack.push(value)?;
-        Ok(OpcodeResult::Continue)
-    }
-
-    // TSTORE operation
-    pub fn op_tstore(&mut self) -> Result<OpcodeResult, VMError> {
-        let (key, value, to) = {
-            let current_call_frame = &mut self.current_call_frame;
-
-            current_call_frame.increase_consumed_gas(gas_cost::TSTORE)?;
-
-            if current_call_frame.is_static {
-                return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
-            }
-
-            let [key, value] = *current_call_frame.stack.pop()?;
-            (key, value, current_call_frame.to)
-        };
-        self.substate.set_transient(&to, &key, value);
+        vm.current_call_frame.stack.pop1()?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // MLOAD operation
-    #[inline]
-    pub fn op_mload(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        let offset = u256_to_usize(current_call_frame.stack.pop1()?)?;
+/// Implementation for the `GAS` opcode.
+pub struct OpGasHandler;
+impl OpcodeHandler for OpGasHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::GAS)?;
 
-        let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
-
-        current_call_frame.increase_consumed_gas(gas_cost::mload(
-            new_memory_size,
-            current_call_frame.memory.len(),
-        )?)?;
-
-        current_call_frame
+        vm.current_call_frame
             .stack
-            .push(current_call_frame.memory.load_word(offset)?)?;
+            .push(vm.current_call_frame.gas_remaining.into())?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // MSTORE operation
-    #[inline]
-    pub fn op_mstore(&mut self) -> Result<OpcodeResult, VMError> {
-        let [offset, value] = *self.current_call_frame.stack.pop()?;
+/// Implementation for the `PC` opcode.
+pub struct OpPcHandler;
+impl OpcodeHandler for OpPcHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame.increase_consumed_gas(gas_cost::PC)?;
 
-        // This is only for debugging purposes of special solidity contracts that enable printing text on screen.
-        if self.debug_mode.enabled && self.debug_mode.handle_debug(offset, value)? {
+        // Note: Since the PC has been preincremented, subtracting 1 from it to get the operation's
+        //   offset will never cause an underflow condition.
+        vm.current_call_frame
+            .stack
+            .push(vm.current_call_frame.pc.wrapping_sub(1).into())?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `MLOAD` opcode.
+pub struct OpMLoadHandler;
+impl OpcodeHandler for OpMLoadHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        // Stack-neutral: replace the top (the offset) with the loaded word in place.
+        let offset = u256_to_usize(*vm.current_call_frame.stack.top_mut()?)?;
+        let new_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::mload(
+                new_size,
+                vm.current_call_frame.memory.len(),
+            )?)?;
+
+        let word = vm
+            .current_call_frame
+            .memory
+            .load_word_prerounded(offset, new_size)?;
+        // MLOAD is stack-neutral: the top was validated by the `top_mut()?` read
+        // above and the depth is unchanged, so skip the redundant bounds check.
+        #[expect(unsafe_code, reason = "top validated above; MLOAD is stack-neutral")]
+        unsafe {
+            vm.current_call_frame.stack.set_top_unchecked(word);
+        }
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `MSTORE` opcode.
+pub struct OpMStoreHandler;
+impl OpcodeHandler for OpMStoreHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let [offset, value] = *vm.current_call_frame.stack.pop()?;
+
+        // Handle debug text printing for solidity contracts that enable it.
+        if vm.debug_mode.enabled && vm.debug_mode.handle_debug(offset, value)? {
             return Ok(OpcodeResult::Continue);
         }
 
         let offset = u256_to_usize(offset)?;
+        // Round the new memory size up to a word once, then reuse it for both the
+        // gas charge and the store (store_word would otherwise re-round it).
+        let new_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::mstore(
+                new_size,
+                vm.current_call_frame.memory.len(),
+            )?)?;
 
-        let current_call_frame = &mut self.current_call_frame;
-
-        let new_memory_size = calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?;
-
-        current_call_frame.increase_consumed_gas(gas_cost::mstore(
-            new_memory_size,
-            current_call_frame.memory.len(),
-        )?)?;
-
-        current_call_frame.memory.store_word(offset, value)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // MSTORE8 operation
-    pub fn op_mstore8(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-
-        let offset = u256_to_usize(current_call_frame.stack.pop1()?)?;
-
-        let new_memory_size = calculate_memory_size(offset, 1)?;
-
-        current_call_frame.increase_consumed_gas(gas_cost::mstore8(
-            new_memory_size,
-            current_call_frame.memory.len(),
-        )?)?;
-
-        let value = current_call_frame.stack.pop1()?;
-
-        current_call_frame
+        vm.current_call_frame
             .memory
-            .store_data(offset, &u256_to_big_endian(value)[WORD_SIZE - 1..WORD_SIZE])?;
+            .store_word_prerounded(offset, value, new_size)?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // SLOAD operation
-    #[inline]
-    pub fn op_sload(&mut self) -> Result<OpcodeResult, VMError> {
-        let (storage_slot_key, address) = {
-            let current_call_frame = &mut self.current_call_frame;
-            let storage_slot_key = current_call_frame.stack.pop1()?;
-            let address = current_call_frame.to;
-            (storage_slot_key, address)
-        };
+/// Implementation for the `MSTORE8` opcode.
+pub struct OpMStore8Handler;
+impl OpcodeHandler for OpMStore8Handler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let [offset, value] = *vm.current_call_frame.stack.pop()?;
+        let offset = u256_to_usize(offset)?;
+        let value = value.byte(0);
 
-        let key = u256_to_h256(storage_slot_key);
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::mstore8(
+                calculate_memory_size(offset, size_of::<u8>())?,
+                vm.current_call_frame.memory.len(),
+            )?)?;
 
-        // Note: access_storage_slot does NOT record to BAL per EIP-7928.
-        // BAL recording must happen AFTER gas check passes.
-        let (value, storage_slot_was_cold) = self.access_storage_slot(address, key)?;
+        vm.current_call_frame
+            .memory
+            .store_data(offset, slice::from_ref(&value))?;
 
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::sload(storage_slot_was_cold)?)?;
-
-        // Record to BAL AFTER gas check passes per EIP-7928:
-        // "If pre-state validation fails, the target is never accessed and must not appear in BAL."
-        self.record_storage_slot_to_bal(address, storage_slot_key);
-
-        self.current_call_frame.stack.push(value)?;
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // SSTORE operation
-    pub fn op_sstore(&mut self) -> Result<OpcodeResult, VMError> {
-        if self.current_call_frame.is_static {
+/// Implementation for the `MCOPY` opcode.
+pub struct OpMCopyHandler;
+impl OpcodeHandler for OpMCopyHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let [dst_offset, src_offset, len] = *vm.current_call_frame.stack.pop()?;
+        let (len, dst_offset) = size_offset_to_usize(len, dst_offset)?;
+        let src_offset = u256_to_usize(src_offset).unwrap_or(usize::MAX);
+
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::mcopy(
+                calculate_memory_size(src_offset.max(dst_offset), len)?,
+                vm.current_call_frame.memory.len(),
+                len,
+            )?)?;
+
+        vm.current_call_frame
+            .memory
+            .copy_within(src_offset, dst_offset, len)?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `MSIZE` opcode.
+pub struct OpMSizeHandler;
+impl OpcodeHandler for OpMSizeHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::MSIZE)?;
+
+        vm.current_call_frame
+            .stack
+            .push(vm.current_call_frame.memory.len().into())?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `TLOAD` opcode.
+pub struct OpTLoadHandler;
+impl OpcodeHandler for OpTLoadHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::TLOAD)?;
+
+        let key = vm.current_call_frame.stack.pop1()?;
+        vm.current_call_frame
+            .stack
+            .push(vm.substate.get_transient(&vm.current_call_frame.to, &key))?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `TSTORE` opcode.
+pub struct OpTStoreHandler;
+impl OpcodeHandler for OpTStoreHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        if vm.current_call_frame.is_static {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
 
-        let (storage_slot_key, new_storage_slot_value, to) = {
-            let current_call_frame = &mut self.current_call_frame;
-            let [storage_slot_key, new_storage_slot_value] = *current_call_frame.stack.pop()?;
-            let to = current_call_frame.to;
-            (storage_slot_key, new_storage_slot_value, to)
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::TSTORE)?;
+
+        let [key, value] = *vm.current_call_frame.stack.pop()?;
+        vm.substate
+            .set_transient(&vm.current_call_frame.to, &key, value);
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `SLOAD` opcode.
+pub struct OpSLoadHandler;
+impl OpcodeHandler for OpSLoadHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let storage_slot_key = vm.current_call_frame.stack.pop1()?;
+        let address = vm.current_call_frame.to;
+        let key = {
+            #[expect(unsafe_code)]
+            unsafe {
+                let mut hash = mem::transmute::<U256, H256>(storage_slot_key);
+                hash.0.reverse();
+                hash
+            }
         };
 
-        // EIP-2200: SSTORE_STIPEND check BEFORE accessing storage
-        // Per EIP-7928: "If SSTORE fails the GAS_CALL_STIPEND check, the storage slot MUST NOT
-        // appear in storage_reads or storage_changes."
-        let gas_left = self.current_call_frame.gas_remaining;
-        if gas_left <= SSTORE_STIPEND {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::sload(
+                vm.substate.add_accessed_slot(address, key),
+                vm.env.config.fork,
+            )?)?;
+
+        // Record to BAL AFTER gas check passes per EIP-7928
+        vm.record_storage_slot_to_bal(address, storage_slot_key);
+
+        // EIP-8141 mempool validation-trace: SLOAD restricted to the sender's storage.
+        if vm.validation_observer.active {
+            vm.validation_check_sload(address, key);
+        }
+
+        let value = vm.get_storage_value(address, key)?;
+        vm.current_call_frame.stack.push(value)?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Implementation for the `SSTORE` opcode.
+pub struct OpSStoreHandler;
+impl OpcodeHandler for OpSStoreHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        if vm.current_call_frame.is_static {
+            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
+        }
+
+        let fork = vm.env.config.fork;
+
+        // EIP-2200. Pre-Amsterdam, COLD_STORAGE_ACCESS (2100) never exceeds the
+        // 2300 stipend, so gating on the flat stipend alone is sufficient.
+        if fork < Fork::Amsterdam && vm.current_call_frame.gas_remaining <= SSTORE_STIPEND {
             return Err(ExceptionalHalt::OutOfGas.into());
         }
 
-        // Get current and original (pre-tx) values.
-        // Note: access_storage_slot does NOT record to BAL per EIP-7928.
-        // BAL recording happens AFTER the SSTORE_STIPEND check but BEFORE the main gas check.
-        let key = u256_to_h256(storage_slot_key);
-        let (current_value, storage_slot_was_cold) = self.access_storage_slot(to, key)?;
-        let original_value = self.get_original_storage(to, key)?;
+        let [storage_slot_key, value] = *vm.current_call_frame.stack.pop()?;
+        let to = vm.current_call_frame.to;
+        #[expect(unsafe_code)]
+        let key = unsafe {
+            let mut hash = mem::transmute::<U256, H256>(storage_slot_key);
+            hash.0.reverse();
+            hash
+        };
 
-        // Record storage read to BAL AFTER SSTORE_STIPEND check passes, BEFORE main gas check.
-        // Per EIP-7928 test_bal_sstore_and_oog: if SSTORE passes the stipend check but fails the
-        // main gas charge (charge_gas), the slot MUST appear as a read because the implicit SLOAD
-        // has already happened (to get current_value and original_value).
-        // "If SSTORE fails the GAS_CALL_STIPEND check, the storage slot MUST NOT appear in BAL"
-        // only refers to the stipend check, NOT the main gas check.
-        self.record_storage_slot_to_bal(to, storage_slot_key);
-
-        // Gas Refunds
-        // Sync gas refund with global env, ensuring consistency accross contexts.
-        let mut gas_refunds = self.substate.refunded_gas;
-
-        // https://eips.ethereum.org/EIPS/eip-2929
-        let (remove_slot_cost, restore_empty_slot_cost, restore_slot_cost) = (4800, 19900, 2800);
-
-        if new_storage_slot_value != current_value {
-            if current_value == original_value {
-                if !original_value.is_zero() && new_storage_slot_value.is_zero() {
-                    gas_refunds = gas_refunds
-                        .checked_add(remove_slot_cost)
-                        .ok_or(InternalError::Overflow)?;
-                }
+        if fork >= Fork::Amsterdam {
+            // EIP-8038 prices the cold storage access independently of the 2300
+            // stipend, so the flat pre-Amsterdam gate above no longer suffices
+            // as the EIP-2200 sentry. Peek warmth WITHOUT
+            // marking the slot accessed, gate on
+            // `max(access_cost, SSTORE_STIPEND + 1)` per EELS `check_gas`
+            // (amsterdam/vm/instructions/storage.py::sstore), and only mark the
+            // slot accessed / record the BAL read once this gate passes.
+            let is_cold = !vm.substate.is_slot_accessed(&to, &key);
+            let access_cost = if is_cold {
+                gas_cost::cold_storage_access_cost(fork)
             } else {
-                if original_value != U256::zero() {
-                    if current_value == U256::zero() {
-                        gas_refunds = gas_refunds
-                            .checked_sub(remove_slot_cost)
-                            .ok_or(InternalError::Underflow)?;
-                    } else if new_storage_slot_value.is_zero() {
-                        gas_refunds = gas_refunds
-                            .checked_add(remove_slot_cost)
-                            .ok_or(InternalError::Overflow)?;
-                    }
-                }
-                if new_storage_slot_value == original_value {
-                    if original_value == U256::zero() {
-                        gas_refunds = gas_refunds
-                            .checked_add(restore_empty_slot_cost)
-                            .ok_or(InternalError::Overflow)?;
-                    } else {
-                        gas_refunds = gas_refunds
-                            .checked_add(restore_slot_cost)
-                            .ok_or(InternalError::Overflow)?;
-                    }
-                }
-            }
+                SSTORE_DEFAULT_DYNAMIC
+            };
+            let sstore_stipend_floor = u64::try_from(SSTORE_STIPEND)
+                .map_err(|_| InternalError::TypeConversion)?
+                .checked_add(1)
+                .ok_or(InternalError::Overflow)?;
+            vm.current_call_frame
+                .check_gas(access_cost.max(sstore_stipend_floor))?;
         }
 
-        self.substate.refunded_gas = gas_refunds;
+        let (current_value, original_value, storage_slot_was_cold) =
+            vm.access_storage_slot_for_sstore(to, key)?;
 
-        // Main gas check - if this fails, the storage read is already recorded above
-        self.current_call_frame
+        // Record storage read to BAL AFTER the stipend/access-cost gate passes,
+        // BEFORE the main gas check. Per EIP-7928: if SSTORE passes that gate
+        // but fails the main gas charge, the slot MUST appear as a read
+        // because the implicit SLOAD has already happened.
+        vm.record_storage_slot_to_bal(to, storage_slot_key);
+
+        // EIP-8141 mempool validation-trace: SSTORE allowed only inside the
+        // deploy frame and only against the sender's own storage.
+        if vm.validation_observer.active {
+            vm.validation_check_sstore(to, key);
+        }
+
+        // EIP-8037 (Amsterdam+): check if state gas is needed for new storage slot (0 -> nonzero),
+        // but charge it AFTER regular gas per EELS ordering (ethereum/EIPs#11421).
+        // Regular gas OOG must not consume state gas that would inflate the parent's reservoir.
+        let needs_state_gas = fork >= Fork::Amsterdam
+            && value != current_value
+            && current_value == original_value
+            && original_value.is_zero()
+            && !value.is_zero();
+
+        vm.current_call_frame
             .increase_consumed_gas(gas_cost::sstore(
                 original_value,
                 current_value,
-                new_storage_slot_value,
+                value,
                 storage_slot_was_cold,
+                fork,
             )?)?;
 
-        // Note: BAL read already recorded above (after stipend check, before gas check).
-        // If value changes, update_account_storage will record the write.
+        if needs_state_gas {
+            vm.increase_state_gas(vm.state_gas_storage_set)?;
+        }
+        // EIP-8037 (Amsterdam+) 0→N→0: the slot was created in this tx (original == 0),
+        // dirtied to N (current_value != 0), and now being reset to 0 (value == original == 0).
+        // The creation state gas is refunded via clamp-and-spill, not the regular refund counter.
+        let is_zero_to_n_to_zero_amsterdam = fork >= Fork::Amsterdam
+            && value != current_value
+            && current_value != original_value
+            && value == original_value
+            && original_value.is_zero();
 
-        if new_storage_slot_value != current_value {
-            self.update_account_storage(
-                to,
-                key,
-                storage_slot_key,
-                new_storage_slot_value,
-                current_value,
-            )?;
+        if value != current_value {
+            // Net refund deltas accumulated across a tx's SSTOREs, matching EELS
+            // (execution-specs amsterdam/vm/instructions/storage.py::sstore): +clear-refund on a
+            // first-time clear, -clear-refund when that clear is reversed, and +STORAGE_WRITE when
+            // a slot is restored to its original value (access is charged separately). EIP-8037
+            // state gas is handled via the reservoir, not these regular deltas.
+            let (remove_slot_cost, restore_empty_slot_cost, restore_slot_cost): (i64, i64, i64) =
+                if fork >= Fork::Amsterdam {
+                    // Amsterdam: both restore deltas are the full STORAGE_WRITE.
+                    (STORAGE_CLEAR_REFUND_AMSTERDAM, 10000, 10000)
+                } else {
+                    // EIP-2929
+                    (4800, 19900, 2800)
+                };
+
+            // The operations on `delta` cannot overflow.
+            let mut delta = 0i64;
+            #[expect(
+                clippy::arithmetic_side_effects,
+                reason = "delta additions are bounded by known constants"
+            )]
+            if current_value == original_value {
+                if !original_value.is_zero() && value.is_zero() {
+                    delta += remove_slot_cost;
+                }
+            } else {
+                if !original_value.is_zero() {
+                    if current_value.is_zero() {
+                        delta -= remove_slot_cost;
+                    } else if value.is_zero() {
+                        delta += remove_slot_cost;
+                    }
+                }
+
+                if value == original_value {
+                    if original_value.is_zero() {
+                        delta += restore_empty_slot_cost;
+                    } else {
+                        delta += restore_slot_cost;
+                    }
+                }
+            }
+
+            // Update refunded gas after checking for overflow or underflow.
+            match vm.substate.refunded_gas.checked_add_signed(delta) {
+                Some(refunded_gas) => vm.substate.refunded_gas = refunded_gas,
+                None if delta < 0 => return Err(InternalError::Underflow.into()),
+                None => return Err(InternalError::Overflow.into()),
+            }
+        }
+
+        // EIP-8037: credit the state gas refund via clamp-and-spill (after regular gas processing).
+        if is_zero_to_n_to_zero_amsterdam {
+            vm.credit_state_gas_refund(vm.state_gas_storage_set)?;
+        }
+
+        if value != current_value {
+            vm.update_account_storage(to, key, storage_slot_key, value, current_value)?;
         }
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // MSIZE operation
-    pub fn op_msize(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::MSIZE)?;
-        current_call_frame
-            .stack
-            .push(current_call_frame.memory.len().into())?;
-        Ok(OpcodeResult::Continue)
-    }
-
-    // GAS operation
-    pub fn op_gas(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::GAS)?;
-
-        let remaining_gas = current_call_frame.gas_remaining;
-        // Note: These are not consumed gas calculations, but are related, so I used this wrapping here
-        current_call_frame.stack.push(remaining_gas.into())?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // MCOPY operation
-    pub fn op_mcopy(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        let [dest_offset, src_offset, size] = *current_call_frame.stack.pop()?;
-        let size: usize = u256_to_usize(size)?;
-
-        let (dest_offset, src_offset) = if size == 0 {
-            (0, 0)
-        } else {
-            (u256_to_usize(dest_offset)?, u256_to_usize(src_offset)?)
-        };
-
-        let new_memory_size = calculate_memory_size(dest_offset.max(src_offset), size)?;
-
-        current_call_frame.increase_consumed_gas(gas_cost::mcopy(
-            new_memory_size,
-            current_call_frame.memory.len(),
-            size,
-        )?)?;
-
-        current_call_frame
-            .memory
-            .copy_within(src_offset, dest_offset, size)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // JUMP operation
-    pub fn op_jump(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::JUMP)?;
-
-        let jump_address = current_call_frame.stack.pop1()?;
-        Self::jump(current_call_frame, jump_address)?;
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    /// Check if the jump destination is valid by:
-    ///   - Checking that the byte at the requested target PC is a JUMPDEST (0x5B).
-    ///   - Ensuring the byte is not blacklisted. In other words, the 0x5B value is not part of a
-    ///     constant associated with a push instruction.
-    fn target_address_is_valid(call_frame: &CallFrame, jump_address: u32) -> bool {
-        call_frame
-            .bytecode
-            .jump_targets
-            .binary_search(&jump_address)
-            .is_ok()
-    }
-
-    /// JUMP* family (`JUMP` and `JUMP` ATTOW [DEC 2024]) helper
-    /// function.
-    /// This function will change the PC for the specified call frame
-    /// to be equal to the specified address. If the address is not a
-    /// valid JUMPDEST, it will return an error
-    pub fn jump(call_frame: &mut CallFrame, jump_address: U256) -> Result<(), VMError> {
-        let jump_address_u32 = jump_address
-            .try_into()
-            .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?;
-
-        #[expect(clippy::arithmetic_side_effects)]
-        if Self::target_address_is_valid(call_frame, jump_address_u32) {
-            call_frame.increase_consumed_gas(gas_cost::JUMPDEST)?;
-            call_frame.pc = usize::try_from(jump_address_u32)
-                .map_err(|_err| ExceptionalHalt::VeryLargeNumber)?
-                + 1;
-            Ok(())
-        } else {
-            Err(ExceptionalHalt::InvalidJump.into())
-        }
-    }
-
-    // JUMPI operation
-    pub fn op_jumpi(&mut self) -> Result<OpcodeResult, VMError> {
-        let [jump_address, condition] = *self.current_call_frame.stack.pop()?;
-
-        self.current_call_frame
-            .increase_consumed_gas(gas_cost::JUMPI)?;
-
-        if !condition.is_zero() {
-            // Move the PC but don't increment it afterwards
-            Self::jump(&mut self.current_call_frame, jump_address)?;
-        }
-
-        Ok(OpcodeResult::Continue)
-    }
-
-    // JUMPDEST operation
-    pub fn op_jumpdest(&mut self) -> Result<OpcodeResult, VMError> {
-        self.current_call_frame
+/// Implementation for the `JUMPDEST` opcode.
+pub struct OpJumpDestHandler;
+impl OpcodeHandler for OpJumpDestHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
             .increase_consumed_gas(gas_cost::JUMPDEST)?;
 
         Ok(OpcodeResult::Continue)
     }
+}
 
-    // PC operation
-    pub fn op_pc(&mut self) -> Result<OpcodeResult, VMError> {
-        let current_call_frame = &mut self.current_call_frame;
-        current_call_frame.increase_consumed_gas(gas_cost::PC)?;
+/// Implementation for the `JUMP` opcode.
+pub struct OpJumpHandler;
+impl OpcodeHandler for OpJumpHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::JUMP)?;
 
-        current_call_frame
-            .stack
-            .push(U256::from(current_call_frame.pc.wrapping_sub(1)))?;
+        let target = vm.current_call_frame.stack.pop1()?;
+        jump(vm, target.try_into().unwrap_or(usize::MAX), gas_cost::JUMP)?;
 
         Ok(OpcodeResult::Continue)
     }
+}
+
+/// Implementation for the `JUMPI` opcode.
+pub struct OpJumpIHandler;
+impl OpcodeHandler for OpJumpIHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::JUMPI)?;
+
+        let [target, condition] = *vm.current_call_frame.stack.pop()?;
+        if !condition.is_zero() {
+            jump(vm, target.try_into().unwrap_or(usize::MAX), gas_cost::JUMPI)?;
+        }
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Validate and take a jump. Fuses the destination JUMPDEST (advances PC past
+/// it and charges its 1 gas inline) to save a dispatch cycle on the hot path.
+///
+/// When the tracer is active we keep the fusion for performance and *synthesize*
+/// a JUMPDEST entry in the trace log: `parent_gas_cost` is recorded as the
+/// override for the parent JUMP/JUMPI step (so its `gasCost` doesn't absorb the
+/// JUMPDEST charge), and the JUMPDEST step is pushed directly via
+/// `synthesize_step` after the gas is charged — including when that charge is
+/// what runs the frame out of gas, so the trace keeps the step an unfused
+/// dispatch would have logged.
+fn jump(vm: &mut VM<'_>, target: usize, parent_gas_cost: u64) -> Result<(), VMError> {
+    // Check target address validity: the target has to be a JUMPDEST that is not part
+    // of a literal (aka. a PUSH immediate). Both are answered by the bitmap, which only
+    // has bits set for JUMPDESTs reached by the opcode walk.
+    if vm.current_call_frame.bytecode.is_valid_jumpdest(target) {
+        if vm.opcode_tracer.active {
+            // Override the parent JUMP/JUMPI's gasCost so the dispatch loop
+            // doesn't roll the upcoming JUMPDEST charge into it.
+            vm.opcode_tracer.last_opcode_gas_cost = Some(parent_gas_cost);
+
+            // Capture the synthetic JUMPDEST step's state BEFORE charging its gas.
+            let synth = build_jumpdest_step(vm, target);
+
+            // Fuse: charge JUMPDEST + advance PC past it.
+            vm.current_call_frame.pc = target.wrapping_add(1);
+            if let Err(err) = vm
+                .current_call_frame
+                .increase_consumed_gas(gas_cost::JUMPDEST)
+            {
+                // The JUMPDEST charge emptied the frame. An unfused dispatch
+                // reaches JUMPDEST as its own step and logs it carrying the
+                // fault, so bailing out here would silently drop the frame's
+                // last opcode from the trace. The fault is the JUMPDEST's, not
+                // the JUMP's: close the parent step out clean, then hand the
+                // pending finalize to the JUMPDEST so the dispatch loop's
+                // post-step hook patches the error onto it.
+                let refund = vm.substate.refunded_gas;
+                vm.opcode_tracer
+                    .finalize_step(parent_gas_cost, refund, None);
+                if vm.opcode_tracer.synthesize_faulting_step(synth) {
+                    vm.opcode_tracer.last_opcode_gas_cost = Some(gas_cost::JUMPDEST);
+                }
+                return Err(err.into());
+            }
+
+            vm.opcode_tracer.synthesize_step(synth);
+        } else {
+            // Hot path: fuse JUMP/JUMPI + JUMPDEST without any trace bookkeeping.
+            vm.current_call_frame.pc = target.wrapping_add(1);
+            vm.current_call_frame
+                .increase_consumed_gas(gas_cost::JUMPDEST)?;
+        }
+        Ok(())
+    } else {
+        // Target address is invalid.
+        Err(ExceptionalHalt::InvalidJump.into())
+    }
+}
+
+/// Builds a synthetic JUMPDEST trace entry. Captures gas/stack/memory/return-data
+/// state at the moment of the call (i.e. *before* the JUMPDEST gas has been
+/// charged) and hands them to the shared [`opcode_tracer::build_step`] so the
+/// cfg-driven conditionals (disable_stack, enable_memory, enable_return_data)
+/// live in exactly one place.
+#[expect(
+    clippy::as_conversions,
+    reason = "pc/depth/mem_size bounded; fit in target types"
+)]
+fn build_jumpdest_step(vm: &VM<'_>, target: usize) -> ethrex_common::tracing::OpcodeStep {
+    use crate::opcode_tracer::build_step;
+    use bytes::Bytes;
+
+    let cfg = &vm.opcode_tracer.cfg;
+    let gas = vm.current_call_frame.gas_remaining.max(0) as u64;
+    let depth = (vm.call_frames.len() as u32).saturating_add(1);
+    let refund = vm.substate.refunded_gas;
+    let mem_size = vm.current_call_frame.memory.len() as u64;
+
+    let stack_view = if cfg.disable_stack {
+        Vec::new()
+    } else {
+        vm.collect_stack_for_trace()
+    };
+    let mem_view = if cfg.enable_memory {
+        vm.collect_memory_for_trace()
+    } else {
+        Vec::new()
+    };
+    let return_data = if cfg.enable_return_data {
+        vm.current_call_frame.sub_return_data.clone()
+    } else {
+        Bytes::new()
+    };
+
+    build_step(
+        cfg,
+        target as u64,
+        Opcode::JUMPDEST as u8,
+        gas,
+        gas_cost::JUMPDEST,
+        depth,
+        refund,
+        &stack_view,
+        &mem_view,
+        mem_size,
+        &return_data,
+        None,
+    )
 }

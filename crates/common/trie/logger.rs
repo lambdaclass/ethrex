@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::decode::RLPDecode;
 
 use crate::{Nibbles, Node, NodeHash, Trie, TrieDB, TrieError};
@@ -21,7 +22,7 @@ impl TrieLogger {
     }
 
     pub fn open_trie(trie: Trie) -> (TrieWitness, Trie) {
-        let root = trie.hash_no_commit();
+        let root = trie.hash_no_commit(&NativeCrypto);
         let db = trie.db;
         let witness = Arc::new(Mutex::new(HashMap::new()));
         let logger = TrieLogger {
@@ -39,7 +40,7 @@ impl TrieDB for TrieLogger {
             && let Ok(decoded) = Node::decode(result)
         {
             let mut lock = self.witness.lock().map_err(|_| TrieError::LockError)?;
-            lock.insert(decoded.compute_hash(), decoded);
+            lock.insert(decoded.compute_hash(&NativeCrypto), decoded);
         }
         Ok(result)
     }

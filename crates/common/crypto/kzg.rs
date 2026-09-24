@@ -1,3 +1,6 @@
+#[cfg(not(feature = "std"))]
+use alloc::string::String;
+
 // TODO: Currently, we cannot include the types crate independently of common because the crates are not yet split.
 // After issue #4596 ("Split types crate from common") is resolved, update this to import the types crate directly,
 // so that crypto/kzg.rs does not depend on common for type definitions.
@@ -42,9 +45,6 @@ pub enum KzgError {
     #[cfg(feature = "kzg-rs")]
     #[error("kzg-rs error: {0}")]
     KzgRs(kzg_rs::KzgError),
-    #[cfg(feature = "openvm-kzg")]
-    #[error("openvm-kzg error: {0}")]
-    OpenvmKzg(openvm_kzg::KzgError),
     #[cfg(not(feature = "c-kzg"))]
     #[error("{0} is not supported without c-kzg feature enabled")]
     NotSupportedWithoutCKZG(String),
@@ -56,13 +56,6 @@ pub enum KzgError {
 impl From<kzg_rs::KzgError> for KzgError {
     fn from(value: kzg_rs::KzgError) -> Self {
         KzgError::KzgRs(value)
-    }
-}
-
-#[cfg(feature = "openvm-kzg")]
-impl From<openvm_kzg::KzgError> for KzgError {
-    fn from(value: openvm_kzg::KzgError) -> Self {
-        KzgError::OpenvmKzg(value)
     }
 }
 
@@ -115,21 +108,16 @@ pub fn verify_blob_kzg_proof(
     commitment: Commitment,
     proof: Proof,
 ) -> Result<bool, KzgError> {
-    #[cfg(all(
-        not(feature = "c-kzg"),
-        not(feature = "openvm-kzg"),
-        not(feature = "kzg-rs")
-    ))]
+    #[cfg(all(not(feature = "c-kzg"), not(feature = "kzg-rs")))]
     {
-        return Err(KzgError::Unimplemented(
-            "One of features c-kzg, openvm-kzg or kzg-rs should be active".to_string(),
-        ));
+        let _blob = blob;
+        let _commitment = commitment;
+        let _proof = proof;
+        Err(KzgError::Unimplemented(
+            "One of features c-kzg or kzg-rs should be active".into(),
+        ))
     }
-    #[cfg(all(
-        not(feature = "c-kzg"),
-        not(feature = "openvm-kzg"),
-        feature = "kzg-rs"
-    ))]
+    #[cfg(all(not(feature = "c-kzg"), feature = "kzg-rs"))]
     {
         kzg_rs::KzgProof::verify_blob_kzg_proof(
             kzg_rs::Blob(blob),
@@ -139,22 +127,12 @@ pub fn verify_blob_kzg_proof(
         )
         .map_err(KzgError::from)
     }
-    #[cfg(all(not(feature = "c-kzg"), feature = "openvm-kzg"))]
-    {
-        Err(KzgError::Unimplemented(
-            "openvm-kzg doesn't implement verify_blob_kzg_proof".to_string(),
-        ))
-    }
-    #[cfg(all(feature = "c-kzg", not(feature = "openvm-kzg")))]
+    #[cfg(feature = "c-kzg")]
     {
         let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
         c_kzg_settings
             .verify_blob_kzg_proof(&blob.into(), &commitment.into(), &proof.into())
             .map_err(KzgError::from)
-    }
-    #[cfg(all(feature = "c-kzg", feature = "openvm-kzg"))]
-    {
-        compile_error!("you must enable only one of c-kzg or openvm-kzg feature flags")
     }
 }
 
@@ -191,21 +169,17 @@ pub fn verify_kzg_proof(
     y: [u8; 32],
     proof_bytes: [u8; 48],
 ) -> Result<bool, KzgError> {
-    #[cfg(all(
-        not(feature = "c-kzg"),
-        not(feature = "openvm-kzg"),
-        not(feature = "kzg-rs")
-    ))]
+    #[cfg(all(not(feature = "c-kzg"), not(feature = "kzg-rs")))]
     {
-        return Err(KzgError::Unimplemented(
-            "One of features c-kzg, openvm-kzg or kzg-rs should be active".to_string(),
-        ));
+        let _commitment_bytes = commitment_bytes;
+        let _z = z;
+        let _y = y;
+        let _proof_bytes = proof_bytes;
+        Err(KzgError::Unimplemented(
+            "One of features c-kzg or kzg-rs should be active".into(),
+        ))
     }
-    #[cfg(all(
-        not(feature = "c-kzg"),
-        not(feature = "openvm-kzg"),
-        feature = "kzg-rs"
-    ))]
+    #[cfg(all(not(feature = "c-kzg"), feature = "kzg-rs"))]
     {
         kzg_rs::KzgProof::verify_kzg_proof(
             &kzg_rs::Bytes48(commitment_bytes),
@@ -216,18 +190,7 @@ pub fn verify_kzg_proof(
         )
         .map_err(KzgError::from)
     }
-    #[cfg(all(not(feature = "c-kzg"), feature = "openvm-kzg"))]
-    {
-        openvm_kzg::KzgProof::verify_kzg_proof(
-            &openvm_kzg::Bytes48::from_slice(&commitment_bytes)?,
-            &openvm_kzg::Bytes32::from_slice(&z)?,
-            &openvm_kzg::Bytes32::from_slice(&y)?,
-            &openvm_kzg::Bytes48::from_slice(&proof_bytes)?,
-            &openvm_kzg::get_kzg_settings(),
-        )
-        .map_err(KzgError::from)
-    }
-    #[cfg(all(feature = "c-kzg", not(feature = "openvm-kzg")))]
+    #[cfg(feature = "c-kzg")]
     {
         let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
         c_kzg_settings
@@ -238,10 +201,6 @@ pub fn verify_kzg_proof(
                 &proof_bytes.into(),
             )
             .map_err(KzgError::from)
-    }
-    #[cfg(all(feature = "c-kzg", feature = "openvm-kzg"))]
-    {
-        compile_error!("you must enable only one of c-kzg or openvm-kzg feature flags")
     }
 }
 
@@ -259,6 +218,93 @@ pub fn blob_to_kzg_commitment_and_proof(blob: &Blob) -> Result<(Commitment, Proo
     let proof_bytes = proof.to_bytes();
 
     Ok((commitment_bytes.into_inner(), proof_bytes.into_inner()))
+}
+
+/// Reconstruct a blob from its cells.
+///
+/// EIP-7594 lays the original blob data in the first `CELLS_PER_EXT_BLOB / 2`
+/// cells (columns 0..63); the second half is the Reed-Solomon extension.
+/// Concatenating the 64 data cells reproduces the blob's field elements 1:1,
+/// so a full data-column set needs no KZG recovery. Verified empirically:
+/// `compute_cells(blob)[0..64]` concatenated equals `blob` and yields the same
+/// commitment.
+///
+/// `all_cells[col]` must hold the cell bytes for column `col`; only columns
+/// 0..63 are read, so callers must ensure those are present.
+pub fn cells_to_blob(
+    all_cells: &[[u8; BYTES_PER_CELL]; CELLS_PER_EXT_BLOB],
+) -> [u8; BYTES_PER_BLOB] {
+    let mut blob = [0u8; BYTES_PER_BLOB];
+    for col in 0..CELLS_PER_EXT_BLOB / 2 {
+        let dst = &mut blob[col * BYTES_PER_CELL..(col + 1) * BYTES_PER_CELL];
+        dst.copy_from_slice(&all_cells[col]);
+    }
+    blob
+}
+
+/// Recover all 128 cells and their KZG proofs from a partial set of cells.
+/// `cell_indices` and `cells` must have equal length (≥ 64 for successful recovery).
+/// Returns `(all_cells, all_proofs)` each of length 128.
+#[cfg(feature = "c-kzg")]
+pub fn recover_cells_and_kzg_proofs(
+    cell_indices: &[u64],
+    cells: &[[u8; BYTES_PER_CELL]],
+) -> Result<(Vec<[u8; BYTES_PER_CELL]>, Vec<Proof>), KzgError> {
+    let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
+    let c_cells: Vec<c_kzg::Cell> = cells.iter().map(|c| c_kzg::Cell::new(*c)).collect();
+    let (recovered_cells, recovered_proofs) =
+        c_kzg_settings.recover_cells_and_kzg_proofs(cell_indices, &c_cells)?;
+    let out_cells: Vec<[u8; BYTES_PER_CELL]> =
+        recovered_cells.iter().map(|c| c.to_bytes()).collect();
+    let out_proofs: Vec<Proof> = recovered_proofs
+        .iter()
+        .map(|p| p.to_bytes().into_inner())
+        .collect();
+    Ok((out_cells, out_proofs))
+}
+
+/// Compute all `CELLS_PER_EXT_BLOB` cells for a blob.
+/// Returns one `[u8; BYTES_PER_CELL]` per cell.
+#[cfg(feature = "c-kzg")]
+pub fn compute_cells(blob: &Blob) -> Result<Vec<[u8; BYTES_PER_CELL]>, KzgError> {
+    let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
+    let c_blob: c_kzg::Blob = (*blob).into();
+    let boxed = c_kzg_settings
+        .compute_cells(&c_blob)
+        .map_err(KzgError::CKzg)?;
+    Ok(boxed.iter().map(|cell| cell.to_bytes()).collect())
+}
+
+/// Verify KZG cell proofs for a subset of cells (partial batch).
+/// `commitments`, `cell_indices`, `cells`, and `proofs` must all have the same length.
+#[allow(unused_variables)]
+pub fn verify_cell_kzg_proof_batch_partial(
+    commitments: &[Commitment],
+    cell_indices: &[u64],
+    cells: &[[u8; BYTES_PER_CELL]],
+    proofs: &[Proof],
+) -> Result<bool, KzgError> {
+    #[cfg(not(feature = "c-kzg"))]
+    {
+        return Err(KzgError::Unimplemented(
+            "verify_cell_kzg_proof_batch_partial requires the c-kzg feature".into(),
+        ));
+    }
+    #[cfg(feature = "c-kzg")]
+    {
+        let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
+        let c_commitments: Vec<c_kzg::Bytes48> = commitments.iter().map(|c| (*c).into()).collect();
+        let c_cells: Vec<c_kzg::Cell> = cells.iter().map(|c| c_kzg::Cell::new(*c)).collect();
+        let c_proofs: Vec<c_kzg::Bytes48> = proofs.iter().map(|p| (*p).into()).collect();
+        c_kzg::KzgSettings::verify_cell_kzg_proof_batch(
+            c_kzg_settings,
+            &c_commitments,
+            cell_indices,
+            &c_cells,
+            &c_proofs,
+        )
+        .map_err(KzgError::from)
+    }
 }
 
 #[cfg(feature = "c-kzg")]

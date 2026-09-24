@@ -1,6 +1,152 @@
 # Ethrex Changelog
 
+## Observability
+
+### 2026-06-03
+
+- Reduce allocations and clones [#6782](https://github.com/lambdaclass/ethrex/pull/6782)
+
+### 2026-05-27
+
+- Add BAL (EIP-7928) Prometheus instruments (`bal_blocks_total`, `bal_size_bytes`, `bal_size_bytes_histogram`, `bal_account_count`, `bal_slot_count`) and a BAL row in the `ethrex_l1_perf` Grafana dashboard [#6678](https://github.com/lambdaclass/ethrex/pull/6678)
+
 ## Perf
+
+### 2026-09-14
+
+- Stop copying the stateless input one byte at a time, hash the block access list once instead of twice, and route `validate_public_keys` through the injected `Crypto`: −8.81% guest instructions on mainnet block 25453112 [#7277](https://github.com/lambdaclass/ethrex/pull/7277)
+
+### 2026-09-03
+
+- EIP-8037 (execution-specs#3478, consensus-breaking): when a successful child frame merges, the state-gas reservoir now repays the spill still outstanding in the merged frame back into `gas_remaining`, debiting the reservoir by the same amount. A cross-frame refund can credit the reservoir while the `gas_remaining` that funded the charge stays reduced; the merge is the first point where the claim and the credit share a frame. Billing-neutral by construction — the user total (`gas_limit - gas_remaining - reservoir`) and the EIP-7778 dimensions are unchanged — but it changes how much execution gas a parent frame has after a child returns, so it is consensus-visible. Fixtures move to `tests-glamsterdam-devnet@v8.1.4` [#7250](https://github.com/lambdaclass/ethrex/pull/7250)
+
+### 2026-08-24
+
+- Make `eth_estimateGas`'s plain-transfer short circuit fire. Its condition tested whether the recipient account existed rather than whether it had code, so every transfer to an ordinary funded wallet ran the full binary search instead of returning `TRANSACTION_GAS` at once [#7211](https://github.com/lambdaclass/ethrex/pull/7211)
+
+### 2026-08-03
+
+- Size the default RocksDB shared block cache from the memory the process may actually use — 40% of the smaller of physical memory and the cgroup limit, clamped to 512 MiB..=12 GiB — instead of a flat 12 GiB. The flat default was 71% of a 16 GiB host, leaving no headroom for trie layers, execution and the mempool; `--rocksdb.block-cache-size` still overrides it. Detection reads `/proc`, so outside Linux the default stays at the 12 GiB ceiling; startup logs the detected limit and the resolved size
+### 2026-07-29
+
+- Breadth-first batched trie-node prefetch on the merkle storage-root path: one sorted RocksDB `multi_get` per trie level warms the touched nodes into the arena before the serial inserts, on the parallel BAL merkleizer (storage-root recomputation and the Stage C state-trie update) and the streaming (BAL-less / pre-Amsterdam) merkleizer. Warming-only, so the computed roots are byte-identical; large speedup on cold storage-heavy blocks [#6986](https://github.com/lambdaclass/ethrex/pull/6986)
+### 2026-08-04
+
+- Cut the cost of a cold contract-code access: store jump destinations as a 1-bit-per-byte bitmap instead of a persisted RLP list of `u32` offsets, count the bytecode in the code cache's byte budget, answer `EXTCODESIZE` from the code-length table instead of materializing the bytecode, and give the account-code column families a bloom filter (4KB data blocks on the blob-backed bytecode CF). Raises the code cache's byte budget from an effective 64 MiB of jump tables to 256 MiB of bytecode, and bumps the store schema version so an older binary warns rather than failing on the new value format. `COLD_ACCOUNT_CODE_ACCESS` drops from 7736 to 4652 gas in the EIP-8038 repricing fit, and `COLD_ACCOUNT_CODE_WRITE` from 10415 to 6355 [#7095](https://github.com/lambdaclass/ethrex/pull/7095)
+- Batch and stream the BAL contract-code prefetch: warm accounts and their code in chunks instead of reading every access-list account before the first bytecode, take code hashes from the account read rather than a second lookup per account, and add a batched bytecode read that resolves the buffer and code cache first, then either fans out parallel point gets or shards the remainder across concurrent `multi_get`s, whichever reaches the greater read queue depth for the batch size on this host [#7099](https://github.com/lambdaclass/ethrex/pull/7099)
+
+### 2026-08-07
+
+- Access the EVM memory buffer without `RefCell`'s borrow-flag bookkeeping and round the `MLOAD`/`MSTORE` memory size once instead of twice [#7119](https://github.com/lambdaclass/ethrex/pull/7119)
+
+### 2026-07-22
+
+- Unify full-sync batch import onto the per-block execution pipeline, validating every block's state root and reusing the pipeline's BAL-driven parallel execution instead of the bespoke "execute all, apply once" batch path [#7008](https://github.com/lambdaclass/ethrex/pull/7008)
+
+### 2026-07-16
+
+- Prewarm each sender's ready transaction prefix so successor txs warm against their predecessors' state [#6999](https://github.com/lambdaclass/ethrex/pull/6999)
+
+### 2026-07-08
+
+- Batch BAL prefetch for storage-heavy blocks via sorted, sharded parallel rocksdb `multi_get` reads. The keys are sorted so adjacent entries share data blocks, then split into contiguous shards read concurrently, recovering the cold-read throughput a single serial `multi_get` loses (it runs at queue depth 1 since `async_io` is off). Applied to storage-slot prefetch (flat key-value table), account-state prefetch, and a complementary trie-node prefetch that warms the merkle node CFs concurrently with execution. Each path is gated on the count of missing (cold) slots/accounts (>= 16384, ~34M gas of cold reads), so warm and normal blocks keep the per-slot parallel point-gets while genuinely storage-heavy blocks take the sharded path, which also hardens against storage-bloat DoS [#6980](https://github.com/lambdaclass/ethrex/pull/6980)
+
+### 2026-07-06
+
+- Warm state caches between blocks by speculatively executing top-of-mempool transactions [#6967](https://github.com/lambdaclass/ethrex/pull/6967)
+
+### 2026-07-01
+
+- Precompute the `eth_getLogs` filter's address/topic blooms once instead of re-deriving them per block, removing redundant hashing from the header-bloom prefilter on wide-range queries [#6895](https://github.com/lambdaclass/ethrex/pull/6895)
+
+### 2026-06-29
+
+- Thread `Arc<BlockAccessList>` through the block pipeline to avoid an O(BAL-size) deep clone of the Block Access List (and its validation index) per block on the parallel execution path [#6829](https://github.com/lambdaclass/ethrex/pull/6829)
+
+### 2026-06-19
+
+- Parallelize single-account storage-trie merkleization: shard a hot account's (>=2048 slot updates) storage-root computation across 16 nibble-keyed workers, so one bloated contract no longer serializes its trie inserts on a single thread [#6845](https://github.com/lambdaclass/ethrex/pull/6845)
+
+### 2026-06-18
+
+- In-place top-slot mutation for unary/binary opcodes and `MLOAD`: mutate the top stack slot directly instead of pop-then-push, removing the serial read-modify-write of the stack offset on offset-chain-bound ops. ~2.16x on an ISZERO loop and ~1.63x on `MLOAD` (IPC 2.41 -> 3.45 on a 33M-op loop) [#6865](https://github.com/lambdaclass/ethrex/pull/6865)
+- Monomorphize the LEVM opcode dispatch loop over whether a struct-log tracer is active (`run_dispatch::<const TRACED: bool>`), moving the per-opcode trace capture into cold out-of-line helpers. The non-traced path (the common case) drops the per-op tracer load/branches and the capture code's influence on loop codegen: ~36% fewer instructions and ~23% fewer cycles per opcode on a minimal op, lifting all-opcode dispatch throughput [#6847](https://github.com/lambdaclass/ethrex/pull/6847)
+- Read a block's receipts in a single bulk read in `eth_getLogs` instead of a point lookup per transaction, ~5–7x faster on mainnet log queries [#6852](https://github.com/lambdaclass/ethrex/pull/6852)
+- Skip non-matching blocks in `eth_getLogs` using the per-block header bloom, avoiding body/receipt loads for blocks that provably cannot match [#6813](https://github.com/lambdaclass/ethrex/pull/6813)
+
+### 2026-06-15
+
+- Pad `Code` bytecode with 33 trailing `STOP` bytes so the hot dispatch fetch and `pc` advance drop their bounds checks (~8% fewer instructions, ~13% fewer branches on dispatch). The logical length is tracked separately and `Code` is encapsulated so all consumers read the true length [#6866](https://github.com/lambdaclass/ethrex/pull/6866)
+
+### 2026-06-10
+
+- Route the native P256VERIFY (secp256r1, RIP-7212/EIP-7951) precompile through the `aws-lc-rs` (AWS-LC) backend, replacing the pure-Rust `p256` path on `NativeCrypto`; zkVM guest builds keep the portable backend [#6828](https://github.com/lambdaclass/ethrex/pull/6828)
+
+### 2026-06-05
+
+- Route the native BLS12-381 (EIP-2537) precompiles through the `blst` backend, replacing the pure-Rust path whose Fermat field inversion made `BLS12_G1ADD`/`BLS12_G2ADD` time-per-gas outliers; ~7.7x faster G1ADD, ~5.6x faster G2ADD (zkVM guest builds keep the portable backend) [#6792](https://github.com/lambdaclass/ethrex/pull/6792)
+
+### 2026-06-03
+
+- Short-circuit the `KECCAK256` opcode on zero-length input by returning the precomputed `keccak256("")` constant, skipping the permutation [#6775](https://github.com/lambdaclass/ethrex/pull/6775)
+
+### 2026-05-28
+
+- Batch account-state prefetch via rocksdb `multi_get_cf` on the flat key-value table [#6712](https://github.com/lambdaclass/ethrex/pull/6712)
+
+### 2026-05-27
+
+- Prefetch all BAL storage synchronously before execution [#6732](https://github.com/lambdaclass/ethrex/pull/6732)
+
+### 2026-05-19
+
+- Lazy BAL cursor for per-tx parallel execution [#6669](https://github.com/lambdaclass/ethrex/pull/6669)
+- Move per-tx BAL validation into the rayon par_iter closure on the parallel execution path [#6677](https://github.com/lambdaclass/ethrex/pull/6677)
+
+### 2026-05-18
+
+- O(1) BAL recorder checkpoint via journal snapshots [#6667](https://github.com/lambdaclass/ethrex/pull/6667)
+
+### 2026-05-15
+
+- Replace synchronous disk I/O with async operations in snap sync [#6113](https://github.com/lambdaclass/ethrex/pull/6113)
+
+### 2026-05-14
+
+- Skip `vm.run_execution()` for transfers to codeless EOAs [#6570](https://github.com/lambdaclass/ethrex/pull/6570)
+- BAL optimistic merkleization: synthesize state deltas from the input Block Access List pre-execution and merkleize in parallel with the EVM on the `engine_newPayload` validation path. Includes a parallel state-trie pre-warm and per-account hashed-key-sorted storage inserts to keep the trie node arena hot for Stage B/C [#6655](https://github.com/lambdaclass/ethrex/pull/6655)
+
+### 2026-05-21
+
+- Two-CF receipts migration: copy old RLP-keyed receipts to `receipts_v2` with fixed-width keys; old CF auto-dropped on restart [#6598](https://github.com/lambdaclass/ethrex/pull/6598)
+
+### 2026-04-27
+
+- Reduce peak disk usage during snap sync by moving SST files into the temp DB instead of copying [#6532](https://github.com/lambdaclass/ethrex/pull/6532)
+
+### 2026-03-30
+
+- Replace per-block thread spawning with persistent thread pool for merkleization [#6344](https://github.com/lambdaclass/ethrex/pull/6344)
+
+### 2026-03-26
+
+- Eliminate stack-frame spill in Stack::push for zero-upper-limb values [#6390](https://github.com/lambdaclass/ethrex/pull/6390)
+- Use const-generic big-endian conversion in PUSH opcodes [#6390](https://github.com/lambdaclass/ethrex/pull/6390)
+
+### 2026-03-05
+
+- Doubly pipelined merkleization with self-coordinating shard workers [#6278](https://github.com/lambdaclass/ethrex/pull/6278)
+- Switch hot EVM and mempool HashMaps to FxHashMap for faster hashing [#6303](https://github.com/lambdaclass/ethrex/pull/6303)
+
+### 2026-03-02
+
+- SIMD-accelerate trie nibble operations for block execution [#6286](https://github.com/lambdaclass/ethrex/pull/6286)
+- Use FxHashMap in call frame backup [#6286](https://github.com/lambdaclass/ethrex/pull/6286)
+
+### 2026-02-27
+
+- Use nested storage originals, FxHashMap call frame backup, and sstore-specific storage access helper [#6265](https://github.com/lambdaclass/ethrex/pull/6265)
+- Refactor LEVM opcode handlers to avoid expensive matches [#4791](https://github.com/lambdaclass/ethrex/pull/4791)
 
 ### 2026-02-25
 
@@ -32,6 +178,7 @@
 
 ### 2026-01-23
 
+- Compute base blob fee once per block [#6006](https://github.com/lambdaclass/ethrex/pull/6006)
 - Reuse cache in prewarm workers [#5999](https://github.com/lambdaclass/ethrex/pull/5999)
 
 ### 2026-01-21

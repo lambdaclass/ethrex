@@ -56,6 +56,7 @@ docker run \
     -p 9090:9090 \
     --name ethrex \
     ghcr.io/lambdaclass/ethrex \
+    --http.addr 0.0.0.0 \
     --authrpc.addr 0.0.0.0
 ```
 
@@ -68,6 +69,8 @@ docker run \
   - `30303`: P2P networking (TCP/UDP)
   - `9090`: Metrics (TCP)
 - Mounts the Docker volume `ethrex` to persist blockchain data
+
+`--http.addr 0.0.0.0` is required inside the container so the published port `8545` is reachable from the host. The flag only changes the container-internal bind; whether the RPC port is exposed beyond the host is still controlled by the `-p 8545:8545` mapping (and any firewall in front of the host). Only enable additional JSON-RPC namespaces with `--http.api eth,net,web3,...` when you actually need them; `admin_*`, `debug_*`, and `txpool_*` are unauthenticated.
 
 **Tip:** You can add more Ethrex CLI arguments at the end of the command as needed.
 

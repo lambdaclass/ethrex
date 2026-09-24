@@ -1,1 +1,16 @@
 allow-unwrap-in-tests = true
+
+[[disallowed-methods]]
+path = "ethereum_types::U256::as_u64"
+reason = "panics on overflow"
+replacement = "u64::try_from()"
+
+[[disallowed-methods]]
+path = "ethereum_types::U256::as_u32"
+reason = "panics on overflow"
+replacement = "u32::try_from()"
+
+[[disallowed-methods]]
+path = "ethereum_types::U256::as_usize"
+reason = "panics on overflow"
+replacement = "usize::try_from()"

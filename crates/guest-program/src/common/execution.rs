@@ -1,8 +1,13 @@
+use std::sync::Arc;
+
+use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::{ExecutionWitness, GuestProgramState};
-use ethrex_common::types::{Block, Receipt};
+use ethrex_common::types::{Block, Receipt, validate_block_body};
 use ethrex_common::{
-    H256, U256, validate_block, validate_gas_used, validate_receipts_root, validate_requests_hash,
+    H256, U256, validate_block_access_list_hash, validate_block_pre_execution, validate_gas_used,
+    validate_receipts_root_and_logs_bloom, validate_requests_hash,
 };
+use ethrex_crypto::Crypto;
 use ethrex_vm::{Evm, GuestProgramStateWrapper, VmDatabase};
 
 use crate::common::ExecutionError;
@@ -22,6 +27,12 @@ pub struct BatchExecutionResult {
     pub non_privileged_count: U256,
     /// Chain ID from the execution witness.
     pub chain_id: u64,
+    /// Per-block recomputed burned fees (EIP-8079, LStar+). `None` for pre-LStar forks.
+    /// One entry per block in the same order as `receipts`.
+    pub burned_fees: Vec<Option<u64>>,
+    /// Per-block recomputed Block Access List (EIP-7928, Amsterdam+). `None` for pre-Amsterdam.
+    /// One entry per block in the same order as `receipts`.
+    pub bals: Vec<Option<BlockAccessList>>,
 }
 
 /// Execute a batch of blocks using the provided VM factory.
@@ -40,6 +51,7 @@ pub fn execute_blocks<F>(
     execution_witness: ExecutionWitness,
     elasticity_multiplier: u64,
     vm_factory: F,
+    crypto: Arc<dyn Crypto + Send + Sync>,
 ) -> Result<BatchExecutionResult, ExecutionError>
 where
     F: Fn(&GuestProgramStateWrapper, usize) -> Result<Evm, ExecutionError>,
@@ -48,12 +60,11 @@ where
 
     let ethrex_guest_program_state: GuestProgramState =
         report_cycles("ethrex_guest_program_state_initialization", || {
-            execution_witness
-                .try_into()
+            GuestProgramState::from_witness(execution_witness, crypto.as_ref())
                 .map_err(ExecutionError::GuestProgramState)
         })?;
 
-    let mut wrapped_db = GuestProgramStateWrapper::new(ethrex_guest_program_state);
+    let mut wrapped_db = GuestProgramStateWrapper::new(ethrex_guest_program_state, crypto.clone());
 
     let chain_config = wrapped_db.get_chain_config().map_err(|_| {
         ExecutionError::Internal("No chain config in execution witness".to_string())
@@ -96,12 +107,20 @@ where
     // Execute blocks
     let mut parent_block_header = &parent_block_header;
     let mut acc_receipts = Vec::new();
+    let mut acc_burned_fees: Vec<Option<u64>> = Vec::new();
+    let mut acc_bals: Vec<Option<BlockAccessList>> = Vec::new();
     let mut non_privileged_count: usize = 0;
 
     for (i, block) in blocks.iter().enumerate() {
-        // Validate the block
-        report_cycles("validate_block", || {
-            validate_block(
+        // Validate that the block header and body match (transactions root, withdrawals root)
+        report_cycles("validate_block_body", || {
+            validate_block_body(&block.header, &block.body, crypto.as_ref())
+                .map_err(ExecutionError::BlockBodyValidation)
+        })?;
+
+        // Validate the block header pre-execution
+        report_cycles("validate_block_pre_execution", || {
+            validate_block_pre_execution(
                 block,
                 parent_block_header,
                 &chain_config,
@@ -114,12 +133,13 @@ where
         let mut vm = report_cycles("setup_evm", || vm_factory(&wrapped_db, i))?;
 
         // Execute block
-        let (result, _bal) = report_cycles("execute_block", || {
+        let (result, bal) = report_cycles("execute_block", || {
             vm.execute_block(block).map_err(ExecutionError::Evm)
         })?;
 
         let receipts = result.receipts;
         let block_gas_used = result.block_gas_used;
+        let block_burned_fees = result.burned_fees;
 
         let account_updates = report_cycles("get_state_transitions", || {
             vm.get_state_transitions().map_err(ExecutionError::Evm)
@@ -146,8 +166,8 @@ where
             validate_gas_used(block_gas_used, &block.header).map_err(ExecutionError::GasValidation)
         })?;
 
-        report_cycles("validate_receipts_root", || {
-            validate_receipts_root(&block.header, &receipts)
+        report_cycles("validate_receipts_root_and_logs_bloom", || {
+            validate_receipts_root_and_logs_bloom(&block.header, &receipts, crypto.as_ref())
                 .map_err(ExecutionError::ReceiptsRootValidation)
         })?;
 
@@ -156,7 +176,22 @@ where
                 .map_err(ExecutionError::RequestsRootValidation)
         })?;
 
+        if let Some(bal) = &bal {
+            report_cycles("validate_block_access_list_hash", || {
+                validate_block_access_list_hash(
+                    &block.header,
+                    &chain_config,
+                    bal,
+                    block.body.transactions.len(),
+                    crypto.as_ref(),
+                )
+                .map_err(ExecutionError::BlockValidation)
+            })?;
+        }
+
         acc_receipts.push(receipts);
+        acc_burned_fees.push(block_burned_fees);
+        acc_bals.push(bal);
         parent_block_header = &block.header;
     }
 
@@ -173,7 +208,7 @@ where
         return Err(ExecutionError::InvalidFinalStateTrie);
     }
 
-    let last_block_hash = last_block.header.hash();
+    let last_block_hash = last_block.header.compute_block_hash(crypto.as_ref());
 
     Ok(BatchExecutionResult {
         receipts: acc_receipts,
@@ -182,5 +217,7 @@ where
         last_block_hash,
         non_privileged_count: non_privileged_count.into(),
         chain_id,
+        burned_fees: acc_burned_fees,
+        bals: acc_bals,
     })
 }

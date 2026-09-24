@@ -2149,7 +2149,7 @@
     "petersburgBlock": 0,
     "pragueTime": 0,
     "shanghaiTime": 0,
-    "terminalTotalDifficulty": 0,
+    "terminalTotalDifficulty": "0x0",
     "terminalTotalDifficultyPassed": true
   },
   "difficulty": "0x1",

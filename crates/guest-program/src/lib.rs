@@ -1,11 +1,13 @@
 pub mod common;
+pub mod crypto;
 pub mod l1;
 pub mod l2;
 pub mod methods;
 
-// Backward-compatible re-exports based on feature flag.
-// The prover backend uses `ethrex_guest_program::input::ProgramInput`, etc.
-// These re-exports allow existing code to work without changes.
+// Input/output aliases, selected by the `l2` feature, so `ProverBackend` stays
+// generic-free. L1 uses the spec's `statelessInputBytes`/`SszStatelessValidationResult`;
+// L2 keeps its own rkyv `ProgramInput` and commitment shape, because its on-chain
+// verifier needs state roots and blob/message commitments the spec output lacks.
 
 #[cfg(feature = "l2")]
 pub mod input {
@@ -13,7 +15,7 @@ pub mod input {
 }
 #[cfg(not(feature = "l2"))]
 pub mod input {
-    pub use crate::l1::ProgramInput;
+    pub type ProgramInput = Vec<u8>;
 }
 
 #[cfg(feature = "l2")]
@@ -22,36 +24,32 @@ pub mod output {
 }
 #[cfg(not(feature = "l2"))]
 pub mod output {
-    pub use crate::l1::ProgramOutput;
+    pub use ethrex_common::types::stateless_ssz::SszStatelessValidationResult as ProgramOutput;
 }
 
 #[cfg(feature = "l2")]
 pub mod execution {
     pub use crate::l2::execution_program;
 }
-#[cfg(not(feature = "l2"))]
-pub mod execution {
-    pub use crate::l1::execution_program;
-}
 
 // When running clippy, the ELFs are not built, so we define them empty.
 
-#[cfg(all(not(clippy), feature = "sp1"))]
+#[cfg(all(not(clippy), feature = "sp1-build-elf"))]
 pub static ZKVM_SP1_PROGRAM_ELF: &[u8] =
     include_bytes!("../bin/sp1/out/riscv32im-succinct-zkvm-elf");
-#[cfg(any(clippy, not(feature = "sp1")))]
+#[cfg(any(clippy, not(feature = "sp1-build-elf")))]
 pub const ZKVM_SP1_PROGRAM_ELF: &[u8] = &[];
 
-#[cfg(all(not(clippy), feature = "risc0"))]
+#[cfg(all(not(clippy), feature = "risc0-build-elf"))]
 pub static ZKVM_RISC0_PROGRAM_VK: &str =
     include_str!(concat!("../bin/risc0/out/riscv32im-risc0-vk"));
-#[cfg(any(clippy, not(feature = "risc0")))]
+#[cfg(any(clippy, not(feature = "risc0-build-elf")))]
 pub const ZKVM_RISC0_PROGRAM_VK: &str = "";
 
-#[cfg(all(not(clippy), feature = "zisk"))]
+#[cfg(all(not(clippy), feature = "zisk-build-elf"))]
 pub static ZKVM_ZISK_PROGRAM_ELF: &[u8] =
-    include_bytes!("../bin/zisk/target/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk");
-#[cfg(any(clippy, not(feature = "zisk")))]
+    include_bytes!("../bin/zisk/target/elf/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk");
+#[cfg(any(clippy, not(feature = "zisk-build-elf")))]
 pub const ZKVM_ZISK_PROGRAM_ELF: &[u8] = &[];
 
 /// Report cycles used in a code block when running inside SP1 zkVM.

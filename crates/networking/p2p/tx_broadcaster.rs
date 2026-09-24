@@ -7,21 +7,27 @@ use std::{
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
 use ethrex_common::types::{MempoolTransaction, Transaction};
+use ethrex_crypto::NativeCrypto;
 use ethrex_storage::error::StoreError;
 use rand::{seq::SliceRandom, thread_rng};
 use spawned_concurrency::{
-    messages::Unused,
-    tasks::{CastResponse, GenServer, GenServerHandle, send_interval},
+    actor,
+    error::ActorError,
+    protocol,
+    tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, send_interval},
 };
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, trace};
 
 use crate::{
-    peer_table::{PeerTable, PeerTableError},
+    peer_table::{PeerTable, PeerTableServerProtocol as _},
     rlpx::{
         Message,
         connection::server::PeerConnection,
-        eth::transactions::{NewPooledTransactionHashes, Transactions},
-        p2p::{Capability, SUPPORTED_ETH_CAPABILITIES},
+        eth::{
+            eth72::transactions::NewPooledTransactionHashes72,
+            transactions::{NewPooledTransactionHashes, Transactions},
+        },
+        p2p::Capability,
     },
 };
 
@@ -36,6 +42,14 @@ const PRUNE_INTERVAL_SECS: u64 = 360; // 6 minutes
 
 // Amount of milliseconds between each broadcast
 pub const BROADCAST_INTERVAL_MS: u64 = 1000; // 1 second
+
+#[protocol]
+pub trait TxBroadcasterProtocol: Send + Sync {
+    fn broadcast_txs(&self) -> Result<(), ActorError>;
+    fn add_txs(&self, tx_hashes: Vec<H256>, peer_id: H256) -> Result<(), ActorError>;
+    fn prune_txs(&self) -> Result<(), ActorError>;
+    fn remove_peer(&self, peer_id: H256) -> Result<(), ActorError>;
+}
 
 #[derive(Debug, Clone, Default)]
 struct PeerMask {
@@ -70,6 +84,17 @@ impl PeerMask {
         let bit = (idx as usize) % 64;
         self.bits[word] |= 1u64 << bit;
     }
+
+    #[inline]
+    // Clear bit `idx`. Used when a peer's index is freed so a future peer that reuses the
+    // index does not inherit a stale "already-sent" bit (which would suppress a real broadcast).
+    fn clear(&mut self, idx: u32) {
+        let word = (idx as usize) / 64;
+        if word < self.bits.len() {
+            let bit = (idx as usize) % 64;
+            self.bits[word] &= !(1u64 << bit);
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -97,27 +122,57 @@ pub struct TxBroadcaster {
     peer_indexer: HashMap<H256, u32>,
     // Next index to assign to a new peer
     next_peer_idx: u32,
+    // Indices freed by disconnected peers, reused before allocating new ones. Without this,
+    // next_peer_idx (and therefore every PeerMask's width) grows unbounded with peer churn.
+    free_indices: Vec<u32>,
+    tx_broadcasting_time_interval: u64,
 }
 
-#[derive(Debug, Clone)]
-pub enum InMessage {
-    BroadcastTxs,
-    AddTxs(Vec<H256>, H256), // (tx_hashes, peer_id)
-    PruneTxs,
+pub async fn send_tx_hashes(
+    txs: Vec<MempoolTransaction>,
+    negotiated_eth: Option<Capability>,
+    connection: &mut PeerConnection,
+    peer_id: H256,
+    blockchain: &Arc<Blockchain>,
+) -> Result<(), TxBroadcasterError> {
+    let Some(eth) = negotiated_eth else {
+        return Ok(());
+    };
+    // The announcement gained its `cell_mask` field in eth/72 (EIP-8070); sending
+    // that shape on an older session makes the peer's decoder see an over-long list.
+    let use_eth72_announcement = eth.version >= 72;
+    for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
+        let tx_count = tx_chunk.len();
+        let mut txs_to_send = Vec::with_capacity(tx_count);
+        for tx in tx_chunk {
+            txs_to_send.push((**tx).clone());
+        }
+        let hashes_message = if use_eth72_announcement {
+            Message::NewPooledTransactionHashes72(NewPooledTransactionHashes72::new(
+                txs_to_send,
+                blockchain,
+            )?)
+        } else {
+            Message::NewPooledTransactionHashes(NewPooledTransactionHashes::new(
+                txs_to_send,
+                blockchain,
+            )?)
+        };
+        connection.outgoing_message(hashes_message.clone()).await.unwrap_or_else(|err| {
+            debug!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transaction hashes");
+        });
+    }
+    Ok(())
 }
 
-#[derive(Debug, Clone)]
-pub enum OutMessage {
-    Done,
-}
-
+#[actor(protocol = TxBroadcasterProtocol)]
 impl TxBroadcaster {
     pub fn spawn(
         kademlia: PeerTable,
         blockchain: Arc<Blockchain>,
         tx_broadcasting_time_interval: u64,
-    ) -> Result<GenServerHandle<TxBroadcaster>, TxBroadcasterError> {
-        info!("Starting Transaction Broadcaster");
+    ) -> Result<ActorRef<TxBroadcaster>, TxBroadcasterError> {
+        debug!("Starting transaction broadcaster");
 
         let state = TxBroadcaster {
             peer_table: kademlia,
@@ -125,23 +180,89 @@ impl TxBroadcaster {
             known_txs: HashMap::new(),
             peer_indexer: HashMap::new(),
             next_peer_idx: 0,
+            free_indices: Vec::new(),
+            tx_broadcasting_time_interval,
         };
 
-        let server = state.start();
+        Ok(state.start())
+    }
 
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
         send_interval(
-            Duration::from_millis(tx_broadcasting_time_interval),
-            server.clone(),
-            InMessage::BroadcastTxs,
+            Duration::from_millis(self.tx_broadcasting_time_interval),
+            ctx.clone(),
+            tx_broadcaster_protocol::BroadcastTxs,
         );
 
         send_interval(
             Duration::from_secs(PRUNE_INTERVAL_SECS),
-            server.clone(),
-            InMessage::PruneTxs,
+            ctx.clone(),
+            tx_broadcaster_protocol::PruneTxs,
+        );
+    }
+
+    #[send_handler]
+    async fn handle_broadcast_txs(
+        &mut self,
+        _msg: tx_broadcaster_protocol::BroadcastTxs,
+        _ctx: &Context<Self>,
+    ) {
+        trace!(received = "BroadcastTxs");
+
+        let _ = self.do_broadcast_txs().await.inspect_err(|err| {
+            error!(err = ?err, "Failed to broadcast transactions");
+        });
+    }
+
+    #[send_handler]
+    async fn handle_add_txs(&mut self, msg: tx_broadcaster_protocol::AddTxs, _ctx: &Context<Self>) {
+        debug!(received = "AddTxs", tx_count = msg.tx_hashes.len());
+        self.do_add_txs(msg.tx_hashes, msg.peer_id);
+    }
+
+    #[send_handler]
+    async fn handle_prune_txs(
+        &mut self,
+        _msg: tx_broadcaster_protocol::PruneTxs,
+        _ctx: &Context<Self>,
+    ) {
+        debug!(received = "PruneTxs");
+        let now = Instant::now();
+        let before = self.known_txs.len();
+        let prune_window = Duration::from_secs(PRUNE_WAIT_TIME_SECS);
+
+        self.known_txs
+            .retain(|_, record| now.duration_since(record.last_sent) < prune_window);
+        debug!(
+            before = before,
+            after = self.known_txs.len(),
+            "Pruned old broadcasted transactions"
         );
 
-        Ok(server)
+        // Piggyback the alternates-map sweep on this same tick.
+        let _ = self.blockchain.mempool.prune_alternates(prune_window);
+    }
+
+    #[send_handler]
+    async fn handle_remove_peer(
+        &mut self,
+        msg: tx_broadcaster_protocol::RemovePeer,
+        _ctx: &Context<Self>,
+    ) {
+        self.do_remove_peer(msg.peer_id);
+    }
+
+    // Remove a disconnected peer: drop its index mapping, clear its bit from every known_txs
+    // record (so a future peer reusing the index isn't treated as already-notified), and return
+    // the index to the free-list — bounding peer_indexer and every PeerMask's width to live peers.
+    fn do_remove_peer(&mut self, peer_id: H256) {
+        if let Some(idx) = self.peer_indexer.remove(&peer_id) {
+            for record in self.known_txs.values_mut() {
+                record.peers.clear(idx);
+            }
+            self.free_indices.push(idx);
+        }
     }
 
     // Get or assign a unique index to the peer_id
@@ -153,15 +274,19 @@ impl TxBroadcaster {
             // We are assigning indexes sequentially, so next_peer_idx is always the next available one.
             // self.peer_indexer.len() could be used instead of next_peer_idx but avoided here if we ever
             // remove entries from peer_indexer in the future.
-            let idx = self.next_peer_idx;
-            // In practice we won't exceed u32::MAX (~4.29 Billion) peers.
-            self.next_peer_idx += 1;
+            // Reuse a freed index if available, otherwise allocate the next one.
+            let idx = self.free_indices.pop().unwrap_or_else(|| {
+                let idx = self.next_peer_idx;
+                // In practice we won't exceed u32::MAX (~4.29 Billion) peers.
+                self.next_peer_idx += 1;
+                idx
+            });
             self.peer_indexer.insert(peer_id, idx);
             idx
         }
     }
 
-    fn add_txs(&mut self, txs: Vec<H256>, peer_id: H256) {
+    fn do_add_txs(&mut self, txs: Vec<H256>, peer_id: H256) {
         debug!(total = self.known_txs.len(), adding = txs.len(), peer_id = %format!("{:#x}", peer_id), "Adding transactions to known list");
 
         if txs.is_empty() {
@@ -177,7 +302,7 @@ impl TxBroadcaster {
         }
     }
 
-    async fn broadcast_txs(&mut self) -> Result<(), TxBroadcasterError> {
+    async fn do_broadcast_txs(&mut self) -> Result<(), TxBroadcasterError> {
         let txs_to_broadcast = self
             .blockchain
             .mempool
@@ -186,20 +311,30 @@ impl TxBroadcaster {
         if txs_to_broadcast.is_empty() {
             return Ok(());
         }
-        let peers = self.peer_table.get_peers_with_capabilities().await?;
+        let peers = self.peer_table.get_connected_peers().await?;
         let peer_sqrt = (peers.len() as f64).sqrt();
 
         let full_txs = txs_to_broadcast
             .iter()
             .map(|tx| tx.transaction().clone())
             .filter(|tx| {
-                !matches!(tx, Transaction::EIP4844Transaction { .. }) && !tx.is_privileged()
+                // Blob (EIP-4844) and frame (EIP-8141) transactions have large
+                // bodies, so they are announced by hash only (never full-body
+                // broadcast), mirroring the EIP-4844 propagation policy.
+                !matches!(tx, Transaction::EIP4844Transaction { .. })
+                    && !matches!(tx, Transaction::FrameTransaction(_))
+                    && !tx.is_privileged()
             })
             .collect::<Vec<Transaction>>();
 
-        let blob_txs = txs_to_broadcast
+        // Transactions announced by hash only (not full-body): blob (EIP-4844)
+        // and frame (EIP-8141) transactions.
+        let announce_only_txs = txs_to_broadcast
             .iter()
-            .filter(|tx| matches!(tx.transaction(), Transaction::EIP4844Transaction { .. }))
+            .filter(|tx| {
+                matches!(tx.transaction(), Transaction::EIP4844Transaction { .. })
+                    || matches!(tx.transaction(), Transaction::FrameTransaction(_))
+            })
             .cloned()
             .collect::<Vec<MempoolTransaction>>();
 
@@ -209,12 +344,12 @@ impl TxBroadcaster {
         let (peers_to_send_full_txs, peers_to_send_hashes) =
             shuffled_peers.split_at(peer_sqrt.ceil() as usize);
 
-        for (peer_id, mut connection, capabilities) in peers_to_send_full_txs.iter().cloned() {
+        for (peer_id, mut connection, negotiated_eth) in peers_to_send_full_txs.iter().cloned() {
             let peer_idx = self.peer_index(peer_id);
             let txs_to_send = full_txs
                 .iter()
                 .filter(|tx| {
-                    let hash = tx.hash();
+                    let hash = tx.hash(&NativeCrypto);
                     !self
                         .known_txs
                         .get(&hash)
@@ -222,38 +357,52 @@ impl TxBroadcaster {
                 })
                 .cloned()
                 .collect::<Vec<Transaction>>();
-            self.add_txs(txs_to_send.iter().map(|tx| tx.hash()).collect(), peer_id);
-            // If a peer is selected to receive the full transactions, we don't send the blob transactions, since they only require to send the hashes
+            self.do_add_txs(
+                txs_to_send
+                    .iter()
+                    .map(|tx| tx.hash(&NativeCrypto))
+                    .collect(),
+                peer_id,
+            );
+            // If a peer is selected to receive the full transactions, we don't send the announce-only transactions (blob/frame), since they only require to send the hashes
             let txs_message = Message::Transactions(Transactions {
                 transactions: txs_to_send,
             });
             connection.outgoing_message(txs_message).await.unwrap_or_else(|err| {
-                error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
+                debug!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
             });
-            self.send_tx_hashes(blob_txs.clone(), capabilities, &mut connection, peer_id)
-                .await?;
-        }
-        for (peer_id, mut connection, capabilities) in peers_to_send_hashes.iter().cloned() {
-            // If a peer is not selected to receive the full transactions, we only send the hashes of all transactions (including blob transactions)
-            self.send_tx_hashes(
-                txs_to_broadcast.clone(),
-                capabilities,
+            self.send_tx_hashes_internal(
+                announce_only_txs.clone(),
+                negotiated_eth,
                 &mut connection,
                 peer_id,
             )
             .await?;
         }
-        let broadcasted_hashes: Vec<H256> = txs_to_broadcast.iter().map(|tx| tx.hash()).collect();
+        for (peer_id, mut connection, negotiated_eth) in peers_to_send_hashes.iter().cloned() {
+            // If a peer is not selected to receive the full transactions, we only send the hashes of all transactions (including blob transactions)
+            self.send_tx_hashes_internal(
+                txs_to_broadcast.clone(),
+                negotiated_eth,
+                &mut connection,
+                peer_id,
+            )
+            .await?;
+        }
+        let broadcasted_hashes: Vec<H256> = txs_to_broadcast
+            .iter()
+            .map(|tx| tx.hash(&NativeCrypto))
+            .collect();
         self.blockchain
             .mempool
             .remove_broadcasted_txs(&broadcasted_hashes)?;
         Ok(())
     }
 
-    async fn send_tx_hashes(
+    async fn send_tx_hashes_internal(
         &mut self,
         txs: Vec<MempoolTransaction>,
-        capabilities: Vec<Capability>,
+        negotiated_eth: Option<Capability>,
         connection: &mut PeerConnection,
         peer_id: H256,
     ) -> Result<(), TxBroadcasterError> {
@@ -261,7 +410,7 @@ impl TxBroadcaster {
         let txs_to_send = txs
             .iter()
             .filter(|tx| {
-                let hash = tx.hash();
+                let hash = tx.hash(&NativeCrypto);
                 !self
                     .known_txs
                     .get(&hash)
@@ -270,88 +419,21 @@ impl TxBroadcaster {
             })
             .cloned()
             .collect::<Vec<MempoolTransaction>>();
-        self.add_txs(txs_to_send.iter().map(|tx| tx.hash()).collect(), peer_id);
+        self.do_add_txs(
+            txs_to_send
+                .iter()
+                .map(|tx| tx.hash(&NativeCrypto))
+                .collect(),
+            peer_id,
+        );
         send_tx_hashes(
             txs_to_send,
-            capabilities,
+            negotiated_eth,
             connection,
             peer_id,
             &self.blockchain,
         )
         .await
-    }
-}
-
-pub async fn send_tx_hashes(
-    txs: Vec<MempoolTransaction>,
-    capabilities: Vec<Capability>,
-    connection: &mut PeerConnection,
-    peer_id: H256,
-    blockchain: &Arc<Blockchain>,
-) -> Result<(), TxBroadcasterError> {
-    if SUPPORTED_ETH_CAPABILITIES
-        .iter()
-        .any(|cap| capabilities.contains(cap))
-    {
-        for tx_chunk in txs.chunks(NEW_POOLED_TRANSACTION_HASHES_SOFT_LIMIT) {
-            let tx_count = tx_chunk.len();
-            let mut txs_to_send = Vec::with_capacity(tx_count);
-            for tx in tx_chunk {
-                txs_to_send.push((**tx).clone());
-            }
-            let hashes_message = Message::NewPooledTransactionHashes(
-                NewPooledTransactionHashes::new(txs_to_send, blockchain)?,
-            );
-            connection.outgoing_message(hashes_message.clone()).await.unwrap_or_else(|err| {
-                error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions hashes");
-            });
-        }
-    }
-    Ok(())
-}
-
-impl GenServer for TxBroadcaster {
-    type CallMsg = Unused;
-    type CastMsg = InMessage;
-    type OutMsg = OutMessage;
-    type Error = TxBroadcasterError;
-
-    async fn handle_cast(
-        &mut self,
-        message: Self::CastMsg,
-        _handle: &spawned_concurrency::tasks::GenServerHandle<Self>,
-    ) -> CastResponse {
-        match message {
-            Self::CastMsg::BroadcastTxs => {
-                trace!(received = "BroadcastTxs");
-
-                let _ = self.broadcast_txs().await.inspect_err(|_| {
-                    error!("Failed to broadcast transactions");
-                });
-
-                CastResponse::NoReply
-            }
-            Self::CastMsg::AddTxs(txs, peer_id) => {
-                debug!(received = "AddTxs", tx_count = txs.len());
-                self.add_txs(txs, peer_id);
-                CastResponse::NoReply
-            }
-            Self::CastMsg::PruneTxs => {
-                debug!(received = "PruneTxs");
-                let now = Instant::now();
-                let before = self.known_txs.len();
-                let prune_window = Duration::from_secs(PRUNE_WAIT_TIME_SECS);
-
-                self.known_txs
-                    .retain(|_, record| now.duration_since(record.last_sent) < prune_window);
-                debug!(
-                    before = before,
-                    after = self.known_txs.len(),
-                    "Pruned old broadcasted transactions"
-                );
-                CastResponse::NoReply
-            }
-        }
     }
 }
 
@@ -362,5 +444,5 @@ pub enum TxBroadcasterError {
     #[error(transparent)]
     StoreError(#[from] StoreError),
     #[error(transparent)]
-    PeerTableError(#[from] PeerTableError),
+    PeerTableError(#[from] ActorError),
 }

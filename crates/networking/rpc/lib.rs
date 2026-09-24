@@ -67,15 +67,20 @@ mod eth;
 mod mempool;
 mod net;
 pub mod rpc;
-mod tracing;
+pub mod subscription_manager;
+pub mod testing;
+pub mod tracing;
 
 pub mod clients;
 pub mod types;
 pub mod utils;
 pub use clients::{EngineClient, EthClient};
 
-pub use rpc::{start_api, start_block_executor};
+pub use rpc::{
+    BoundRpc, RpcRole, RpcStartupError, bind_api, bind_listener, start_api, start_block_executor,
+};
 
+#[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
 // TODO: These exports are needed by ethrex-l2-rpc, but we do not want to
@@ -87,7 +92,16 @@ pub use eth::{
     transaction::EstimateGasRequest,
 };
 pub use rpc::{
-    ClientVersion, NodeData, RpcApiContext, RpcHandler, RpcRequestWrapper, map_debug_requests,
+    ClientVersion, NodeData, RpcApiContext, RpcHandler, RpcRequestWrapper, WebSocketConfig,
+    handle_eth_subscribe, handle_eth_unsubscribe, handle_websocket, map_debug_requests,
     map_eth_requests, map_http_requests, rpc_response, shutdown_signal,
 };
+pub use subscription_manager::{SubscriptionManager, SubscriptionManagerProtocol};
 pub use utils::{RpcErr, RpcErrorMetadata, RpcNamespace};
+
+/// Default namespaces enabled on the public HTTP/WS RPC endpoint.
+///
+/// Operators who need `admin`, `debug` or `txpool` must enable them explicitly
+/// via `--http.api`.
+pub const DEFAULT_HTTP_API: &[RpcNamespace] =
+    &[RpcNamespace::Eth, RpcNamespace::Net, RpcNamespace::Web3];

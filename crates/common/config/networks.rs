@@ -9,18 +9,19 @@ use serde::{Deserialize, Serialize};
 
 //TODO: Look for a better place to move these files
 const MAINNET_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/mainnet/bootnodes.json");
-const HOLESKY_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/holesky/bootnodes.json");
 const SEPOLIA_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/sepolia/bootnodes.json");
 const HOODI_BOOTNODES: &str = include_str!("../../../cmd/ethrex/networks/hoodi/bootnodes.json");
+const PLATABERGET_BOOTNODES: &str =
+    include_str!("../../../cmd/ethrex/networks/plataberget/bootnodes.json");
 
 pub const MAINNET_GENESIS_CONTENTS: &str =
     include_str!("../../../cmd/ethrex/networks/mainnet/genesis.json");
-pub const HOLESKY_GENESIS_CONTENTS: &str =
-    include_str!("../../../cmd/ethrex/networks/holesky/genesis.json");
 pub const HOODI_GENESIS_CONTENTS: &str =
     include_str!("../../../cmd/ethrex/networks/hoodi/genesis.json");
 pub const SEPOLIA_GENESIS_CONTENTS: &str =
     include_str!("../../../cmd/ethrex/networks/sepolia/genesis.json");
+pub const PLATABERGET_GENESIS_CONTENTS: &str =
+    include_str!("../../../cmd/ethrex/networks/plataberget/genesis.json");
 pub const LOCAL_DEVNET_GENESIS_CONTENTS: &str = include_str!("../../../fixtures/genesis/l1.json");
 pub const LOCAL_DEVNETL2_GENESIS_CONTENTS: &str = include_str!("../../../fixtures/genesis/l2.json");
 
@@ -28,9 +29,9 @@ pub const LOCAL_DEVNET_PRIVATE_KEYS: &str =
     include_str!("../../../fixtures/keys/private_keys_l1.txt");
 
 pub const MAINNET_CHAIN_ID: u64 = 0x1;
-pub const HOLESKY_CHAIN_ID: u64 = 0x4268;
 pub const HOODI_CHAIN_ID: u64 = 0x88bb0;
 pub const SEPOLIA_CHAIN_ID: u64 = 0xAA36A7;
+pub const PLATABERGET_CHAIN_ID: u64 = 7091047534;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Network {
@@ -45,18 +46,22 @@ pub enum Network {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PublicNetwork {
     Hoodi,
-    Holesky,
     Sepolia,
     Mainnet,
+    /// Platåberget: the first public Glamsterdam testnet, run on the
+    /// glamsterdam-devnet-8 spec (genesis 2026-08-13, Amsterdam at
+    /// timestamp 1787212224). Configs:
+    /// https://github.com/ethpandaops/glamsterdam-devnets/tree/master/network-configs/devnet-8
+    Plataberget,
 }
 
 impl From<&str> for Network {
     fn from(value: &str) -> Self {
         match value {
             "hoodi" => Network::PublicNetwork(PublicNetwork::Hoodi),
-            "holesky" => Network::PublicNetwork(PublicNetwork::Holesky),
             "mainnet" => Network::PublicNetwork(PublicNetwork::Mainnet),
             "sepolia" => Network::PublicNetwork(PublicNetwork::Sepolia),
+            "plataberget" => Network::PublicNetwork(PublicNetwork::Plataberget),
             // Note that we don't allow to manually specify the local devnet genesis
             s => Network::GenesisPath(PathBuf::from(s)),
         }
@@ -69,9 +74,9 @@ impl TryFrom<u64> for Network {
     fn try_from(value: u64) -> Result<Self, Self::Error> {
         match value {
             MAINNET_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Mainnet)),
-            HOLESKY_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Holesky)),
             SEPOLIA_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Sepolia)),
             HOODI_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Hoodi)),
+            PLATABERGET_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Plataberget)),
             _ => Err(format!("Unknown chain ID: {}", value)),
         }
     }
@@ -92,10 +97,10 @@ impl Default for Network {
 impl fmt::Display for Network {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Network::PublicNetwork(PublicNetwork::Holesky) => write!(f, "holesky"),
             Network::PublicNetwork(PublicNetwork::Hoodi) => write!(f, "hoodi"),
             Network::PublicNetwork(PublicNetwork::Mainnet) => write!(f, "mainnet"),
             Network::PublicNetwork(PublicNetwork::Sepolia) => write!(f, "sepolia"),
+            Network::PublicNetwork(PublicNetwork::Plataberget) => write!(f, "plataberget"),
             Network::LocalDevnet => write!(f, "local-devnet"),
             Network::LocalDevnetL2 => write!(f, "local-devnet-l2"),
             Network::L2Chain(chain_id) => write!(f, "l2-chain-{}", chain_id),
@@ -128,12 +133,45 @@ impl Network {
         }
     }
 
+    /// Returns the network-specific subdirectory name for the datadir.
+    /// Public networks get a named suffix; custom genesis files and L2 chains
+    /// use their chain ID as suffix.
+    pub fn datadir_suffix(&self) -> Option<String> {
+        match self {
+            Network::PublicNetwork(PublicNetwork::Mainnet) => Some("mainnet".to_owned()),
+            Network::PublicNetwork(PublicNetwork::Hoodi) => Some("hoodi".to_owned()),
+            Network::PublicNetwork(PublicNetwork::Sepolia) => Some("sepolia".to_owned()),
+            Network::PublicNetwork(PublicNetwork::Plataberget) => Some("plataberget".to_owned()),
+            Network::LocalDevnet => None,
+            Network::LocalDevnetL2 => None,
+            Network::L2Chain(chain_id) => Some(format!("chain-{chain_id}")),
+            Network::GenesisPath(_) => {
+                let chain_id = self.get_genesis().ok()?.config.chain_id;
+                Some(format!("chain-{chain_id}"))
+            }
+        }
+    }
+
+    /// Returns all possible datadir subdirectory names (public networks + "dev").
+    /// Used by migration logic to detect existing network subdirectories.
+    pub fn all_datadir_suffixes() -> &'static [&'static str] {
+        // Explicit list derived from PublicNetwork variants + dev mode.
+        // Update this when adding new PublicNetwork variants.
+        &[
+            "mainnet",     // PublicNetwork::Mainnet
+            "hoodi",       // PublicNetwork::Hoodi
+            "sepolia",     // PublicNetwork::Sepolia
+            "plataberget", // PublicNetwork::Plataberget
+            "dev",         // dev mode
+        ]
+    }
+
     pub fn get_bootnodes(&self) -> Vec<Node> {
         let bootnodes = match self {
-            Network::PublicNetwork(PublicNetwork::Holesky) => HOLESKY_BOOTNODES,
             Network::PublicNetwork(PublicNetwork::Hoodi) => HOODI_BOOTNODES,
             Network::PublicNetwork(PublicNetwork::Mainnet) => MAINNET_BOOTNODES,
             Network::PublicNetwork(PublicNetwork::Sepolia) => SEPOLIA_BOOTNODES,
+            Network::PublicNetwork(PublicNetwork::Plataberget) => PLATABERGET_BOOTNODES,
             _ => return vec![],
         };
         serde_json::from_str(bootnodes).expect("bootnodes file should be valid JSON")
@@ -142,10 +180,10 @@ impl Network {
 
 fn get_genesis_contents(network: PublicNetwork) -> &'static str {
     match network {
-        PublicNetwork::Holesky => HOLESKY_GENESIS_CONTENTS,
         PublicNetwork::Hoodi => HOODI_GENESIS_CONTENTS,
         PublicNetwork::Mainnet => MAINNET_GENESIS_CONTENTS,
         PublicNetwork::Sepolia => SEPOLIA_GENESIS_CONTENTS,
+        PublicNetwork::Plataberget => PLATABERGET_GENESIS_CONTENTS,
     }
 }
 
@@ -163,22 +201,35 @@ mod tests {
     }
 
     #[test]
-    fn test_holesky_genesis_block_hash() {
-        // Values taken from the geth codebase:
-        // https://github.com/ethereum/go-ethereum/blob/a327ffe9b35289719ac3c484b7332584985b598a/params/config.go#L30-L35
-        assert_genesis_hash(
-            PublicNetwork::Holesky,
-            "b5f7f912443c940f21fd611f12828d75b534364ed9e95ca4e307729a4661bde4",
-        );
-    }
-
-    #[test]
     fn test_sepolia_genesis_block_hash() {
         // Values taken from the geth codebase:
         // https://github.com/ethereum/go-ethereum/blob/a327ffe9b35289719ac3c484b7332584985b598a/params/config.go#L30-L35
         assert_genesis_hash(
             PublicNetwork::Sepolia,
             "25a5cc106eea7138acab33231d7160d69cb777ee0c2c553fcddf5138993e6dd9",
+        );
+    }
+
+    #[test]
+    fn test_sepolia_amsterdam_activation() {
+        // Epoch 353024, 2026-10-06 13:53:36 UTC. Decided in ethereum/pm#2205 and
+        // recorded in EIP-7773 by ethereum/EIPs#12355; the client configuration is
+        // eth-clients/sepolia#126 (`metadata/genesis.json`, `amsterdamTime`).
+        // 1655733600 + 353024 * 32 * 12 = 1791294816.
+        let genesis = Network::PublicNetwork(PublicNetwork::Sepolia)
+            .get_genesis()
+            .unwrap();
+        assert_eq!(genesis.config.amsterdam_time, Some(1_791_294_816));
+    }
+
+    #[test]
+    fn test_plataberget_genesis_block_hash() {
+        // Value published on the network's config page (https://plataberget.dev/,
+        // "Genesis Hash (EL)"), served by
+        // https://github.com/ethpandaops/glamsterdam-devnets/tree/master/network-configs/devnet-8
+        assert_genesis_hash(
+            PublicNetwork::Plataberget,
+            "ee33ef92bbabcf07bcf44fea1d18a7925c5f7f9da8f81334ea19b0f3cb892b31",
         );
     }
 
@@ -203,8 +254,60 @@ mod tests {
     }
 
     #[test]
+    fn test_datadir_suffix_public_networks() {
+        assert_eq!(Network::mainnet().datadir_suffix(), Some("mainnet".into()));
+        assert_eq!(
+            Network::PublicNetwork(PublicNetwork::Hoodi).datadir_suffix(),
+            Some("hoodi".into())
+        );
+        assert_eq!(
+            Network::PublicNetwork(PublicNetwork::Sepolia).datadir_suffix(),
+            Some("sepolia".into())
+        );
+    }
+
+    #[test]
+    fn test_datadir_suffix_non_public_networks() {
+        assert_eq!(Network::LocalDevnet.datadir_suffix(), None);
+        assert_eq!(Network::LocalDevnetL2.datadir_suffix(), None);
+        assert_eq!(
+            Network::L2Chain(42).datadir_suffix(),
+            Some("chain-42".into())
+        );
+        // Invalid genesis path returns None (can't parse chain ID).
+        assert_eq!(
+            Network::GenesisPath(PathBuf::from("/tmp/nonexistent.json")).datadir_suffix(),
+            None
+        );
+    }
+
+    #[test]
+    fn test_all_datadir_suffixes_covers_all_public_networks() {
+        let all = Network::all_datadir_suffixes();
+        // Every public network suffix must appear in all_datadir_suffixes.
+        let networks = [
+            Network::PublicNetwork(PublicNetwork::Mainnet),
+            Network::PublicNetwork(PublicNetwork::Hoodi),
+            Network::PublicNetwork(PublicNetwork::Sepolia),
+        ];
+        for net in &networks {
+            let suffix = net
+                .datadir_suffix()
+                .expect("public networks must have a suffix");
+            assert!(
+                all.contains(&suffix.as_str()),
+                "all_datadir_suffixes() missing suffix {suffix:?} for {net:?}"
+            );
+        }
+        // "dev" must also be present.
+        assert!(
+            all.contains(&"dev"),
+            "all_datadir_suffixes() missing \"dev\""
+        );
+    }
+
+    #[test]
     fn test_get_bootnodes_works_for_public_networks() {
-        Network::PublicNetwork(PublicNetwork::Holesky).get_bootnodes();
         Network::PublicNetwork(PublicNetwork::Hoodi).get_bootnodes();
         Network::PublicNetwork(PublicNetwork::Mainnet).get_bootnodes();
         Network::PublicNetwork(PublicNetwork::Sepolia).get_bootnodes();

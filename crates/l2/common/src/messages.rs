@@ -30,6 +30,12 @@ pub const BRIDGE_ADDRESS: Address = H160([
     0x00, 0x00, 0xff, 0xff,
 ]);
 
+/// Address of the L2Bridge predeploy for native rollups (handles L1 messages and withdrawals).
+pub const NATIVE_ROLLUP_L2_BRIDGE: Address = H160([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0xff, 0xfd,
+]);
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct L1MessageProof {
     pub batch_number: u64,
@@ -134,7 +140,9 @@ impl L2Message {
         let tx_id = U256::from_big_endian(log.data.get(128..160)?);
         // 160 to 192 is the offset for calldata
         let calldata_len = U256::from_big_endian(log.data.get(192..224)?);
-        let calldata = log.data.get(224..224 + calldata_len.as_usize())?;
+        let calldata = log
+            .data
+            .get(224..224 + usize::try_from(calldata_len).ok()?)?;
 
         Some(L2Message {
             dest_chain_id,

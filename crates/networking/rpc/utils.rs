@@ -22,16 +22,28 @@ use ethrex_blockchain::error::MempoolError;
 /// - `-32602`: Invalid params
 /// - `-32603`: Internal error
 /// - `-32000`: Generic server error
-/// - `-38001` to `-38005`: Engine API specific errors
+/// - `-38001` to `-38006`: Engine API specific errors
 /// - `3`: Execution reverted/halted
 #[derive(Debug, thiserror::Error)]
 pub enum RpcErr {
     #[error("Method not found: {0}")]
     MethodNotFound(String),
+    /// Also `-32601`, but for a method this build *does* implement and this
+    /// endpoint does not serve: its namespace is off the `--http.api` allowlist,
+    /// or it belongs to the other RPC port. The reason travels in the message so
+    /// callers stop reading a bare "Method not found" as "ethrex has not
+    /// implemented this method".
+    #[error("Method not found: {method} ({reason})")]
+    MethodNotServedHere { method: String, reason: String },
     #[error("Wrong parameter: {0}")]
     WrongParam(String),
     #[error("Invalid params: {0}")]
     BadParams(String),
+    /// Spec-compliant invalid params error (-32602). The message is used
+    /// verbatim, with no "Invalid params: " prefix, so error strings can
+    /// match other clients exactly. `BadParams`/`WrongParam` map to -32000.
+    #[error("{0}")]
+    InvalidParams(String),
     #[error("Missing parameter: {0}")]
     MissingParam(String),
     #[error("Too large request")]
@@ -50,12 +62,40 @@ pub enum RpcErr {
     Halt { reason: String, gas_used: u64 },
     #[error("Authentication error: {0:?}")]
     AuthenticationError(AuthenticationError),
+    /// JSON-RPC 2.0 §5.1: the JSON sent is not a valid Request object. Used
+    /// for malformed bodies on the auth port (e.g. empty batches) where we
+    /// also drop the request id (per spec, id MUST be null when it cannot
+    /// be detected).
+    #[error("Invalid Request: {0}")]
+    InvalidRequest(String),
     #[error("Invalid forkchoice state: {0}")]
     InvalidForkChoiceState(String),
     #[error("Invalid payload attributes: {0}")]
     InvalidPayloadAttributes(String),
+    #[error("Too deep reorg: {0}")]
+    TooDeepReorg(String),
     #[error("Unknown payload: {0}")]
     UnknownPayload(String),
+    // EIP-8025 proof errors (-39001 .. -39004)
+    #[error("Invalid proof format: {0}")]
+    InvalidProofFormat(String),
+    #[error("Invalid header format: {0}")]
+    InvalidHeaderFormat(String),
+    #[error("Invalid payload: {0}")]
+    InvalidPayload(String),
+    #[error("Proof generation unavailable: {0}")]
+    ProofGenerationUnavailable(String),
+    /// `-32001: Resource not found`, e.g. a block-access-list getter asked
+    /// about a block that predates the Amsterdam fork (execution-apis#851).
+    #[error("Resource not found: {0}")]
+    ResourceNotFound(String),
+    /// `4444: Pruned history unavailable`: the block is known but the data to
+    /// answer was pruned. The code was introduced across the eth/debug getters
+    /// by execution-apis#636 (EIP-4444 history expiry left the RPC behaviour
+    /// out of scope), and execution-apis#851 requires it for the
+    /// block-access-list getters.
+    #[error("Pruned history unavailable: {0}")]
+    PrunedHistoryUnavailable(String),
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -66,6 +106,11 @@ impl From<RpcErr> for RpcErrorMetadata {
                 data: None,
                 message: format!("Method not found: {bad_method}"),
             },
+            RpcErr::MethodNotServedHere { method, reason } => RpcErrorMetadata {
+                code: -32601,
+                data: None,
+                message: format!("Method not found: {method} ({reason})"),
+            },
             RpcErr::WrongParam(field) => RpcErrorMetadata {
                 code: -32602,
                 data: None,
@@ -75,6 +120,16 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: -32000,
                 data: None,
                 message: format!("Invalid params: {context}"),
+            },
+            RpcErr::InvalidParams(context) => RpcErrorMetadata {
+                code: -32602,
+                data: None,
+                message: context,
+            },
+            RpcErr::InvalidRequest(context) => RpcErrorMetadata {
+                code: -32600,
+                data: None,
+                message: format!("Invalid Request: {context}"),
             },
             RpcErr::MissingParam(parameter_name) => RpcErrorMetadata {
                 code: -32000,
@@ -152,10 +207,46 @@ impl From<RpcErr> for RpcErrorMetadata {
                 data: Some(data),
                 message: "Invalid payload attributes".to_string(),
             },
+            RpcErr::TooDeepReorg(data) => RpcErrorMetadata {
+                code: -38006,
+                data: Some(data),
+                message: "Too deep reorg".to_string(),
+            },
             RpcErr::UnknownPayload(context) => RpcErrorMetadata {
                 code: -38001,
                 data: None,
                 message: format!("Unknown payload: {context}"),
+            },
+            // EIP-8025 proof error codes
+            RpcErr::InvalidProofFormat(context) => RpcErrorMetadata {
+                code: -39001,
+                data: None,
+                message: format!("Invalid proof format: {context}"),
+            },
+            RpcErr::InvalidHeaderFormat(context) => RpcErrorMetadata {
+                code: -39002,
+                data: None,
+                message: format!("Invalid header format: {context}"),
+            },
+            RpcErr::InvalidPayload(context) => RpcErrorMetadata {
+                code: -39003,
+                data: None,
+                message: format!("Invalid payload: {context}"),
+            },
+            RpcErr::ProofGenerationUnavailable(context) => RpcErrorMetadata {
+                code: -39004,
+                data: None,
+                message: format!("Proof generation unavailable: {context}"),
+            },
+            RpcErr::ResourceNotFound(context) => RpcErrorMetadata {
+                code: -32001,
+                data: Some(context),
+                message: "Resource not found".to_string(),
+            },
+            RpcErr::PrunedHistoryUnavailable(context) => RpcErrorMetadata {
+                code: 4444,
+                data: Some(context),
+                message: "Pruned history unavailable".to_string(),
             },
         }
     }
@@ -178,8 +269,8 @@ impl From<MempoolError> for RpcErr {
     }
 }
 
-impl From<ethrex_common::EcdsaError> for RpcErr {
-    fn from(err: ethrex_common::EcdsaError) -> Self {
+impl From<ethrex_crypto::CryptoError> for RpcErr {
+    fn from(err: ethrex_crypto::CryptoError) -> Self {
         Self::Internal(format!("Cryptography error: {err}"))
     }
 }
@@ -188,6 +279,7 @@ impl From<ethrex_common::EcdsaError> for RpcErr {
 ///
 /// Methods are namespaced by prefix (e.g., `eth_getBalance` is in the `Eth` namespace).
 /// Different namespaces may have different authentication requirements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RpcNamespace {
     /// Engine API methods for consensus client communication (requires JWT auth).
     Engine,
@@ -203,13 +295,50 @@ pub enum RpcNamespace {
     Net,
     /// Transaction pool inspection methods (exposed as `txpool_*`).
     Mempool,
+    /// Testing-only methods for fixture generation (exposed as `testing_*`).
+    /// Disabled by default; must never be exposed on public-facing RPC APIs.
+    Testing,
+}
+
+impl RpcNamespace {
+    /// Renders the namespace back to its CLI/method-prefix form, the inverse of
+    /// [`RpcNamespace::from_prefix`]. Error messages use this so operators see
+    /// the exact string they would pass to `--http.api` (`txpool`, not
+    /// `Mempool`).
+    pub fn as_prefix(self) -> &'static str {
+        match self {
+            RpcNamespace::Engine => "engine",
+            RpcNamespace::Eth => "eth",
+            RpcNamespace::Admin => "admin",
+            RpcNamespace::Debug => "debug",
+            RpcNamespace::Web3 => "web3",
+            RpcNamespace::Net => "net",
+            RpcNamespace::Mempool => "txpool",
+            RpcNamespace::Testing => "testing",
+        }
+    }
+
+    /// Parses a namespace name from its CLI/method-prefix form.
+    pub fn from_prefix(s: &str) -> Option<Self> {
+        match s {
+            "engine" => Some(RpcNamespace::Engine),
+            "eth" => Some(RpcNamespace::Eth),
+            "admin" => Some(RpcNamespace::Admin),
+            "debug" => Some(RpcNamespace::Debug),
+            "web3" => Some(RpcNamespace::Web3),
+            "net" => Some(RpcNamespace::Net),
+            "txpool" => Some(RpcNamespace::Mempool),
+            "testing" => Some(RpcNamespace::Testing),
+            _ => None,
+        }
+    }
 }
 
 /// JSON-RPC request identifier.
 ///
 /// Per the JSON-RPC 2.0 spec, request IDs can be either numbers or strings.
 /// The same ID must be returned in the response.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RpcRequestId {
     /// Numeric request ID.
@@ -230,7 +359,7 @@ pub enum RpcRequestId {
 ///     "params": ["0x...", "latest"]
 /// }
 /// ```
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RpcRequest {
     /// Request identifier, echoed back in the response.
     pub id: RpcRequestId,
@@ -262,17 +391,7 @@ impl RpcRequest {
 }
 
 pub fn resolve_namespace(maybe_namespace: &str, method: String) -> Result<RpcNamespace, RpcErr> {
-    match maybe_namespace {
-        "engine" => Ok(RpcNamespace::Engine),
-        "eth" => Ok(RpcNamespace::Eth),
-        "admin" => Ok(RpcNamespace::Admin),
-        "debug" => Ok(RpcNamespace::Debug),
-        "web3" => Ok(RpcNamespace::Web3),
-        "net" => Ok(RpcNamespace::Net),
-        // TODO: The namespace is set to match geth's namespace for compatibility, consider changing it in the future
-        "txpool" => Ok(RpcNamespace::Mempool),
-        _ => Err(RpcErr::MethodNotFound(method)),
-    }
+    RpcNamespace::from_prefix(maybe_namespace).ok_or(RpcErr::MethodNotFound(method))
 }
 
 impl Default for RpcRequest {
@@ -290,7 +409,7 @@ impl Default for RpcRequest {
 ///
 /// Contains the error code, message, and optional additional data.
 /// Error codes follow the JSON-RPC 2.0 and Ethereum conventions.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RpcErrorMetadata {
     /// Numeric error code (negative for standard errors).
     pub code: i32,
@@ -365,14 +484,12 @@ pub fn get_message_from_revert_data(data: &str) -> Result<String, EthClientError
                 "Failed to slice index abi_decoded_error_data when getting message from revert data".to_owned(),
             ),
         )?);
-        let string_len = if string_length > usize::MAX.into() {
-            return Err(EthClientError::Custom(
+        let string_len = usize::try_from(string_length).map_err(|_| {
+            EthClientError::Custom(
                 "Failed to convert string_length to usize when getting message from revert data"
                     .to_owned(),
-            ));
-        } else {
-            string_length.as_usize()
-        };
+            )
+        })?;
         let string_data = abi_decoded_error_data
             .get(68..68 + string_len)
             .ok_or(EthClientError::Custom(
@@ -394,5 +511,41 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
         maybe_parsed.map_err(|_| format!("Could not parse given hex {maybe_hex}"))
     } else {
         Err(format!("Could not parse given hex {hex}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `as_prefix` feeds `--http.api` advice in error messages, so it must stay
+    /// the exact inverse of the parser operators' input goes through. Drift would
+    /// tell someone to enable a namespace under a name the CLI rejects.
+    #[test]
+    fn namespace_prefix_round_trips() {
+        for namespace in [
+            RpcNamespace::Engine,
+            RpcNamespace::Eth,
+            RpcNamespace::Admin,
+            RpcNamespace::Debug,
+            RpcNamespace::Web3,
+            RpcNamespace::Net,
+            RpcNamespace::Mempool,
+            RpcNamespace::Testing,
+        ] {
+            let prefix = namespace.as_prefix();
+            assert_eq!(
+                RpcNamespace::from_prefix(prefix),
+                Some(namespace),
+                "{namespace:?} renders as {prefix:?}, which does not parse back"
+            );
+        }
+    }
+
+    /// The `txpool_*` methods live under the `Mempool` variant, so the CLI name
+    /// and the variant name genuinely differ. Error messages must use the former.
+    #[test]
+    fn mempool_renders_as_its_cli_name() {
+        assert_eq!(RpcNamespace::Mempool.as_prefix(), "txpool");
     }
 }

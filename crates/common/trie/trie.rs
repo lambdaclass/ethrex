@@ -1,5 +1,21 @@
+#![cfg_attr(not(feature = "std"), no_std)]
+// In no_std builds the per-node hash cache (`OnceLock`) is a non-atomic, `!Sync`
+// cell (see `node::OnceLock`), which makes `Node` `!Sync` and trips
+// `arc_with_non_send_sync` on the `Arc<Node>` in `NodeRef`. The `Arc` is
+// deliberate: the type is shared with the std build, where `Node` is `Send + Sync`
+// and nodes are handed across rayon workers during parallel merkleization. The
+// single-threaded no_std consumer (the zkVM guest) never shares across threads, so
+// the atomic refcount is harmless here and keeps a single unified node type across
+// both builds.
+#![cfg_attr(not(feature = "std"), allow(clippy::arc_with_non_send_sync))]
+
+#[macro_use]
+extern crate alloc;
+
 pub mod db;
 pub mod error;
+// Witness recording (Arc<Mutex>) is host-only; the guest verifies against a witness.
+#[cfg(feature = "std")]
 pub mod logger;
 mod nibbles;
 pub mod node;
@@ -8,25 +24,45 @@ pub mod rkyv_utils;
 mod rlp;
 #[cfg(test)]
 mod test_utils;
+// Parallel merkleization (std threads + crossbeam) is host-only.
+#[cfg(feature = "std")]
 pub mod threadpool;
 mod trie_iter;
+#[cfg(feature = "std")]
 pub mod trie_sorted;
 mod verify_range;
+
+use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
+#[cfg(not(feature = "std"))]
+use alloc::{boxed::Box, vec::Vec};
 use ethereum_types::H256;
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::encode::RLPEncode;
+
+#[cfg(feature = "std")]
 use rustc_hash::FxHashSet;
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+// `FxHashMap` is part of the public API (`get_embedded_root_committed`). Its concrete
+// type is build-dependent, so callers that build this crate `no_std` (e.g. the guest
+// via `ethrex-common`) must name it through this re-export to stay type-compatible.
+#[cfg(feature = "std")]
+pub use rustc_hash::FxHashMap;
+// rustc-hash's map/set aliases require std; use hashbrown with the Fx hasher otherwise.
+#[cfg(not(feature = "std"))]
+pub type FxHashMap<K, V> = hashbrown::HashMap<K, V, rustc_hash::FxBuildHasher>;
+#[cfg(not(feature = "std"))]
+type FxHashSet<K> = hashbrown::HashSet<K, rustc_hash::FxBuildHasher>;
 
 pub use self::db::{InMemoryTrieDB, TrieDB};
+#[cfg(feature = "std")]
 pub use self::logger::{TrieLogger, TrieWitness};
 pub use self::nibbles::Nibbles;
+#[cfg(feature = "std")]
 pub use self::threadpool::ThreadPool;
 pub use self::verify_range::verify_range;
 pub use self::{
-    node::{Node, NodeRef},
+    node::{Node, NodeRef, OnceLock},
     node_hash::NodeHash,
 };
 
@@ -34,14 +70,15 @@ pub use self::error::{ExtensionNodeErrorData, InconsistentTreeError, TrieError};
 use self::{node::LeafNode, trie_iter::TrieIterator};
 
 use ethrex_rlp::decode::RLPDecode;
-use lazy_static::lazy_static;
 
-lazy_static! {
-    // Hash value for an empty trie, equal to keccak(RLP_NULL)
-    pub static ref EMPTY_TRIE_HASH: H256 = H256(
-        keccak_hash([RLP_NULL]),
-    );
-}
+/// Hash of an empty trie: `keccak256(RLP_NULL)`, a well-known Ethereum constant.
+/// Hardcoded so it needs no lazy initialization, works in `const` contexts, and
+/// pulls no lazy-cell dependency into `no_std` builds. The
+/// `empty_trie_hash_matches_keccak` test pins it to the computed value.
+pub const EMPTY_TRIE_HASH: H256 = H256([
+    0x56, 0xe8, 0x1f, 0x17, 0x1b, 0xcc, 0x55, 0xa6, 0xff, 0x83, 0x45, 0xe6, 0x92, 0xc0, 0xf8, 0x6e,
+    0x5b, 0x48, 0xe0, 0x1b, 0x99, 0x6c, 0xad, 0xc0, 0x01, 0x62, 0x2f, 0xb5, 0xe3, 0x63, 0xb4, 0x21,
+]);
 
 /// RLP-encoded trie path
 pub type PathRLP = Vec<u8>;
@@ -60,6 +97,7 @@ pub struct Trie {
     dirty: FxHashSet<Nibbles>,
 }
 
+// `Default` builds an in-memory (InMemoryTrieDB) trie.
 impl Default for Trie {
     fn default() -> Self {
         Self::new_temp()
@@ -81,7 +119,7 @@ impl Trie {
     pub fn open(db: Box<dyn TrieDB>, root: H256) -> Self {
         Self {
             db,
-            root: if root != *EMPTY_TRIE_HASH {
+            root: if root != EMPTY_TRIE_HASH {
                 NodeHash::from(root).into()
             } else {
                 Default::default()
@@ -118,7 +156,7 @@ impl Trie {
             NodeRef::Hash(hash) if hash.is_valid() => {
                 Node::decode(&self.db.get(Nibbles::default())?.ok_or_else(|| {
                     TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(
-                        hash.finalize(),
+                        hash.finalize(&NativeCrypto),
                     )))
                 })?)
                 .map_err(TrieError::RLPDecode)?
@@ -147,6 +185,94 @@ impl Trie {
             self.root = Node::from(LeafNode::new(path, value)).into()
         };
         self.root.clear_hash();
+
+        Ok(())
+    }
+
+    /// Pre-resolves, via breadth-first batched reads, every trie node that the
+    /// upcoming serial `insert`/`remove` loop over `sorted_paths` would
+    /// otherwise resolve one at a time (one `db.get` per level per key).
+    ///
+    /// Nodes are installed into the in-memory arena exactly the way lazy
+    /// resolution does it (see [`NodeRef::get_node_mut`]): the decoded node
+    /// replaces the `NodeRef::Hash` with a `NodeRef::Node` that keeps the SAME
+    /// memoized hash (`OnceLock::from(hash)`). This is purely a caching step:
+    /// it never modifies any node's content, never marks anything dirty, and
+    /// is therefore transparent to the resulting root hash and to the
+    /// persisted node set produced by `collect_changes_since_last_hash`
+    /// (verified by the `trie_prefetch` equivalence test). Prefetching extra
+    /// nodes for keys that later diverge during insert is safe for the same
+    /// reason: an unmodified, hash-preserved node is never re-emitted.
+    ///
+    /// No-op if `sorted_paths` is empty or if the trie's root isn't a
+    /// `NodeRef::Hash(NodeHash::Hashed(_))` (empty trie, inline root, or a
+    /// root that's already resolved — nothing left to batch).
+    pub fn prefetch_sorted(&mut self, sorted_paths: &[Nibbles]) -> Result<(), TrieError> {
+        if sorted_paths.is_empty() {
+            return Ok(());
+        }
+        if !matches!(self.root, NodeRef::Hash(NodeHash::Hashed(_))) {
+            return Ok(());
+        }
+
+        // Resolve the root itself first, exactly like the first `insert`
+        // would (a single `db.get`).
+        if self
+            .root
+            .get_node_mut(self.db.as_ref(), Nibbles::default())?
+            .is_none()
+        {
+            // Root hash points to a node that isn't in the DB. Let the real
+            // insert/remove loop hit (and report) this inconsistency;
+            // prefetching can't fix it and shouldn't hide it.
+            return Ok(());
+        }
+
+        let all_indices: Vec<usize> = (0..sorted_paths.len()).collect();
+        // Defensive guard against a malformed/cyclic trie: legitimate paths
+        // are at most 65 nibbles (64 nibbles + leaf terminator) deep.
+        const MAX_LEVELS: usize = 68;
+
+        for _ in 0..MAX_LEVELS {
+            // Clone the root's Arc (cheap refcount bump) so the following
+            // immutable scan doesn't hold a borrow of `self.root`, freeing it
+            // up for the later mutable install pass without any `&mut`
+            // reference held across the `multi_get` call in between.
+            let root_node = match &self.root {
+                NodeRef::Node(node, _) => node.clone(),
+                _ => break,
+            };
+
+            let mut to_fetch: Vec<Nibbles> = Vec::new();
+            collect_prefetch_targets(
+                &root_node,
+                &Nibbles::default(),
+                &all_indices,
+                sorted_paths,
+                &mut to_fetch,
+            );
+            // Release the extra strong ref to the root before the mutable
+            // install pass, so `Arc::make_mut` below sees strong count 1 (the
+            // common single-owner case) and does not clone the resolved path.
+            drop(root_node);
+            if to_fetch.is_empty() {
+                break;
+            }
+
+            let mut results = self.db.multi_get(&to_fetch).into_iter();
+
+            let NodeRef::Node(root_arc, _) = &mut self.root else {
+                break;
+            };
+            let root_mut = Arc::make_mut(root_arc);
+            install_prefetch_targets(
+                root_mut,
+                &Nibbles::default(),
+                &all_indices,
+                sorted_paths,
+                &mut results,
+            )?;
+        }
 
         Ok(())
     }
@@ -180,20 +306,22 @@ impl Trie {
     /// Return the hash of the trie's root node.
     /// Returns keccak(RLP_NULL) if the trie is empty
     /// Also commits changes to the DB
-    pub fn hash(&mut self) -> Result<H256, TrieError> {
-        self.commit()?;
-        Ok(self.hash_no_commit())
+    pub fn hash(&mut self, crypto: &dyn Crypto) -> Result<H256, TrieError> {
+        self.commit(crypto)?;
+        Ok(self.hash_no_commit(crypto))
     }
 
     /// Return the hash of the trie's root node.
     /// Returns keccak(RLP_NULL) if the trie is empty
-    pub fn hash_no_commit(&self) -> H256 {
+    pub fn hash_no_commit(&self, crypto: &dyn Crypto) -> H256 {
         if self.root.is_valid() {
             // 512 is the maximum size of an encoded node
             let mut buf = Vec::with_capacity(512);
-            self.root.compute_hash_no_alloc(&mut buf).finalize()
+            self.root
+                .compute_hash_no_alloc(&mut buf, crypto)
+                .finalize(crypto)
         } else {
-            *EMPTY_TRIE_HASH
+            EMPTY_TRIE_HASH
         }
     }
 
@@ -202,7 +330,9 @@ impl Trie {
             .get_node_checked(self.db.as_ref(), path)?
             .ok_or_else(|| {
                 TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(
-                    self.root.compute_hash().finalize(),
+                    self.root
+                        .compute_hash(&NativeCrypto)
+                        .finalize(&NativeCrypto),
                 )))
             })
     }
@@ -212,9 +342,12 @@ impl Trie {
     /// # Returns
     ///
     /// A tuple containing the hash and the list of changes.
-    pub fn collect_changes_since_last_hash(&mut self) -> (H256, Vec<TrieNode>) {
-        let updates = self.commit_without_storing();
-        let ret_hash = self.hash_no_commit();
+    pub fn collect_changes_since_last_hash(
+        &mut self,
+        crypto: &dyn Crypto,
+    ) -> (H256, Vec<TrieNode>) {
+        let updates = self.commit_without_storing(crypto);
+        let ret_hash = self.hash_no_commit(crypto);
         (ret_hash, updates)
     }
 
@@ -222,8 +355,8 @@ impl Trie {
     ///
     /// This method will also compute the hash of all internal nodes indirectly. It will not clear
     /// the cached nodes.
-    pub fn commit(&mut self) -> Result<(), TrieError> {
-        let acc = self.commit_without_storing();
+    pub fn commit(&mut self, crypto: &dyn Crypto) -> Result<(), TrieError> {
+        let acc = self.commit_without_storing(crypto);
         self.db.put_batch(acc)?;
 
         // Commit the underlying transaction
@@ -234,12 +367,12 @@ impl Trie {
 
     /// Computes the nodes that would be added if updating the trie.
     /// Nodes are given with their hash pre-calculated.
-    pub fn commit_without_storing(&mut self) -> Vec<TrieNode> {
+    pub fn commit_without_storing(&mut self, crypto: &dyn Crypto) -> Vec<TrieNode> {
         let mut acc = Vec::new();
         if self.root.is_valid() {
-            self.root.commit(Nibbles::default(), &mut acc);
+            self.root.commit(Nibbles::default(), &mut acc, crypto);
         }
-        if self.root.compute_hash() == NodeHash::Hashed(*EMPTY_TRIE_HASH) {
+        if self.root.compute_hash(crypto) == NodeHash::Hashed(EMPTY_TRIE_HASH) {
             acc.push((Nibbles::default(), vec![RLP_NULL]))
         }
         acc.extend(self.pending_removal.drain().map(|nib| (nib, vec![])));
@@ -256,7 +389,7 @@ impl Trie {
     ///   `Ok(Vec::new())` instead.
     pub fn get_proof(&self, path: &[u8]) -> Result<Vec<NodeRLP>, TrieError> {
         if self.root.is_valid() {
-            let hash = self.root.compute_hash();
+            let hash = self.root.compute_hash(&NativeCrypto);
 
             let mut node_path = Vec::new();
             if let NodeHash::Inline((data, len)) = hash {
@@ -301,10 +434,11 @@ impl Trie {
         }
     }
 
+    #[cfg(feature = "std")]
     pub fn empty_in_memory() -> Self {
-        Self::new(Box::new(InMemoryTrieDB::new(Arc::new(Mutex::new(
-            BTreeMap::new(),
-        )))))
+        Self::new(Box::new(InMemoryTrieDB::new(Arc::new(
+            std::sync::Mutex::new(BTreeMap::new()),
+        ))))
     }
 
     /// Gets node with embedded references to child nodes, all in just one `Node`.
@@ -313,7 +447,7 @@ impl Trie {
         root_hash: H256,
     ) -> Result<NodeRef, TrieError> {
         // If the root hash is of the empty trie then we can get away by setting the NodeRef to default
-        if root_hash == *EMPTY_TRIE_HASH {
+        if root_hash == EMPTY_TRIE_HASH {
             return Ok(NodeRef::default());
         }
 
@@ -333,7 +467,7 @@ impl Trie {
                         };
 
                         if hash.is_valid() {
-                            *choice = match all_nodes.get(&hash.finalize()) {
+                            *choice = match all_nodes.get(&hash.finalize(&NativeCrypto)) {
                                 Some(node) => get_embedded_node(all_nodes, node)?.into(),
                                 None => hash.into(),
                             };
@@ -347,7 +481,7 @@ impl Trie {
                         return Ok(node.into());
                     };
 
-                    node.child = match all_nodes.get(&hash.finalize()) {
+                    node.child = match all_nodes.get(&hash.finalize(&NativeCrypto)) {
                         Some(node) => get_embedded_node(all_nodes, node)?.into(),
                         None => hash.into(),
                     };
@@ -362,6 +496,81 @@ impl Trie {
         Ok(root.into())
     }
 
+    /// Gets node with embedded references to child nodes, all in just one `Node`.
+    ///
+    /// Note that this method caches the hash of each node, so it assumes the provided `all_nodes` are well-formed.
+    pub fn get_embedded_root_committed(
+        all_nodes: &FxHashMap<H256, Node>,
+        root_hash: H256,
+        crypto: &dyn Crypto,
+    ) -> Result<NodeRef, TrieError> {
+        // If the root hash is of the empty trie then we can get away by setting the NodeRef to default
+        if root_hash == EMPTY_TRIE_HASH {
+            return Ok(NodeRef::default());
+        }
+
+        let root_rlp = all_nodes.get(&root_hash).ok_or_else(|| {
+            TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(root_hash)))
+        })?;
+
+        /// Creates an embedded node reference with its hash slot pre-seeded.
+        ///
+        /// The caller must guarantee that `hash` is the hash of the referenced
+        /// node, for example because the node was just resolved by looking that
+        /// hash up. Seeding lets later hash computations over the subtree reuse
+        /// the known value instead of re-encoding and re-hashing it.
+        fn node_with_hash(node: Node, hash: NodeHash) -> NodeRef {
+            NodeRef::Node(Arc::new(node), OnceLock::from(hash))
+        }
+
+        fn get_embedded_node_committed(
+            all_nodes: &FxHashMap<H256, Node>,
+            cur_node: &Node,
+            crypto: &dyn Crypto,
+        ) -> Result<Node, TrieError> {
+            Ok(match cur_node.clone() {
+                Node::Branch(mut node) => {
+                    for choice in &mut node.choices {
+                        let NodeRef::Hash(hash) = *choice else {
+                            continue;
+                        };
+
+                        if hash.is_valid() {
+                            *choice = match all_nodes.get(&hash.finalize(crypto)) {
+                                Some(node) => node_with_hash(
+                                    get_embedded_node_committed(all_nodes, node, crypto)?,
+                                    hash,
+                                ),
+                                None => hash.into(),
+                            };
+                        }
+                    }
+
+                    (*node).into()
+                }
+                Node::Extension(mut node) => {
+                    let NodeRef::Hash(hash) = node.child else {
+                        return Ok(node.into());
+                    };
+
+                    node.child = match all_nodes.get(&hash.finalize(crypto)) {
+                        Some(node) => node_with_hash(
+                            get_embedded_node_committed(all_nodes, node, crypto)?,
+                            hash,
+                        ),
+                        None => hash.into(),
+                    };
+
+                    node.into()
+                }
+                Node::Leaf(node) => node.into(),
+            })
+        }
+
+        let root = get_embedded_node_committed(all_nodes, root_rlp, crypto)?;
+        Ok(node_with_hash(root, NodeHash::Hashed(root_hash)))
+    }
+
     /// Builds a trie from a set of nodes with an empty InMemoryTrieDB as a backend because the nodes are embedded in the root.
     ///
     /// Note: This method will not ensure that all node references are valid. Invalid references
@@ -369,6 +578,7 @@ impl Trie {
     ///   `Trie::remove`) to return `Err(InconsistentTrie)`.
     /// Note: This method will ignore any dangling nodes. All nodes that are not accessible from the
     ///   root node are considered dangling.
+    #[cfg(feature = "std")]
     pub fn from_nodes(
         root_hash: H256,
         state_nodes: &BTreeMap<H256, Node>,
@@ -383,6 +593,7 @@ impl Trie {
     /// Builds an in-memory trie from the given elements and returns its hash
     pub fn compute_hash_from_unsorted_iter(
         iter: impl Iterator<Item = (PathRLP, ValueRLP)>,
+        crypto: &dyn Crypto,
     ) -> H256 {
         let mut trie = Trie::stateless();
         for (path, value) in iter {
@@ -390,7 +601,7 @@ impl Trie {
             trie.insert(path, value).unwrap();
         }
 
-        trie.hash_no_commit()
+        trie.hash_no_commit(crypto)
     }
 
     /// Creates a new stateless trie. This trie won't be able to store any nodes so all data will be lost after calculating the hash
@@ -446,8 +657,12 @@ impl Trie {
                                 .ok_or_else(|| {
                                     TrieError::InconsistentTree(Box::new(
                                         InconsistentTreeError::NodeNotFoundOnBranchNode(
-                                            child_ref.compute_hash().finalize(),
-                                            branch_node.compute_hash().finalize(),
+                                            child_ref
+                                                .compute_hash(&NativeCrypto)
+                                                .finalize(&NativeCrypto),
+                                            branch_node
+                                                .compute_hash(&NativeCrypto)
+                                                .finalize(&NativeCrypto),
                                             child_path.clone(),
                                         ),
                                     ))
@@ -473,11 +688,11 @@ impl Trie {
                                         ExtensionNodeErrorData {
                                             node_hash: extension_node
                                                 .child
-                                                .compute_hash()
-                                                .finalize(),
+                                                .compute_hash(&NativeCrypto)
+                                                .finalize(&NativeCrypto),
                                             extension_node_hash: extension_node
-                                                .compute_hash()
-                                                .finalize(),
+                                                .compute_hash(&NativeCrypto)
+                                                .finalize(&NativeCrypto),
                                             extension_node_prefix: extension_node.prefix.clone(),
                                             node_path: child_path.clone(),
                                         },
@@ -565,6 +780,7 @@ impl Trie {
 
     /// Validate the trie structure in parallel by splitting at the root branch node.
     /// Each of the root's 16 subtrees is validated independently using rayon.
+    #[cfg(feature = "std")]
     pub fn validate_parallel(self) -> Result<(), TrieError> {
         use rayon::prelude::*;
 
@@ -603,8 +819,191 @@ impl Trie {
     }
 }
 
+/// Immutable BFS-boundary scan used by [`Trie::prefetch_sorted`]: given an
+/// already-resolved node and the set of key indices routed to it, finds every
+/// `NodeRef::Hash` child that lies on the path of at least one of those keys,
+/// stopping the recursion at the first unresolved node in each branch
+/// (already-resolved descendants, if any, are explored further in the same
+/// call). Mirrors the descent performed by `Node::get`/`BranchNode::insert`/
+/// `ExtensionNode::insert`.
+fn collect_prefetch_targets(
+    node: &Node,
+    path: &Nibbles,
+    key_indices: &[usize],
+    sorted_paths: &[Nibbles],
+    out: &mut Vec<Nibbles>,
+) {
+    match node {
+        Node::Branch(branch) => {
+            let depth = path.len();
+            let mut buckets: [Vec<usize>; 16] = core::array::from_fn(|_| Vec::new());
+            for &i in key_indices {
+                let p = sorted_paths[i].as_ref();
+                if depth >= p.len() {
+                    continue;
+                }
+                let nibble = p[depth];
+                if nibble < 16 {
+                    buckets[nibble as usize].push(i);
+                }
+            }
+            for (nibble, indices) in buckets.iter().enumerate() {
+                if indices.is_empty() {
+                    continue;
+                }
+                let child_path = path.append_new(nibble as u8);
+                match &branch.choices[nibble] {
+                    NodeRef::Hash(NodeHash::Hashed(_)) => out.push(child_path),
+                    NodeRef::Node(child, _) => {
+                        collect_prefetch_targets(child, &child_path, indices, sorted_paths, out)
+                    }
+                    // Inline (embedded, no separate disk node) or invalid/empty: nothing to fetch.
+                    _ => {}
+                }
+            }
+        }
+        Node::Extension(ext) => {
+            let depth = path.len();
+            let prefix = ext.prefix.as_ref();
+            let matched: Vec<usize> = key_indices
+                .iter()
+                .copied()
+                .filter(|&i| {
+                    let p = sorted_paths[i].as_ref();
+                    depth + prefix.len() <= p.len() && &p[depth..depth + prefix.len()] == prefix
+                })
+                .collect();
+            if matched.is_empty() {
+                // No key continues through this prefix: they diverge and will
+                // cause the extension to be restructured on insert; nothing
+                // to prefetch here.
+                return;
+            }
+            let child_path = path.concat(&ext.prefix);
+            match &ext.child {
+                NodeRef::Hash(NodeHash::Hashed(_)) => out.push(child_path),
+                NodeRef::Node(child, _) => {
+                    collect_prefetch_targets(child, &child_path, &matched, sorted_paths, out)
+                }
+                _ => {}
+            }
+        }
+        // Terminal: leaves have no children to prefetch.
+        Node::Leaf(_) => {}
+    }
+}
+
+/// Mutable counterpart to [`collect_prefetch_targets`] used by
+/// [`Trie::prefetch_sorted`]: repeats the identical descent/routing so it
+/// visits `NodeRef::Hash` children in the exact same order, installing the
+/// corresponding (same-order) `multi_get` result into the arena
+/// hash-preservingly, exactly as `NodeRef::get_node_mut` installs a single
+/// resolved node. On a `None`/empty result the ref is left untouched (absent
+/// path); the subsequent `insert` will create it.
+fn install_prefetch_targets(
+    node: &mut Node,
+    path: &Nibbles,
+    key_indices: &[usize],
+    sorted_paths: &[Nibbles],
+    results: &mut alloc::vec::IntoIter<Result<Option<Vec<u8>>, TrieError>>,
+) -> Result<(), TrieError> {
+    match node {
+        Node::Branch(branch) => {
+            let depth = path.len();
+            let mut buckets: [Vec<usize>; 16] = core::array::from_fn(|_| Vec::new());
+            for &i in key_indices {
+                let p = sorted_paths[i].as_ref();
+                if depth >= p.len() {
+                    continue;
+                }
+                let nibble = p[depth];
+                if nibble < 16 {
+                    buckets[nibble as usize].push(i);
+                }
+            }
+            for (nibble, indices) in buckets.iter().enumerate() {
+                if indices.is_empty() {
+                    continue;
+                }
+                let child_path = path.append_new(nibble as u8);
+                let slot = &mut branch.choices[nibble];
+                match slot {
+                    NodeRef::Hash(hash @ NodeHash::Hashed(_)) => {
+                        let hash = *hash;
+                        let bytes = results.next().ok_or_else(|| {
+                            TrieError::DbError(anyhow::anyhow!(
+                                "prefetch_sorted: multi_get returned fewer results than requested"
+                            ))
+                        })??;
+                        if let Some(bytes) = bytes.filter(|b| !b.is_empty()) {
+                            let decoded = Node::decode(&bytes).map_err(TrieError::RLPDecode)?;
+                            *slot = NodeRef::Node(Arc::new(decoded), OnceLock::from(hash));
+                        }
+                    }
+                    NodeRef::Node(child, _) => {
+                        let child_mut = Arc::make_mut(child);
+                        install_prefetch_targets(
+                            child_mut,
+                            &child_path,
+                            indices,
+                            sorted_paths,
+                            results,
+                        )?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Node::Extension(ext) => {
+            let depth = path.len();
+            let prefix = ext.prefix.as_ref();
+            let matched: Vec<usize> = key_indices
+                .iter()
+                .copied()
+                .filter(|&i| {
+                    let p = sorted_paths[i].as_ref();
+                    depth + prefix.len() <= p.len() && &p[depth..depth + prefix.len()] == prefix
+                })
+                .collect();
+            if matched.is_empty() {
+                return Ok(());
+            }
+            let child_path = path.concat(&ext.prefix);
+            let slot = &mut ext.child;
+            match slot {
+                NodeRef::Hash(hash @ NodeHash::Hashed(_)) => {
+                    let hash = *hash;
+                    let bytes = results.next().ok_or_else(|| {
+                        TrieError::DbError(anyhow::anyhow!(
+                            "prefetch_sorted: multi_get returned fewer results than requested"
+                        ))
+                    })??;
+                    if let Some(bytes) = bytes.filter(|b| !b.is_empty()) {
+                        let decoded = Node::decode(&bytes).map_err(TrieError::RLPDecode)?;
+                        *slot = NodeRef::Node(Arc::new(decoded), OnceLock::from(hash));
+                    }
+                }
+                NodeRef::Node(child, _) => {
+                    let child_mut = Arc::make_mut(child);
+                    install_prefetch_targets(
+                        child_mut,
+                        &child_path,
+                        &matched,
+                        sorted_paths,
+                        results,
+                    )?;
+                }
+                _ => {}
+            }
+        }
+        Node::Leaf(_) => {}
+    }
+    Ok(())
+}
+
 /// Validate a subtree rooted at `start_ref`, checking that all referenced nodes exist
 /// and their hashes match.
+#[cfg(feature = "std")]
 fn validate_subtree(
     db: &dyn TrieDB,
     start_path: Nibbles,
@@ -679,13 +1078,26 @@ impl ProofTrie {
         Ok(())
     }
 
-    pub fn hash(&self) -> H256 {
-        self.0.hash_no_commit()
+    pub fn hash(&self, crypto: &dyn Crypto) -> H256 {
+        self.0.hash_no_commit(crypto)
     }
 }
 
 impl From<Trie> for ProofTrie {
     fn from(value: Trie) -> Self {
         Self(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_crypto::keccak::keccak_hash;
+
+    // Pins the hardcoded `EMPTY_TRIE_HASH` to `keccak256(RLP_NULL)` so a typo in the
+    // byte literal can't silently diverge from the computed value.
+    #[test]
+    fn empty_trie_hash_matches_keccak() {
+        assert_eq!(EMPTY_TRIE_HASH, H256(keccak_hash([RLP_NULL])));
     }
 }
