@@ -97,47 +97,21 @@ impl Code {
         }
     }
 
-    /// Builds the [`Code::jumpdests`] bitmap: one pass over the bytecode, setting the
-    /// bit for every `JUMPDEST` while skipping `PUSH` immediates.
+    /// Builds the [`Code::jumpdests`] bitmap: the bit of every `JUMPDEST` that is not a
+    /// `PUSH` immediate.
     ///
-    /// The bits of a byte are accumulated in a register and written once the scan leaves
-    /// that byte, which the monotonic `i` makes safe. Reading the bitmap back inside the
-    /// loop instead would turn each `JUMPDEST` into a read-modify-write, and indexing it
-    /// would put a bounds-check panic path in the loop body, which inhibits optimization
-    /// of every iteration rather than only the ones that find a destination.
+    /// On x86_64 and aarch64 this works on 64-byte blocks (see `jumpdests_by_block`),
+    /// because a scan that branches on each opcode stalls on every misprediction, and
+    /// random bytecode mispredicts on most bytes. execution-specs#3631 builds such
+    /// initcode on purpose. Other targets are the zkVM guests, which have no branch
+    /// predictor and would only pay for the extra instructions, so they keep the plain
+    /// scan (`jumpdests_by_opcode`).
     pub fn compute_jumpdests(code: &[u8]) -> Arc<[u8]> {
         let mut bitmap = vec![0u8; code.len().div_ceil(8)];
-        let mut any = false;
-        let mut current_byte = usize::MAX;
-        let mut bits = 0u8;
-        let mut i = 0;
-        while i < code.len() {
-            // TODO: we don't use the constants from the vm module to avoid a circular dependency
-            match code[i] {
-                // OP_JUMPDEST
-                0x5B => {
-                    if i / 8 != current_byte {
-                        if let Some(byte) = bitmap.get_mut(current_byte) {
-                            *byte = bits;
-                        }
-                        current_byte = i / 8;
-                        bits = 0;
-                    }
-                    bits |= 1 << (i % 8);
-                    any = true;
-                }
-                // OP_PUSH1..32
-                c @ 0x60..0x80 => {
-                    // OP_PUSH0
-                    i += (c - 0x5F) as usize;
-                }
-                _ => (),
-            }
-            i += 1;
-        }
-        if let Some(byte) = bitmap.get_mut(current_byte) {
-            *byte = bits;
-        }
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        let any = jumpdests_by_block(code, &mut bitmap);
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        let any = jumpdests_by_opcode(code, &mut bitmap);
         // Share the single empty bitmap for jumpless bytecode (very common: EOAs,
         // tiny contracts) so we don't allocate for an all-zero map; `is_valid_jumpdest`
         // reads a missing byte as "no jump destination".
@@ -207,6 +181,232 @@ impl Code {
         let bitmap_size = size_of::<Arc<[u8]>>() + self.jumpdests.len();
         hash_size + bytes_size + bitmap_size
     }
+}
+
+// Opcodes the jump destination analysis needs. The vm module defines them too, but
+// depending on it here would be circular.
+const OP_JUMPDEST: u8 = 0x5B;
+const OP_PUSH1: u8 = 0x60;
+const OP_PUSH32: u8 = 0x7F;
+
+/// Bytes per block in [`jumpdests_by_block`], one `u64` of bitmap.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+const BLOCK: usize = 64;
+
+/// Fills `bitmap` for `code` one opcode at a time and returns whether any bit is set.
+///
+/// The bits of a byte are accumulated in a register and written once the scan leaves
+/// that byte, which the monotonic `i` makes safe. Reading the bitmap back inside the
+/// loop instead would turn each `JUMPDEST` into a read-modify-write, and indexing it
+/// would put a bounds-check panic path in the loop body, which inhibits optimization
+/// of every iteration rather than only the ones that find a destination.
+#[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64"), allow(dead_code))]
+fn jumpdests_by_opcode(code: &[u8], bitmap: &mut [u8]) -> bool {
+    let mut any = false;
+    let mut current_byte = usize::MAX;
+    let mut bits = 0u8;
+    let mut i = 0;
+    while i < code.len() {
+        match code[i] {
+            OP_JUMPDEST => {
+                if i / 8 != current_byte {
+                    if let Some(byte) = bitmap.get_mut(current_byte) {
+                        *byte = bits;
+                    }
+                    current_byte = i / 8;
+                    bits = 0;
+                }
+                bits |= 1 << (i % 8);
+                any = true;
+            }
+            // PUSH1..PUSH32 are followed by 1..32 immediate bytes.
+            c @ OP_PUSH1..=OP_PUSH32 => i += usize::from(c - OP_PUSH1) + 1,
+            _ => (),
+        }
+        i += 1;
+    }
+    if let Some(byte) = bitmap.get_mut(current_byte) {
+        *byte = bits;
+    }
+    any
+}
+
+/// Fills `bitmap` for `code` 64 bytes at a time and returns whether any bit is set.
+///
+/// Whether a byte is an opcode depends on the `PUSH`es before it, so a scan normally
+/// visits every opcode and branches on it. Here each block is first reduced to
+/// bitmasks of its `JUMPDEST` and `PUSH` bytes, which needs no per-byte branch, and only
+/// the `PUSH` opcodes are then resolved one by one (see [`block_jumpdests`]).
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn jumpdests_by_block(code: &[u8], bitmap: &mut [u8]) -> bool {
+    let (blocks, tail) = code.as_chunks::<BLOCK>();
+    let mut carry = 0;
+    let mut any = 0;
+    // A full block fills exactly one 8-byte word of the bitmap.
+    for (block, word) in blocks.iter().zip(bitmap.as_chunks_mut::<8>().0) {
+        let valid = block_jumpdests(block, &mut carry);
+        *word = valid.to_le_bytes();
+        any |= valid;
+    }
+    if !tail.is_empty() {
+        // Zeros are STOPs, which are neither destinations nor PUSHes.
+        let mut padded = [0; BLOCK];
+        padded[..tail.len()].copy_from_slice(tail);
+        let valid = block_jumpdests(&padded, &mut carry);
+        let rest = &mut bitmap[blocks.len() * 8..];
+        rest.copy_from_slice(&valid.to_le_bytes()[..rest.len()]);
+        any |= valid;
+    }
+    any != 0
+}
+
+/// The valid jump destinations of one block, bit `i` for byte `i`.
+///
+/// `carry` is how many leading bytes of the block are immediates of a `PUSH` in the
+/// previous block, and is updated for the next one.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[inline(always)]
+fn block_jumpdests(block: &[u8; BLOCK], carry: &mut usize) -> u64 {
+    const ODD_BITS: u64 = 0xAAAA_AAAA_AAAA_AAAA;
+    let BlockMasks {
+        jumpdests,
+        push1s,
+        pushes,
+    } = BlockMasks::new(block);
+    let carried = low_bits(*carry);
+
+    // First assume every PUSH opcode is a PUSH1. Then each PUSH1 opcode turns the next
+    // byte into an immediate, and a PUSH1 byte that is an immediate does not. That is
+    // how backslashes escape characters in JSON, and simdjson resolves it for a whole
+    // word with one subtraction: within each run of candidates, it keeps the ones at
+    // the parity where the run starts.
+    let candidates = push1s & !carried;
+    let opcodes_and_immediates = ((candidates << 1) | ODD_BITS).wrapping_sub(candidates) ^ ODD_BITS;
+    let immediates = (opcodes_and_immediates ^ candidates) | carried;
+    // Right if every longer PUSH in the block is itself an immediate.
+    if pushes & !push1s & !immediates == 0 {
+        let last_is_push1 = (opcodes_and_immediates & candidates) >> (BLOCK - 1);
+        *carry = last_is_push1 as usize;
+        return jumpdests & !immediates;
+    }
+
+    // Otherwise walk the PUSH opcodes in order. `ends[i]` is where the next opcode
+    // starts if byte `i` is a PUSH: past the opcode and its `byte - PUSH1 + 1`
+    // immediates. It is only read for PUSH bytes, so the wrapped values elsewhere
+    // don't matter.
+    let mut ends = *block;
+    for (i, end) in ends.iter_mut().enumerate() {
+        *end = end.wrapping_sub(OP_PUSH1 - 2).wrapping_add(i as u8);
+    }
+    let mut immediates = carried;
+    // The first byte that can be an opcode. Always below BLOCK: a carry is at most 32
+    // bytes, and the loop stops at the first PUSH whose immediates leave the block.
+    let mut next = *carry;
+    loop {
+        // In PUSH-dense code the next opcode is usually another PUSH. Checking that
+        // first keeps `trailing_zeros` out of the dependency chain between PUSHes when
+        // it holds, and it holds consistently in exactly that code, so the branch
+        // predicts well.
+        let at = if (pushes >> next) & 1 != 0 {
+            next
+        } else {
+            let rest = pushes & (u64::MAX << next);
+            if rest == 0 {
+                *carry = 0;
+                break;
+            }
+            rest.trailing_zeros() as usize
+        };
+        let end = usize::from(ends[at % BLOCK]);
+        immediates |= low_bits(end) & ((u64::MAX << at) << 1);
+        if end >= BLOCK {
+            *carry = end - BLOCK;
+            break;
+        }
+        next = end;
+    }
+    jumpdests & !immediates
+}
+
+/// One bit per byte of a block: which bytes are `JUMPDEST`, `PUSH1`, and any of
+/// `PUSH1..PUSH32`.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+struct BlockMasks {
+    jumpdests: u64,
+    push1s: u64,
+    pushes: u64,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl BlockMasks {
+    /// Compares 16 bytes at a time and takes the top bit of each result byte.
+    #[inline(always)]
+    fn new(block: &[u8; BLOCK]) -> Self {
+        use core::arch::x86_64::*;
+        let mut masks = Self {
+            jumpdests: 0,
+            push1s: 0,
+            pushes: 0,
+        };
+        for (i, lane) in block.as_chunks::<16>().0.iter().enumerate() {
+            // SAFETY: SSE2 is part of the x86_64 baseline, `lane` is 16 readable bytes,
+            // and `loadu` has no alignment requirement.
+            unsafe {
+                let bytes = _mm_loadu_si128(lane.as_ptr().cast());
+                let mask = |matches| u64::from(_mm_movemask_epi8(matches) as u16) << (16 * i);
+                let jumpdest = _mm_set1_epi8(OP_JUMPDEST as i8);
+                let push1 = _mm_set1_epi8(OP_PUSH1 as i8);
+                masks.jumpdests |= mask(_mm_cmpeq_epi8(bytes, jumpdest));
+                masks.push1s |= mask(_mm_cmpeq_epi8(bytes, push1));
+                // PUSH1..PUSH32 are exactly the bytes 0b011x_xxxx.
+                let top_bits = _mm_and_si128(bytes, _mm_set1_epi8(0xE0_u8 as i8));
+                masks.pushes |= mask(_mm_cmpeq_epi8(top_bits, push1));
+            }
+        }
+        masks
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+impl BlockMasks {
+    /// NEON has no instruction that gathers one bit per byte, so each matching byte
+    /// keeps the bit of its position within 8 bytes, and three rounds of pairwise adds
+    /// pack them into one `u64`.
+    #[inline(always)]
+    fn new(block: &[u8; BLOCK]) -> Self {
+        use core::arch::aarch64::*;
+        // SAFETY: NEON is part of the aarch64 baseline, `block` is 64 readable bytes, and
+        // `vld1q_u8_x4` has no alignment requirement.
+        unsafe {
+            let lanes = vld1q_u8_x4(block.as_ptr());
+            let lanes = [lanes.0, lanes.1, lanes.2, lanes.3];
+            let position_bits = vreinterpretq_u8_u64(vdupq_n_u64(0x8040_2010_0804_0201));
+            let mask = |matches: [uint8x16_t; 4]| {
+                let [a, b, c, d] = matches.map(|m| vandq_u8(m, position_bits));
+                let quarters = vpaddq_u8(vpaddq_u8(a, b), vpaddq_u8(c, d));
+                vgetq_lane_u64::<0>(vreinterpretq_u64_u8(vpaddq_u8(quarters, quarters)))
+            };
+            let jumpdest = vdupq_n_u8(OP_JUMPDEST);
+            let push1 = vdupq_n_u8(OP_PUSH1);
+            // PUSH1..PUSH32 are exactly the bytes 0b011x_xxxx.
+            let top_bits = vdupq_n_u8(0xE0);
+            Self {
+                jumpdests: mask(lanes.map(|l| vceqq_u8(l, jumpdest))),
+                push1s: mask(lanes.map(|l| vceqq_u8(l, push1))),
+                pushes: mask(lanes.map(|l| vceqq_u8(vandq_u8(l, top_bits), push1))),
+            }
+        }
+    }
+}
+
+/// The lowest `n` bits set, or all of them when `n >= 64`.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+#[inline(always)]
+fn low_bits(n: usize) -> u64 {
+    u32::try_from(n)
+        .ok()
+        .and_then(|n| 1u64.checked_shl(n))
+        .map_or(u64::MAX, |bit| bit - 1)
 }
 
 /// Serde shadow for [`Code`]. Stores the *logical* (unpadded) bytecode so the
