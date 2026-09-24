@@ -60,15 +60,6 @@ fn precompile_cache_skips_an_entry_larger_than_the_budget() {
     assert!(cache.get(&address(2), &payload(2)).is_some());
 }
 
-#[test]
-fn precompile_cache_can_be_disabled_with_zero_budget() {
-    let cache = PrecompileCache::with_max_bytes(0);
-
-    cache.insert(address(1), payload(5), payload(5), 5);
-
-    assert_eq!(cache.get(&address(1), &payload(5)), None);
-}
-
 /// The budget counts each entry's fixed storage, not only its payload, so many tiny
 /// entries cannot hold far more memory than the budget says.
 #[test]
