@@ -91,6 +91,9 @@ pub const BLOB_BASE_COST: u64 = 8192;
 pub const POST_OSAKA_GAS_LIMIT_CAP: u64 = 16777216;
 pub const TX_MAX_GAS_LIMIT_AMSTERDAM: u64 = 1 << 24; // 16,777,216
 
+/// EIP-7954 (Amsterdam): maximum size of deployed bytecode, 64 KiB.
+pub const AMSTERDAM_MAX_CODE_SIZE: u64 = 0x10000;
+
 // === EIP-7928 BAL size cap constants ===
 /// GAS_BLOCK_ACCESS_LIST_ITEM: a flat per-item charge, independent of the
 /// EIP-8038 access-list repricing.

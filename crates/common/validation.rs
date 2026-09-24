@@ -200,6 +200,31 @@ pub fn validate_header_bal_indices(
     Ok(())
 }
 
+/// Validates that no code change in the BAL is larger than `max_code_size`, the fork's
+/// maximum deployed bytecode size.
+///
+/// Code can only be deployed within that limit, so a larger code change cannot appear in
+/// the BAL of a valid block. This is structural, like [`validate_header_bal_indices`], so
+/// it runs before the BAL is used to seed execution rather than after.
+pub fn validate_bal_code_sizes(
+    bal: &crate::types::block_access_list::BlockAccessList,
+    max_code_size: u64,
+) -> Result<(), InvalidBlockError> {
+    for account in bal.accounts() {
+        for change in &account.code_changes {
+            let size = change.new_code.len();
+            if u64::try_from(size).map_or(true, |size| size > max_code_size) {
+                return Err(InvalidBlockError::BlockAccessListCodeTooLarge {
+                    address: account.address,
+                    size,
+                    max: max_code_size,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Validates that the block access list hash matches the block header (Amsterdam+).
 /// Also validates that all BlockAccessIndex values are within valid bounds per EIP-7928,
 /// and that the BAL size does not exceed the gas-derived limit.

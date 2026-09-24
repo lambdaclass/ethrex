@@ -1,3 +1,4 @@
+mod bal_code_size_tests;
 mod bal_content_validation_tests;
 mod bal_hash_parallel_skip;
 mod bal_system_phase_under_declaration;

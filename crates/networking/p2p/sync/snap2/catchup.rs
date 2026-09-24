@@ -13,7 +13,12 @@
 
 use std::sync::Arc;
 
-use ethrex_common::{H256, constants::EMPTY_BLOCK_ACCESS_LIST_HASH, types::BlockHeader};
+use ethrex_common::{
+    H256,
+    constants::{AMSTERDAM_MAX_CODE_SIZE, EMPTY_BLOCK_ACCESS_LIST_HASH},
+    types::BlockHeader,
+    validate_bal_code_sizes,
+};
 use ethrex_crypto::NativeCrypto;
 use ethrex_storage::Store;
 use tracing::{debug, info, warn};
@@ -127,6 +132,9 @@ pub async fn catch_up(
 
                 bal.validate_ordering().map_err(|err| {
                     SyncError::Snap2CatchUpStalled(header.number, format!("bad ordering: {err}"))
+                })?;
+                validate_bal_code_sizes(&bal, AMSTERDAM_MAX_CODE_SIZE).map_err(|err| {
+                    SyncError::Snap2CatchUpStalled(header.number, format!("bad code size: {err}"))
                 })?;
                 let expected = header
                     .block_access_list_hash

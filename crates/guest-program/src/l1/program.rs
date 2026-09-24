@@ -168,6 +168,11 @@ pub fn new_payload_request_to_block(
         // reason (`rpc/engine/payload.rs`); the guest has to reject explicitly.
         bal.validate_ordering()
             .map_err(|e| format!("block_access_list ordering: {e}"))?;
+        ethrex_common::validate_bal_code_sizes(
+            &bal,
+            ethrex_common::constants::AMSTERDAM_MAX_CODE_SIZE,
+        )
+        .map_err(|e| format!("block_access_list code size: {e}"))?;
         let encoded = bal.encode_to_vec();
         if encoded != bal_bytes {
             return Err("block access list is not canonically encoded".to_string());

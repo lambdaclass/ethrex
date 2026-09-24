@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::PayloadBuildResult;
+use ethrex_common::constants::AMSTERDAM_MAX_CODE_SIZE;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::{
     ExecutionWitness, ExtWitness, RpcExecutionWitness,
@@ -8,6 +9,7 @@ use ethrex_common::types::block_execution_witness::{
 use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Fork};
+use ethrex_common::validate_bal_code_sizes;
 use ethrex_common::{H256, U256};
 use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::sync::SyncMode;
@@ -1181,10 +1183,13 @@ async fn handle_new_payload_v4(
     bal: Option<BlockAccessList>,
     make_witness: bool,
 ) -> Result<PayloadStatus, RpcErr> {
-    if let Some(bal) = &bal
-        && let Err(err) = bal.validate_ordering()
-    {
-        return Ok(PayloadStatus::invalid_with_err(&err));
+    if let Some(bal) = &bal {
+        if let Err(err) = bal.validate_ordering() {
+            return Ok(PayloadStatus::invalid_with_err(&err));
+        }
+        if let Err(err) = validate_bal_code_sizes(bal, AMSTERDAM_MAX_CODE_SIZE) {
+            return Ok(PayloadStatus::invalid_with_err(&err.to_string()));
+        }
     }
     handle_new_payload_v3(
         payload,
