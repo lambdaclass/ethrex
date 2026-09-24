@@ -374,7 +374,7 @@ pub fn effective_precompile_address(address: Address, moves: Option<&PrecompileM
 /// Upper bound on the memory one [`PrecompileCache`] may hold. A cache lives for a
 /// single block, and a block's working set sits far below this, so in normal operation
 /// no result is ever turned away.
-const PRECOMPILE_CACHE_MAX_BYTES: usize = 128 * 1024 * 1024;
+pub const PRECOMPILE_CACHE_MAX_BYTES: usize = 128 * 1024 * 1024;
 
 #[derive(Default)]
 struct PrecompileCacheEntries {
@@ -385,31 +385,18 @@ struct PrecompileCacheEntries {
 
 /// Per-block cache for precompile results shared between warmer and executor.
 ///
-/// Holds at most `max_bytes`, as counted by [`PrecompileCache::entry_size`]; once full,
-/// further results are simply not cached. Nothing is evicted: the cache is dropped
-/// with its block, so there is no recency worth tracking, and lookups stay on the
-/// shared read lock.
+/// Holds at most [`PRECOMPILE_CACHE_MAX_BYTES`], as counted by
+/// [`PrecompileCache::entry_size`]; once full, further results are simply not cached.
+/// Nothing is evicted: the cache is dropped with its block, so there is no recency worth
+/// tracking, and lookups stay on the shared read lock.
+#[derive(Default)]
 pub struct PrecompileCache {
     cache: RwLock<PrecompileCacheEntries>,
-    max_bytes: usize,
-}
-
-impl Default for PrecompileCache {
-    fn default() -> Self {
-        Self::with_max_bytes(PRECOMPILE_CACHE_MAX_BYTES)
-    }
 }
 
 impl PrecompileCache {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub fn with_max_bytes(max_bytes: usize) -> Self {
-        Self {
-            cache: RwLock::new(PrecompileCacheEntries::default()),
-            max_bytes,
-        }
     }
 
     /// Bytes one entry is charged against the budget: its calldata and output, plus
@@ -441,7 +428,7 @@ impl PrecompileCache {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let entries = &mut *guard;
         let used_bytes = entries.used_bytes.saturating_add(entry_size);
-        if used_bytes > self.max_bytes {
+        if used_bytes > PRECOMPILE_CACHE_MAX_BYTES {
             return;
         }
         // The warmer and the executor can both compute the same call; the result is
