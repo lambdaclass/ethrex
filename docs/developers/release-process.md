@@ -96,8 +96,9 @@ Before publishing the release, run through the following checks using the pre-re
 - [ ] Upgrade `ethrex-teku`
 - [ ] Upgrade `ethrex-grandine`
 - [ ] Launch multisync on `ethrex-multisync-main`
-- [ ] Upgrade a local L2 created with the previous version and run the integration tests
+- [ ] Upgrade an L2 created with the previous version and run the integration tests, on the GPU server (`l2-gpu`) with the SP1 prover
 - [ ] Run the L2 integration tests with a SP1 prover on the GPU server (`l2-gpu`)
+- [ ] Run the multiprover test: SP1 prover on the GPU server (`l2-gpu`), TDX prover and the rest of the stack on `ethrex-tdx-baremetal`
 
 The commands for each target follow. The host roster changes between releases — fill in the ones you run and leave the placeholders for the rest. Replace `vX.Y.Z-rc.W` / `release/vX.Y.Z` with the version under test.
 
@@ -155,13 +156,45 @@ tmux new-session -d -s sync "make multisync-loop-auto MULTISYNC_BRANCH=release/v
 
 Check progress later with `tmux attach -t sync` (detach with `Ctrl-b` then `d`).
 
-#### Local L2 upgrade + integration tests
+#### L2 upgrade + integration tests (`l2-gpu`)
 
 See [Upgrade test](l2/upgrade-test.md) for the full procedure.
+
+Run it on `l2-gpu` with `--backend sp1`, not locally with `--backend exec`. The
+`exec` backend produces no proof, so it never consults a verification key — and
+the verification key is exactly what an upgrade changes. Batches are committed
+under `keccak(VERGEN_GIT_SHA)`, baked into the binary at build time, and
+`commitBatch` rejects a commit hash the deployment holds no key for, so an
+upgraded sequencer commits nothing at all until the new release's key is
+registered. Under `exec` that whole class of upgrade failure is invisible.
+
+Both L2 checks share the ports and datadirs on `l2-gpu`, so run them one after
+the other, not concurrently.
 
 #### L2 integration tests with a SP1 prover (`l2-gpu`)
 
 See [L2 integration tests with a SP1 GPU prover](l2/sp1-gpu-integration-test.md) for the full procedure.
+
+This one deploys the new version from scratch; the upgrade test above covers the
+path from the previous release. Keep both: a release can deploy cleanly and still
+fail to upgrade, and the reverse.
+
+#### Multiprover test (SP1 GPU + TDX)
+
+See [Multiprover test](l2/multiprover-test.md) for the full procedure. It runs across two hosts: the SP1 prover on `l2-gpu`, and the L1, deploy, sequencer and TDX prover VM on `ethrex-tdx-baremetal`, with the SP1 prover reaching the proof coordinator over the tailnet.
+
+The single-prover checks above each exercise one prover against an `OnChainProposer` that requires only that one. This is the only check where a batch must satisfy **two** provers before `lastVerifiedBatch` moves, which is the configuration a production rollup runs.
+
+Confirm on-chain that the deployment really requires both, rather than trusting the deploy flags — a batch verifying under a single-prover deployment would prove nothing:
+
+```bash
+rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'REQUIRE_SP1_PROOF()' "$L1_RPC"   # 0x..01
+rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'REQUIRE_TDX_PROOF()' "$L1_RPC"   # 0x..01
+```
+
+The check passes when `lastVerifiedBatch` advances past zero with both flags set.
+
+Run it with `ETHREX_TDX_DEV_MODE=false`, so the TDX quote is verified on chain by `verifyAndAttestOnChain` rather than trusted. That is the point of running on TDX hardware, and it is what CI cannot do — CI uses dev mode, where registration skips verification entirely. It needs two extra steps the runbook covers: pinning the verifier's expected measurements to the image being released, and loading this platform's TCB collateral, since the tool `ethrex` normally shells out to cannot serve a dev chain.
 
 ### Publish
 

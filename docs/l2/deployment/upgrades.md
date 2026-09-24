@@ -1,5 +1,38 @@
 # Upgrades
 
+## Every release — register the new verification key
+
+Applies to any deployment that verifies real proofs (`--sp1 true` at deploy
+time), whether or not the release changes a contract.
+
+A batch is committed under the git sha of the binary that committed it, and
+`commitBatch` rejects a commit hash the deployment holds no key for. Your
+deployment only holds the key of the version that deployed it, so an upgraded
+sequencer commits **nothing** until the new key is registered — every commit
+reverts with `MissingVerificationKeyForCommit()` (`0xf6b9798e`), surfacing as:
+
+```
+Failed to send commitment for batch N ... execution reverted: 0xf6b9798e
+```
+
+The L2 keeps producing blocks throughout, so it reads as a stuck committer
+rather than a missing key. Nothing is lost: register the key and the pending
+batch commits on the next attempt.
+
+```
+rex l2 register-vk --commit <GIT_SHA> --vk <VERIFICATION_KEY> \
+  --on-chain-proposer <OCP> --timelock <TIMELOCK> --private-key <SECURITY_COUNCIL_PK>
+```
+
+The sha is the one the new binary prints after `HEAD-` in `ethrex --version`; the
+key is the `ethrex-riscv32im-succinct-zkvm-vk-bn254` file from the new release's
+`ethrex-contracts.tar.gz`. See
+[Registering a new verification key](../fundamentals/upgrades.md#registering-a-new-verification-key)
+for what the command does and why the Timelock is in the path.
+
+Keys are stored per commit hash, not per version, so the old key stays valid —
+which is what lets a rollback keep verifying.
+
 ## From v7 to v8
 
 ### Database migration (local node)
