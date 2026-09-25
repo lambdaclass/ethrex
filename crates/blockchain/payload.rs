@@ -49,6 +49,7 @@ use crate::{
     vm::StoreVmDatabase,
 };
 
+use flux_profiler::timed;
 use thiserror::Error;
 use tracing::{debug, warn};
 
@@ -553,6 +554,7 @@ impl Blockchain {
 
     /// Completes the payload building process, return the block value.
     /// Transactions are pulled from the mempool.
+    #[timed]
     pub fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
         self.build_payload_inner(payload, None)
     }
@@ -727,6 +729,7 @@ impl Blockchain {
     /// Shared block-building pipeline. When `explicit_transactions` is `None` the
     /// payload is filled from the mempool; otherwise the provided transactions are
     /// applied verbatim.
+    #[timed]
     fn build_payload_inner(
         &self,
         payload: Block,
@@ -791,6 +794,7 @@ impl Blockchain {
         Ok(context.into())
     }
 
+    #[timed]
     pub fn apply_withdrawals(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
         let binding = Vec::new();
         let withdrawals = context
@@ -805,6 +809,7 @@ impl Blockchain {
     // This function applies system level operations:
     // - Call beacon root contract, and obtain the new state root
     // - Call block hash process contract, and store parent block hash
+    #[timed]
     pub fn apply_system_operations(
         &self,
         context: &mut PayloadBuildContext,
@@ -814,6 +819,7 @@ impl Blockchain {
 
     /// Fetches suitable transactions from the mempool
     /// Returns two transaction queues, one for plain and one for blob txs
+    #[timed]
     pub fn fetch_mempool_transactions(
         &self,
         context: &mut PayloadBuildContext,
@@ -865,6 +871,7 @@ impl Blockchain {
 
     /// Fills the payload with transactions taken from the mempool
     /// Returns the block value
+    #[timed]
     pub fn fill_transactions(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
         let chain_config = context.chain_config();
         let max_blob_number_per_block = self.effective_max_blobs(context);
@@ -1059,6 +1066,7 @@ impl Blockchain {
     ///
     /// Caller is responsible for mempool bookkeeping (advancing or dropping
     /// the sender's queue) — this function only mutates the payload context.
+    #[timed]
     pub fn apply_tx_to_payload(
         &self,
         head: HeadTransaction,
@@ -1237,6 +1245,7 @@ impl Blockchain {
         Ok(receipt)
     }
 
+    #[timed]
     pub fn extract_requests(&self, context: &mut PayloadBuildContext) -> Result<(), EvmError> {
         if !context
             .chain_config()
@@ -1254,6 +1263,7 @@ impl Blockchain {
         Ok(())
     }
 
+    #[timed]
     pub fn finalize_payload(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
         // Take BAL from VM before getting state transitions (which clears state)
         let block_access_list = context.vm.take_bal();

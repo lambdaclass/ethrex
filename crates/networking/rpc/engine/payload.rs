@@ -12,9 +12,10 @@ use ethrex_common::{H256, U256};
 use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::sync::SyncMode;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
+use flux_profiler::timed;
 use serde_json::Value;
 use tokio::sync::oneshot;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::payload::{
@@ -815,6 +816,7 @@ fn build_payload_body_response(bodies: Vec<Option<BlockBody>>) -> Result<Value, 
 /// or Amsterdam blocks processed before BAL persistence was added) does it fall
 /// back to regenerating via re-execution, which requires the parent state trie
 /// and fails on snap-synced nodes that don't hold that historical state.
+#[timed]
 fn bal_for_block(
     context: &RpcApiContext,
     block: &Block,
@@ -963,6 +965,7 @@ impl RpcHandler for GetPayloadBodiesByRangeV2Request {
     }
 }
 
+#[timed]
 fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPayload, RpcErr> {
     let params = params
         .as_ref()
@@ -975,6 +978,7 @@ fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPaylo
 
 /// The Amsterdam payload fields (EIP-7928 block access list, EIP-7843 slot number) must be
 /// absent from every pre-Amsterdam payload version.
+#[timed]
 fn reject_amsterdam_payload_fields(payload: &ExecutionPayload) -> Result<(), RpcErr> {
     if payload.block_access_list.is_some() {
         return Err(RpcErr::WrongParam("block_access_list".to_string()));
@@ -986,6 +990,7 @@ fn reject_amsterdam_payload_fields(payload: &ExecutionPayload) -> Result<(), Rpc
     Ok(())
 }
 
+#[timed]
 fn validate_execution_payload_v1(payload: &ExecutionPayload) -> Result<(), RpcErr> {
     // Validate that only the required arguments are present
     if payload.withdrawals.is_some() {
@@ -1001,6 +1006,7 @@ fn validate_execution_payload_v1(payload: &ExecutionPayload) -> Result<(), RpcEr
     reject_amsterdam_payload_fields(payload)
 }
 
+#[timed]
 fn validate_execution_payload_v2(payload: &ExecutionPayload) -> Result<(), RpcErr> {
     // Validate that only the required arguments are present
     if payload.withdrawals.is_none() {
@@ -1017,6 +1023,7 @@ fn validate_execution_payload_v2(payload: &ExecutionPayload) -> Result<(), RpcEr
 }
 
 /// Fields shared by every payload version from Cancun onwards.
+#[timed]
 fn validate_execution_payload_cancun_fields(payload: &ExecutionPayload) -> Result<(), RpcErr> {
     if payload.withdrawals.is_none() {
         return Err(RpcErr::WrongParam("withdrawals".to_string()));
@@ -1032,6 +1039,7 @@ fn validate_execution_payload_cancun_fields(payload: &ExecutionPayload) -> Resul
 }
 
 /// Shared by `engine_newPayloadV3` and `engine_newPayloadV4`, both of which predate Amsterdam.
+#[timed]
 fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcErr> {
     // Validate that only the required arguments are present
     validate_execution_payload_cancun_fields(payload)?;
@@ -1040,6 +1048,7 @@ fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcEr
 }
 
 #[inline]
+#[timed]
 fn validate_execution_payload_v4(payload: &ExecutionPayload) -> Result<(), RpcErr> {
     // The Amsterdam payload shape: the Cancun fields plus a block access list. Reached only
     // through `validate_execution_payload_v5`, so the Amsterdam fields are required here
@@ -1055,6 +1064,7 @@ fn validate_execution_payload_v4(payload: &ExecutionPayload) -> Result<(), RpcEr
 }
 
 #[inline]
+#[timed]
 fn validate_execution_payload_v5(payload: &ExecutionPayload) -> Result<(), RpcErr> {
     validate_execution_payload_v4(payload)?;
 
@@ -1065,6 +1075,7 @@ fn validate_execution_payload_v5(payload: &ExecutionPayload) -> Result<(), RpcEr
     Ok(())
 }
 
+#[timed]
 fn validate_payload_v1_v2(block: &Block, context: &RpcApiContext) -> Result<(), RpcErr> {
     let chain_config = &context.storage.get_chain_config();
     if chain_config.is_cancun_activated(block.header.timestamp) {
@@ -1076,6 +1087,7 @@ fn validate_payload_v1_v2(block: &Block, context: &RpcApiContext) -> Result<(), 
 }
 
 // This function is used to make sure neither the current block nor its parent have been invalidated
+#[instrument(level = "trace", name = "Engine validate ancestors", skip_all)]
 async fn validate_ancestors(
     block: &Block,
     context: &RpcApiContext,
@@ -1242,6 +1254,7 @@ fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), 
     Ok(())
 }
 
+#[instrument(level = "trace", name = "Engine add block", skip_all)]
 pub async fn add_block(
     ctx: &RpcApiContext,
     block: Block,
@@ -1261,6 +1274,7 @@ pub async fn add_block(
         .map_err(|e| ChainError::Custom(format!("failed to receive block execution result: {e}")))?
 }
 
+#[instrument(level = "trace", name = "Engine execute payload", skip_all)]
 async fn try_execute_payload(
     block: Block,
     context: &RpcApiContext,
@@ -1542,6 +1556,7 @@ fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(
     Ok(())
 }
 
+#[instrument(level = "trace", name = "Engine get payload", skip_all)]
 async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<PayloadBundle, RpcErr> {
     info!(
         id = %format!("{:#018x}", payload_id),

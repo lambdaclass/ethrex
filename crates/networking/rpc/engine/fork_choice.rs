@@ -5,8 +5,9 @@ use ethrex_blockchain::{
 };
 use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
 use ethrex_p2p::sync::SyncMode;
+use flux_profiler::timed;
 use serde_json::Value;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, instrument, warn};
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
@@ -57,6 +58,7 @@ pub(crate) fn parse_custody_columns(value: &Value) -> Result<Option<u128>, RpcEr
 /// `RpcApiContext` (the context exposes a `PeerHandler` but not a channel to
 /// push availability advertisements). The p2p layer picks up the new set on its
 /// next announce/flush cycle via `mempool.get_custody_columns()`.
+#[timed]
 pub(crate) fn apply_custody_update(context: &RpcApiContext, custody_columns: Option<u128>) {
     let Some(new) = custody_columns else {
         // null / absent param — no custody change.
@@ -312,6 +314,7 @@ fn parse(
     Ok((forkchoice_state, payload_attributes))
 }
 
+#[instrument(level = "trace", name = "Engine fork choice", skip_all)]
 async fn handle_forkchoice(
     fork_choice_state: &ForkChoiceState,
     context: RpcApiContext,
@@ -531,6 +534,7 @@ async fn handle_forkchoice(
     }
 }
 
+#[timed]
 fn validate_attributes_v1(
     attributes: &PayloadAttributesV3,
     head_block: &BlockHeader,

@@ -54,6 +54,7 @@ pub mod tracing;
 pub mod vm;
 
 use ::tracing::{error, info, instrument, warn};
+use flux_profiler::timed;
 // Every `debug!` call site lives in the rayon warmer path, so the import is
 // unused in any configuration that compiles that path out.
 #[cfg(feature = "rayon")]
@@ -3519,6 +3520,7 @@ impl Blockchain {
     /// re-orged-out block are not re-admitted here, so their reservations are not
     /// reconstructed (ties to existing TODO #797). A subsequent re-submission
     /// re-runs full admission and re-reserves.
+    #[timed]
     pub fn revalidate_frame_txs_after_block(&self, block: &Block) -> Result<(), StoreError> {
         let pending = self.mempool.pending_frame_txs()?;
         // No-op when no frame tx is pending.

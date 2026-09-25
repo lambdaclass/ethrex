@@ -81,6 +81,7 @@ use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::SharedLocalNode;
 use ethrex_storage::Store;
+use flux_profiler::timed;
 use serde::Deserialize;
 use serde_json::Value;
 use spawned_concurrency::tasks::ActorRef;
@@ -100,7 +101,7 @@ use tokio::sync::{
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
-use tracing::{info, warn};
+use tracing::{info, instrument, warn};
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
 #[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
@@ -1003,12 +1004,19 @@ pub(crate) async fn handle_http_request(
     Ok(Json(res))
 }
 
+/// Decode the JSON-RPC body of an authenticated (engine) request.
+#[timed]
+fn parse_authrpc_body(body: &str) -> Result<RpcRequestWrapper, serde_json::Error> {
+    serde_json::from_str(body)
+}
+
+#[instrument(level = "trace", name = "Engine authrpc request", skip_all)]
 pub async fn handle_authrpc_request(
     State(service_context): State<RpcApiContext>,
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
     body: String,
 ) -> Result<Json<Value>, StatusCode> {
-    let wrapper: RpcRequestWrapper = match serde_json::from_str(&body) {
+    let wrapper = match parse_authrpc_body(&body) {
         Ok(w) => w,
         Err(_) => {
             return Ok(Json(null_id_error(RpcErr::InvalidRequest(

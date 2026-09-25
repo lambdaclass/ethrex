@@ -4,6 +4,7 @@ use axum_extra::{
     headers::{Authorization, authorization::Bearer},
 };
 use bytes::Bytes;
+use flux_profiler::timed;
 use jsonwebtoken::{Algorithm, DecodingKey, TokenData, Validation, decode};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -15,6 +16,7 @@ pub enum AuthenticationError {
     MissingAuthentication,
 }
 
+#[timed]
 pub fn authenticate(
     secret: &Bytes,
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
@@ -39,6 +41,7 @@ struct Claims {
 }
 
 /// Authenticates bearer jwt to check that authrpc calls are sent by the consensus layer
+#[timed]
 pub fn validate_jwt_authentication(token: &str, secret: &Bytes) -> Result<(), AuthenticationError> {
     let decoding_key = DecodingKey::from_secret(secret);
     let mut validation = Validation::new(Algorithm::HS256);
