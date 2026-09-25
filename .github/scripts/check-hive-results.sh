@@ -59,23 +59,7 @@ mkdir -p "${failed_logs_root}"
 
 # Tests excluded from the failure count (substring match against test case
 # name).
-#
-# The rpc-compat cases below are the ones whose recorded response contains at
-# least one log object. That corpus is pinned to execution-apis d08382ae, which
-# predates `blockTimestamp` on log objects, and rpc-compat compares byte-exactly,
-# so emitting the field (as every other client does) cannot match. The pin cannot
-# move: the field only reaches those fixtures in revisions that also carry a
-# pre-merge test chain, which ethrex does not support by design. See
-# docs/known_issues.md.
 KNOWN_EXCLUDED_TESTS=(
-  "eth_getLogs/contract-addr"
-  "eth_getLogs/no-topics"
-  "eth_getLogs/topic-exact-match"
-  "eth_getLogs/topic-wildcard"
-  "eth_getBlockReceipts/get-block-receipts-latest"
-  "eth_getTransactionReceipt/get-access-list"
-  "eth_getTransactionReceipt/get-blob-tx"
-  "eth_getTransactionReceipt/get-dynamic-fee"
 )
 
 # Build a jq filter that excludes the known-excluded tests.
