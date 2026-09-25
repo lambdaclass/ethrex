@@ -13,7 +13,7 @@ or
 cargo test --package ef_tests-state --test all --release -- <flags>
 ```
 
-All tests are first run on levm for the most recent forks (Merge,Shangai,Cancun and Prague), and then any failing tests are re-run on revm. If you want to run the tests with a different set up, you can see how on the following sections.
+All tests are first run on levm for the most recent forks (Merge,Shanghai,Cancun and Prague), and then any failing tests are re-run on revm. If you want to run the tests with a different set up, you can see how on the following sections.
 
 ## Setting up the tests if you are running flamegraphs
 
