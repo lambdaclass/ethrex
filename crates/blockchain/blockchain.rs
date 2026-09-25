@@ -2598,7 +2598,7 @@ impl Blockchain {
         block: Block,
         bal: Option<Arc<BlockAccessList>>,
     ) -> Result<(), ChainError> {
-        let (_, _, result) = self.add_block_pipeline_inner(block, bal, false, None)?;
+        let (_, _, result) = self.add_block_pipeline_inner(block, bal, false, None, None)?;
         result
     }
 
@@ -2616,7 +2616,7 @@ impl Blockchain {
         commit_depth: usize,
     ) -> Result<Option<BlockAccessList>, ChainError> {
         let (produced_bal, _, result) =
-            self.add_block_pipeline_inner(block, bal, false, Some(commit_depth))?;
+            self.add_block_pipeline_inner(block, bal, false, Some(commit_depth), None)?;
         result?;
         Ok(produced_bal)
     }
@@ -2632,19 +2632,41 @@ impl Blockchain {
         block: Block,
         bal: Option<Arc<BlockAccessList>>,
     ) -> Result<Option<BlockAccessList>, ChainError> {
-        let (produced_bal, _, result) = self.add_block_pipeline_inner(block, bal, false, None)?;
+        let (produced_bal, _, result) =
+            self.add_block_pipeline_inner(block, bal, false, None, None)?;
         result?;
         Ok(produced_bal)
     }
 
     /// Same as [`add_block_pipeline`] but returns the execution witness produced
     /// while importing the block.
+    /// Pipeline entry for `engine_newPayload`: the caller has already looked the
+    /// parent up, so it is passed in instead of read again. Returns the witness only
+    /// when one was requested.
+    pub fn add_block_pipeline_from_payload(
+        &self,
+        block: Block,
+        bal: Option<Arc<BlockAccessList>>,
+        parent_header: Option<BlockHeader>,
+        collect_witness: bool,
+    ) -> Result<Option<ExecutionWitness>, ChainError> {
+        let (_, witness, result) =
+            self.add_block_pipeline_inner(block, bal, collect_witness, None, parent_header)?;
+        result?;
+        if !collect_witness {
+            return Ok(None);
+        }
+        witness.map(Some).ok_or_else(|| {
+            ChainError::Custom("Block executed with witness collection but produced none".into())
+        })
+    }
+
     pub fn add_block_pipeline_with_witness(
         &self,
         block: Block,
         bal: Option<Arc<BlockAccessList>>,
     ) -> Result<ExecutionWitness, ChainError> {
-        let (_, witness, result) = self.add_block_pipeline_inner(block, bal, true, None)?;
+        let (_, witness, result) = self.add_block_pipeline_inner(block, bal, true, None, None)?;
         result?;
         witness.ok_or_else(|| {
             ChainError::WitnessGeneration(
@@ -2667,12 +2689,22 @@ impl Blockchain {
         bal: Option<Arc<BlockAccessList>>,
         force_witness: bool,
         commit_depth: Option<usize>,
+        parent_header: Option<BlockHeader>,
     ) -> Result<AddBlockPipelineInnerResult, ChainError> {
-        // Validate if it can be the new head and find the parent
-        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
-            // If the parent is not present, we store it as pending.
-            self.storage.add_pending_block(block)?;
-            return Err(ChainError::ParentNotFound);
+        // Validate if it can be the new head and find the parent. The engine path has
+        // already read the parent while deciding whether the block is executable, so
+        // it hands it over rather than having it read again here; anything it passes
+        // is verified against the block's own parent hash before being trusted.
+        let parent_header = match parent_header {
+            Some(header) if header.hash() == block.header.parent_hash => header,
+            _ => match find_parent_header(&block.header, &self.storage) {
+                Ok(header) => header,
+                Err(_) => {
+                    // If the parent is not present, we store it as pending.
+                    self.storage.add_pending_block(block)?;
+                    return Err(ChainError::ParentNotFound);
+                }
+            },
         };
 
         let should_store_witness = self.options.precompute_witnesses && self.is_synced();
@@ -2762,10 +2794,19 @@ impl Blockchain {
         // On the parallel Amsterdam validation path the BAL is supplied via the header
         // and `produced_bal` is None, so fall back to the validated incoming `bal`.
         // Pre-Amsterdam blocks have no BAL on either source, so nothing is stored.
-        if let Some(bal) = produced_bal.as_ref().or(input_bal.as_deref())
-            && let Err(err) = self.storage.store_block_access_list(block_hash, bal)
-        {
-            warn!("Failed to store block access list for block {block_hash}: {err}");
+        // Encode the BAL once: the same bytes are written to storage and sized for
+        // the metric below, instead of encoding (and re-sorting) it a second time
+        // just to measure it.
+        let mut _bal_size_bytes = 0usize;
+        if let Some(bal) = produced_bal.as_ref().or(input_bal.as_deref()) {
+            let encoded = bal.encode_to_vec();
+            _bal_size_bytes = encoded.len();
+            if let Err(err) = self
+                .storage
+                .store_block_access_list_encoded(block_hash, encoded)
+            {
+                warn!("Failed to store block access list for block {block_hash}: {err}");
+            }
         }
 
         let result = self.store_block_with_depth(block, account_updates_list, res, commit_depth);
@@ -2797,7 +2838,7 @@ impl Blockchain {
             if let Some(bal_ref) = produced_bal.as_ref().or(input_bal.as_deref()) {
                 let account_count = bal_ref.accounts().len() as u64;
                 let slot_count = bal_ref.item_count().saturating_sub(account_count);
-                let size_bytes = bal_ref.length() as f64;
+                let size_bytes = _bal_size_bytes as f64;
                 METRICS_BAL.blocks_total.inc();
                 METRICS_BAL.size_bytes.set(size_bytes);
                 METRICS_BAL.size_bytes_histogram.observe(size_bytes);

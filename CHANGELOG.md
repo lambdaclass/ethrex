@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-09-22
+
+- Stop redoing work around the block pipeline on the engine path: the block access list is RLP-encoded once (the size metric used to re-encode and re-sort it) and the parent header the newPayload handler already fetched is passed into the pipeline instead of read again; executor time outside the pipeline timer 0.26 → 0.06 ms per block on Plataberget [#7300](https://github.com/lambdaclass/ethrex/pull/7300)
+
 ### 2026-09-14
 
 - Stop copying the stateless input one byte at a time, hash the block access list once instead of twice, and route `validate_public_keys` through the injected `Crypto`: −8.81% guest instructions on mainnet block 25453112 [#7277](https://github.com/lambdaclass/ethrex/pull/7277)

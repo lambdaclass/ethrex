@@ -1247,10 +1247,11 @@ pub async fn add_block(
     block: Block,
     bal: Option<BlockAccessList>,
     make_witness: bool,
+    parent_header: Option<BlockHeader>,
 ) -> Result<Option<ExecutionWitness>, ChainError> {
     let (notify_send, notify_recv) = oneshot::channel();
     ctx.block_worker_channel
-        .send((notify_send, block, bal, make_witness))
+        .send((notify_send, block, bal, make_witness, parent_header))
         .map_err(|e| {
             ChainError::Custom(format!(
                 "failed to send block execution request to worker: {e}"
@@ -1347,7 +1348,8 @@ async fn try_execute_payload(
     // If the parent is itself unknown, fall through to `add_block` which
     // returns `ChainError::ParentNotFound` and stashes the block; handled
     // below as `SYNCING`, preserving existing behavior.
-    if let Some(parent_header) = storage.get_block_header_by_hash(block.header.parent_hash)? {
+    let parent_header = storage.get_block_header_by_hash(block.header.parent_hash)?;
+    if let Some(parent_header) = &parent_header {
         let parent_state = parent_header.state_root;
         let in_cache = storage.is_state_in_layer_cache(parent_state)?;
         let on_disk = !in_cache && storage.has_state_root(parent_state)?;
@@ -1371,7 +1373,7 @@ async fn try_execute_payload(
     // this happens once per newPayload and is negligible next to block execution.
     let bad_block_candidate = block.clone();
 
-    match add_block(context, block, bal, make_witness).await {
+    match add_block(context, block, bal, make_witness, parent_header).await {
         Err(ChainError::ParentNotFound) => {
             // Start sync
             syncer.sync_to_head(block_hash);
