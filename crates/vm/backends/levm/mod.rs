@@ -593,9 +593,9 @@ impl LEVM {
         {
             // Validate header BAL structural properties before execution.
             // This catches index-out-of-bounds early, before wasting execution time.
-            // Note: size cap validation is deferred until after transaction processing
-            // so that transaction-level errors (e.g. gas allowance exceeded) take
-            // priority, matching the reference implementation's validation order.
+            // Note: the EIP-7928 item-count cap is deferred until after transaction
+            // processing so that transaction-level errors (e.g. gas allowance exceeded)
+            // take priority, matching the reference implementation's validation order.
             validate_header_bal_indices(&bal, block.body.transactions.len())
                 .map_err(|e| EvmError::Custom(e.to_string()))?;
             // Each transaction that loads an account builds its code from the BAL, so an
