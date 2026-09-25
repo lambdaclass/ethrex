@@ -102,6 +102,10 @@ contract OnChainProposer is
     mapping(bytes32 commitHash => mapping(uint8 verifierId => bytes32 vk))
         public verificationKeys;
 
+    /// @notice Total privileged transactions in committed-but-not-yet-verified batches.
+    /// @dev Invariant: equals the sum of priv tx counts for batches in range (lastVerifiedBatch, lastCommittedBatch].
+    uint256 public committedPrivilegedTxCount;
+
     modifier onlyLeaderSequencer() {
         if (
             msg.sender !=
@@ -235,14 +239,19 @@ contract OnChainProposer is
         if (lastBlockHash == bytes32(0)) revert LastBlockHashIsZero();
 
         if (processedPrivilegedTransactionsRollingHash != bytes32(0)) {
+            uint16 privTxCount = _rollingHashCount(
+                processedPrivilegedTransactionsRollingHash
+            );
             bytes32 claimedProcessedTransactions = ICommonBridge(BRIDGE)
-                .getPendingTransactionsVersionedHash(
-                    uint16(bytes2(processedPrivilegedTransactionsRollingHash))
+                .getPendingTransactionsVersionedHashWithOffset(
+                    committedPrivilegedTxCount,
+                    privTxCount
                 );
             if (
                 claimedProcessedTransactions !=
                 processedPrivilegedTransactionsRollingHash
             ) revert InvalidPrivilegedTransactionLogs();
+            committedPrivilegedTxCount += privTxCount;
         }
         if (withdrawalsLogsMerkleRoot != bytes32(0)) {
             ICommonBridge(BRIDGE).publishWithdrawals(
@@ -298,17 +307,15 @@ contract OnChainProposer is
         if (batchCommitments[batchNumber].newStateRoot == bytes32(0))
             revert BatchNotCommitted();
 
-        // The first 2 bytes are the number of privileged transactions.
-        uint16 privileged_transaction_count = uint16(
-            bytes2(
-                batchCommitments[batchNumber]
-                    .processedPrivilegedTransactionsRollingHash
-            )
+        uint16 privileged_transaction_count = _rollingHashCount(
+            batchCommitments[batchNumber]
+                .processedPrivilegedTransactionsRollingHash
         );
         if (privileged_transaction_count > 0) {
             ICommonBridge(BRIDGE).removePendingTransactionHashes(
                 privileged_transaction_count
             );
+            committedPrivilegedTxCount -= privileged_transaction_count;
         }
 
         if (
@@ -426,17 +433,15 @@ contract OnChainProposer is
             if (batchCommitments[batchNumber].newStateRoot == bytes32(0))
                 revert BatchNotCommitted();
 
-            // The first 2 bytes are the number of privileged transactions.
-            uint16 privileged_transaction_count = uint16(
-                bytes2(
-                    batchCommitments[batchNumber]
-                        .processedPrivilegedTransactionsRollingHash
-                )
+            uint16 privileged_transaction_count = _rollingHashCount(
+                batchCommitments[batchNumber]
+                    .processedPrivilegedTransactionsRollingHash
             );
             if (privileged_transaction_count > 0) {
                 ICommonBridge(BRIDGE).removePendingTransactionHashes(
                     privileged_transaction_count
                 );
+                committedPrivilegedTxCount -= privileged_transaction_count;
             }
 
             // Reconstruct public inputs from commitments
@@ -521,6 +526,13 @@ contract OnChainProposer is
         if (!callResult) revert AlignedAggregatorCallFailed();
         bool proofVerified = abi.decode(response, (bool));
         if (!proofVerified) revert AlignedProofVerificationFailed();
+    }
+
+    /// @dev Extract the entry count encoded in the first 2 bytes of a rolling hash.
+    function _rollingHashCount(
+        bytes32 rollingHash
+    ) internal pure returns (uint16) {
+        return uint16(bytes2(rollingHash));
     }
 
     /// @notice Allow owner to upgrade the contract.
