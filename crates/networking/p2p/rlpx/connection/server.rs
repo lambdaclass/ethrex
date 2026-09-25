@@ -1839,6 +1839,19 @@ async fn handle_incoming_message(
                 let hashes =
                     announcement.get_transactions_to_request(&state.blockchain, peer_id)?;
 
+                // A peer advertising every column is a provider for each blob tx it
+                // announces, whether or not we fetch the body from it. This has to be
+                // recorded for every such announcer: the sampler waits for
+                // MIN_PROVIDERS_BEFORE_SAMPLING of them before pulling cells, and every
+                // announcer after the first names a hash that is already in flight or
+                // already pooled, so `hashes` comes back empty for it.
+                if state.blockchain.blob_sampling_enabled()
+                    && announcement.announces_blob_tx()
+                    && announcement.cell_mask == Some(u128::MAX)
+                {
+                    record_blob_providers(state, &announcement, peer_id);
+                }
+
                 if !hashes.is_empty() {
                     if !state.blockchain.blob_sampling_enabled() {
                         // Sampling disabled: always provider — request everything.
@@ -1908,51 +1921,6 @@ async fn handle_incoming_message(
                             ));
                         }
 
-                        // Sampler hashes: record the announcing peer as a provider
-                        // ONLY if it signaled full availability (all-ones mask);
-                        // a partially-available peer is not a provider observation.
-                        // if recording this provider hits the threshold and we already
-                        // have the tx body, retrigger cell-fetch immediately rather than
-                        // waiting for the tx-body response path.
-                        if announcement.cell_mask == Some(u128::MAX) {
-                            let mempool = &state.blockchain.mempool;
-                            for &hash in &sampler_hashes {
-                                let count = match mempool
-                                    .record_provider_announcement(hash, peer_id)
-                                {
-                                    Ok(n) => n,
-                                    Err(e) => {
-                                        warn!(error = %e, "record_provider_announcement failed");
-                                        continue;
-                                    }
-                                };
-                                // retrigger: threshold just reached and tx body already known.
-                                if count
-                                    == ethrex_blockchain::mempool::MIN_PROVIDERS_BEFORE_SAMPLING
-                                    && mempool.contains_tx(hash).unwrap_or(false)
-                                {
-                                    let custody = match mempool.get_custody_columns() {
-                                        Ok(c) => c,
-                                        Err(e) => {
-                                            warn!(error = %e, "get_custody_columns failed (D6b)");
-                                            continue;
-                                        }
-                                    };
-                                    // only add C_extra when this peer is a provider.
-                                    let mut target = custody;
-                                    if let Some(extra_col) =
-                                        pick_random_extra_column(custody, local_node_id, hash)
-                                    {
-                                        target |= 1u128 << extra_col;
-                                    }
-                                    // A provider holds every column, so the whole
-                                    // target can be requested from it.
-                                    if target != 0 {
-                                        state.pending_cell_requests.push((vec![hash], target));
-                                    }
-                                }
-                            }
-                        }
                         if !sampler_hashes.is_empty() {
                             // Request the tx body (no cells) from this peer.
                             let trimmed = announcement.filter_to(&sampler_hashes);
@@ -2557,6 +2525,61 @@ async fn handle_broadcast(
         }
     }
     Ok(())
+}
+
+/// EIP-8070: record `peer_id` as a provider of every blob tx in `announcement`, which
+/// the caller has checked advertises full availability.
+///
+/// When that brings a tx whose body is already pooled to the sampling threshold, the
+/// cell fetch starts here, from this peer: the body response that would otherwise
+/// trigger it came earlier, while there were still too few providers.
+fn record_blob_providers(
+    state: &mut Established,
+    announcement: &NewPooledTransactionHashes72,
+    peer_id: H256,
+) {
+    let mempool = &state.blockchain.mempool;
+    let blob_hashes = announcement
+        .transaction_types
+        .iter()
+        .zip(announcement.transaction_hashes.iter())
+        .filter(|&(&ty, _)| ty == 3)
+        .map(|(_, &hash)| hash);
+    let mut ready = Vec::new();
+    for hash in blob_hashes {
+        match mempool.record_provider_announcement(hash, peer_id) {
+            Ok(count)
+                if count == ethrex_blockchain::mempool::MIN_PROVIDERS_BEFORE_SAMPLING
+                    && mempool.contains_tx(hash).unwrap_or(false) =>
+            {
+                ready.push(hash);
+            }
+            Ok(_) => {}
+            Err(e) => warn!(error = %e, "record_provider_announcement failed"),
+        }
+    }
+    if ready.is_empty() {
+        return;
+    }
+    let custody = match mempool.get_custody_columns() {
+        Ok(custody) => custody,
+        Err(e) => {
+            warn!(error = %e, "get_custody_columns failed");
+            return;
+        }
+    };
+    let local_node_id = node_id(&public_key_from_signing_key(&state.signer));
+    for hash in ready {
+        // A provider holds every column, so C_extra and the whole target can be
+        // requested from it.
+        let mut target = custody;
+        if let Some(extra_col) = pick_random_extra_column(custody, local_node_id, hash) {
+            target |= 1u128 << extra_col;
+        }
+        if target != 0 {
+            state.pending_cell_requests.push((vec![hash], target));
+        }
+    }
 }
 
 async fn handle_block_range_update(state: &mut Established) -> Result<(), PeerConnectionError> {
