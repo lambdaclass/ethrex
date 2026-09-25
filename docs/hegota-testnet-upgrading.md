@@ -70,6 +70,30 @@ Whichever path, do one node at a time and wait for it to rejoin before starting 
 Two of three must stay up: the chain needs its validators attesting, and each consensus
 client is pinned to its own execution client.
 
+**The in-place path, as done on 2026-09-25 for the `bf42186da` hotfix.** The containers'
+entrypoint is the bare `ethrex` binary at `/usr/local/bin/ethrex`, which is enough: a running
+binary cannot be overwritten, but it can be replaced by rename, and `docker restart` keeps
+the writable layer (chain database, `chain-8141/node.key`) and every kurtosis label, so the
+enode and the published `bootnodes.txt` stay valid and no joiner resyncs. The
+`.dockerignore` keeps `.git` out of the build context, so pass the version in or the binary
+reports `unknown`:
+
+```bash
+# build on the host, in a checkout of the pushed commit
+docker build --build-arg GIT_BRANCH=<branch> --build-arg GIT_SHA=$(git rev-parse HEAD) -t ethrex:<tag> .
+docker create --name extract ethrex:<tag> && docker cp extract:/usr/local/bin/ethrex ~/ethrex-new && docker rm extract
+# per node, the faucet's node (el-1) last; record the enode first and check it after
+docker cp ~/ethrex-new <el>:/usr/local/bin/ethrex.new
+docker exec <el> mv /usr/local/bin/ethrex.new /usr/local/bin/ethrex
+docker restart <el>
+docker exec <el> ethrex --version          # the only trustworthy version read
+```
+
+Then wait until that node's `eth_blockNumber` passes its pre-restart value before the next
+one. Expect the restarted node's validator to miss the slot it was proposing during the
+restart; one missed slot per node is the cost. `docker ps` keeps reporting the old image
+tag, which is why the version is read from the binary.
+
 **A consensus-rule change is not an in-place upgrade.** If the new binary changes what
 counts as a valid block at a timestamp already passed, the upgraded node disagrees with
 its own history. Consensus changes need a re-genesis, or an activation timestamp far
