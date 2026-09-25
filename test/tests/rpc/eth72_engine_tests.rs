@@ -99,7 +99,7 @@ async fn blobs_v4_unknown_hash_returns_null_entry() {
 }
 
 #[tokio::test]
-async fn blobs_v4_sparse_mask_returns_length_128_matrix() {
+async fn blobs_v4_single_column_mask_returns_one_entry() {
     let ctx = amsterdam_context().await;
 
     // Build a synthetic bundle with 1 blob (version=1 for Osaka).
@@ -139,35 +139,24 @@ async fn blobs_v4_sparse_mask_returns_length_128_matrix() {
     assert!(!entry.is_null(), "known hash must return non-null entry");
     let blob_cells = entry["blobCells"].as_array().unwrap();
     let proofs = entry["proofs"].as_array().unwrap();
-    // Sparse length-128 matrices (EIP-8070 / execution-specs PR #2948): the value
-    // sits at requested+held column 2, with null at every other index, for both
-    // cells and proofs.
-    assert_eq!(blob_cells.len(), CELLS_PER_EXT_BLOB);
-    assert_eq!(proofs.len(), CELLS_PER_EXT_BLOB);
-    assert!(
-        !blob_cells[2].is_null(),
-        "requested column 2 cell must not be null"
-    );
-    assert!(
-        !proofs[2].is_null(),
-        "requested column 2 proof must not be null"
-    );
-    let hex = blob_cells[2].as_str().unwrap();
+    // Compact matrices (amsterdam.md getBlobsV4 §1): the single selected column
+    // gives a single entry per matrix, not a length-128 matrix holding the value
+    // at index 2 with null everywhere else.
+    assert_eq!(blob_cells.len(), 1);
+    assert_eq!(proofs.len(), 1);
+    let hex = blob_cells[0].as_str().unwrap();
     let decoded = hex::decode(&hex[2..]).unwrap();
     assert!(
         decoded.iter().all(|&b| b == 0xCC),
         "stored cell value preserved"
     );
-    for i in 0..CELLS_PER_EXT_BLOB {
-        if i == 2 {
-            continue;
-        }
-        assert!(
-            blob_cells[i].is_null(),
-            "non-requested cell {i} must be null"
-        );
-        assert!(proofs[i].is_null(), "non-requested proof {i} must be null");
-    }
+    // The bundle's proof for column `i` is `[i; 48]`, so the proof served at the
+    // compacted position must still be the one belonging to column 2.
+    let proof = hex::decode(&proofs[0].as_str().unwrap()[2..]).unwrap();
+    assert!(
+        proof.iter().all(|&b| b == 2),
+        "proof taken from requested column 2"
+    );
 }
 
 #[tokio::test]
@@ -395,9 +384,10 @@ async fn blobs_v4_parse_valid_bitarray() {
 }
 
 #[tokio::test]
-async fn blobs_v4_response_is_sparse_length_128() {
-    // EIP-8070 / execution-specs PR #2948: getBlobsV4 returns length-128
-    // matrices with the value at requested indices and null elsewhere.
+async fn blobs_v4_response_is_compact() {
+    // amsterdam.md getBlobsV4 §1: the matrices carry only the mask-selected
+    // columns, so two requested columns give two entries, not length-128
+    // matrices with null at the 126 unrequested indices.
     let context = context_with_chain_config(true).await;
     let (bundle, hashes) = sample_bundle(1);
     let tx_hash = H256::from_low_u64_be(1);
@@ -408,7 +398,8 @@ async fn blobs_v4_response_is_sparse_length_128() {
         .unwrap();
 
     // Request columns 0 and 5 only; store cells for both.
-    for col in [0usize, 5] {
+    let columns = [0usize, 5];
+    for col in columns {
         let cell_bytes = Box::new([0xCDu8; BYTES_PER_CELL]);
         context
             .blockchain
@@ -416,18 +407,17 @@ async fn blobs_v4_response_is_sparse_length_128() {
             .store_cells(tx_hash, 1, vec![(0, col, cell_bytes)])
             .unwrap();
     }
-    let mask: u128 = (1 << 0) | (1 << 5);
+    let mask: u128 = (1 << columns[0]) | (1 << columns[1]);
     let request = blobs_v4_request(vec![hashes[0]], mask);
     let result = request.handle(context.clone()).await.unwrap();
     let entry = &result.as_array().unwrap()[0];
     let blob_cells = entry["blobCells"].as_array().unwrap();
     let proofs = entry["proofs"].as_array().unwrap();
-    assert_eq!(blob_cells.len(), CELLS_PER_EXT_BLOB);
-    assert_eq!(proofs.len(), CELLS_PER_EXT_BLOB);
-    for i in 0..CELLS_PER_EXT_BLOB {
-        let requested = (mask >> i) & 1 == 1;
-        assert_eq!(!blob_cells[i].is_null(), requested, "cell {i}");
-        assert_eq!(!proofs[i].is_null(), requested, "proof {i}");
+    assert_eq!(blob_cells.len(), columns.len());
+    assert_eq!(proofs.len(), columns.len());
+    for (position, (cell, proof)) in blob_cells.iter().zip(proofs).enumerate() {
+        assert!(!cell.is_null(), "cell {position}");
+        assert!(!proof.is_null(), "proof {position}");
     }
 }
 

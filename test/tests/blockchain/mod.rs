@@ -1,5 +1,6 @@
 mod bal_content_validation_tests;
 mod bal_hash_parallel_skip;
+mod bal_system_phase_under_declaration;
 mod bal_validate_tx_execution_tests;
 mod batch_tests;
 mod canonical_commit_gate_tests;
@@ -14,6 +15,8 @@ mod logs_bloom_tests;
 mod mempool_cells_tests;
 mod mempool_tests;
 mod merkle_pool_tests;
+mod parallel_admission_bounds_tests;
+mod parallel_gas_early_stop_tests;
 mod payload_build_loop_tests;
 mod payload_tests;
 mod sampling_tests;
