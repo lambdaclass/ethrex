@@ -650,6 +650,8 @@ pub enum InvalidBlockHeaderError {
     GasUsedGreaterThanGasLimit,
     #[error("Gas limit changed more than allowed from the parent")]
     GasLimitTooFarFromParent,
+    #[error("Base fee per gas is not present")]
+    BaseFeePerGasNotPresent,
     #[error("Base fee per gas is incorrect")]
     BaseFeePerGasIncorrect,
     #[error("Timestamp is not greater than parent timestamp")]
@@ -714,6 +716,14 @@ pub fn validate_block_header(
 ) -> Result<(), InvalidBlockHeaderError> {
     if header.gas_used > header.gas_limit {
         return Err(InvalidBlockHeaderError::GasUsedGreaterThanGasLimit);
+    }
+
+    // `base_fee_per_gas` is RLP-optional (pre-London headers lack it) but
+    // mandatory for every fork ethrex validates (Merge+). Enforce presence
+    // explicitly instead of silently defaulting to INITIAL_BASE_FEE below —
+    // every other fork-gated header field already has a presence check.
+    if header.base_fee_per_gas.is_none() {
+        return Err(InvalidBlockHeaderError::BaseFeePerGasNotPresent);
     }
 
     let expected_base_fee_per_gas = if let Some(base_fee) = calculate_base_fee_per_gas(
@@ -1092,6 +1102,45 @@ mod test {
         assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok());
         assert_eq!(parent_block.encode_to_vec().len(), parent_block.length());
         assert_eq!(block.encode_to_vec().len(), block.length());
+    }
+
+    #[test]
+    fn test_validate_block_header_requires_base_fee_present() {
+        // Parent gas used == target, so the expected child base fee equals the
+        // parent's (no adjustment), keeping the fixture minimal.
+        let parent = BlockHeader {
+            ommers_hash: *DEFAULT_OMMERS_HASH,
+            number: 0,
+            gas_limit: 30_000_000,
+            gas_used: 15_000_000,
+            timestamp: 1000,
+            base_fee_per_gas: Some(INITIAL_BASE_FEE),
+            ..Default::default()
+        };
+        let block = BlockHeader {
+            parent_hash: parent.hash(),
+            ommers_hash: *DEFAULT_OMMERS_HASH,
+            number: 1,
+            gas_limit: 30_000_000,
+            gas_used: 0,
+            timestamp: 1001,
+            base_fee_per_gas: Some(INITIAL_BASE_FEE),
+            ..Default::default()
+        };
+        // Sanity: with base fee present, the header validates.
+        assert!(validate_block_header(&block, &parent, ELASTICITY_MULTIPLIER).is_ok());
+
+        // base_fee_per_gas is RLP-optional but mandatory for Merge+ headers: a
+        // header that omits it must be rejected, not defaulted to
+        // INITIAL_BASE_FEE.
+        let block_without_base_fee = BlockHeader {
+            base_fee_per_gas: None,
+            ..block
+        };
+        assert!(matches!(
+            validate_block_header(&block_without_base_fee, &parent, ELASTICITY_MULTIPLIER),
+            Err(InvalidBlockHeaderError::BaseFeePerGasNotPresent)
+        ));
     }
 
     #[test]
