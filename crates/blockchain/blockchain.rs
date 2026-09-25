@@ -855,6 +855,7 @@ impl Blockchain {
     /// Generates Block Access List by re-executing a block.
     /// Returns None for pre-Amsterdam blocks.
     /// This is used by engine_getPayloadBodiesByHashV2 and engine_getPayloadBodiesByRangeV2.
+    #[timed]
     pub fn generate_bal_for_block(
         &self,
         block: &Block,
@@ -2614,6 +2615,7 @@ impl Blockchain {
     ///   `head - DB_COMMIT_THRESHOLD` safe-commit root so non-canonical state is never persisted.
     /// - `Some(depth)`: single-canonical-chain execution (batch import, full sync, startup
     ///   state regeneration); commit every layer deeper than `depth`, bounding in-memory layers.
+    #[timed]
     pub fn store_block_with_depth(
         &self,
         block: Block,
@@ -2746,6 +2748,7 @@ impl Blockchain {
     ///   even when storage fails, so callers like `add_block_pipeline_bal` can
     ///   retrieve it. Note: if *execution* itself fails (outer `Result`), the
     ///   BAL is not available.
+    #[timed]
     fn add_block_pipeline_inner(
         &self,
         block: Block,
@@ -4361,6 +4364,7 @@ impl Blockchain {
 }
 
 /// Open a state trie or storage trie depending on whether `prefix` is given.
+#[timed]
 fn load_trie(
     storage: &Store,
     parent_state_root: H256,
@@ -4512,6 +4516,7 @@ fn flush_storage_buffer(
     Ok(())
 }
 
+#[timed]
 fn handle_subtrie(
     storage: Store,
     rx: cb::Receiver<WorkerRequest>,
@@ -4959,6 +4964,7 @@ fn attach_stateless_validator(evm: &mut Evm) {
 }
 
 /// Performs post-execution checks
+#[timed]
 pub fn validate_state_root(
     block_header: &BlockHeader,
     new_state_root: H256,
@@ -5034,6 +5040,7 @@ fn branchify(node: Node) -> Box<BranchNode> {
     }
 }
 
+#[timed]
 fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieNode>), TrieError> {
     let root = branchify(
         trie.root_node()?

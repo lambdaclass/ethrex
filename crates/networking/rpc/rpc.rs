@@ -470,6 +470,46 @@ pub const FILTER_DURATION: Duration = {
 /// # Panics
 ///
 /// Panics if the worker thread cannot be spawned.
+/// Import one queued block on the executor thread and answer its caller.
+///
+/// Its own function so the profiler frames the whole hand-off target: the
+/// interval between the RPC side sending the block and this frame opening is
+/// the queue wait.
+#[timed]
+fn handle_block_worker_message(
+    blockchain: &Blockchain,
+    prewarmer: Option<&ethrex_blockchain::prewarm::PrewarmHandle>,
+    block_receiver: &tokio::sync::mpsc::UnboundedReceiver<BlockWorkerMessage>,
+    (notify, block, bal, make_witness): BlockWorkerMessage,
+) {
+    // Kill any in-flight warming before touching the executor's resources.
+    if let Some(handle) = prewarmer {
+        handle.cancel_current();
+    }
+    let imported_header = prewarmer.map(|_| block.header.clone());
+    let result = (|| {
+        let bal = bal.map(Arc::new);
+        if make_witness {
+            let witness = blockchain.add_block_pipeline_with_witness(block, bal)?;
+            Ok(Some(witness))
+        } else {
+            blockchain.add_block_pipeline(block, bal)?;
+            Ok(None)
+        }
+    })();
+    // One pass per cleanly imported block, only when synced and idle (no
+    // queued blocks): warm the child of the new head.
+    if let (Some(handle), Some(header), true) = (prewarmer, imported_header, result.is_ok())
+        && blockchain.is_synced()
+        && block_receiver.is_empty()
+    {
+        handle.trigger(header);
+    }
+    let _ = notify
+        .send(result)
+        .inspect_err(|_| tracing::error!("failed to notify caller"));
+}
+
 pub fn start_block_executor(
     blockchain: Arc<Blockchain>,
 ) -> (
@@ -481,35 +521,13 @@ pub fn start_block_executor(
     let executor = std::thread::Builder::new()
         .name("block_executor".to_string())
         .spawn(move || {
-            while let Some((notify, block, bal, make_witness)) = block_receiver.blocking_recv() {
-                // Kill any in-flight warming before touching the executor's
-                // resources.
-                if let Some(handle) = &prewarmer {
-                    handle.cancel_current();
-                }
-                let imported_header = prewarmer.as_ref().map(|_| block.header.clone());
-                let result = (|| {
-                    let bal = bal.map(Arc::new);
-                    if make_witness {
-                        let witness = blockchain.add_block_pipeline_with_witness(block, bal)?;
-                        Ok(Some(witness))
-                    } else {
-                        blockchain.add_block_pipeline(block, bal)?;
-                        Ok(None)
-                    }
-                })();
-                // One pass per cleanly imported block, only when synced and
-                // idle (no queued blocks): warm the child of the new head.
-                if let (Some(handle), Some(header), true) =
-                    (&prewarmer, imported_header, result.is_ok())
-                    && blockchain.is_synced()
-                    && block_receiver.is_empty()
-                {
-                    handle.trigger(header);
-                }
-                let _ = notify
-                    .send(result)
-                    .inspect_err(|_| tracing::error!("failed to notify caller"));
+            while let Some(message) = block_receiver.blocking_recv() {
+                handle_block_worker_message(
+                    &blockchain,
+                    prewarmer.as_ref(),
+                    &block_receiver,
+                    message,
+                );
             }
         })
         .expect("Falied to spawn block_executor thread");

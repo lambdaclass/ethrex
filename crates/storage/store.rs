@@ -41,6 +41,7 @@ use ethrex_rlp::{
 };
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
 use ethrex_trie::{Node, NodeRLP};
+use flux_profiler::timed;
 use lru::LruCache;
 use rayon::prelude::*;
 use rustc_hash::FxBuildHasher;
@@ -2088,6 +2089,7 @@ impl Store {
     }
 
     /// Helper method for batch writes
+    #[timed]
     pub fn write_batch(
         &self,
         table: &'static str,
@@ -2182,6 +2184,7 @@ impl Store {
     /// Single path for all updates: hand the whole unit (block data + one aggregate trie
     /// diff) to the SINGLE persist worker and wait for its ack. `commit_depth` selects the
     /// commit gate; `wait_for_flush` selects when the worker acks (see [`UpdateBatch`]).
+    #[timed]
     fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let (parent_state_root, last_state_root, last_block_number, last_block_hash) =
             self.batch_state_roots(&update_batch)?;
@@ -4493,6 +4496,7 @@ impl Store {
     /// `rx.recv()`. This is the synchronous core of [`wait_for_persistence_idle`];
     /// we inline it here because callers are not async. The caller's subsequent
     /// `trie_cache.write()` serialising any future RCU makes the swap safe.
+    #[timed]
     fn rendezvous_persist_worker(&self, caller: &str) -> Result<(), StoreError> {
         let (ack_tx, ack_rx) = sync_channel::<Result<(), StoreError>>(1);
         self.persist_tx
@@ -4949,6 +4953,7 @@ enum PersistMessage {
 /// Shared by [`Store::add_blocks`] (sync import) and [`flush_block_data`]
 /// (deferred flush) so the on-disk encoding stays in lockstep. Receipts and codes
 /// are written by callers that need them (only `flush_block_data` does).
+#[timed]
 fn write_block_data(
     tx: &mut dyn StorageWriteBatch,
     number: BlockNumber,
@@ -4980,6 +4985,7 @@ fn write_block_data(
 
 /// Write all unflushed blocks to disk in one tx, advance `flushed_upto`, then
 /// evict. Eviction is gap-safe: blocks stay buffered until the commit succeeds.
+#[timed]
 fn flush_block_data(
     backend: &dyn StorageBackend,
     buffer: &Arc<RwLock<Arc<BlockDataBuffer>>>,
@@ -5147,6 +5153,7 @@ fn apply_trie_phase1(
 /// the full-sync and import tails, and it would leave the journal discontiguous with the
 /// on-disk root: surviving entries below a non-journaled commit describe pre-images
 /// relative to a root the disk has already moved past.
+#[timed]
 fn commit_trie_if_due(
     backend: &dyn StorageBackend,
     trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
@@ -5180,6 +5187,7 @@ fn commit_trie_if_due(
 /// Reused by both the per-block path ([`commit_trie_if_due`]) and the forkchoice-driven
 /// flush ([`PersistMessage::Commit`]): without the latter, an execute-all-then-one-forkchoice
 /// flow (block import) would never persist, because the commit step only runs while blocks execute.
+#[timed]
 fn commit_to_disk(
     backend: &dyn StorageBackend,
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
