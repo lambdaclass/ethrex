@@ -1,4 +1,4 @@
-//! Payload witness response from execution-apis #885 at e473f58911e49cc619fb4102d3973e4e049322f0.
+//! Payload witness response from execution-apis #885 at 40924d49a7edecebe4ebc430042d1d6f95a86b8a.
 //! These bounded REST lists deliberately differ from stateless guest containers.
 
 use ethrex_common::H256;
@@ -6,28 +6,28 @@ use ethrex_common::types::{BlockHeader, block_execution_witness::RpcExecutionWit
 use ethrex_rlp::decode::RLPDecode;
 use libssz::SszEncode;
 use libssz_derive::{SszDecode, SszEncode};
-use libssz_types::{SszList, SszVector};
+use libssz_types::SszList;
 
-use super::common::{MAX_TRANSACTIONS_PER_PAYLOAD, PayloadStatus};
+use super::common::PayloadStatus;
 use crate::engine_rest::error::ProblemJson;
 
 pub const MAX_WITNESS_ITEMS: usize = 1 << 20;
-pub const MAX_WITNESS_ITEM_BYTES: usize = 1 << 20;
-pub type WitnessItems = SszList<SszList<u8, MAX_WITNESS_ITEM_BYTES>, MAX_WITNESS_ITEMS>;
-pub type PublicKeys = SszList<SszVector<u8, 65>, MAX_TRANSACTIONS_PER_PAYLOAD>;
+pub const MAX_BYTES_PER_WITNESS_NODE: usize = 1 << 10;
+pub const MAX_BYTES_PER_CODE: usize = 1 << 16;
+pub const MAX_BYTES_PER_HEADER: usize = 1 << 10;
+pub const MAX_WITNESS_HEADERS: usize = 1 << 8;
 
 #[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode)]
 pub struct ExecutionWitness {
-    pub state: WitnessItems,
-    pub codes: WitnessItems,
-    pub headers: WitnessItems,
+    pub state: SszList<SszList<u8, MAX_BYTES_PER_WITNESS_NODE>, MAX_WITNESS_ITEMS>,
+    pub codes: SszList<SszList<u8, MAX_BYTES_PER_CODE>, MAX_WITNESS_ITEMS>,
+    pub headers: SszList<SszList<u8, MAX_BYTES_PER_HEADER>, MAX_WITNESS_HEADERS>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode)]
 pub struct PayloadStatusWithWitness {
     pub payload_status: PayloadStatus,
     pub witness: SszList<ExecutionWitness, 1>,
-    pub public_keys: PublicKeys,
 }
 
 impl ExecutionWitness {
@@ -37,7 +37,7 @@ impl ExecutionWitness {
         witness: RpcExecutionWitness,
         parent: H256,
     ) -> Result<Self, ProblemJson> {
-        if !(1..=256).contains(&witness.headers.len()) {
+        if !(1..=MAX_WITNESS_HEADERS).contains(&witness.headers.len()) {
             return Err(ProblemJson::internal(
                 "witness requires 1 to 256 ancestor headers",
             ));
@@ -61,22 +61,24 @@ impl ExecutionWitness {
                 "witness does not end at the payload parent",
             ));
         }
-        fn items(values: Vec<bytes::Bytes>) -> Result<WitnessItems, ProblemJson> {
-            if values.len() > MAX_WITNESS_ITEMS {
+        fn items<const MAX_BYTES: usize, const MAX_ITEMS: usize>(
+            values: Vec<bytes::Bytes>,
+        ) -> Result<SszList<SszList<u8, MAX_BYTES>, MAX_ITEMS>, ProblemJson> {
+            if values.len() > MAX_ITEMS {
                 return Err(ProblemJson::internal(
-                    "witness field exceeds MAX_WITNESS_ITEMS",
+                    "witness field exceeds item count limit",
                 ));
             }
             values
                 .into_iter()
                 .map(|bytes| {
                     bytes.to_vec().try_into().map_err(|_| {
-                        ProblemJson::internal("witness item exceeds MAX_WITNESS_ITEM_BYTES")
+                        ProblemJson::internal("witness item exceeds byte length limit")
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?
                 .try_into()
-                .map_err(|_| ProblemJson::internal("witness field exceeds MAX_WITNESS_ITEMS"))
+                .map_err(|_| ProblemJson::internal("witness field exceeds item count limit"))
         }
         Ok(Self {
             state: items(witness.state)?,
@@ -117,70 +119,107 @@ mod tests {
                     .try_into()
                     .unwrap(),
             })),
-            public_keys: vec![
-                vec![4; 65].try_into().unwrap(),
-                vec![5; 65].try_into().unwrap(),
-            ]
-            .try_into()
-            .unwrap(),
         };
-        // Outer offsets: 12, 12+41, 12+41+4+23. Optional witness has its own offset.
-        let mut expected = vec![
-            12, 0, 0, 0, 53, 0, 0, 0, 80, 0, 0, 0, 0, 9, 0, 0, 0, 41, 0, 0, 0,
-        ];
+        // Outer offsets: 8, 8+41. Optional witness has its own offset.
+        let mut expected = vec![8, 0, 0, 0, 49, 0, 0, 0, 0, 9, 0, 0, 0, 41, 0, 0, 0];
         expected.extend([0xaa; 32]);
         expected.extend([
             4, 0, 0, 0, 12, 0, 0, 0, 17, 0, 0, 0, 17, 0, 0, 0, 4, 0, 0, 0, 0xc0, 4, 0, 0, 0, 1, 2,
         ]);
-        expected.extend([4; 65]);
-        expected.extend([5; 65]);
         assert_eq!(response.to_ssz(), expected);
         assert_eq!(
             PayloadStatusWithWitness::from_ssz_bytes(&expected).unwrap(),
             response
         );
-        for index in [0, 4, 8, 53] {
+        for index in [0, 4, 9, 13, 49] {
             let mut malformed = expected.clone();
             malformed[index] = 255;
             assert!(PayloadStatusWithWitness::from_ssz_bytes(&malformed).is_err());
         }
-        expected.pop(); // fixed-size keys cannot be truncated
-        assert!(PayloadStatusWithWitness::from_ssz_bytes(&expected).is_err());
     }
 
     #[test]
-    fn absent_witness_and_keys_have_no_selector_or_padding() {
+    fn absent_witness_has_no_selector_or_padding() {
         for status in [1, 2, 3] {
             let response = PayloadStatusWithWitness {
                 payload_status: PayloadStatus::new(status, None, None),
                 witness: Default::default(),
-                public_keys: Default::default(),
             };
-            let expected = vec![
-                12, 0, 0, 0, 21, 0, 0, 0, 21, 0, 0, 0, status, 9, 0, 0, 0, 9, 0, 0, 0,
-            ];
+            let expected = vec![8, 0, 0, 0, 17, 0, 0, 0, status, 9, 0, 0, 0, 9, 0, 0, 0];
             assert_eq!(response.to_ssz(), expected);
+            assert_eq!(
+                PayloadStatusWithWitness::from_ssz_bytes(&expected).unwrap(),
+                response
+            );
         }
     }
 
     #[test]
     fn witness_bounds_reject_oversized_items_and_lists() {
-        assert!(
-            SszList::<u8, MAX_WITNESS_ITEM_BYTES>::from_ssz_bytes(&vec![
-                0;
-                MAX_WITNESS_ITEM_BYTES + 1
-            ])
-            .is_err()
-        );
-        assert!(WitnessItems::try_from(vec![SszList::default(); MAX_WITNESS_ITEMS + 1]).is_err());
-        assert!(
-            PublicKeys::from_ssz_bytes(&vec![0; 65 * (MAX_TRANSACTIONS_PER_PAYLOAD + 1)]).is_err()
-        );
-        let mut rpc = RpcExecutionWitness::default();
+        // Construct the wire bytes independently, including an over-limit field
+        // that cannot be constructed through SszList's checked API.
+        let encode = |state: Vec<Vec<u8>>, codes: Vec<Vec<u8>>, headers: Vec<Vec<u8>>| {
+            let fields = [state.to_ssz(), codes.to_ssz(), headers.to_ssz()];
+            let mut bytes = Vec::new();
+            let mut offset = 12u32;
+            for field in &fields {
+                bytes.extend(offset.to_le_bytes());
+                offset += field.len() as u32;
+            }
+            for field in fields {
+                bytes.extend(field);
+            }
+            bytes
+        };
+        for extra in [0, 1] {
+            let state = vec![vec![0; MAX_BYTES_PER_WITNESS_NODE + extra]];
+            let codes = vec![vec![0; MAX_BYTES_PER_CODE + extra]];
+            let headers = vec![vec![0; MAX_BYTES_PER_HEADER + extra]];
+            for bytes in [
+                encode(state, vec![], vec![]),
+                encode(vec![], codes, vec![]),
+                encode(vec![], vec![], headers),
+                encode(vec![vec![]; MAX_WITNESS_ITEMS + extra], vec![], vec![]),
+                encode(vec![], vec![vec![]; MAX_WITNESS_ITEMS + extra], vec![]),
+                encode(vec![], vec![], vec![vec![]; MAX_WITNESS_HEADERS + extra]),
+            ] {
+                assert_eq!(ExecutionWitness::from_ssz_bytes(&bytes).is_ok(), extra == 0);
+            }
+        }
+    }
+
+    #[test]
+    fn rpc_conversion_enforces_field_byte_limits() {
         let parent = BlockHeader::default();
-        rpc.headers.push(parent.encode_to_vec().into());
-        rpc.codes.push(vec![0; MAX_WITNESS_ITEM_BYTES + 1].into());
-        assert!(ExecutionWitness::from_rpc(rpc, parent.hash()).is_err());
+        for extra in [0, 1] {
+            for (state, codes) in [
+                (
+                    vec![vec![0; MAX_BYTES_PER_WITNESS_NODE + extra].into()],
+                    vec![],
+                ),
+                (vec![], vec![vec![0; MAX_BYTES_PER_CODE + extra].into()]),
+            ] {
+                let rpc = RpcExecutionWitness {
+                    state,
+                    codes,
+                    headers: vec![parent.encode_to_vec().into()],
+                    ..Default::default()
+                };
+                assert_eq!(
+                    ExecutionWitness::from_rpc(rpc, parent.hash()).is_ok(),
+                    extra == 0
+                );
+            }
+        }
+        let oversized_parent = BlockHeader {
+            extra_data: vec![0; MAX_BYTES_PER_HEADER].into(),
+            ..Default::default()
+        };
+        let rpc = RpcExecutionWitness {
+            headers: vec![oversized_parent.encode_to_vec().into()],
+            ..Default::default()
+        };
+        assert!(ExecutionWitness::from_rpc(rpc, oversized_parent.hash()).is_err());
     }
 
     #[test]

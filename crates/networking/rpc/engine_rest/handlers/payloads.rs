@@ -32,7 +32,7 @@ use crate::engine_rest::types::common::{
     Bytes20, PayloadId, PayloadStatus as SszPayloadStatus, PayloadStatusCode,
 };
 use crate::engine_rest::types::conversions::{DecodedNewPayload, EngineCall, IntoEngineCall};
-use crate::engine_rest::types::witness::{ExecutionWitness, PayloadStatusWithWitness, PublicKeys};
+use crate::engine_rest::types::witness::{ExecutionWitness, PayloadStatusWithWitness};
 use crate::engine_rest::types::{amsterdam, cancun, paris, prague, shanghai};
 use crate::rpc::RpcApiContext;
 use crate::types::payload::PayloadValidationStatus;
@@ -197,13 +197,6 @@ where
     //    binds the CL and EL to the same transactions, so a mismatch still
     //    surfaces as INVALID. The JSON-RPC path keeps the explicit cross-check
     //    (it still receives the param); only this transport drops it.
-    // Keep transactions only for the witness response; address caches cannot
-    // reconstruct public keys. Recovery happens after successful validation.
-    let transactions = if make_witness {
-        block.body.transactions.clone()
-    } else {
-        Vec::new()
-    };
     let parent_hash = block.header.parent_hash;
     let result = match call {
         EngineCall::V1V2 => {
@@ -257,39 +250,18 @@ where
         return SszBody(ssz_status).into_response();
     }
     let response = (|| -> Result<PayloadStatusWithWitness, ProblemJson> {
-        let (witness, public_keys) = if internal_status.status == PayloadValidationStatus::Valid {
+        let witness = if internal_status.status == PayloadValidationStatus::Valid {
             let witness = submission
                 .witness
                 .ok_or_else(|| ProblemJson::internal("valid payload has no witness"))?;
             let witness = ExecutionWitness::from_rpc(witness, parent_hash)?;
-            let keys = transactions
-                .iter()
-                .map(|tx| {
-                    let key = tx
-                        .public_key(&ethrex_crypto::NativeCrypto)
-                        .map_err(|e| {
-                            ProblemJson::internal(&format!("public key recovery failed: {e}"))
-                        })?
-                        .ok_or_else(|| {
-                            ProblemJson::internal(
-                                "valid payload transaction has no sender public key",
-                            )
-                        })?;
-                    SszVector::<u8, 65>::try_from(key.to_vec())
-                        .map_err(|_| ProblemJson::internal("invalid public key length"))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let keys: PublicKeys = keys
-                .try_into()
-                .map_err(|_| ProblemJson::internal("too many transaction public keys"))?;
-            (to_optional(Some(witness)), keys)
+            to_optional(Some(witness))
         } else {
-            (to_optional(None), PublicKeys::default())
+            to_optional(None)
         };
         let response = PayloadStatusWithWitness {
             payload_status: ssz_status,
             witness,
-            public_keys,
         };
         response.check_encoded_length()?;
         Ok(response)
