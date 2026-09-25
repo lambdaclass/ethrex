@@ -59,6 +59,7 @@ use ethrex_levm::memory::Memory;
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::utils::get_base_fee_per_blob_gas;
+use ethrex_levm::utils::intrinsic_gas_floor;
 use ethrex_levm::validation_observer::FrameSimViolation;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
@@ -74,7 +75,7 @@ use std::cmp::min;
 use std::sync::Arc;
 #[cfg(feature = "rayon")]
 use std::sync::atomic::AtomicBool;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
 /// EIP-7928 `block_access_index` of the pre-block system calls.
@@ -147,6 +148,96 @@ fn check_gas_limit(
         )));
     }
     Ok(())
+}
+
+/// Upper bound on the gas a block can legitimately spend across all its transactions.
+///
+/// Per transaction `gas_used = regular + state`, so
+/// `sum(gas_used) = sum(regular) + sum(state) <= 2 * max(sum(regular), sum(state))`.
+/// That max is exactly the block's reported `gas_used`, which a valid block keeps
+/// within its gas limit, so no valid block spends more than twice its limit in total.
+pub fn block_work_budget(block_gas_limit: u64) -> u64 {
+    block_gas_limit.saturating_mul(2)
+}
+
+/// Reject a block whose transactions cannot all be admitted, before executing any of
+/// them.
+///
+/// Ordered gas admission ([`check_2d_gas_allowance`]) needs each transaction's real
+/// gas, so on the parallel path it can only run once every transaction has executed
+/// and its report is held in memory. This bound needs none of that: every transaction
+/// spends at least its EIP-7623/7976 floor, so a block whose floors already exceed
+/// [`block_work_budget`] cannot pass admission whatever it executes to.
+///
+/// Sound in the accepting direction: for any block that could be valid,
+/// `sum(floor) <= sum(gas_used) <= block_work_budget`, so this never rejects a block
+/// ordered admission would have accepted.
+pub fn check_minimum_block_work<'a>(
+    txs_with_sender: impl IntoIterator<Item = (&'a Transaction, Address)>,
+    fork: Fork,
+    block_gas_limit: u64,
+) -> Result<(), EvmError> {
+    let budget = block_work_budget(block_gas_limit);
+    let mut floor_total = 0_u64;
+    for (tx, sender) in txs_with_sender {
+        // The floor is computed from the transaction's own fields, so failing to
+        // compute it (an overflow) makes the block invalid rather than a transient
+        // error to retry.
+        let floor = intrinsic_gas_floor(tx, sender, fork)
+            .map_err(|e| EvmError::Transaction(format!("intrinsic gas floor: {e}")))?;
+        floor_total = floor_total.saturating_add(floor);
+        if floor_total > budget {
+            return Err(EvmError::Transaction(format!(
+                "Gas allowance exceeded: minimum gas of the block's transactions \
+                 {floor_total} exceeds the block work budget {budget} \
+                 (block_gas_limit={block_gas_limit})"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Gas spent so far by the transactions parallel execution has finished, per EIP-8037
+/// dimension, so it can stop once the block is over its gas limit.
+///
+/// Ordered admission ([`check_2d_gas_allowance`]) only runs after every transaction
+/// has executed, so without this a block that is over its gas limit still costs its
+/// full execution, which can be many times the work of any valid block.
+///
+/// Sound in the accepting direction: a valid block keeps the sum of each dimension
+/// within its gas limit, and the transactions finished so far are a subset of the
+/// block, so their sums cannot exceed the limit either.
+#[derive(Default)]
+pub struct CompletedGas {
+    regular: AtomicU64,
+    state: AtomicU64,
+}
+
+impl CompletedGas {
+    /// Rejects once the finished transactions exceed the gas limit in either dimension.
+    pub fn check(&self, block_gas_limit: u64) -> Result<(), EvmError> {
+        let regular = self.regular.load(Ordering::Relaxed);
+        let state = self.state.load(Ordering::Relaxed);
+        if regular > block_gas_limit || state > block_gas_limit {
+            return Err(EvmError::Transaction(format!(
+                "Gas allowance exceeded: transactions completed during parallel execution \
+                 used regular={regular} state={state}, over block_gas_limit={block_gas_limit}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Adds one finished transaction's gas, then applies [`Self::check`].
+    pub fn record(
+        &self,
+        regular_gas: u64,
+        state_gas: u64,
+        block_gas_limit: u64,
+    ) -> Result<(), EvmError> {
+        self.regular.fetch_add(regular_gas, Ordering::Relaxed);
+        self.state.fetch_add(state_gas, Ordering::Relaxed);
+        self.check(block_gas_limit)
+    }
 }
 
 /// EIP-8037 (Amsterdam+, execution-specs PR #2703) per-tx 2D inclusion check.
@@ -1476,9 +1567,27 @@ impl LEVM {
             Option<EvmError>,     // deferred BAL validation error
         );
 
+        // Ordered gas admission (step 3 below) can only reject a block once every
+        // transaction has been executed and its report retained. Two checks make an
+        // over-limit block cheap to reject, and both hold for any block that could be
+        // valid.
+        //
+        // Before any execution: the transactions' minimum gas alone may already rule
+        // the block out.
+        check_minimum_block_work(
+            txs_with_sender.iter().map(|(tx, sender)| (*tx, *sender)),
+            chain_config.fork(header.timestamp),
+            header.gas_limit,
+        )?;
+
+        // During execution: stop starting transactions once the finished ones are over
+        // the gas limit, which bounds both the work done and the reports retained.
+        let completed_gas = CompletedGas::default();
+
         let exec_results: Result<Vec<TxExecResult>, EvmError> = (0..n_txs)
             .into_par_iter()
             .map(|tx_idx| -> Result<_, EvmError> {
+                completed_gas.check(header.gas_limit)?;
                 let (tx, sender) = &txs_with_sender[tx_idx];
                 // Small capacity hint — per-tx DBs materialize only touched accounts via lazy_bal cursor.
                 let mut tx_db = GeneralizedDatabase::new_with_shared_base_and_capacity(
@@ -1531,6 +1640,19 @@ impl LEVM {
                     evm_config,
                     chain_id,
                     stateless_validator,
+                )?;
+                let mut report = report;
+
+                // Block validation builds receipts from `logs` and never reads the
+                // top-level return data, so holding it until the collect below would
+                // retain a per-transaction buffer nothing downstream consumes.
+                report.output = Bytes::new();
+
+                // Same regular/state split as the ordered admission loop below.
+                completed_gas.record(
+                    report.gas_used.saturating_sub(report.state_gas_used),
+                    report.state_gas_used,
+                    header.gas_limit,
                 )?;
 
                 let current_state = std::mem::take(&mut tx_db.current_accounts_state);

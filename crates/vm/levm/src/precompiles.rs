@@ -7,7 +7,7 @@ use ethrex_common::{
 use ethrex_crypto::{Crypto, CryptoError};
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, hash_map::Entry};
 use std::sync::RwLock;
 
 use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
@@ -371,22 +371,41 @@ pub fn effective_precompile_address(address: Address, moves: Option<&PrecompileM
         .unwrap_or(address)
 }
 
-/// Per-block cache for precompile results shared between warmer and executor.
-pub struct PrecompileCache {
-    cache: RwLock<FxHashMap<(Address, Bytes), (Bytes, u64)>>,
+/// Upper bound on the memory one [`PrecompileCache`] may hold. A cache lives for a
+/// single block, and a block's working set sits far below this, so in normal operation
+/// no result is ever turned away.
+pub const PRECOMPILE_CACHE_MAX_BYTES: usize = 128 * 1024 * 1024;
+
+#[derive(Default)]
+struct PrecompileCacheEntries {
+    map: FxHashMap<(Address, Bytes), (Bytes, u64)>,
+    /// Sum of [`PrecompileCache::entry_size`] over `map`.
+    used_bytes: usize,
 }
 
-impl Default for PrecompileCache {
-    fn default() -> Self {
-        Self {
-            cache: RwLock::new(FxHashMap::default()),
-        }
-    }
+/// Per-block cache for precompile results shared between warmer and executor.
+///
+/// Holds at most [`PRECOMPILE_CACHE_MAX_BYTES`], as counted by
+/// [`PrecompileCache::entry_size`]; once full, further results are simply not cached.
+/// Nothing is evicted: the cache is dropped with its block, so there is no recency worth
+/// tracking, and lookups stay on the shared read lock.
+#[derive(Default)]
+pub struct PrecompileCache {
+    cache: RwLock<PrecompileCacheEntries>,
 }
 
 impl PrecompileCache {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Bytes one entry is charged against the budget: its calldata and output, plus
+    /// the fixed size of the key and value it is stored as. Hash-table slack is not
+    /// counted, so the budget is approximate, not an exact resident size.
+    pub fn entry_size(calldata_len: usize, output_len: usize) -> usize {
+        calldata_len
+            .saturating_add(output_len)
+            .saturating_add(size_of::<((Address, Bytes), (Bytes, u64))>())
     }
 
     pub fn get(&self, address: &Address, calldata: &Bytes) -> Option<(Bytes, u64)> {
@@ -396,15 +415,28 @@ impl PrecompileCache {
         self.cache
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .map
             .get(&(*address, calldata.clone()))
             .cloned()
     }
 
     pub fn insert(&self, address: Address, calldata: Bytes, output: Bytes, gas_cost: u64) {
-        self.cache
+        let entry_size = Self::entry_size(calldata.len(), output.len());
+        let mut guard = self
+            .cache
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert((address, calldata), (output, gas_cost));
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let entries = &mut *guard;
+        let used_bytes = entries.used_bytes.saturating_add(entry_size);
+        if used_bytes > PRECOMPILE_CACHE_MAX_BYTES {
+            return;
+        }
+        // The warmer and the executor can both compute the same call; the result is
+        // identical, so keep the first one and charge it once.
+        if let Entry::Vacant(slot) = entries.map.entry((address, calldata)) {
+            slot.insert((output, gas_cost));
+            entries.used_bytes = used_bytes;
+        }
     }
 }
 
