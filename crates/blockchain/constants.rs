@@ -26,7 +26,8 @@ pub const TX_DATA_NON_ZERO_GAS: u64 = 68;
 // Max bytecode size
 pub const MAX_CODE_SIZE: u32 = 0x6000;
 // EIP-7954 (Amsterdam): increase max bytecode size to 64 KiB
-pub const AMSTERDAM_MAX_CODE_SIZE: u32 = 0x10000;
+#[allow(clippy::as_conversions)]
+pub const AMSTERDAM_MAX_CODE_SIZE: u32 = ethrex_common::constants::AMSTERDAM_MAX_CODE_SIZE as u32;
 
 // === EIP-3860 constants ===
 

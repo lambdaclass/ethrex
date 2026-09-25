@@ -36,7 +36,10 @@ use ethrex_common::{
     },
 };
 #[cfg(feature = "rayon")]
-use ethrex_common::{BigEndianHash, validate_block_access_list_size, validate_header_bal_indices};
+use ethrex_common::{
+    BigEndianHash, constants::AMSTERDAM_MAX_CODE_SIZE, validate_bal_code_sizes,
+    validate_block_access_list_size, validate_header_bal_indices,
+};
 use ethrex_crypto::Crypto;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::StatelessValidator;
@@ -590,11 +593,15 @@ impl LEVM {
         {
             // Validate header BAL structural properties before execution.
             // This catches index-out-of-bounds early, before wasting execution time.
-            // Note: size cap validation is deferred until after transaction processing
-            // so that transaction-level errors (e.g. gas allowance exceeded) take
-            // priority, matching the reference implementation's validation order.
+            // Note: the EIP-7928 item-count cap is deferred until after transaction
+            // processing so that transaction-level errors (e.g. gas allowance exceeded)
+            // take priority, matching the reference implementation's validation order.
             validate_header_bal_indices(&bal, block.body.transactions.len())
                 .map_err(|e| EvmError::Custom(e.to_string()))?;
+            // Each transaction that loads an account builds its code from the BAL, so an
+            // oversized code change must be rejected before any of them run.
+            validate_bal_code_sizes(&bal, AMSTERDAM_MAX_CODE_SIZE)
+                .map_err(|e| EvmError::Custom(format!("BAL validation failed: {e}")))?;
 
             // Shadow-record the system phases: their account cache also holds internal
             // loads the recorder never sees, so it can't say what they touched.

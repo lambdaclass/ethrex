@@ -4,6 +4,7 @@ use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_common::types::stateless_ssz::{
     STATELESS_INPUT_SCHEMA_ID, SszPublicKeys, SszStatelessInput, SszStatelessValidationResult,
 };
+use ethrex_common::{constants::AMSTERDAM_MAX_CODE_SIZE, validate_bal_code_sizes};
 use ethrex_crypto::Crypto;
 use ethrex_vm::Evm;
 use libssz_merkle::{HashTreeRoot, Sha256Hasher};
@@ -168,6 +169,8 @@ pub fn new_payload_request_to_block(
         // reason (`rpc/engine/payload.rs`); the guest has to reject explicitly.
         bal.validate_ordering()
             .map_err(|e| format!("block_access_list ordering: {e}"))?;
+        validate_bal_code_sizes(&bal, AMSTERDAM_MAX_CODE_SIZE)
+            .map_err(|e| format!("block_access_list code size: {e}"))?;
         let encoded = bal.encode_to_vec();
         if encoded != bal_bytes {
             return Err("block access list is not canonically encoded".to_string());
