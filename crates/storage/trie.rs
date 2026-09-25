@@ -22,7 +22,7 @@ pub struct BackendTrieDB {
     nodes_table: &'static str,
     fkv_table: &'static str,
     /// Storage trie address prefix (for storage tries)
-    /// None for state tries, Some(address) for storage tries
+    /// None for state tries, or when the caller prefixes the paths itself
     address_prefix: Option<H256>,
 }
 
@@ -54,18 +54,24 @@ impl BackendTrieDB {
     }
 
     /// Create a new BackendTrieDB for the storage tries
+    /// `address_prefix` is `Some(account_hash)` to scope reads and writes to a single
+    /// account's storage trie, or `None` when the caller already prefixes the paths
+    /// (e.g. a `TrieWrapper` built with `Some(account_hash)`) - passing the hash twice
+    /// would double-prefix every key
     pub fn new_for_storages(
         db: Arc<dyn StorageBackend>,
+        address_prefix: Option<H256>,
         last_written: Vec<u8>,
     ) -> Result<Self, StoreError> {
         let read_view = db.begin_read()?;
-        Self::new_for_storages_with_view(db, read_view, last_written)
+        Self::new_for_storages_with_view(db, read_view, address_prefix, last_written)
     }
 
     /// Create a new BackendTrieDB for the storage tries with a shared read view
     pub fn new_for_storages_with_view(
         db: Arc<dyn StorageBackend>,
         read_view: Arc<dyn StorageReadView>,
+        address_prefix: Option<H256>,
         last_written: Vec<u8>,
     ) -> Result<Self, StoreError> {
         let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
@@ -75,35 +81,7 @@ impl BackendTrieDB {
             last_computed_flatkeyvalue,
             nodes_table: STORAGE_TRIE_NODES,
             fkv_table: STORAGE_FLATKEYVALUE,
-            address_prefix: None,
-        })
-    }
-
-    /// Create a new BackendTrieDB for a specific storage trie
-    pub fn new_for_account_storage(
-        db: Arc<dyn StorageBackend>,
-        address_prefix: H256,
-        last_written: Vec<u8>,
-    ) -> Result<Self, StoreError> {
-        let read_view = db.begin_read()?;
-        Self::new_for_account_storage_with_view(db, read_view, address_prefix, last_written)
-    }
-
-    /// Create a new BackendTrieDB for a specific storage trie with a shared read view
-    pub fn new_for_account_storage_with_view(
-        db: Arc<dyn StorageBackend>,
-        read_view: Arc<dyn StorageReadView>,
-        address_prefix: H256,
-        last_written: Vec<u8>,
-    ) -> Result<Self, StoreError> {
-        let last_computed_flatkeyvalue = Nibbles::from_hex(last_written);
-        Ok(Self {
-            db,
-            read_view,
-            last_computed_flatkeyvalue,
-            nodes_table: STORAGE_TRIE_NODES,
-            fkv_table: STORAGE_FLATKEYVALUE,
-            address_prefix: Some(address_prefix),
+            address_prefix,
         })
     }
 
