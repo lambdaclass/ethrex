@@ -597,6 +597,34 @@ impl Blockchain {
         self.pipeline_pool.get_or_init(Self::build_pipeline_pool)
     }
 
+    /// Persistent pool that runs the per-block speculative warmer and trie-node
+    /// prefetch, replacing an OS thread creation per block for each of them.
+    ///
+    /// Process-wide rather than per instance: the tasks carry no instance state,
+    /// and test harnesses build many `Blockchain`s, which would otherwise each
+    /// own a pool this size. Sized like the global rayon pool because a task's
+    /// parallel iterators run on the pool that owns the task, not the global
+    /// one, so `warm_block` / `warm_block_from_bal` keep the parallelism they had
+    /// on a plain OS thread. Without the `rayon` feature nothing is spawned into
+    /// it and it stays at one parked thread.
+    fn warm_pool() -> &'static rayon::ThreadPool {
+        static WARM_POOL: OnceLock<Arc<rayon::ThreadPool>> = OnceLock::new();
+        WARM_POOL.get_or_init(|| {
+            let threads = if cfg!(feature = "rayon") {
+                rayon::current_num_threads()
+            } else {
+                1
+            };
+            Arc::new(
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(threads)
+                    .thread_name(|i| format!("block-warmer-{i}"))
+                    .build()
+                    .expect("Failed to create block warmer thread pool"),
+            )
+        })
+    }
+
     /// Builds the merkleization pool now, unless it is already seeded.
     ///
     /// Node startup calls this so a pool that cannot be created fails the process at
@@ -990,8 +1018,8 @@ impl Blockchain {
         // accesses and read-only slots, so warming is scoped to nodes the merkleizer
         // will actually read; using the access set instead regressed read-heavy
         // blocks (value-0 CALLs to existing accounts, bloated SLOADs). The prefetch
-        // runs on its own thread inside the scope below (`trie_prefetch_handle`),
-        // overlapping execution rather than preceding it. Gated so ordinary
+        // runs as a task on the warm pool inside the scope below, overlapping
+        // execution rather than preceding it. Gated so ordinary
         // merkle-light blocks skip the probe cost; the payoff is on blocks that WRITE
         // many distinct slots or modify many accounts, where merkle walks a large set
         // of scattered, cold nodes. See `BLOATED_BATCH_THRESHOLD`.
@@ -1032,21 +1060,27 @@ impl Blockchain {
         #[cfg(feature = "rayon")]
         let block_has_transactions = !block.body.transactions.is_empty();
 
-        let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(
-            // `s` carries the warmer and trie-prefetch threads, which are rayon-only;
-            // without that feature nothing is spawned into the scope.
-            |#[allow(unused_variables)] s| -> Result<_, ChainError> {
+        // The warmer and trie prefetch run as tasks on the persistent warm pool
+        // instead of OS threads created per block. `in_place_scope` runs this body
+        // on the calling thread and joins both tasks before returning, so the
+        // borrows they hold stay valid. Both are rayon-only; without that feature
+        // nothing is spawned into the scope.
+        let (execution_result, merkleization_result, warmer_duration) = Self::warm_pool()
+            .in_place_scope(|#[allow(unused_variables)] s| -> Result<_, ChainError> {
                 #[cfg(feature = "rayon")]
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
                 #[cfg(feature = "rayon")]
                 let bal_prefetch_enabled = self.options.bal_prefetch_enabled;
                 #[cfg(feature = "rayon")]
-                let warm_handle = (!collect_witness && block_has_transactions)
-                    .then(|| {
-                        std::thread::Builder::new()
-                            .name("block_executor_warmer".to_string())
-                            .spawn_scoped(s, move || {
+                let warm_rx = (!collect_witness && block_has_transactions).then(|| {
+                    let (warm_tx, warm_rx) = std::sync::mpsc::sync_channel::<Duration>(1);
+                    s.spawn(move |_| {
+                        // A panic is caught because the task runs on a shared pool
+                        // scope, where an unwinding task would take block processing
+                        // down with it; before, a panicking warmer thread was only
+                        // logged at join.
+                        let elapsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                                 // Warming uses the same caching store, sharing cached state with execution.
                                 // Precompile cache lives inside CachingDatabase, shared automatically.
                                 let start = Instant::now();
@@ -1092,12 +1126,15 @@ impl Blockchain {
                                     }
                                 }
                                 start.elapsed()
-                            })
-                            .map_err(|e| {
-                                ChainError::Custom(format!("Failed to spawn warmer thread: {e}"))
-                            })
-                    })
-                    .transpose()?;
+                        }))
+                        .unwrap_or_else(|e| {
+                            warn!("Warming task panicked (best-effort, ignored): {e:?}");
+                            Duration::ZERO
+                        });
+                        let _ = warm_tx.send(elapsed);
+                    });
+                    warm_rx
+                });
 
                 // Warm the merkleizer's trie-node reads concurrently with execution
                 // instead of up front. Touches different CFs than execution, so no
@@ -1108,24 +1145,25 @@ impl Blockchain {
                 // the merkleizer at higher aggregate queue depth, so it completes
                 // within the exec/merkle window rather than extending it.
                 #[cfg(feature = "rayon")]
-                let trie_prefetch_handle = match trie_prefetch_input {
-                    Some((slots, accounts)) => {
-                        let storage = &self.storage;
-                        std::thread::Builder::new()
-                            .name("block_executor_trie_prefetch".to_string())
-                            .spawn_scoped(s, move || {
-                                // Result deliberately discarded: this is best-effort
-                                // cache warming. A read error (or any node it fails to
-                                // warm) just means the merkleizer cold-reads that node;
-                                // it never affects block output, so a failure must not
-                                // propagate into block processing.
-                                let _ = storage.prefetch_trie_nodes(&slots, &accounts);
-                            })
-                            .inspect_err(|e| debug!("trie-node prefetch spawn failed: {e}"))
-                            .ok()
-                    }
-                    None => None,
-                };
+                if let Some((slots, accounts)) = trie_prefetch_input {
+                    let storage = &self.storage;
+                    s.spawn(move |_| {
+                        // Result deliberately discarded: this is best-effort
+                        // cache warming. A read error (or any node it fails to
+                        // warm) just means the merkleizer cold-reads that node;
+                        // it never affects block output, so a failure must not
+                        // propagate into block processing. A panic is caught for
+                        // the same reason, and surfaced so a failing prefetch is
+                        // observable rather than silent.
+                        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            let _ = storage.prefetch_trie_nodes(&slots, &accounts);
+                        }))
+                        .is_err()
+                        {
+                            warn!("trie-node prefetch task panicked (best-effort, ignored)");
+                        }
+                    });
+                }
 
                 let max_queue_length_ref = &mut max_queue_length;
                 // Channel is needed whenever the merkleizer takes the streaming
@@ -1323,30 +1361,16 @@ impl Blockchain {
                         "merkleizer finished without sending a result".to_string(),
                     ))
                 });
+                // Blocks until the warmer task has sent, i.e. finished, which is what
+                // joining its thread did before.
                 #[cfg(feature = "rayon")]
-                let warmer_duration = warm_handle
-                    .map(|handle| {
-                        handle
-                            .join()
-                            .inspect_err(|e| warn!("Warming thread error: {e:?}"))
-                            .ok()
-                            .unwrap_or(Duration::ZERO)
-                    })
+                let warmer_duration = warm_rx
+                    .map(|rx| rx.recv().unwrap_or(Duration::ZERO))
                     .unwrap_or(Duration::ZERO);
                 #[cfg(not(feature = "rayon"))]
                 let warmer_duration = Duration::ZERO;
-                // Best-effort prefetch: join so the scope's borrows end cleanly.
-                // The warming result is discarded, but surface a panic so a failing
-                // prefetch (e.g. a RocksDB error) is observable rather than silent.
-                #[cfg(feature = "rayon")]
-                if let Some(h) = trie_prefetch_handle
-                    && let Err(e) = h.join()
-                {
-                    warn!("trie-node prefetch thread panicked (best-effort, ignored): {e:?}");
-                }
                 Ok((execution_result, merkleization_result, warmer_duration))
-            },
-        )?;
+            })?;
         let (account_updates_list, streaming_witness, merkle_start_instant, merkle_end_instant) =
             merkleization_result?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
