@@ -67,6 +67,7 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::VM,
 };
+use flux_profiler::timed;
 #[cfg(feature = "rayon")]
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 #[cfg(feature = "rayon")]
@@ -541,6 +542,7 @@ impl LEVM {
     /// passes `None` because the caller merkleizes optimistically from the input BAL and
     /// the EVM-side `bal_to_account_updates` send is then redundant work.
     #[allow(clippy::too_many_arguments)]
+    #[timed]
     pub fn execute_block_pipeline(
         block: &Block,
         db: &mut GeneralizedDatabase,
@@ -1035,6 +1037,7 @@ impl LEVM {
     /// (highest `block_access_index` entry per field) and builds an AccountUpdate.
     /// State comes entirely from the BAL — no execution needed.
     #[cfg(feature = "rayon")]
+    #[timed]
     fn bal_to_account_updates(
         bal: &BlockAccessList,
         store: &dyn Database,
@@ -1395,6 +1398,7 @@ impl LEVM {
     /// should be visible. BAL indexing: 0 = system calls, 1 = tx 0, 2 = tx 1, ...
     /// For tx at index `i`, pass `max_idx = i` (diffs with index <= i = system + txs 0..i-1).
     #[cfg(feature = "rayon")]
+    #[timed]
     fn seed_db_from_bal(
         db: &mut GeneralizedDatabase,
         bal: &BlockAccessList,
@@ -1445,6 +1449,7 @@ impl LEVM {
     /// `bal_to_account_updates`, not from tx execution.
     #[cfg(feature = "rayon")]
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    #[timed]
     fn execute_block_parallel(
         block: &Block,
         txs_with_sender: &[(&Transaction, Address)],
@@ -2207,6 +2212,7 @@ impl LEVM {
     /// (`test/tests/blockchain/bal_validate_tx_execution_tests.rs`) can call it.
     #[cfg(feature = "rayon")]
     #[allow(clippy::too_many_arguments)]
+    #[timed]
     pub fn validate_tx_execution(
         bal_idx: u32,
         seed_idx: u32,
@@ -3129,6 +3135,7 @@ impl LEVM {
     /// parallel workers can benefit from shared caching. The same cache should
     /// be used by the sequential execution phase.
     #[cfg(feature = "rayon")]
+    #[timed]
     pub fn warm_block(
         block: &Block,
         store: Arc<dyn Database>,
@@ -3183,6 +3190,7 @@ impl LEVM {
     /// execution. Execution results are discarded — only cache population
     /// matters.
     #[cfg(feature = "rayon")]
+    #[timed]
     pub fn warm_txs(
         txs_with_sender: &[(&Transaction, Address)],
         header: &BlockHeader,
@@ -3269,6 +3277,7 @@ impl LEVM {
     /// executor race the warmer to the trie for SSTORE original values and cost
     /// ~22% of CPU. Keep storage warming synchronous and up front.
     #[cfg(feature = "rayon")]
+    #[timed]
     pub fn warm_block_from_bal(
         bal: &BlockAccessList,
         store: Arc<dyn Database>,
@@ -3436,6 +3445,7 @@ impl LEVM {
     // Like execute_tx but allows reusing the stack pool. Takes the block-invariant
     // `config`/`chain_id` precomputed once per block (see `setup_env_with_config`).
     #[allow(clippy::too_many_arguments)]
+    #[timed]
     fn execute_tx_in_block(
         // The transaction to execute.
         tx: &Transaction,
@@ -3706,6 +3716,7 @@ impl LEVM {
         Ok(db.get_state_transitions_tx()?)
     }
 
+    #[timed]
     pub fn process_withdrawals(
         db: &mut GeneralizedDatabase,
         withdrawals: &[Withdrawal],
@@ -4013,6 +4024,7 @@ impl LEVM {
     }
 }
 
+#[timed]
 pub fn generic_system_contract_levm(
     block_header: &BlockHeader,
     calldata: Bytes,
@@ -4118,6 +4130,7 @@ pub fn generic_system_contract_levm(
 
 #[allow(unreachable_code)]
 #[allow(unused_variables)]
+#[timed]
 pub fn extract_all_requests_levm(
     receipts: &[Receipt],
     db: &mut GeneralizedDatabase,
