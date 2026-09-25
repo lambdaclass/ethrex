@@ -100,17 +100,23 @@ impl Code {
     /// Builds the [`Code::jumpdests`] bitmap: the bit of every `JUMPDEST` that is not a
     /// `PUSH` immediate.
     ///
-    /// On x86_64 and aarch64 this works on 64-byte blocks (see `jumpdests_by_block`),
-    /// because a scan that branches on each opcode stalls on every misprediction, and
-    /// random bytecode mispredicts on most bytes. execution-specs#3631 builds such
-    /// initcode on purpose. Other targets are the zkVM guests, which have no branch
-    /// predictor and would only pay for the extra instructions, so they keep the plain
-    /// scan (`jumpdests_by_opcode`).
+    /// On aarch64, and on x86_64 with SSSE3, this runs without a data-dependent branch
+    /// (see `by_block`), because a scan that branches on each opcode stalls on every
+    /// misprediction, and random bytecode mispredicts on most bytes. execution-specs#3631
+    /// builds such initcode on purpose. Other targets are mostly the zkVM guests, which
+    /// have no branch predictor and would only pay for the extra instructions, so they
+    /// keep the plain scan (`jumpdests_by_opcode`).
     pub fn compute_jumpdests(code: &[u8]) -> Arc<[u8]> {
         let mut bitmap = vec![0u8; code.len().div_ceil(8)];
-        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        let any = jumpdests_by_block(code, &mut bitmap);
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        #[cfg(any(
+            target_arch = "aarch64",
+            all(target_arch = "x86_64", target_feature = "ssse3")
+        ))]
+        let any = by_block::jumpdests(code, &mut bitmap);
+        #[cfg(not(any(
+            target_arch = "aarch64",
+            all(target_arch = "x86_64", target_feature = "ssse3")
+        )))]
         let any = jumpdests_by_opcode(code, &mut bitmap);
         // Share the single empty bitmap for jumpless bytecode (very common: EOAs,
         // tiny contracts) so we don't allocate for an all-zero map; `is_valid_jumpdest`
@@ -189,10 +195,6 @@ const OP_JUMPDEST: u8 = 0x5B;
 const OP_PUSH1: u8 = 0x60;
 const OP_PUSH32: u8 = 0x7F;
 
-/// Bytes per block in [`jumpdests_by_block`], one `u64` of bitmap.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-const BLOCK: usize = 64;
-
 /// Fills `bitmap` for `code` one opcode at a time and returns whether any bit is set.
 ///
 /// The bits of a byte are accumulated in a register and written once the scan leaves
@@ -200,7 +202,13 @@ const BLOCK: usize = 64;
 /// loop instead would turn each `JUMPDEST` into a read-modify-write, and indexing it
 /// would put a bounds-check panic path in the loop body, which inhibits optimization
 /// of every iteration rather than only the ones that find a destination.
-#[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64"), allow(dead_code))]
+#[cfg_attr(
+    any(
+        target_arch = "aarch64",
+        all(target_arch = "x86_64", target_feature = "ssse3")
+    ),
+    allow(dead_code)
+)]
 fn jumpdests_by_opcode(code: &[u8], bitmap: &mut [u8]) -> bool {
     let mut any = false;
     let mut current_byte = usize::MAX;
@@ -231,195 +239,312 @@ fn jumpdests_by_opcode(code: &[u8], bitmap: &mut [u8]) -> bool {
     any
 }
 
-/// Fills `bitmap` for `code` 64 bytes at a time and returns whether any bit is set.
+/// The jump destination analysis without a data-dependent branch, 64 bytes at a time.
 ///
-/// Whether a byte is an opcode depends on the `PUSH`es before it, so a scan normally
-/// visits every opcode and branches on it. Here each block is first reduced to
-/// bitmasks of its `JUMPDEST` and `PUSH` bytes, which needs no per-byte branch, and only
-/// the `PUSH` opcodes are then resolved one by one (see [`block_jumpdests`]).
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-fn jumpdests_by_block(code: &[u8], bitmap: &mut [u8]) -> bool {
-    let (blocks, tail) = code.as_chunks::<BLOCK>();
-    let mut carry = 0;
-    let mut any = 0;
-    // A full block fills exactly one 8-byte word of the bitmap.
-    for (block, word) in blocks.iter().zip(bitmap.as_chunks_mut::<8>().0) {
-        let valid = block_jumpdests(block, &mut carry);
-        *word = valid.to_le_bytes();
-        any |= valid;
-    }
-    if !tail.is_empty() {
-        // Zeros are STOPs, which are neither destinations nor PUSHes.
-        let mut padded = [0; BLOCK];
-        padded[..tail.len()].copy_from_slice(tail);
-        let valid = block_jumpdests(&padded, &mut carry);
-        let rest = &mut bitmap[blocks.len() * 8..];
-        rest.copy_from_slice(&valid.to_le_bytes()[..rest.len()]);
-        any |= valid;
-    }
-    any != 0
-}
-
-/// The valid jump destinations of one block, bit `i` for byte `i`.
+/// Whether a byte is an opcode depends on every `PUSH` before it, so the natural scan
+/// branches on each opcode, and on random bytecode that branch mispredicts on most bytes.
+/// Here the work per block is the same whatever its bytes are:
 ///
-/// `carry` is how many leading bytes of the block are immediates of a `PUSH` in the
-/// previous block, and is updated for the next one.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-#[inline(always)]
-fn block_jumpdests(block: &[u8; BLOCK], carry: &mut usize) -> u64 {
-    const ODD_BITS: u64 = 0xAAAA_AAAA_AAAA_AAAA;
-    let BlockMasks {
-        jumpdests,
-        push1s,
-        pushes,
-    } = BlockMasks::new(block);
-    let carried = low_bits(*carry);
+/// 1. In each 16-byte group, the walks from all 16 bytes, each as if its byte were an
+///    opcode, advance at once until they leave the group (see [`group_walks`]).
+/// 2. The real walk enters the block where the previous block's walk left it. Where it
+///    leaves a group is where it enters the next one, so four dependent loads pick the
+///    walk of each group, and give where the walk enters the next block.
+#[cfg(any(
+    target_arch = "aarch64",
+    all(target_arch = "x86_64", target_feature = "ssse3")
+))]
+mod by_block {
+    use super::{OP_JUMPDEST, OP_PUSH1};
+    use lanes::Lanes;
 
-    // First assume every PUSH opcode is a PUSH1. Then each PUSH1 opcode turns the next
-    // byte into an immediate, and a PUSH1 byte that is an immediate does not. That is
-    // how backslashes escape characters in JSON, and simdjson resolves it for a whole
-    // word with one subtraction: within each run of candidates, it keeps the ones at
-    // the parity where the run starts.
-    let candidates = push1s & !carried;
-    let opcodes_and_immediates = ((candidates << 1) | ODD_BITS).wrapping_sub(candidates) ^ ODD_BITS;
-    let immediates = (opcodes_and_immediates ^ candidates) | carried;
-    // Right if every longer PUSH in the block is itself an immediate.
-    if pushes & !push1s & !immediates == 0 {
-        let last_is_push1 = (opcodes_and_immediates & candidates) >> (BLOCK - 1);
-        *carry = last_is_push1 as usize;
-        return jumpdests & !immediates;
-    }
-    jumpdests & !push_immediates(block, pushes, carry)
-}
+    /// Bytes per block, one `u64` of bitmap.
+    const BLOCK: usize = 64;
+    /// Bytes per group, one SIMD register.
+    const GROUP: usize = 16;
 
-/// The immediates of the PUSH opcodes in `block`, found by walking them in order from
-/// the first byte after `carry`, which is updated for the next block.
-///
-/// Kept out of line so that the layout of this loop, and with it how well its branches
-/// are predicted, doesn't depend on the code it would otherwise be inlined into.
-/// Inlined, the same loop measured anywhere from 78 to 97 us per 128 KiB of `PUSH2`
-/// code on Zen 2, depending on the build.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-#[inline(never)]
-fn push_immediates(block: &[u8; BLOCK], pushes: u64, carry: &mut usize) -> u64 {
-    // `ends[i]` is where the next opcode starts if byte `i` is a PUSH: past the opcode
-    // and its `byte - PUSH1 + 1` immediates. It is only read for PUSH bytes, so the
-    // wrapped values elsewhere don't matter.
-    let mut ends = *block;
-    for (i, end) in ends.iter_mut().enumerate() {
-        *end = end.wrapping_sub(OP_PUSH1 - 2).wrapping_add(i as u8);
-    }
-    let mut immediates = low_bits(*carry);
-    // The first byte that can be an opcode. Always below BLOCK: a carry is at most 32
-    // bytes, and the loop stops at the first PUSH whose immediates leave the block.
-    let mut next = *carry;
-    loop {
-        // In PUSH-dense code the next PUSH usually starts right at `next`, or one byte
-        // later, after a single other opcode (`PUSH2 x JUMPDEST ...`). Checking those
-        // first keeps `trailing_zeros` out of the dependency chain between PUSHes, and
-        // in such code the gap repeats, so the branches predict well.
-        let ahead = pushes >> next;
-        let at = if ahead & 1 != 0 {
-            next
-        } else if ahead & 0b10 != 0 {
-            next + 1
-        } else {
-            if ahead == 0 {
-                *carry = 0;
-                break;
-            }
-            next + ahead.trailing_zeros() as usize
-        };
-        let end = usize::from(ends[at % BLOCK]);
-        immediates |= low_bits(end) & ((u64::MAX << at) << 1);
-        if end >= BLOCK {
-            *carry = end - BLOCK;
-            break;
+    /// Fills `bitmap` for `code` and returns whether any bit is set.
+    pub(super) fn jumpdests(code: &[u8], bitmap: &mut [u8]) -> bool {
+        let mut walks = Walks::new();
+        let (blocks, tail) = code.as_chunks::<BLOCK>();
+        let mut carry = 0;
+        let mut any = 0;
+        // A full block fills exactly one 8-byte word of the bitmap.
+        for (block, word) in blocks.iter().zip(bitmap.as_chunks_mut::<8>().0) {
+            let valid = block_jumpdests(block, &mut carry, &mut walks);
+            *word = valid.to_le_bytes();
+            any |= valid;
         }
-        next = end;
-    }
-    immediates
-}
-
-/// One bit per byte of a block: which bytes are `JUMPDEST`, `PUSH1`, and any of
-/// `PUSH1..PUSH32`.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-struct BlockMasks {
-    jumpdests: u64,
-    push1s: u64,
-    pushes: u64,
-}
-
-#[cfg(target_arch = "x86_64")]
-impl BlockMasks {
-    /// Compares 16 bytes at a time and takes the top bit of each result byte.
-    #[inline(always)]
-    fn new(block: &[u8; BLOCK]) -> Self {
-        use core::arch::x86_64::*;
-        let mut masks = Self {
-            jumpdests: 0,
-            push1s: 0,
-            pushes: 0,
-        };
-        for (i, lane) in block.as_chunks::<16>().0.iter().enumerate() {
-            // SAFETY: SSE2 is part of the x86_64 baseline, `lane` is 16 readable bytes,
-            // and `loadu` has no alignment requirement.
-            unsafe {
-                let bytes = _mm_loadu_si128(lane.as_ptr().cast());
-                let mask = |matches| u64::from(_mm_movemask_epi8(matches) as u16) << (16 * i);
-                let jumpdest = _mm_set1_epi8(OP_JUMPDEST as i8);
-                let push1 = _mm_set1_epi8(OP_PUSH1 as i8);
-                masks.jumpdests |= mask(_mm_cmpeq_epi8(bytes, jumpdest));
-                masks.push1s |= mask(_mm_cmpeq_epi8(bytes, push1));
-                // PUSH1..PUSH32 are exactly the bytes 0b011x_xxxx.
-                let top_bits = _mm_and_si128(bytes, _mm_set1_epi8(0xE0_u8 as i8));
-                masks.pushes |= mask(_mm_cmpeq_epi8(top_bits, push1));
-            }
+        if !tail.is_empty() {
+            // Zeros are STOPs, which are neither destinations nor PUSHes.
+            let mut padded = [0; BLOCK];
+            padded[..tail.len()].copy_from_slice(tail);
+            let valid = block_jumpdests(&padded, &mut carry, &mut walks);
+            let rest = &mut bitmap[blocks.len() * 8..];
+            rest.copy_from_slice(&valid.to_le_bytes()[..rest.len()]);
+            any |= valid;
         }
-        masks
+        any != 0
     }
-}
 
-#[cfg(target_arch = "aarch64")]
-impl BlockMasks {
-    /// NEON has no instruction that gathers one bit per byte, so each matching byte
-    /// keeps the bit of its position within 8 bytes, and three rounds of pairwise adds
-    /// pack them into one `u64`.
-    #[inline(always)]
-    fn new(block: &[u8; BLOCK]) -> Self {
-        use core::arch::aarch64::*;
-        // SAFETY: NEON is part of the aarch64 baseline, `block` is 64 readable bytes, and
-        // `vld1q_u8_x4` has no alignment requirement.
-        unsafe {
-            let lanes = vld1q_u8_x4(block.as_ptr());
-            let lanes = [lanes.0, lanes.1, lanes.2, lanes.3];
-            let position_bits = vreinterpretq_u8_u64(vdupq_n_u64(0x8040_2010_0804_0201));
-            let mask = |matches: [uint8x16_t; 4]| {
-                let [a, b, c, d] = matches.map(|m| vandq_u8(m, position_bits));
-                let quarters = vpaddq_u8(vpaddq_u8(a, b), vpaddq_u8(c, d));
-                vgetq_lane_u64::<0>(vreinterpretq_u64_u8(vpaddq_u8(quarters, quarters)))
-            };
-            let jumpdest = vdupq_n_u8(OP_JUMPDEST);
-            let push1 = vdupq_n_u8(OP_PUSH1);
-            // PUSH1..PUSH32 are exactly the bytes 0b011x_xxxx.
-            let top_bits = vdupq_n_u8(0xE0);
+    /// The walks of one block's bytes (see [`group_walks`]), by position in the block:
+    /// where each leaves its group, and which bytes of the group it lands on, the lower
+    /// 8 in `low_stops` and the upper 8 in `high_stops`.
+    ///
+    /// Positions from 64 on stand for the next block: they lead to themselves and land on
+    /// nothing, so a walk that has left the block stays where it is.
+    struct Walks {
+        exits: [u8; 2 * BLOCK],
+        low_stops: [u8; 2 * BLOCK],
+        high_stops: [u8; 2 * BLOCK],
+    }
+
+    impl Walks {
+        fn new() -> Self {
             Self {
-                jumpdests: mask(lanes.map(|l| vceqq_u8(l, jumpdest))),
-                push1s: mask(lanes.map(|l| vceqq_u8(l, push1))),
-                pushes: mask(lanes.map(|l| vceqq_u8(vandq_u8(l, top_bits), push1))),
+                exits: core::array::from_fn(|i| i as u8),
+                low_stops: [0; 2 * BLOCK],
+                high_stops: [0; 2 * BLOCK],
             }
         }
     }
-}
 
-/// The lowest `n` bits set, or all of them when `n >= 64`.
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-#[inline(always)]
-fn low_bits(n: usize) -> u64 {
-    u32::try_from(n)
-        .ok()
-        .and_then(|n| 1u64.checked_shl(n))
-        .map_or(u64::MAX, |bit| bit - 1)
+    /// The valid jump destinations of one block, bit `i` for byte `i`.
+    ///
+    /// `carry` is how many leading bytes of the block are immediates of a `PUSH` in the
+    /// previous block, and is updated for the next one.
+    #[inline(always)]
+    fn block_jumpdests(block: &[u8; BLOCK], carry: &mut usize, walks: &mut Walks) -> u64 {
+        let groups = block.as_chunks::<GROUP>().0;
+        let groups: [Lanes; BLOCK / GROUP] = core::array::from_fn(|g| Lanes::load(&groups[g]));
+        let jumpdests = Lanes::bits(groups.map(|bytes| bytes.eq(Lanes::splat(OP_JUMPDEST))));
+        for (g, bytes) in groups.into_iter().enumerate() {
+            let (exits, low_stops, high_stops) = group_walks(bytes);
+            // From here on, positions are relative to the block instead of the group.
+            let exits = exits.add(Lanes::splat((g * GROUP) as u8));
+            exits.store(&mut walks.exits.as_chunks_mut::<GROUP>().0[g]);
+            low_stops.store(&mut walks.low_stops.as_chunks_mut::<GROUP>().0[g]);
+            high_stops.store(&mut walks.high_stops.as_chunks_mut::<GROUP>().0[g]);
+        }
+        let mut at = *carry;
+        let mut opcodes = 0;
+        for _ in 0..BLOCK / GROUP {
+            // At most 96, 32 immediates past the block; the modulo drops the bounds checks.
+            let i = at % (2 * BLOCK);
+            let stops = u64::from(walks.low_stops[i]) | (u64::from(walks.high_stops[i]) << 8);
+            // Past the block there are no stops, so the shift only matters inside it.
+            let group_start = i & (BLOCK - GROUP);
+            opcodes |= stops << group_start;
+            at = usize::from(walks.exits[i]);
+        }
+        // Each load moves the walk past at least one more group, so it is now past the
+        // block, by as many bytes as the next block starts with immediates.
+        *carry = at - BLOCK;
+        jumpdests & opcodes
+    }
+
+    /// For each byte of a 16-byte group, the walk that starts if that byte is an opcode,
+    /// up to where it leaves the group: the position it leaves to, relative to the group
+    /// (16 to 48), and the bytes it lands on, bits 0 to 7 in the first mask and bits 8 to
+    /// 15 in the second.
+    ///
+    /// All 16 walks advance together by pointer doubling: each round, a walk that is still
+    /// in the group takes as many steps again by continuing with the walk of the byte it
+    /// is at, which a table lookup of every lane (TBL on aarch64, PSHUFB on x86_64) reads.
+    /// A step moves at least one byte, so four rounds (16 steps) take every walk out of
+    /// the group.
+    #[inline(always)]
+    fn group_walks(bytes: Lanes) -> (Lanes, Lanes, Lanes) {
+        const POSITIONS_PLUS_ONE: [u8; GROUP] =
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        const LOW_POSITION_BITS: [u8; GROUP] =
+            [1, 2, 4, 8, 16, 32, 64, 128, 0, 0, 0, 0, 0, 0, 0, 0];
+        const HIGH_POSITION_BITS: [u8; GROUP] =
+            [0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 4, 8, 16, 32, 64, 128];
+        // PUSH1..PUSH32 are exactly the bytes 0b011x_xxxx, with `byte - PUSH1 + 1`
+        // immediates.
+        let is_push = bytes.and(Lanes::splat(0xE0)).eq(Lanes::splat(OP_PUSH1));
+        let immediates = is_push.and(bytes.sub(Lanes::splat(OP_PUSH1 - 1)));
+        // One step, past the opcode and its immediates.
+        let mut exits = Lanes::load(&POSITIONS_PLUS_ONE).add(immediates);
+        let mut low_stops = Lanes::load(&LOW_POSITION_BITS);
+        let mut high_stops = Lanes::load(&HIGH_POSITION_BITS);
+        // The lookups read zero for a walk that has left the group, so its stops stay as
+        // they are, and `max` keeps its exit, while a walk still inside moves ahead.
+        // Stops in the lower 8 bytes are a walk's first 8 at most, so the last round can
+        // skip them.
+        for round in 0..4 {
+            if round < 3 {
+                low_stops = low_stops.or(low_stops.lookup(exits));
+            }
+            high_stops = high_stops.or(high_stops.lookup(exits));
+            exits = exits.max(exits.lookup(exits));
+        }
+        (exits, low_stops, high_stops)
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    mod lanes {
+        use core::arch::aarch64::*;
+
+        /// 16 bytes in a NEON register.
+        #[derive(Clone, Copy)]
+        pub(super) struct Lanes(uint8x16_t);
+
+        // SAFETY (every `unsafe` below): NEON is part of the aarch64 baseline, and the
+        // loads and stores go through a reference to exactly 16 bytes, with no alignment
+        // requirement.
+        impl Lanes {
+            #[inline(always)]
+            pub(super) fn load(bytes: &[u8; 16]) -> Self {
+                unsafe { Self(vld1q_u8(bytes.as_ptr())) }
+            }
+
+            #[inline(always)]
+            pub(super) fn store(self, out: &mut [u8; 16]) {
+                unsafe { vst1q_u8(out.as_mut_ptr(), self.0) }
+            }
+
+            #[inline(always)]
+            pub(super) fn splat(byte: u8) -> Self {
+                unsafe { Self(vdupq_n_u8(byte)) }
+            }
+
+            #[inline(always)]
+            pub(super) fn and(self, other: Self) -> Self {
+                unsafe { Self(vandq_u8(self.0, other.0)) }
+            }
+
+            #[inline(always)]
+            pub(super) fn or(self, other: Self) -> Self {
+                unsafe { Self(vorrq_u8(self.0, other.0)) }
+            }
+
+            #[inline(always)]
+            pub(super) fn add(self, other: Self) -> Self {
+                unsafe { Self(vaddq_u8(self.0, other.0)) }
+            }
+
+            #[inline(always)]
+            pub(super) fn sub(self, other: Self) -> Self {
+                unsafe { Self(vsubq_u8(self.0, other.0)) }
+            }
+
+            /// All ones in the lanes that are equal, zero in the others.
+            #[inline(always)]
+            pub(super) fn eq(self, other: Self) -> Self {
+                unsafe { Self(vceqq_u8(self.0, other.0)) }
+            }
+
+            #[inline(always)]
+            pub(super) fn max(self, other: Self) -> Self {
+                unsafe { Self(vmaxq_u8(self.0, other.0)) }
+            }
+
+            /// Lane `i` of `self` for each lane `i` of `indices` below 16, zero for the rest.
+            #[inline(always)]
+            pub(super) fn lookup(self, indices: Self) -> Self {
+                unsafe { Self(vqtbl1q_u8(self.0, indices.0)) }
+            }
+
+            /// The top bit of every lane of four registers of all-ones or zero lanes.
+            ///
+            /// NEON has no instruction that gathers one bit per byte, so each lane keeps
+            /// the bit of its position within 8 bytes, and three rounds of pairwise adds
+            /// pack them into one `u64`.
+            #[inline(always)]
+            pub(super) fn bits(masks: [Self; 4]) -> u64 {
+                unsafe {
+                    let position_bits = vreinterpretq_u8_u64(vdupq_n_u64(0x8040_2010_0804_0201));
+                    let [a, b, c, d] = masks.map(|m| vandq_u8(m.0, position_bits));
+                    let quarters = vpaddq_u8(vpaddq_u8(a, b), vpaddq_u8(c, d));
+                    vgetq_lane_u64::<0>(vreinterpretq_u64_u8(vpaddq_u8(quarters, quarters)))
+                }
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    mod lanes {
+        use core::arch::x86_64::*;
+
+        /// 16 bytes in an SSE register.
+        #[derive(Clone, Copy)]
+        pub(super) struct Lanes(__m128i);
+
+        // SAFETY (every `unsafe` below): SSE2 is part of the x86_64 baseline, SSSE3 is
+        // enabled for this build (see the `cfg` on `by_block`), and the loads and stores
+        // go through a reference to exactly 16 bytes, with no alignment requirement.
+        impl Lanes {
+            #[inline(always)]
+            pub(super) fn load(bytes: &[u8; 16]) -> Self {
+                unsafe { Self(_mm_loadu_si128(bytes.as_ptr().cast())) }
+            }
+
+            #[inline(always)]
+            pub(super) fn store(self, out: &mut [u8; 16]) {
+                unsafe { _mm_storeu_si128(out.as_mut_ptr().cast(), self.0) }
+            }
+
+            #[inline(always)]
+            pub(super) fn splat(byte: u8) -> Self {
+                unsafe { Self(_mm_set1_epi8(byte as i8)) }
+            }
+
+            #[inline(always)]
+            pub(super) fn and(self, other: Self) -> Self {
+                unsafe { Self(_mm_and_si128(self.0, other.0)) }
+            }
+
+            #[inline(always)]
+            pub(super) fn or(self, other: Self) -> Self {
+                unsafe { Self(_mm_or_si128(self.0, other.0)) }
+            }
+
+            #[inline(always)]
+            pub(super) fn add(self, other: Self) -> Self {
+                unsafe { Self(_mm_add_epi8(self.0, other.0)) }
+            }
+
+            #[inline(always)]
+            pub(super) fn sub(self, other: Self) -> Self {
+                unsafe { Self(_mm_sub_epi8(self.0, other.0)) }
+            }
+
+            /// All ones in the lanes that are equal, zero in the others.
+            #[inline(always)]
+            pub(super) fn eq(self, other: Self) -> Self {
+                unsafe { Self(_mm_cmpeq_epi8(self.0, other.0)) }
+            }
+
+            #[inline(always)]
+            pub(super) fn max(self, other: Self) -> Self {
+                unsafe { Self(_mm_max_epu8(self.0, other.0)) }
+            }
+
+            /// Lane `i` of `self` for each lane `i` of `indices` below 16, zero for the rest
+            /// up to 143.
+            #[inline(always)]
+            pub(super) fn lookup(self, indices: Self) -> Self {
+                // PSHUFB zeroes the lanes whose index has its top bit set and otherwise
+                // uses the index's low 4 bits. Adding 0x70 sets the top bit of 16..=143
+                // and keeps the low 4 bits of 0..=15.
+                unsafe {
+                    let indices = _mm_add_epi8(indices.0, _mm_set1_epi8(0x70));
+                    Self(_mm_shuffle_epi8(self.0, indices))
+                }
+            }
+
+            /// The top bit of every lane of four registers of all-ones or zero lanes.
+            #[inline(always)]
+            pub(super) fn bits(masks: [Self; 4]) -> u64 {
+                masks.iter().enumerate().fold(0, |bits, (i, m)| {
+                    let lanes = unsafe { _mm_movemask_epi8(m.0) } as u16;
+                    bits | (u64::from(lanes) << (16 * i))
+                })
+            }
+        }
+    }
 }
 
 /// Serde shadow for [`Code`]. Stores the *logical* (unpadded) bytecode so the
