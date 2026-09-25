@@ -1643,6 +1643,12 @@ impl Store {
         Ok(self.latest_block_header.get().number)
     }
 
+    /// Timestamp of the current head, for callers that only need to place the
+    /// head against a fork schedule and would otherwise clone a whole header.
+    pub fn latest_block_timestamp(&self) -> u64 {
+        self.latest_block_header.get().timestamp
+    }
+
     /// Update pending block number
     pub async fn update_pending_block_number(
         &self,

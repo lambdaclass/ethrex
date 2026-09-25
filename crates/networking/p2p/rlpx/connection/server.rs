@@ -751,7 +751,7 @@ impl PeerConnectionServer {
             // mode latched on, fetch the now-wanted columns this peer can serve for
             // pending blob txs. Inert unless sampling is enabled, and only ever
             // asked of an eth/72 peer.
-            if state.blockchain.mempool.blob_sampling_enabled && supports_eth72(state) {
+            if state.blockchain.blob_sampling_enabled() && supports_eth72(state) {
                 let generation = state.blockchain.mempool.custody_generation();
                 if generation != state.last_custody_generation {
                     state.last_custody_generation = generation;
@@ -763,9 +763,24 @@ impl PeerConnectionServer {
                         .peer_cell_mask(state.node.node_id())
                         .unwrap_or(None)
                         .unwrap_or(u128::MAX);
+                    let peer_id = state.node.node_id();
                     match state.blockchain.mempool.blob_txs_missing_cells() {
                         Ok(missing_list) => {
                             for (tx_hash, missing) in missing_list {
+                                // `blob_txs_missing_cells` spans the whole pool, but a
+                                // peer may only be asked for cells it advertised: devp2p
+                                // `caps/eth.md` fetches "from peers that announced
+                                // overlapping availability". Without this the sweep asks
+                                // every eth/72 peer for every pending blob tx, including
+                                // ones it never announced.
+                                if !state
+                                    .blockchain
+                                    .mempool
+                                    .peer_announced_tx(tx_hash, peer_id)
+                                    .unwrap_or(false)
+                                {
+                                    continue;
+                                }
                                 let fetch_mask = missing & peer_available;
                                 if fetch_mask != 0 {
                                     state
@@ -1155,8 +1170,22 @@ where
                 )));
             }
         };
+        // eth/69+ Status already tells the peer our latest block, so it is the baseline
+        // for the next BlockRangeUpdate. Left at 0, the first periodic tick would resend
+        // the range the peer just received; go-ethereum likewise only sends an update
+        // once the head has moved an epoch past what peers already know.
+        let status_latest_block = match &status {
+            Message::Status69(status) => Some(status.0.latest_block),
+            Message::Status70(status) => Some(status.latest_block),
+            Message::Status71(status) => Some(status.0.latest_block),
+            Message::Status72(status) => Some(status.0.latest_block),
+            _ => None,
+        };
         trace!(peer=%state.node, "Sending status");
         send(state, status).await?;
+        if let Some(latest_block) = status_latest_block {
+            state.last_block_range_update_block = latest_block - (latest_block % 32);
+        }
         // The next immediate message in the ETH protocol is the
         // status, reference here:
         // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
@@ -1272,10 +1301,11 @@ where
     // eth/72 (EIP-8070) is only safe to negotiate when blob sampling is enabled:
     // it always elides blob payloads in PooledTransactions, and a node that does
     // not run the sampler/provider cell-fetch loop would receive blob txs it can
-    // never reconstruct. With sampling off we cap at eth/71 so default nodes keep
-    // full-blob propagation unchanged. The EIP's Backwards Compatibility section
-    // explicitly supports this gradual, version-gated rollout.
-    let offer_eth72 = state.blockchain.mempool.blob_sampling_enabled;
+    // never reconstruct. Sampling switches on at Amsterdam, so pre-fork peers cap
+    // at eth/71 and keep full-blob propagation unchanged. The EIP's Backwards
+    // Compatibility section explicitly supports this gradual, version-gated
+    // rollout.
+    let offer_eth72 = state.blockchain.blob_sampling_enabled();
     // This allow is because in l2 we mut the capabilities
     // to include the l2 cap
     let snap_capabilities =
@@ -1809,8 +1839,21 @@ async fn handle_incoming_message(
                 let hashes =
                     announcement.get_transactions_to_request(&state.blockchain, peer_id)?;
 
+                // A peer advertising every column is a provider for each blob tx it
+                // announces, whether or not we fetch the body from it. This has to be
+                // recorded for every such announcer: the sampler waits for
+                // MIN_PROVIDERS_BEFORE_SAMPLING of them before pulling cells, and every
+                // announcer after the first names a hash that is already in flight or
+                // already pooled, so `hashes` comes back empty for it.
+                if state.blockchain.blob_sampling_enabled()
+                    && announcement.announces_blob_tx()
+                    && announcement.cell_mask == Some(u128::MAX)
+                {
+                    record_blob_providers(state, &announcement, peer_id);
+                }
+
                 if !hashes.is_empty() {
-                    if !state.blockchain.mempool.blob_sampling_enabled {
+                    if !state.blockchain.blob_sampling_enabled() {
                         // Sampling disabled: always provider — request everything.
                         // Trim to the truly-requested subset so the flush does not
                         // re-request hashes already in-flight from another peer.
@@ -1878,51 +1921,6 @@ async fn handle_incoming_message(
                             ));
                         }
 
-                        // Sampler hashes: record the announcing peer as a provider
-                        // ONLY if it signaled full availability (all-ones mask);
-                        // a partially-available peer is not a provider observation.
-                        // if recording this provider hits the threshold and we already
-                        // have the tx body, retrigger cell-fetch immediately rather than
-                        // waiting for the tx-body response path.
-                        if announcement.cell_mask == Some(u128::MAX) {
-                            let mempool = &state.blockchain.mempool;
-                            for &hash in &sampler_hashes {
-                                let count = match mempool
-                                    .record_provider_announcement(hash, peer_id)
-                                {
-                                    Ok(n) => n,
-                                    Err(e) => {
-                                        warn!(error = %e, "record_provider_announcement failed");
-                                        continue;
-                                    }
-                                };
-                                // retrigger: threshold just reached and tx body already known.
-                                if count
-                                    == ethrex_blockchain::mempool::MIN_PROVIDERS_BEFORE_SAMPLING
-                                    && mempool.contains_tx(hash).unwrap_or(false)
-                                {
-                                    let custody = match mempool.get_custody_columns() {
-                                        Ok(c) => c,
-                                        Err(e) => {
-                                            warn!(error = %e, "get_custody_columns failed (D6b)");
-                                            continue;
-                                        }
-                                    };
-                                    // only add C_extra when this peer is a provider.
-                                    let mut target = custody;
-                                    if let Some(extra_col) =
-                                        pick_random_extra_column(custody, local_node_id, hash)
-                                    {
-                                        target |= 1u128 << extra_col;
-                                    }
-                                    // A provider holds every column, so the whole
-                                    // target can be requested from it.
-                                    if target != 0 {
-                                        state.pending_cell_requests.push((vec![hash], target));
-                                    }
-                                }
-                            }
-                        }
                         if !sampler_hashes.is_empty() {
                             // Request the tx body (no cells) from this peer.
                             let trimmed = announcement.filter_to(&sampler_hashes);
@@ -2076,7 +2074,7 @@ async fn handle_incoming_message(
         }
         // eth/72 (EIP-8070): PooledTransactions72 handler.
         // Blob txs arrive with elided blobs — do NOT trigger the missing-blob disconnect.
-        Message::PooledTransactions72(msg) if peer_supports_eth => {
+        Message::PooledTransactions72(mut msg) if peer_supports_eth => {
             if !msg.pooled_transactions.is_empty() {
                 state.received_txs_from_peer = true;
             }
@@ -2104,6 +2102,11 @@ async fn handle_incoming_message(
                             DisconnectReason::SubprotocolError,
                         ));
                     }
+                }
+                if let Some((announced, _, _, _)) = &removed_request {
+                    // Tolerated by `validate_requested`, but not admitted: only the
+                    // transactions this request asked for reach the pool.
+                    msg.retain_requested(announced);
                 }
                 #[cfg(feature = "l2")]
                 let is_l2_mode = state.l2_state.is_supported();
@@ -2137,7 +2140,7 @@ async fn handle_incoming_message(
                 }
                 // EIP-8070 sampler: after tx validation, check if we have enough provider
                 // announcements to start fetching cells.
-                if state.blockchain.mempool.blob_sampling_enabled {
+                if state.blockchain.blob_sampling_enabled() {
                     let peer_id = state.node.node_id();
                     let mempool = &state.blockchain.mempool;
                     let local_pubkey = public_key_from_signing_key(&state.signer);
@@ -2522,6 +2525,61 @@ async fn handle_broadcast(
         }
     }
     Ok(())
+}
+
+/// EIP-8070: record `peer_id` as a provider of every blob tx in `announcement`, which
+/// the caller has checked advertises full availability.
+///
+/// When that brings a tx whose body is already pooled to the sampling threshold, the
+/// cell fetch starts here, from this peer: the body response that would otherwise
+/// trigger it came earlier, while there were still too few providers.
+fn record_blob_providers(
+    state: &mut Established,
+    announcement: &NewPooledTransactionHashes72,
+    peer_id: H256,
+) {
+    let mempool = &state.blockchain.mempool;
+    let blob_hashes = announcement
+        .transaction_types
+        .iter()
+        .zip(announcement.transaction_hashes.iter())
+        .filter(|&(&ty, _)| ty == 3)
+        .map(|(_, &hash)| hash);
+    let mut ready = Vec::new();
+    for hash in blob_hashes {
+        match mempool.record_provider_announcement(hash, peer_id) {
+            Ok(count)
+                if count == ethrex_blockchain::mempool::MIN_PROVIDERS_BEFORE_SAMPLING
+                    && mempool.contains_tx(hash).unwrap_or(false) =>
+            {
+                ready.push(hash);
+            }
+            Ok(_) => {}
+            Err(e) => warn!(error = %e, "record_provider_announcement failed"),
+        }
+    }
+    if ready.is_empty() {
+        return;
+    }
+    let custody = match mempool.get_custody_columns() {
+        Ok(custody) => custody,
+        Err(e) => {
+            warn!(error = %e, "get_custody_columns failed");
+            return;
+        }
+    };
+    let local_node_id = node_id(&public_key_from_signing_key(&state.signer));
+    for hash in ready {
+        // A provider holds every column, so C_extra and the whole target can be
+        // requested from it.
+        let mut target = custody;
+        if let Some(extra_col) = pick_random_extra_column(custody, local_node_id, hash) {
+            target |= 1u128 << extra_col;
+        }
+        if target != 0 {
+            state.pending_cell_requests.push((vec![hash], target));
+        }
+    }
 }
 
 async fn handle_block_range_update(state: &mut Established) -> Result<(), PeerConnectionError> {

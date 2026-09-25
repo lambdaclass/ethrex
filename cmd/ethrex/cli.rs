@@ -524,7 +524,7 @@ pub struct Options {
         long = "blob-sampling",
         action = ArgAction::SetTrue,
         default_value = "false",
-        help = "Enable EIP-8070 PeerDAS blob sampling (sampler/provider state machine). Disabled by default; when off the node always acts as provider (p=1.0).",
+        help = "Enable EIP-8070 PeerDAS blob sampling (sampler/provider state machine) before Amsterdam. From Amsterdam onwards it is on regardless; until then the node always acts as provider (p=1.0).",
         help_heading = "P2P options",
         env = "ETHREX_BLOB_SAMPLING"
     )]
