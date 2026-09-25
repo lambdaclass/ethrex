@@ -93,7 +93,7 @@
     <a href="https://github.com/lambdaclass/ethrex">ethrex</a>. Test ETH has no value.
   </p>
   <p style="margin:-1.1rem 0 1.75rem;font-size:14px;color:var(--muted)">
-    Latest change: 2026-09-14 · <a href="#changelog">changelog</a>
+    Latest change: 2026-09-25 · <a href="#changelog">changelog</a>
   </p>
 
   <div class="panel">
@@ -387,6 +387,21 @@ lighthouse beacon_node \
   <h2 id="changelog">Changelog</h2>
   <div class="panel">
     <table>
+      <tr>
+        <td>2026-09-25<br><span style="font-weight:400">08:52 UTC</span></td>
+        <td class="desc"><strong>Node hotfix, no re-genesis.</strong> A frame transaction whose
+          top-level frame called a precompile after an earlier frame had emitted a log crashed
+          the execution client while it built a block, so the proposer produced nothing for
+          that slot and every following one while the transaction stayed pending. The
+          transaction shape is valid; the client mishandled it. All three network nodes now
+          run <code>hegota-testnet-hotfix</code> at <code>bf42186da</code>, swapped in place
+          with their chain databases and node keys unchanged: the bundle, the bootnodes and
+          every balance are as before, and nothing has to be resynced or re-signed. Anyone
+          running their own ethrex node should move to the same commit before sending that
+          shape, since a node on the previous build fails to import a block that contains it.
+          One slot was missed during the rolling restart. Reported by an external user;
+          thank you.</td>
+      </tr>
       <tr>
         <td>2026-09-14<br><span style="font-weight:400">21:47 UTC</span></td>
         <td class="desc"><strong>Fresh genesis on the current specs</strong>, the chain running
