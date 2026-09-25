@@ -76,6 +76,10 @@ impl RocksDBBackend {
         opts.set_max_open_files(-1);
         opts.set_max_file_opening_threads(16);
 
+        // Hand long-latency cleanup (deleting obsolete files, freeing memtables) to the
+        // background threads instead of running it on the thread doing the write or flush.
+        opts.set_avoid_unnecessary_blocking_io(true);
+
         opts.set_max_background_jobs(8);
 
         opts.set_level_zero_file_num_compaction_trigger(2);
@@ -714,6 +718,34 @@ impl Drop for RocksDBLocked {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// RocksDB writes every effective option to an `OPTIONS-*` file on open; rust-rocksdb
+    /// has no getter, so read it back from there.
+    #[test]
+    fn open_defers_cleanup_io_to_background_threads() {
+        let dir = tempfile::tempdir().unwrap();
+        let _backend =
+            RocksDBBackend::open(dir.path(), crate::store::MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES)
+                .unwrap();
+
+        let options_file = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("OPTIONS-"))
+            })
+            .expect("RocksDB writes an OPTIONS file on open");
+        let options = std::fs::read_to_string(options_file).unwrap();
+
+        assert!(
+            options
+                .lines()
+                .any(|line| line.trim() == "avoid_unnecessary_blocking_io=true"),
+            "avoid_unnecessary_blocking_io must be enabled"
+        );
+    }
     use crate::store::encode_tx_location_operand;
     use ethrex_common::H256;
     use ethrex_common::types::{BlockHash, BlockNumber, Index};
