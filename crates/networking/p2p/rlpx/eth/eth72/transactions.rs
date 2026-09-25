@@ -102,20 +102,21 @@ impl NewPooledTransactionHashes72 {
                 Transaction::EIP4844Transaction(eip4844_tx) => {
                     // See `NewPooledTransactionHashes::new`: a blob tx whose bundle is no
                     // longer in the pool cannot be served, so it must not be announced.
-                    // An empty bundle would announce ~162 bytes for a ~137 KB transaction.
+                    // Without commitments and proofs the announced size would match no
+                    // delivery.
                     let Some(tx_blobs_bundle) =
                         blockchain.mempool.get_blobs_bundle(transaction_hash)?
                     else {
                         continue;
                     };
-                    let p2p_tx =
-                        P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
+                    eth72_size(&P2PTransaction::EIP4844TransactionWithBlobs(
+                        WrappedEIP4844Transaction {
                             tx: eip4844_tx,
                             wrapper_version: (tx_blobs_bundle.version != 0)
                                 .then_some(tx_blobs_bundle.version),
                             blobs_bundle: tx_blobs_bundle,
-                        });
-                    p2p_tx.encode_canonical_len()
+                        },
+                    ))
                 }
                 _ => transaction.encode_canonical_len(),
             };
@@ -316,6 +317,23 @@ pub fn encode_elided_canonical(wrapped: &WrappedEIP4844Transaction) -> Vec<u8> {
     out
 }
 
+/// Size of `tx` as eth/72 announces it: the length of its `PooledTransactions`
+/// encoding, so the blob payload is left out of type-3 transactions.
+///
+/// An eth/72 peer never sends the blobs with the transaction, so it can only check an
+/// announced size against what does arrive. go-ethereum announces blob transactions
+/// to eth/72 peers without the blob payload and disconnects a peer whose delivery
+/// differs from its announcement by more than 8 bytes; both sides of our eth/72
+/// session (announcing and validating) have to measure the same thing.
+pub fn eth72_size(tx: &P2PTransaction) -> usize {
+    match tx {
+        P2PTransaction::EIP4844TransactionWithBlobs(wrapped) => {
+            encode_elided_canonical(wrapped).len()
+        }
+        other => other.encode_canonical_len(),
+    }
+}
+
 /// A transaction as it appears in an eth/72 `PooledTransactions`: an RLP byte
 /// string holding the canonical encoding, with the blob payload elided for type 3.
 struct Elided<'a>(&'a P2PTransaction);
@@ -353,8 +371,9 @@ impl PooledTransactions72 {
     }
 
     /// Validates that received txs match the request.
-    /// Size check is skipped for blob txs since announced size reflects full blobs
-    /// while eth/72 uses elided encoding.
+    ///
+    /// Sizes are compared on the eth/72 wire encoding, which elides blob payloads:
+    /// see [`eth72_size`].
     pub fn validate_requested(
         &self,
         requested: &NewPooledTransactionHashes72,
@@ -387,17 +406,12 @@ impl PooledTransactions72 {
             if tx.tx_type() as u8 != expected_type {
                 return Err(MempoolError::InvalidPooledTxType(expected_type));
             }
-            // Size validation skipped for blob txs: announced size reflects full-blob
-            // encoding while eth/72 elided encoding is smaller.
-            if tx.tx_type() as u8 != 3 {
-                let expected_size = requested.transaction_sizes[pos];
-                let tx_size = tx.encode_canonical_len();
-                // Same tolerance as the eth/71 path: geth's tx fetcher allows up to 8 bytes
-                // of skew between the announced and actual size before treating it as a
-                // protocol violation.
-                if tx_size.abs_diff(expected_size) > POOLED_TX_SIZE_TOLERANCE {
-                    return Err(MempoolError::InvalidPooledTxSize);
-                }
+            let expected_size = requested.transaction_sizes[pos];
+            // Same tolerance as the eth/71 path: geth's tx fetcher allows up to 8 bytes
+            // of skew between the announced and actual size before treating it as a
+            // protocol violation.
+            if eth72_size(tx).abs_diff(expected_size) > POOLED_TX_SIZE_TOLERANCE {
+                return Err(MempoolError::InvalidPooledTxSize);
             }
         }
         Ok(())
