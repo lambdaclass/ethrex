@@ -1170,8 +1170,22 @@ where
                 )));
             }
         };
+        // eth/69+ Status already tells the peer our latest block, so it is the baseline
+        // for the next BlockRangeUpdate. Left at 0, the first periodic tick would resend
+        // the range the peer just received; go-ethereum likewise only sends an update
+        // once the head has moved an epoch past what peers already know.
+        let status_latest_block = match &status {
+            Message::Status69(status) => Some(status.0.latest_block),
+            Message::Status70(status) => Some(status.latest_block),
+            Message::Status71(status) => Some(status.0.latest_block),
+            Message::Status72(status) => Some(status.0.latest_block),
+            _ => None,
+        };
         trace!(peer=%state.node, "Sending status");
         send(state, status).await?;
+        if let Some(latest_block) = status_latest_block {
+            state.last_block_range_update_block = latest_block - (latest_block % 32);
+        }
         // The next immediate message in the ETH protocol is the
         // status, reference here:
         // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
