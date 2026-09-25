@@ -141,6 +141,8 @@ kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
 aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", rev = "54ca2471624700536561b6bd369ed9f4d327991e", package = "agg_mode_sdk" }
+# Cross-process `#[timed]` timeline profiler (shared-memory rings, Perfetto export).
+flux-profiler = { git = "https://github.com/gattaca-com/flux", rev = "8064a8dbefa19659562d9810e2b80bab7f33b200" }
 spawned-concurrency = "0.5.0"
 spawned-rt = "0.5.0"
 lambdaworks-crypto = "0.13.0"

@@ -45,8 +45,14 @@ use std::{
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{Level, debug, error, info, warn};
 use tracing_subscriber::{
-    EnvFilter, Layer, Registry, filter::Directive, fmt, layer::SubscriberExt, reload,
+    EnvFilter, Layer, Registry,
+    filter::{Directive, filter_fn},
+    fmt,
+    layer::SubscriberExt,
+    reload,
 };
+
+use crate::profiler::{FluxBridgeLayer, bridged_span};
 
 // Compile-time check to ensure that at least one of the database features is enabled.
 #[cfg(not(feature = "rocksdb"))]
@@ -111,7 +117,10 @@ pub fn init_tracing(
 
     let subscriber = Registry::default()
         .with(fmt_layer.and_then(file_layer).with_filter(filter))
-        .with(profiling_layer);
+        .with(profiling_layer)
+        // Profiler frames for the allowlisted spans; the filter also keeps those
+        // callsites enabled regardless of the log level.
+        .with(FluxBridgeLayer.with_filter(filter_fn(bridged_span)));
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 

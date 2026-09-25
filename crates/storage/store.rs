@@ -2413,23 +2413,32 @@ impl Store {
         };
         let backend_clone = store.backend.clone();
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
-        background_threads.push(std::thread::spawn(move || {
-            let rx = fkv_rx;
-            // Wait for the first Continue to start generation
-            loop {
-                match rx.recv() {
-                    Ok(FKVGeneratorControlMessage::Continue) => break,
-                    Ok(FKVGeneratorControlMessage::Stop) => {}
-                    Err(std::sync::mpsc::RecvError) => {
-                        debug!("Closing FlatKeyValue generator.");
-                        return;
+        background_threads.push(
+            std::thread::Builder::new()
+                .name("store_flatkeyvalue".to_string())
+                .spawn(move || {
+                    let rx = fkv_rx;
+                    // Wait for the first Continue to start generation
+                    loop {
+                        match rx.recv() {
+                            Ok(FKVGeneratorControlMessage::Continue) => break,
+                            Ok(FKVGeneratorControlMessage::Stop) => {}
+                            Err(std::sync::mpsc::RecvError) => {
+                                debug!("Closing FlatKeyValue generator.");
+                                return;
+                            }
+                        }
                     }
-                }
-            }
 
-            let _ = flatkeyvalue_generator(&backend_clone, &last_computed_fkv, &rx)
-                .inspect_err(|err| error!("Error while generating FlatKeyValue: {err}"));
-        }));
+                    let _ = flatkeyvalue_generator(&backend_clone, &last_computed_fkv, &rx)
+                        .inspect_err(|err| error!("Error while generating FlatKeyValue: {err}"));
+                })
+                .map_err(|e| {
+                    StoreError::Custom(format!(
+                        "failed to spawn the store_flatkeyvalue thread: {e}"
+                    ))
+                })?,
+        );
         // The single persist worker: sole swapper of `block_data_buffer`, sole
         // builder of trie diff-layers. One DB transaction per `Block` message.
         let persist_backend = store.backend.clone();
@@ -2437,127 +2446,136 @@ impl Store {
         let persist_trie_cache = store.trie_cache.clone();
         let persist_pending_roots = store.pending_trie_roots.clone();
         let persist_fkv_ctl = store.flatkeyvalue_control_tx.clone();
-        background_threads.push(std::thread::spawn(move || {
-            let rx = persist_rx;
-            // Carries the prior flush result: the live path acks after staging,
-            // so a disk failure surfaces on the next message's ack.
-            let mut last_flush_result: Result<(), StoreError> = Ok(());
-            loop {
-                match rx.recv() {
-                    Ok(PersistMessage::Block(bp)) => {
-                        let bp = *bp;
-                        // Stage block data (sole swapper of the buffer; codes
-                        // are batch-level and attributed to the first block).
-                        let staged = mutate_block_buffer(&persist_buffer, move |b| {
-                            let mut codes = Some(bp.codes);
-                            for (block, receipts) in bp.blocks {
-                                b.insert(block, receipts, codes.take().unwrap_or_default());
-                            }
-                        });
-                        if let Err(e) = staged {
-                            // Stage failure is terminal for this message.
-                            // Clear the pending root so gated readers are not
-                            // blocked forever (apply_trie_phase1, which normally
-                            // does this, is skipped when we continue here).
-                            persist_pending_roots.clear(bp.child_state_root);
-                            let _ = bp.ack.send(Err(e));
-                            continue;
-                        }
-                        // ACK-AFTER-STAGING: ack now, carrying the prior flush result.
-                        // NOTE: this acks block validity BEFORE apply_trie_phase1
-                        // installs the trie layer below. A phase-1 failure (only
-                        // reachable via lock poisoning, which is already fatal) is
-                        // therefore deferred to the next block's ack via
-                        // last_flush_result rather than attributed to this block;
-                        // the pending root is still cleared unconditionally, so
-                        // gated readers error rather than hang.
-                        if !bp.wait_for_flush {
-                            let _ = bp
-                                .ack
-                                .send(std::mem::replace(&mut last_flush_result, Ok(())));
-                        }
-                        // Build + install the trie layer; clear the read gate.
-                        if let Err(err) = apply_trie_phase1(
-                            &persist_trie_cache,
-                            &persist_pending_roots,
-                            bp.parent_state_root,
-                            bp.child_state_root,
-                            bp.block_number,
-                            bp.block_hash,
-                            bp.account_updates,
-                            bp.storage_updates,
-                        ) {
-                            error!("persist worker trie phase-1 failed: {err}");
-                            if bp.wait_for_flush {
-                                let _ = bp.ack.send(Err(err));
-                            } else {
-                                last_flush_result = Err(err);
-                            }
-                            continue;
-                        }
-                        // Flush block data + commit bottom trie layer when due.
-                        let flushed = flush_block_data(persist_backend.as_ref(), &persist_buffer)
-                            .inspect_err(|err| error!("flush_block_data failed: {err}"))
-                            .and_then(|_| {
-                                commit_trie_if_due(
-                                    persist_backend.as_ref(),
+        background_threads.push(
+            std::thread::Builder::new()
+                .name("store_persist".to_string())
+                .spawn(move || {
+                    let rx = persist_rx;
+                    // Carries the prior flush result: the live path acks after staging,
+                    // so a disk failure surfaces on the next message's ack.
+                    let mut last_flush_result: Result<(), StoreError> = Ok(());
+                    loop {
+                        match rx.recv() {
+                            Ok(PersistMessage::Block(bp)) => {
+                                let bp = *bp;
+                                // Stage block data (sole swapper of the buffer; codes
+                                // are batch-level and attributed to the first block).
+                                let staged = mutate_block_buffer(&persist_buffer, move |b| {
+                                    let mut codes = Some(bp.codes);
+                                    for (block, receipts) in bp.blocks {
+                                        b.insert(block, receipts, codes.take().unwrap_or_default());
+                                    }
+                                });
+                                if let Err(e) = staged {
+                                    // Stage failure is terminal for this message.
+                                    // Clear the pending root so gated readers are not
+                                    // blocked forever (apply_trie_phase1, which normally
+                                    // does this, is skipped when we continue here).
+                                    persist_pending_roots.clear(bp.child_state_root);
+                                    let _ = bp.ack.send(Err(e));
+                                    continue;
+                                }
+                                // ACK-AFTER-STAGING: ack now, carrying the prior flush result.
+                                // NOTE: this acks block validity BEFORE apply_trie_phase1
+                                // installs the trie layer below. A phase-1 failure (only
+                                // reachable via lock poisoning, which is already fatal) is
+                                // therefore deferred to the next block's ack via
+                                // last_flush_result rather than attributed to this block;
+                                // the pending root is still cleared unconditionally, so
+                                // gated readers error rather than hang.
+                                if !bp.wait_for_flush {
+                                    let _ = bp
+                                        .ack
+                                        .send(std::mem::replace(&mut last_flush_result, Ok(())));
+                                }
+                                // Build + install the trie layer; clear the read gate.
+                                if let Err(err) = apply_trie_phase1(
                                     &persist_trie_cache,
-                                    &persist_fkv_ctl,
+                                    &persist_pending_roots,
                                     bp.parent_state_root,
-                                    bp.commit_depth,
-                                    bp.wait_for_flush,
-                                )
-                            });
-                        // ACK-AFTER-FLUSH: ack now (bounds in-flight work to ~1), folding in
-                        // any prior deferred error. ACK-AFTER-STAGING: stash for the next ack.
-                        if bp.wait_for_flush {
-                            let prior = std::mem::replace(&mut last_flush_result, Ok(()));
-                            let _ = bp.ack.send(prior.and(flushed));
-                        } else {
-                            last_flush_result = flushed;
+                                    bp.child_state_root,
+                                    bp.block_number,
+                                    bp.block_hash,
+                                    bp.account_updates,
+                                    bp.storage_updates,
+                                ) {
+                                    error!("persist worker trie phase-1 failed: {err}");
+                                    if bp.wait_for_flush {
+                                        let _ = bp.ack.send(Err(err));
+                                    } else {
+                                        last_flush_result = Err(err);
+                                    }
+                                    continue;
+                                }
+                                // Flush block data + commit bottom trie layer when due.
+                                let flushed =
+                                    flush_block_data(persist_backend.as_ref(), &persist_buffer)
+                                        .inspect_err(|err| error!("flush_block_data failed: {err}"))
+                                        .and_then(|_| {
+                                            commit_trie_if_due(
+                                                persist_backend.as_ref(),
+                                                &persist_trie_cache,
+                                                &persist_fkv_ctl,
+                                                bp.parent_state_root,
+                                                bp.commit_depth,
+                                                bp.wait_for_flush,
+                                            )
+                                        });
+                                // ACK-AFTER-FLUSH: ack now (bounds in-flight work to ~1), folding in
+                                // any prior deferred error. ACK-AFTER-STAGING: stash for the next ack.
+                                if bp.wait_for_flush {
+                                    let prior = std::mem::replace(&mut last_flush_result, Ok(()));
+                                    let _ = bp.ack.send(prior.and(flushed));
+                                } else {
+                                    last_flush_result = flushed;
+                                }
+                            }
+                            Ok(PersistMessage::Commit(root)) => match persist_trie_cache.read() {
+                                Ok(guard) => {
+                                    let trie = guard.clone();
+                                    drop(guard);
+                                    // Forkchoice-driven flush is the live (non-batch) path, so
+                                    // journaling is enabled: pass `is_batch = false`.
+                                    let _ = commit_to_disk(
+                                        persist_backend.as_ref(),
+                                        &persist_fkv_ctl,
+                                        &persist_trie_cache,
+                                        &trie,
+                                        root,
+                                        false,
+                                    )
+                                    .inspect_err(|err| error!("commit_to_disk failed: {err}"));
+                                }
+                                Err(_) => error!("trie cache lock poisoned during commit"),
+                            },
+                            Ok(PersistMessage::Ping(ack)) => {
+                                // Idle handshake: reached only after all earlier Block
+                                // messages are fully processed. Carry the pending flush
+                                // result so a live-path failure is not silently dropped.
+                                let _ = ack.send(std::mem::replace(&mut last_flush_result, Ok(())));
+                            }
+                            Ok(PersistMessage::Shutdown { ack }) => {
+                                // Graceful shutdown: drain (already guaranteed by FIFO) and
+                                // force-flush the not-yet-flushed block-data tail. The trie
+                                // diff-layers stay in memory and are dropped on exit: the
+                                // on-disk trie is a single-version path store, so committing
+                                // the non-finalized tail would make a post-restart reorg
+                                // unrecoverable. Those layers re-execute on the next start.
+                                let result =
+                                    flush_block_data(persist_backend.as_ref(), &persist_buffer);
+                                let prior = std::mem::replace(&mut last_flush_result, Ok(()));
+                                let _ = ack.send(prior.and(result));
+                                // No more work will follow a shutdown request.
+                                return;
+                            }
+                            Err(_) => return,
                         }
                     }
-                    Ok(PersistMessage::Commit(root)) => match persist_trie_cache.read() {
-                        Ok(guard) => {
-                            let trie = guard.clone();
-                            drop(guard);
-                            // Forkchoice-driven flush is the live (non-batch) path, so
-                            // journaling is enabled: pass `is_batch = false`.
-                            let _ = commit_to_disk(
-                                persist_backend.as_ref(),
-                                &persist_fkv_ctl,
-                                &persist_trie_cache,
-                                &trie,
-                                root,
-                                false,
-                            )
-                            .inspect_err(|err| error!("commit_to_disk failed: {err}"));
-                        }
-                        Err(_) => error!("trie cache lock poisoned during commit"),
-                    },
-                    Ok(PersistMessage::Ping(ack)) => {
-                        // Idle handshake: reached only after all earlier Block
-                        // messages are fully processed. Carry the pending flush
-                        // result so a live-path failure is not silently dropped.
-                        let _ = ack.send(std::mem::replace(&mut last_flush_result, Ok(())));
-                    }
-                    Ok(PersistMessage::Shutdown { ack }) => {
-                        // Graceful shutdown: drain (already guaranteed by FIFO) and
-                        // force-flush the not-yet-flushed block-data tail. The trie
-                        // diff-layers stay in memory and are dropped on exit: the
-                        // on-disk trie is a single-version path store, so committing
-                        // the non-finalized tail would make a post-restart reorg
-                        // unrecoverable. Those layers re-execute on the next start.
-                        let result = flush_block_data(persist_backend.as_ref(), &persist_buffer);
-                        let prior = std::mem::replace(&mut last_flush_result, Ok(()));
-                        let _ = ack.send(prior.and(result));
-                        // No more work will follow a shutdown request.
-                        return;
-                    }
-                    Err(_) => return,
-                }
-            }
-        }));
+                })
+                .map_err(|e| {
+                    StoreError::Custom(format!("failed to spawn the store_persist thread: {e}"))
+                })?,
+        );
         store.background_threads = Arc::new(ThreadList {
             list: background_threads,
         });

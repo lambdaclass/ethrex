@@ -14,12 +14,35 @@ use tracing::{error, info};
 
 const LATEST_VERSION_URL: &str = "https://api.github.com/repos/lambdaclass/ethrex/releases/latest";
 
-#[cfg(all(feature = "jemalloc", not(target_env = "msvc")))]
+#[cfg(all(
+    feature = "jemalloc",
+    not(feature = "alloc-profile"),
+    not(target_env = "msvc")
+))]
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
+// `alloc-profile`: the same allocator wrapped in the profiler's counting
+// allocator, so every frame carries the bytes allocated and freed on its thread.
+#[cfg(all(
+    feature = "jemalloc",
+    feature = "alloc-profile",
+    not(target_env = "msvc")
+))]
+#[global_allocator]
+static ALLOC: flux_profiler::allocator::CountingAllocator<tikv_jemallocator::Jemalloc> =
+    flux_profiler::allocator::CountingAllocator(tikv_jemallocator::Jemalloc);
+
 fn log_global_allocator() {
-    if cfg!(all(feature = "jemalloc", not(target_env = "msvc"))) {
+    if cfg!(all(
+        feature = "jemalloc",
+        feature = "alloc-profile",
+        not(target_env = "msvc")
+    )) {
+        tracing::info!(
+            "Global allocator: jemalloc (tikv-jemallocator), wrapped in the profiler's counting allocator"
+        );
+    } else if cfg!(all(feature = "jemalloc", not(target_env = "msvc"))) {
         tracing::info!("Global allocator: jemalloc (tikv-jemallocator)");
     } else {
         tracing::info!("Global allocator: system (std::alloc::System)");
@@ -170,8 +193,22 @@ async fn periodically_check_version_update() {
     }
 }
 
-#[tokio::main]
-async fn main() -> eyre::Result<()> {
+fn main() -> eyre::Result<()> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        // Named so profiler tracks and thread listings identify runtime threads.
+        // The same function names the blocking pool, which tokio does not
+        // expose separately.
+        .thread_name_fn(|| {
+            static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            format!("tokio-worker-{id}")
+        })
+        .build()?;
+    runtime.block_on(async_main())
+}
+
+async fn async_main() -> eyre::Result<()> {
     let CLI { opts, command } = CLI::parse();
 
     rayon::ThreadPoolBuilder::default()
@@ -182,6 +219,13 @@ async fn main() -> eyre::Result<()> {
     if let Some(subcommand) = command {
         return subcommand.run(&opts).await;
     }
+
+    // Publish this node's profiler rings so `flux-profiler` can attach at any
+    // time, without a flag or a restart. Only on the node path: enabling unlinks
+    // the app's previous rings and rewrites its pid file, so doing it from a
+    // subcommand (`import`, `--version`) on a host with a running node would cut
+    // that node's live capture.
+    flux_profiler::enable_profiler("ethrex");
 
     let (log_filter_handler, _guard) = init_tracing(&opts);
 

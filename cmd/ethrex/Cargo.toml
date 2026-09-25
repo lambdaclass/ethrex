@@ -24,6 +24,7 @@ ethrex-repl.workspace = true
 ethrex-l2-prover = { workspace = true, optional = true, features = ["l2"] }
 ethrex-rlp.workspace = true
 ethrex-rpc.workspace = true
+flux-profiler.workspace = true
 ethrex-sdk = { workspace = true, optional = true }
 ethrex-storage.workspace = true
 ethrex-storage-rollup = { workspace = true, optional = true }
@@ -134,6 +135,12 @@ risc0 = ["ethrex-l2-prover/risc0", "ethrex-l2/risc0"]
 
 perf_opcode_timings = ["ethrex-vm/perf_opcode_timings"]
 cpu_profiling = ["dep:pprof"]
+# Per-frame allocated/freed bytes alongside every profiler frame: wraps the
+# jemalloc global allocator in the profiler's counting allocator.
+alloc-profile = ["jemalloc", "flux-profiler/alloc-profile"]
+# Per-frame hardware counters (instructions, cycles, cache misses) via rdpmc.
+# Linux x86-64 only; elsewhere the counters read as zero.
+perf = ["flux-profiler/perf"]
 
 [build-dependencies]
 vergen-git2 = { version = "9.1", features = ["rustc"] }
