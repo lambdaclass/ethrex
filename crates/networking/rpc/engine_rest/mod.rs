@@ -33,6 +33,7 @@ pub(crate) const CONTENT_TYPE_OCTET_STREAM: &str = "application/octet-stream";
 ///   GET  /identity
 ///   GET  /capabilities
 ///   POST /payloads
+///   POST /payloads/witness
 ///   GET  /payloads/{id}
 ///   POST /forkchoice
 ///   POST /bodies/hash
@@ -55,6 +56,10 @@ pub fn router(ctx: RpcApiContext) -> Router {
             get(handlers::capabilities::get_capabilities),
         )
         .route("/payloads", post(handlers::payloads::submit_payload))
+        .route(
+            "/payloads/witness",
+            post(handlers::payloads::submit_payload_with_witness),
+        )
         .route("/payloads/{id}", get(handlers::payloads::get_payload))
         .route("/forkchoice", post(handlers::forkchoice::forkchoice_update))
         .route("/bodies/hash", post(handlers::bodies::bodies_by_hash))
