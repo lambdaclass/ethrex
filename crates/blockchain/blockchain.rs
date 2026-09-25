@@ -5040,7 +5040,6 @@ fn branchify(node: Node) -> Box<BranchNode> {
     }
 }
 
-#[timed]
 fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieNode>), TrieError> {
     let root = branchify(
         trie.root_node()?

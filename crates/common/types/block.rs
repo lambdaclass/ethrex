@@ -20,6 +20,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_trie::Trie;
+use flux_profiler::timed;
 #[cfg(feature = "rayon")]
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
@@ -336,6 +337,7 @@ impl BlockBody {
         }
     }
 
+    #[timed]
     pub fn get_transactions_with_sender(
         &self,
         crypto: &dyn Crypto,
@@ -358,6 +360,7 @@ impl BlockBody {
     }
 }
 
+#[timed]
 pub fn compute_transactions_root(transactions: &[Transaction], crypto: &dyn Crypto) -> H256 {
     let iter = transactions.iter().enumerate().map(|(idx, tx)| {
         // Key: RLP(tx_index)
@@ -368,6 +371,7 @@ pub fn compute_transactions_root(transactions: &[Transaction], crypto: &dyn Cryp
     Trie::compute_hash_from_unsorted_iter(iter, crypto)
 }
 
+#[timed]
 pub fn compute_receipts_root(receipts: &[Receipt], crypto: &dyn Crypto) -> H256 {
     let iter = receipts
         .iter()
@@ -380,6 +384,7 @@ pub fn compute_receipts_root(receipts: &[Receipt], crypto: &dyn Crypto) -> H256 
 /// hashing each receipt's bloom only once (it feeds both the receipts trie and the
 /// OR-ed header bloom). Validation paths need both, so this avoids the duplicate
 /// `bloom_from_logs` keccak work — relevant in the zkVM guest where it is cycle-counted.
+#[timed]
 pub fn compute_receipts_root_and_logs_bloom(
     receipts: &[Receipt],
     crypto: &dyn Crypto,
@@ -398,6 +403,7 @@ pub fn compute_receipts_root_and_logs_bloom(
 }
 
 // See [EIP-4895](https://eips.ethereum.org/EIPS/eip-4895)
+#[timed]
 pub fn compute_withdrawals_root(withdrawals: &[Withdrawal], crypto: &dyn Crypto) -> H256 {
     let iter = withdrawals
         .iter()

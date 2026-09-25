@@ -3232,7 +3232,7 @@ impl LEVM {
                     if should_stop() {
                         return;
                     }
-                    let _ = Self::execute_tx_in_block(
+                    let _ = Self::execute_tx_in_block_untimed(
                         tx,
                         sender,
                         header,
@@ -3445,8 +3445,47 @@ impl LEVM {
     // Like execute_tx but allows reusing the stack pool. Takes the block-invariant
     // `config`/`chain_id` precomputed once per block (see `setup_env_with_config`).
     #[allow(clippy::too_many_arguments)]
+    /// Framed entry point for real block execution. The warm-up paths call
+    /// [`Self::execute_tx_in_block_untimed`] so speculative re-executions do not
+    /// flood the profiler with per-transaction frames.
     #[timed]
     fn execute_tx_in_block(
+        // The transaction to execute.
+        tx: &Transaction,
+        // The transaction's recovered address
+        tx_sender: Address,
+        // The block header for the current block.
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        base_blob_fee_per_gas: U256,
+        stack_pool: &mut Vec<Stack>,
+        memory_pool: &mut Vec<Memory>,
+        disable_balance_check: bool,
+        crypto: &dyn Crypto,
+        config: EVMConfig,
+        chain_id: u64,
+        stateless_validator: Option<&dyn StatelessValidator>,
+    ) -> Result<ExecutionReport, EvmError> {
+        Self::execute_tx_in_block_untimed(
+            tx,
+            tx_sender,
+            block_header,
+            db,
+            vm_type,
+            base_blob_fee_per_gas,
+            stack_pool,
+            memory_pool,
+            disable_balance_check,
+            crypto,
+            config,
+            chain_id,
+            stateless_validator,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn execute_tx_in_block_untimed(
         // The transaction to execute.
         tx: &Transaction,
         // The transaction's recovered address

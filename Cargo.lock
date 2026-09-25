@@ -3902,6 +3902,7 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-rlp",
  "ethrex-trie",
+ "flux-profiler",
  "hex",
  "hex-literal 0.4.1",
  "hex-simd",

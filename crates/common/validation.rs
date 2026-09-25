@@ -13,6 +13,7 @@ use crate::types::{
 };
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::encode::RLPEncode;
+use flux_profiler::timed;
 
 /// Performs pre-execution validation of the block's header values in reference to the parent_header.
 /// Verifies that blob gas fields in the header are correct in reference to the block's body.
@@ -110,6 +111,7 @@ pub fn validate_gas_used(
 /// or a block with a correct receipts root but an arbitrary bloom would be accepted,
 /// diverging from geth/reth. Both checks need each receipt's bloom, so computing them
 /// together hashes it only once (it is cycle-counted in the zkVM guest).
+#[timed]
 pub fn validate_receipts_root_and_logs_bloom(
     block_header: &BlockHeader,
     receipts: &[Receipt],
@@ -127,6 +129,7 @@ pub fn validate_receipts_root_and_logs_bloom(
 }
 
 /// Validates that the requests hash matches the block header (Prague+).
+#[timed]
 pub fn validate_requests_hash(
     header: &BlockHeader,
     chain_config: &ChainConfig,
@@ -203,6 +206,7 @@ pub fn validate_header_bal_indices(
 /// Validates that the block access list hash matches the block header (Amsterdam+).
 /// Also validates that all BlockAccessIndex values are within valid bounds per EIP-7928,
 /// and that the BAL size does not exceed the gas-derived limit.
+#[timed]
 pub fn validate_block_access_list_hash(
     header: &BlockHeader,
     chain_config: &ChainConfig,

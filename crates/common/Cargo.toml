@@ -12,6 +12,7 @@ repository.workspace = true
 
 [dependencies]
 ethrex-rlp.workspace = true
+flux-profiler.workspace = true
 # `ethrex-common` is a std crate (it uses `std::` directly), and everything that
 # reaches the trie through it — the node, the prover host, and the zkVM guest ELFs —
 # also builds `ethrex-vm`, whose `VmDatabase: Send + Sync` bound requires a `Sync`
