@@ -49,7 +49,7 @@ use crate::{
 };
 
 use thiserror::Error;
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 #[derive(Debug)]
 pub struct PayloadBuildTask {
@@ -494,7 +494,23 @@ impl Blockchain {
         // Snapshot the mempool sequence *before* the build so any tx that lands
         // during the build is seen as newer than the current `res`.
         let mut last_built_seq = self.mempool.tx_seq();
-        let mut res = self.build_payload_inner(payload.clone(), None, &inclusion_list)?;
+        // The first build runs on a blocking thread like every rebuild, so a panic
+        // inside it (a VM bug tripped by a mempool transaction) surfaces as an
+        // error the engine reports for this slot instead of killing the build
+        // task, which the caller could only observe as a failed join.
+        let mut res = {
+            let blockchain = self.clone();
+            let first_payload = payload.clone();
+            let il_clone = inclusion_list.clone();
+            tokio::task::spawn_blocking(move || {
+                blockchain.build_payload_inner(first_payload, None, &il_clone)
+            })
+            .await
+            .map_err(|err| {
+                error!(%err, "Initial payload build task panicked");
+                ChainError::Custom(format!("initial payload build panicked: {err}"))
+            })??
+        };
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             // Wait for new transactions, cancellation, or slot deadline before rebuilding
             let remaining = SECONDS_PER_SLOT.saturating_sub(start.elapsed());
