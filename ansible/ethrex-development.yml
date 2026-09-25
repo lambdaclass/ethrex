@@ -1,0 +1,290 @@
+- name: Ethrex Development Setup
+  hosts: all
+  vars:
+    ansible_ssh_user: admin
+    network: "{{ lookup('env', 'NETWORK') | default('mainnet', true) }}"
+    lighthouse_version: "8.0.0"
+    solc_version: "0.8.31"
+    lighthouse_flags: |-
+      bn
+      --network {{ network }}
+      --execution-endpoint http://localhost:8551
+      --execution-jwt /secrets/jwt.hex
+      --checkpoint-sync-url https://{{ network }}-checkpoint-sync.attestant.io
+      --port 9000
+      --http
+      --http-address 0.0.0.0
+      --http-port 5052
+      --http-allow-origin "*"
+      --metrics
+      --metrics-port 5054
+      --metrics-address 0.0.0.0
+
+  tasks:
+    - name: Install development APT dependencies
+      become: true
+      apt:
+        name:
+          - libclang-dev
+          - clang
+          - tmux
+          - rsync
+          - linux-perf
+          - git
+          - pkg-config
+          - make
+          - jq
+        state: present
+        update_cache: yes
+      vars:
+        ansible_ssh_user: admin
+
+    - name: Check rustup presence
+      stat:
+        path: "/home/{{ ansible_ssh_user }}/.cargo/bin/rustup"
+      register: rustup_bin
+
+    - name: Download rustup installer
+      get_url:
+        url: https://sh.rustup.rs
+        dest: /tmp/rustup-init.sh
+        mode: '0755'
+      when: not rustup_bin.stat.exists
+
+    - name: Install Rust toolchain
+      command: /tmp/rustup-init.sh -y
+      args:
+        creates: "/home/{{ ansible_ssh_user }}/.cargo/bin/rustup"
+      when: not rustup_bin.stat.exists
+
+    - name: Check solc binary presence
+      stat:
+        path: /usr/local/bin/solc
+      register: solc_bin
+
+    - block:
+        - name: Set solc download URL
+          set_fact:
+            solc_url: "{{ solc_arch_map[ansible_facts['architecture']] | default('') }}"
+          vars:
+            solc_arch_map:
+              x86_64: https://github.com/argotorg/solidity/releases/download/v{{ solc_version }}/solc-static-linux
+              aarch64: https://github.com/argotorg/solidity/releases/download/v{{ solc_version }}/solc-static-linux-arm
+              arm64: https://github.com/argotorg/solidity/releases/download/v{{ solc_version }}/solc-static-linux-arm
+
+        - name: Validate solc download URL for architecture
+          assert:
+            that:
+              - solc_url != ''
+            fail_msg: "Unsupported architecture for solc: {{ ansible_facts['architecture'] }}"
+
+        - name: Download solc
+          get_url:
+            url: "{{ solc_url }}"
+            dest: /tmp/solc
+            mode: '0755'
+
+        - name: Move solc binary
+          become: true
+          copy:
+            remote_src: true
+            src: /tmp/solc
+            dest: /usr/local/bin/solc
+            mode: u=rwx,g=rx,o=rx
+      when: not solc_bin.stat.exists
+
+    - name: Check Docker binary presence
+      stat:
+        path: /usr/bin/docker
+      register: docker_bin
+
+    - block:
+        - name: Install Docker APT dependencies
+          apt:
+            name:
+              - ca-certificates
+              - curl
+              - gnupg
+              - lsb-release
+            state: present
+            update_cache: yes
+
+        - name: Ensure Docker APT keyring directory exists
+          file:
+            path: /etc/apt/keyrings
+            state: directory
+            mode: '0755'
+
+        - name: Set Docker repository parameters
+          set_fact:
+            docker_repo_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64', 'armv7l': 'armhf'}.get(ansible_facts['architecture'], ansible_facts['architecture']) }}"
+            docker_repo_distro: "{{ 'ubuntu' if ansible_facts['distribution'] | lower == 'ubuntu' else 'debian' }}"
+
+        - name: Download Docker GPG key
+          get_url:
+            url: https://download.docker.com/linux/{{ docker_repo_distro }}/gpg
+            dest: /etc/apt/keyrings/docker.asc
+            mode: '0644'
+          register: docker_gpg_key
+
+        - name: Check Docker keyring presence
+          stat:
+            path: /etc/apt/keyrings/docker.gpg
+          register: docker_gpg_keyring
+
+        - name: Convert Docker GPG key to keyring
+          command: gpg --dearmor -o /etc/apt/keyrings/docker.gpg /etc/apt/keyrings/docker.asc
+          when: docker_gpg_key.changed or not docker_gpg_keyring.stat.exists
+
+        - name: Add Docker APT repository
+          apt_repository:
+            repo: "deb [arch={{ docker_repo_arch }} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/{{ docker_repo_distro }} {{ ansible_facts['distribution_release'] }} stable"
+            filename: docker
+            state: present
+            update_cache: yes
+
+        - name: Install Docker Engine
+          apt:
+            name:
+              - docker-ce
+              - docker-ce-cli
+              - containerd.io
+              - docker-buildx-plugin
+              - docker-compose-plugin
+            state: present
+
+        - name: Enable and start Docker
+          systemd:
+            name: docker
+            enabled: true
+            state: started
+
+        - name: Check for admin user
+          getent:
+            database: passwd
+            key: admin
+          failed_when: false
+          changed_when: false
+
+        - name: Add admin to docker group
+          user:
+            name: admin
+            groups: docker
+            append: true
+          when: ansible_facts.getent_passwd is defined and ansible_facts.getent_passwd.admin is defined
+      become: true
+      when: not docker_bin.stat.exists
+
+    - name: Download Lighthouse
+      get_url:
+        url: https://github.com/sigp/lighthouse/releases/download/v{{ lighthouse_version }}/lighthouse-v{{ lighthouse_version }}-{{ ansible_facts['architecture'] }}-unknown-linux-gnu.tar.gz
+        dest: "/tmp/lighthouse-{{ lighthouse_version }}.tar.gz"
+        mode: '0644'
+
+    - name: Extract Lighthouse
+      unarchive:
+        src: "/tmp/lighthouse-{{ lighthouse_version }}.tar.gz"
+        dest: "/tmp/"
+        remote_src: true
+
+    - name: Move Lighthouse binary
+      become: true
+      copy:
+        remote_src: true
+        src: "/tmp/lighthouse"
+        dest: "/usr/local/bin/lighthouse"
+        mode: u=rwx,g=rx,o=rx
+      vars:
+        ansible_ssh_user: admin
+
+    - name: Ensure secrets directory exists
+      become: true
+      file:
+        path: /secrets
+        state: directory
+        mode: '0755'
+
+    - name: Generate JWT secret
+      become: true
+      shell: "openssl rand -hex 32 | tr -d '\\n' > /secrets/jwt.hex"
+      args:
+        creates: /secrets/jwt.hex
+
+    - name: Clone ethrex repository
+      ansible.builtin.git:
+        repo: "https://github.com/lambdaclass/ethrex.git"
+        dest: "/home/{{ ansible_user }}/ethrex"
+        version: "{{ lookup('env', 'BRANCH') | default('main', true) }}"
+
+    - name: Build lighthouse flags string
+      set_fact:
+        lighthouse_flags_joined: "{{ lighthouse_flags.splitlines() | join(' ') }}"
+
+    - name: Check if tmux session exists
+      shell: tmux has-session -t LIGHTHOUSE_ETHREX
+      register: tmux_session_check
+      failed_when: false
+      changed_when: false
+
+    - name: Create tmux session with split lighthouse/ethrex panes
+      shell: |
+        set -e
+        tmux new-session -d -s LIGHTHOUSE_ETHREX -n work -c "/home/{{ ansible_user }}"
+        tmux split-window -t LIGHTHOUSE_ETHREX:work -h -c "/home/{{ ansible_user }}/ethrex"
+
+        tmux send-keys -t LIGHTHOUSE_ETHREX:work.0 'lighthouse {{ lighthouse_flags.splitlines() | join(' ') }}'
+      when: tmux_session_check.rc != 0
+
+    - name: Check node_exporter binary presence
+      stat:
+        path: /usr/local/bin/node_exporter
+      register: node_exporter_bin
+
+    - name: Check ethereum_metrics_exporter binary presence
+      stat:
+        path: /usr/local/bin/ethereum-metrics-exporter
+      register: ethereum_metrics_exporter_bin
+
+    - name: Check monitoring exporters state
+      set_fact:
+        monitoring_exporters_running: "{{ node_exporter_bin.stat.exists and ethereum_metrics_exporter_bin.stat.exists }}"
+
+    - block:
+        - name: Clone monitoring stack repository locally
+          git:
+            repo: "git@github.com:lambdaclass/monitoring-stack.git"
+            dest: "{{ monitoring_stack_dir }}"
+
+        - name: Build monitoring stack targets locally for inventory hosts
+          command:
+            cmd: make inventory TARGET={{ inventory_targets }}
+            chdir: "{{ monitoring_stack_dir }}"
+
+        - name: Build node_exporter locally
+          command:
+            cmd: make node_exporter
+            chdir: "{{ monitoring_stack_dir }}"
+
+        - name: Build ethereum_metrics_exporter locally
+          command:
+            cmd: make ethereum_metrics_exporter
+            chdir: "{{ monitoring_stack_dir }}"
+
+        - name: Build promtail locally
+          command:
+            cmd: make promtail
+            chdir: "{{ monitoring_stack_dir }}"
+          environment:
+            LOKI_URL: "http://ethrex-grafana:3100"
+            ETHREX_LOGS_DIR: "/var/log/ethrex"
+
+        - name: Remove monitoring stack repository locally
+          file:
+            path: "{{ monitoring_stack_dir }}"
+            state: absent
+      vars:
+        inventory_targets: "{{ groups['all'] | default([]) | join(',') }}"
+        monitoring_stack_dir: "{{ playbook_dir }}/monitoring-stack"
+      delegate_to: localhost
+      run_once: true
+      when: not monitoring_exporters_running
