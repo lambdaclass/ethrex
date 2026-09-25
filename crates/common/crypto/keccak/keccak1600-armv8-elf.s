@@ -6,9 +6,14 @@
 //     Reason: `.L` local labels are ELF-specific.
 //   - Replaced instance of `adr x??,label` by `adrp x??,label` followed by
 //     `add x??,x??,:lo12:label`.
+//   - Added an explicit `.text`.
+//     Reason: `global_asm!` blocks inherit the assembler's current section from
+//     whatever block was emitted before them in the same codegen unit.
 //
 // TODO: this is probably a matter of selecting the right parameter
 // for the translator.
+
+.text
 
 .align	8	// strategic alignment and padding that allows to use
 		// address value as loop termination condition...

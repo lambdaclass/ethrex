@@ -1,3 +1,9 @@
+# Modified:
+#   - Wrapped the trailing `.note.gnu.property` block in `.pushsection`/`.popsection`.
+#     Reason: `global_asm!` blocks share the assembler's section state within a codegen
+#     unit, so leaving the note section current made a *following* `global_asm!` emit its
+#     functions into `.note.gnu.property` instead of `.text`. See issue #7246.
+
 .text	
 
 .type	__KeccakF1600,@function
@@ -528,9 +534,10 @@ iotas:
 .size	iotas,.-iotas
 .byte	75,101,99,99,97,107,45,49,54,48,48,32,97,98,115,111,114,98,32,97,110,100,32,115,113,117,101,101,122,101,32,102,111,114,32,120,56,54,95,54,52,44,32,67,82,89,80,84,79,71,65,77,83,32,98,121,32,60,97,112,112,114,111,64,111,112,101,110,115,115,108,46,111,114,103,62,0
 
-.section	.note.gnu.property,"a",@note
+.pushsection	.note.gnu.property,"a",@note
 	.long	4,2f-1f,5
 	.byte	0x47,0x4E,0x55,0
 1:	.long	0xc0000002,4,3
 .align	8
 2:
+.popsection
