@@ -296,11 +296,39 @@ impl DiscoveryServer {
         }
 
         // Remove finished lookups
+        let had_active = self
+            .discv5
+            .as_ref()
+            .is_some_and(|s| !s.active_lookups.is_empty());
         self.discv5
             .as_mut()
             .expect("discv5 state must exist")
             .active_lookups
             .retain(|l| !l.is_finished());
+        let just_finished = had_active
+            && self
+                .discv5
+                .as_ref()
+                .is_some_and(|s| s.active_lookups.is_empty());
+
+        // A lookup just ended. If it added nothing to the peer table, the
+        // network is saturated: rather than start the next one on this same
+        // tick, let the backoff in `get_lookup_interval` space them out.
+        if just_finished {
+            let count = self.peer_table.discovered_count().await?;
+            let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
+            if count > discv5.lookup_started_at_count {
+                discv5.empty_lookups_in_a_row = 0;
+            } else {
+                discv5.empty_lookups_in_a_row = discv5.empty_lookups_in_a_row.saturating_add(1);
+                trace!(
+                    protocol = "discv5",
+                    empty_in_a_row = discv5.empty_lookups_in_a_row,
+                    "Lookup found nothing new, backing off"
+                );
+                return Ok(());
+            }
+        }
 
         // If a lookup is already active, advance it instead of starting a new
         // one. Lookups are timer-driven: each tick sends the next alpha queries.
@@ -338,7 +366,9 @@ impl DiscoveryServer {
             "Starting new iterative lookup"
         );
         let lookup = IterativeLookup::new(target_id, seed);
+        let started_at_count = self.peer_table.discovered_count().await?;
         let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
+        discv5.lookup_started_at_count = started_at_count;
         discv5.active_lookups.push(lookup);
 
         // Fire the initial queries for the new lookup
