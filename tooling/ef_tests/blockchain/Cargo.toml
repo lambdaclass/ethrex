@@ -40,3 +40,7 @@ l2 = ["ethrex-guest-program/l2"]
 [[test]]
 name = "all"
 harness = false
+
+[[bin]]
+name = "block_bench"
+path = "bin/block_bench.rs"
