@@ -1285,6 +1285,91 @@ fn a_frame_targeting_a_precompile_dispatches_it() {
     );
 }
 
+/// A precompile frame returns from `run_execution` before the initial call frame's
+/// substate backup is resolved, so the frame loop found the backup still open: its
+/// log slice offset (taken in the enclosing scope, before the push) exceeded the open
+/// scope's log count whenever an earlier frame had emitted a log, and the VM
+/// panicked. Reported against the testnet: the panic killed the payload build task and
+/// the proposer produced no block while the transaction stayed pending. The same open
+/// backup also swallowed every later frame's logs into a scope nobody committed.
+#[test]
+fn a_precompile_frame_after_a_logging_frame_keeps_the_logs_and_the_backup_straight() {
+    let logger_a = Address::from_low_u64_be(0xAAA1);
+    let logger_b = Address::from_low_u64_be(0xBBB1);
+    let identity = Address::from_low_u64_be(4);
+
+    let sender_frame = |target: Address| Frame {
+        mode: u8::from(FrameMode::Sender),
+        flags: 0,
+        target: Some(target),
+        gas_limit: 100_000,
+        state_gas_limit: 1_000_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    };
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        // Emits one log, so the slice offset the precompile frame inherits is non-zero.
+        sender_frame(logger_a),
+        // The identity precompile, dispatched as a top-level call.
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0,
+            target: Some(identity),
+            gas_limit: 50_000,
+            state_gas_limit: 0,
+            value: U256::zero(),
+            data: Bytes::from(vec![0x11; 32]),
+        },
+        // A log after the precompile: lost if the precompile left its backup open.
+        sender_frame(logger_b),
+    ]);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (logger_a, U256::zero(), 0, Bytes::from(LOG0_CODE.to_vec())),
+        (logger_b, U256::zero(), 0, Bytes::from(LOG0_CODE.to_vec())),
+    ];
+
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("a precompile frame after a log must not fail the tx");
+    assert!(
+        matches!(report.result, TxResult::Success),
+        "expected TxResult::Success, got {:?}",
+        report.result
+    );
+    let frame_results = report.frame_results.expect("per-frame results");
+    assert_eq!(
+        frame_results[2].0,
+        ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
+        "the identity precompile frame succeeds"
+    );
+    assert!(
+        frame_results[2].3.is_empty(),
+        "a precompile emits no log, and must not inherit the earlier frame's: {:?}",
+        frame_results[2].3
+    );
+    assert_eq!(
+        frame_results[1].3.len(),
+        1,
+        "logger_a's frame carries its log"
+    );
+    assert_eq!(
+        frame_results[3].3.len(),
+        1,
+        "logger_b's frame, after the precompile, still carries its log"
+    );
+    assert_eq!(
+        report.logs.iter().map(|l| l.address).collect::<Vec<_>>(),
+        vec![logger_a, logger_b],
+        "the aggregate carries each log once, in order"
+    );
+}
+
 /// EIP-8141 §Behavior: a value-bearing frame whose resolved target does not exist
 /// pays EIP-2780's account-creation state gas from its own `limits.state`, and halts
 /// exceptionally if it declared too little. Funding a fresh account grows the state, and

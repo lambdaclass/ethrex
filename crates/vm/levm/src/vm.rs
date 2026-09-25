@@ -2486,6 +2486,24 @@ impl<'a> VM<'a> {
                             };
                         }
 
+                        // A precompile has no code for the dispatch loop, so
+                        // `run_execution` returns its result before the point where
+                        // it resolves the initial call frame's backup. This frame's
+                        // backup is therefore still open here, and the slice below
+                        // would index past the open scope's logs whenever an earlier
+                        // frame logged. Resolve it exactly as `handle_state_backup`
+                        // would have: commit on success, revert on failure, the
+                        // latter also restoring the cache so the deferred value
+                        // transfer recorded in the inner frame is undone.
+                        if target_is_precompile {
+                            if success {
+                                self.substate.commit_backup();
+                            } else {
+                                self.substate.revert_backup();
+                                self.restore_cache_state()?;
+                            }
+                        }
+
                         if success {
                             // The inner frame is the initial call frame (call_frames
                             // was emptied above), so `run_execution` already ran
@@ -3377,11 +3395,27 @@ impl<'a> VM<'a> {
                 let result = match frame_result {
                     Ok(ctx_result) => {
                         let gas_used = ctx_result.gas_used;
+                        let success = ctx_result.is_success();
                         // The inner frame is the initial call frame, so `run_execution`
                         // already committed (success) or reverted + restored the cache
                         // (revert) this frame's backup via `handle_state_backup`. Only a
-                        // `VMError` (the `Err` arm) leaves the backup live for us to undo.
-                        (ctx_result.is_success(), gas_used)
+                        // `VMError` (the `Err` arm) leaves the backup live for us to undo,
+                        // and a precompile target, which `run_execution` answers before
+                        // it reaches `handle_state_backup`; that one is resolved here the
+                        // same way, so the simulation's scope stays balanced.
+                        if crate::precompiles::is_precompile(
+                            &target,
+                            self.env.config.fork,
+                            self.vm_type,
+                        ) {
+                            if success {
+                                self.substate.commit_backup();
+                            } else {
+                                self.substate.revert_backup();
+                                self.restore_cache_state()?;
+                            }
+                        }
+                        (success, gas_used)
                     }
                     Err(_e) => {
                         self.substate.revert_backup();
