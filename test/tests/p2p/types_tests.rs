@@ -4,6 +4,7 @@ use ethrex_p2p::types::{Node, NodeRecord, NodeRecordPairs};
 use ethrex_p2p::utils::public_key_from_signing_key;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{EngineType, Store};
 use secp256k1::SecretKey;
 use std::{
@@ -455,4 +456,66 @@ fn an_extra_int_of_zero_encodes_as_the_empty_byte_string() {
             .extra_int::<u64>(b"counter"),
         Some(0)
     );
+}
+
+// --- EIP-778 key ordering and uniqueness ---
+
+/// The entries of a well-formed record, in the order EIP-778 requires.
+fn sorted_raw_pairs() -> Vec<(Bytes, Bytes)> {
+    vec![
+        (
+            Bytes::from_static(b"id"),
+            String::from("v4").encode_to_vec().into(),
+        ),
+        (
+            Bytes::from_static(b"ip"),
+            Ipv4Addr::LOCALHOST.encode_to_vec().into(),
+        ),
+        (Bytes::from_static(b"udp"), 30303u16.encode_to_vec().into()),
+    ]
+}
+
+fn assert_rejected_as_unsorted(result: Result<NodeRecordPairs, RLPDecodeError>) {
+    match result {
+        Err(RLPDecodeError::Custom(message)) => assert_eq!(
+            message,
+            "Invalid node record, key/value pairs must be sorted by key and unique"
+        ),
+        other => panic!("expected the ordering error, got {other:?}"),
+    }
+}
+
+#[test]
+fn sorted_unique_pairs_decode() {
+    let pairs = NodeRecordPairs::try_from_raw_pairs(sorted_raw_pairs()).unwrap();
+
+    assert_eq!(pairs.id.as_deref(), Some("v4"));
+    assert_eq!(pairs.ip, Some(Ipv4Addr::LOCALHOST));
+    assert_eq!(pairs.udp_port, Some(30303));
+}
+
+#[test]
+fn a_duplicate_key_is_rejected() {
+    // Without the check the second `ip` silently wins, so a record decodes to
+    // something other than what the sender signed over.
+    let mut pairs = sorted_raw_pairs();
+    pairs.insert(
+        2,
+        (
+            Bytes::from_static(b"ip"),
+            Ipv4Addr::new(203, 0, 113, 7).encode_to_vec().into(),
+        ),
+    );
+
+    assert_rejected_as_unsorted(NodeRecordPairs::try_from_raw_pairs(pairs));
+}
+
+#[test]
+fn out_of_order_keys_are_rejected() {
+    // `encode_pairs` always emits sorted keys, so accepting an unsorted record
+    // means re-encoding it into a different byte string than the signed one.
+    let mut pairs = sorted_raw_pairs();
+    pairs.swap(1, 2);
+
+    assert_rejected_as_unsorted(NodeRecordPairs::try_from_raw_pairs(pairs));
 }
