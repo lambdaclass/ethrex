@@ -12,6 +12,7 @@ use ethrex_common::{H256, U256};
 use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::sync::SyncMode;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
+use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
@@ -313,47 +314,62 @@ impl RpcHandler for NewPayloadV5Request {
         // Extract the raw BAL hash from the JSON payload before deserialization.
         // We hash the raw RLP bytes as-received to preserve the exact encoding
         // (including any ordering) for accurate block hash validation.
-        let mut payload_value = params[0].clone();
-        let mut undecodable_bal = false;
-        let raw_bal_hash = payload_value
+        let payload_value = &params[0];
+
+        // The header's `block_access_list_hash` commits to the BAL exactly as it came
+        // over the wire, so it is hashed from the raw bytes rather than from a
+        // re-encoding of the decoded list.
+        let raw_bal = payload_value
             .get("blockAccessList")
             .map(|v| {
-                let hex_str = v
+                let hex_body = v
                     .as_str()
+                    .and_then(|s| s.strip_prefix("0x"))
                     .ok_or(RpcErr::WrongParam("blockAccessList".to_string()))?;
-                // EIP-7928 blockAccessList is a DATA field: the `0x` prefix is
-                // mandatory. Reject an unprefixed value rather than trimming it.
-                let hex_body = hex_str
-                    .strip_prefix("0x")
-                    .ok_or(RpcErr::WrongParam("blockAccessList".to_string()))?;
-                let bytes = hex::decode(hex_body)
-                    .map_err(|_| RpcErr::WrongParam("blockAccessList".to_string()))?;
-                // Well-formed DATA whose bytes don't RLP-decode into a BAL must yield
-                // `{status: INVALID}`, not -32602. Flag it here (the decision belongs
-                // to `handle`, which can return a status) rather than failing parse.
-                if BlockAccessList::decode(&bytes).is_err() {
-                    undecodable_bal = true;
-                }
-                Ok::<_, RpcErr>(ethrex_common::utils::keccak(bytes))
+                hex::decode(hex_body).map_err(|_| RpcErr::WrongParam("blockAccessList".to_string()))
             })
             .transpose()?;
-        if undecodable_bal {
-            // `ExecutionPayload`'s serde RLP-decodes the field and would fail the
-            // whole params parse with -32602; drop it so deserialization succeeds
-            // and `handle` can answer with the mandated INVALID status.
-            if let Some(obj) = payload_value.as_object_mut() {
-                obj.remove("blockAccessList");
-            }
-        }
+        let raw_bal_hash = raw_bal.as_deref().map(ethrex_common::utils::keccak);
 
+        // Deserialize straight from the borrowed value. The payload is the bulk of the
+        // request — tens of kilobytes of transactions on a busy chain — and this runs
+        // for every block, so it is walked once: the BAL is RLP-decoded inside serde
+        // and nowhere else.
+        let (payload, undecodable_bal) = match ExecutionPayload::deserialize(payload_value) {
+            // Serde's BAL deserializer reads an empty `"0x"` as absent, while the
+            // strict decoder that governs the header hash rejects empty input. Keep
+            // the strict verdict: a BAL that is present but empty is undecodable,
+            // not missing, so the payload is answered INVALID rather than rejected
+            // as malformed params.
+            Ok(payload) => (payload, raw_bal.as_deref().is_some_and(<[u8]>::is_empty)),
+            Err(_) => {
+                // The one failure tolerated here is a BAL that does not RLP-decode: the
+                // block must still be rebuilt so it can be answered INVALID under its
+                // own hash instead of being rejected as a malformed request. Anything
+                // else is a malformed payload. This is the rare path, so it may afford
+                // a copy.
+                let bal_undecodable = raw_bal
+                    .as_deref()
+                    .is_some_and(|bytes| BlockAccessList::decode(bytes).is_err());
+                if !bal_undecodable {
+                    return Err(RpcErr::WrongParam("payload".to_string()));
+                }
+                let mut stripped = payload_value.clone();
+                if let Some(obj) = stripped.as_object_mut() {
+                    obj.remove("blockAccessList");
+                }
+                let payload = serde_json::from_value(stripped)
+                    .map_err(|_| RpcErr::WrongParam("payload".to_string()))?;
+                (payload, true)
+            }
+        };
         Ok(Self {
-            payload: serde_json::from_value(payload_value)
-                .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
-            expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
+            payload,
+            expected_blob_versioned_hashes: Deserialize::deserialize(&params[1])
                 .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
-            parent_beacon_block_root: serde_json::from_value(params[2].clone())
+            parent_beacon_block_root: Deserialize::deserialize(&params[2])
                 .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
-            execution_requests: serde_json::from_value(params[3].clone())
+            execution_requests: Deserialize::deserialize(&params[3])
                 .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
             raw_bal_hash,
             undecodable_bal,
@@ -1638,6 +1654,32 @@ mod tests {
 
         assert_eq!(request.0.payload.slot_number, Some(0));
         assert!(request.0.raw_bal_hash.is_some());
+    }
+
+    /// `"0x"` must be treated as an undecodable BAL, not an absent one: the strict
+    /// decoder rejects empty input, and the engine answer for that is INVALID.
+    #[test]
+    fn new_payload_v5_empty_bal_string_is_undecodable_not_missing() {
+        let mut payload = serde_json::json!(v5_payload());
+        payload["blockAccessList"] = serde_json::Value::String("0x".to_string());
+        let params = Some(vec![
+            payload,
+            serde_json::json!(Vec::<H256>::new()),
+            serde_json::json!(H256::zero()),
+            serde_json::json!(Vec::<EncodedRequests>::new()),
+        ]);
+
+        let parsed = NewPayloadV5Request::parse(&params).expect("an empty BAL must still parse");
+
+        assert!(
+            parsed.undecodable_bal,
+            "an empty BAL must be flagged undecodable"
+        );
+        assert!(parsed.payload.block_access_list.is_none());
+        assert!(
+            parsed.raw_bal_hash.is_some(),
+            "the empty bytes are still hashed"
+        );
     }
 
     #[test]
