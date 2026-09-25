@@ -48,7 +48,23 @@ Useful capture flags:
 For continuous capture, run the reader under a service manager with
 `--duration 1h` and restart-always: each run writes one segment, and a node
 restart is followed by the next run attaching to the new process. Prune the
-segment directory with a `tmpfiles` rule.
+segment directory with a `tmpfiles` rule. The unit used on the profiling host:
+
+```ini
+[Service]
+User=admin
+Environment=HOME=/home/admin
+WorkingDirectory=/home/admin/flux-traces/segments
+ExecStart=/bin/bash -c 'exec flux-profiler --pid "$(cat $HOME/.local/share/ethrex/shmem/queues/pid)" --duration 1h --dump-interval 30s --filter-short-frames 1us --max-mem 2GB --out $HOME/flux-traces/segments/ethrex-$(date -u +%%Y%%m%%dT%%H%%M%%SZ).fxt'
+Restart=always
+RestartSec=10
+```
+
+with `e /home/admin/flux-traces/segments - admin admin 7d` in a `tmpfiles.d`
+file. Taking the pid from the rings' pid file is deliberate: `pgrep` on the
+binary path also matches a tmux or shell wrapper running the same command
+line. A second reader can attach to the same rings for an ad-hoc capture while
+the unit runs; the rings are multi-consumer.
 
 Only the node path publishes rings. Subcommands such as `import` do not, because
 enabling the profiler unlinks the app's previous rings and rewrites its pid
@@ -68,8 +84,10 @@ cargo build --release -p ethrex --features alloc-profile
 cargo build --release -p ethrex --features perf
 ```
 
-Use them for captures on a host set up for them. The mainnet build is timing
-only.
+Use them on a host set up for them. The profiling host runs both: the
+counters cost about 50 ns per frame, which at a few thousand frames per block
+is well under a millisecond, and they answer whether a slow frame did more work
+or stalled. A node meant to mirror production should stay timing only.
 
 ## What is framed
 
@@ -89,6 +107,10 @@ when a capture shows a phase hiding something.
    payload building.
 2. **Per transaction**: transaction execution, per-transaction access-list
    validation, system calls, transactions applied while building a payload.
+   Only real block execution is framed per transaction. The speculative
+   warmer and the mempool prewarmer re-execute transactions through an
+   untimed entry point, because their frames outnumbered real work twenty to
+   one and said nothing about it; their block-level frames remain.
 3. **Leaves**, with judgment. Each thread's ring holds 256k marks and the reader
    reports lost marks when it falls behind; a capture that reports loss is not a
    measurement. Never frame opcodes or per-read state access.
