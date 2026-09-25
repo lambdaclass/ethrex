@@ -1588,7 +1588,7 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::default_context_with_storage;
+    use crate::test_utils::{TestContext, default_context_with_storage};
     use ethrex_common::types::ChainConfig;
     use ethrex_rlp::encode::RLPEncode;
     use ethrex_storage::{EngineType, Store};
@@ -1722,7 +1722,7 @@ mod tests {
         assert_eq!(encoded.as_ref(), expected.as_slice());
     }
 
-    async fn test_context() -> RpcApiContext {
+    async fn test_context() -> TestContext {
         let storage = Store::new("test-payload-bodies", EngineType::InMemory)
             .expect("Failed to create test store");
         default_context_with_storage(storage).await
@@ -1735,7 +1735,7 @@ mod tests {
         let request = GetPayloadBodiesByHashV1Request {
             hashes: vec![BlockHash::default(); GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE as usize],
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -1744,7 +1744,7 @@ mod tests {
         let request = GetPayloadBodiesByHashV1Request {
             hashes: vec![BlockHash::default(); GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE as usize + 1],
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -1754,7 +1754,7 @@ mod tests {
             start: 1,
             count: GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE,
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -1764,7 +1764,7 @@ mod tests {
             start: 1,
             count: GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE + 1,
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -1773,7 +1773,7 @@ mod tests {
         let request = GetPayloadBodiesByHashV2Request {
             hashes: vec![BlockHash::default(); (GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE) as usize],
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -1782,7 +1782,7 @@ mod tests {
         let request = GetPayloadBodiesByHashV2Request {
             hashes: vec![BlockHash::default(); (GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE + 1) as usize],
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -1792,7 +1792,7 @@ mod tests {
             start: 1,
             count: GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE,
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -1802,7 +1802,7 @@ mod tests {
             start: 1,
             count: GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE + 1,
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 }
