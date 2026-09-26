@@ -21,24 +21,22 @@ AMSTERDAM_STAMP := $(SPECTEST_VECTORS_DIR)/.amsterdam_overlay
 # fixtures/blockchain_tests_engine/for_bogota/. The datatest harness walks
 # vectors/eest/ recursively, so they're discovered wherever they land in the tree.
 #
-# The pinned release, tests-focil-devnet@v0.2.0, fills every fixture on the
-# "Bogota" network whose Amsterdam base is glamsterdam-devnet-8 -- the same
-# base this branch implements. (Its predecessor tests-focil@v0.1.0 was filled
-# on an older Amsterdam whose genesis predeployed no EIP-8282 builder
-# deposit/exit contracts, so rejecting its 24 fixtures was the spec-correct
-# outcome; this re-pin aligned the fill base as that analysis predicted.)
+# The pinned release, tests-focil-devnet@v0.3.0, is filled on the "Bogota"
+# network from execution-specs eips/amsterdam/eip-7805 (commit 07a043cc), whose
+# Amsterdam base is newer than the glamsterdam-devnet-8 one this branch
+# implements. The one rule the bundle depends on that entered forks/amsterdam
+# after devnet-8, the TX_MAX_TOTAL_GAS_LIMIT cap (execution-specs#3582), is
+# therefore enforced from Hegota rather than Amsterdam, so the devnet-8
+# Amsterdam fixtures keep passing.
 # Besides the eip7805_focil scenarios, the bundle carries inclusion-list
 # variants auto-generated from prior-fork blockchain/state tests: the last
 # transaction of the last block moves into the inclusion list, expecting
 # `inclusionListSatisfied: false` when it was includable and `true` when it
 # was not (execution-specs#3337).
 #
-# 127 of those generated variants ship expected-VALID blocks that the EELS
-# spec at the same tag rejects (stale `blobGasUsed` left by the variant
-# generator; one block whose access list exceeds the EIP-7928 item cap at its
-# pinned 21k gas limit). They are enumerated -- with the full analysis and the
-# exact failure signature the harness enforces -- in
-# tests/upstream_broken_fixtures.txt.
+# Fixtures whose expected verdict contradicts the EELS spec at the same tag
+# are enumerated, with the exact failure signature the harness enforces, in
+# tests/upstream_broken_fixtures.txt (empty at v0.3.0).
 FOCIL_FIXTURES_FILE := .fixtures_url_focil
 FOCIL_ARTIFACT := focil-tests.tar.gz
 FOCIL_URL := $(shell cat $(FOCIL_FIXTURES_FILE))
