@@ -78,6 +78,27 @@ impl Hook for DefaultHook {
                     },
                 ));
             }
+            // EIP-8037: the reservoir model lifts the cap above, but a gas limit
+            // may still not exceed TX_MAX_TOTAL_GAS_LIMIT (EELS
+            // `validate_transaction`, TransactionGasLimitExceededError).
+            //
+            // Gated at Hegota, not Amsterdam: the cap entered forks/amsterdam
+            // after glamsterdam-devnet-8 (execution-specs #3582), and this
+            // branch runs devnet-8's Amsterdam, whose v8.1.4 fixtures accept
+            // gas limits above it. tests-focil-devnet v0.3.0 fills Bogota on
+            // the newer Amsterdam, so the cap applies from Hegota. Move this to
+            // Amsterdam once the Amsterdam fixtures adopt #3582.
+            if !vm.env.disable_gas_allowance_check
+                && vm.env.config.fork >= Fork::Hegota
+                && vm.tx.gas_limit() > TX_MAX_TOTAL_GAS_LIMIT
+            {
+                return Err(VMError::TxValidation(
+                    TxValidationError::TxMaxGasLimitExceeded {
+                        tx_hash: vm.tx.hash(vm.crypto),
+                        tx_gas_limit: vm.tx.gas_limit(),
+                    },
+                ));
+            }
         }
 
         // (1) GASLIMIT_PRICE_PRODUCT_OVERFLOW

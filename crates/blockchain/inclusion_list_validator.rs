@@ -31,7 +31,9 @@ use std::collections::HashSet;
 
 use ethrex_common::{
     Address, Bytes, H256, U256,
-    constants::{EMPTY_KECCAK_HASH, GAS_PER_BLOB, TX_MAX_GAS_LIMIT_AMSTERDAM},
+    constants::{
+        EMPTY_KECCAK_HASH, GAS_PER_BLOB, TX_MAX_GAS_LIMIT_AMSTERDAM, TX_MAX_TOTAL_GAS_LIMIT,
+    },
     types::{
         BlockHeader, ChainConfig, GWEI_TO_WEI, MAX_BLOB_COUNT, Transaction, TxType,
         VERSIONED_HASH_VERSION_KZG, Withdrawal, calculate_base_fee_per_blob_gas,
@@ -422,6 +424,15 @@ impl InclusionListSatisfactionValidator {
                 Ok(intrinsic) if intrinsic > TX_MAX_GAS_LIMIT_AMSTERDAM => continue,
                 Err(_) => continue,
                 Ok(_) => {}
+            }
+
+            // gas_limit_exceeds_maximum → satisfied. EELS `validate_transaction`
+            // rejects a gas limit above `TX_MAX_TOTAL_GAS_LIMIT` (EIP-8037), so
+            // such a tx can never be validly included. The block-capacity check
+            // below does not cover it: the remaining budget can exceed the cap
+            // on a block whose gas limit does.
+            if tx_il.gas_limit() > TX_MAX_TOTAL_GAS_LIMIT {
+                continue;
             }
 
             // insufficient_gas → satisfied. EELS `check_block_gas_capacity`

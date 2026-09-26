@@ -7,7 +7,7 @@ use ethrex_blockchain::inclusion_list_builder::{
 use ethrex_blockchain::inclusion_list_validator::{
     IlUnsatisfied, InclusionListSatisfactionValidator, TrackedSender,
 };
-use ethrex_common::constants::TX_MAX_GAS_LIMIT_AMSTERDAM;
+use ethrex_common::constants::{TX_MAX_GAS_LIMIT_AMSTERDAM, TX_MAX_TOTAL_GAS_LIMIT};
 use ethrex_common::types::{
     BlockHeader, ChainConfig, EIP1559Transaction, Transaction, TxKind, Withdrawal,
 };
@@ -1213,4 +1213,49 @@ fn il_tx_is_excused_when_it_exceeds_the_state_budget() {
         &crypto,
     );
     assert!(matches!(result, Ok(())));
+}
+
+#[test]
+fn il_tx_above_the_total_gas_limit_cap_is_excused() {
+    // EELS `validate_transaction` rejects a gas limit above
+    // `TX_MAX_TOTAL_GAS_LIMIT` (EIP-8037). The block has room for it in both
+    // dimensions, so only that rule can excuse the omission.
+    let crypto = NativeCrypto;
+    let alice = addr(1);
+    let tx_gas = TX_MAX_TOTAL_GAS_LIMIT + 1;
+    let il = vec![make_tx(alice, 0, tx_gas, U256::from(1))];
+    let mut accounts: FxHashMap<Address, AccountStateView> = Default::default();
+    accounts.insert(alice, account(0, rich_balance()));
+    let state = MockState::with(accounts);
+    let validator =
+        InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
+    let header = BlockHeader {
+        gas_limit: 1 << 40,
+        ..Default::default()
+    };
+
+    let result = validator.check(
+        &il,
+        &HashSet::new(),
+        Some((0, 0)),
+        &header,
+        &config(),
+        &crypto,
+    );
+    assert!(matches!(result, Ok(())));
+
+    // Control: at the cap itself the same tx is includable, so omitting it
+    // leaves the list unsatisfied.
+    let at_cap = vec![make_tx(alice, 0, TX_MAX_TOTAL_GAS_LIMIT, U256::from(1))];
+    let validator =
+        InclusionListSatisfactionValidator::new(&at_cap, &state, &crypto).expect("construct");
+    let control = validator.check(
+        &at_cap,
+        &HashSet::new(),
+        Some((0, 0)),
+        &header,
+        &config(),
+        &crypto,
+    );
+    assert!(control.is_err());
 }
