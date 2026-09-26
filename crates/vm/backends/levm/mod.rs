@@ -2644,7 +2644,7 @@ impl LEVM {
         let pre_account = |addr: Address| -> Result<(U256, u64, H256), EvmError> {
             let s = db.store.get_account_state(addr).map_err(|e| {
                 EvmError::Custom(format!(
-                    "BAL validation failed for pre-exec: db error reading account {addr:?}: {e}"
+                    "BAL validation failed for system_tx: db error reading account {addr:?}: {e}"
                 ))
             })?;
             Ok((s.balance, s.nonce, s.code_hash))
@@ -2661,21 +2661,21 @@ impl LEVM {
                     Some(a) if a.info.balance == expected => {
                         if expected == pre_account(addr)?.0 {
                             return Err(EvmError::Custom(format!(
-                                "BAL validation failed for pre-exec: account {addr:?} has spurious \
-                                 no-op balance change at index 0: post==pre=={expected}"
+                                "BAL validation failed for system_tx: account {addr:?} has \
+                                 spurious no-op balance change at index 0: post==pre=={expected}"
                             )));
                         }
                     }
                     Some(a) => {
                         return Err(EvmError::Custom(format!(
-                            "BAL validation failed for pre-exec: account {addr:?} balance mismatch \
-                             at index 0: BAL={expected}, actual={}",
+                            "BAL validation failed for system_tx: account {addr:?} balance \
+                             mismatch at index 0: BAL={expected}, actual={}",
                             a.info.balance
                         )));
                     }
                     None => {
                         return Err(EvmError::Custom(format!(
-                            "BAL validation failed for pre-exec: account {addr:?} has balance \
+                            "BAL validation failed for system_tx: account {addr:?} has balance \
                              change at index 0 but was not touched by the pre-exec phase"
                         )));
                     }
@@ -2688,21 +2688,21 @@ impl LEVM {
                     Some(a) if a.info.nonce == expected => {
                         if expected == pre_account(addr)?.1 {
                             return Err(EvmError::Custom(format!(
-                                "BAL validation failed for pre-exec: account {addr:?} has spurious \
-                                 no-op nonce change at index 0: post==pre=={expected}"
+                                "BAL validation failed for system_tx: account {addr:?} has \
+                                 spurious no-op nonce change at index 0: post==pre=={expected}"
                             )));
                         }
                     }
                     Some(a) => {
                         return Err(EvmError::Custom(format!(
-                            "BAL validation failed for pre-exec: account {addr:?} nonce mismatch \
+                            "BAL validation failed for system_tx: account {addr:?} nonce mismatch \
                              at index 0: BAL={expected}, actual={}",
                             a.info.nonce
                         )));
                     }
                     None => {
                         return Err(EvmError::Custom(format!(
-                            "BAL validation failed for pre-exec: account {addr:?} has nonce \
+                            "BAL validation failed for system_tx: account {addr:?} has nonce \
                              change at index 0 but was not touched by the pre-exec phase"
                         )));
                     }
@@ -2720,20 +2720,20 @@ impl LEVM {
                     Some(a) if a.info.code_hash == expected_hash => {
                         if expected_hash == pre_account(addr)?.2 {
                             return Err(EvmError::Custom(format!(
-                                "BAL validation failed for pre-exec: account {addr:?} has spurious \
-                                 no-op code change at index 0"
+                                "BAL validation failed for system_tx: account {addr:?} has \
+                                 spurious no-op code change at index 0"
                             )));
                         }
                     }
                     Some(_) => {
                         return Err(EvmError::Custom(format!(
-                            "BAL validation failed for pre-exec: account {addr:?} code mismatch \
+                            "BAL validation failed for system_tx: account {addr:?} code mismatch \
                              at index 0"
                         )));
                     }
                     None => {
                         return Err(EvmError::Custom(format!(
-                            "BAL validation failed for pre-exec: account {addr:?} has code \
+                            "BAL validation failed for system_tx: account {addr:?} has code \
                              change at index 0 but was not touched by the pre-exec phase"
                         )));
                     }
@@ -2751,21 +2751,21 @@ impl LEVM {
                 let actual_value = actual.and_then(|a| a.storage.get(&key)).copied();
                 if actual_value != Some(expected_value) {
                     return Err(EvmError::Custom(format!(
-                        "BAL validation failed for pre-exec: account {addr:?} storage slot {} \
+                        "BAL validation failed for system_tx: account {addr:?} storage slot {} \
                          mismatch at index 0: BAL={expected_value}, actual={actual_value:?}",
                         sc.slot
                     )));
                 }
                 let pre_value = db.store.get_storage_value(addr, key).map_err(|e| {
                     EvmError::Custom(format!(
-                        "BAL validation failed for pre-exec: db error reading storage {addr:?} \
+                        "BAL validation failed for system_tx: db error reading storage {addr:?} \
                          slot {}: {e}",
                         sc.slot
                     ))
                 })?;
                 if expected_value == pre_value {
                     return Err(EvmError::Custom(format!(
-                        "BAL validation failed for pre-exec: account {addr:?} has spurious no-op \
+                        "BAL validation failed for system_tx: account {addr:?} has spurious no-op \
                          storage change for slot {} at index 0: post==pre=={expected_value}",
                         sc.slot
                     )));
