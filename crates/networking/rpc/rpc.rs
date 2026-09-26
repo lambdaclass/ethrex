@@ -7,7 +7,8 @@ use crate::debug::set_head::SetHeadRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request, BlobsV4Request};
 use crate::engine::client_version::GetClientVersionV1Request;
 use crate::engine::payload::{
-    GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request, NewPayloadWithWitnessV5Request,
+    GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request, NewPayloadWithWitnessV4Request,
+    NewPayloadWithWitnessV5Request,
 };
 use crate::engine::{
     ExchangeCapabilitiesRequest,
@@ -1523,7 +1524,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
 ///
 /// Handles:
 /// - Fork choice: `engine_forkchoiceUpdatedV1/V2/V3`
-/// - Payload submission: `engine_newPayloadV1/V2/V3/V4/V5`, `engine_newPayloadWithWitnessV5`
+/// - Payload submission: `engine_newPayloadV1/V2/V3/V4/V5`, `engine_newPayloadWithWitnessV4/V5`
 /// - Payload retrieval: `engine_getPayloadV1/V2/V3/V4/V5/V6`
 /// - Payload bodies: `engine_getPayloadBodiesByHashV1`, `engine_getPayloadBodiesByRangeV1`
 /// - Blob retrieval: `engine_getBlobsV1/V2/V3/V4`
@@ -1547,6 +1548,9 @@ pub async fn map_engine_requests(
         // poll overflows the 2 MB tokio worker stack in unoptimized debug builds.
         "engine_newPayloadWithWitnessV5" => {
             Box::pin(NewPayloadWithWitnessV5Request::call(req, context)).await
+        }
+        "engine_newPayloadWithWitnessV4" => {
+            Box::pin(NewPayloadWithWitnessV4Request::call(req, context)).await
         }
         "engine_newPayloadV5" => Box::pin(NewPayloadV5Request::call(req, context)).await,
         "engine_newPayloadV4" => Box::pin(NewPayloadV4Request::call(req, context)).await,
