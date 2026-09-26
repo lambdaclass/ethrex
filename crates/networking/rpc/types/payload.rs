@@ -132,15 +132,23 @@ impl ExecutionPayload {
             ommers: vec![],
             withdrawals: self.withdrawals,
         };
+        // Recover the senders while the transactions root is computed. Execution
+        // cannot start without them, and recovering them here, on the other
+        // cores, overlaps that work with the root instead of adding it after the
+        // block reaches the pipeline, which then finds them cached. A failed
+        // recovery is left to the pipeline, which reports it as before.
+        let (transactions_root, ()) = rayon::join(
+            || compute_transactions_root(&body.transactions, &ethrex_crypto::NativeCrypto),
+            || {
+                let _ = body.get_transactions_with_sender(&ethrex_crypto::NativeCrypto);
+            },
+        );
         let header = BlockHeader {
             parent_hash: self.parent_hash,
             ommers_hash: *DEFAULT_OMMERS_HASH,
             coinbase: self.fee_recipient,
             state_root: self.state_root,
-            transactions_root: compute_transactions_root(
-                &body.transactions,
-                &ethrex_crypto::NativeCrypto,
-            ),
+            transactions_root,
             receipts_root: self.receipts_root,
             logs_bloom: self.logs_bloom,
             difficulty: 0.into(),
