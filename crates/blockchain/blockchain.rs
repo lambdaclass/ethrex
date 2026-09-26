@@ -548,6 +548,19 @@ struct BalStateWorkItem {
     storage_root: Option<H256>,
 }
 
+/// Whether the block pipeline checks the block body against its header.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BodyCheck {
+    /// The header came from elsewhere (a peer, a file, storage, a test), so the
+    /// transactions root, withdrawals root and ommers must be checked against
+    /// the body.
+    Verify,
+    /// The header's body commitments were computed from this very body, as the
+    /// engine handler does when it assembles a block from a payload, so they
+    /// match by construction.
+    DerivedFromBody,
+}
+
 impl Blockchain {
     /// Build a fresh 17-thread merkleization pool.
     ///
@@ -819,6 +832,9 @@ impl Blockchain {
     }
 
     /// Executes a block withing a new vm instance and state
+    ///
+    /// `body_check` says whether the body still has to be checked against the
+    /// header; see [`BodyCheck`].
     #[instrument(
         level = "trace",
         name = "Execute Block",
@@ -832,6 +848,7 @@ impl Blockchain {
         vm: &mut Evm,
         bal: Option<Arc<BlockAccessList>>,
         collect_witness: bool,
+        body_check: BodyCheck,
     ) -> Result<BlockExecutionPipelineResult, ChainError> {
         let start_instant = Instant::now();
 
@@ -840,8 +857,17 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         self.validate_l1_transaction_types(block)?;
-        validate_block_body(&block.header, &block.body, &NativeCrypto)
-            .map_err(|e| ChainError::InvalidBlock(InvalidBlockError::InvalidBody(e)))?;
+        match body_check {
+            BodyCheck::Verify => validate_block_body(&block.header, &block.body, &NativeCrypto)
+                .map_err(|e| ChainError::InvalidBlock(InvalidBlockError::InvalidBody(e)))?,
+            // The header's body commitments were computed from this body, so they
+            // match by construction. Debug builds still compare them, so a caller
+            // that marks a block assembled any other way fails loudly in tests.
+            BodyCheck::DerivedFromBody => debug_assert!(
+                validate_block_body(&block.header, &block.body, &NativeCrypto).is_ok(),
+                "a block whose header was built from its body does not match that header"
+            ),
+        }
         let block_validated_instant = Instant::now();
 
         let exec_merkle_start = Instant::now();
@@ -2598,7 +2624,8 @@ impl Blockchain {
         block: Block,
         bal: Option<Arc<BlockAccessList>>,
     ) -> Result<(), ChainError> {
-        let (_, _, result) = self.add_block_pipeline_inner(block, bal, false, None, None)?;
+        let (_, _, result) =
+            self.add_block_pipeline_inner(block, bal, false, None, None, BodyCheck::Verify)?;
         result
     }
 
@@ -2615,8 +2642,14 @@ impl Blockchain {
         bal: Option<Arc<BlockAccessList>>,
         commit_depth: usize,
     ) -> Result<Option<BlockAccessList>, ChainError> {
-        let (produced_bal, _, result) =
-            self.add_block_pipeline_inner(block, bal, false, Some(commit_depth), None)?;
+        let (produced_bal, _, result) = self.add_block_pipeline_inner(
+            block,
+            bal,
+            false,
+            Some(commit_depth),
+            None,
+            BodyCheck::Verify,
+        )?;
         result?;
         Ok(produced_bal)
     }
@@ -2633,16 +2666,26 @@ impl Blockchain {
         bal: Option<Arc<BlockAccessList>>,
     ) -> Result<Option<BlockAccessList>, ChainError> {
         let (produced_bal, _, result) =
-            self.add_block_pipeline_inner(block, bal, false, None, None)?;
+            self.add_block_pipeline_inner(block, bal, false, None, None, BodyCheck::Verify)?;
         result?;
         Ok(produced_bal)
     }
 
-    /// Same as [`add_block_pipeline`] but returns the execution witness produced
-    /// while importing the block.
     /// Pipeline entry for `engine_newPayload`: the caller has already looked the
     /// parent up, so it is passed in instead of read again. Returns the witness only
     /// when one was requested.
+    ///
+    /// The block must have been assembled from the payload with
+    /// `ExecutionPayload::into_block`, which computes the header's transactions
+    /// root, withdrawals root and empty ommers from the payload's own body, after
+    /// which the engine handler checks the payload's block hash against that
+    /// header. Checking the body against the header again would rebuild both
+    /// tries on the executor thread, before execution can start, only to compare
+    /// their roots with themselves, so this entry point skips that one check.
+    /// Everything else (pre-execution header rules, execution, receipts,
+    /// requests, state root) runs exactly as for any other block. A block whose
+    /// header came from anywhere else must go through one of the other entry
+    /// points.
     pub fn add_block_pipeline_from_payload(
         &self,
         block: Block,
@@ -2650,8 +2693,14 @@ impl Blockchain {
         parent_header: Option<BlockHeader>,
         collect_witness: bool,
     ) -> Result<Option<ExecutionWitness>, ChainError> {
-        let (_, witness, result) =
-            self.add_block_pipeline_inner(block, bal, collect_witness, None, parent_header)?;
+        let (_, witness, result) = self.add_block_pipeline_inner(
+            block,
+            bal,
+            collect_witness,
+            None,
+            parent_header,
+            BodyCheck::DerivedFromBody,
+        )?;
         result?;
         if !collect_witness {
             return Ok(None);
@@ -2661,12 +2710,15 @@ impl Blockchain {
         })
     }
 
+    /// Same as [`add_block_pipeline`] but returns the execution witness produced
+    /// while importing the block.
     pub fn add_block_pipeline_with_witness(
         &self,
         block: Block,
         bal: Option<Arc<BlockAccessList>>,
     ) -> Result<ExecutionWitness, ChainError> {
-        let (_, witness, result) = self.add_block_pipeline_inner(block, bal, true, None, None)?;
+        let (_, witness, result) =
+            self.add_block_pipeline_inner(block, bal, true, None, None, BodyCheck::Verify)?;
         result?;
         witness.ok_or_else(|| {
             ChainError::WitnessGeneration(
@@ -2690,6 +2742,7 @@ impl Blockchain {
         force_witness: bool,
         commit_depth: Option<usize>,
         parent_header: Option<BlockHeader>,
+        body_check: BodyCheck,
     ) -> Result<AddBlockPipelineInnerResult, ChainError> {
         // Validate if it can be the new head and find the parent. The engine path has
         // already read the parent while deciding whether the block is executable, so
@@ -2752,7 +2805,16 @@ impl Blockchain {
             merkle_queue_length,
             instants,
             warmer_duration,
-        ) = { self.execute_block_pipeline(&block, &parent_header, &mut vm, bal, collect_witness)? };
+        ) = {
+            self.execute_block_pipeline(
+                &block,
+                &parent_header,
+                &mut vm,
+                bal,
+                collect_witness,
+                body_check,
+            )?
+        };
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,

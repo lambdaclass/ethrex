@@ -491,6 +491,9 @@ pub fn start_block_executor(
                     handle.cancel_current();
                 }
                 let imported_header = prewarmer.as_ref().map(|_| block.header.clone());
+                // Every block on this channel was assembled from an engine payload
+                // (`engine::payload::add_block` is the only sender), which is what
+                // `add_block_pipeline_from_payload` requires.
                 let result = blockchain.add_block_pipeline_from_payload(
                     block,
                     bal.map(Arc::new),
