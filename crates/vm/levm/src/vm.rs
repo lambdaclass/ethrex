@@ -508,7 +508,7 @@ pub struct FrameTxContext {
     pub payer_address: Option<Address>,
     /// Per-frame execution results (status, gas_used, logs).
     /// `status` is a `FRAME_RECEIPT_STATUS_*` code (0 = failure, 1 = success,
-    /// 3 = skipped due to failed atomic batch).
+    /// 2 = skipped due to failed atomic batch).
     pub frame_results: Vec<(u8, u64, Vec<Log>)>,
     /// Index of the currently executing frame
     pub current_frame_index: usize,
