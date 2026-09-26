@@ -9,6 +9,7 @@ mod get_block_by_hash_tests;
 mod http_batch_tests;
 mod inclusion_list_engine_tests;
 mod missing_rpc_methods_tests;
+mod new_payload_bal_tests;
 mod send_raw_transaction_tests;
 mod subscription_manager_tests;
 mod trace_call_tests;

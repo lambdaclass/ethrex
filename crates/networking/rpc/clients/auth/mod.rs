@@ -222,6 +222,7 @@ impl EngineClient {
             // matches the V4 path and is not suitable for deposit-bearing Amsterdam tests.
             execution_requests: vec![],
             raw_bal_hash: None,
+            undecodable_bal: false,
         }
         .into();
 
