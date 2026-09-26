@@ -103,7 +103,9 @@ async fn eth_get_block_access_list_matches_spec_example() {
     let request: RpcRequest = serde_json::from_str(&body).unwrap();
     let context = default_context_with_storage(storage).await;
 
-    let got = map_eth_requests(&request, context).await.expect("rpc ok");
+    let got = map_eth_requests(&request, context.clone())
+        .await
+        .expect("rpc ok");
 
     let expected = serde_json::json!([{
         "address": "0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b",
@@ -144,7 +146,9 @@ async fn eth_get_block_access_list_unknown_hash_returns_null() {
     }"#;
     let request: RpcRequest = serde_json::from_str(body).unwrap();
 
-    let got = map_eth_requests(&request, context).await.expect("rpc ok");
+    let got = map_eth_requests(&request, context.clone())
+        .await
+        .expect("rpc ok");
     assert_eq!(got, serde_json::Value::Null);
 }
 
@@ -174,7 +178,7 @@ async fn eth_get_block_access_list_pre_amsterdam_is_resource_not_found() {
     let request: RpcRequest = serde_json::from_str(&body).unwrap();
     let context = default_context_with_storage(storage).await;
 
-    let err = map_eth_requests(&request, context)
+    let err = map_eth_requests(&request, context.clone())
         .await
         .expect_err("pre-Amsterdam block must be an error");
     assert_eq!(RpcErrorMetadata::from(err).code, -32001);
@@ -207,7 +211,9 @@ async fn debug_get_raw_block_access_list_serves_rlp_by_hash() {
     let request: RpcRequest = serde_json::from_str(&body).unwrap();
     let context = default_context_with_storage(storage).await;
 
-    let got = map_debug_requests(&request, context).await.expect("rpc ok");
+    let got = map_debug_requests(&request, context.clone())
+        .await
+        .expect("rpc ok");
     let expected = format!("0x{}", hex::encode(bal.encode_to_vec()));
     assert_eq!(got, serde_json::Value::String(expected));
 }
@@ -226,7 +232,7 @@ async fn debug_get_raw_block_access_list_unknown_hash_is_resource_not_found() {
     }"#;
     let request: RpcRequest = serde_json::from_str(body).unwrap();
 
-    let err = map_debug_requests(&request, context)
+    let err = map_debug_requests(&request, context.clone())
         .await
         .expect_err("unknown block must be an error");
     assert_eq!(RpcErrorMetadata::from(err).code, -32001);
@@ -257,7 +263,7 @@ async fn eth_get_block_access_list_missing_body_is_pruned_history() {
     let request: RpcRequest = serde_json::from_str(&body).unwrap();
     let context = default_context_with_storage(storage).await;
 
-    let err = map_eth_requests(&request, context)
+    let err = map_eth_requests(&request, context.clone())
         .await
         .expect_err("missing body must be an error");
     assert_eq!(RpcErrorMetadata::from(err).code, 4444);
@@ -289,7 +295,7 @@ async fn eth_get_block_access_list_missing_parent_state_is_pruned_history() {
     let request: RpcRequest = serde_json::from_str(&body).unwrap();
     let context = default_context_with_storage(storage).await;
 
-    let err = map_eth_requests(&request, context)
+    let err = map_eth_requests(&request, context.clone())
         .await
         .expect_err("missing parent state must be an error");
     assert_eq!(RpcErrorMetadata::from(err).code, 4444);
@@ -330,7 +336,9 @@ async fn debug_get_raw_block_access_list_genesis_serves_empty_rlp() {
     let request: RpcRequest = serde_json::from_str(&body).unwrap();
     let context = default_context_with_storage(storage).await;
 
-    let got = map_debug_requests(&request, context).await.expect("rpc ok");
+    let got = map_debug_requests(&request, context.clone())
+        .await
+        .expect("rpc ok");
     assert_eq!(got, serde_json::Value::String("0xc0".to_owned()));
 }
 
@@ -349,7 +357,7 @@ async fn eth_get_block_access_list_rejects_extra_params() {
     }"#;
     let request: RpcRequest = serde_json::from_str(body).unwrap();
 
-    let err = map_eth_requests(&request, context)
+    let err = map_eth_requests(&request, context.clone())
         .await
         .expect_err("extra params must be rejected");
     assert_eq!(RpcErrorMetadata::from(err).code, -32000);
@@ -382,7 +390,7 @@ async fn payload_bodies_by_hash_v2_serves_stored_bal() {
     let request = GetPayloadBodiesByHashV2Request {
         hashes: vec![block_hash],
     };
-    let got = request.handle(context).await.expect("rpc ok");
+    let got = request.handle(context.clone()).await.expect("rpc ok");
 
     let expected =
         serde_json::json!([
@@ -424,7 +432,7 @@ async fn payload_bodies_by_range_v2_serves_stored_bal() {
     // params: [start, count] = [block 1, 1 block]
     let params = Some(vec![serde_json::json!("0x1"), serde_json::json!("0x1")]);
     let request = GetPayloadBodiesByRangeV2Request::parse(&params).expect("parse");
-    let got = request.handle(context).await.expect("rpc ok");
+    let got = request.handle(context.clone()).await.expect("rpc ok");
 
     let expected =
         serde_json::json!([
@@ -463,7 +471,7 @@ async fn payload_bodies_by_hash_v2_drops_bal_not_matching_commitment() {
     let request = GetPayloadBodiesByHashV2Request {
         hashes: vec![block_hash],
     };
-    let got = request.handle(context).await.expect("rpc ok");
+    let got = request.handle(context.clone()).await.expect("rpc ok");
 
     let expected =
         serde_json::json!([
@@ -503,7 +511,7 @@ async fn payload_bodies_by_hash_v2_pre_amsterdam_returns_none_without_re_executi
     let request = GetPayloadBodiesByHashV2Request {
         hashes: vec![block_hash],
     };
-    let got = request.handle(context).await.expect("rpc ok");
+    let got = request.handle(context.clone()).await.expect("rpc ok");
 
     let expected =
         serde_json::json!([
