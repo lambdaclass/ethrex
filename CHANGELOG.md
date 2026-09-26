@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-09-26
+
+- Apply the streaming merkleizer's buffered storage slots while the block is still executing instead of after its last transaction: on mainnet the wait for the state root after execution drops from 3.40 to 0.80 ms at the median and from 5.66 to 1.38 ms at p90 [#7319](https://github.com/lambdaclass/ethrex/pull/7319)
+
 ### 2026-09-14
 
 - Stop copying the stateless input one byte at a time, hash the block access list once instead of twice, and route `validate_public_keys` through the injected `Crypto`: −8.81% guest instructions on mainnet block 25453112 [#7277](https://github.com/lambdaclass/ethrex/pull/7277)
