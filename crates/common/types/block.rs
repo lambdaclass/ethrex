@@ -355,9 +355,8 @@ impl BlockBody {
         // Recovering addresses is computationally expensive.
         // Computing them in parallel greatly reduces execution time.
         // One transaction per task: only some of them need a recovery (the rest
-        // hit the signer cache), and they tend to sit next to each other in the
-        // block, so rayon's default chunks would leave one thread with a run of
-        // recoveries while the others idle.
+        // hit the signer cache), so tasks differ a lot in cost, and single
+        // transactions let an idle thread take the next expensive one.
         // Without rayon, use sequential iteration
         #[cfg(feature = "rayon")]
         return self
