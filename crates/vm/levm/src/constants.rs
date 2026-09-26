@@ -37,6 +37,7 @@ pub const TX_BASE_COST_AMSTERDAM: u64 = 12000;
 // https://eips.ethereum.org/EIPS/eip-7825
 pub use ethrex_common::constants::POST_OSAKA_GAS_LIMIT_CAP;
 pub use ethrex_common::constants::TX_MAX_GAS_LIMIT_AMSTERDAM;
+pub use ethrex_common::constants::TX_MAX_TOTAL_GAS_LIMIT_AMSTERDAM;
 
 pub const MAX_CODE_SIZE: u64 = 0x6000;
 pub const INIT_CODE_MAX_SIZE: usize = 49152;

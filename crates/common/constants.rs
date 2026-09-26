@@ -91,6 +91,15 @@ pub const BLOB_BASE_COST: u64 = 8192;
 pub const POST_OSAKA_GAS_LIMIT_CAP: u64 = 16777216;
 pub const TX_MAX_GAS_LIMIT_AMSTERDAM: u64 = 1 << 24; // 16,777,216
 
+// === EIP-8037 constant ===
+// https://eips.ethereum.org/EIPS/eip-8037
+/// Ceiling on a transaction's whole `gas` field from Amsterdam on, reservoir
+/// included. EIP-7825's `TX_MAX_GAS_LIMIT` above bounds only the execution-gas
+/// dimension, so it is checked against the intrinsic execution cost rather than
+/// against `tx.gas`; this one bounds `tx.gas` itself, keeping the field inside
+/// the range a `u32` can carry.
+pub const TX_MAX_TOTAL_GAS_LIMIT_AMSTERDAM: u64 = u32::MAX as u64; // 4,294,967,295
+
 // === EIP-7928 BAL size cap constants ===
 /// GAS_BLOCK_ACCESS_LIST_ITEM: a flat per-item charge, independent of the
 /// EIP-8038 access-list repricing.
