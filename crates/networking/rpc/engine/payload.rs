@@ -271,6 +271,15 @@ impl RpcHandler for NewPayloadV4Request {
     }
 }
 
+/// `validationError` for a present-but-undecodable `blockAccessList`, shared by
+/// `engine_newPayloadV5` and `engine_newPayloadV6`. Wording matters: EEST's
+/// ethrex exception mapper resolves `BlockException.INVALID_BLOCK_ACCESS_LIST`
+/// by matching the substring "Failed to RLP decode BAL" (the serde-layer
+/// message this path predates), so it stays the prefix for consume-engine to
+/// attribute the INVALID status to the right exception.
+const UNDECODABLE_BAL_ERROR: &str = "Failed to RLP decode BAL: blockAccessList is not a valid RLP \
+     encoding of the block access list";
+
 pub struct NewPayloadV5Request {
     pub payload: ExecutionPayload,
     pub expected_blob_versioned_hashes: Vec<H256>,
@@ -377,14 +386,8 @@ impl NewPayloadV5Request {
         // newPayloadV5 spec 3). The field was dropped from `self.payload` at parse
         // time, so falling through would misreport it as missing (-32602).
         if self.undecodable_bal {
-            // Wording matters: EEST's ethrex exception mapper resolves
-            // BlockException.INVALID_BLOCK_ACCESS_LIST by matching the substring
-            // "Failed to RLP decode BAL" (the serde-layer message this path
-            // predates). Keep it as the prefix so consume-engine attributes the
-            // INVALID status to the right exception.
             return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
-                "Failed to RLP decode BAL: blockAccessList is not a valid RLP \
-                 encoding of the block access list",
+                UNDECODABLE_BAL_ERROR,
             ))?);
         }
         validate_execution_payload_v5(&self.payload)?;
@@ -502,6 +505,9 @@ pub struct NewPayloadV6Request {
     pub execution_requests: Vec<EncodedRequests>,
     pub inclusion_list_transactions: Vec<bytes::Bytes>,
     pub raw_bal_hash: Option<H256>,
+    /// See [`NewPayloadV5Request::undecodable_bal`]; bogota.md defines
+    /// `engine_newPayloadV6` as V5 plus changes, none of which relax that rule.
+    pub undecodable_bal: bool,
 }
 
 impl From<NewPayloadV6Request> for RpcRequest {
@@ -539,33 +545,34 @@ impl RpcHandler for NewPayloadV6Request {
             return Err(RpcErr::BadParams("Expected 5 params".to_owned()));
         }
 
-        let raw_bal_hash = params[0]
-            .get("blockAccessList")
-            .map(|v| {
-                let hex_str = v
-                    .as_str()
-                    .ok_or(RpcErr::WrongParam("blockAccessList".to_string()))?;
-                let bytes = hex::decode(hex_str.trim_start_matches("0x"))
-                    .map_err(|_| RpcErr::WrongParam("blockAccessList".to_string()))?;
-                Ok::<_, RpcErr>(ethrex_common::utils::keccak(bytes))
-            })
-            .transpose()?;
-
+        // The first four params are exactly `engine_newPayloadV5`'s, with its
+        // `blockAccessList` handling (mandatory `0x` prefix, an undecodable list
+        // flagged for an INVALID status rather than -32602), so parse them with
+        // V5's parser instead of a copy that can drift from it.
+        let base = NewPayloadV5Request::parse(&Some(params[..4].to_vec()))?;
         Ok(Self {
-            payload: serde_json::from_value(params[0].clone())
-                .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
-            expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
-                .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
-            parent_beacon_block_root: serde_json::from_value(params[2].clone())
-                .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
-            execution_requests: serde_json::from_value(params[3].clone())
-                .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
+            payload: base.payload,
+            expected_blob_versioned_hashes: base.expected_blob_versioned_hashes,
+            parent_beacon_block_root: base.parent_beacon_block_root,
+            execution_requests: base.execution_requests,
             inclusion_list_transactions: parse_il_transactions(&params[4])?,
-            raw_bal_hash,
+            raw_bal_hash: base.raw_bal_hash,
+            undecodable_bal: base.undecodable_bal,
         })
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        // Must precede every other check, as in V5: the undecodable field was
+        // dropped from `self.payload` at parse time, so the payload validation
+        // below would misreport it as missing (-32602). The status is INVALID,
+        // so `inclusionListSatisfied` is `null` (bogota.md newPayloadV6 2.2).
+        if self.undecodable_bal {
+            return Ok(serde_json::to_value(
+                PayloadStatus::invalid_with_err(UNDECODABLE_BAL_ERROR)
+                    .with_inclusion_list_satisfied(None),
+            )?);
+        }
+
         validate_execution_payload_v4(&self.payload)?;
         validate_execution_requests(&self.execution_requests)?;
 
