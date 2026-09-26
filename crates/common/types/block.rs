@@ -378,14 +378,14 @@ pub fn compute_receipts_root(receipts: &[Receipt], crypto: &dyn Crypto) -> H256 
     Trie::compute_hash_from_unsorted_iter(iter, crypto)
 }
 
-/// Computes the receipts root and the aggregate header `logs_bloom` in a single pass,
-/// hashing each receipt's bloom only once (it feeds both the receipts trie and the
-/// OR-ed header bloom). Validation paths need both, so this avoids the duplicate
-/// `bloom_from_logs` keccak work — relevant in the zkVM guest where it is cycle-counted.
 /// Logs per task when a single receipt's bloom is computed in parallel.
 #[cfg(feature = "rayon")]
 const LOGS_PER_BLOOM_TASK: usize = 16;
 
+/// Computes the receipts root and the aggregate header `logs_bloom` in a single pass,
+/// hashing each receipt's bloom only once (it feeds both the receipts trie and the
+/// OR-ed header bloom). Validation paths need both, so this avoids the duplicate
+/// `bloom_from_logs` keccak work — relevant in the zkVM guest where it is cycle-counted.
 pub fn compute_receipts_root_and_logs_bloom(
     receipts: &[Receipt],
     crypto: &dyn Crypto,
