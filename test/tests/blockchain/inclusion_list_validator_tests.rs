@@ -7,6 +7,7 @@ use ethrex_blockchain::inclusion_list_builder::{
 use ethrex_blockchain::inclusion_list_validator::{
     IlUnsatisfied, InclusionListSatisfactionValidator, TrackedSender,
 };
+use ethrex_common::constants::TX_MAX_GAS_LIMIT_AMSTERDAM;
 use ethrex_common::types::{
     BlockHeader, ChainConfig, EIP1559Transaction, Transaction, TxKind, Withdrawal,
 };
@@ -125,8 +126,16 @@ fn addr(b: u8) -> Address {
 /// Default block header for `check`. `base_fee_per_gas = None` (→ 0) and a
 /// non-Amsterdam default config keep the intrinsic-gas / base-fee gates
 /// inert for the simple 21k transfers the tests use.
+/// Every test block leaves 30M gas unspent in both EIP-8037 dimensions: the
+/// header's gas limit is the budget and the checks pass `Some((0, 0))` as the
+/// executed totals, so the capacity gate reduces to `tx.gas <= 30M`.
+const TEST_BLOCK_GAS_LIMIT: u64 = 30_000_000;
+
 fn header() -> BlockHeader {
-    BlockHeader::default()
+    BlockHeader {
+        gas_limit: TEST_BLOCK_GAS_LIMIT,
+        ..Default::default()
+    }
 }
 
 fn config() -> ChainConfig {
@@ -176,7 +185,7 @@ fn all_il_present_returns_ok() {
         InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
 
     let block_txs: HashSet<H256> = il.iter().map(|t| t.hash(&NativeCrypto)).collect();
-    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    let result = validator.check(&il, &block_txs, Some((0, 0)), &header(), &config(), &crypto);
     assert!(matches!(result, Ok(())));
 }
 
@@ -195,8 +204,19 @@ fn il_omitted_with_insufficient_gas_returns_ok() {
         InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
 
     let block_txs: HashSet<H256> = HashSet::new();
-    // gas_left smaller than tx.gas_limit() → insufficient_gas
-    let result = validator.check(&il, &block_txs, 500_000, &header(), &config(), &crypto);
+    // Remaining budget smaller than tx.gas_limit() → insufficient_gas
+    let small_budget = BlockHeader {
+        gas_limit: 500_000,
+        ..Default::default()
+    };
+    let result = validator.check(
+        &il,
+        &block_txs,
+        Some((0, 0)),
+        &small_budget,
+        &config(),
+        &crypto,
+    );
     assert!(matches!(result, Ok(())));
 }
 
@@ -225,7 +245,7 @@ fn il_omitted_with_advanced_nonce_returns_ok() {
         .expect("observe");
 
     let block_txs: HashSet<H256> = std::iter::once(bump_tx.hash(&NativeCrypto)).collect();
-    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    let result = validator.check(&il, &block_txs, Some((0, 0)), &header(), &config(), &crypto);
     assert!(matches!(result, Ok(())));
 }
 
@@ -256,7 +276,7 @@ fn il_omitted_with_drained_balance_returns_ok() {
     // IL tx is omitted; tracker says alice has nonce 5 (matches IL) but
     // balance 0 (< cost). Should classify as invalid_balance → Ok.
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    let result = validator.check(&il, &block_txs, Some((0, 0)), &header(), &config(), &crypto);
     assert!(matches!(result, Ok(())));
 }
 
@@ -276,7 +296,7 @@ fn il_omitted_with_sufficient_state_returns_unsatisfied() {
 
     // Empty block; alice retains nonce 5 and rich balance; gas plenty.
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    let result = validator.check(&il, &block_txs, Some((0, 0)), &header(), &config(), &crypto);
     match result {
         Err(IlUnsatisfied { tx_hash }) => {
             assert_eq!(tx_hash, il[0].hash(&NativeCrypto));
@@ -375,7 +395,7 @@ fn il_position_in_block_does_not_matter() {
     .into_iter()
     .collect();
 
-    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    let result = validator.check(&il, &block_txs, Some((0, 0)), &header(), &config(), &crypto);
     assert!(matches!(result, Ok(())));
 }
 
@@ -395,8 +415,8 @@ fn algorithm_is_idempotent_over_il() {
 
     let block_txs: HashSet<H256> = HashSet::new();
 
-    let r1 = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
-    let r2 = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    let r1 = validator.check(&il, &block_txs, Some((0, 0)), &header(), &config(), &crypto);
+    let r2 = validator.check(&il, &block_txs, Some((0, 0)), &header(), &config(), &crypto);
 
     // Both runs must return the same Unsatisfied verdict for the same hash.
     match (r1, r2) {
@@ -446,7 +466,7 @@ fn algorithm_does_not_invoke_evm() {
     // Empty block → IL tx omitted → returns Unsatisfied without ever
     // touching `_panic_state` or any execution surface.
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    let result = validator.check(&il, &block_txs, Some((0, 0)), &header(), &config(), &crypto);
     match result {
         Err(_) => {}
         other => panic!("expected Unsatisfied, got {other:?}"),
@@ -475,7 +495,7 @@ fn check_does_not_call_state_provider() {
     // This test documents the design: `check`'s signature contains no
     // provider, so it cannot call out to one.
     let block_txs: HashSet<H256> = std::iter::once(il[0].hash(&NativeCrypto)).collect();
-    let _ = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    let _ = validator.check(&il, &block_txs, Some((0, 0)), &header(), &config(), &crypto);
     // Reach the end without panicking.
 }
 
@@ -523,7 +543,7 @@ fn omitted_intrinsic_gas_too_low_il_tx_is_satisfied() {
         InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
 
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    let result = validator.check(&il, &block_txs, Some((0, 0)), &header(), &config(), &crypto);
     assert!(
         matches!(result, Ok(())),
         "intrinsic-gas-too-low IL tx must be satisfied"
@@ -548,7 +568,7 @@ fn omitted_invalid_signature_il_tx_is_satisfied() {
     );
 
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    let result = validator.check(&il, &block_txs, Some((0, 0)), &header(), &config(), &crypto);
     assert!(
         matches!(result, Ok(())),
         "invalid-signature IL tx must be satisfied"
@@ -575,7 +595,7 @@ fn omitted_below_base_fee_il_tx_is_satisfied() {
     hdr.base_fee_per_gas = Some(100);
 
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(&il, &block_txs, 30_000_000, &hdr, &config(), &crypto);
+    let result = validator.check(&il, &block_txs, Some((0, 0)), &hdr, &config(), &crypto);
     assert!(
         matches!(result, Ok(())),
         "below-base-fee IL tx must be satisfied"
@@ -585,7 +605,7 @@ fn omitted_below_base_fee_il_tx_is_satisfied() {
     // tx flips to Unsatisfied — proving the base-fee gate is what mattered.
     let mut hdr_ok = header();
     hdr_ok.base_fee_per_gas = Some(1);
-    let control = validator.check(&il, &block_txs, 30_000_000, &hdr_ok, &config(), &crypto);
+    let control = validator.check(&il, &block_txs, Some((0, 0)), &hdr_ok, &config(), &crypto);
     assert!(matches!(control, Err(IlUnsatisfied { .. })));
 }
 
@@ -718,7 +738,7 @@ fn il_omitted_with_wrong_chain_id_returns_ok() {
     let validator = single_sender_validator(&il, alice, 0);
 
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    let result = validator.check(&il, &block_txs, Some((0, 0)), &header(), &config(), &crypto);
     assert!(
         matches!(result, Ok(())),
         "wrong-chain-id tx must be excused"
@@ -739,7 +759,7 @@ fn il_omitted_with_wrong_chain_id_returns_ok() {
     let control = validator_ok.check(
         &il_ok,
         &block_txs,
-        30_000_000,
+        Some((0, 0)),
         &header(),
         &config(),
         &crypto,
@@ -758,7 +778,7 @@ fn il_omitted_with_max_nonce_returns_ok() {
     let validator = single_sender_validator(&il, alice, u64::MAX);
 
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    let result = validator.check(&il, &block_txs, Some((0, 0)), &header(), &config(), &crypto);
     assert!(
         matches!(result, Ok(())),
         "nonce-overflow tx must be excused"
@@ -783,7 +803,7 @@ fn il_omitted_with_priority_above_max_fee_returns_ok() {
     let validator = single_sender_validator(&il, alice, 0);
 
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    let result = validator.check(&il, &block_txs, Some((0, 0)), &header(), &config(), &crypto);
     assert!(
         matches!(result, Ok(())),
         "priority-above-cap tx must be excused"
@@ -809,7 +829,7 @@ fn il_omitted_with_oversized_initcode_returns_ok() {
     let validator = single_sender_validator(&il, alice, 0);
 
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    let result = validator.check(&il, &block_txs, Some((0, 0)), &header(), &config(), &crypto);
     assert!(
         matches!(result, Ok(())),
         "oversized-initcode creation must be excused"
@@ -830,7 +850,7 @@ fn il_omitted_with_oversized_initcode_returns_ok() {
     let control = validator_ok.check(
         &il_ok,
         &block_txs,
-        30_000_000,
+        Some((0, 0)),
         &header(),
         &config(),
         &crypto,
@@ -870,7 +890,7 @@ fn il_omitted_with_empty_authorization_list_returns_ok() {
     let validator = single_sender_validator(&il, alice, 0);
 
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    let result = validator.check(&il, &block_txs, Some((0, 0)), &header(), &config(), &crypto);
     assert!(
         matches!(result, Ok(())),
         "empty-authorization-list tx must be excused"
@@ -900,7 +920,7 @@ fn il_omitted_from_contract_sender_returns_ok() {
         InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
 
     let block_txs: HashSet<H256> = HashSet::new();
-    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    let result = validator.check(&il, &block_txs, Some((0, 0)), &header(), &config(), &crypto);
     assert!(matches!(result, Ok(())), "contract sender must be excused");
 
     // Control: an EIP-7702 delegation designation keeps the account an EOA in
@@ -917,7 +937,7 @@ fn il_omitted_from_contract_sender_returns_ok() {
     };
     let validator_ok =
         InclusionListSatisfactionValidator::new(&il, &delegated_state, &crypto).expect("construct");
-    let control = validator_ok.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    let control = validator_ok.check(&il, &block_txs, Some((0, 0)), &header(), &config(), &crypto);
     assert!(matches!(control, Err(IlUnsatisfied { .. })));
 }
 
@@ -936,7 +956,7 @@ fn il_omitted_includable_blob_tx_returns_unsatisfied() {
     let result = validator.check(
         &il,
         &block_txs,
-        30_000_000,
+        Some((0, 0)),
         &header(),
         &blob_config(),
         &crypto,
@@ -961,7 +981,7 @@ fn il_omitted_blob_tx_invalid_variants_return_ok() {
             validator.check(
                 &il,
                 &block_txs,
-                30_000_000,
+                Some((0, 0)),
                 &header(),
                 &blob_config(),
                 &crypto
@@ -979,7 +999,7 @@ fn il_omitted_blob_tx_invalid_variants_return_ok() {
             validator.check(
                 &il,
                 &block_txs,
-                30_000_000,
+                Some((0, 0)),
                 &header(),
                 &blob_config(),
                 &crypto
@@ -1002,7 +1022,7 @@ fn il_omitted_blob_tx_invalid_variants_return_ok() {
             validator.check(
                 &il,
                 &block_txs,
-                30_000_000,
+                Some((0, 0)),
                 &header(),
                 &blob_config(),
                 &crypto
@@ -1021,7 +1041,7 @@ fn il_omitted_blob_tx_invalid_variants_return_ok() {
             validator.check(
                 &il,
                 &block_txs,
-                30_000_000,
+                Some((0, 0)),
                 &header(),
                 &blob_config(),
                 &crypto
@@ -1039,7 +1059,7 @@ fn il_omitted_blob_tx_invalid_variants_return_ok() {
     hdr.blob_gas_used = Some(6 * 131_072);
     assert!(
         matches!(
-            validator.check(&il, &block_txs, 30_000_000, &hdr, &blob_config(), &crypto),
+            validator.check(&il, &block_txs, Some((0, 0)), &hdr, &blob_config(), &crypto),
             Ok(())
         ),
         "blob tx beyond the remaining blob budget must be excused"
@@ -1082,7 +1102,7 @@ fn il_sender_funded_by_same_block_withdrawal_is_excused() {
     // Control first (`check` is read-only): with the credit still in the
     // tracker the tx is includable, so the omission counts against the block.
     let block_txs: HashSet<H256> = HashSet::new();
-    let control = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    let control = validator.check(&il, &block_txs, Some((0, 0)), &header(), &config(), &crypto);
     assert!(matches!(control, Err(IlUnsatisfied { .. })));
 
     // Discounting the block's withdrawals (including one to an untracked
@@ -1102,9 +1122,95 @@ fn il_sender_funded_by_same_block_withdrawal_is_excused() {
             amount: 7,
         },
     ]);
-    let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+    let result = validator.check(&il, &block_txs, Some((0, 0)), &header(), &config(), &crypto);
     assert!(
         matches!(result, Ok(())),
         "withdrawal-funded IL sender must be excused, got {result:?}"
     );
+}
+
+// EIP-8037 block capacity (EELS `check_block_gas_capacity`). Each dimension has
+// its own budget: at most `TX_MAX_GAS_LIMIT` of a tx's gas counts against the
+// execution budget, all of it against the state budget. The header keeps only
+// `max(execution, state)`, which cannot tell the two apart.
+
+/// A block whose execution budget is below `tx.gas` but at least
+/// `TX_MAX_GAS_LIMIT`, with the state budget untouched.
+fn execution_bound_block(tx_gas: u64) -> (BlockHeader, (u64, u64)) {
+    let gas_limit = 60_000_000;
+    let execution_left = TX_MAX_GAS_LIMIT_AMSTERDAM + (tx_gas - TX_MAX_GAS_LIMIT_AMSTERDAM) / 2;
+    let execution_used = gas_limit - execution_left;
+    let header = BlockHeader {
+        gas_limit,
+        // What the header records: the larger of the two totals.
+        gas_used: execution_used,
+        ..Default::default()
+    };
+    (header, (execution_used, 0))
+}
+
+#[test]
+fn il_tx_above_the_execution_cap_fits_when_only_the_cap_counts() {
+    // The case the header alone gets wrong: execution is charged only up to
+    // `TX_MAX_GAS_LIMIT`, so the tx fits even though `tx.gas` exceeds the
+    // execution budget. Omitting it leaves the list unsatisfied.
+    let crypto = NativeCrypto;
+    let alice = addr(1);
+    let tx_gas = TX_MAX_GAS_LIMIT_AMSTERDAM + 4_000_000;
+    let il = vec![make_tx(alice, 0, tx_gas, U256::from(1))];
+    let mut accounts: FxHashMap<Address, AccountStateView> = Default::default();
+    accounts.insert(alice, account(0, rich_balance()));
+    let state = MockState::with(accounts);
+    let validator =
+        InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
+    let (header, executed) = execution_bound_block(tx_gas);
+
+    let exact = validator.check(
+        &il,
+        &HashSet::new(),
+        Some(executed),
+        &header,
+        &config(),
+        &crypto,
+    );
+    assert!(
+        exact.is_err(),
+        "the block had room for it, so omitting it is unsatisfied"
+    );
+
+    // Without the executed totals only `max(execution, state)` is known, and
+    // the tx looks too big for the block.
+    let header_only = validator.check(&il, &HashSet::new(), None, &header, &config(), &crypto);
+    assert!(matches!(header_only, Ok(())));
+}
+
+#[test]
+fn il_tx_is_excused_when_it_exceeds_the_state_budget() {
+    // The state dimension is charged the full `tx.gas`, cap or not.
+    let crypto = NativeCrypto;
+    let alice = addr(1);
+    let tx_gas = TX_MAX_GAS_LIMIT_AMSTERDAM + 4_000_000;
+    let il = vec![make_tx(alice, 0, tx_gas, U256::from(1))];
+    let mut accounts: FxHashMap<Address, AccountStateView> = Default::default();
+    accounts.insert(alice, account(0, rich_balance()));
+    let state = MockState::with(accounts);
+    let validator =
+        InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
+    let gas_limit = 60_000_000;
+    let state_used = gas_limit - (tx_gas - 1);
+    let header = BlockHeader {
+        gas_limit,
+        gas_used: state_used,
+        ..Default::default()
+    };
+
+    let result = validator.check(
+        &il,
+        &HashSet::new(),
+        Some((0, state_used)),
+        &header,
+        &config(),
+        &crypto,
+    );
+    assert!(matches!(result, Ok(())));
 }

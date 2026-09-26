@@ -347,6 +347,27 @@ pub struct BlockExecutionResult {
     pub tx_gas_breakdowns: Vec<TxGasBreakdown>,
 }
 
+impl BlockExecutionResult {
+    /// EIP-8037 block totals `(regular, state)`, i.e. EELS's
+    /// `block_output.block_gas_used` and `block_state_gas_used`. The header
+    /// keeps only their maximum, so these exist only while the block executes.
+    ///
+    /// Summed from `tx_gas_breakdowns`, whose per-tx split is computed with
+    /// the same formula as the accumulators LEVM feeds `check_2d_gas_allowance`
+    /// during import, so the two agree. Empty on the L2 paths that build this
+    /// from re-derived data, which never run the inclusion-list check.
+    pub fn gas_dimensions(&self) -> (u64, u64) {
+        self.tx_gas_breakdowns
+            .iter()
+            .fold((0u64, 0u64), |(regular, state), tx| {
+                (
+                    regular.saturating_add(tx.regular_gas_used),
+                    state.saturating_add(tx.state_gas_used),
+                )
+            })
+    }
+}
+
 /// Per-tx gas-dimension snapshot captured at the block-execution boundary.
 /// All fields are pre-refund except `gas_spent` and `gas_refunded` which are
 /// the user-pays (post-refund) values.

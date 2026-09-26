@@ -137,14 +137,13 @@ pub async fn block_satisfies_inclusion_list(
         .iter()
         .map(|tx| tx.hash(&crypto))
         .collect();
-    let gas_left = header.gas_limit.saturating_sub(header.gas_used);
     let chain_config = context.storage.get_chain_config();
 
     Ok(validator
         .check(
             inclusion_list,
             &block_tx_hashes,
-            gas_left,
+            context.blockchain.block_gas_dimensions(&block_hash),
             &header,
             &chain_config,
             &crypto,

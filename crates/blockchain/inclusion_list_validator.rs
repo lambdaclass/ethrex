@@ -40,6 +40,7 @@ use ethrex_common::{
 };
 use ethrex_crypto::Crypto;
 use ethrex_storage::Store;
+use ethrex_vm::check_2d_gas_allowance;
 use rustc_hash::FxHashMap;
 
 use crate::constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE};
@@ -293,7 +294,8 @@ impl InclusionListSatisfactionValidator {
     ///
     /// `block_txs` is the set of transaction hashes included in the block;
     /// position within the block does not matter (per the EIP rationale).
-    /// `gas_left` is `block.gas_limit - header.gas_used` post-execution.
+    /// `gas_dimensions` are the block's EIP-8037 `(regular, state)` totals when
+    /// this node executed it; `None` falls back to the header's `gas_used`.
     /// `header` and `config` describe the block under check; they supply the
     /// fork (for the intrinsic-gas calculation), the `base_fee_per_gas`, and
     /// the blob-gas parameters.
@@ -305,7 +307,7 @@ impl InclusionListSatisfactionValidator {
         &self,
         il: &[Transaction],
         block_txs: &HashSet<H256>,
-        gas_left: u64,
+        gas_dimensions: Option<(u64, u64)>,
         header: &BlockHeader,
         config: &ChainConfig,
         crypto: &dyn Crypto,
@@ -423,13 +425,23 @@ impl InclusionListSatisfactionValidator {
             }
 
             // insufficient_gas → satisfied. EELS `check_block_gas_capacity`
-            // checks the execution and state gas dimensions against their own
-            // remaining budgets; the header only records their maximum
-            // (`gas_used = max(execution, state)`), so `gas_left` is the
-            // smaller of the two remaining budgets and this check matches EELS
-            // exactly whenever `tx.gas <= TX_MAX_GAS_LIMIT` (the execution
-            // dimension counts at most that much per tx).
-            if tx_il.gas_limit() > gas_left {
+            // budgets each dimension separately: at most `TX_MAX_GAS_LIMIT`
+            // of the tx's gas against the execution budget, and all of it
+            // against the state budget. `check_2d_gas_allowance` is that rule,
+            // the one import applies per tx.
+            //
+            // The header records only `max(execution, state)`, so without the
+            // executed totals the smaller remaining budget is used instead.
+            // That agrees with EELS only while `tx.gas <= TX_MAX_GAS_LIMIT`;
+            // above it, it overstates the execution charge and wrongly excuses
+            // a transaction the block had room for.
+            let fits = match gas_dimensions {
+                Some((regular, state)) => {
+                    check_2d_gas_allowance(tx_il, regular, state, header.gas_limit).is_ok()
+                }
+                None => tx_il.gas_limit() <= header.gas_limit.saturating_sub(header.gas_used),
+            };
+            if !fits {
                 continue;
             }
 

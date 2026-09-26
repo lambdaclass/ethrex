@@ -111,11 +111,11 @@ use mempool::{BalanceCheck, Mempool, SenderAdmission};
 use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::LazyLock;
 use std::sync::mpsc::Sender;
 use std::sync::{
-    Arc, RwLock,
+    Arc, Mutex, RwLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc::{Receiver, channel},
 };
@@ -194,6 +194,43 @@ pub struct L2Config {
     pub fee_config: Arc<RwLock<FeeConfig>>,
 }
 
+/// Upper bound on blocks whose EIP-8037 gas dimensions are kept. A block's
+/// dimensions are only needed while its inclusion list may still be checked,
+/// so this matches the window `engine_newPayloadV6` retains lists for.
+const MAX_BLOCK_GAS_DIMENSIONS: usize = 64;
+
+/// EIP-8037 `(regular, state)` gas totals of recently executed blocks, keyed by
+/// block hash, FIFO-evicted.
+///
+/// The EIP-7805 satisfaction check needs both totals (EELS
+/// `check_block_gas_capacity` budgets each dimension separately), but the
+/// header records only their maximum and the check runs on a stored block. On
+/// a miss (a block executed before a restart, or evicted) the check falls back
+/// to the header's single total, which is exact for any tx whose gas is within
+/// `TX_MAX_GAS_LIMIT` and too strict above it.
+#[derive(Debug, Default)]
+struct BlockGasDimensions {
+    by_block: HashMap<H256, (u64, u64)>,
+    order: VecDeque<H256>,
+}
+
+impl BlockGasDimensions {
+    fn insert(&mut self, block_hash: H256, dimensions: (u64, u64)) {
+        if self.by_block.insert(block_hash, dimensions).is_none() {
+            self.order.push_back(block_hash);
+        }
+        while self.order.len() > MAX_BLOCK_GAS_DIMENSIONS {
+            if let Some(evicted) = self.order.pop_front() {
+                self.by_block.remove(&evicted);
+            }
+        }
+    }
+
+    fn get(&self, block_hash: &H256) -> Option<(u64, u64)> {
+        self.by_block.get(block_hash).copied()
+    }
+}
+
 /// Core blockchain implementation for block validation and execution.
 ///
 /// The `Blockchain` struct is the main entry point for all blockchain operations:
@@ -254,6 +291,9 @@ pub struct Blockchain {
     /// Cache handoff slot from the mempool prewarmer to
     /// `execute_block_pipeline`; see `PrewarmedCache` and `crate::prewarm`.
     prewarmed: PrewarmedCache,
+    /// EIP-8037 gas totals of recently executed blocks, for the EIP-7805
+    /// satisfaction check; see [`BlockGasDimensions`].
+    gas_dimensions: Mutex<BlockGasDimensions>,
 }
 
 /// Newtype around the prewarmer's cache-handoff slot so `Blockchain` can keep
@@ -506,6 +546,7 @@ impl Blockchain {
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
             prewarmed: PrewarmedCache::default(),
+            gas_dimensions: Mutex::default(),
         }
     }
 
@@ -528,6 +569,7 @@ impl Blockchain {
             options: BlockchainOptions::default(),
             merkle_pool: pool,
             prewarmed: PrewarmedCache::default(),
+            gas_dimensions: Mutex::default(),
         }
     }
 
@@ -541,6 +583,7 @@ impl Blockchain {
             options: BlockchainOptions::default(),
             merkle_pool: Self::build_merkle_pool(),
             prewarmed: PrewarmedCache::default(),
+            gas_dimensions: Mutex::default(),
         }
     }
 
@@ -2509,7 +2552,7 @@ impl Blockchain {
             .map(|tx| tx.hash(&NativeCrypto))
             .collect();
         let post_state_root = block.header.state_root;
-        let gas_left = block.header.gas_limit.saturating_sub(block.header.gas_used);
+        let block_hash = block.hash();
         // Snapshot the header for the satisfaction check (intrinsic-gas fork +
         // base fee) before `block` is moved into the inner pipeline.
         let header = block.header.clone();
@@ -2564,7 +2607,7 @@ impl Blockchain {
         match validator.check(
             il,
             &block_tx_hashes,
-            gas_left,
+            self.block_gas_dimensions(&block_hash),
             &header,
             &chain_config,
             &crypto,
@@ -2574,6 +2617,15 @@ impl Blockchain {
                 tx_hash: unsat.tx_hash,
             }),
         }
+    }
+
+    /// EIP-8037 `(regular, state)` gas totals of a block this node executed,
+    /// while still retained; see [`BlockGasDimensions`].
+    pub fn block_gas_dimensions(&self, block_hash: &H256) -> Option<(u64, u64)> {
+        self.gas_dimensions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(block_hash)
     }
 
     /// Runs the full block pipeline (execute + merkleize + store).
@@ -2652,6 +2704,19 @@ impl Blockchain {
             block.body.transactions.len(),
         );
         let block_hash = block.hash();
+        // EIP-7805: keep the EIP-8037 gas totals, which exist only during
+        // execution, for the inclusion-list satisfaction check. `res` moves
+        // into storage below.
+        if self
+            .storage
+            .get_chain_config()
+            .is_hegota_activated(block.header.timestamp)
+        {
+            self.gas_dimensions
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .insert(block_hash, res.gas_dimensions());
+        }
 
         let mut witness = None;
         if let Some(logger) = logger
