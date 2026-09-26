@@ -20,7 +20,7 @@ async fn raw_receipts_reports_a_block_whose_receipts_are_absent() {
     let context = default_context_with_storage(store).await;
 
     let response = call_http(
-        context,
+        &context,
         r#"{"jsonrpc":"2.0","method":"debug_getRawReceipts","params":["0x1"],"id":1}"#.to_string(),
     )
     .await;
@@ -46,7 +46,7 @@ async fn raw_receipts_still_serves_genesis_as_empty() {
     // Genesis legitimately has no receipts and is short-circuited before the
     // completeness check, so it must keep answering with an empty list.
     let response = call_http(
-        context,
+        &context,
         r#"{"jsonrpc":"2.0","method":"debug_getRawReceipts","params":["0x0"],"id":1}"#.to_string(),
     )
     .await;

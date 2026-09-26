@@ -28,6 +28,13 @@ use ethrex_blockchain::error::MempoolError;
 pub enum RpcErr {
     #[error("Method not found: {0}")]
     MethodNotFound(String),
+    /// Also `-32601`, but for a method this build *does* implement and this
+    /// endpoint does not serve: its namespace is off the `--http.api` allowlist,
+    /// or it belongs to the other RPC port. The reason travels in the message so
+    /// callers stop reading a bare "Method not found" as "ethrex has not
+    /// implemented this method".
+    #[error("Method not found: {method} ({reason})")]
+    MethodNotServedHere { method: String, reason: String },
     #[error("Wrong parameter: {0}")]
     WrongParam(String),
     #[error("Invalid params: {0}")]
@@ -98,6 +105,11 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: -32601,
                 data: None,
                 message: format!("Method not found: {bad_method}"),
+            },
+            RpcErr::MethodNotServedHere { method, reason } => RpcErrorMetadata {
+                code: -32601,
+                data: None,
+                message: format!("Method not found: {method} ({reason})"),
             },
             RpcErr::WrongParam(field) => RpcErrorMetadata {
                 code: -32602,
@@ -289,6 +301,23 @@ pub enum RpcNamespace {
 }
 
 impl RpcNamespace {
+    /// Renders the namespace back to its CLI/method-prefix form, the inverse of
+    /// [`RpcNamespace::from_prefix`]. Error messages use this so operators see
+    /// the exact string they would pass to `--http.api` (`txpool`, not
+    /// `Mempool`).
+    pub fn as_prefix(self) -> &'static str {
+        match self {
+            RpcNamespace::Engine => "engine",
+            RpcNamespace::Eth => "eth",
+            RpcNamespace::Admin => "admin",
+            RpcNamespace::Debug => "debug",
+            RpcNamespace::Web3 => "web3",
+            RpcNamespace::Net => "net",
+            RpcNamespace::Mempool => "txpool",
+            RpcNamespace::Testing => "testing",
+        }
+    }
+
     /// Parses a namespace name from its CLI/method-prefix form.
     pub fn from_prefix(s: &str) -> Option<Self> {
         match s {
@@ -482,5 +511,41 @@ pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
         maybe_parsed.map_err(|_| format!("Could not parse given hex {maybe_hex}"))
     } else {
         Err(format!("Could not parse given hex {hex}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `as_prefix` feeds `--http.api` advice in error messages, so it must stay
+    /// the exact inverse of the parser operators' input goes through. Drift would
+    /// tell someone to enable a namespace under a name the CLI rejects.
+    #[test]
+    fn namespace_prefix_round_trips() {
+        for namespace in [
+            RpcNamespace::Engine,
+            RpcNamespace::Eth,
+            RpcNamespace::Admin,
+            RpcNamespace::Debug,
+            RpcNamespace::Web3,
+            RpcNamespace::Net,
+            RpcNamespace::Mempool,
+            RpcNamespace::Testing,
+        ] {
+            let prefix = namespace.as_prefix();
+            assert_eq!(
+                RpcNamespace::from_prefix(prefix),
+                Some(namespace),
+                "{namespace:?} renders as {prefix:?}, which does not parse back"
+            );
+        }
+    }
+
+    /// The `txpool_*` methods live under the `Mempool` variant, so the CLI name
+    /// and the variant name genuinely differ. Error messages must use the former.
+    #[test]
+    fn mempool_renders_as_its_cli_name() {
+        assert_eq!(RpcNamespace::Mempool.as_prefix(), "txpool");
     }
 }

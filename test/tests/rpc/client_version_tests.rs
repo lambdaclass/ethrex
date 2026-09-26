@@ -25,7 +25,7 @@ async fn test_get_client_version_v1() {
 
     // Process request
     let context = default_context_with_storage(storage).await;
-    let result = GetClientVersionV1Request::call(&request, context).await;
+    let result = GetClientVersionV1Request::call(&request, context.clone()).await;
 
     // Verify the response
     assert!(result.is_ok());
@@ -95,7 +95,7 @@ async fn test_client_version_v1_accepts_unknown_client_codes() {
 
     let storage = Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
     let context = default_context_with_storage(storage).await;
-    let result = GetClientVersionV1Request::call(&request, context).await;
+    let result = GetClientVersionV1Request::call(&request, context.clone()).await;
 
     assert!(result.is_ok(), "Should accept unknown client codes");
 }
