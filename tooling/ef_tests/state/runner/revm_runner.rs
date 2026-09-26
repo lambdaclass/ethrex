@@ -620,8 +620,6 @@ pub async fn _ensure_post_state_revm(
                             state_gas_used: 0,
                             logs: vec![],
                             output: Bytes::new(),
-                            payer_address: None,
-                            frame_results: None,
                         }),
                         //TODO: This is not a TransactionReport because it is REVM
                         error_reason,
@@ -645,8 +643,6 @@ pub async fn _ensure_post_state_revm(
                                 state_gas_used: 0,
                                 logs: vec![],
                                 output: Bytes::new(),
-                                payer_address: None,
-                                frame_results: None,
                             }),
                             //TODO: This is not a TransactionReport because it is REVM
                             format!("Post-state root mismatch on REVM runner, line: {}", line!())

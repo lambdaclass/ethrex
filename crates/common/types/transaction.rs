@@ -2031,23 +2031,6 @@ mod serde_impl {
         }
     }
 
-    /// JSON shape of an EIP-8141 outer signature.
-    #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
-    #[serde(rename_all = "camelCase")]
-    pub struct SignatureEntry {
-        #[serde(with = "crate::serde_utils::u64::hex_str")]
-        pub scheme: u64,
-        pub signer: Option<Address>,
-        #[serde(with = "crate::serde_utils::bytes")]
-        pub msg: Bytes,
-        #[serde(with = "crate::serde_utils::bytes")]
-        pub signature: Bytes,
-    }
-
-    fn serialize_u256_hex<S: serde::Serializer>(value: &U256, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&format!("{value:#x}"))
-    }
-
     impl Serialize for LegacyTransaction {
         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where
@@ -3933,9 +3916,7 @@ mod tests {
         assert_eq!(tx.encode_to_vec().len(), EIP1559_DEFAULT_SERIALIZED_LENGTH);
     }
 
-    // ── Frame Transaction (EIP-8141) tests ──
-
-    // ── EIP-8141 fork-gate predicate tests ──
+    // ── Hegotá fork-activation predicate tests ──
 
     fn chain_config_with_hegota(hegota_time: Option<u64>) -> crate::types::ChainConfig {
         crate::types::ChainConfig {
@@ -3972,8 +3953,6 @@ mod tests {
         assert!(cfg.is_hegota_activated(1));
         assert!(cfg.is_hegota_activated(u64::MAX));
     }
-
-    // ── EIP-8141 expiry verifier frame tests ──
 
     #[test]
     fn test_cost_without_base_fee_eip4844_includes_blob_gas() {

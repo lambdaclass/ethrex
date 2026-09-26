@@ -172,7 +172,6 @@ pub enum Opcode {
     LOG2 = 0xA2,
     LOG3 = 0xA3,
     LOG4 = 0xA4,
-    // EIP-8141 Frame Transaction opcodes
     // EIP-8024
     DUPN = 0xE6,
     SWAPN = 0xE7,
@@ -641,13 +640,9 @@ impl<'a> VM<'a> {
         opcode_table
     }
 
-    #[expect(clippy::as_conversions, clippy::indexing_slicing)]
     const fn build_opcode_table_hegota() -> [OpCodeFn; 256] {
-        let opcode_table: [OpCodeFn; 256] = Self::build_opcode_table_amsterdam();
-
-        // EIP-8141 Frame Transaction opcodes (Hegota)
-
-        opcode_table
+        // Hegotá adds no opcodes on this branch: EIP-7805 is consensus-side only.
+        Self::build_opcode_table_amsterdam()
     }
 }
 

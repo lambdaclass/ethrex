@@ -475,15 +475,6 @@ fn blobs_bundle_loadtest() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// EIP-8141 frame transaction mempool admission tests
-// ---------------------------------------------------------------------------
-
-/// The address used as the sender by [`minimal_valid_frame_tx`]. Genesis seeds
-/// it with APPROVE(scope=3) code so its `self_verify` validation prefix
-/// establishes a payer (itself, OQ2) during admission simulation.
-const FRAME_TX_SELF_SENDER: u64 = 0xABCD;
-
 #[test]
 fn blobs_bundle_insert_and_remove() {
     // Insert two bundles with 2 blobs, and where both bundles contain one specific blob.
@@ -775,10 +766,6 @@ fn blob_eviction_offset_is_per_sender_not_cross_sender() {
         "two of the backlogged sender's blobs evicted"
     );
 }
-
-// ---------------------------------------------------------------------------
-// EIP-8141 Phase 4 admission and revalidation tests
-// ---------------------------------------------------------------------------
 
 mod alternates {
     use super::*;

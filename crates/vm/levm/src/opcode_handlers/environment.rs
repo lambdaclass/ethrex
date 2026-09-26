@@ -296,9 +296,6 @@ impl OpcodeHandler for OpExtCodeSizeHandler {
                 vm.env.config.fork,
             )?)?;
 
-        // EIP-8141 mempool validation-trace: EXTCODESIZE target must exist and
-        // not be EIP-7702-delegated (sender exempt).
-
         // State access AFTER gas check passes (using optimized code length lookup)
         let account_code_length = vm.db.get_code_length(address)?.into();
 
@@ -337,9 +334,6 @@ impl OpcodeHandler for OpExtCodeCopyHandler {
             recorder.record_touched_address(address);
         }
 
-        // EIP-8141 mempool validation-trace: EXTCODECOPY target must exist and
-        // not be EIP-7702-delegated (sender exempt).
-
         // EELS reads the account's code unconditionally (even for size=0), so
         // fetch the code — not just the account — to keep the read observable
         // for execution witnesses (EIP-8025) and parallel-BAL access tracking.
@@ -376,9 +370,6 @@ impl OpcodeHandler for OpExtCodeHashHandler {
                 vm.substate.add_accessed_address(address),
                 vm.env.config.fork,
             )?)?;
-
-        // EIP-8141 mempool validation-trace: EXTCODEHASH target must exist and
-        // not be EIP-7702-delegated (sender exempt).
 
         let account = vm.db.get_account(address)?;
         let account_is_empty = account.is_empty();

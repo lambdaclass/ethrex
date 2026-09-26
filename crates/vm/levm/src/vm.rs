@@ -407,11 +407,6 @@ impl Substate {
         self.transient_storage.insert((*to, *key), value);
     }
 
-    /// Clear all transient storage (used between frames in frame transactions).
-    pub fn clear_transient_storage(&mut self) {
-        self.transient_storage.clear();
-    }
-
     /// Extract all logs in order.
     pub fn extract_logs(&self) -> Vec<Log> {
         fn inner(substrate: &Substate, target: &mut Vec<Log>) {
@@ -426,21 +421,6 @@ impl Substate {
         inner(self, &mut logs);
 
         logs
-    }
-
-    /// Return a clone of the current sub-substate's logs only, excluding parent logs.
-    /// Used by EIP-8141 frame execution to capture per-frame log deltas for
-    /// `frame_receipts[i].logs`. Must be called after `push_backup()` and before
-    /// `commit_backup()` to return only the logs emitted during the current scope.
-    pub fn current_logs(&self) -> Vec<Log> {
-        self.logs.clone()
-    }
-
-    /// Number of logs in the current scope, without cloning them. Used to slice
-    /// out a single frame's logs after `run_execution` has already committed the
-    /// frame's backup up into this scope.
-    pub fn logs_len(&self) -> usize {
-        self.logs.len()
     }
 
     /// Push a log record.
@@ -595,14 +575,6 @@ pub struct VM<'a> {
     pub stateless_validator: Option<&'a dyn crate::StatelessValidator>,
 }
 
-/// Validate every EIP-8141 outer signature against the canonical `sig_hash`.
-/// Returns false if any signature is malformed or invalid. Verification gas is
-/// intrinsic (already in `total_gas_limit`), so a scratch budget is used for the
-/// crypto precompiles and their deduction is ignored.
-#[expect(
-    clippy::indexing_slicing,
-    reason = "signature length is checked before each fixed-offset slice"
-)]
 impl<'a> VM<'a> {
     /// Constructs a VM, allocating a fresh 32 KB root call-frame stack.
     ///
@@ -1231,8 +1203,6 @@ impl<'a> VM<'a> {
 
     /// Executes a whole external transaction. Performing validations at the beginning.
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
-        // Detect frame transaction and branch to specialized execution
-
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.
             // Consume the backup unless a `BackupHook` will read it (L2 / stateless); on L1 it
@@ -1439,10 +1409,6 @@ impl<'a> VM<'a> {
             let pc_of_current_op = self.current_call_frame.pc;
             let opcode = self.current_call_frame.next_opcode();
             self.advance_pc();
-
-            // EIP-8141 mempool validation-trace observer (single branch on the
-            // fast path when inactive). Enforces the banned-opcode set and the
-            // sequential `GAS`-before-`*CALL` rule before the handler runs.
 
             // Struct-log pre-step capture (compiled out entirely when !TRACED).
             let gas_before_op = if TRACED {
@@ -1691,8 +1657,6 @@ impl<'a> VM<'a> {
             state_gas_used: net_state_gas_used,
             output: std::mem::take(&mut ctx_result.output),
             logs,
-            payer_address: None,
-            frame_results: None,
         };
 
         Ok(report)

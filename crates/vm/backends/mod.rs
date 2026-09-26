@@ -171,8 +171,6 @@ impl Evm {
             execution_report.logs.clone(),
         );
 
-        // For frame transactions, populate payer and per-frame receipts
-
         Ok((receipt, execution_report))
     }
 

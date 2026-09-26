@@ -1315,20 +1315,6 @@ impl Blockchain {
     }
 }
 
-/// Returns true if `e` represents a transaction nonce mismatch.
-///
-/// The VM surfaces this as `TxValidationError::NonceMismatch` which gets
-/// stringified through `EvmError::Transaction(String)` →
-/// `ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(String))`.
-/// There is no typed variant to match at the `ChainError` level, so we detect
-/// it by the stable Display substring. Used to keep gapped-nonce txs pooled
-/// instead of evicting them: a nonce gap is transient because the
-/// `TransactionQueue` feeds the lowest pooled nonce without comparing to the
-/// account nonce, so the tx becomes valid once earlier nonces are included.
-fn is_nonce_mismatch(e: &ChainError) -> bool {
-    e.to_string().contains("Nonce mismatch")
-}
-
 /// Whether a tx failed with an error that recurs at the same nonce for as long as
 /// the active fork's rules hold — i.e. it is intrinsically invalid, not merely
 /// mis-ordered.
@@ -1786,36 +1772,6 @@ mod tests {
         assert!(block.header.withdrawals_root.is_some());
         ethrex_common::types::validate_block_body(&block.header, &block.body, &NativeCrypto)
             .expect("produced block must pass validate_block_body");
-    }
-
-    #[test]
-    fn nonce_mismatch_detected_from_chain_error() {
-        // Build the ChainError through the REAL production conversion path so a
-        // change to the TxValidationError/VMError Display strings breaks this
-        // test instead of silently breaking `is_nonce_mismatch` (which keys off
-        // the "Nonce mismatch" substring). Path:
-        // TxValidationError::NonceMismatch -> VMError -> EvmError::Transaction
-        // (via From, which stringifies) -> ChainError::InvalidBlock.
-        use ethrex_levm::errors::{TxValidationError, VMError};
-        let nonce_err: ChainError =
-            EvmError::from(VMError::TxValidation(TxValidationError::NonceMismatch {
-                expected: 5,
-                actual: 7,
-            }))
-            .into();
-        assert!(
-            is_nonce_mismatch(&nonce_err),
-            "is_nonce_mismatch must match the real NonceMismatch Display; got: {nonce_err}"
-        );
-        // A different validation error must NOT match, also via the real path.
-        let other: ChainError = EvmError::from(VMError::TxValidation(
-            TxValidationError::InsufficientAccountFunds,
-        ))
-        .into();
-        assert!(
-            !is_nonce_mismatch(&other),
-            "is_nonce_mismatch must not match unrelated errors; got: {other}"
-        );
     }
 
     #[test]

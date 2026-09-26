@@ -3249,9 +3249,7 @@ impl Blockchain {
         // per-sender gate inputs, re-checked atomically inside `add_transaction`,
         // which also removes whatever occupies the sender's nonce slot (any tx
         // type) under the same lock, so replacement detection, the gates, the
-        // removal, and the insert are one atomic scope (#6938). For a frame tx
-        // the removal happens only after the locked paymaster re-check, so a
-        // rejected fee-bump leaves the original pending tx intact.
+        // removal, and the insert are one atomic scope (#6938).
         let sender_admission = self.validate_transaction(&transaction, sender).await?;
 
         // Add transaction to storage
@@ -3345,13 +3343,9 @@ impl Blockchain {
     5. Ensure the transactor is able to add a new transaction. The number of transactions sent by an account may be limited by a certain configured value
 
     */
-    /// Returns the paymaster reservation to apply on insert for frame
-    /// transactions (EIP-8141), plus the per-sender admission guard re-checked
-    /// atomically inside `add_transaction`. The reservation is computed here but
-    /// applied in the locked section of `add_transaction`, so a frame tx that
-    /// fails any later admission check never leaks a reservation. Any same-nonce
-    /// tx being replaced is detected and removed live under that write lock, so
-    /// its hash is not returned here.
+    /// Returns the per-sender admission guard re-checked atomically inside
+    /// `add_transaction`. Any same-nonce tx being replaced is detected and
+    /// removed live under that write lock, so its hash is not returned here.
     pub async fn validate_transaction(
         &self,
         tx: &Transaction,
@@ -3483,11 +3477,6 @@ impl Blockchain {
             // the code is an EIP-7702 delegation designation (the account is
             // still an EOA in spirit, just pointing at delegate code).
             //
-            // Frame transactions are exempt: EIP-8141 ("Transaction
-            // origination") explicitly does NOT apply the EIP-3607 restriction
-            // to them, since a frame tx's `SENDER` frame legitimately
-            // originates calls where `tx.sender` is a contract account.
-            //
             // Length-based fast path: any code whose length isn't exactly
             // `EIP7702_DELEGATED_CODE_LEN` (23) cannot be a delegation, so
             // we reject without loading the bytecode. Only when the metadata
@@ -3533,8 +3522,7 @@ impl Blockchain {
             return Err(MempoolError::NotEnoughBalance);
         };
 
-        // On-chain nonce for the gap-admission check below (0 for a
-        // not-yet-existent sender, matching the implied EIP-8141 nonce).
+        // On-chain nonce for the gap-admission check below.
         let sender_acc_nonce = sender_account_nonce.unwrap_or(0);
 
         // Check the nonce of pendings TXs in the mempool from the same sender
@@ -3553,10 +3541,6 @@ impl Blockchain {
         // gate can't be bypassed by an invariant violation. Obsoleted txs
         // (nonce below the sender's on-chain nonce — already mined but not yet
         // pruned) are excluded so they don't inflate the required balance.
-        //
-        // Skipped for frame txs: their payer is unknown until execution, so
-        // (matching the single-tx balance check above) they are not gated on
-        // the sender's balance.
         let existing_cost = self.mempool.sum_cost_for_sender(
             sender,
             sender_account_nonce.unwrap_or(0),

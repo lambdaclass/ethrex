@@ -319,12 +319,9 @@ pub fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), 
     let max_blob_gas_per_block = max_blob_number_per_block * GAS_PER_BLOB;
 
     for transaction in block.body.transactions.iter() {
-        match transaction {
-            crate::types::Transaction::EIP4844Transaction(tx) => {
-                blob_gas_used += get_total_blob_gas(tx);
-                blobs_in_block += tx.blob_versioned_hashes.len() as u32;
-            }
-            _ => {}
+        if let crate::types::Transaction::EIP4844Transaction(tx) = transaction {
+            blob_gas_used += get_total_blob_gas(tx);
+            blobs_in_block += tx.blob_versioned_hashes.len() as u32;
         }
     }
     if blob_gas_used > max_blob_gas_per_block {

@@ -10,9 +10,11 @@ use crate::system_contracts::{
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::H256;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::constants::EMPTY_KECCAK_HASH;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::types::Code;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::types::TxType;
@@ -355,8 +357,6 @@ impl LEVM {
                 cumulative_gas_used,
                 report.logs,
             );
-
-            // For frame transactions, propagate payer and per-frame receipts
 
             receipts.push(receipt);
         }
@@ -789,8 +789,6 @@ impl LEVM {
                 cumulative_gas_used,
                 report.logs,
             );
-
-            // For frame transactions, propagate payer and per-frame receipts
 
             receipts.push(receipt);
         }
