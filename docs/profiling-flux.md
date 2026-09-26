@@ -61,7 +61,18 @@ RestartSec=10
 ```
 
 with `e /home/admin/flux-traces/segments - admin admin 7d` in a `tmpfiles.d`
-file. Taking the pid from the rings' pid file is deliberate: `pgrep` on the
+file.
+
+**Each segment re-exports what is still in the rings.** A new reader drains
+every thread's ring from its oldest retained mark, and the reader has no option
+to start from the present. Busy threads wrap within the hour, but quiet ones do
+not: after a node restart, the warmer, merkle, persist and runtime threads can
+carry many hours of history into every later segment, and a thread that only
+ran once (the catch-up import after a restart runs on `main`) appears in all of
+them. Timestamps are absolute, so filter by the segment's own window, from the
+time in its file name to the next file's, before computing anything per block.
+In practice a segment is 100 to 130 MB per hour on mainnet, roughly 20 GB for a
+week of retention. Taking the pid from the rings' pid file is deliberate: `pgrep` on the
 binary path also matches a tmux or shell wrapper running the same command
 line. A second reader can attach to the same rings for an ad-hoc capture while
 the unit runs; the rings are multi-consumer.
