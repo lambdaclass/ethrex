@@ -372,8 +372,7 @@ impl LEVM {
             )));
         }
 
-        // Set BAL index for post-execution phase (requests + withdrawals)
-        // Order must match geth: requests (system calls) BEFORE withdrawals.
+        // Set BAL index for post-execution phase (withdrawals + requests).
         if is_amsterdam {
             let post_tx_index =
                 u32::try_from(block.body.transactions.len() + 1).unwrap_or(u32::MAX);
@@ -392,14 +391,16 @@ impl LEVM {
         // TODO: I don't like deciding the behavior based on the VMType here.
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
         // in L2 execution, but its implementation behaves differently based on this.
+        // Withdrawals BEFORE requests, as EELS `apply_body` orders them (Prague
+        // onward): the dequeue system calls run on post-withdrawal state.
+        if let Some(withdrawals) = &block.body.withdrawals {
+            Self::process_withdrawals(db, withdrawals)?;
+        }
+
         let requests = match vm_type {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?,
             VMType::L2(_) => Default::default(),
         };
-
-        if let Some(withdrawals) = &block.body.withdrawals {
-            Self::process_withdrawals(db, withdrawals)?;
-        }
 
         // Extract BAL if recording was enabled
         let bal = db.take_bal();
@@ -555,17 +556,17 @@ impl LEVM {
                 &validation_index.accounts_by_min_index,
             )?;
 
-            // Order must match geth: requests (system calls) BEFORE withdrawals.
+            // Withdrawals BEFORE requests, as EELS `apply_body` orders them.
+            if let Some(withdrawals) = &block.body.withdrawals {
+                Self::process_withdrawals(db, withdrawals)?;
+            }
+
             let requests = match vm_type {
                 VMType::L1 => {
                     extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?
                 }
                 VMType::L2(_) => Default::default(),
             };
-
-            if let Some(withdrawals) = &block.body.withdrawals {
-                Self::process_withdrawals(db, withdrawals)?;
-            }
             // State transitions for merkleizer come from bal_to_account_updates,
             // not from db — no need to call send_state_transitions_tx here.
 
@@ -818,8 +819,7 @@ impl LEVM {
             LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
         }
 
-        // Set BAL index for post-execution phase (requests + withdrawals)
-        // Order must match geth: requests (system calls) BEFORE withdrawals.
+        // Set BAL index for post-execution phase (withdrawals + requests).
         if is_amsterdam {
             let post_tx_index =
                 u32::try_from(block.body.transactions.len() + 1).unwrap_or(u32::MAX);
@@ -836,14 +836,16 @@ impl LEVM {
         // TODO: I don't like deciding the behavior based on the VMType here.
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
         // in L2 execution, but its implementation behaves differently based on this.
+        // Withdrawals BEFORE requests, as EELS `apply_body` orders them (Prague
+        // onward): the dequeue system calls run on post-withdrawal state.
+        if let Some(withdrawals) = &block.body.withdrawals {
+            Self::process_withdrawals(db, withdrawals)?;
+        }
+
         let requests = match vm_type {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?,
             VMType::L2(_) => Default::default(),
         };
-
-        if let Some(withdrawals) = &block.body.withdrawals {
-            Self::process_withdrawals(db, withdrawals)?;
-        }
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
         // Extract BAL if recording was enabled
