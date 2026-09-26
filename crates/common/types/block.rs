@@ -1146,7 +1146,11 @@ mod test {
             ommers: vec![],
             withdrawals: None,
         };
-        assert!(body.transactions.iter().all(|tx| tx.cached_sender().is_none()));
+        assert!(
+            body.transactions
+                .iter()
+                .all(|tx| tx.cached_sender().is_none())
+        );
 
         // Only the first transaction's sender known: the rest are still recovered.
         body.transactions[0].sender(&crypto).unwrap();
