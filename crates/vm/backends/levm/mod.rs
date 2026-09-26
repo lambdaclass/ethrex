@@ -21,9 +21,9 @@ use ethrex_common::types::TxType;
 use ethrex_common::types::block_access_list::BlockAccessList;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::types::block_access_list::{
-    BalAddressIndex, find_exact_change_balance, find_exact_change_code, find_exact_change_nonce,
-    find_exact_change_storage, has_exact_change_balance, has_exact_change_code,
-    has_exact_change_nonce, has_exact_change_storage,
+    BalAddressIndex, BlockAccessListRecorder, find_exact_change_balance, find_exact_change_code,
+    find_exact_change_nonce, find_exact_change_storage, has_exact_change_balance,
+    has_exact_change_code, has_exact_change_nonce, has_exact_change_storage,
 };
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
@@ -478,9 +478,14 @@ impl LEVM {
             validate_header_bal_indices(&bal, block.body.transactions.len())
                 .map_err(|e| EvmError::Custom(e.to_string()))?;
 
-            // Outer db has no BAL recorder: header BAL drives validation.
-            // Per-tx tx_dbs enable a shadow recorder for accessed-entry checks.
+            // The header BAL drives validation. The outer db records only the
+            // pre-execution system calls, as a shadow of what the builder would
+            // write at index 0, so their accesses can be checked against the BAL
+            // the same way per-tx dbs check theirs, once the block has executed.
+            db.enable_bal_recording();
+            db.set_bal_index(0);
             Self::prepare_block(block, db, vm_type, crypto)?;
+            let pre_exec_recorder = db.bal_recorder.take();
 
             // Build validation index once — shared across parallel execution and post-exec seeding.
             let validation_index = Arc::new(bal.build_validation_index());
@@ -556,6 +561,23 @@ impl LEVM {
                 &validation_index.accounts_by_min_index,
             )?;
 
+            // `saturating_add(1)` prevents a release-build wrap if `n == u32::MAX`
+            // (debug_assert on tx count catches this upstream, but belt-and-braces).
+            let withdrawal_idx = u32::try_from(block.body.transactions.len())
+                .map(|n| n.saturating_add(1))
+                .unwrap_or(u32::MAX);
+
+            // Shadow-record the post-execution phase, mirroring the builder:
+            // every withdrawal recipient is touched regardless of amount
+            // (EIP-7928), though `process_withdrawals` loads only non-zero ones.
+            db.enable_bal_recording();
+            db.set_bal_index(withdrawal_idx);
+            if let Some(withdrawals) = &block.body.withdrawals
+                && let Some(recorder) = db.bal_recorder_mut()
+            {
+                recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
+            }
+
             // Withdrawals BEFORE requests, as EELS `apply_body` orders them.
             if let Some(withdrawals) = &block.body.withdrawals {
                 Self::process_withdrawals(db, withdrawals)?;
@@ -567,17 +589,33 @@ impl LEVM {
                 }
                 VMType::L2(_) => Default::default(),
             };
+            let post_exec_recorder = db.bal_recorder.take();
             // State transitions for merkleizer come from bal_to_account_updates,
             // not from db — no need to call send_state_transitions_tx here.
 
             // Validate BAL entries at the withdrawal index against actual
-            // post-withdrawal/request state. `saturating_add(1)` prevents a
-            // release-build wrap if `n == u32::MAX` (debug_assert on tx count
-            // catches this upstream, but belt-and-braces).
-            let withdrawal_idx = u32::try_from(block.body.transactions.len())
-                .map(|n| n.saturating_add(1))
-                .unwrap_or(u32::MAX);
+            // post-withdrawal/request state.
             Self::validate_bal_withdrawal_index(db, &bal, withdrawal_idx, &validation_index)?;
+            // Access completeness of both system-call phases is checked only
+            // now: EELS compares the BAL after `apply_body`, so an invalid tx or
+            // a failing request system call (SYSTEM_CONTRACT_CALL_FAILED) takes
+            // priority over an omission from the BAL.
+            if let Some(recorder) = pre_exec_recorder {
+                Self::validate_phase_accesses_in_bal(
+                    recorder,
+                    &bal,
+                    &validation_index,
+                    "system_tx",
+                )?;
+            }
+            if let Some(recorder) = post_exec_recorder {
+                Self::validate_phase_accesses_in_bal(
+                    recorder,
+                    &bal,
+                    &validation_index,
+                    "withdrawal",
+                )?;
+            }
 
             // Mark storage_reads that occurred during the withdrawal/request phase.
             if !unread_storage_reads.is_empty() {
@@ -2221,6 +2259,53 @@ impl LEVM {
             }
         }
 
+        Ok(())
+    }
+
+    /// Checks that every account and storage slot a system-call phase accessed
+    /// is present in the BAL, as EIP-7928 requires even when nothing changed.
+    ///
+    /// The per-tx path runs this check against a shadow recorder. The index-0
+    /// and post-execution phases need it too: an omitted read or touched-only
+    /// account leaves the state root unchanged, so the value-based validators
+    /// cannot see it, and the block would be accepted with a BAL the spec
+    /// rejects. A storage read satisfies the check as either a change or a
+    /// read, since SSTORE records an implicit read.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    fn validate_phase_accesses_in_bal(
+        mut recorder: BlockAccessListRecorder,
+        bal: &BlockAccessList,
+        index: &BalAddressIndex,
+        phase: &str,
+    ) -> Result<(), EvmError> {
+        for addr in recorder.take_touched_addresses() {
+            if !index.addr_to_idx.contains_key(&addr) {
+                return Err(EvmError::Custom(format!(
+                    "BAL validation failed for {phase}: account {addr:?} was accessed \
+                     but is missing from BAL"
+                )));
+            }
+        }
+        for (addr, slot) in recorder.take_storage_reads() {
+            let Some(&bal_acct_idx) = index.addr_to_idx.get(&addr) else {
+                return Err(EvmError::Custom(format!(
+                    "BAL validation failed for {phase}: account {addr:?} was accessed \
+                     but is missing from BAL"
+                )));
+            };
+            let acct = &bal.accounts()[bal_acct_idx];
+            let in_changes = acct
+                .storage_changes
+                .binary_search_by(|sc| sc.slot.cmp(&slot))
+                .is_ok();
+            let in_reads = acct.storage_reads.binary_search(&slot).is_ok();
+            if !in_changes && !in_reads {
+                return Err(EvmError::Custom(format!(
+                    "BAL validation failed for {phase}: storage slot {slot} of account \
+                     {addr:?} was read but is missing from BAL"
+                )));
+            }
+        }
         Ok(())
     }
 
