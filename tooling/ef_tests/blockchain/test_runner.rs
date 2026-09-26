@@ -29,7 +29,7 @@ use regex::Regex;
 thread_local! {
     /// Per-OS-thread merkleization pool, lazily built on first use. Mirrors the
     /// pattern used by `tooling/ef_tests/engine` so the ~10k+ blockchain tests
-    /// don't each spawn a fresh 17-thread rayon pool inside `Blockchain::new`.
+    /// don't each spawn a fresh 17-thread rayon pool of their own.
     /// The merkle protocol's 16 worker jobs cross-communicate via channels, so
     /// each pool may have only one concurrent `in_place_scope` caller; keying by
     /// `thread_local!` makes the calling test-runner thread the natural
@@ -121,7 +121,7 @@ pub async fn run_ef_test(
     check_prestate_against_db(test_key, test, &store);
 
     // Blockchain EF tests are meant for L1.
-    let blockchain = Blockchain::default_with_store_and_pool(store.clone(), merkle_pool());
+    let blockchain = Blockchain::for_test_harness_with_pool(store.clone(), merkle_pool());
 
     // Early return if the exception is in the rlp decoding of the block
     for bf in &test.blocks {
@@ -241,7 +241,7 @@ async fn run(
 async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), String> {
     // ---- Pass 1: sequential, collect BALs ----
     let store1 = build_store_for_test(test).await;
-    let blockchain1 = Blockchain::default_with_store_and_pool(store1.clone(), merkle_pool());
+    let blockchain1 = Blockchain::for_test_harness_with_pool(store1.clone(), merkle_pool());
 
     let mut bals: Vec<Arc<BlockAccessList>> = Vec::with_capacity(test.blocks.len());
 
@@ -273,7 +273,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
 
     // ---- Pass 2: parallel (BAL-driven), verify post-state ----
     let store2 = build_store_for_test(test).await;
-    let blockchain2 = Blockchain::default_with_store_and_pool(store2.clone(), merkle_pool());
+    let blockchain2 = Blockchain::for_test_harness_with_pool(store2.clone(), merkle_pool());
 
     for (block_fixture, bal) in test.blocks.iter().zip(bals.iter()) {
         let block: CoreBlock = block_fixture.block().unwrap().clone().into();
@@ -501,7 +501,7 @@ pub async fn blocks_and_witness_for_test(
     test: &TestUnit,
 ) -> Result<(Vec<CoreBlock>, ExecutionWitness), String> {
     let store = build_store_for_test(test).await;
-    let blockchain = Blockchain::default_with_store_and_pool(store.clone(), merkle_pool());
+    let blockchain = Blockchain::for_test_harness_with_pool(store.clone(), merkle_pool());
 
     let mut blocks: Vec<CoreBlock> = Vec::with_capacity(test.blocks.len());
     for block_fixture in test.blocks.iter() {

@@ -14,7 +14,7 @@ use tokio::{
     time::{Duration, sleep},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -50,6 +50,7 @@ pub struct SyncManager {
     /// This is also held by the Syncer and allows tracking it's latest syncmode
     /// It is a READ_ONLY value, as modifications will disrupt the current active sync progress
     snap_enabled: Arc<AtomicBool>,
+    blockchain: Arc<Blockchain>,
     syncer: Arc<Mutex<Syncer>>,
     last_fcu_head: Arc<Mutex<H256>>,
     store: Store,
@@ -68,13 +69,29 @@ impl SyncManager {
         backfill_config: BackfillConfig,
         tracker: TaskTracker,
     ) -> Self {
-        let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
+        // Whether snap sync is permitted at all, captured from the configured mode before
+        // the auto-switch below can flip `snap_enabled` to full. The unreachable-state
+        // recovery uses this to avoid escalating a `--syncmode full` node into snap.
+        let snap_permitted = matches!(sync_mode, SyncMode::Snap);
+        let snap_enabled = Arc::new(AtomicBool::new(snap_permitted));
 
         // Clone the shared handles the optional backfill task needs before
         // `peer_handler`/`cancel_token`/`blockchain` are moved into the Syncer below.
         let backfill_peers = peer_handler.clone();
         let backfill_cancel = cancel_token.clone();
         let backfill_blockchain = blockchain.clone();
+
+        // Only a snap/1 state sync depends on `GetTrieNodes`, and that is the
+        // sync this node runs exactly when its chain has no Amsterdam, since
+        // snap/2 reconciles with access lists that do not exist before it.
+        //
+        // Keying this on "a snap sync is running" instead would be circular and
+        // would strand the snap/2 path permanently: withholding snap/2 means
+        // never negotiating it, which means never finding a snap/2 peer, which
+        // means always falling back to snap/1 and never clearing the flag.
+        let needs_trie_nodes = snap_enabled.load(Ordering::Relaxed)
+            && store.get_chain_config().amsterdam_time.is_none();
+        blockchain.set_state_sync_needs_trie_nodes(needs_trie_nodes);
 
         // Fetch checkpoint once to avoid duplicate DB reads
         let has_checkpoint = store
@@ -103,6 +120,7 @@ impl SyncManager {
             if is_synced {
                 info!("Node has synced state (block {latest_block}), switching to full sync");
                 snap_enabled.store(false, Ordering::Relaxed);
+                blockchain.set_state_sync_needs_trie_nodes(false);
                 if has_checkpoint && let Err(e) = store.clear_snap_state().await {
                     warn!("Failed to clear stale snap state: {e}");
                 }
@@ -110,9 +128,11 @@ impl SyncManager {
         }
 
         let diagnostics = Arc::new(tokio::sync::RwLock::new(SyncDiagnostics::default()));
+        let blockchain_for_manager = blockchain.clone();
         let syncer = Arc::new(Mutex::new(Syncer::new(
             peer_handler,
             snap_enabled.clone(),
+            snap_permitted,
             cancel_token,
             blockchain,
             datadir,
@@ -137,6 +157,7 @@ impl SyncManager {
         }
         let sync_manager = Self {
             snap_enabled,
+            blockchain: blockchain_for_manager,
             syncer,
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: store.clone(),
@@ -171,6 +192,7 @@ impl SyncManager {
     /// Disables snapsync mode
     pub fn disable_snap(&self) {
         self.snap_enabled.store(false, Ordering::Relaxed);
+        self.blockchain.set_state_sync_needs_trie_nodes(false);
     }
 
     /// Returns a snapshot of the current sync diagnostics with live values.
@@ -253,7 +275,6 @@ impl SyncManager {
             let Ok(mut syncer) = syncer.try_lock() else {
                 return;
             };
-            let mut waiting_for_fcu_logged = false;
             let mut heal_wait_done = false;
             loop {
                 let sync_head = {
@@ -264,20 +285,19 @@ impl SyncManager {
                     };
                     *sync_head
                 };
-                // Edge case: If we are resuming a sync process after a node restart, wait until the next fcu to start
+                // No forkchoice head yet (e.g. right after a node restart, before the
+                // first forkchoiceUpdate). Return and release the syncer lock instead
+                // of spinning here while holding it: while this task is alive `is_active()`
+                // stays true, so every `sync_to_head()` becomes a silent no-op and the
+                // node never re-arms once a head finally arrives (a single dropped fcu-head
+                // update in `set_head` would then wedge it indefinitely). The next
+                // forkchoiceUpdate calls `sync_to_head()`, which finds the syncer idle and
+                // re-spawns this task with the head populated.
                 if sync_head.is_zero() {
-                    if waiting_for_fcu_logged {
-                        debug!(
-                            "Still waiting for a forkchoice update from the consensus client to resume sync"
-                        );
-                    } else {
-                        info!(
-                            "Resuming sync after node restart, waiting for a forkchoice update from the consensus client"
-                        );
-                        waiting_for_fcu_logged = true;
-                    }
-                    sleep(Duration::from_secs(5)).await;
-                    continue;
+                    info!(
+                        "No forkchoice head yet (e.g. after a node restart); waiting for the next forkchoice update to start syncing"
+                    );
+                    return;
                 }
                 // A node that was following the tip and is asked to sync to an unknown
                 // head is almost always seeing the FCU/newPayload ordering race: the

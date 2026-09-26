@@ -12,6 +12,14 @@
 
 ## Perf
 
+### 2026-09-14
+
+- Stop copying the stateless input one byte at a time, hash the block access list once instead of twice, and route `validate_public_keys` through the injected `Crypto`: −8.81% guest instructions on mainnet block 25453112 [#7277](https://github.com/lambdaclass/ethrex/pull/7277)
+
+### 2026-09-03
+
+- EIP-8037 (execution-specs#3478, consensus-breaking): when a successful child frame merges, the state-gas reservoir now repays the spill still outstanding in the merged frame back into `gas_remaining`, debiting the reservoir by the same amount. A cross-frame refund can credit the reservoir while the `gas_remaining` that funded the charge stays reduced; the merge is the first point where the claim and the credit share a frame. Billing-neutral by construction — the user total (`gas_limit - gas_remaining - reservoir`) and the EIP-7778 dimensions are unchanged — but it changes how much execution gas a parent frame has after a child returns, so it is consensus-visible. Fixtures move to `tests-glamsterdam-devnet@v8.1.4` [#7250](https://github.com/lambdaclass/ethrex/pull/7250)
+
 ### 2026-08-24
 
 - Make `eth_estimateGas`'s plain-transfer short circuit fire. Its condition tested whether the recipient account existed rather than whether it had code, so every transfer to an ordinary funded wallet ran the full binary search instead of returning `TRANSACTION_GAS` at once [#7211](https://github.com/lambdaclass/ethrex/pull/7211)
@@ -22,6 +30,14 @@
 ### 2026-07-29
 
 - Breadth-first batched trie-node prefetch on the merkle storage-root path: one sorted RocksDB `multi_get` per trie level warms the touched nodes into the arena before the serial inserts, on the parallel BAL merkleizer (storage-root recomputation and the Stage C state-trie update) and the streaming (BAL-less / pre-Amsterdam) merkleizer. Warming-only, so the computed roots are byte-identical; large speedup on cold storage-heavy blocks [#6986](https://github.com/lambdaclass/ethrex/pull/6986)
+### 2026-08-04
+
+- Cut the cost of a cold contract-code access: store jump destinations as a 1-bit-per-byte bitmap instead of a persisted RLP list of `u32` offsets, count the bytecode in the code cache's byte budget, answer `EXTCODESIZE` from the code-length table instead of materializing the bytecode, and give the account-code column families a bloom filter (4KB data blocks on the blob-backed bytecode CF). Raises the code cache's byte budget from an effective 64 MiB of jump tables to 256 MiB of bytecode, and bumps the store schema version so an older binary warns rather than failing on the new value format. `COLD_ACCOUNT_CODE_ACCESS` drops from 7736 to 4652 gas in the EIP-8038 repricing fit, and `COLD_ACCOUNT_CODE_WRITE` from 10415 to 6355 [#7095](https://github.com/lambdaclass/ethrex/pull/7095)
+- Batch and stream the BAL contract-code prefetch: warm accounts and their code in chunks instead of reading every access-list account before the first bytecode, take code hashes from the account read rather than a second lookup per account, and add a batched bytecode read that resolves the buffer and code cache first, then either fans out parallel point gets or shards the remainder across concurrent `multi_get`s, whichever reaches the greater read queue depth for the batch size on this host [#7099](https://github.com/lambdaclass/ethrex/pull/7099)
+
+### 2026-08-07
+
+- Access the EVM memory buffer without `RefCell`'s borrow-flag bookkeeping and round the `MLOAD`/`MSTORE` memory size once instead of twice [#7119](https://github.com/lambdaclass/ethrex/pull/7119)
 
 ### 2026-07-22
 
@@ -86,6 +102,10 @@
 
 - Lazy BAL cursor for per-tx parallel execution [#6669](https://github.com/lambdaclass/ethrex/pull/6669)
 - Move per-tx BAL validation into the rayon par_iter closure on the parallel execution path [#6677](https://github.com/lambdaclass/ethrex/pull/6677)
+
+### 2026-05-18
+
+- O(1) BAL recorder checkpoint via journal snapshots [#6667](https://github.com/lambdaclass/ethrex/pull/6667)
 
 ### 2026-05-15
 
