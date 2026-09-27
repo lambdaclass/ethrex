@@ -1016,8 +1016,12 @@ fn frame_tx_happy_path_sstore_and_log() {
 /// only the first frame's callees under it.
 #[test]
 fn call_tracer_records_every_frame() {
+    use ethrex_common::tracing::CallType;
+    use ethrex_common::types::Log;
+
     let worker = Address::from_low_u64_be(0xC0FFEE);
     let codeless = Address::from_low_u64_be(0xDECAF);
+    let entry_point = ethrex_common::types::frame_tx_entry_point();
 
     let tx = frame_tx_with_frames(vec![
         verify_frame(FUNDED_SENDER),
@@ -1025,20 +1029,28 @@ fn call_tracer_records_every_frame() {
             mode: u8::from(FrameMode::Sender),
             flags: 0,
             target: Some(worker),
-            gas_limit: 300_000,
-            value: U256::zero(),
+            limits: FrameLimits {
+                execution: 300_000,
+                state: 300_000,
+            },
+            value: U256::from(7),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         },
         Frame {
-            mode: u8::from(FrameMode::Sender),
+            mode: u8::from(FrameMode::Default),
             flags: 0,
             target: Some(codeless),
-            gas_limit: 100_000,
+            limits: FrameLimits {
+                execution: 300_000,
+                state: 50_000,
+            },
             value: U256::zero(),
-            data: Bytes::new(),
+            data: Bytes::from_static(&[0xde, 0xad]),
+            encoding: FrameEncoding::Limits,
         },
     ]);
-
+    let tx_max_gas = tx.total_gas_limit();
     let accounts = [
         (
             FUNDED_SENDER,
@@ -1056,16 +1068,352 @@ fn call_tracer_records_every_frame() {
 
     let (report, trace) = trace_frame_tx(&accounts, tx);
 
+    assert!(report.is_success());
+    assert!(matches!(trace.call_type, CallType::CALL));
+    assert_eq!(trace.from, FUNDED_SENDER);
+    assert_eq!(trace.to, entry_point);
+    assert_eq!(trace.value, U256::zero());
+    assert!(trace.input.is_empty());
+    assert_eq!(trace.gas, tx_max_gas);
+    assert_eq!(trace.gas_used, report.gas_used);
+    assert_eq!(trace.error, None);
+    assert_eq!(trace.calls.len(), 3);
+
+    let verify = &trace.calls[0];
+    assert!(matches!(verify.call_type, CallType::STATICCALL));
+    assert_eq!(verify.from, entry_point);
+    assert_eq!(verify.to, FUNDED_SENDER);
+    assert_eq!(verify.gas, 200_000);
+
+    let sender_call = &trace.calls[1];
+    assert!(matches!(sender_call.call_type, CallType::CALL));
+    assert_eq!(sender_call.from, FUNDED_SENDER);
+    assert_eq!(sender_call.to, worker);
+    assert_eq!(sender_call.value, U256::from(7));
+    assert_eq!(sender_call.gas, 600_000);
+
+    let default_call = &trace.calls[2];
+    assert!(matches!(default_call.call_type, CallType::CALL));
+    assert_eq!(default_call.from, entry_point);
+    assert_eq!(default_call.to, codeless);
+    assert_eq!(default_call.input, Bytes::from_static(&[0xde, 0xad]));
+
+    let expected_logs = [
+        vec![],
+        vec![
+            Log {
+                address: Address::from_slice(&hex_literal::hex!(
+                    "fffffffffffffffffffffffffffffffffffffffe"
+                )),
+                topics: vec![
+                    H256(hex_literal::hex!(
+                        "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+                    )),
+                    H256(hex_literal::hex!(
+                        "000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    )),
+                    H256(hex_literal::hex!(
+                        "0000000000000000000000000000000000000000000000000000000000c0ffee"
+                    )),
+                ],
+                data: Bytes::from_static(&hex_literal::hex!(
+                    "0000000000000000000000000000000000000000000000000000000000000007"
+                )),
+            },
+            Log {
+                address: worker,
+                topics: vec![],
+                data: Bytes::new(),
+            },
+        ],
+        vec![],
+    ];
+    let frame_results = report
+        .frame_results
+        .as_ref()
+        .expect("frame results present");
+    for (frame_idx, call) in trace.calls.iter().enumerate() {
+        assert_eq!(call.gas_used, frame_results[frame_idx].1);
+        assert_eq!(call.error, None);
+        assert!(call.calls.is_empty());
+        let traced: Vec<Log> = call
+            .logs
+            .iter()
+            .map(|log| Log {
+                address: log.address,
+                topics: log.topics.clone(),
+                data: log.data.clone(),
+            })
+            .collect();
+        assert_eq!(traced, expected_logs[frame_idx]);
+        assert_eq!(frame_results[frame_idx].2, expected_logs[frame_idx]);
+    }
+}
+
+#[test]
+fn call_tracer_reports_a_reverted_frame_with_the_evm_error() {
+    let reverter = Address::from_low_u64_be(0x8141_0021);
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0,
+            target: Some(reverter),
+            limits: FrameLimits {
+                execution: 300_000,
+                state: 50_000,
+            },
+            value: U256::zero(),
+            data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
+        },
+    ]);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (
+            reverter,
+            U256::zero(),
+            0,
+            Bytes::from(PURE_REVERT_CODE.to_vec()),
+        ),
+    ];
+
+    let (report, trace) = trace_frame_tx(&accounts, tx);
+
+    let frame_results = report
+        .frame_results
+        .as_ref()
+        .expect("frame results present");
+    assert_eq!(frame_results[1].0, FRAME_RECEIPT_STATUS_FAILURE);
+    assert_eq!(trace.calls.len(), 2);
+    assert_eq!(trace.calls[0].error, None);
     assert_eq!(
-        trace.gas_used, report.gas_used,
-        "top call must report the transaction's gas"
+        trace.calls[1].error,
+        Some(VMError::RevertOpcode.to_string())
     );
-    assert_eq!(trace.calls.len(), 3, "one subcall per executed frame");
-    assert_eq!(trace.calls[0].to, FUNDED_SENDER);
-    assert_eq!(trace.calls[1].to, worker);
+    assert_eq!(trace.calls[1].gas_used, frame_results[1].1);
+    assert!(!report.is_success());
+    assert!(trace.error.is_some());
+    assert_eq!(trace.gas_used, report.gas_used);
+}
+
+#[test]
+fn call_tracer_renders_a_frame_that_fails_before_the_evm_from_the_tx() {
+    let recipient = Address::from_low_u64_be(0x8141_0031);
+    let sender_balance = U256::from(10).pow(U256::from(18));
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0,
+            target: Some(recipient),
+            limits: FrameLimits {
+                execution: 300_000,
+                state: 50_000,
+            },
+            value: sender_balance,
+            data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
+        },
+    ]);
+    let accounts = [(
+        FUNDED_SENDER,
+        sender_balance,
+        0,
+        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+    )];
+
+    let (report, trace) = trace_frame_tx(&accounts, tx);
+
+    let frame_results = report
+        .frame_results
+        .as_ref()
+        .expect("frame results present");
+    assert_eq!(frame_results[1].0, FRAME_RECEIPT_STATUS_FAILURE);
+    let unaffordable = &trace.calls[1];
+    assert_eq!(unaffordable.from, FUNDED_SENDER);
+    assert_eq!(unaffordable.to, recipient);
+    assert_eq!(unaffordable.value, sender_balance);
+    assert_eq!(unaffordable.gas_used, frame_results[1].1);
+    assert!(unaffordable.error.is_some());
+    assert!(unaffordable.calls.is_empty());
+}
+
+#[test]
+fn call_tracer_marks_skipped_frames_and_drops_unrolled_batch_logs() {
+    use ethrex_common::types::FRAME_RECEIPT_STATUS_SKIPPED;
+
+    let logger = Address::from_low_u64_be(0x8141_0041);
+    let reverter = Address::from_low_u64_be(0x8141_0042);
+    let terminator = Address::from_low_u64_be(0x8141_0043);
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0x04,
+            target: Some(logger),
+            limits: FrameLimits {
+                execution: 300_000,
+                state: 50_000,
+            },
+            value: U256::zero(),
+            data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
+        },
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0x04,
+            target: Some(reverter),
+            limits: FrameLimits {
+                execution: 300_000,
+                state: 50_000,
+            },
+            value: U256::zero(),
+            data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
+        },
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0,
+            target: Some(terminator),
+            limits: FrameLimits {
+                execution: 300_000,
+                state: 50_000,
+            },
+            value: U256::zero(),
+            data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
+        },
+    ]);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (logger, U256::zero(), 0, Bytes::from(LOG0_CODE.to_vec())),
+        (
+            reverter,
+            U256::zero(),
+            0,
+            Bytes::from(PURE_REVERT_CODE.to_vec()),
+        ),
+        (
+            terminator,
+            U256::zero(),
+            0,
+            Bytes::from(SSTORE_THEN_STOP_CODE.to_vec()),
+        ),
+    ];
+
+    let (report, trace) = trace_frame_tx(&accounts, tx);
+
+    let frame_results = report
+        .frame_results
+        .as_ref()
+        .expect("frame results present");
+    assert_eq!(frame_results[1].0, FRAME_RECEIPT_STATUS_SUCCESS);
+    assert_eq!(frame_results[3].0, FRAME_RECEIPT_STATUS_SKIPPED);
+    assert_eq!(trace.calls.len(), 4);
+
+    let unrolled = &trace.calls[1];
+    assert_eq!(unrolled.error, None);
+    assert!(unrolled.logs.is_empty());
+    assert!(unrolled.calls.is_empty());
+    assert_eq!(unrolled.gas_used, frame_results[1].1);
+
     assert_eq!(
-        trace.calls[2].to, codeless,
-        "a frame served by default code never reaches the interpreter and is traced all the same"
+        trace.calls[2].error,
+        Some(VMError::RevertOpcode.to_string())
+    );
+
+    let skipped = &trace.calls[3];
+    assert_eq!(skipped.to, terminator);
+    assert_eq!(skipped.gas, 350_000);
+    assert_eq!(skipped.error.as_deref(), Some("frame skipped"));
+    assert_eq!(skipped.gas_used, 0);
+    assert!(skipped.calls.is_empty());
+
+    assert!(trace.error.is_some());
+}
+
+#[test]
+fn call_tracer_root_gas_is_the_transaction_max_gas() {
+    let mut verify = verify_frame(FUNDED_SENDER);
+    verify.data = Bytes::from(vec![0x11u8; 8_192]);
+    let tx = frame_tx_with_frames(vec![verify]);
+    let frame_limits_sum = 200_000;
+    assert!(tx.calldata_floor_total() > tx.standard_gas_limit());
+    let tx_max_gas = tx.total_gas_limit();
+    let accounts = [(
+        FUNDED_SENDER,
+        AUTO_SEED_SENDER_BALANCE,
+        0,
+        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+    )];
+
+    let (report, trace) = trace_frame_tx(&accounts, tx);
+
+    assert_eq!(trace.gas, tx_max_gas);
+    assert!(trace.gas > frame_limits_sum);
+    assert_eq!(trace.gas_used, report.gas_used);
+    assert!(trace.gas_used > frame_limits_sum);
+    assert_eq!(trace.error, None);
+}
+
+#[test]
+fn frame_tx_touches_executed_targets_and_payer_but_no_create_address() {
+    let sponsor = Address::from_low_u64_be(0x8141_0051);
+    let unseeded_target = Address::from_low_u64_be(0x8141_0052);
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        pay_frame(sponsor),
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0,
+            target: Some(unseeded_target),
+            limits: FrameLimits {
+                execution: 300_000,
+                state: 50_000,
+            },
+            value: U256::zero(),
+            data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
+        },
+    ]);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            U256::zero(),
+            0,
+            Bytes::from(APPROVE_EXECUTION_CODE.to_vec()),
+        ),
+        (
+            sponsor,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_PAYMENT_CODE.to_vec()),
+        ),
+    ];
+
+    let (result, db) = run_frame_tx(&accounts, tx);
+
+    let report = result.expect("sponsored frame tx must execute");
+    assert_eq!(report.payer_address, Some(sponsor));
+    let touched = &db.current_accounts_state;
+    assert!(touched.contains_key(&sponsor));
+    assert!(touched.contains_key(&unseeded_target));
+    assert!(
+        !touched.contains_key(&ethrex_common::evm::calculate_create_address(
+            FUNDED_SENDER,
+            0
+        ))
     );
 }
 
