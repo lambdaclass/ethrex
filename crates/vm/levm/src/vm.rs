@@ -1195,10 +1195,15 @@ impl<'a> VM<'a> {
         } else {
             CallType::CALL
         };
+        let traced_callee = if matches!(vm.tx, Transaction::FrameTransaction(_)) {
+            ethrex_common::types::frame_tx_entry_point()
+        } else {
+            callee
+        };
         vm.tracer.enter(
             call_type,
             vm.env.origin,
-            callee,
+            traced_callee,
             vm.tx.value(),
             vm.env.gas_limit,
             vm.tx.data(),
@@ -2176,6 +2181,9 @@ impl<'a> VM<'a> {
                         Vec::new(),
                         0,
                     ));
+                    self.trace_frame_entry(frame, sender);
+                    self.tracer
+                        .exit_frame(0, Bytes::new(), Some("frame skipped".to_string()))?;
                     if frame_idx == end_idx {
                         skip_until_batch_end = None;
                         in_atomic_batch = false;
@@ -2268,6 +2276,8 @@ impl<'a> VM<'a> {
                 match crate::opcode_handlers::frame_tx::execute_utxo_frame(self, frame, frame_idx)?
                 {
                     Some((frame_gas, settlement)) => {
+                        self.trace_frame_entry(frame, sender);
+                        self.tracer.exit_frame(frame_gas, Bytes::new(), None)?;
                         utxo_settlements.push(settlement);
                         total_gas_used = total_gas_used.saturating_add(frame_gas);
                         let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
@@ -2406,6 +2416,7 @@ impl<'a> VM<'a> {
                         if self.env.config.fork >= Fork::Amsterdam && sender != target {
                             let log =
                                 crate::utils::create_eth_transfer_log(sender, target, frame.value);
+                            self.tracer.log(&log)?;
                             self.substate.add_log(log);
                         }
                     }
@@ -2449,7 +2460,12 @@ impl<'a> VM<'a> {
             // every slot, a single such frame halts block production.
             let mut frame_bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
 
+            self.trace_frame_entry(frame, sender);
+            let mut frame_error = VMError::RevertOpcode;
+            let mut frame_output = Bytes::new();
+
             let (frame_success, frame_gas_used, frame_logs) = if value_transfer_reverted {
+                frame_error = crate::errors::TxValidationError::InsufficientAccountFunds.into();
                 self.substate.revert_backup();
                 self.restore_cache_state()?;
                 (false, frame.limits.execution, Vec::new())
@@ -2483,7 +2499,8 @@ impl<'a> VM<'a> {
                             (false, gas_used, Vec::new())
                         }
                     }
-                    Err(_) => {
+                    Err(e) => {
+                        frame_error = e;
                         self.substate.revert_backup();
                         self.restore_cache_state()?;
                         (false, frame.limits.execution, Vec::new())
@@ -2529,6 +2546,10 @@ impl<'a> VM<'a> {
                     Ok(ctx_result) => {
                         let gas_used = ctx_result.gas_used;
                         let success = ctx_result.is_success();
+                        frame_output = ctx_result.output;
+                        if let TxResult::Revert(e) = ctx_result.result {
+                            frame_error = e;
+                        }
 
                         if success {
                             // The inner frame is the initial call frame (call_frames
@@ -2552,7 +2573,8 @@ impl<'a> VM<'a> {
                             (false, gas_used, Vec::new())
                         }
                     }
-                    Err(_e) => {
+                    Err(e) => {
+                        frame_error = e;
                         // A `VMError` propagates out of `run_execution` before it reaches
                         // `handle_state_backup`, so this frame's backup is still live and
                         // must be reverted (and the cache restored) here.
@@ -2595,6 +2617,12 @@ impl<'a> VM<'a> {
 
                 result
             };
+
+            self.tracer.exit_frame(
+                frame_gas_used,
+                frame_output,
+                (!frame_success).then(|| frame_error.to_string()),
+            )?;
 
             // EIP-8037: a failed frame's state changes were reverted above, so it
             // creates no state and must contribute zero state gas. Roll the shared
@@ -2717,6 +2745,8 @@ impl<'a> VM<'a> {
                 {
                     result.2 = Vec::new();
                 }
+                self.tracer
+                    .discard_frame_logs(batch_start_idx..=frame_idx)?;
                 // Roll back approvals granted inside the reverted batch.
                 ctx.restore_approvals(batch_approval_snapshot);
                 // Remove only logs from the batch, preserving pre-batch logs
@@ -3172,6 +3202,14 @@ impl<'a> VM<'a> {
         let frame_gas_used = total_gas_used.saturating_sub(intrinsic_gas);
         let gas_refund = sum_frame_gas_limits.saturating_sub(frame_gas_used);
 
+        let tx_ctx_result = ContextResult {
+            result: result.clone(),
+            gas_used: total_gas_used,
+            gas_spent: total_gas_used,
+            output: Bytes::new(),
+        };
+        self.tracer.exit_context(&tx_ctx_result, true)?;
+
         let report = ExecutionReport {
             result,
             gas_used: total_gas_used,
@@ -3185,6 +3223,23 @@ impl<'a> VM<'a> {
         };
 
         Ok(report)
+    }
+
+    fn trace_frame_entry(&mut self, frame: &Frame, sender: Address) {
+        let entry_point = ethrex_common::types::frame_tx_entry_point();
+        let (call_type, caller) = match frame.execution_mode() {
+            Some(FrameMode::Sender) => (CallType::CALL, sender),
+            Some(FrameMode::Verify | FrameMode::PostTx) => (CallType::STATICCALL, entry_point),
+            _ => (CallType::CALL, entry_point),
+        };
+        self.tracer.enter_frame(
+            call_type,
+            caller,
+            frame.target.unwrap_or(sender),
+            frame.value,
+            frame.limits.execution.saturating_add(frame.limits.state),
+            &frame.data,
+        );
     }
 
     /// EIP-8141 mempool entry point: set up the frame-tx context and observer,

@@ -54,11 +54,23 @@ impl LevmCallTracer {
         gas: u64,
         input: &Bytes, // For avoiding cloning when calling (cleaner code)
     ) {
-        if !self.active {
-            return;
-        }
         if self.only_top_call && !self.callframes.is_empty() {
             // Only create callframe if it's the first one to be created.
+            return;
+        }
+        self.enter_frame(call_type, from, to, value, gas, input);
+    }
+
+    pub fn enter_frame(
+        &mut self,
+        call_type: CallType,
+        from: Address,
+        to: Address,
+        value: U256,
+        gas: u64,
+        input: &Bytes,
+    ) {
+        if !self.active {
             return;
         }
 
@@ -139,6 +151,36 @@ impl LevmCallTracer {
         self.exit(gas_used, Bytes::new(), error, None)
     }
 
+    pub fn exit_frame(
+        &mut self,
+        gas_used: u64,
+        output: Bytes,
+        error: Option<String>,
+    ) -> Result<(), InternalError> {
+        if !self.active {
+            return Ok(());
+        }
+        let revert_reason = match error {
+            Some(_) if !output.is_empty() => String::from_utf8(output.to_vec()).ok(),
+            _ => None,
+        };
+        self.exit(gas_used, output, error, revert_reason)
+    }
+
+    pub fn discard_frame_logs(
+        &mut self,
+        frames: std::ops::RangeInclusive<usize>,
+    ) -> Result<(), InternalError> {
+        if !self.active {
+            return Ok(());
+        }
+        let root = self.current_callframe_mut()?;
+        for frame in root.calls.get_mut(frames).into_iter().flatten() {
+            discard_logs(frame);
+        }
+        Ok(())
+    }
+
     /// Registers log when opcode log is executed.
     /// Note: Logs of callframes that reverted will be removed at end of execution.
     pub fn log(&mut self, log: &Log) -> Result<(), InternalError> {
@@ -190,6 +232,13 @@ fn clear_reverted_logs(callframe: &mut CallTraceFrame) {
     }
     for subcall in &mut callframe.calls {
         clear_reverted_logs(subcall);
+    }
+}
+
+fn discard_logs(callframe: &mut CallTraceFrame) {
+    callframe.logs.clear();
+    for subcall in &mut callframe.calls {
+        discard_logs(subcall);
     }
 }
 
