@@ -192,6 +192,9 @@ pub enum Opcode {
     // The spec defines no per-index accessor (see docs/eip-8250.md); ethrex uses
     // the next free byte after the EIP-7906 block.
     NONCEKEYLOAD = 0xB9,
+    /// EIP-8141 `SIGDATACOPY`. The spec assigns `0xB5`, which EIP-8272 already
+    /// uses for `RECENTROOTREFLOAD` here; see `docs/hegota-devnet.md`.
+    SIGDATACOPY = 0xBA,
     // EIP-8024
     DUPN = 0xE6,
     SWAPN = 0xE7,
@@ -358,6 +361,7 @@ impl From<u8> for Opcode {
             table[0xB7] = Opcode::EVENTDATACOPY;
             table[0xB8] = Opcode::TXDIFF;
             table[0xB9] = Opcode::NONCEKEYLOAD;
+            table[0xBA] = Opcode::SIGDATACOPY;
             table[0x51] = Opcode::MLOAD;
             table[0x52] = Opcode::MSTORE;
             table[0x53] = Opcode::MSTORE8;
@@ -677,6 +681,7 @@ impl<'a> VM<'a> {
 
         // EIP-8141 Frame Transaction opcodes (Hegota)
         opcode_table[Opcode::APPROVE as usize] = OpCodeFn::new::<OpApproveHandler>();
+        opcode_table[Opcode::SIGDATACOPY as usize] = OpCodeFn::new::<OpSigDataCopyHandler>();
         opcode_table[Opcode::TXPARAM as usize] = OpCodeFn::new::<OpTxParamHandler>();
         opcode_table[Opcode::FRAMEDATALOAD as usize] = OpCodeFn::new::<OpFrameDataLoadHandler>();
         opcode_table[Opcode::FRAMEDATACOPY as usize] = OpCodeFn::new::<OpFrameDataCopyHandler>();

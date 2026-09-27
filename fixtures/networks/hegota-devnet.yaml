@@ -9,15 +9,17 @@
 # Cargo feature). Launch:
 #   make localnet ENCLAVE=hegota KURTOSIS_CONFIG_FILE=fixtures/networks/hegota-devnet.yaml
 #
-# Matrix: 3x ethrex EL + Lighthouse (glamsterdam-devnet-7) CL (3 validator pairs),
+# Matrix: 3x ethrex EL + Lighthouse (focil build) CL (3 validator pairs),
 # chain id 3151908 (kurtosis default), 6s slots, dora explorer. The frame-tx EIPs
 # are all EL-internal and gated on Fork::Hegota (scheduled below via
 # heze_fork_epoch), so no consensus-side change is needed and Lighthouse drives
 # the chain over the Engine API.
 #
-# `--mempool.max-verify-gas` raises the EIP-8141 MAX_VERIFY_GAS mempool budget
-# above the 100_000 default: sponsored transactions run a paymaster VERIFY frame
-# in the validation prefix, whose gas is charged against that budget at admission.
+# No `--mempool.max-verify-gas` override any more. EIP-8141 now declares two
+# budgets per frame, so a paymaster VERIFY frame's state growth is charged against
+# MAX_VERIFY_STATE_GAS (500_000) rather than crowding the execution budget, and
+# MAX_VERIFY_GAS stays at its spec value of 100_000. Both are operator-tunable via
+# `--mempool.max-verify-gas` / `--mempool.max-verify-state-gas` if a devnet needs it.
 #
 # `--http.api` adds the `ethrex` namespace to the `eth,net,web3` default so
 # `ethrex_simulateFrameTransaction` is reachable: senders need to dry-run a
@@ -26,22 +28,22 @@
 participants:
   - el_type: ethrex
     el_image: ethrex:local
-    el_extra_params: ["--syncmode", "full", "--mempool.max-verify-gas", "500000", "--http.api", "eth,net,web3,ethrex"]
+    el_extra_params: ["--syncmode", "full", "--http.api", "eth,net,web3,ethrex"]
     cl_type: lighthouse
-    cl_image: ethpandaops/lighthouse:glamsterdam-devnet-7
+    cl_image: ethpandaops/lighthouse:focil
     validator_count: 32
     supernode: true
   - el_type: ethrex
     el_image: ethrex:local
-    el_extra_params: ["--syncmode", "full", "--mempool.max-verify-gas", "500000", "--http.api", "eth,net,web3,ethrex"]
+    el_extra_params: ["--syncmode", "full", "--http.api", "eth,net,web3,ethrex"]
     cl_type: lighthouse
-    cl_image: ethpandaops/lighthouse:glamsterdam-devnet-7
+    cl_image: ethpandaops/lighthouse:focil
     validator_count: 32
   - el_type: ethrex
     el_image: ethrex:local
-    el_extra_params: ["--syncmode", "full", "--mempool.max-verify-gas", "500000", "--http.api", "eth,net,web3,ethrex"]
+    el_extra_params: ["--syncmode", "full", "--http.api", "eth,net,web3,ethrex"]
     cl_type: lighthouse
-    cl_image: ethpandaops/lighthouse:glamsterdam-devnet-7
+    cl_image: ethpandaops/lighthouse:focil
     validator_count: 32
 
 network_params:

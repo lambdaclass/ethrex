@@ -345,6 +345,31 @@ pub struct ChainConfig {
     #[serde(default)]
     pub utxo_frames_time: Option<u64>,
 
+    /// EIP-8141 two-dimensional frame budgets: when a frame's slot 3 stops being
+    /// a scalar `gas_limit` and becomes `limits = [execution, state]`.
+    ///
+    /// Decoupled from the named forks for the same reason `utxo_frames_time` is:
+    /// upstream has not named a fork for this, and inventing one in [`Fork`] would
+    /// imply a schedule position we do not have.
+    ///
+    /// This is a WIRE-FORMAT change, unlike EIP-8312's inert new frame mode, so a
+    /// FUTURE timestamp is what makes a state-preserving upgrade possible at all:
+    /// every already-produced block keeps the encoding it was built with, and so
+    /// keeps its transaction hashes and transactions root. Without the gate the
+    /// new decoder cannot read pre-existing frame transactions, and a decoder that
+    /// merely tolerates both forms re-encodes them into the new one and reports
+    /// the wrong hash.
+    ///
+    /// `None` = the chain has always used the current format, which is what every
+    /// network without pre-revision frame history wants and so is the default.
+    /// The scalar era is not a stage every chain passes through: it exists only
+    /// for a chain that already produced frame transactions under the earlier
+    /// EIP-8141 revision, and such a chain opts in by setting this to the
+    /// timestamp at which it switched. See
+    /// [`ChainConfig::is_frame_limits_activated`].
+    #[serde(default)]
+    pub frame_limits_time: Option<u64>,
+
     /// EIP-8369 `AA_VOPS_SLOT_COUNT`: how many leading storage slots of `sender`
     /// and `payer` sit inside the FOCIL Profile 2 validation surface. A read
     /// outside the surface makes a transaction ineligible for inclusion-list
@@ -501,6 +526,21 @@ impl ChainConfig {
         self.utxo_frames_time
             .is_some_and(|time| time <= block_timestamp)
             && self.get_fork(block_timestamp) >= Fork::Hegota
+    }
+
+    /// Whether frames at `block_timestamp` carry `limits = [execution, state]`
+    /// rather than a scalar `gas_limit`.
+    ///
+    /// Unset means yes, always. This is the opposite default from
+    /// [`ChainConfig::is_utxo_frames_activated`], and deliberately: that flag
+    /// gates a new frame mode that must stay unavailable until scheduled, while
+    /// this one gates the current spec against a superseded revision. A chain
+    /// with no history under the old revision has no boundary to place, and
+    /// making it declare one would be a footgun — forget it, and the chain quietly
+    /// produces frames in a format no longer in the EIP.
+    pub fn is_frame_limits_activated(&self, block_timestamp: u64) -> bool {
+        self.frame_limits_time
+            .is_none_or(|time| time <= block_timestamp)
     }
 
     /// EIP-8369 `AA_VOPS_SLOT_COUNT`, falling back to

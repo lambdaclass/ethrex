@@ -80,7 +80,7 @@
       <tr>
         <td><a href="https://eips.ethereum.org/EIPS/eip-8141">EIP-8141</a></td>
         <td class="desc">Frame transactions: a new type <code>0x06</code> whose payload is a list of
-          <em>frames</em>, each executed with its own target, gas limit and mode, with payment
+          <em>frames</em>, each executed with its own target, mode and two gas budgets, with payment
           authorised by an <code>APPROVE</code> in a validation prefix.</td>
       </tr>
       <tr>
@@ -107,29 +107,12 @@
           the consensus layer implements too.</td>
       </tr>
       <tr>
-        <td><a href="https://github.com/ethereum/EIPs/pull/12110">EIP-8312</a></td>
+        <td><a href="https://ethresear.ch/t/native-utxos-on-ethereum/25368/23">Native UTXOs</a></td>
         <td class="desc">UTXO frames: a one-shot payment object that is created once and spent once,
           leaving a single spent bit rather than a permanent account. A full create-and-spend cycle
           costs less than one ordinary transfer to a new account. Activates on its own timestamp,
           separately from the rest.</td>
       </tr>
-    </table>
-  </div>
-
-  <h2>Inherited from Amsterdam</h2>
-  <div class="panel">
-    <table>
-      <tr><td><a href="https://eips.ethereum.org/EIPS/eip-7928">EIP-7928</a></td>
-          <td class="desc">Block-level access lists.</td></tr>
-      <tr><td><a href="https://eips.ethereum.org/EIPS/eip-8037">EIP-8037</a></td>
-          <td class="desc">Two-dimensional gas: state growth is priced separately from execution, so a
-            transfer to a fresh account costs far more than 21,000 gas.</td></tr>
-      <tr><td><a href="https://eips.ethereum.org/EIPS/eip-8038">EIP-8038</a></td>
-          <td class="desc">Amsterdam repricing of the access, storage and access-list constants.</td></tr>
-      <tr><td><a href="https://eips.ethereum.org/EIPS/eip-7843">EIP-7843</a></td>
-          <td class="desc">A beacon slot number available to execution.</td></tr>
-      <tr><td><a href="https://eips.ethereum.org/EIPS/eip-8282">EIP-8282</a></td>
-          <td class="desc">Builder deposits and exits via predeploys.</td></tr>
     </table>
   </div>
 
@@ -142,13 +125,7 @@
     </dl>
   </div>
 
-  <div class="note">
-    <strong>Budget more gas than you expect.</strong> Under EIP-8038 a plain transfer that
-    <em>creates</em> an account is far more expensive than the historical 21 000, closer to
-    210 000 on this chain, because account creation is charged as state growth. Estimate gas
-    rather than hardcoding it; tooling with a baked-in 21 000 will fail here, and it will fail
-    specifically when paying someone new.
-  </div>
+
 
   <h2>Sending transactions here</h2>
   <div class="panel">
@@ -178,7 +155,7 @@
              max_priority_fee, max_fee, max_fee_per_blob_gas, blob_hashes,
              recent_root_references])
 
-frame     = [mode, flags, target, gas_limit, value, data]
+frame     = [mode, flags, target, [execution, state], value, data]
 signature = [scheme, signer, msg, signature]      # scheme 1 = secp256k1
 sig_hash  = keccak256(0x06 || rlp(envelope))      # empty-msg signature bytes elided</pre>
     <table>

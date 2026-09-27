@@ -1,7 +1,10 @@
 pub mod db;
 mod tracing;
 
-use super::{BlockExecutionResult, FrameValidationOutcome, TxGasBreakdown, compute_burned_fees};
+use super::{
+    BlockExecutionResult, FrameValidationOutcome, TxGasBreakdown, compute_burned_fees,
+    frame_encoding_of,
+};
 use crate::system_contracts::{
     AMSTERDAM_REQUEST_PREDEPLOYS, BEACON_ROOTS_ADDRESS, BUILDER_DEPOSIT_CONTRACT_ADDRESS,
     BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
@@ -16,6 +19,7 @@ use ethrex_common::H256;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::constants::EMPTY_KECCAK_HASH;
 use ethrex_common::types::Code;
+use ethrex_common::types::FrameEncoding;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::types::TxType;
 use ethrex_common::types::block_access_list::BlockAccessList;
@@ -33,7 +37,7 @@ use ethrex_common::{
     Address, U256,
     types::{
         AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, FrameReceipt,
-        GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Log, Receipt, Transaction, TxKind,
+        GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind,
         Withdrawal, requests::Requests,
     },
 };
@@ -55,7 +59,7 @@ use ethrex_levm::db::gen_db::{
 };
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_levm::db::{Database, gen_db::CacheDB};
-use ethrex_levm::errors::{InternalError, TxValidationError};
+use ethrex_levm::errors::{FrameResult, InternalError, TxValidationError};
 use ethrex_levm::memory::Memory;
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
@@ -116,16 +120,23 @@ pub struct LEVM;
 /// Build the per-frame receipts (EIP-8141) for a frame transaction from an
 /// execution report's `frame_results`. Returns `None` when the report carries
 /// no frame results.
+///
+/// `encoding` comes from the transaction being receipted: a receipt's layout is
+/// the layout of the revision its transaction was written for, so the two can
+/// never disagree about whether `state_gas_used` is present.
 fn frame_receipts_from(
-    frame_results: Option<Vec<(u8, u64, Vec<Log>)>>,
+    frame_results: Option<Vec<FrameResult>>,
+    encoding: FrameEncoding,
 ) -> Option<Vec<FrameReceipt>> {
     frame_results.map(|results| {
         results
             .into_iter()
-            .map(|(status, gas_used, logs)| FrameReceipt {
+            .map(|(status, gas_used, logs, state_gas_used)| FrameReceipt {
                 status,
                 gas_used,
+                state_gas_used,
                 logs,
+                encoding,
             })
             .collect()
     })
@@ -380,7 +391,8 @@ impl LEVM {
             // For frame transactions, propagate payer and per-frame receipts
             if matches!(tx, Transaction::FrameTransaction(_)) {
                 receipt.payer = report.payer_address;
-                receipt.frame_receipts = frame_receipts_from(report.frame_results);
+                receipt.frame_receipts =
+                    frame_receipts_from(report.frame_results, frame_encoding_of(tx));
             }
 
             receipts.push(receipt);
@@ -835,7 +847,8 @@ impl LEVM {
             // For frame transactions, propagate payer and per-frame receipts
             if matches!(tx, Transaction::FrameTransaction(_)) {
                 receipt.payer = report.payer_address;
-                receipt.frame_receipts = frame_receipts_from(report.frame_results);
+                receipt.frame_receipts =
+                    frame_receipts_from(report.frame_results, frame_encoding_of(tx));
             }
 
             receipts.push(receipt);
@@ -1567,7 +1580,15 @@ impl LEVM {
             );
             if tx_type == TxType::Frame {
                 receipt.payer = report.payer_address;
-                receipt.frame_receipts = frame_receipts_from(report.frame_results);
+                // This path receipts by tx_type without the transaction in hand.
+                // The block's era is the same answer: validation rejects any
+                // frame transaction whose encoding disagrees with its block.
+                let encoding = if evm_config.frame_limits_active {
+                    FrameEncoding::Limits
+                } else {
+                    FrameEncoding::Scalar
+                };
+                receipt.frame_receipts = frame_receipts_from(report.frame_results, encoding);
             }
             receipts.push(receipt);
         }

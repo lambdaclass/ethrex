@@ -551,6 +551,23 @@ impl OpcodeHandler for OpTxDiffHandler {
         };
         vm.current_call_frame.increase_consumed_gas(gas)?;
 
+        // EIP-7906 §Gas Cost: where EIP-7928 is active, the slot or address a
+        // live-state param reads is recorded in the block-level access list "like
+        // any other state-reading opcode". Only 0x00-0x05 can fall back to live
+        // state; 0x06-0x0A are answered from the transaction-local diff and add no
+        // access. Recorded AFTER the gas charge above, per EIP-7928: a param whose
+        // pre-state validation fails never accessed the target and must not appear
+        // in the BAL.
+        match param {
+            0x00 | 0x01 => vm.record_storage_slot_to_bal(address, in3),
+            0x02..=0x05 => {
+                if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+                    recorder.record_touched_address(address);
+                }
+            }
+            _ => {}
+        }
+
         let result: U256 = match param {
             // -- storage slot (in3 = slot key) --
             0x00 | 0x01 => {
@@ -911,10 +928,16 @@ mod pure_fn_tests {
         // Global table is sorted by address then slot: (1,0x0A) (1,0x0B) (2,0x0C).
         assert_eq!(address_slot_indices(&changes, addr(1)), vec![0, 1]);
         assert_eq!(address_slot_indices(&changes, addr(2)), vec![2]);
-        // The mapped global index must address the same entry in the global table.
-        let global = address_slot_indices(&changes, addr(2))[0];
-        assert_eq!(changes[global].0, addr(2));
-        assert_eq!(slot_num(&changes[global].1), 0x0C);
+        // The mapped global indices must address the same entries in the global
+        // table. Resolved through `get` rather than indexing so an out-of-range
+        // index drops the entry and fails the comparison, instead of panicking
+        // somewhere less legible.
+        let mapped: Vec<(Address, u64)> = address_slot_indices(&changes, addr(2))
+            .into_iter()
+            .filter_map(|index| changes.get(index))
+            .map(|entry| (entry.0, slot_num(&entry.1)))
+            .collect();
+        assert_eq!(mapped, vec![(addr(2), 0x0C)]);
     }
 
     #[test]

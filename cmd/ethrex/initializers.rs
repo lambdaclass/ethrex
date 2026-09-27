@@ -820,6 +820,7 @@ pub async fn init_l1(
             max_reorg_depth: opts.max_reorg_depth,
             gap_admit_occupancy_threshold: opts.mempool_gap_admit_occupancy_threshold,
             max_verify_gas: opts.mempool_max_verify_gas,
+            max_verify_state_gas: opts.mempool_max_verify_state_gas,
             max_utxo_verify_gas: opts.mempool_max_utxo_verify_gas,
             private_mempool: opts.mempool_private,
         },

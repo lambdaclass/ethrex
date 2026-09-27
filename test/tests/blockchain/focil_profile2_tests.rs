@@ -35,8 +35,8 @@ use ethrex_common::validation::BlockValidationContext;
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        APPROVE_EXECUTION_AND_PAYMENT, BlockHeader, ChainConfig, Frame, FrameMode,
-        FrameTransaction, Genesis, GenesisAccount, Transaction,
+        APPROVE_EXECUTION_AND_PAYMENT, BlockHeader, ChainConfig, Frame, FrameEncoding, FrameLimits,
+        FrameMode, FrameTransaction, Genesis, GenesisAccount, Transaction,
     },
 };
 use ethrex_crypto::NativeCrypto;
@@ -111,9 +111,13 @@ fn verify_frame(target: Option<Address>, scope: u8, gas_limit: u64) -> Frame {
         mode: FrameMode::Verify as u8,
         flags: scope,
         target,
-        gas_limit,
+        limits: FrameLimits {
+            execution: gas_limit,
+            state: gas_limit,
+        },
         value: U256::zero(),
         data: Default::default(),
+        encoding: FrameEncoding::Limits,
     }
 }
 
@@ -585,9 +589,13 @@ async fn frame_tx_with_a_utxo_frame_is_undecided() {
         mode: FrameMode::Utxo as u8,
         flags: 0,
         target: None,
-        gas_limit: 0,
+        limits: FrameLimits {
+            execution: 0,
+            state: 0,
+        },
         value: U256::zero(),
         data: Default::default(),
+        encoding: FrameEncoding::Limits,
     });
     let il = vec![frame_tx_transaction(tx.clone())];
 

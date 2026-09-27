@@ -85,6 +85,15 @@ pub struct EVMConfig {
     /// openings-root block-end operation, and the UTXO execution path. Every
     /// consumer MUST read this flag rather than re-deriving activation.
     pub utxo_frames_active: bool,
+    /// Whether the EIP-8141 two-dimensional frame format (`limits =
+    /// [execution, state]`) is active for this block. Block-invariant; derived
+    /// from [`ChainConfig::is_frame_limits_activated`]. Like EIP-8312 this
+    /// carries its own activation timestamp rather than riding a named fork,
+    /// because it exists to let a chain that already has frame-transaction
+    /// history adopt the revised encoding without losing it. Gates the
+    /// per-frame state-gas pool and the encoding a block admits; the intrinsic
+    /// reprice follows each frame's own `FrameEncoding` marker.
+    pub frame_limits_active: bool,
 }
 
 impl EVMConfig {
@@ -98,6 +107,11 @@ impl EVMConfig {
             // ChainConfig; a bare fork-only construction (EF tests, tools) has
             // none, so it is inactive.
             utxo_frames_active: false,
+            // Opposite default from `utxo_frames_active`, matching
+            // `ChainConfig::is_frame_limits_activated`: an unset activation means
+            // the chain has always used the current format, and a fork-only
+            // construction (EF tests, tools) has no superseded history to read.
+            frame_limits_active: true,
         }
     }
 
@@ -118,6 +132,7 @@ impl EVMConfig {
             slot_number,
             payer_txparam_active: chain_config.is_payer_txparam_activated(block_header.timestamp),
             utxo_frames_active: chain_config.is_utxo_frames_activated(block_header.timestamp),
+            frame_limits_active: chain_config.is_frame_limits_activated(block_header.timestamp),
         }
     }
 
@@ -174,6 +189,7 @@ impl Default for EVMConfig {
             slot_number: U256::zero(),
             payer_txparam_active: false,
             utxo_frames_active: false,
+            frame_limits_active: true,
         }
     }
 }

@@ -7,8 +7,8 @@ use ethrex_blockchain::focil_eligibility::{
 };
 use ethrex_common::types::{
     APPROVE_EXECUTION, APPROVE_EXECUTION_AND_PAYMENT, APPROVE_PAYMENT, EIP1559Transaction,
-    FRAME_SIG_SCHEME_SECP256K1, Frame, FrameMode, FrameSignature, FrameTransaction,
-    LegacyTransaction, Transaction, TxKind, frame_tx_expiry_verifier,
+    FRAME_SIG_SCHEME_SECP256K1, Frame, FrameEncoding, FrameLimits, FrameMode, FrameSignature,
+    FrameTransaction, LegacyTransaction, Transaction, TxKind, frame_tx_expiry_verifier,
 };
 use ethrex_common::{Address, U256};
 
@@ -21,9 +21,13 @@ fn verify_frame(target: Option<Address>, scope: u8, gas_limit: u64) -> Frame {
         mode: FrameMode::Verify as u8,
         flags: scope,
         target,
-        gas_limit,
+        limits: FrameLimits {
+            execution: gas_limit,
+            state: gas_limit,
+        },
         value: U256::zero(),
         data: Default::default(),
+        encoding: FrameEncoding::Limits,
     }
 }
 
@@ -131,9 +135,13 @@ fn an_unrecognized_prefix_is_not_a_candidate() {
         mode: FrameMode::Sender as u8,
         flags: 0,
         target: Some(Address::repeat_byte(0xaa)),
-        gas_limit: 1_000,
+        limits: FrameLimits {
+            execution: 1_000,
+            state: 1_000,
+        },
         value: U256::zero(),
         data: Default::default(),
+        encoding: FrameEncoding::Limits,
     }]);
     assert_eq!(
         classify(&Transaction::FrameTransaction(tx), false),
@@ -151,16 +159,20 @@ fn an_expiry_verifier_frames_gas_counts_toward_the_budget() {
     let without = self_verify_tx(50_000);
     let base = verify_budget_cost(&without).expect("priceable");
 
-    let mut with_expiry = without.clone();
+    let mut with_expiry = without;
     with_expiry.frames.insert(
         0,
         Frame {
             mode: FrameMode::Verify as u8,
             flags: 0,
             target: Some(frame_tx_expiry_verifier()),
-            gas_limit: 7_000,
+            limits: FrameLimits {
+                execution: 7_000,
+                state: 7_000,
+            },
             value: U256::zero(),
             data: 0u64.to_be_bytes().to_vec().into(),
+            encoding: FrameEncoding::Limits,
         },
     );
 
@@ -179,7 +191,7 @@ fn signature_verification_gas_is_part_of_the_budget() {
     let one_sig = self_verify_tx(50_000);
     let base = verify_budget_cost(&one_sig).expect("priceable");
 
-    let mut two_sigs = one_sig.clone();
+    let mut two_sigs = one_sig;
     two_sigs.signatures.push(FrameSignature {
         scheme: FRAME_SIG_SCHEME_SECP256K1,
         signer: Some(sender()),

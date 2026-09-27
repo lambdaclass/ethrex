@@ -24,8 +24,8 @@ use ethrex_common::{
     constants::GAS_PER_BLOB,
     types::{
         BlobsBundle, ChainConfig, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Fork, Frame,
-        FrameMode, FrameTransaction, Genesis, GenesisAccount, MAX_TX_SIZE, P2PTransaction,
-        Transaction, blobs_bundle::blob_from_bytes,
+        FrameEncoding, FrameLimits, FrameMode, FrameTransaction, Genesis, GenesisAccount,
+        MAX_TX_SIZE, P2PTransaction, Transaction, blobs_bundle::blob_from_bytes,
     },
 };
 use ethrex_p2p::rlpx::eth::transactions::{NewPooledTransactionHashes, PooledTransactions};
@@ -99,9 +99,13 @@ fn blob_frame_tx(versioned_hashes: Vec<H256>) -> FrameTransaction {
             mode: FrameMode::Verify as u8,
             flags: 0x03, // APPROVE_EXECUTION_AND_PAYMENT
             target: Some(sender),
-            gas_limit: 100_000,
+            limits: FrameLimits {
+                execution: 100_000,
+                state: 100_000,
+            },
             value: U256::zero(),
             data: Bytes::new(),
+            encoding: FrameEncoding::Limits,
         }],
         signatures: vec![],
         max_priority_fee_per_gas: 0,
@@ -253,9 +257,13 @@ async fn blob_frame_transaction_over_the_plain_size_cap_is_admitted() {
         mode: FrameMode::Sender as u8,
         flags: 0,
         target: Some(Address::from_low_u64_be(SENDER)),
-        gas_limit: 10_000_000,
+        limits: FrameLimits {
+            execution: 10_000_000,
+            state: 10_000_000,
+        },
         value: U256::zero(),
         data: Bytes::from(data),
+        encoding: FrameEncoding::Limits,
     });
     let tx = Transaction::FrameTransaction(tx);
     assert!(tx.encode_canonical_len() > MAX_TX_SIZE);

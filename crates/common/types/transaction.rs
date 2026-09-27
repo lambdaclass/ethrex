@@ -30,7 +30,7 @@ pub static GLOBAL_SIGNER_CACHE: LazyLock<Mutex<LruCache<H256, Address>>> = LazyL
     ))
 });
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
-use serde::{Serialize, ser::SerializeStruct};
+use serde::{Deserialize, Serialize, ser::SerializeStruct};
 pub use serde_impl::{
     AccessListEntry, AuthorizationTupleEntry, FrameEntry, GenericTransaction,
     GenericTransactionError,
@@ -1957,6 +1957,80 @@ impl From<FrameMode> for u8 {
     }
 }
 
+/// Which wire form a frame's slot 3 uses.
+///
+/// EIP-8141 changed it from a scalar `gas_limit` to the `[execution, state]`
+/// list. A chain crosses that at `ChainConfig::frame_limits_time`, so blocks on
+/// either side of the boundary encode frames differently and a frame has to
+/// remember which form it came from — re-encoding a pre-fork frame in the new
+/// form changes its transaction hash and its block's transactions root.
+///
+/// Decoding sets this from the bytes, which are self-describing: an RLP list
+/// prefix is `>= 0xc0`. Frames built in memory default to [`FrameEncoding::Limits`],
+/// so anything newly constructed encodes in the current form.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    RSerialize,
+    RDeserialize,
+    Archive,
+)]
+pub enum FrameEncoding {
+    /// Pre-fork: slot 3 is a scalar `gas_limit`, and the frame has no declared
+    /// state budget.
+    Scalar,
+    /// Post-fork: slot 3 is `[execution, state]`.
+    #[default]
+    Limits,
+}
+
+/// EIP-8141 `limits = [execution, state]`: a frame's two independent gas budgets.
+///
+/// EIP-8037 meters execution gas and state gas separately, but an ordinary
+/// transaction carries a single gas field, so the split has to be derived at
+/// runtime via a reservoir. The frame transaction is a new envelope, so it
+/// declares the split instead: the two pools never mix, which keeps the EIP-7825
+/// check static, lets the mempool bound the validation prefix per dimension
+/// without simulation, and makes block reservations exact.
+///
+/// Budgets are per-frame for the same reason unused gas does not roll over
+/// between frames: frames belong to mutually distrusting parties, and a shared
+/// pool would let a user operation drain the state gas a paymaster's post-op
+/// frame depends on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
+pub struct FrameLimits {
+    /// Maximum execution gas the frame may expend. Initializes `gas_left`.
+    pub execution: u64,
+    /// Maximum EIP-8037 state gas the frame may expend. Initializes
+    /// `state_gas_left`, which is frame-scoped: inner call frames draw from it
+    /// directly rather than being forwarded a split of it.
+    pub state: u64,
+}
+
+impl RLPEncode for FrameLimits {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.execution)
+            .encode_field(&self.state)
+            .finish();
+    }
+}
+
+impl RLPDecode for FrameLimits {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (execution, decoder) = decoder.decode_field("execution")?;
+        let (state, decoder) = decoder.decode_field("state")?;
+        Ok((FrameLimits { execution, state }, decoder.finish()?))
+    }
+}
+
 /// EIP-8141 Frame: a single execution step within a frame transaction.
 ///
 /// `mode` is the wire execution-mode byte; its meaning is era-dependent, see
@@ -1969,8 +2043,13 @@ pub struct Frame {
     pub flags: u8,
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H160Wrapper>)]
     pub target: Option<Address>,
-    pub gas_limit: u64,
-    // Per EIP-8141 the frame is a 6-tuple [mode, flags, target, gas_limit, value, data].
+    /// Per EIP-8141 the frame is a 6-tuple `[mode, flags, target, limits, value, data]`,
+    /// where `limits` is itself the 2-list `[execution, state]`.
+    pub limits: FrameLimits,
+    /// Which wire form slot 3 came in. Not part of the frame's meaning — it exists
+    /// so a pre-fork frame re-encodes to the bytes it was hashed from. See
+    /// [`FrameEncoding`].
+    pub encoding: FrameEncoding,
     // Only SENDER frames may carry a non-zero value; see
     // `validate_static_constraints`.
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
@@ -2014,11 +2093,18 @@ impl RLPEncode for Frame {
             Some(addr) => TxKind::Call(addr),
             None => TxKind::Create, // RLP_NULL encodes "no target" → sender
         };
-        Encoder::new(buf)
+        let encoder = Encoder::new(buf)
             .encode_field(&(self.mode as u64))
             .encode_field(&(self.flags as u64))
-            .encode_field(&target_kind)
-            .encode_field(&self.gas_limit)
+            .encode_field(&target_kind);
+        // Slot 3 must go back out in the form it came in: a pre-fork frame
+        // re-encoded as a list would hash differently from the bytes its
+        // transaction hash and its block's transactions root were built from.
+        let encoder = match self.encoding {
+            FrameEncoding::Scalar => encoder.encode_field(&self.limits.execution),
+            FrameEncoding::Limits => encoder.encode_field(&self.limits),
+        };
+        encoder
             .encode_field(&self.value)
             .encode_field(&self.data)
             .finish();
@@ -2039,14 +2125,34 @@ impl RLPDecode for Frame {
             TxKind::Call(addr) => Some(addr),
             TxKind::Create => None,
         };
-        let (gas_limit, decoder) = decoder.decode_field("gas_limit")?;
+        // RLP is self-describing, so the two forms are distinguishable with no fork
+        // context threaded into decoding: a list prefix is `>= 0xc0`. Whether the
+        // form is *allowed* at this height is a validation question, checked
+        // against `ChainConfig::is_frame_limits_activated` where block context
+        // exists — decoding stays context-free.
+        let slot3_is_list = decoder.peek_is_list().unwrap_or(true);
+        let (limits, encoding, decoder) = if slot3_is_list {
+            let (limits, decoder): (FrameLimits, _) = decoder.decode_field("limits")?;
+            (limits, FrameEncoding::Limits, decoder)
+        } else {
+            let (execution, decoder): (u64, _) = decoder.decode_field("gas_limit")?;
+            (
+                FrameLimits {
+                    execution,
+                    state: 0,
+                },
+                FrameEncoding::Scalar,
+                decoder,
+            )
+        };
         let (value, decoder): (U256, _) = decoder.decode_field("value")?;
         let (data, decoder) = decoder.decode_field("data")?;
         let frame = Frame {
             mode,
             flags,
             target,
-            gas_limit,
+            limits,
+            encoding,
             value,
             data,
         };
@@ -2187,7 +2293,26 @@ pub struct FrameTransaction {
 }
 
 /// Intrinsic gas cost for frame transactions (EIP-8141)
-pub const FRAME_TX_INTRINSIC_COST: u64 = 15000;
+pub const FRAME_TX_INTRINSIC_COST: u64 = 12000;
+
+/// The intrinsic cost EIP-8141 charged before frames declared a state budget.
+///
+/// Repricing came in the same revision as `limits = [execution, state]`, so a
+/// frame's [`FrameEncoding`] tells which price applies: a transaction included
+/// under the old encoding settled at the old price, and re-executing it at the
+/// new one would not reproduce its block. Post-fork transactions cannot reach
+/// this constant, because a block at or after activation rejects scalar frames.
+pub const FRAME_TX_INTRINSIC_COST_PRE_LIMITS: u64 = 15000;
+
+/// EIP-8141 `TX_VALUE_COST`: charged once per value-bearing frame, for the
+/// recipient balance write and the transfer log, as EIP-2780 charges top-level
+/// transfers. Static, because `value` and `target` are transaction fields.
+///
+/// Frame targets deliberately do NOT pay EIP-2780's unconditional cold-rate
+/// recipient touch: frames behave like internal calls, which stay on the
+/// EIP-2929 warm/cold model, so a transaction repeatedly targeting the same
+/// account would otherwise overpay.
+pub const FRAME_TX_VALUE_COST: u64 = 6000;
 /// Per-frame cost (EIP-8141): CALL context overhead (100) + G_log (375)
 pub const FRAME_TX_PER_FRAME_COST: u64 = 475;
 /// ENTRY_POINT address used as caller for DEFAULT/VERIFY frames per EIP-8141.
@@ -2214,12 +2339,27 @@ fn calldata_cost(data: &[u8]) -> u64 {
 pub const FRAME_SIG_SCHEME_ARBITRARY: u8 = 0;
 pub const FRAME_SIG_SCHEME_SECP256K1: u8 = 1;
 pub const FRAME_SIG_SCHEME_P256: u8 = 2;
-/// EIP-8141 §Mempool `MAX_VERIFY_GAS`: the maximum gas
-/// a public-mempool node should expend validating signatures and simulating the
-/// validation prefix. Signature validation counts against this budget (rule #6),
-/// so a frame tx whose `signature_verification_cost()` alone exceeds it can never
-/// satisfy the prefix budget and must be rejected at admission.
+/// EIP-8141 §Mempool `MAX_VERIFY_GAS`: the maximum *execution* gas a public-mempool
+/// node should expend validating signatures and simulating the validation prefix.
+/// Signature validation counts against this budget (rule 6), so a frame tx whose
+/// `signature_verification_cost()` alone exceeds it can never satisfy the prefix
+/// budget and must be rejected at admission.
+///
+/// This is the spec value. An earlier revision of this branch raised it to 500_000
+/// because EIP-8037 repricing made account creation unaffordable inside a single
+/// combined budget; the spec has since split the budget into two dimensions, so the
+/// deviation is obsolete — state growth is bounded by
+/// [`FRAME_TX_MAX_VERIFY_STATE_GAS`] instead.
 pub const FRAME_TX_MAX_VERIFY_GAS: u64 = 100_000;
+
+/// EIP-8141 §Mempool `MAX_VERIFY_STATE_GAS`: the maximum EIP-8037 *state* gas that
+/// may be budgeted across the validation prefix.
+///
+/// State gas does not measure node validation work, so this does not bound
+/// simulation; it bounds the state growth admitted through the public mempool. A
+/// `deploy` frame may spend it on account and code creation, and a `VERIFY` frame
+/// only through `APPROVE` when incrementing the nonce creates the sender account.
+pub const FRAME_TX_MAX_VERIFY_STATE_GAS: u64 = 500_000;
 /// EIP-8141 APPROVE scope-restriction values (bits 0-1 of `Frame.flags`).
 /// Used by VERIFY and PAY frames to declare which capabilities they grant.
 pub const APPROVE_PAYMENT: u8 = 0x1;
@@ -2472,12 +2612,49 @@ impl FrameTransaction {
             .saturating_mul(FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN)
     }
 
+    /// Which EIP-8141 revision this transaction's frames were written against.
+    ///
+    /// Read from the frames themselves rather than from a block timestamp, so
+    /// pricing and encoding can never disagree: the marker that decides how a
+    /// frame re-encodes is the marker that decides what it costs. Block-level
+    /// validation is what keeps the marker honest, by rejecting a transaction
+    /// whose era does not match the block it appears in.
+    ///
+    /// An empty frame list is treated as current-era; such a transaction is
+    /// rejected as malformed before pricing matters.
+    pub fn encoding(&self) -> FrameEncoding {
+        self.frames
+            .first()
+            .map_or(FrameEncoding::Limits, |frame| frame.encoding)
+    }
+
     /// The mandatory costs, always charged in full: the intrinsic cost, the
     /// per-frame cost, and signature verification.
     pub fn mandatory_gas(&self) -> u64 {
-        FRAME_TX_INTRINSIC_COST
+        let intrinsic = match self.encoding() {
+            FrameEncoding::Scalar => FRAME_TX_INTRINSIC_COST_PRE_LIMITS,
+            FrameEncoding::Limits => FRAME_TX_INTRINSIC_COST,
+        };
+        intrinsic
             .saturating_add((self.frames.len() as u64).saturating_mul(FRAME_TX_PER_FRAME_COST))
             .saturating_add(self.signature_verification_cost())
+            .saturating_add(self.value_transfer_cost())
+    }
+
+    /// EIP-8141 `value_transfer_cost`: `TX_VALUE_COST` per frame that actually
+    /// moves value to someone other than the sender. A zero-value frame, a frame
+    /// with no target, and a self-directed frame each cost nothing.
+    ///
+    /// Introduced alongside `limits = [execution, state]`, so frames from before
+    /// that revision are not charged it — see [`Self::encoding`].
+    pub fn value_transfer_cost(&self) -> u64 {
+        if self.encoding() == FrameEncoding::Scalar {
+            return 0;
+        }
+        self.frames
+            .iter()
+            .filter(|f| !f.value.is_zero() && f.target.is_some_and(|target| target != self.sender))
+            .fold(0u64, |acc, _| acc.saturating_add(FRAME_TX_VALUE_COST))
     }
 
     /// EIP-8272 `recent_root_calldata`: `rlp(recent_root_references)`. The bytes
@@ -2514,12 +2691,31 @@ impl FrameTransaction {
         self.mandatory_gas()
             .saturating_add(self.data_cost())
             .saturating_add(self.recent_root_reference_intrinsic_gas())
-            .saturating_add(
-                self.frames
-                    .iter()
-                    .map(|f| f.gas_limit)
-                    .fold(0u64, |acc, g| acc.saturating_add(g)),
-            )
+            .saturating_add(self.total_execution_limit())
+            // EIP-8141: the reservation covers BOTH dimensions, because a builder
+            // must reserve the transaction's full gas in each — either could be
+            // consumed in full. Frames now spend state from their own declared
+            // pools and report what they used per frame, so an unspent state
+            // budget is reserved without being charged.
+            .saturating_add(self.total_state_limit())
+    }
+
+    /// Sum of every frame's declared execution budget. This is the dimension the
+    /// EIP-7825 transaction cap applies to; state gas is excluded from that cap
+    /// and bounded only by the encoding limit and block state-gas capacity.
+    pub fn total_execution_limit(&self) -> u64 {
+        self.frames
+            .iter()
+            .map(|f| f.limits.execution)
+            .fold(0u64, |acc, g| acc.saturating_add(g))
+    }
+
+    /// Sum of every frame's declared state budget.
+    pub fn total_state_limit(&self) -> u64 {
+        self.frames
+            .iter()
+            .map(|f| f.limits.state)
+            .fold(0u64, |acc, g| acc.saturating_add(g))
     }
 
     /// EIP-8141 `calldata_floor_gas`: the mandatory costs plus the EIP-7623
@@ -2567,6 +2763,39 @@ impl FrameTransaction {
                 let bytes: [u8; FRAME_TX_EXPIRY_DATA_LENGTH] = f.data.as_ref().try_into().ok()?;
                 Some(u64::from_be_bytes(bytes))
             })
+    }
+
+    /// Reject a transaction whose frames are encoded for the other side of the
+    /// `frame_limits` activation.
+    ///
+    /// Decoding accepts both encodings unconditionally — it has no block context,
+    /// and a node must be able to read history written before the switch. This is
+    /// what makes each block's encoding unambiguous instead: before activation
+    /// only the scalar `gas_limit` form is admissible, at or after it only
+    /// `limits = [execution, state]`. Without this check a sender could pick the
+    /// cheaper intrinsic price by choosing an encoding, since
+    /// [`Self::mandatory_gas`] prices a transaction by the era its frames declare.
+    ///
+    /// `frame_limits_active` is [`ChainConfig::is_frame_limits_activated`] for the
+    /// block being validated against. Never pass a literal at a consensus site.
+    pub fn validate_frame_encoding_era(&self, frame_limits_active: bool) -> Result<(), String> {
+        let expected = if frame_limits_active {
+            FrameEncoding::Limits
+        } else {
+            FrameEncoding::Scalar
+        };
+        // Checked per frame, not via `encoding()`: a transaction mixing both
+        // encodings has no single era, and would otherwise be priced by whichever
+        // frame happened to come first.
+        for (index, frame) in self.frames.iter().enumerate() {
+            if frame.encoding != expected {
+                return Err(format!(
+                    "frame {index} uses the {:?} encoding, but this block requires {expected:?}",
+                    frame.encoding
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Validate static constraints per EIP-8141 spec.
@@ -2857,14 +3086,20 @@ impl FrameTransaction {
             // in docs/eip-8141.md. It is effectively unreachable: any gas_limit
             // >= 2**63 dwarfs every real block gas limit and is rejected by the
             // gas-limit-vs-block-limit check regardless.
-            if frame.gas_limit > i64::MAX as u64 {
+            if frame.limits.execution > i64::MAX as u64 {
                 return Err(format!(
-                    "Frame {i}: gas_limit {} exceeds 2**63-1",
-                    frame.gas_limit
+                    "Frame {i}: limits.execution {} exceeds 2**63-1",
+                    frame.limits.execution
+                ));
+            }
+            if frame.limits.state > i64::MAX as u64 {
+                return Err(format!(
+                    "Frame {i}: limits.state {} exceeds 2**63-1",
+                    frame.limits.state
                 ));
             }
             total_frame_gas = total_frame_gas
-                .checked_add(frame.gas_limit as u128)
+                .checked_add(frame.limits.execution as u128)
                 .ok_or_else(|| format!("Frame {i}: cumulative gas_limit overflow"))?;
             if total_frame_gas > i64::MAX as u128 {
                 return Err(format!(
@@ -2908,6 +3143,25 @@ impl FrameTransaction {
                 "a vault-sender transaction must contain at least one UTXO frame (EIP-8312)"
                     .to_string(),
             );
+        }
+
+        use crate::constants::TX_MAX_GAS_LIMIT_AMSTERDAM;
+        // EIP-8141 §Transaction execution gas cap: EIP-7825 caps the transaction's
+        // full *execution* budget. State gas is excluded — it is bounded by the
+        // encoding limit and the block's state-gas capacity instead, matching
+        // EIP-8037 — so this deliberately sums `limits.execution` only. The
+        // calldata floor is checked against the same cap, because a transaction
+        // whose floor exceeds the cap could never be paid for either.
+        let execution_budget = self
+            .mandatory_gas()
+            .saturating_add(self.data_cost())
+            .saturating_add(self.recent_root_reference_intrinsic_gas())
+            .saturating_add(self.total_execution_limit());
+        let capped = execution_budget.max(self.calldata_floor_total());
+        if capped > TX_MAX_GAS_LIMIT_AMSTERDAM {
+            return Err(format!(
+                "transaction execution gas {capped} exceeds TX_MAX_GAS_LIMIT {TX_MAX_GAS_LIMIT_AMSTERDAM} (EIP-7825)"
+            ));
         }
 
         Ok(())
@@ -3060,6 +3314,7 @@ impl FrameTransaction {
         &self,
         prefix: &ValidationPrefix,
         max_verify_gas: u64,
+        max_verify_state_gas: u64,
     ) -> Result<(), FrameValidationError> {
         let mut deploy_count = 0usize;
 
@@ -3173,17 +3428,40 @@ impl FrameTransaction {
             return Err(FrameValidationError::VerifyFrameAfterPrefix { frame_index });
         }
 
-        // Gas budget: prefix frame gas limits + signature cost ≤ MAX_VERIFY_GAS.
+        // EIP-8141 §Mempool rule 6, both dimensions.
+        //
+        // Execution: the prefix's `limits.execution` plus the intrinsic cost of
+        // validating the signatures must fit `MAX_VERIFY_GAS`. This bounds the
+        // work a public-mempool node performs.
         let prefix_gas: u64 = prefix
             .frame_indices
             .iter()
-            .map(|&i| self.frames[i].gas_limit)
+            .map(|&i| self.frames[i].limits.execution)
             .fold(0u64, |acc, g| acc.saturating_add(g));
         let total_verify_gas = prefix_gas.saturating_add(self.signature_verification_cost());
         if total_verify_gas > max_verify_gas {
             return Err(FrameValidationError::VerifyGasBudgetExceeded {
                 actual: total_verify_gas,
                 limit: max_verify_gas,
+            });
+        }
+
+        // State: the prefix's `limits.state` must fit `MAX_VERIFY_STATE_GAS`.
+        // State gas does not measure node validation work — simulation stays
+        // bounded by the execution budget alone — so this is a separate, larger
+        // cap whose job is to bound the state growth admitted through the public
+        // mempool. It is what lets a deploy frame in the prefix pay for account
+        // and code creation, which the execution budget could never cover under
+        // EIP-8037 repricing.
+        let prefix_state_gas: u64 = prefix
+            .frame_indices
+            .iter()
+            .map(|&i| self.frames[i].limits.state)
+            .fold(0u64, |acc, g| acc.saturating_add(g));
+        if prefix_state_gas > max_verify_state_gas {
+            return Err(FrameValidationError::VerifyStateGasBudgetExceeded {
+                actual: prefix_state_gas,
+                limit: max_verify_state_gas,
             });
         }
 
@@ -3248,6 +3526,8 @@ pub enum FrameValidationError {
     VerifyFrameAfterPrefix { frame_index: usize },
     #[error("prefix gas budget exceeded: {actual} > {limit} (MAX_VERIFY_GAS)")]
     VerifyGasBudgetExceeded { actual: u64, limit: u64 },
+    #[error("validation prefix state gas budget {actual} exceeds MAX_VERIFY_STATE_GAS {limit}")]
+    VerifyStateGasBudgetExceeded { actual: u64, limit: u64 },
 }
 
 impl RLPEncode for FrameTransaction {
@@ -3648,7 +3928,9 @@ mod serde_impl {
         pub flags: u64,
         pub to: Option<Address>,
         #[serde(with = "crate::serde_utils::u64::hex_str")]
-        pub gas_limit: u64,
+        pub execution_gas_limit: u64,
+        #[serde(with = "crate::serde_utils::u64::hex_str")]
+        pub state_gas_limit: u64,
         #[serde(
             default,
             serialize_with = "serialize_u256_hex",
@@ -3713,7 +3995,8 @@ mod serde_impl {
                 mode: value.mode as u64,
                 flags: value.flags as u64,
                 to: value.target,
-                gas_limit: value.gas_limit,
+                execution_gas_limit: value.limits.execution,
+                state_gas_limit: value.limits.state,
                 value: value.value,
                 data: value.data.clone(),
             }
@@ -3726,9 +4009,15 @@ mod serde_impl {
                 mode: entry.mode as u8,
                 flags: entry.flags as u8,
                 target: entry.to,
-                gas_limit: entry.gas_limit,
+                limits: FrameLimits {
+                    execution: entry.execution_gas_limit,
+                    state: entry.state_gas_limit,
+                },
+                // This is the RPC/serde view, which only ever describes a frame a
+                // caller is submitting now, so it is always the current form.
                 value: entry.value,
                 data: entry.data,
+                encoding: FrameEncoding::Limits,
             }
         }
     }
@@ -3999,9 +4288,39 @@ mod serde_impl {
         where
             S: serde::Serializer,
         {
-            let mut s = serializer.serialize_struct("FrameTransaction", 11)?;
+            let mut s = serializer.serialize_struct("FrameTransaction", 21)?;
             s.serialize_field("type", &TxType::Frame)?;
             s.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
+            // Standard transaction fields. A frame transaction has no single target,
+            // value or calldata -- each frame carries its own -- and its nonce lives in
+            // `nonceSeq`/`nonceKeys`. They are emitted anyway because `eth_getBlockByNumber`
+            // and `eth_getTransactionByHash` return transaction objects that every JSON-RPC
+            // client parses against the standard shape: a missing `gas` alone makes ethers,
+            // viem and web3 reject the *whole block*, so one frame transaction in a block
+            // breaks every consumer of that block, not just readers of the frame itself.
+            // `gas` mirrors `Transaction::gas_limit()`, and `nonce` mirrors
+            // `Transaction::nonce()`, so the RPC view agrees with the node's own accessors.
+            // `to` is null and `value`/`input` are empty rather than invented: the per-frame
+            // truth stays in `frames`, which is where a frame-aware client should read it.
+            s.serialize_field("gas", &format!("{:#x}", self.total_gas_limit()))?;
+            s.serialize_field("nonce", &format!("{:#x}", self.nonce_seq))?;
+            s.serialize_field("to", &Option::<Address>::None)?;
+            s.serialize_field("value", "0x0")?;
+            s.serialize_field("input", "0x")?;
+            // A frame transaction is authenticated by the `signatures` list, not by one
+            // ECDSA triple, and its authoritative sender is `sender` (`from` at the RPC
+            // layer). Clients nevertheless require a signature on every transaction object
+            // and reject the block without one. Zeroes are emitted rather than promoting
+            // the first entry of `signatures`: that entry need not be the sender's (a
+            // sponsored transaction's first signature is the payer's), so exposing it as
+            // *the* signature would invite callers to ecrecover a sender that is not the
+            // sender. An all-zero triple recovers nothing, so it cannot be mistaken for a
+            // real one.
+            let zero_sig = format!("{:#x}", H256::zero());
+            s.serialize_field("v", "0x0")?;
+            s.serialize_field("yParity", "0x0")?;
+            s.serialize_field("r", &zero_sig)?;
+            s.serialize_field("s", &zero_sig)?;
             s.serialize_field(
                 "nonceKeys",
                 &self
@@ -5714,7 +6033,11 @@ mod tests {
                     mode: FrameMode::Verify as u8,
                     flags: 0x03, // APPROVE_PAYMENT_AND_EXECUTION
                     target: Some(Address::from_low_u64_be(0xABCD)),
-                    gas_limit: 100_000,
+                    limits: FrameLimits {
+                        execution: 100_000,
+                        state: 0,
+                    },
+                    encoding: FrameEncoding::Limits,
                     value: U256::zero(),
                     data: Bytes::from_static(b"verify_data"),
                 },
@@ -5722,7 +6045,11 @@ mod tests {
                     mode: FrameMode::Sender as u8,
                     flags: 0x00,
                     target: Some(Address::from_low_u64_be(0x1234)),
-                    gas_limit: 200_000,
+                    limits: FrameLimits {
+                        execution: 200_000,
+                        state: 0,
+                    },
+                    encoding: FrameEncoding::Limits,
                     value: U256::zero(),
                     data: Bytes::from_static(b"call_data"),
                 },
@@ -5753,7 +6080,11 @@ mod tests {
                 mode: FrameMode::Default as u8,
                 flags: 0x04, // atomic batch
                 target: Some(Address::from_low_u64_be(0xB0B)),
-                gas_limit: 21_000,
+                limits: FrameLimits {
+                    execution: 21_000,
+                    state: 0,
+                },
+                encoding: FrameEncoding::Limits,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -5761,7 +6092,11 @@ mod tests {
                 mode: FrameMode::Sender as u8,
                 flags: 0x04, // atomic batch
                 target: Some(Address::from_low_u64_be(0xB0B)),
-                gas_limit: 21_000,
+                limits: FrameLimits {
+                    execution: 21_000,
+                    state: 0,
+                },
+                encoding: FrameEncoding::Limits,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -5769,7 +6104,11 @@ mod tests {
                 mode: FrameMode::Sender as u8,
                 flags: 0x00, // terminator: no flag
                 target: Some(Address::from_low_u64_be(0xCAFE)),
-                gas_limit: 21_000,
+                limits: FrameLimits {
+                    execution: 21_000,
+                    state: 0,
+                },
+                encoding: FrameEncoding::Limits,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -5784,7 +6123,11 @@ mod tests {
             mode: FrameMode::Sender as u8,
             flags: 0x04,
             target: Some(Address::from_low_u64_be(0xCAFE)),
-            gas_limit: 21_000,
+            limits: FrameLimits {
+                execution: 21_000,
+                state: 0,
+            },
+            encoding: FrameEncoding::Limits,
             value: U256::zero(),
             data: Bytes::new(),
         }];
@@ -5798,7 +6141,11 @@ mod tests {
             mode: FrameMode::Verify as u8,
             flags: 0x03,
             target: Some(Address::from_low_u64_be(0x1234)),
-            gas_limit: 50_000,
+            limits: FrameLimits {
+                execution: 50_000,
+                state: 0,
+            },
+            encoding: FrameEncoding::Limits,
             value: U256::zero(),
             data: Bytes::from_static(b"hello"),
         };
@@ -5813,7 +6160,11 @@ mod tests {
             mode: FrameMode::Default as u8,
             flags: 0x00,
             target: None,
-            gas_limit: 10_000,
+            limits: FrameLimits {
+                execution: 10_000,
+                state: 0,
+            },
+            encoding: FrameEncoding::Limits,
             value: U256::zero(),
             data: Bytes::from_static(b"deploy"),
         };
@@ -5830,7 +6181,11 @@ mod tests {
                 mode: mode_val,
                 flags: if mode_val == 1 { 0x03 } else { 0x00 },
                 target: Some(Address::from_low_u64_be(0x1234)),
-                gas_limit: 50_000,
+                limits: FrameLimits {
+                    execution: 50_000,
+                    state: 0,
+                },
+                encoding: FrameEncoding::Limits,
                 value: U256::zero(),
                 data: Bytes::new(),
             };
@@ -5843,7 +6198,11 @@ mod tests {
             mode: 2,            // SENDER
             flags: 0x01 | 0x04, // scope=1 + atomic_batch
             target: Some(Address::from_low_u64_be(0x1234)),
-            gas_limit: 50_000,
+            limits: FrameLimits {
+                execution: 50_000,
+                state: 0,
+            },
+            encoding: FrameEncoding::Limits,
             value: U256::zero(),
             data: Bytes::new(),
         };
@@ -5861,7 +6220,11 @@ mod tests {
             mode: FrameMode::Sender as u8,
             flags: 0x00,
             target: Some(Address::from_low_u64_be(0xCAFE)),
-            gas_limit: 100_000,
+            limits: FrameLimits {
+                execution: 100_000,
+                state: 0,
+            },
+            encoding: FrameEncoding::Limits,
             value: U256::from(1_000_000_000_000_000u64), // 0.001 ETH
             data: Bytes::from_static(b"hello"),
         };
@@ -6104,7 +6467,11 @@ mod tests {
                 mode: FrameMode::Sender as u8,
                 flags: 0x00,
                 target: Some(Address::from_low_u64_be(0x1234)),
-                gas_limit: gl,
+                limits: FrameLimits {
+                    execution: gl,
+                    state: 0,
+                },
+                encoding: FrameEncoding::Limits,
                 value: U256::zero(),
                 data: Bytes::new(),
             })
@@ -6142,12 +6509,20 @@ mod tests {
     }
 
     #[test]
-    fn cumulative_frame_gas_limit_equal_to_i64_max_is_accepted() {
+    fn cumulative_frame_gas_limit_equal_to_i64_max_clears_the_cumulative_bound() {
+        // The 2**63-1 cumulative bound is inclusive, so an exact total passes it.
+        // It is not accepted outright: EIP-7825 caps a transaction's execution gas
+        // far lower and rejects it next. Asserting the specific rejection is what
+        // distinguishes "cleared one bound" from "rejected by that same bound".
         let a = (i64::MAX as u64) / 2;
         let b = i64::MAX as u64 - a;
         let tx = make_frame_tx_with_gas_limits(vec![a, b]);
-        tx.validate_static_constraints(true)
-            .expect("exact i64::MAX total should be accepted");
+        let err = tx.validate_static_constraints(true).unwrap_err();
+        assert!(
+            !err.contains("cumulative"),
+            "an exact i64::MAX total is within the inclusive cumulative bound: {err}"
+        );
+        assert!(err.contains("TX_MAX_GAS_LIMIT"), "unexpected error: {err}");
     }
 
     #[test]
@@ -6204,7 +6579,11 @@ mod tests {
                 mode: FrameMode::Verify as u8,
                 flags: 0x01,
                 target: None,
-                gas_limit: 50_000,
+                limits: FrameLimits {
+                    execution: 50_000,
+                    state: 0,
+                },
+                encoding: FrameEncoding::Limits,
                 value: U256::from(1u64),
                 data: Bytes::new(),
             }],
@@ -6229,7 +6608,11 @@ mod tests {
                 mode: FrameMode::Default as u8,
                 flags: 0x00,
                 target: Some(Address::from_low_u64_be(0x1234)),
-                gas_limit: 50_000,
+                limits: FrameLimits {
+                    execution: 50_000,
+                    state: 0,
+                },
+                encoding: FrameEncoding::Limits,
                 value: U256::from(1u64),
                 data: Bytes::new(),
             }],
@@ -6247,7 +6630,11 @@ mod tests {
                 mode: FrameMode::Sender as u8,
                 flags: 0x00,
                 target: Some(Address::from_low_u64_be(0x1234)),
-                gas_limit: 50_000,
+                limits: FrameLimits {
+                    execution: 50_000,
+                    state: 0,
+                },
+                encoding: FrameEncoding::Limits,
                 value: U256::from(1u64),
                 data: Bytes::new(),
             }],
@@ -6318,7 +6705,11 @@ mod tests {
             mode: FrameMode::Verify as u8,
             flags: 0x00,
             target: Some(frame_tx_expiry_verifier()),
-            gas_limit: 30_000,
+            limits: FrameLimits {
+                execution: 30_000,
+                state: 0,
+            },
+            encoding: FrameEncoding::Limits,
             value: U256::zero(),
             data: Bytes::copy_from_slice(&deadline.to_be_bytes()),
         }
@@ -6555,7 +6946,13 @@ mod tests {
         // external EEST reference vectors exist yet;
         // these values are the current canonical output and must only change
         // with a deliberate, reviewed format change.
-        let tx = FrameTransaction {
+        //
+        // Locked for both frame encodings. The scalar vector is not historical
+        // trivia: it is the exact output a chain with pre-`limits` frame history
+        // must keep producing, because transaction hashes and the transactions
+        // root are derived by re-encoding. If a change breaks it, that chain can
+        // no longer serve its own history under the right identities.
+        let build = |encoding: FrameEncoding| FrameTransaction {
             chain_id: 1,
             nonce_keys: vec![U256::zero()],
             nonce_seq: 7,
@@ -6565,7 +6962,11 @@ mod tests {
                     mode: 1,
                     flags: 3,
                     target: None,
-                    gas_limit: 0x5208,
+                    limits: FrameLimits {
+                        execution: 0x5208,
+                        state: 0,
+                    },
+                    encoding,
                     value: U256::zero(),
                     data: Bytes::from_static(&[0x11, 0x22]),
                 },
@@ -6573,7 +6974,11 @@ mod tests {
                     mode: 2,
                     flags: 0,
                     target: Some(Address::from_low_u64_be(0x1234)),
-                    gas_limit: 0x9c40,
+                    limits: FrameLimits {
+                        execution: 0x9c40,
+                        state: 0,
+                    },
+                    encoding,
                     value: U256::zero(),
                     data: Bytes::new(),
                 },
@@ -6593,13 +6998,29 @@ mod tests {
             cached_canonical: OnceCell::new(),
         };
 
+        // GOLDEN_RLP (scalar): the pre-`limits` encoding, obtained from first run.
+        let scalar_tx = build(FrameEncoding::Scalar);
+        let mut scalar_buf = Vec::new();
+        scalar_tx.encode(&mut scalar_buf);
+        assert_eq!(
+            hex::encode(&scalar_buf),
+            "f8ae01c1800794000000000000000000000000000000000000abcde8ca01038082520880821122dc0280940000000000000000000000000000000000001234829c408080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0c0"
+        );
+        let (decoded, rest) = FrameTransaction::decode_unfinished(&scalar_buf).unwrap();
+        assert!(rest.is_empty());
+        assert_eq!(
+            decoded, scalar_tx,
+            "a scalar-encoded transaction must decode back to itself, marker included"
+        );
+
+        let tx = build(FrameEncoding::Limits);
         let mut buf = Vec::new();
         tx.encode(&mut buf);
         let rlp_hex = hex::encode(&buf);
         // GOLDEN_RLP: obtained from first run
         assert_eq!(
             rlp_hex,
-            "f8ae01c1800794000000000000000000000000000000000000abcde8ca01038082520880821122dc0280940000000000000000000000000000000000001234829c408080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0c0"
+            "f8b201c1800794000000000000000000000000000000000000abcdeccc010380c48252088080821122de0280940000000000000000000000000000000000001234c4829c40808080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0c0"
         );
 
         // Round-trips losslessly.
@@ -6607,11 +7028,18 @@ mod tests {
         assert!(rest.is_empty());
         assert_eq!(decoded, tx);
 
+        // GOLDEN_SIG_HASH (scalar): what a signer on the pre-`limits` encoding
+        // signed. Locked for the same reason as the scalar RLP above.
+        assert_eq!(
+            format!("{:#x}", scalar_tx.compute_sig_hash()),
+            "0x989e6ce4dc87b2afd5cfa6c780ff60f01fc3b40c77057cf872410145d69f715c",
+        );
+
         let sig_hash = tx.compute_sig_hash();
         // GOLDEN_SIG_HASH: obtained from first run
         assert_eq!(
             format!("{:#x}", sig_hash),
-            "0x989e6ce4dc87b2afd5cfa6c780ff60f01fc3b40c77057cf872410145d69f715c",
+            "0xb42101cc078751f769ad722fb0795eb59a6ed1403bec9061ecd1d6b72924de34",
         );
 
         // Elision invariant: changing empty-msg signature bytes must NOT change sig_hash.
@@ -6657,5 +7085,49 @@ mod tests {
             got, expected,
             "blob-gas term missing from cost_without_base_fee() for EIP-4844"
         );
+    }
+}
+
+#[cfg(test)]
+mod frame_tx_rpc_shape_tests {
+    use super::*;
+
+    /// A frame transaction is returned by `eth_getBlockByNumber` and
+    /// `eth_getTransactionByHash` inside ordinary transaction objects, and every JSON-RPC
+    /// client validates those against the standard shape before it looks at any
+    /// type-specific field. Omitting one required field does not degrade the frame
+    /// transaction alone, it makes the client reject the entire block, so a single frame
+    /// transaction takes down every consumer of that block.
+    #[test]
+    fn frame_tx_rpc_json_carries_the_standard_transaction_fields() {
+        let tx = FrameTransaction {
+            chain_id: 3151908,
+            nonce_keys: vec![U256::zero()],
+            nonce_seq: 7,
+            sender: Address::from_low_u64_be(0xABCD),
+            max_priority_fee_per_gas: 1000,
+            max_fee_per_gas: 1028,
+            ..Default::default()
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&tx).expect("serialize")).expect("json");
+
+        for field in [
+            "gas", "nonce", "to", "value", "input", "v", "yParity", "r", "s",
+        ] {
+            assert!(
+                v.get(field).is_some(),
+                "standard field `{field}` missing from the frame-tx RPC object; \
+                 clients reject the whole block when it is absent"
+            );
+        }
+        // `gas` must agree with the node's own accessor, not be an invented placeholder.
+        assert_eq!(v["gas"], format!("{:#x}", tx.total_gas_limit()));
+        assert_eq!(v["nonce"], format!("{:#x}", tx.nonce_seq));
+        assert!(v["to"].is_null(), "a frame tx has no single target");
+        // The real authentication material stays where a frame-aware client reads it.
+        assert!(v.get("signatures").is_some());
+        assert!(v.get("frames").is_some());
+        assert_eq!(v["sender"], format!("{:#x}", tx.sender));
     }
 }

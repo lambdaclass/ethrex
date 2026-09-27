@@ -29,7 +29,7 @@ use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::AccountInfo;
 use ethrex_common::types::{
     Account, BlockHeader, Code, EIP1559Transaction, FRAME_RECEIPT_STATUS_FAILURE, Fork, Frame,
-    FrameMode, FrameTransaction, Transaction, TxKind,
+    FrameEncoding, FrameLimits, FrameMode, FrameTransaction, Transaction, TxKind,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
@@ -235,6 +235,17 @@ fn run_frame_tx_with_db(
     seeds: Vec<Seed>,
     tx: FrameTransaction,
 ) -> (Result<ExecutionReport, VMError>, GeneralizedDatabase) {
+    run_frame_tx_with_db_opts(seeds, tx, false)
+}
+
+/// As [`run_frame_tx_with_db`], with EIP-7928 block-access-list recording
+/// optionally switched on, for tests that assert on what an opcode recorded
+/// rather than on what it returned.
+fn run_frame_tx_with_db_opts(
+    seeds: Vec<Seed>,
+    tx: FrameTransaction,
+    record_bal: bool,
+) -> (Result<ExecutionReport, VMError>, GeneralizedDatabase) {
     let mut seeds = seeds;
     if !seeds.iter().any(|s| s.addr == tx.sender) {
         seeds.push(
@@ -242,6 +253,9 @@ fn run_frame_tx_with_db(
         );
     }
     let mut db = seeded_db(&seeds);
+    if record_bal {
+        db.enable_bal_recording();
+    }
     let env = frame_tx_env(&tx);
     let transaction = Transaction::FrameTransaction(tx);
     let result = {
@@ -265,9 +279,13 @@ fn verify_frame(target: Address) -> Frame {
         mode: u8::from(FrameMode::Verify),
         flags: 0x03,
         target: Some(target),
-        gas_limit: 200_000,
+        limits: FrameLimits {
+            execution: 200_000,
+            state: 200_000,
+        },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     }
 }
 
@@ -287,9 +305,13 @@ fn default_frame(target: Address) -> Frame {
         mode: u8::from(FrameMode::Default),
         flags: 0x00,
         target: Some(target),
-        gas_limit: 2_000_000,
+        limits: FrameLimits {
+            execution: 2_000_000,
+            state: 2_000_000,
+        },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     }
 }
 
@@ -300,9 +322,13 @@ fn posttx_frame(target: Address) -> Frame {
         mode: u8::from(FrameMode::PostTx),
         flags: 0x00,
         target: Some(target),
-        gas_limit: 400_000,
+        limits: FrameLimits {
+            execution: 400_000,
+            state: 400_000,
+        },
         value: U256::zero(),
         data: Bytes::new(),
+        encoding: FrameEncoding::Limits,
     }
 }
 
@@ -1403,5 +1429,67 @@ fn txdiff_invalid_before_hegota() {
     assert!(
         !run_normal_tx(code, Fork::Amsterdam),
         "TXDIFF must be invalid before Hegota"
+    );
+}
+
+/// EIP-7906 §Gas Cost: a `TXDIFF` param that can fall back to reading live state
+/// (`0x00`-`0x05`) must record that access in the EIP-7928 block access list,
+/// "like any other state-reading opcode".
+///
+/// This is a consensus concern rather than a cosmetic one: a block's access list
+/// has to name every slot the block actually read, so a slot reached only through
+/// `TXDIFF` and left out of the BAL makes re-execution reject the block. The
+/// per-address diff params (`0x06`-`0x0A`) are answered from the transaction-local
+/// diff and must add nothing, which is the other half of the assertion.
+#[test]
+fn txdiff_live_state_reads_are_recorded_in_the_block_access_list() {
+    let probe = Address::from_low_u64_be(0x0790_6ba1);
+    let slot = U256::from(7);
+
+    // POST_TX assertion body: TXDIFF(param=0x01 /* slot_after */, address=probe,
+    // in3=slot). Stack order is [param, address, in3] with `param` popped first,
+    // so push in3, then address, then param.
+    let mut code = vec![0x60, 0x07]; // PUSH1 7            (in3 = slot)
+    code.push(0x73); // PUSH20 probe            (address)
+    code.extend_from_slice(probe.as_bytes());
+    code.extend_from_slice(&[0x60, 0x01]); // PUSH1 1      (param = slot_after)
+    code.push(TXDIFF);
+    code.extend_from_slice(&[0x50, STOP]); // POP ; STOP
+
+    let seeds = vec![
+        Seed::new(assertion_addr(), code),
+        // The probe account exists but is untouched by the body, so the only way
+        // its slot can reach the BAL is through the TXDIFF read itself.
+        Seed::new(probe, vec![STOP]),
+    ];
+    let mut frames = vec![verify_frame(FUNDED_SENDER)];
+    frames.push(posttx_frame(assertion_addr()));
+    let tx = frame_tx_with_frames(frames);
+
+    let (report, mut db) = run_frame_tx_with_db_opts(seeds, tx, true);
+    let report = report.expect("tx valid: the VERIFY frame approves payment");
+    assert!(
+        report.is_success(),
+        "the assertion frame reads a slot and stops; it must not fail: {:?}",
+        report.result
+    );
+
+    let bal = db
+        .bal_recorder
+        .take()
+        .expect("BAL recording was enabled")
+        .build();
+    let entry = bal
+        .accounts()
+        .iter()
+        .find(|acc| acc.address == probe)
+        .expect(
+            "TXDIFF read the probe's live storage, so the probe must appear in the \
+             block access list; otherwise re-execution rejects the block",
+        );
+    assert!(
+        entry.storage_reads.contains(&slot),
+        "the slot TXDIFF read must be recorded as a storage read; got reads {:?}",
+        entry.storage_reads
     );
 }

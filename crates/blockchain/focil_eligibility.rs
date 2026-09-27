@@ -30,10 +30,12 @@ use ethrex_common::types::{FrameTransaction, Transaction, TxType, is_eip7702_del
 /// EIP-8369 `MAX_VERIFY_GAS_PER_TX`: the largest VERIFY budget a single
 /// Profile 2 candidate may declare.
 ///
-/// Deliberately higher than EIP-8141's `MAX_VERIFY_GAS = 100_000` public mempool
-/// cap, "because FOCIL eligibility and public mempool admission are separate
-/// policies". This is a consensus-relevant classification input, so it is a
-/// constant here and must never be read from node configuration.
+/// Deliberately higher than the public mempool `MAX_VERIFY_GAS` cap (EIP-8141
+/// specifies 100_000; this chain raises it to 500_000, see
+/// [`ethrex_common::types::FRAME_TX_MAX_VERIFY_GAS`]), "because FOCIL
+/// eligibility and public mempool admission are separate policies". This is a
+/// consensus-relevant classification input, so it is a constant here and must
+/// never be read from node configuration.
 pub const MAX_VERIFY_GAS_PER_TX: u64 = 1 << 20;
 
 /// EIP-8369 `MAX_VERIFY_GAS_PER_IL`: the VERIFY budget one inclusion list may
@@ -138,14 +140,14 @@ pub fn verify_budget_cost(tx: &FrameTransaction) -> Option<u64> {
     let prefix_gas = prefix
         .frame_indices
         .iter()
-        .map(|&i| tx.frames.get(i).map_or(0, |f| f.gas_limit))
+        .map(|&i| tx.frames.get(i).map_or(0, |f| f.limits.execution))
         .fold(0u64, |acc, g| acc.saturating_add(g));
 
     let expiry_gas = tx
         .frames
         .iter()
         .filter(|f| f.is_expiry_verifier())
-        .map(|f| f.gas_limit)
+        .map(|f| f.limits.execution)
         .fold(0u64, |acc, g| acc.saturating_add(g));
 
     Some(
@@ -214,8 +216,12 @@ pub fn is_profile_2_candidate(tx: &FrameTransaction, utxo_frames_active: bool) -
 
     // Structural conformance only. The budget is checked separately below
     // against the FOCIL constant, so `u64::MAX` disables the caller-supplied
-    // mempool budget inside this call rather than letting it decide eligibility.
-    if tx.validate_prefix_structure(&prefix, u64::MAX).is_err() {
+    // mempool budgets — both dimensions — inside this call rather than letting
+    // node configuration decide an attested verdict.
+    if tx
+        .validate_prefix_structure(&prefix, u64::MAX, u64::MAX)
+        .is_err()
+    {
         return false;
     }
 

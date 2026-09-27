@@ -21,7 +21,10 @@ Config (env):
   MAX_CONCURRENT           in-flight requests before shedding    (default 32)
   BIND_ADDR                                                      (default 0.0.0.0)
   PORT                                                           (default 8080)
-  PUBLIC_RPC_URL           shown on the landing page             (optional)
+  PUBLIC_RPC_URLS          comma-separated RPC endpoints shown   (optional)
+                           on the landing page; supersedes
+                           PUBLIC_RPC_URL when set
+  PUBLIC_RPC_URL           single RPC shown on the landing page  (optional)
   EXPLORER_URL             shown on the landing page             (optional)
 
 Deployment note: only `TRUSTED_PROXIES` peers may set the client IP. Publish the
@@ -250,7 +253,19 @@ def render_page():
         html = path.read_text()
     except OSError:
         return b"<h1>Hegota devnet faucet</h1><p>POST /api/claim {\"address\": \"0x...\"}</p>"
-    rpc_row = f"<dt>RPC</dt><dd>{PUBLIC_RPC_URL}</dd>" if PUBLIC_RPC_URL else ""
+    # Three public RPC endpoints answer for this devnet, not one. Listing only the first
+    # sends every reader to the same node and hides the others while one is restarting.
+    # PUBLIC_RPC_URLS (comma-separated) wins when set; otherwise fall back to the single
+    # PUBLIC_RPC_URL so an operator who has not set the new variable still gets a row.
+    _rpc_urls = [u.strip() for u in os.environ.get("PUBLIC_RPC_URLS", "").split(",") if u.strip()]
+    if not _rpc_urls and PUBLIC_RPC_URL:
+        _rpc_urls = [PUBLIC_RPC_URL]
+    if _rpc_urls:
+        _label = "RPC" if len(_rpc_urls) == 1 else "RPC endpoints"
+        _cells = "".join("<dd>" + u + "</dd>" for u in _rpc_urls)
+        rpc_row = "<dt>" + _label + "</dt>" + _cells
+    else:
+        rpc_row = ""
     explorer_row = (f'<dt>Explorer</dt><dd><a href="{EXPLORER_URL}">{EXPLORER_URL}</a></dd>'
                     if EXPLORER_URL else "")
     chain_id = "unknown"

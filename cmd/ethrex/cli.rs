@@ -11,7 +11,8 @@ use std::{
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
     BlockchainOptions, BlockchainType, DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
-    DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT, DEFAULT_MAX_VERIFY_GAS, L2Config,
+    DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT, DEFAULT_MAX_VERIFY_GAS, DEFAULT_MAX_VERIFY_STATE_GAS,
+    L2Config,
     error::{ChainError, InvalidBlockError},
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
@@ -266,6 +267,15 @@ pub struct Options {
         env = "ETHREX_MEMPOOL_MAX_VERIFY_GAS"
     )]
     pub mempool_max_verify_gas: u64,
+    #[arg(
+        help = "EIP-8141 MAX_VERIFY_STATE_GAS: maximum EIP-8037 state gas a frame transaction may budget across its validation prefix at mempool admission. Bounds admitted state growth rather than node work, so it is a separate, larger lane than --mempool.max-verify-gas. Mempool policy, not consensus.",
+        long = "mempool.max-verify-state-gas",
+        default_value_t = DEFAULT_MAX_VERIFY_STATE_GAS,
+        value_name = "GAS",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_MAX_VERIFY_STATE_GAS"
+    )]
+    pub mempool_max_verify_state_gas: u64,
     #[arg(
         help = "EIP-8312 MAX_UTXO_VERIFY_GAS: maximum gas counted when admitting a transaction that carries UTXO frames (actor signatures plus the frames' own cost, both gas dimensions summed). A separate lane from --mempool.max-verify-gas. Mempool policy, not consensus.",
         long = "mempool.max-utxo-verify-gas",
@@ -604,6 +614,7 @@ impl Default for Options {
             mempool_gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
             mempool_max_queued_txs_per_account: DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT,
             mempool_max_verify_gas: DEFAULT_MAX_VERIFY_GAS,
+            mempool_max_verify_state_gas: DEFAULT_MAX_VERIFY_STATE_GAS,
             mempool_max_utxo_verify_gas: ethrex_common::types::MAX_UTXO_VERIFY_GAS,
             mempool_private: false,
             tx_broadcasting_time_interval: Default::default(),

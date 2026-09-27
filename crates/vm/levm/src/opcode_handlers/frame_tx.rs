@@ -462,7 +462,7 @@ impl OpcodeHandler for OpFrameParamHandler {
             }
             0x01 => {
                 // gas_limit
-                U256::from(frame.gas_limit)
+                U256::from(frame.limits.execution)
             }
             0x02 => {
                 // mode
@@ -483,7 +483,7 @@ impl OpcodeHandler for OpFrameParamHandler {
                 if idx >= ctx.current_frame_index {
                     return Err(ExceptionalHalt::InvalidOpcode.into());
                 }
-                let (status, _, _) = ctx
+                let (status, _, _, _) = ctx
                     .frame_results
                     .get(idx)
                     .ok_or(ExceptionalHalt::InvalidOpcode)?;
@@ -823,9 +823,9 @@ fn execute_recent_root_frame(
     if is_static || frame.data.len() != 64 || !frame.value.is_zero() {
         return Ok((false, 0, Vec::new()));
     }
-    if frame.gas_limit < gas_cost::RECENT_ROOT_WRITE_GAS {
+    if frame.limits.execution < gas_cost::RECENT_ROOT_WRITE_GAS {
         // The write out-of-gasses: the frame consumes its whole budget.
-        return Ok((false, frame.gas_limit, Vec::new()));
+        return Ok((false, frame.limits.execution, Vec::new()));
     }
     let ctx = vm
         .frame_tx_context
@@ -1095,7 +1095,7 @@ pub fn execute_utxo_frame(
 
     // Per the EIP an under-provisioned UTXO frame invalidates the transaction —
     // it is not a failed frame that the transaction survives.
-    if frame.gas_limit < utxo_frame_gas {
+    if frame.limits.execution < utxo_frame_gas {
         return Ok(None);
     }
 
@@ -1310,4 +1310,82 @@ fn spent_bit_state_gas(vm: &VM<'_>) -> u64 {
 
 fn u256_to_h256(value: U256) -> ethrex_common::H256 {
     ethrex_common::H256(value.to_big_endian())
+}
+
+/// `SIGDATACOPY` (`0xBA`) — EIP-8141: copy an `ARBITRARY` signature entry's raw
+/// bytes into memory.
+///
+/// The raw bytes of protocol-validated schemes are deliberately NOT reachable
+/// from the EVM, so that those signatures stay aggregatable in future; only
+/// `ARBITRARY` entries, which are validated during EVM execution anyway, may be
+/// copied. Any other scheme halts, as does an out-of-range index.
+///
+/// Semantics match `CALLDATACOPY`, including its gas shape and zero-filling past
+/// the end of the signature. The entry's byte length is available through
+/// `SIGPARAM` param `0x03`.
+///
+/// **Opcode byte diverges from the spec.** EIP-8141 assigns `0xB5`, which
+/// EIP-8272 already uses for `RECENTROOTREFLOAD` on this branch — the second
+/// collision between live 8141-family drafts. `RECENTROOTREFLOAD` keeps `0xB5`
+/// (EIP-8272 assigned it first and the running devnet depends on it), so this
+/// takes the next free byte. See `docs/hegota-devnet.md`.
+///
+/// Stack (top first): `memOffset`, `dataOffset`, `length`, `signatureIndex`.
+pub struct OpSigDataCopyHandler;
+impl OpcodeHandler for OpSigDataCopyHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let [mem_offset, data_offset, length, signature_index] =
+            *vm.current_call_frame.stack.pop()?;
+        let (length, mem_offset) = size_offset_to_usize(length, mem_offset)?;
+        let data_offset_opt = u256_to_offset(data_offset);
+
+        let new_memory_size = calculate_memory_size(mem_offset, length)?;
+        let current_memory_size = vm.current_call_frame.memory.len();
+        // Charge the memory expansion before the context and scheme guards: the
+        // caller pays for growth it asked for even when the opcode then halts.
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::framedatacopy(
+                new_memory_size,
+                current_memory_size,
+                length,
+            )?)?;
+
+        let signature_index =
+            u64::try_from(signature_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let idx = index_to_usize(signature_index)?;
+
+        let ctx = vm
+            .frame_tx_context
+            .as_ref()
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+        let sig = ctx
+            .tx
+            .signatures
+            .get(idx)
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+        if sig.scheme != ethrex_common::types::FRAME_SIG_SCHEME_ARBITRARY {
+            return Err(ExceptionalHalt::InvalidOpcode.into());
+        }
+        // The index and scheme are validated even for a zero-length copy, so an
+        // out-of-range or protocol-validated entry halts either way.
+        if length == 0 {
+            return Ok(OpcodeResult::Continue);
+        }
+
+        let data = &sig.signature;
+        let mut buf = vec![0u8; length];
+        if let Some(data_offset) = data_offset_opt {
+            let available = data.len().saturating_sub(data_offset);
+            let copy_len = length.min(available);
+            if let (Some(dst), Some(src)) = (
+                buf.get_mut(..copy_len),
+                data.get(data_offset..data_offset.saturating_add(copy_len)),
+            ) {
+                dst.copy_from_slice(src);
+            }
+        }
+        vm.current_call_frame.memory.store_data(mem_offset, &buf)?;
+        Ok(OpcodeResult::Continue)
+    }
 }

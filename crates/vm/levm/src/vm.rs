@@ -6,8 +6,8 @@ use crate::{
     debug::DebugMode,
     environment::Environment,
     errors::{
-        ContextResult, ExceptionalHalt, ExecutionReport, InternalError, OpcodeResult, TxResult,
-        VMError,
+        ContextResult, ExceptionalHalt, ExecutionReport, FrameResult, InternalError, OpcodeResult,
+        TxResult, VMError,
     },
     gas_cost::{
         STATE_BYTES_PER_AUTH_BASE, STATE_BYTES_PER_NEW_ACCOUNT, STATE_BYTES_PER_STORAGE_SET,
@@ -524,7 +524,7 @@ pub struct FrameTxContext {
     /// Per-frame execution results (status, gas_used, logs).
     /// `status` is a `FRAME_RECEIPT_STATUS_*` code (0 = failure, 1 = success,
     /// 3 = skipped due to failed atomic batch).
-    pub frame_results: Vec<(u8, u64, Vec<Log>)>,
+    pub frame_results: Vec<FrameResult>,
     /// Index of the currently executing frame
     pub current_frame_index: usize,
     /// The sig_hash of the frame transaction
@@ -663,6 +663,19 @@ pub struct VM<'a> {
     pub state_gas_used: i64,
     /// EIP-8037: State gas reservoir pre-funded from excess gas_limit (Amsterdam+).
     pub state_gas_reservoir: u64,
+    /// EIP-8141: the current frame's remaining state-gas pool, `Some` only while a
+    /// frame transaction's frame is executing.
+    ///
+    /// A frame transaction declares `limits.state` per frame rather than deriving a
+    /// split from one gas field, so inside a frame this pool REPLACES the reservoir
+    /// and the spill-to-`gas_remaining` path entirely: the two pools never mix, and
+    /// execution gas can never be spent on state charges.
+    ///
+    /// It is frame-scoped, not call-frame-scoped. EVM call frames at any depth
+    /// within the frame draw from it directly; it is never forwarded, split, or
+    /// given the 63/64 treatment execution gas gets. Exhausting it halts the current
+    /// call frame with ordinary out-of-gas semantics.
+    pub frame_state_gas_left: Option<u64>,
     /// EIP-8037: Initial reservoir at tx start (before any execution). Captured in
     /// add_intrinsic_gas so block-dimensional regular gas can be computed
     /// independently of mid-tx reservoir activity (auth refunds, SSTORE credits).
@@ -1137,6 +1150,7 @@ impl<'a> VM<'a> {
             preserve_top_level_backup,
             state_gas_used: 0,
             state_gas_reservoir: 0,
+            frame_state_gas_left: None,
             state_gas_reservoir_initial: 0,
             state_gas_spill: 0,
             cost_per_state_byte: cpsb,
@@ -1219,6 +1233,22 @@ impl<'a> VM<'a> {
             self.env.config.fork >= Fork::Amsterdam,
             "increase_state_gas called pre-Amsterdam"
         );
+        // EIP-8141: inside a frame transaction's frame the state pool is declared,
+        // not derived, so it replaces the reservoir/spill model outright. Draw the
+        // whole charge from `limits.state`; running it dry is an ordinary
+        // out-of-gas halt of the current call frame, and execution gas is never
+        // touched. `state_gas_used` still accumulates so per-frame receipts and the
+        // block's state-gas total stay correct.
+        if let Some(left) = self.frame_state_gas_left {
+            let remaining = left.checked_sub(gas).ok_or(ExceptionalHalt::OutOfGas)?;
+            self.frame_state_gas_left = Some(remaining);
+            self.state_gas_used = self
+                .state_gas_used
+                .checked_add(i64::try_from(gas).map_err(|_| InternalError::Overflow)?)
+                .ok_or(InternalError::Overflow)?;
+            return Ok(());
+        }
+
         // Draw from reservoir first; only spill to gas_remaining if reservoir exhausted
         let from_reservoir = self.state_gas_reservoir.min(gas);
         // Safe: from_reservoir <= gas
@@ -1859,6 +1889,16 @@ impl<'a> VM<'a> {
             ));
         }
 
+        // EIP-8141: only this block's era of frame encoding is admissible. Enforced
+        // here as well as at admission because the encoding a frame declares is
+        // what prices it, so a block accepting the wrong era would settle at the
+        // wrong intrinsic cost.
+        if let Err(_e) = frame_tx.validate_frame_encoding_era(self.env.config.frame_limits_active) {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::InvalidFrameTransaction,
+            ));
+        }
+
         // Check nonce matches
         let sender_info = self.db.get_account(sender)?.info.clone();
         // EIP-8250 keyed-nonce validation: every selected key's current sequence
@@ -2068,9 +2108,22 @@ impl<'a> VM<'a> {
         let sum_frame_gas_limits: u64 = frame_tx
             .frames
             .iter()
-            .map(|f| f.gas_limit)
+            .map(|f| f.limits.execution)
             .fold(0u64, |acc, g| acc.saturating_add(g));
-        let intrinsic_gas = total_gas_limit.saturating_sub(sum_frame_gas_limits);
+        // `total_gas_limit` is the RESERVATION: intrinsic plus both dimensions of
+        // every frame's declared budget, because a builder must reserve gas it
+        // might spend in either. Settlement charges what was actually used, so
+        // both declared sums come back out here and each frame then adds its real
+        // execution and state usage below. Subtracting only the execution sum
+        // would bill the entire state reservation as consumed and never return it.
+        let sum_frame_state_limits: u64 = frame_tx
+            .frames
+            .iter()
+            .map(|f| f.limits.state)
+            .fold(0u64, |acc, g| acc.saturating_add(g));
+        let intrinsic_gas = total_gas_limit
+            .saturating_sub(sum_frame_gas_limits)
+            .saturating_sub(sum_frame_state_limits);
         let mut total_gas_used: u64 = intrinsic_gas;
         let mut tx_invalid = false;
 
@@ -2121,6 +2174,7 @@ impl<'a> VM<'a> {
                         ethrex_common::types::FRAME_RECEIPT_STATUS_SKIPPED,
                         0,
                         Vec::new(),
+                        0,
                     ));
                     if frame_idx == end_idx {
                         skip_until_batch_end = None;
@@ -2226,6 +2280,7 @@ impl<'a> VM<'a> {
                             ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
                             frame_gas,
                             Vec::new(),
+                            0,
                         ));
                     }
                     None => {
@@ -2331,6 +2386,20 @@ impl<'a> VM<'a> {
             macro_rules! do_frame_value_transfer {
                 () => {
                     if !frame.value.is_zero() && !value_transfer_reverted {
+                        // EIP-8037: a transfer that brings a non-existent account into being
+                        // grows the state trie, and that growth is priced in state gas — the
+                        // same charge `CALL` and `CREATE` make before they move value (see
+                        // `opcode_handlers::system`). A frame moving value reached the raw
+                        // balance write directly, so it created accounts for free: unmetered
+                        // state growth, which is a chain-bloat vector rather than a rounding
+                        // error. `is_empty()` is exactly EELS' `not is_account_alive`, and
+                        // reading the target here also records the access for the EIP-7928
+                        // block access list, matching the opcode paths.
+                        if self.env.config.fork >= Fork::Amsterdam
+                            && self.get_account_mut(target)?.is_empty()
+                        {
+                            self.increase_state_gas(self.state_gas_new_account)?;
+                        }
                         self.transfer(sender, target, frame.value)?;
                         // EIP-7708 log parity with default_hook::transfer_value:
                         // only Amsterdam+ and only when sender != target.
@@ -2353,6 +2422,23 @@ impl<'a> VM<'a> {
             let state_gas_used_at_frame_entry = self.state_gas_used;
             let state_gas_reservoir_at_frame_entry = self.state_gas_reservoir;
             let state_gas_spill_at_frame_entry = self.state_gas_spill;
+
+            // EIP-8141: open this frame's declared state pool. Budgets are
+            // per-frame precisely because unused gas does not roll over between
+            // frames — frames belong to mutually distrusting parties, and a shared
+            // pool would let one drain the state gas a later frame (a paymaster's
+            // post-op, say) depends on.
+            //
+            // Before the pools existed, frames declared no state budget and drew
+            // on the EIP-8037 reservoir like any other transaction. Opening a
+            // zero pool for such a frame would fail its first state write, so
+            // pre-activation blocks keep the reservoir path — which is also the
+            // only way they re-execute to the state they were built with.
+            self.frame_state_gas_left = self
+                .env
+                .config
+                .frame_limits_active
+                .then_some(frame.limits.state);
 
             // EIP-7928: capture the access-list recorder before the frame runs. A
             // reverted frame's state changes are rolled back, so its recorded
@@ -2382,7 +2468,7 @@ impl<'a> VM<'a> {
             let (frame_success, frame_gas_used, frame_logs) = if value_transfer_reverted {
                 self.substate.revert_backup();
                 self.restore_cache_state()?;
-                (false, frame.gas_limit, Vec::new())
+                (false, frame.limits.execution, Vec::new())
             } else if bytecode.is_empty() && !is_delegation_7702 {
                 // Default code runs only when the target has NEITHER code NOR a delegation
                 // indicator (EIP-8141 §Execution). After eip7702_get_code,
@@ -2416,7 +2502,7 @@ impl<'a> VM<'a> {
                     Err(_) => {
                         self.substate.revert_backup();
                         self.restore_cache_state()?;
-                        (false, frame.gas_limit, Vec::new())
+                        (false, frame.limits.execution, Vec::new())
                     }
                 }
             } else {
@@ -2430,12 +2516,12 @@ impl<'a> VM<'a> {
                     caller,                                    // msg_sender
                     target,                                    // to (delegator; ADDRESS/storage)
                     code_address,                              // code_address (delegatee when 7702)
-                    bytecode,           // bytecode (delegatee's code when 7702)
-                    frame.value,        // msg_value -- CALLVALUE
-                    frame.data.clone(), // calldata
-                    is_static,          // is_static
-                    frame.gas_limit,    // gas_limit
-                    0,                  // depth
+                    bytecode,               // bytecode (delegatee's code when 7702)
+                    frame.value,            // msg_value -- CALLVALUE
+                    frame.data.clone(),     // calldata
+                    is_static,              // is_static
+                    frame.limits.execution, // gas_limit
+                    0,                      // depth
                     false, // should_transfer_value (do_frame_value_transfer! handles it)
                     false, // is_create
                     0,     // ret_offset
@@ -2488,7 +2574,7 @@ impl<'a> VM<'a> {
                         // must be reverted (and the cache restored) here.
                         self.substate.revert_backup();
                         self.restore_cache_state()?;
-                        (false, frame.gas_limit, Vec::new())
+                        (false, frame.limits.execution, Vec::new())
                     }
                 };
 
@@ -2563,9 +2649,28 @@ impl<'a> VM<'a> {
             // is spent and must be dropped.
             self.state_gas_reservoir = state_gas_reservoir_at_frame_entry;
             self.state_gas_spill = state_gas_spill_at_frame_entry;
+            // EIP-8141: close this frame's state pool. Leaving it open would let the
+            // gap between frames — settlement, the next frame's setup — draw on a
+            // budget no frame declared, and would hand the next frame whatever this
+            // one did not spend.
+            self.frame_state_gas_left = None;
 
             total_gas_used = total_gas_used
                 .checked_add(frame_gas_used)
+                .ok_or(VMError::Internal(InternalError::Overflow))?;
+            // Charge the state gas this frame actually drew, not what it declared.
+            // The declared budgets were removed from the reservation above, so a
+            // frame that spends none of its state pool costs the payer nothing for
+            // it.
+            total_gas_used = total_gas_used
+                .checked_add(
+                    u64::try_from(
+                        self.state_gas_used
+                            .saturating_sub(state_gas_used_at_frame_entry)
+                            .max(0),
+                    )
+                    .map_err(|_| InternalError::Overflow)?,
+                )
                 .ok_or(VMError::Internal(InternalError::Overflow))?;
             all_logs.extend(frame_logs.clone());
 
@@ -2581,8 +2686,22 @@ impl<'a> VM<'a> {
             } else {
                 ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE
             };
-            ctx.frame_results
-                .push((status_code, frame_gas_used, frame_logs));
+            // EIP-8141 `gas_used.state`: what this frame drew from its own
+            // `limits.state`. Taken as the delta over the frame's entry snapshot,
+            // which is already zero for a failed frame — its state changes were
+            // rolled back, so it created no state and owes no state gas.
+            let frame_state_gas_used = u64::try_from(
+                self.state_gas_used
+                    .saturating_sub(state_gas_used_at_frame_entry)
+                    .max(0),
+            )
+            .map_err(|_| InternalError::Overflow)?;
+            ctx.frame_results.push((
+                status_code,
+                frame_gas_used,
+                frame_logs,
+                frame_state_gas_used,
+            ));
 
             // Atomic batch: if a frame in the batch reverted, revert the
             // batch-level snapshot and skip remaining frames in the batch.
@@ -3051,7 +3170,7 @@ impl<'a> VM<'a> {
         let any_frame_reverted = ctx
             .frame_results
             .iter()
-            .any(|(status, _, _)| *status != ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS);
+            .any(|(status, _, _, _)| *status != ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS);
 
         let result = if any_frame_reverted {
             TxResult::Revert(VMError::RevertOpcode)
@@ -3140,6 +3259,9 @@ impl<'a> VM<'a> {
         if frame_tx
             .validate_static_constraints(self.env.config.utxo_frames_active)
             .is_err()
+            || frame_tx
+                .validate_frame_encoding_era(self.env.config.frame_limits_active)
+                .is_err()
         {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InvalidFrameTransaction,
@@ -3341,7 +3463,7 @@ impl<'a> VM<'a> {
             let (frame_success, frame_gas_used) = if value_transfer_reverted {
                 self.substate.revert_backup();
                 self.restore_cache_state()?;
-                (false, frame.gas_limit)
+                (false, frame.limits.execution)
             } else if bytecode.is_empty() && !is_delegation_7702 {
                 // Default-code path (target has neither code nor a delegation).
                 if !frame.value.is_zero() {
@@ -3362,7 +3484,7 @@ impl<'a> VM<'a> {
                     Err(_) => {
                         self.substate.revert_backup();
                         self.restore_cache_state()?;
-                        (false, frame.gas_limit)
+                        (false, frame.limits.execution)
                     }
                 }
             } else {
@@ -3375,7 +3497,7 @@ impl<'a> VM<'a> {
                     frame.value,
                     frame.data.clone(),
                     is_static,
-                    frame.gas_limit,
+                    frame.limits.execution,
                     0,
                     false,
                     false,
@@ -3406,7 +3528,7 @@ impl<'a> VM<'a> {
                     Err(_e) => {
                         self.substate.revert_backup();
                         self.restore_cache_state()?;
-                        (false, frame.gas_limit)
+                        (false, frame.limits.execution)
                     }
                 };
 
@@ -4288,6 +4410,7 @@ impl<'a> VM<'a> {
             preserve_top_level_backup: false,
             state_gas_used: 0,
             state_gas_reservoir,
+            frame_state_gas_left: None,
             state_gas_reservoir_initial: state_gas_reservoir,
             state_gas_spill: 0,
             cost_per_state_byte: 0,
