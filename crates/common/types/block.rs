@@ -382,6 +382,13 @@ pub fn compute_receipts_root(receipts: &[Receipt], crypto: &dyn Crypto) -> H256 
 #[cfg(feature = "rayon")]
 const LOGS_PER_BLOOM_TASK: usize = 16;
 
+/// Fewest receipts for which the receipts root is prepared in parallel. On
+/// mainnet blocks the parallel version was slower below about 100 receipts,
+/// where waking the thread pool costs more than the work it spreads, and faster
+/// in four blocks out of five from 150 up.
+#[cfg(feature = "rayon")]
+const MIN_RECEIPTS_FOR_PARALLEL_ROOT: usize = 128;
+
 /// Computes the receipts root and the aggregate header `logs_bloom` in a single pass,
 /// hashing each receipt's bloom only once (it feeds both the receipts trie and the
 /// OR-ed header bloom). Validation paths need both, so this avoids the duplicate
@@ -390,58 +397,68 @@ pub fn compute_receipts_root_and_logs_bloom(
     receipts: &[Receipt],
     crypto: &dyn Crypto,
 ) -> (H256, Bloom) {
-    // Each receipt's bloom (a keccak per log address and topic) and encoding are
-    // independent of the others and make up most of the cost, so with rayon they
-    // are prepared on all cores; only the trie is built sequentially. The block
-    // pipeline runs this after the last transaction, on the way to finishing the
-    // block.
     #[cfg(feature = "rayon")]
-    {
-        let leaves: Vec<(Vec<u8>, Vec<u8>, Bloom)> = receipts
-            .par_iter()
-            .enumerate()
-            .map(|(idx, receipt)| {
-                // One receipt can carry a large share of a block's logs, so its
-                // bloom is split across threads too instead of capping the rest.
-                let bloom = if receipt.logs.len() > LOGS_PER_BLOOM_TASK {
-                    receipt
-                        .logs
-                        .par_chunks(LOGS_PER_BLOOM_TASK)
-                        .map(|logs| crate::types::bloom_from_logs(logs, crypto))
-                        .reduce(Bloom::zero, |a, b| a | b)
-                } else {
-                    crate::types::bloom_from_logs(&receipt.logs, crypto)
-                };
-                (
-                    idx.encode_to_vec(),
-                    receipt.encode_inner_with_precomputed_bloom(bloom),
-                    bloom,
-                )
-            })
-            .collect();
-        let mut logs_bloom = Bloom::zero();
-        let iter = leaves.into_iter().map(|(key, value, bloom)| {
-            logs_bloom |= bloom;
-            (key, value)
-        });
-        let receipts_root = Trie::compute_hash_from_unsorted_iter(iter, crypto);
-        (receipts_root, logs_bloom)
+    if receipts.len() >= MIN_RECEIPTS_FOR_PARALLEL_ROOT {
+        return receipts_root_and_logs_bloom_parallel(receipts, crypto);
     }
+    receipts_root_and_logs_bloom_sequential(receipts, crypto)
+}
 
-    #[cfg(not(feature = "rayon"))]
-    {
-        let mut logs_bloom = Bloom::zero();
-        let iter = receipts.iter().enumerate().map(|(idx, receipt)| {
-            let bloom = crate::types::bloom_from_logs(&receipt.logs, crypto);
-            logs_bloom |= bloom;
+fn receipts_root_and_logs_bloom_sequential(
+    receipts: &[Receipt],
+    crypto: &dyn Crypto,
+) -> (H256, Bloom) {
+    let mut logs_bloom = Bloom::zero();
+    let iter = receipts.iter().enumerate().map(|(idx, receipt)| {
+        let bloom = crate::types::bloom_from_logs(&receipt.logs, crypto);
+        logs_bloom |= bloom;
+        (
+            idx.encode_to_vec(),
+            receipt.encode_inner_with_precomputed_bloom(bloom),
+        )
+    });
+    let receipts_root = Trie::compute_hash_from_unsorted_iter(iter, crypto);
+    (receipts_root, logs_bloom)
+}
+
+/// Each receipt's bloom (a keccak per log address and topic) and encoding are
+/// independent of the others and make up most of the cost, so they are prepared
+/// on all cores; only the trie is built sequentially. The block pipeline runs
+/// this after the last transaction, on the way to finishing the block.
+#[cfg(feature = "rayon")]
+fn receipts_root_and_logs_bloom_parallel(
+    receipts: &[Receipt],
+    crypto: &dyn Crypto,
+) -> (H256, Bloom) {
+    let leaves: Vec<(Vec<u8>, Vec<u8>, Bloom)> = receipts
+        .par_iter()
+        .enumerate()
+        .map(|(idx, receipt)| {
+            // One receipt can carry a large share of a block's logs, so its bloom
+            // is split across threads too instead of capping the rest.
+            let bloom = if receipt.logs.len() > LOGS_PER_BLOOM_TASK {
+                receipt
+                    .logs
+                    .par_chunks(LOGS_PER_BLOOM_TASK)
+                    .map(|logs| crate::types::bloom_from_logs(logs, crypto))
+                    .reduce(Bloom::zero, |a, b| a | b)
+            } else {
+                crate::types::bloom_from_logs(&receipt.logs, crypto)
+            };
             (
                 idx.encode_to_vec(),
                 receipt.encode_inner_with_precomputed_bloom(bloom),
+                bloom,
             )
-        });
-        let receipts_root = Trie::compute_hash_from_unsorted_iter(iter, crypto);
-        (receipts_root, logs_bloom)
-    }
+        })
+        .collect();
+    let mut logs_bloom = Bloom::zero();
+    let iter = leaves.into_iter().map(|(key, value, bloom)| {
+        logs_bloom |= bloom;
+        (key, value)
+    });
+    let receipts_root = Trie::compute_hash_from_unsorted_iter(iter, crypto);
+    (receipts_root, logs_bloom)
 }
 
 // See [EIP-4895](https://eips.ethereum.org/EIPS/eip-4895)
@@ -1015,6 +1032,37 @@ pub fn calc_excess_blob_gas(parent: &BlockHeader, schedule: ForkBlobSchedule, fo
 #[cfg(test)]
 mod test {
     use super::*;
+
+    /// The parallel receipts root must match the sequential one, below and above
+    /// the size threshold, with receipts that have no logs and ones whose bloom
+    /// is split across threads.
+    #[cfg(feature = "rayon")]
+    #[test]
+    fn parallel_receipts_root_matches_sequential() {
+        use crate::types::{Log, Receipt, TxType};
+        let crypto = ethrex_crypto::NativeCrypto;
+        for count in [0usize, 1, 17, 127, 128, 129, 300] {
+            let receipts: Vec<Receipt> = (0..count)
+                .map(|i| {
+                    let logs = (0..(i * 7) % 40)
+                        .map(|j| Log {
+                            address: Address::from_low_u64_be((i * 31 + j) as u64),
+                            topics: (0..j % 4)
+                                .map(|t| H256::from_low_u64_be((i * 1000 + j * 10 + t) as u64))
+                                .collect(),
+                            data: vec![(i + j) as u8; j * 3].into(),
+                        })
+                        .collect();
+                    Receipt::new(TxType::EIP1559, i % 5 != 0, 21_000 * (i as u64 + 1), logs)
+                })
+                .collect();
+            assert_eq!(
+                receipts_root_and_logs_bloom_parallel(&receipts, &crypto),
+                receipts_root_and_logs_bloom_sequential(&receipts, &crypto),
+                "receipts root or bloom differs for {count} receipts"
+            );
+        }
+    }
     use crate::constants::EMPTY_KECCAK_HASH;
     use crate::types::{BLOB_BASE_FEE_UPDATE_FRACTION, ELASTICITY_MULTIPLIER, INITIAL_BASE_FEE};
     use ethereum_types::H160;
