@@ -675,12 +675,13 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
             // 21000 intrinsic floor: this tx is only admitted once the frame-tx
             // intrinsic-gas fix prices it correctly.
             gas_limit: 100,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         }],
         signatures: vec![],
-        max_priority_fee_per_gas: 0,
-        max_fee_per_gas: 0,
+        max_priority_fee_per_gas: U256::from(0u64),
+        max_fee_per_gas: U256::from(0u64),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
@@ -850,6 +851,7 @@ async fn mempool_rejects_oversized_frame_data() {
         flags: 0x00,
         target: Some(Address::from_low_u64_be(0xCAFE)),
         gas_limit: 0,
+        state_gas_limit: 1_000_000,
         value: U256::zero(),
         data: payload,
     });
@@ -1053,6 +1055,7 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
                 target: Some(frame_tx_expiry_verifier()),
                 // Enough to reserve the EIP-7623 floor of the 8-byte deadline.
                 gas_limit: 1_000,
+                state_gas_limit: 1_000_000,
                 value: U256::zero(),
                 data: Bytes::from(data.to_vec()),
             },
@@ -1061,13 +1064,14 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
                 flags: APPROVE_EXECUTION_AND_PAYMENT,
                 target: Some(sender),
                 gas_limit: 100,
+                state_gas_limit: 1_000_000,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
         ],
         signatures: vec![],
-        max_priority_fee_per_gas: 0,
-        max_fee_per_gas: 0,
+        max_priority_fee_per_gas: U256::from(0u64),
+        max_fee_per_gas: U256::from(0u64),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
@@ -1785,6 +1789,10 @@ async fn setup_hegota_store_funded() -> Store {
 /// so `max_cost = gas_limit * max_fee_per_gas > 0`. The sender must be seeded
 /// with enough balance to cover it (use `setup_hegota_store_funded`).
 fn funded_frame_tx(max_fee_per_gas: u64, max_priority_fee_per_gas: u64) -> FrameTransaction {
+    let (max_fee_per_gas, max_priority_fee_per_gas) = (
+        U256::from(max_fee_per_gas),
+        U256::from(max_priority_fee_per_gas),
+    );
     let sender = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
     FrameTransaction {
         chain_id: 0,
@@ -1795,6 +1803,7 @@ fn funded_frame_tx(max_fee_per_gas: u64, max_priority_fee_per_gas: u64) -> Frame
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(sender),
             gas_limit: 100,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         }],
@@ -1895,12 +1904,13 @@ async fn mempool_rejects_underfunded_paymaster() {
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(phantom_sender),
             gas_limit: 100,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         }],
         signatures: vec![],
-        max_priority_fee_per_gas: 0,
-        max_fee_per_gas: 0,
+        max_priority_fee_per_gas: U256::from(0u64),
+        max_fee_per_gas: U256::from(0u64),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
@@ -1973,12 +1983,13 @@ async fn mempool_enforces_noncanonical_paymaster_limit() {
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(phantom_sender),
             gas_limit: 100,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         }],
         signatures: vec![],
-        max_priority_fee_per_gas: 0,
-        max_fee_per_gas: 0,
+        max_priority_fee_per_gas: U256::from(0u64),
+        max_fee_per_gas: U256::from(0u64),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
@@ -2049,12 +2060,13 @@ async fn mempool_rejects_second_frame_tx_same_sender_new_nonce() {
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(sender),
             gas_limit: 100,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         }],
         signatures: vec![],
-        max_priority_fee_per_gas: 0,
-        max_fee_per_gas: 0,
+        max_priority_fee_per_gas: U256::from(0u64),
+        max_fee_per_gas: U256::from(0u64),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
@@ -2293,12 +2305,13 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(phantom_sender),
             gas_limit: 100,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         }],
         signatures: vec![],
-        max_priority_fee_per_gas: 0,
-        max_fee_per_gas: 0,
+        max_priority_fee_per_gas: U256::from(0u64),
+        max_fee_per_gas: U256::from(0u64),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
@@ -2481,8 +2494,8 @@ async fn mempool_revalidation_evicts_invalid_frame_tx() {
     let deadline: u64 = 2000;
     let sender = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
     let mut expiry_tx = frame_tx_with_expiry(deadline);
-    expiry_tx.max_fee_per_gas = 1_000_000_000;
-    expiry_tx.max_priority_fee_per_gas = 1_000_000_000;
+    expiry_tx.max_fee_per_gas = U256::from(1_000_000_000u64);
+    expiry_tx.max_priority_fee_per_gas = U256::from(1_000_000_000u64);
     let tx = Transaction::FrameTransaction(expiry_tx);
     let tx_hash = blockchain
         .add_transaction_to_pool(tx)
@@ -3306,6 +3319,7 @@ mod p2p_serve_tests {
                 flags: 0x00,
                 target: Some(Address::from_low_u64_be(0x1234)),
                 gas_limit: 100_000,
+                state_gas_limit: 1_000_000,
                 value: U256::zero(),
                 data: bytes::Bytes::from_static(b"call_data"),
             }],
@@ -3315,8 +3329,8 @@ mod p2p_serve_tests {
                 msg: bytes::Bytes::new(),
                 signature: bytes::Bytes::from(vec![0u8; 65]),
             }],
-            max_priority_fee_per_gas: 1_000_000_000,
-            max_fee_per_gas: 30_000_000_000,
+            max_priority_fee_per_gas: U256::from(1_000_000_000u64),
+            max_fee_per_gas: U256::from(30_000_000_000u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
             ..Default::default()

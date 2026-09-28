@@ -44,12 +44,13 @@ fn frame_tx_with_blobs(n_blobs: usize) -> FrameTransaction {
             flags: 0x00,
             target: None,
             gas_limit: 0,
+            state_gas_limit: 1_000_000,
             value: Default::default(),
             data: Bytes::new(),
         }],
         signatures: vec![],
-        max_priority_fee_per_gas: 0,
-        max_fee_per_gas: 0,
+        max_priority_fee_per_gas: U256::from(0u64),
+        max_fee_per_gas: U256::from(0u64),
         max_fee_per_blob_gas: Default::default(),
         blob_versioned_hashes: (0..n_blobs).map(|_| H256::zero()).collect(),
         ..Default::default()
@@ -127,6 +128,7 @@ fn expiry_verifier_frame() -> Frame {
         flags: 0x00,
         target: Some(frame_tx_expiry_verifier()),
         gas_limit: 1_000,
+        state_gas_limit: 1_000_000,
         value: U256::zero(),
         data: Bytes::from(vec![0u8; 8]),
     }
@@ -138,6 +140,7 @@ fn self_verify_frame() -> Frame {
         flags: APPROVE_EXECUTION_AND_PAYMENT,
         target: Some(sender_addr()),
         gas_limit: 10_000,
+        state_gas_limit: 1_000_000,
         value: U256::zero(),
         data: Bytes::new(),
     }
@@ -149,6 +152,7 @@ fn only_verify_frame() -> Frame {
         flags: APPROVE_EXECUTION,
         target: Some(sender_addr()),
         gas_limit: 10_000,
+        state_gas_limit: 1_000_000,
         value: U256::zero(),
         data: Bytes::new(),
     }
@@ -160,6 +164,7 @@ fn pay_frame() -> Frame {
         flags: APPROVE_PAYMENT,
         target: Some(sender_addr()),
         gas_limit: 10_000,
+        state_gas_limit: 1_000_000,
         value: U256::zero(),
         data: Bytes::new(),
     }
@@ -171,6 +176,7 @@ fn deploy_frame() -> Frame {
         flags: 0x00,
         target: None,
         gas_limit: 50_000,
+        state_gas_limit: 1_000_000,
         value: U256::zero(),
         data: Bytes::from_static(b"deploy_bytecode"),
     }
@@ -182,8 +188,8 @@ fn base_frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
         frames,
         chain_id: 1,
         nonce: 42,
-        max_priority_fee_per_gas: 1_000_000_000,
-        max_fee_per_gas: 30_000_000_000,
+        max_priority_fee_per_gas: U256::from(1_000_000_000u64),
+        max_fee_per_gas: U256::from(30_000_000_000u64),
         ..Default::default()
     }
 }
@@ -309,6 +315,7 @@ fn prefix_rejection_unrecognized_shape() {
         flags: 0x00,
         target: None,
         gas_limit: 10_000,
+        state_gas_limit: 1_000_000,
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -330,6 +337,7 @@ fn prefix_rejection_deploy_not_first() {
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(sender_addr()),
             gas_limit: 5_000,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -398,6 +406,7 @@ fn prefix_rejection_wrong_scope_self_verify() {
         flags: APPROVE_EXECUTION,
         target: Some(sender_addr()),
         gas_limit: 10_000,
+        state_gas_limit: 1_000_000,
         value: U256::zero(),
         data: Bytes::new(),
     }]);
@@ -477,6 +486,7 @@ fn make_test_frame_tx() -> FrameTransaction {
                 flags: 0x03, // APPROVE_EXECUTION_AND_PAYMENT
                 target: Some(Address::from_low_u64_be(0xABCD)),
                 gas_limit: 100_000,
+                state_gas_limit: 1_000_000,
                 value: U256::zero(),
                 data: Bytes::from_static(b"verify_data"),
             },
@@ -485,6 +495,7 @@ fn make_test_frame_tx() -> FrameTransaction {
                 flags: 0x00,
                 target: Some(Address::from_low_u64_be(0x1234)),
                 gas_limit: 200_000,
+                state_gas_limit: 1_000_000,
                 value: U256::zero(),
                 data: Bytes::from_static(b"call_data"),
             },
@@ -495,8 +506,8 @@ fn make_test_frame_tx() -> FrameTransaction {
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; 65]),
         }],
-        max_priority_fee_per_gas: 1_000_000_000,
-        max_fee_per_gas: 30_000_000_000,
+        max_priority_fee_per_gas: U256::from(1_000_000_000u64),
+        max_fee_per_gas: U256::from(30_000_000_000u64),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
@@ -512,6 +523,7 @@ fn atomic_batch_flag_on_verify_frame_is_invalid() {
             flags: 0x04 | 0x03, // atomic batch + scope bits
             target: None,
             gas_limit: 21_000,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -520,6 +532,7 @@ fn atomic_batch_flag_on_verify_frame_is_invalid() {
             flags: 0x00,
             target: Some(Address::from_low_u64_be(0xCAFE)),
             gas_limit: 21_000,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -542,6 +555,7 @@ fn atomic_batch_followed_by_verify_frame_is_invalid() {
             flags: 0x04, // atomic batch
             target: Some(Address::from_low_u64_be(0xB0B)),
             gas_limit: 21_000,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -550,6 +564,7 @@ fn atomic_batch_followed_by_verify_frame_is_invalid() {
             flags: 0x03,
             target: None,
             gas_limit: 21_000,
+            state_gas_limit: 1_000_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -634,6 +649,10 @@ fn max_gas_takes_the_calldata_floor_when_it_exceeds_the_standard_limit() {
     tx.frames[1].data = Bytes::new();
     tx.frames[0].gas_limit = 100;
     tx.frames[1].gas_limit = 100;
+    // `standard_gas_limit` spans both dimensions, so the state budgets have to be
+    // small too for the data floor to be the binding quantity.
+    tx.frames[0].state_gas_limit = 0;
+    tx.frames[1].state_gas_limit = 0;
     assert!(tx.calldata_floor_total() > tx.standard_gas_limit());
     assert_eq!(tx.max_gas(), tx.calldata_floor_total());
     assert!(tx.validate_static_constraints().is_ok());
@@ -643,4 +662,55 @@ fn max_gas_takes_the_calldata_floor_when_it_exceeds_the_standard_limit() {
     assert!(tx.standard_gas_limit() > tx.calldata_floor_total());
     assert_eq!(tx.max_gas(), tx.standard_gas_limit());
     assert!(tx.validate_static_constraints().is_ok());
+}
+
+/// Cross-check ethrex's frame-transaction encoder against bytes produced by the
+/// reference implementation, taken verbatim from a filled spec fixture.
+///
+/// A self round-trip (encode then decode) cannot catch a layout disagreement,
+/// since both halves would share the same mistake. Decoding foreign bytes and
+/// requiring the re-encode to reproduce them exactly does catch it: this is what
+/// pins EIP-8141's `limits = [execution, state]` frame tuple and the nested
+/// `fees` list, which together took the payload from nine top-level fields to
+/// seven.
+#[test]
+fn reference_frame_tx_reencodes_byte_identically() {
+    // From `transfer_with_default_code.json`, filled at Bogota against the spec
+    // at EIP commit 060351456.
+    const REFERENCE_TX: &str = "06f8b6018094f6c3a9edc1afa0ad5b720e4d42e1437c43d3b3fff83ace010380c8830186a083061a808080ea028094f36afef4dcb45e52f80cb039335952f77cec8960c8830186a083061a8088016345785d8a000080f85cf85a0194f6c3a9edc1afa0ad5b720e4d42e1437c43d3b3ff80b8410134b0f36de64a70296d3a9e8ecbb8d3dc279986d4e5110df618949f9cf229338a6165431b1a501e0c78f29f35691f0528ccccafb4a65d92a2475d13bdea26bf62c3800780c0";
+
+    let raw = hex::decode(REFERENCE_TX).expect("valid hex");
+    let tx = Transaction::decode_canonical(&raw).expect("the reference bytes must decode");
+    assert!(matches!(tx, Transaction::FrameTransaction(_)));
+
+    let reencoded = tx.encode_canonical_to_vec();
+    assert_eq!(
+        hex::encode(&reencoded),
+        REFERENCE_TX,
+        "re-encoding must reproduce the reference bytes exactly"
+    );
+}
+
+#[test]
+fn diagnostic_reference_tx_signer_recovery() {
+    const REFERENCE_TX: &str = "06f8b6018094f6c3a9edc1afa0ad5b720e4d42e1437c43d3b3fff83ace010380c8830186a083061a808080ea028094f36afef4dcb45e52f80cb039335952f77cec8960c8830186a083061a8088016345785d8a000080f85cf85a0194f6c3a9edc1afa0ad5b720e4d42e1437c43d3b3ff80b8410134b0f36de64a70296d3a9e8ecbb8d3dc279986d4e5110df618949f9cf229338a6165431b1a501e0c78f29f35691f0528ccccafb4a65d92a2475d13bdea26bf62c3800780c0";
+    let raw = hex::decode(REFERENCE_TX).unwrap();
+    let tx = Transaction::decode_canonical(&raw).unwrap();
+    let Transaction::FrameTransaction(ft) = &tx else {
+        panic!("not a frame tx")
+    };
+    println!("DIAG sender          = {:#x}", ft.sender);
+    println!("DIAG sig_hash        = {:#x}", ft.compute_sig_hash());
+    println!("DIAG declared signer = {:?}", ft.signatures[0].signer);
+    println!("DIAG frames          = {}", ft.frames.len());
+    for (i, f) in ft.frames.iter().enumerate() {
+        println!(
+            "DIAG   frame[{i}] mode={} flags={:#x} gas={} state_gas={}",
+            f.mode, f.flags, f.gas_limit, f.state_gas_limit
+        );
+    }
+    println!(
+        "DIAG fees priority={} max={}",
+        ft.max_priority_fee_per_gas, ft.max_fee_per_gas
+    );
 }

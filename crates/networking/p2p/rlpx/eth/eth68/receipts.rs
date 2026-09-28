@@ -247,11 +247,13 @@ mod tests {
                 FrameReceipt {
                     status: FRAME_RECEIPT_STATUS_SUCCESS,
                     gas_used: 100000,
+                    state_gas_used: 0,
                     logs: vec![],
                 },
                 FrameReceipt {
                     status: FRAME_RECEIPT_STATUS_SUCCESS,
                     gas_used: 150000,
+                    state_gas_used: 0,
                     logs: vec![Log {
                         address: Address::from_low_u64_be(0xbeef),
                         topics: vec![],
@@ -307,6 +309,7 @@ mod tests {
             frame_receipts: Some(vec![FrameReceipt {
                 status: FRAME_RECEIPT_STATUS_SUCCESS,
                 gas_used: 29000,
+                state_gas_used: 0,
                 logs: vec![],
             }]),
         };

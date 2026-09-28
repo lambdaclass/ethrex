@@ -31,7 +31,7 @@ use ethrex_common::{
     Address, U256,
     types::{
         AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, FrameReceipt,
-        GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Log, Receipt, Transaction, TxKind,
+        GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind,
         Withdrawal, requests::Requests,
     },
 };
@@ -132,14 +132,15 @@ pub struct LEVM;
 /// execution report's `frame_results`. Returns `None` when the report carries
 /// no frame results.
 fn frame_receipts_from(
-    frame_results: Option<Vec<(u8, u64, Vec<Log>)>>,
+    frame_results: Option<Vec<ethrex_levm::errors::FrameResult>>,
 ) -> Option<Vec<FrameReceipt>> {
     frame_results.map(|results| {
         results
             .into_iter()
-            .map(|(status, gas_used, logs)| FrameReceipt {
+            .map(|(status, gas_used, state_gas_used, logs)| FrameReceipt {
                 status,
                 gas_used,
+                state_gas_used,
                 logs,
             })
             .collect()
@@ -275,7 +276,24 @@ pub fn check_2d_gas_allowance(
     block_gas_used_state: u64,
     block_gas_limit: u64,
 ) -> Result<(), EvmError> {
-    let tx_gas = tx.gas_limit();
+    // A frame transaction declares its two budgets separately, so each dimension
+    // reserves only what can be spent in it: the execution side mirrors the EIP-7825
+    // cap (`intrinsic + Σ limits.execution`, or the calldata floor, whichever binds),
+    // and the state side is the frames' total state budget. Reserving the combined
+    // figure in both dimensions would double-count every frame transaction.
+    let (regular_gas, state_gas) = match tx {
+        Transaction::FrameTransaction(frame_tx) => (
+            frame_tx
+                .mandatory_gas()
+                .saturating_add(frame_tx.data_cost())
+                .saturating_add(frame_tx.total_frame_execution_gas())
+                .max(frame_tx.calldata_floor_total()),
+            frame_tx
+                .total_frame_gas()
+                .saturating_sub(frame_tx.total_frame_execution_gas()),
+        ),
+        _ => (tx.gas_limit(), tx.gas_limit()),
+    };
     let regular_available = block_gas_limit.saturating_sub(block_gas_used_regular);
     let state_available = block_gas_limit.saturating_sub(block_gas_used_state);
 
@@ -283,7 +301,7 @@ pub fn check_2d_gas_allowance(
     // TX_MAX_GAS_LIMIT. The spec uses the full tx gas with no intrinsic
     // subtraction; intrinsic underfunding is rejected separately in transaction
     // validation, not by this inclusion check.
-    let regular_contrib = tx_gas.min(TX_MAX_GAS_LIMIT_AMSTERDAM);
+    let regular_contrib = regular_gas.min(TX_MAX_GAS_LIMIT_AMSTERDAM);
     if regular_contrib > regular_available {
         return Err(EvmError::Transaction(format!(
             "Gas allowance exceeded: regular dim worst-case {regular_contrib} > \
@@ -293,7 +311,7 @@ pub fn check_2d_gas_allowance(
     }
 
     // State dim: worst-case state contribution = full tx.gas.
-    let state_contrib = tx_gas;
+    let state_contrib = state_gas;
     if state_contrib > state_available {
         return Err(EvmError::Transaction(format!(
             "Gas allowance exceeded: state dim worst-case {state_contrib} > \
@@ -439,7 +457,9 @@ impl LEVM {
                 &report,
             ));
 
-            // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used
+            // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used.
+            // Frame and ordinary transactions report the same shape: the payer
+            // total across both gas dimensions.
             cumulative_gas_used += report.gas_spent;
 
             // EIP-8037 (Amsterdam+): block_gas_used = max(sum_regular, sum_state)
@@ -941,7 +961,9 @@ impl LEVM {
                 tx_since_last_flush += 1;
             }
 
-            // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used
+            // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used.
+            // Frame and ordinary transactions report the same shape: the payer
+            // total across both gas dimensions.
             cumulative_gas_used += report.gas_spent;
 
             // EIP-8037 (Amsterdam+): block_gas_used = max(sum_regular, sum_state)
@@ -3424,8 +3446,8 @@ impl LEVM {
             block_excess_blob_gas,
             block_blob_gas_used: block_header.blob_gas_used,
             tx_blob_hashes: tx.blob_versioned_hashes(),
-            tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
-            tx_max_fee_per_gas: tx.max_fee_per_gas().map(U256::from),
+            tx_max_priority_fee_per_gas: tx.max_priority_fee(),
+            tx_max_fee_per_gas: tx.max_fee_per_gas(),
             tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas(),
             tx_nonce: tx.nonce(),
             block_gas_limit: block_header.gas_limit,
@@ -3721,8 +3743,9 @@ impl LEVM {
     /// uses checked_mul/checked_add and halts on overflow. Saturating to
     /// `U256::MAX` here only makes the reservation larger, never smaller.
     fn frame_tx_reservation_ceiling(frame_tx: &ethrex_common::types::FrameTransaction) -> U256 {
-        let gas_cost =
-            U256::from(frame_tx.max_fee_per_gas).saturating_mul(U256::from(frame_tx.max_gas()));
+        let gas_cost = frame_tx
+            .max_fee_per_gas
+            .saturating_mul(U256::from(frame_tx.max_gas()));
         let blob_cost = U256::from(frame_tx.blob_versioned_hashes.len())
             .saturating_mul(U256::from(131072u64))
             .saturating_mul(frame_tx.max_fee_per_blob_gas);
@@ -3826,13 +3849,20 @@ impl LEVM {
     /// activation, clients must install..."). Idempotent: writes only when
     /// the existing code differs, so exactly one account update is produced
     /// (at the first Hegota block) and none afterwards.
+    ///
+    /// Only the code is installed. The account's nonce and balance are left
+    /// exactly as they were, so a previously nonexistent account keeps nonce
+    /// zero and any balance it held before the fork survives. That is what the
+    /// EIP specifies ("install the following ... runtime code") and what the
+    /// execution specs do; it differs from the genesis predeploys
+    /// (4788/2935/7002/7251), whose nonce 1 comes from the deployment
+    /// transaction that created them, not from a client-side install. Setting
+    /// nonce 1 here produced a different state root at the fork block from
+    /// every client that follows the spec.
     pub fn install_expiry_verifier_code(
         db: &mut GeneralizedDatabase,
         crypto: &dyn Crypto,
     ) -> Result<(), EvmError> {
-        // Predeploy convention (matches the genesis predeploys 4788/2935/7002/7251).
-        const PREDEPLOY_NONCE: u64 = 1;
-
         let current = db.get_account_code(EXPIRY_VERIFIER_PREDEPLOY.address)?;
         if current.code() == EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice() {
             return Ok(());
@@ -3842,18 +3872,17 @@ impl LEVM {
             crypto,
         );
         let code_hash = code.hash;
-        // Record BAL code/nonce changes if recording is active, so a BAL
-        // reconstructor reproduces the same post-state (it takes nonce from
-        // prestate otherwise).
+        // Record the BAL code change if recording is active, so a BAL
+        // reconstructor reproduces the same post-state. There is no nonce change
+        // to record: the nonce is untouched, and the reconstructor carries the
+        // pre-state nonce forward for an account whose only change is its code.
         if let Some(recorder) = db.bal_recorder_mut() {
             recorder.record_code_change(EXPIRY_VERIFIER_PREDEPLOY.address, code.code_bytes());
-            recorder.record_nonce_change(EXPIRY_VERIFIER_PREDEPLOY.address, PREDEPLOY_NONCE);
         }
         let acc = db
             .get_account_mut(EXPIRY_VERIFIER_PREDEPLOY.address)
             .map_err(EvmError::from)?;
         acc.info.code_hash = code_hash;
-        acc.info.nonce = PREDEPLOY_NONCE;
         db.codes.entry(code_hash).or_insert(code);
         Ok(())
     }
@@ -4245,13 +4274,13 @@ pub fn calculate_gas_price_for_tx(
         fee_per_gas += operator_fee_config.operator_fee_per_gas;
     }
 
-    if fee_per_gas > max_fee_per_gas {
+    if U256::from(fee_per_gas) > max_fee_per_gas {
         return Err(VMError::TxValidation(
             TxValidationError::InsufficientMaxFeePerGas,
         ));
     }
 
-    Ok(min(max_priority_fee + fee_per_gas, max_fee_per_gas).into())
+    Ok(min(max_priority_fee + fee_per_gas, max_fee_per_gas))
 }
 
 /// When basefee tracking is disabled  (ie. env.disable_base_fee = true; env.disable_block_gas_limit = true;)
@@ -4588,6 +4617,80 @@ mod bal_tests {
         ) -> Result<ethrex_common::types::CodeMetadata, DatabaseError> {
             Ok(ethrex_common::types::CodeMetadata { length: 0 })
         }
+    }
+
+    /// EIP-8141 installs the expiry verifier's *runtime code* at activation and
+    /// nothing else: an account that did not exist keeps nonce zero. The genesis
+    /// predeploys carry nonce 1 because a deployment transaction created them;
+    /// this one is written by the client, and the spec says code only. Getting
+    /// this wrong changes the fork block's state root against every other client.
+    #[test]
+    fn expiry_verifier_install_leaves_a_fresh_account_at_nonce_zero() {
+        let store = MockStore::new();
+        let mut db = GeneralizedDatabase::new(Arc::new(store));
+
+        LEVM::install_expiry_verifier_code(&mut db, &ethrex_crypto::NativeCrypto).unwrap();
+
+        let acc = db.get_account(EXPIRY_VERIFIER_PREDEPLOY.address).unwrap();
+        assert_eq!(acc.info.nonce, 0, "install must not touch the nonce");
+        assert_eq!(acc.info.balance, U256::zero());
+        assert_eq!(
+            db.get_account_code(EXPIRY_VERIFIER_PREDEPLOY.address)
+                .unwrap()
+                .code(),
+            EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice()
+        );
+    }
+
+    /// An account that already existed at the address keeps its nonce and
+    /// balance: the install replaces code and nothing more.
+    #[test]
+    fn expiry_verifier_install_preserves_existing_nonce_and_balance() {
+        let store = MockStore::new().with_account(
+            EXPIRY_VERIFIER_PREDEPLOY.address,
+            AccountState {
+                nonce: 7,
+                balance: U256::from(5_000u64),
+                code_hash: *EMPTY_KECCAK_HASH,
+                storage_root: H256::zero(),
+            },
+        );
+        let mut db = GeneralizedDatabase::new(Arc::new(store));
+
+        LEVM::install_expiry_verifier_code(&mut db, &ethrex_crypto::NativeCrypto).unwrap();
+
+        let acc = db.get_account(EXPIRY_VERIFIER_PREDEPLOY.address).unwrap();
+        assert_eq!(acc.info.nonce, 7);
+        assert_eq!(acc.info.balance, U256::from(5_000u64));
+        assert_eq!(
+            db.get_account_code(EXPIRY_VERIFIER_PREDEPLOY.address)
+                .unwrap()
+                .code(),
+            EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice()
+        );
+    }
+
+    /// Idempotent: a second call finds the code already in place and changes
+    /// nothing, so exactly one account update is ever produced for the install.
+    #[test]
+    fn expiry_verifier_install_is_idempotent() {
+        let store = MockStore::new();
+        let mut db = GeneralizedDatabase::new(Arc::new(store));
+
+        LEVM::install_expiry_verifier_code(&mut db, &ethrex_crypto::NativeCrypto).unwrap();
+        let first = db
+            .get_account(EXPIRY_VERIFIER_PREDEPLOY.address)
+            .unwrap()
+            .clone();
+        LEVM::install_expiry_verifier_code(&mut db, &ethrex_crypto::NativeCrypto).unwrap();
+        let second = db
+            .get_account(EXPIRY_VERIFIER_PREDEPLOY.address)
+            .unwrap()
+            .clone();
+
+        assert_eq!(first.info.nonce, second.info.nonce);
+        assert_eq!(first.info.code_hash, second.info.code_hash);
+        assert_eq!(second.info.nonce, 0);
     }
 
     #[test]
