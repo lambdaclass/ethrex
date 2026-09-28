@@ -627,6 +627,21 @@ L1 Committer options:
 
           [env: ETHREX_COMMITTER_REMOTE_SIGNER_PUBLIC_KEY=]
 
+      --committer.remote-signer-tls-keystore-file <PATH>
+          PKCS#12 keystore with the client certificate presented to the remote signer over TLS, for a Web3Signer that only accepts known clients.
+
+          [env: ETHREX_COMMITTER_REMOTE_SIGNER_TLS_KEYSTORE_FILE=]
+
+      --committer.remote-signer-tls-keystore-password-file <PATH>
+          File containing the password of the remote signer TLS keystore.
+
+          [env: ETHREX_COMMITTER_REMOTE_SIGNER_TLS_KEYSTORE_PASSWORD_FILE=]
+
+      --committer.remote-signer-tls-ca-cert-file <PATH>
+          PEM certificate to trust when verifying the remote signer, such as Web3Signer's self-signed certificate.
+
+          [env: ETHREX_COMMITTER_REMOTE_SIGNER_TLS_CA_CERT_FILE=]
+
       --l1.on-chain-proposer-address <ADDRESS>
           [env: ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=]
 
@@ -676,6 +691,21 @@ Proof coordinator options:
           Public key to request the remote signature from.
 
           [env: ETHREX_PROOF_COORDINATOR_REMOTE_SIGNER_PUBLIC_KEY=]
+
+      --proof-coordinator.remote-signer-tls-keystore-file <PATH>
+          PKCS#12 keystore with the client certificate presented to the remote signer over TLS, for a Web3Signer that only accepts known clients.
+
+          [env: ETHREX_PROOF_COORDINATOR_REMOTE_SIGNER_TLS_KEYSTORE_FILE=]
+
+      --proof-coordinator.remote-signer-tls-keystore-password-file <PATH>
+          File containing the password of the remote signer TLS keystore.
+
+          [env: ETHREX_PROOF_COORDINATOR_REMOTE_SIGNER_TLS_KEYSTORE_PASSWORD_FILE=]
+
+      --proof-coordinator.remote-signer-tls-ca-cert-file <PATH>
+          PEM certificate to trust when verifying the remote signer, such as Web3Signer's self-signed certificate.
+
+          [env: ETHREX_PROOF_COORDINATOR_REMOTE_SIGNER_TLS_CA_CERT_FILE=]
 
       --proof-coordinator.addr <IP_ADDRESS>
           Set it to 0.0.0.0 to allow connections from other machines.
