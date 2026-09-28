@@ -15,6 +15,11 @@
 ### 2026-09-28
 
 - Build the receipts' blooms and encodings in parallel for blocks with 128 receipts or more: the receipts root after the last transaction drops from 1.28 to 1.10 ms at the median and from 2.96 to 1.80 ms at p90 on mainnet [#7324](https://github.com/lambdaclass/ethrex/pull/7324)
+- Run the JUMPDEST analysis on 64-byte blocks without a branch that depends on the bytecode, using 16-lane table lookups (NEON, SSSE3), so it takes the same time on any code: the random-bytecode `test_jumpdest_analysis` blocks of execution-specs#3631 go from 38–54 to 570 MGas/s on Zen 2, and 1573 mainnet contracts are analyzed 6.1x faster [#7311](https://github.com/lambdaclass/ethrex/pull/7311)
+
+### 2026-09-22
+
+- Stop redoing work around the block pipeline on the engine path: the block access list is RLP-encoded once (the size metric used to re-encode and re-sort it) and the parent header the newPayload handler already fetched is passed into the pipeline instead of read again; executor time outside the pipeline timer 0.26 → 0.06 ms per block on Plataberget [#7300](https://github.com/lambdaclass/ethrex/pull/7300)
 
 ### 2026-09-14
 
