@@ -3064,10 +3064,19 @@ impl Store {
         block_hash: BlockHash,
         bal: &BlockAccessList,
     ) -> Result<(), StoreError> {
-        let key = block_hash.as_bytes().to_vec();
         let mut value = vec![];
         bal.encode(&mut value);
-        self.write(BLOCK_ACCESS_LISTS, key, value)
+        self.store_block_access_list_encoded(block_hash, value)
+    }
+
+    /// Store a block access list the caller has already RLP-encoded, so a caller
+    /// that also needs the encoded size does not encode it twice.
+    pub fn store_block_access_list_encoded(
+        &self,
+        block_hash: BlockHash,
+        encoded: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        self.write(BLOCK_ACCESS_LISTS, block_hash.as_bytes().to_vec(), encoded)
     }
 
     /// Returns the block access list for a given block hash, if stored.
