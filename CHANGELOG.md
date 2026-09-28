@@ -14,6 +14,7 @@
 
 ### 2026-09-28
 
+- Stop cloning every payload's block before execution; the `debug_getBadBlocks` record is rebuilt from the payload only when execution rejects the block [#7302](https://github.com/lambdaclass/ethrex/pull/7302)
 - Run the JUMPDEST analysis on 64-byte blocks without a branch that depends on the bytecode, using 16-lane table lookups (NEON, SSSE3), so it takes the same time on any code: the random-bytecode `test_jumpdest_analysis` blocks of execution-specs#3631 go from 38–54 to 570 MGas/s on Zen 2, and 1573 mainnet contracts are analyzed 6.1x faster [#7311](https://github.com/lambdaclass/ethrex/pull/7311)
 
 ### 2026-09-22
