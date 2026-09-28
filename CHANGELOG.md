@@ -15,6 +15,11 @@
 ### 2026-09-28
 
 - Add a bloom filter to the headers and bodies tables and rewrite them once in the background, so the known-block lookup at the start of every `engine_newPayload` stops reading every level of the headers table: 2.78 ms to 10 µs at the median on mainnet [#7323](https://github.com/lambdaclass/ethrex/pull/7323)
+- Run the JUMPDEST analysis on 64-byte blocks without a branch that depends on the bytecode, using 16-lane table lookups (NEON, SSSE3), so it takes the same time on any code: the random-bytecode `test_jumpdest_analysis` blocks of execution-specs#3631 go from 38–54 to 570 MGas/s on Zen 2, and 1573 mainnet contracts are analyzed 6.1x faster [#7311](https://github.com/lambdaclass/ethrex/pull/7311)
+
+### 2026-09-22
+
+- Stop redoing work around the block pipeline on the engine path: the block access list is RLP-encoded once (the size metric used to re-encode and re-sort it) and the parent header the newPayload handler already fetched is passed into the pipeline instead of read again; executor time outside the pipeline timer 0.26 → 0.06 ms per block on Plataberget [#7300](https://github.com/lambdaclass/ethrex/pull/7300)
 
 ### 2026-09-14
 
