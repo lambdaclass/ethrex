@@ -2266,6 +2266,11 @@ async fn handle_incoming_message(
                     .collect();
 
                 'txs: for (tx_idx, tx_hash) in cells_msg.transaction_hashes.iter().enumerate() {
+                    // `flush_pending_cell_requests` only asks for pooled txs, so a missing
+                    // bundle means the tx left the pool (mined, replaced, evicted) while
+                    // the request was in flight. Its cells are no longer wanted and cannot
+                    // be verified, so they are dropped unstored. The peer is not at fault,
+                    // so this does not cost the connection.
                     let Some(bundle) = mempool.get_blobs_bundle(*tx_hash).unwrap_or(None) else {
                         continue;
                     };
@@ -2765,11 +2770,20 @@ async fn flush_pending_cell_requests(state: &mut Established) -> Result<(), Peer
     // triggers (announce retrigger, tx-body response, custody sweep) and by
     // every connection, so without this the same cells are re-requested after
     // another peer already delivered them.
+    let mempool = &state.blockchain.mempool;
     let mut all_hashes: Vec<H256> = Vec::new();
     let mut all_masks: Vec<u128> = Vec::new();
     for (hashes, mask) in &pending {
         for &h in hashes {
-            let missing = mask & !state.blockchain.mempool.available_cell_mask(h);
+            // Cells are verified against the pooled tx's sidecar commitments and
+            // proofs, so a tx the pool never admitted, or has since dropped, leaves
+            // any answer unverifiable: the `Cells` handler would have to skip it.
+            // The tx-body trigger queues every requested blob hash before knowing
+            // whether the pool took it, so this is where rejected txs are filtered.
+            if !mempool.contains_tx(h).unwrap_or(false) {
+                continue;
+            }
+            let missing = mask & !mempool.available_cell_mask(h);
             if missing != 0 {
                 all_hashes.push(h);
                 all_masks.push(missing);
