@@ -2245,6 +2245,7 @@ impl<'a> VM<'a> {
             // The access charge precedes the balance check: a frame that cannot pay it halts
             // with its whole limit, even when the sender also cannot fund `value`.
             let (frame_success, frame_gas_used, frame_logs) = if frame_entry_gas > frame.gas_limit {
+                frame_error = Some(ExceptionalHalt::OutOfGas.into());
                 self.substate.revert_backup();
                 self.restore_cache_state()?;
                 (false, frame.gas_limit, Vec::new())
@@ -2257,6 +2258,7 @@ impl<'a> VM<'a> {
                 self.restore_cache_state()?;
                 (false, frame_entry_gas, Vec::new())
             } else if frame_entry_unaffordable {
+                frame_error = Some(ExceptionalHalt::OutOfGas.into());
                 self.substate.revert_backup();
                 self.restore_cache_state()?;
                 (false, frame.gas_limit, Vec::new())
@@ -2297,7 +2299,8 @@ impl<'a> VM<'a> {
                             (false, frame_entry_gas.saturating_add(gas_used), Vec::new())
                         }
                     }
-                    Err(_) => {
+                    Err(error) => {
+                        frame_error = Some(error);
                         self.substate.revert_backup();
                         self.restore_cache_state()?;
                         (false, frame.gas_limit, Vec::new())
