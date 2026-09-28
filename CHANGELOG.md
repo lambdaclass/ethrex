@@ -20,6 +20,10 @@
 
 - Stop redoing work around the block pipeline on the engine path: the block access list is RLP-encoded once (the size metric used to re-encode and re-sort it) and the parent header the newPayload handler already fetched is passed into the pipeline instead of read again; executor time outside the pipeline timer 0.26 → 0.06 ms per block on Plataberget [#7300](https://github.com/lambdaclass/ethrex/pull/7300)
 
+### 2026-09-15
+
+- Stop creating OS threads per block in the execution pipeline. Execution now runs on the calling thread and the merkleizer on a persistent pool, and a block with no transactions merkleizes inline and skips the speculative warmer entirely. On a chain of near-empty blocks the pipeline's fixed cost dominates: block processing measured 1.34 ms, of which 0.39 ms was the merkleizer's start delay, the gap between the start of the phase and that thread's first instruction. Also adds `[METRIC] NEWPAYLOAD` and `[METRIC] ENGINE_RPC` lines, which split the engine `newPayload` path into payload decoding, JSON parsing, JWT verification, the pre-execution checks and execution; none of that was measured before [#7281](https://github.com/lambdaclass/ethrex/pull/7281)
+
 ### 2026-09-14
 
 - Stop copying the stateless input one byte at a time, hash the block access list once instead of twice, and route `validate_public_keys` through the injected `Crypto`: −8.81% guest instructions on mainnet block 25453112 [#7277](https://github.com/lambdaclass/ethrex/pull/7277)
