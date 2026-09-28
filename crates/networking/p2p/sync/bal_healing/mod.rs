@@ -11,9 +11,10 @@ pub(crate) use apply::store_code_sync;
 use std::sync::Arc;
 
 use ethrex_common::{
-    H256,
-    constants::EMPTY_BLOCK_ACCESS_LIST_HASH,
+    H256, InvalidBlockError,
+    constants::{AMSTERDAM_MAX_CODE_SIZE, EMPTY_BLOCK_ACCESS_LIST_HASH},
     types::{BlockHeader, block_access_list::BlockAccessList},
+    validate_bal_code_sizes,
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_storage::Store;
@@ -35,6 +36,8 @@ use crate::{
 pub enum ApplyBalError {
     #[error("BAL ordering invalid: {0}")]
     BadOrdering(String),
+    #[error("BAL code change too large: {0}")]
+    CodeTooLarge(InvalidBlockError),
     #[error("BAL hash mismatch: expected {expected:?}, got {actual:?}")]
     BadHash { expected: H256, actual: H256 },
     #[error("parent hash mismatch: expected {expected_parent:?}, actual {actual_parent:?}")]
@@ -64,6 +67,7 @@ pub fn try_apply_bal_block(
 ) -> Result<H256, ApplyBalError> {
     bal.validate_ordering()
         .map_err(ApplyBalError::BadOrdering)?;
+    validate_bal_code_sizes(bal, AMSTERDAM_MAX_CODE_SIZE).map_err(ApplyBalError::CodeTooLarge)?;
 
     let expected_bal_hash = header
         .block_access_list_hash
