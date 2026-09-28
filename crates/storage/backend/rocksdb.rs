@@ -1,7 +1,7 @@
 use crate::api::tables::{
     ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS,
-    BODIES, CANONICAL_BLOCK_HASHES, FULLSYNC_HEADERS, HEADERS, RECEIPTS_V2, STORAGE_FLATKEYVALUE,
-    STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+    BODIES, CANONICAL_BLOCK_HASHES, FULLSYNC_HEADERS, HEADERS, MISC_VALUES, RECEIPTS_V2,
+    STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
 };
 use crate::api::{
     PrefixResult, StorageBackend, StorageLockedView, StorageReadView, StorageWriteBatch,
@@ -11,12 +11,13 @@ use crate::error::StoreError;
 use rocksdb::DBWithThreadMode;
 use rocksdb::checkpoint::Checkpoint;
 use rocksdb::{
-    BlockBasedOptions, Cache, ColumnFamilyDescriptor, MergeOperands, MultiThreaded, Options,
-    SnapshotWithThreadMode, WriteBatch,
+    BlockBasedOptions, BottommostLevelCompaction, Cache, ColumnFamilyDescriptor, CompactOptions,
+    MergeOperands, MultiThreaded, Options, SnapshotWithThreadMode, WriteBatch,
 };
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::{info, warn};
 
 use crate::store::tx_locations_merge;
@@ -42,6 +43,10 @@ pub struct RocksDBBackend {
     /// Retained DB `Options` when RocksDB statistics are enabled, so block-cache
     /// hit/miss tickers can be read for observability. `None` when disabled.
     db_opts: Option<std::sync::Mutex<Options>>,
+    /// The one-time bloom-filter rewrite while it runs: a stop flag and its thread.
+    /// `Drop` stops and joins it, because the thread holds its own reference to
+    /// the database.
+    block_data_rewrite: std::sync::Mutex<Option<(Arc<AtomicBool>, std::thread::JoinHandle<()>)>>,
 }
 
 // `rocksdb::Options` does not implement `Debug`, so we derive it manually and
@@ -195,6 +200,13 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB blocks
+                    // Both tables are keyed by block hash, and every `engine_newPayload`
+                    // first asks whether its block is already stored. For a new block
+                    // the answer is no, and without a filter RocksDB can only establish
+                    // that by reading a data block from every level (~2.7 ms on a
+                    // mainnet headers table). See `rewrite_block_data_with_bloom_filters`
+                    // for databases created before the filter existed.
+                    block_opts.set_bloom_filter(10.0, false);
                     configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
@@ -338,6 +350,7 @@ impl RocksDBBackend {
         Ok(Self {
             db: Arc::new(db),
             db_opts: stats_enabled.then(|| std::sync::Mutex::new(opts)),
+            block_data_rewrite: std::sync::Mutex::new(None),
         })
     }
 
@@ -364,8 +377,101 @@ impl RocksDBBackend {
     }
 }
 
+/// `MISC_VALUES` key recording that the headers and bodies tables were rewritten
+/// once after they gained a bloom filter.
+const BLOCK_DATA_BLOOM_REWRITE_KEY: &[u8] = b"block_data_bloom_rewrite";
+
+impl RocksDBBackend {
+    /// Rewrites the headers and bodies tables once, in the background, so the
+    /// files written before those tables had a bloom filter get one.
+    ///
+    /// RocksDB only builds a filter into the files it writes after the filter is
+    /// configured, and the headers table of a synced node is almost never
+    /// compacted again, so without this pass its existing files would keep
+    /// answering lookups for unknown hashes the slow way. The pass forces the
+    /// bottommost level too: a plain manual compaction leaves that level, where
+    /// nearly all the data sits, untouched. A marker in `MISC_VALUES` makes it
+    /// run once; on a fresh database it finishes at once. If the node stops
+    /// midway, the marker is missing and the next start runs it again.
+    pub fn rewrite_block_data_with_bloom_filters(&self) {
+        let done = self
+            .begin_read()
+            .and_then(|read| read.get(MISC_VALUES, BLOCK_DATA_BLOOM_REWRITE_KEY))
+            .map(|marker| marker.is_some())
+            .unwrap_or(false);
+        if done {
+            return;
+        }
+        let db = self.db.clone();
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = stop.clone();
+        let spawned = std::thread::Builder::new()
+            .name("block_data_rewrite".to_string())
+            .spawn(move || {
+                let start = std::time::Instant::now();
+                info!("Rewriting the headers and bodies tables once to add bloom filters");
+                let mut options = CompactOptions::default();
+                options.set_exclusive_manual_compaction(false);
+                options.set_bottommost_level_compaction(BottommostLevelCompaction::Force);
+                for table in [HEADERS, BODIES] {
+                    if thread_stop.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    let Some(cf) = db.cf_handle(table) else {
+                        warn!("Column family {table} not found; skipping the bloom-filter rewrite");
+                        return;
+                    };
+                    db.compact_range_cf_opt(&cf, None::<&[u8]>, None::<&[u8]>, &options);
+                }
+                // A compaction cut short by shutdown returns like a finished one, so
+                // only record the pass when nothing asked it to stop.
+                if thread_stop.load(Ordering::Relaxed) {
+                    return;
+                }
+                let Some(misc) = db.cf_handle(MISC_VALUES) else {
+                    warn!("Column family {MISC_VALUES} not found; the bloom-filter rewrite will run again");
+                    return;
+                };
+                match db.put_cf(&misc, BLOCK_DATA_BLOOM_REWRITE_KEY, [1u8]) {
+                    Ok(()) => info!(
+                        elapsed_s = start.elapsed().as_secs(),
+                        "Headers and bodies tables rewritten with bloom filters"
+                    ),
+                    Err(e) => warn!("Failed to record the bloom-filter rewrite, it will run again: {e}"),
+                }
+            });
+        match spawned {
+            Ok(handle) => {
+                if let Ok(mut slot) = self.block_data_rewrite.lock() {
+                    *slot = Some((stop, handle));
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to start the bloom-filter rewrite of the headers and bodies tables: {e}"
+                )
+            }
+        }
+    }
+}
+
 impl Drop for RocksDBBackend {
     fn drop(&mut self) {
+        // Stop the one-time rewrite first: its thread holds a reference to the
+        // database, and a manual compaction only returns early once background work
+        // is cancelled. Joining it gives this backend the last reference back.
+        let rewrite = self
+            .block_data_rewrite
+            .get_mut()
+            .ok()
+            .and_then(|slot| slot.take());
+        if let Some((stop, handle)) = rewrite {
+            if !handle.is_finished() {
+                stop.store(true, Ordering::Relaxed);
+                self.db.cancel_all_background_work(true);
+            }
+            let _ = handle.join();
+        }
         // When the last reference to the db is dropped, stop background threads
         // See https://github.com/facebook/rocksdb/issues/11349
         if let Some(db) = Arc::get_mut(&mut self.db) {
@@ -718,6 +824,124 @@ mod tests {
     use ethrex_common::H256;
     use ethrex_common::types::{BlockHash, BlockNumber, Index};
     use ethrex_rlp::decode::RLPDecode;
+
+    /// Total size of the bloom-filter blocks in a column family's SST files.
+    fn filter_block_bytes(db: &DBWithThreadMode<MultiThreaded>, table: &str) -> u64 {
+        let cf = db.cf_handle(table).unwrap();
+        let properties = db
+            .property_value_cf(&cf, "rocksdb.aggregated-table-properties")
+            .unwrap()
+            .unwrap_or_default();
+        properties
+            .split(';')
+            .find_map(|field| field.trim().strip_prefix("filter block size="))
+            .and_then(|size| size.trim().parse().ok())
+            .unwrap_or(0)
+    }
+
+    /// Headers written by a build without the bloom filter get one after the
+    /// one-time rewrite, keep their data, and the rewrite records its marker.
+    #[test]
+    fn block_data_rewrite_adds_bloom_filters_to_existing_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = H256::from_low_u64_be(0x7319);
+        {
+            // What older builds wrote: a headers table with no filter.
+            let mut opts = Options::default();
+            opts.create_if_missing(true);
+            opts.create_missing_column_families(true);
+            let db =
+                DBWithThreadMode::<MultiThreaded>::open_cf(&opts, dir.path(), [HEADERS]).unwrap();
+            let cf = db.cf_handle(HEADERS).unwrap();
+            db.put_cf(&cf, key.as_bytes(), b"header").unwrap();
+            db.flush_cf(&cf).unwrap();
+            // Settle the file in the bottommost level, where a synced node's
+            // headers sit and a plain manual compaction would leave them.
+            db.compact_range_cf(&cf, None::<&[u8]>, None::<&[u8]>);
+            assert_eq!(
+                filter_block_bytes(&db, HEADERS),
+                0,
+                "older files carry no filter"
+            );
+        }
+
+        let backend =
+            RocksDBBackend::open(dir.path(), crate::store::MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES)
+                .unwrap();
+        backend.rewrite_block_data_with_bloom_filters();
+        let marker_recorded = || {
+            backend
+                .begin_read()
+                .unwrap()
+                .get(MISC_VALUES, BLOCK_DATA_BLOOM_REWRITE_KEY)
+                .unwrap()
+                .is_some()
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !marker_recorded() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the rewrite never finished"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        assert!(
+            filter_block_bytes(&backend.db, HEADERS) > 0,
+            "rewritten files carry a filter"
+        );
+        let header = backend
+            .begin_read()
+            .unwrap()
+            .get(HEADERS, key.as_bytes())
+            .unwrap();
+        assert_eq!(header.as_deref(), Some(&b"header"[..]));
+    }
+
+    /// Dropping the backend while the rewrite runs stops and joins it: the database
+    /// reopens at once in the same process, and a pass cut short is not recorded.
+    #[test]
+    fn dropping_the_backend_stops_the_block_data_rewrite() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut opts = Options::default();
+            opts.create_if_missing(true);
+            opts.create_missing_column_families(true);
+            let db =
+                DBWithThreadMode::<MultiThreaded>::open_cf(&opts, dir.path(), [HEADERS]).unwrap();
+            let cf = db.cf_handle(HEADERS).unwrap();
+            // Enough data that the rewrite is still running when the backend drops.
+            for i in 0..300_000u64 {
+                db.put_cf(&cf, H256::from_low_u64_be(i).as_bytes(), [7u8; 64])
+                    .unwrap();
+            }
+            db.flush_cf(&cf).unwrap();
+            db.compact_range_cf(&cf, None::<&[u8]>, None::<&[u8]>);
+        }
+
+        let backend =
+            RocksDBBackend::open(dir.path(), crate::store::MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES)
+                .unwrap();
+        backend.rewrite_block_data_with_bloom_filters();
+        drop(backend);
+
+        // Without the join, the rewrite thread would still hold the database lock.
+        let reopened =
+            RocksDBBackend::open(dir.path(), crate::store::MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES)
+                .expect("the database reopens right after the backend drops");
+        let recorded = reopened
+            .begin_read()
+            .unwrap()
+            .get(MISC_VALUES, BLOCK_DATA_BLOOM_REWRITE_KEY)
+            .unwrap()
+            .is_some();
+        if recorded {
+            assert!(
+                filter_block_bytes(&reopened.db, HEADERS) > 0,
+                "a recorded pass left every file with a filter"
+            );
+        }
+    }
 
     /// End-to-end guard for the associative merge operator at the real RocksDB
     /// layer: write many operands for the same key, each flushed into its own

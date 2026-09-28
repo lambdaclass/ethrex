@@ -2313,6 +2313,7 @@ impl Store {
                     )?);
                     crate::migrations::run_pending_migrations(rocksdb.as_ref(), &db_path, v)?;
                     rocksdb.drop_obsolete_cfs(&path);
+                    rocksdb.rewrite_block_data_with_bloom_filters();
                     let backend: Arc<dyn crate::api::StorageBackend> = rocksdb;
                     return Self::from_backend(
                         backend,
@@ -2335,6 +2336,7 @@ impl Store {
             EngineType::RocksDB => {
                 let rocksdb = RocksDBBackend::open(&path, config.rocksdb_block_cache_size)?;
                 rocksdb.drop_obsolete_cfs(&path);
+                rocksdb.rewrite_block_data_with_bloom_filters();
                 let backend: Arc<dyn StorageBackend> = Arc::new(rocksdb);
                 Self::from_backend(
                     backend,
