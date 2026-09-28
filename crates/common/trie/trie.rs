@@ -600,7 +600,8 @@ impl Trie {
             // Unwraping here won't panic as our in_memory trie DB won't fail
             trie.insert(path, value).unwrap();
         }
-
+        #[cfg(feature = "std")]
+        hash_top_subtries_in_parallel(&trie.root, crypto, 0);
         trie.hash_no_commit(crypto)
     }
 
@@ -1089,9 +1090,74 @@ impl From<Trie> for ProofTrie {
     }
 }
 
+/// Branch levels, counted from the root, whose children are hashed in parallel.
+#[cfg(feature = "std")]
+const PARALLEL_HASH_LEVELS: usize = 4;
+
+/// Hashes the subtries under the top branch levels on all cores, caching each
+/// hash in its node reference, so the root hash computed afterwards only has to
+/// combine them.
+///
+/// Every leaf of a transactions or receipts trie holds a whole encoded
+/// transaction or receipt, so hashing the leaves is most of the cost of those
+/// roots, and subtries hash independently. Index keys are skewed: every index
+/// from 128 to 255 sits under the path `8, 1`, so one subtrie two levels down
+/// holds half the leaves of a typical block. Going four levels deep splits it.
+#[cfg(feature = "std")]
+fn hash_top_subtries_in_parallel(node_ref: &NodeRef, crypto: &dyn Crypto, level: usize) {
+    use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+    let NodeRef::Node(node, _) = node_ref else {
+        return;
+    };
+    if level >= PARALLEL_HASH_LEVELS {
+        return;
+    }
+    match node.as_ref() {
+        Node::Branch(branch) => branch.choices.par_iter().for_each(|child| {
+            if child.is_valid() {
+                hash_top_subtries_in_parallel(child, crypto, level + 1);
+                child.compute_hash_ref(crypto);
+            }
+        }),
+        Node::Extension(extension) => {
+            hash_top_subtries_in_parallel(&extension.child, crypto, level)
+        }
+        Node::Leaf(_) => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The parallel subtrie hashing in `compute_hash_from_unsorted_iter` must not
+    /// change a root: compare it with hashing the same trie sequentially, for
+    /// index-keyed tries of every shape a block produces, up to past the 128 and
+    /// 256 index boundaries where the key length changes.
+    #[test]
+    fn ordered_trie_root_matches_sequential_hashing() {
+        use ethrex_rlp::encode::RLPEncode;
+        for count in [
+            0usize, 1, 2, 15, 16, 17, 127, 128, 129, 255, 256, 257, 300, 1000,
+        ] {
+            let leaves: Vec<(Vec<u8>, Vec<u8>)> = (0..count)
+                .map(|i| {
+                    // Values of varied size, some large like big transactions.
+                    let len = 1 + (i * 37) % 700 + if i % 97 == 0 { 20_000 } else { 0 };
+                    (i.encode_to_vec(), vec![(i % 251) as u8; len])
+                })
+                .collect();
+            let mut sequential = Trie::stateless();
+            for (path, value) in leaves.clone() {
+                sequential.insert(path, value).unwrap();
+            }
+            assert_eq!(
+                Trie::compute_hash_from_unsorted_iter(leaves.into_iter(), &NativeCrypto),
+                sequential.hash_no_commit(&NativeCrypto),
+                "root differs for {count} leaves"
+            );
+        }
+    }
     use ethrex_crypto::keccak::keccak_hash;
 
     // Pins the hardcoded `EMPTY_TRIE_HASH` to `keccak256(RLP_NULL)` so a typo in the
