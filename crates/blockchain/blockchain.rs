@@ -1047,6 +1047,16 @@ impl Blockchain {
             None
         };
 
+        // Recover every sender once, on all cores, before the warmer and the
+        // executor start. Both need them, and when each recovered them itself the
+        // two parallel passes raced over the same transactions at the same moment;
+        // once the warmer's speculative execution filled the pool, the executor's
+        // pass could only finish after those long tasks did. With the senders
+        // cached here both read them in place. A failure is left to the executor,
+        // which recovers again and reports it exactly as before.
+        #[cfg(feature = "rayon")]
+        let _ = block.body.get_transactions_with_sender(&NativeCrypto);
+
         // Each thread that captures `bal` needs its own Arc clone (cheap pointer bump).
         #[cfg(feature = "rayon")]
         let bal_warmer = bal.clone();

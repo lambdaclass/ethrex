@@ -1251,6 +1251,22 @@ impl Transaction {
             .copied()
     }
 
+    /// The sender, if it is known without recovering it: carried explicitly by
+    /// frame transactions, or already recovered by an earlier [`Self::sender`].
+    pub fn cached_sender(&self) -> Option<Address> {
+        let sender_cache = match self {
+            Transaction::FrameTransaction(tx) => return Some(tx.sender),
+            Transaction::LegacyTransaction(tx) => &tx.sender_cache,
+            Transaction::EIP2930Transaction(tx) => &tx.sender_cache,
+            Transaction::EIP1559Transaction(tx) => &tx.sender_cache,
+            Transaction::EIP4844Transaction(tx) => &tx.sender_cache,
+            Transaction::EIP7702Transaction(tx) => &tx.sender_cache,
+            Transaction::PrivilegedL2Transaction(tx) => &tx.sender_cache,
+            Transaction::FeeTokenTransaction(tx) => &tx.sender_cache,
+        };
+        sender_cache.get().copied()
+    }
+
     /// The bytes that were signed, plus the 65-byte `r || s || v` signature.
     ///
     /// `Ok(None)` for transactions that carry an explicit sender and no signature
