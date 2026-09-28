@@ -25,10 +25,8 @@ pub struct Receipts68 {
 /// it). Each receipt is encoded as its EIP-2718 consensus byte form
 /// (`tx_type || rlp(payload)` for typed, `rlp(payload)` for legacy) wrapped in
 /// an RLP byte-string for typed receipts. This reproduces the historical
-/// `ReceiptWithBloom` wire bytes for every non-frame receipt while letting frame
-/// receipts carry their EIP-8141 `[cumulative_gas_used, payer, [frame_receipt]]`
-/// payload, so an eth/68 peer reconstructs the same bytes the receipts trie was
-/// built from.
+/// `ReceiptWithBloom` wire bytes, so an eth/68 peer reconstructs the same bytes
+/// the receipts trie was built from.
 #[derive(Debug, Clone)]
 struct ReceiptItem68(Receipt);
 
@@ -129,8 +127,7 @@ impl RLPxMessage for Receipts68 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethrex_common::types::{FRAME_RECEIPT_STATUS_SUCCESS, FrameReceipt, Log, ReceiptWithBloom};
-    use ethrex_common::{Address, Bytes as CommonBytes};
+    use ethrex_common::types::{Log, ReceiptWithBloom};
 
     fn sample_nonframe_receipts() -> Vec<Vec<Receipt>> {
         vec![
@@ -144,16 +141,12 @@ mod tests {
                         topics: vec![],
                         data: CommonBytes::from_static(b"legacy"),
                     }],
-                    payer: None,
-                    frame_receipts: None,
                 },
                 Receipt {
                     tx_type: TxType::EIP1559,
                     succeeded: false,
                     cumulative_gas_used: 42000,
                     logs: vec![],
-                    payer: None,
-                    frame_receipts: None,
                 },
             ],
             vec![Receipt {
@@ -165,11 +158,10 @@ mod tests {
                     topics: vec![],
                     data: CommonBytes::from_static(b"blob"),
                 }],
-                payer: None,
-                frame_receipts: None,
             }],
         ]
     }
+    use ethrex_common::{Address, Bytes as CommonBytes};
 
     /// The eth/68 wire bytes for non-frame receipts must be IDENTICAL to the
     /// historical `Vec<Vec<ReceiptWithBloom>>` encoding, so existing eth/68 peers
@@ -199,28 +191,6 @@ mod tests {
         assert_eq!(new_buf, old_buf);
     }
 
-    /// A single non-frame receipt wire item equals `Bytes(encode_inner_with_bloom(&ethrex_crypto::NativeCrypto))`
-    /// for typed receipts, confirming the per-item wrap is unchanged.
-    #[test]
-    fn nonframe_item_wire_equals_bytes_inner_with_bloom() {
-        let receipt = Receipt {
-            tx_type: TxType::EIP1559,
-            succeeded: true,
-            cumulative_gas_used: 12345,
-            logs: vec![],
-            payer: None,
-            frame_receipts: None,
-        };
-        let mut item_buf = Vec::new();
-        ReceiptItem68(receipt.clone()).encode(&mut item_buf);
-
-        let mut expected = Vec::new();
-        Bytes::from(receipt.encode_inner_with_bloom(&ethrex_crypto::NativeCrypto))
-            .encode(&mut expected);
-
-        assert_eq!(item_buf, expected);
-    }
-
     /// Full message round-trip for non-frame receipts.
     #[test]
     fn nonframe_message_roundtrips() {
@@ -231,102 +201,5 @@ mod tests {
         let decoded = Receipts68::decode(&buf).unwrap();
         assert_eq!(decoded.get_id(), 3);
         assert_eq!(decoded.get_receipts(), receipts);
-    }
-
-    /// Frame receipts now survive eth/68 with payer + frame_receipts intact, and
-    /// their wire item carries the EIP-8141 consensus payload (matching the trie).
-    #[test]
-    fn frame_receipt_roundtrips_over_eth68() {
-        let frame = Receipt {
-            tx_type: TxType::Frame,
-            succeeded: true,
-            cumulative_gas_used: 250000,
-            logs: vec![],
-            payer: Some(Address::from_low_u64_be(0x1234)),
-            frame_receipts: Some(vec![
-                FrameReceipt {
-                    status: FRAME_RECEIPT_STATUS_SUCCESS,
-                    gas_used: 100000,
-                    logs: vec![],
-                },
-                FrameReceipt {
-                    status: FRAME_RECEIPT_STATUS_SUCCESS,
-                    gas_used: 150000,
-                    logs: vec![Log {
-                        address: Address::from_low_u64_be(0xbeef),
-                        topics: vec![],
-                        data: CommonBytes::from_static(b"frame"),
-                    }],
-                },
-            ]),
-        };
-        let receipts = vec![vec![frame.clone()]];
-        let msg = Receipts68::new(9, receipts);
-        let mut buf = Vec::new();
-        msg.encode(&mut buf).unwrap();
-        let decoded = Receipts68::decode(&buf).unwrap();
-        let decoded_frame = &decoded.get_receipts()[0][0];
-
-        assert_eq!(decoded_frame.tx_type, TxType::Frame);
-        assert_eq!(decoded_frame.payer, frame.payer);
-        assert_eq!(decoded_frame.frame_receipts, frame.frame_receipts);
-        assert_eq!(decoded_frame.cumulative_gas_used, 250000);
-
-        // The per-item wire bytes equal the consensus / trie bytes wrapped as an
-        // RLP byte-string (frame is typed, prefix 0x06).
-        let mut item_buf = Vec::new();
-        ReceiptItem68(frame.clone()).encode(&mut item_buf);
-        let mut expected = Vec::new();
-        Bytes::from(frame.encode_inner_with_bloom(&ethrex_crypto::NativeCrypto))
-            .encode(&mut expected);
-        assert_eq!(item_buf, expected);
-    }
-
-    /// Mixed block (non-frame + frame receipts) round-trips, exercising the
-    /// per-item length tracking in the list decoder.
-    #[test]
-    fn mixed_receipts_roundtrip() {
-        let nonframe = Receipt {
-            tx_type: TxType::EIP1559,
-            succeeded: true,
-            cumulative_gas_used: 21000,
-            logs: vec![Log {
-                address: Address::from_low_u64_be(1),
-                topics: vec![],
-                data: CommonBytes::from_static(b"x"),
-            }],
-            payer: None,
-            frame_receipts: None,
-        };
-        let frame = Receipt {
-            tx_type: TxType::Frame,
-            succeeded: true,
-            cumulative_gas_used: 50000,
-            logs: vec![],
-            payer: Some(Address::from_low_u64_be(2)),
-            frame_receipts: Some(vec![FrameReceipt {
-                status: FRAME_RECEIPT_STATUS_SUCCESS,
-                gas_used: 29000,
-                logs: vec![],
-            }]),
-        };
-        let legacy = Receipt {
-            tx_type: TxType::Legacy,
-            succeeded: false,
-            cumulative_gas_used: 100,
-            logs: vec![],
-            payer: None,
-            frame_receipts: None,
-        };
-        let receipts = vec![vec![nonframe.clone(), frame.clone(), legacy.clone()]];
-        let msg = Receipts68::new(11, receipts);
-        let mut buf = Vec::new();
-        msg.encode(&mut buf).unwrap();
-        let decoded = Receipts68::decode(&buf).unwrap();
-        let block = &decoded.get_receipts()[0];
-        assert_eq!(block.len(), 3);
-        assert_eq!(block[0], nonframe);
-        assert_eq!(block[1], frame);
-        assert_eq!(block[2], legacy);
     }
 }

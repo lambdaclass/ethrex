@@ -347,8 +347,6 @@ async fn test_store_block_receipt(store: Store) {
         succeeded: true,
         cumulative_gas_used: 1747,
         logs: vec![],
-        payer: None,
-        frame_receipts: None,
     };
     let block_number = 6;
     let index = 4;

@@ -318,23 +318,17 @@ impl TxBroadcaster {
             .iter()
             .map(|tx| tx.transaction().clone())
             .filter(|tx| {
-                // Blob (EIP-4844) and frame (EIP-8141) transactions have large
-                // bodies, so they are announced by hash only (never full-body
-                // broadcast), mirroring the EIP-4844 propagation policy.
-                !matches!(tx, Transaction::EIP4844Transaction { .. })
-                    && !matches!(tx, Transaction::FrameTransaction(_))
-                    && !tx.is_privileged()
+                // Blob (EIP-4844) transactions have large bodies, so they are
+                // announced by hash only (never full-body broadcast).
+                !matches!(tx, Transaction::EIP4844Transaction { .. }) && !tx.is_privileged()
             })
             .collect::<Vec<Transaction>>();
 
         // Transactions announced by hash only (not full-body): blob (EIP-4844)
-        // and frame (EIP-8141) transactions.
+        // transactions.
         let announce_only_txs = txs_to_broadcast
             .iter()
-            .filter(|tx| {
-                matches!(tx.transaction(), Transaction::EIP4844Transaction { .. })
-                    || matches!(tx.transaction(), Transaction::FrameTransaction(_))
-            })
+            .filter(|tx| matches!(tx.transaction(), Transaction::EIP4844Transaction { .. }))
             .cloned()
             .collect::<Vec<MempoolTransaction>>();
 

@@ -273,13 +273,7 @@ fn get_cells_does_not_serve_a_private_transaction() {
         ..Default::default()
     });
     mempool
-        .add_transaction_no_broadcast(
-            tx_hash,
-            sender,
-            MempoolTransaction::new(tx, sender),
-            None,
-            None,
-        )
+        .add_transaction_no_broadcast(tx_hash, sender, MempoolTransaction::new(tx, sender), None)
         .expect("add private tx");
     mempool
         .store_cells(tx_hash, 1, vec![(0, 0, Box::new([0xAAu8; BYTES_PER_CELL]))])
@@ -395,7 +389,7 @@ fn add_blob_tx_with_bundle(
             .expect("add bundle");
     }
     bc.mempool
-        .add_transaction(hash, sender, mtx, None, None)
+        .add_transaction(hash, sender, mtx, None)
         .expect("add to mempool");
     tx
 }

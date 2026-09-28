@@ -7399,8 +7399,6 @@ mod backfill_write_tests {
             succeeded: true,
             cumulative_gas_used: 21_000,
             logs: vec![],
-            payer: None,
-            frame_receipts: None,
         }
     }
 

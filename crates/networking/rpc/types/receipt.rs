@@ -4,8 +4,8 @@ use ethrex_common::{
     evm::calculate_create_address,
     serde_utils,
     types::{
-        BlockHash, BlockHeader, BlockNumber, FrameReceipt, Log, Receipt, Transaction, TxKind,
-        TxType, bloom_from_logs,
+        BlockHash, BlockHeader, BlockNumber, Log, Receipt, Transaction, TxKind, TxType,
+        bloom_from_logs,
     },
 };
 use ethrex_crypto::NativeCrypto;
@@ -24,32 +24,6 @@ pub struct RpcReceipt {
     pub tx_info: RpcReceiptTxInfo,
     #[serde(flatten)]
     pub block_info: RpcReceiptBlockInfo,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub payer: Option<Address>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub frame_receipts: Option<Vec<RpcFrameReceipt>>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RpcFrameReceipt {
-    /// EIP-8141 frame status code: 0 = failure, 1 = success, 3 = skipped
-    /// (atomic-batch failure). Serialized as a hex-encoded byte.
-    #[serde(with = "serde_utils::u8::hex_str")]
-    pub status: u8,
-    #[serde(with = "serde_utils::u64::hex_str")]
-    pub gas_used: u64,
-    pub logs: Vec<RpcLogInfo>,
-}
-
-impl From<FrameReceipt> for RpcFrameReceipt {
-    fn from(fr: FrameReceipt) -> Self {
-        Self {
-            status: fr.status,
-            gas_used: fr.gas_used,
-            logs: fr.logs.into_iter().map(RpcLogInfo::from).collect(),
-        }
-    }
 }
 
 impl RpcReceipt {
@@ -72,18 +46,11 @@ impl RpcReceipt {
             ));
             log_index += 1;
         }
-        let payer = receipt.payer;
-        let frame_receipts = receipt
-            .frame_receipts
-            .clone()
-            .map(|frs| frs.into_iter().map(RpcFrameReceipt::from).collect());
         Self {
             receipt: receipt.into(),
             logs,
             tx_info,
             block_info,
-            payer,
-            frame_receipts,
         }
     }
 }
@@ -285,8 +252,6 @@ mod tests {
                     topics: vec![],
                     data: Bytes::from_static(b"strawberry"),
                 }],
-                payer: None,
-                frame_receipts: None,
             },
             RpcReceiptTxInfo {
                 transaction_hash: H256::zero(),
@@ -330,8 +295,6 @@ mod tests {
                     topics: vec![],
                     data: Bytes::new(),
                 }],
-                payer: None,
-                frame_receipts: None,
             },
             RpcReceiptTxInfo {
                 transaction_hash: H256::zero(),

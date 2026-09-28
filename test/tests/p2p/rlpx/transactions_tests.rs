@@ -73,7 +73,7 @@ fn add_mempool_tx(bc: &Blockchain, nonce: u64, data_len: usize) -> H256 {
     let mtx = MempoolTransaction::new(tx, sender);
     let hash = mtx.hash(&NativeCrypto);
     bc.mempool
-        .add_transaction(hash, sender, mtx, None, None)
+        .add_transaction(hash, sender, mtx, None)
         .expect("add to mempool");
     hash
 }
@@ -142,7 +142,7 @@ fn add_blob_tx_with_bundle(
             .expect("add bundle");
     }
     bc.mempool
-        .add_transaction(hash, sender, mtx, None, None)
+        .add_transaction(hash, sender, mtx, None)
         .expect("add to mempool");
     tx
 }

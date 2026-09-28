@@ -945,61 +945,18 @@ impl Blockchain {
                 continue;
             }
 
-            // EIP-8141 fork gating: drop frame transactions that reached the payload
-            // builder before Hegota has activated. These must never be included in a
-            // block until the fork is live.
-            if head_tx.tx_type() == TxType::Frame
-                && !chain_config.is_hegota_activated(context.payload.header.timestamp)
-            {
-                debug!("Skipping frame transaction before Hegota fork: {}", tx_hash);
-                txs.pop();
-                self.remove_transaction_from_pool(&tx_hash)?;
-                continue;
-            }
-
-            // EIP-8141 expiry: drop frame txs whose
-            // expiry deadline is behind the block being built. Deterministic
-            // for this payload timestamp, so remove from the pool as well.
-            if let Transaction::FrameTransaction(frame_tx) = &*head_tx.tx
-                && frame_tx
-                    .expiry_deadline()
-                    .is_some_and(|deadline| deadline < context.payload.header.timestamp)
-            {
-                debug!("Skipping expired frame transaction: {}", tx_hash);
-                txs.pop();
-                self.remove_transaction_from_pool(&tx_hash)?;
-                continue;
-            }
-
-            let is_frame = head_tx.tx_type() == TxType::Frame;
-
             match self.apply_tx_to_payload(head_tx, context) {
                 Ok(()) => txs.shift()?,
                 Err(e) => {
-                    // Frame-tx failures are deterministic (signatures bind the
-                    // whole tx) EXCEPT nonce mismatches, which are transient
-                    // queue-ordering artifacts — keep those pooled for a later
-                    // block, mirroring how regular txs are treated.
-                    //
-                    // Regular txs are likewise kept pooled on failure, since the
-                    // usual cause is a transient queue-ordering/nonce/balance
-                    // artifact that a later block resolves. But a
-                    // DETERMINISTICALLY-invalid regular tx (intrinsic gas below
-                    // the minimum or the calldata floor, or initcode over the
-                    // size cap) can never become valid at its nonce; keeping it
+                    // Txs are kept pooled on failure, since the usual cause is a
+                    // transient queue-ordering/nonce/balance artifact that a later
+                    // block resolves. But a DETERMINISTICALLY-invalid tx (intrinsic
+                    // gas below the minimum or the calldata floor, or initcode over
+                    // the size cap) can never become valid at its nonce; keeping it
                     // pooled lets it re-occupy the sender's queue head on every
-                    // build and starve that sender's other txs indefinitely.
-                    // Evict those too.
-                    let evict = if is_frame {
-                        !is_nonce_mismatch(&e)
-                    } else {
-                        is_deterministic_invalid(&e)
-                    };
-                    if evict {
-                        // Neutral wording on purpose: the two branches evict for
-                        // different reasons (a frame tx for any non-nonce-mismatch
-                        // failure, a regular tx only for a deterministic one), so
-                        // naming either reason here would mislabel the other.
+                    // build and starve that sender's other txs indefinitely. Evict
+                    // those.
+                    if is_deterministic_invalid(&e) {
                         debug!("Evicting transaction {tx_hash} from the pool: {e}");
                         self.remove_transaction_from_pool(&tx_hash)?;
                     }
@@ -1196,9 +1153,9 @@ impl Blockchain {
         // proof per blob) is invalid at Osaka — EIP-7594 requires cell proofs (v1) and there is no
         // upgrade path — so including it would make getPayloadV5 emit a wrong-format
         // BlobsBundleV2. That mismatch is deterministic and permanent, so drop the tx from the
-        // pool (like the frame-tx fork gates in `fill_transactions`) rather than skip-and-retry it
-        // every block, where it would also block later nonces from the same sender. Dropping it
-        // also stops other blob reads (P2P pooled-tx serving) from returning the stale sidecar;
+        // pool rather than skip-and-retry it every block, where it would also block later nonces
+        // from the same sender. Dropping it also stops other blob reads (P2P pooled-tx serving)
+        // from returning the stale sidecar;
         // the `engine_getBlobsV2/V3` read path is tracked separately (`ethrex-getblobs-v2-legacy-proof`).
         // The version/Osaka checks are structural (no KZG), so this needs no `c-kzg` feature.
         // (Explicit builds carry no sidecar, so `bundle` is `None` and this is a no-op.)
@@ -1337,20 +1294,6 @@ impl Blockchain {
         context.payload.header.logs_bloom = bloom_from_logs(&logs, &NativeCrypto);
         Ok(())
     }
-}
-
-/// Returns true if `e` represents a transaction nonce mismatch.
-///
-/// The VM surfaces this as `TxValidationError::NonceMismatch` which gets
-/// stringified through `EvmError::Transaction(String)` →
-/// `ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(String))`.
-/// There is no typed variant to match at the `ChainError` level, so we detect
-/// it by the stable Display substring. Used to keep gapped-nonce frame txs
-/// pooled instead of evicting them: a nonce gap is transient because the
-/// `TransactionQueue` feeds the lowest pooled nonce without comparing to the
-/// account nonce, so the tx becomes valid once earlier nonces are included.
-fn is_nonce_mismatch(e: &ChainError) -> bool {
-    e.to_string().contains("Nonce mismatch")
 }
 
 /// Whether a tx failed with an error that recurs at the same nonce for as long as
@@ -1808,36 +1751,6 @@ mod tests {
         assert!(block.header.withdrawals_root.is_some());
         ethrex_common::types::validate_block_body(&block.header, &block.body, &NativeCrypto)
             .expect("produced block must pass validate_block_body");
-    }
-
-    #[test]
-    fn nonce_mismatch_detected_from_chain_error() {
-        // Build the ChainError through the REAL production conversion path so a
-        // change to the TxValidationError/VMError Display strings breaks this
-        // test instead of silently breaking `is_nonce_mismatch` (which keys off
-        // the "Nonce mismatch" substring). Path:
-        // TxValidationError::NonceMismatch -> VMError -> EvmError::Transaction
-        // (via From, which stringifies) -> ChainError::InvalidBlock.
-        use ethrex_levm::errors::{TxValidationError, VMError};
-        let nonce_err: ChainError =
-            EvmError::from(VMError::TxValidation(TxValidationError::NonceMismatch {
-                expected: 5,
-                actual: 7,
-            }))
-            .into();
-        assert!(
-            is_nonce_mismatch(&nonce_err),
-            "is_nonce_mismatch must match the real NonceMismatch Display; got: {nonce_err}"
-        );
-        // A different validation error must NOT match, also via the real path.
-        let other: ChainError = EvmError::from(VMError::TxValidation(
-            TxValidationError::InsufficientAccountFunds,
-        ))
-        .into();
-        assert!(
-            !is_nonce_mismatch(&other),
-            "is_nonce_mismatch must not match unrelated errors; got: {other}"
-        );
     }
 
     #[test]
