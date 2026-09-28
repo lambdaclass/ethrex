@@ -1286,6 +1286,9 @@ async fn try_execute_payload(
     if context.blockchain.is_reorg_in_progress() {
         return Ok(PayloadStatus::syncing());
     }
+    // Set when the block is re-executed only to rebuild evicted state for a block we had
+    // already accepted: one on our canonical chain, at or below our head.
+    let mut reexecuting_canonical_block = false;
     // Fast path: if we already have this block's header AND its state is reachable,
     // we know it has been fully validated previously and can reply VALID (with a
     // witness if requested) without re-execution.
@@ -1321,6 +1324,8 @@ async fn try_execute_payload(
         if !parent_reachable {
             return payload_status_for_existing_block(&block, context, make_witness).await;
         }
+        reexecuting_canonical_block = block_number <= storage.get_latest_block_number()?
+            && storage.get_canonical_block_hash_sync(block_number)? == Some(block_hash);
         // Fall through ; `add_block` below will re-execute and rebuild the layer.
     }
 
@@ -1387,6 +1392,17 @@ async fn try_execute_payload(
             debug!(%block_hash, "Parent state not found, returning SYNCING and triggering sync");
             syncer.sync_to_head(block_hash);
             Ok(PayloadStatus::syncing())
+        }
+        // A block already on our canonical chain was validated when it joined it, so a
+        // failed re-execution means the parent state we rebuilt for it is wrong, not that
+        // the block is. Recording it as bad would make us reject our own canonical chain
+        // and everything built on it. Answer as for any known block whose state we
+        // cannot rebuild, as the fast path above does.
+        Err(error @ (ChainError::InvalidBlock(_) | ChainError::EvmError(_)))
+            if reexecuting_canonical_block =>
+        {
+            error!(%block_hash, %block_number, "Re-executing a canonical block failed, keeping it: {error}");
+            payload_status_for_existing_block(&bad_block_candidate, context, make_witness).await
         }
         Err(ChainError::InvalidBlock(error)) => {
             warn!(%block_hash, %block_number, "Error executing block: {error}");
