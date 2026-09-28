@@ -14,6 +14,7 @@
 
 ### 2026-09-28
 
+- Recover a block's senders once, alongside the payload's transactions root, instead of in two racing passes after it: about 0.8 ms less before the first transaction at the median and 1.2 to 1.6 ms less at p90 on mainnet [#7325](https://github.com/lambdaclass/ethrex/pull/7325)
 - Run the JUMPDEST analysis on 64-byte blocks without a branch that depends on the bytecode, using 16-lane table lookups (NEON, SSSE3), so it takes the same time on any code: the random-bytecode `test_jumpdest_analysis` blocks of execution-specs#3631 go from 38–54 to 570 MGas/s on Zen 2, and 1573 mainnet contracts are analyzed 6.1x faster [#7311](https://github.com/lambdaclass/ethrex/pull/7311)
 
 ### 2026-09-22

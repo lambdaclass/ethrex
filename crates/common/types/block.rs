@@ -21,7 +21,7 @@ use ethrex_rlp::{
 };
 use ethrex_trie::Trie;
 #[cfg(feature = "rayon")]
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 
@@ -340,13 +340,29 @@ impl BlockBody {
         &self,
         crypto: &dyn Crypto,
     ) -> Result<Vec<(&Transaction, Address)>, CryptoError> {
+        // Every sender already known (the block pipeline recovers them before it
+        // starts the warmer and the executor): read them in place. A parallel pass
+        // here would gain nothing and, on a pool busy with long tasks, could only
+        // finish once those did.
+        if let Some(known) = self
+            .transactions
+            .iter()
+            .map(|tx| tx.cached_sender().map(|sender| (tx, sender)))
+            .collect::<Option<Vec<_>>>()
+        {
+            return Ok(known);
+        }
         // Recovering addresses is computationally expensive.
         // Computing them in parallel greatly reduces execution time.
+        // One transaction per task: only some of them need a recovery (the rest
+        // hit the signer cache), so tasks differ a lot in cost, and single
+        // transactions let an idle thread take the next expensive one.
         // Without rayon, use sequential iteration
         #[cfg(feature = "rayon")]
         return self
             .transactions
             .par_iter()
+            .with_max_len(1)
             .map(|tx| Ok((tx, tx.sender(crypto)?)))
             .collect::<Result<Vec<(&Transaction, Address)>, CryptoError>>();
 
@@ -1116,6 +1132,42 @@ mod test {
                 .unwrap(),
         );
         assert_eq!(transactions_root, expected_root);
+    }
+
+    #[test]
+    fn senders_recovered_once_are_read_back_unchanged() {
+        let crypto = ethrex_crypto::NativeCrypto;
+        let raw = hex!(
+            "f86e81fa843127403882f61894db8d964741c53e55df9c2d4e9414c6c96482874e870aa87bee538000808360306ca03aa421df67a101c45ff9cb06ce28f518a5d8d8dbb76a79361280071909650a27a05a447ff053c4ae601cfe81859b58d5603f2d0a73481c50f348089032feb0b073"
+        );
+        let decode = || Transaction::decode_canonical(&raw).unwrap();
+        // Recovered on its own decoded copy, so the body's copies start unrecovered.
+        let expected = decode().sender(&crypto).unwrap();
+        let body = BlockBody {
+            transactions: vec![decode(), decode(), decode()],
+            ommers: vec![],
+            withdrawals: None,
+        };
+        assert!(
+            body.transactions
+                .iter()
+                .all(|tx| tx.cached_sender().is_none())
+        );
+
+        // Only the first transaction's sender known: the rest are still recovered.
+        body.transactions[0].sender(&crypto).unwrap();
+        let partly_known = body.get_transactions_with_sender(&crypto).unwrap();
+        assert!(partly_known.iter().all(|(_, sender)| *sender == expected));
+
+        // All known now, so the next call reads them back in place.
+        assert!(
+            body.transactions
+                .iter()
+                .all(|tx| tx.cached_sender() == Some(expected))
+        );
+        let all_known = body.get_transactions_with_sender(&crypto).unwrap();
+        assert_eq!(all_known.len(), 3);
+        assert!(all_known.iter().all(|(_, sender)| *sender == expected));
     }
 
     #[test]
