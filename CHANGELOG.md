@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-09-28
+
+- Add a bloom filter to the headers and bodies tables and rewrite them once in the background, so the known-block lookup at the start of every `engine_newPayload` stops reading every level of the headers table: 2.78 ms to 10 µs at the median on mainnet [#7323](https://github.com/lambdaclass/ethrex/pull/7323)
+
 ### 2026-09-14
 
 - Stop copying the stateless input one byte at a time, hash the block access list once instead of twice, and route `validate_public_keys` through the injected `Crypto`: −8.81% guest instructions on mainnet block 25453112 [#7277](https://github.com/lambdaclass/ethrex/pull/7277)
