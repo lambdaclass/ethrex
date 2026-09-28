@@ -1013,4 +1013,97 @@ mod test {
         let code = vec![0x60, 0x60, 0x60, 0x40, 0x52 /* ... */];
         assert!(!is_eip7702_delegation(&code));
     }
+
+    // On these targets `compute_jumpdests` runs `by_block`, so the scan it replaces only
+    // runs here, as the reference: both must give the same bitmap.
+    #[cfg(any(
+        target_arch = "aarch64",
+        all(target_arch = "x86_64", target_feature = "ssse3")
+    ))]
+    mod by_block_against_the_scan {
+        use super::*;
+
+        fn assert_same_jumpdests(code: &[u8]) {
+            let mut want = vec![0; code.len().div_ceil(8)];
+            let mut got = want.clone();
+            let want_any = jumpdests_by_opcode(code, &mut want);
+            let got_any = by_block::jumpdests(code, &mut got);
+            assert_eq!((got_any, got), (want_any, want), "code {code:02x?}");
+        }
+
+        /// One or two bytes at every offset of codes whose lengths straddle the 16-byte
+        /// groups and 64-byte blocks, so every PUSH below crosses each boundary, and is cut
+        /// short by the end of the code.
+        #[test]
+        fn matches_around_group_and_block_boundaries() {
+            // STOP, JUMPDEST, the shortest PUSHes, the ones that fill a group with their
+            // immediates or come a byte short or over, and the longest ones.
+            const BYTES: [u8; 9] = [
+                0x00,
+                OP_JUMPDEST,
+                OP_PUSH1,
+                OP_PUSH1 + 1,
+                OP_PUSH1 + 14,
+                OP_PUSH1 + 15,
+                OP_PUSH1 + 16,
+                OP_PUSH32 - 1,
+                OP_PUSH32,
+            ];
+            let lengths = [
+                1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 96, 127, 128, 129, 193,
+            ];
+            // A JUMPDEST filler exposes any immediate taken for an opcode or the other way
+            // round. A PUSH1 filler makes where each block's walk starts depend on every
+            // byte before it.
+            for filler in [OP_JUMPDEST, OP_PUSH1] {
+                for len in lengths {
+                    for at in 0..len {
+                        for first in BYTES {
+                            for second in [None].into_iter().chain(BYTES.map(Some)) {
+                                let mut code = vec![filler; len];
+                                code[at] = first;
+                                if let (Some(second), Some(byte)) = (second, code.get_mut(at + 1)) {
+                                    *byte = second;
+                                }
+                                assert_same_jumpdests(&code);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /// Random code up to 4 KiB long, over byte mixes that make the scan's branches
+        /// unpredictable.
+        #[test]
+        fn matches_on_random_code() {
+            // xorshift64, so every run checks the same inputs.
+            let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+            let mut next = move || {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state
+            };
+            let jumpdest_and_pushes: Vec<u8> = std::iter::once(OP_JUMPDEST)
+                .chain(OP_PUSH1..=OP_PUSH32)
+                .collect();
+            let all_bytes: Vec<u8> = (0..=u8::MAX).collect();
+            let mixes: [&[u8]; 4] = [
+                &[0x00, OP_JUMPDEST, OP_PUSH1],
+                &[OP_JUMPDEST, OP_PUSH1, OP_PUSH1 + 1],
+                &jumpdest_and_pushes,
+                &all_bytes,
+            ];
+            for mix in mixes {
+                for _ in 0..200 {
+                    let len = (next() % 4096) as usize;
+                    let code: Vec<u8> = (0..len)
+                        .map(|_| mix[(next() % mix.len() as u64) as usize])
+                        .collect();
+                    assert_same_jumpdests(&code);
+                }
+            }
+        }
+    }
 }
