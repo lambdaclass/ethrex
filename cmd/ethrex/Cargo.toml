@@ -102,7 +102,12 @@ c-kzg = [
   # it the handler compiles its no-KZG branch and serves null for every cell
   "ethrex-rpc/c-kzg",
 ]
-metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics", "ethrex-p2p/metrics"]
+metrics = [
+  "ethrex-blockchain/metrics",
+  "ethrex-l2?/metrics",
+  "ethrex-p2p/metrics",
+  "ethrex-storage/metrics",
+]
 rocksdb = ["ethrex-storage/rocksdb", "ethrex-p2p/rocksdb", "ethrex-l2?/rocksdb"]
 jemalloc = ["dep:tikv-jemallocator"]
 jemalloc_profiling = [

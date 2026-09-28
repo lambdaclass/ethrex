@@ -127,7 +127,7 @@ async fn resolve_floor(
 /// pivot.
 ///
 /// Also used by snap sync to record the true frontier at the end of each cycle.
-pub(crate) async fn reconcile_frontier(store: &Store) -> Result<BlockNumber, SyncError> {
+pub async fn reconcile_frontier(store: &Store) -> Result<BlockNumber, SyncError> {
     let head = store.get_latest_block_number()?;
     if head == 0 {
         return Ok(0);
@@ -334,7 +334,7 @@ async fn backfill_step(
                 recorded,
                 actual, "Reconciled backfill frontier to the lowest block with full chain data"
             );
-            store.update_earliest_block_number(actual).await?;
+            store.set_earliest_block_number(actual).await?;
         }
         *reconciled = true;
     }

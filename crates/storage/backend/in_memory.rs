@@ -125,6 +125,23 @@ impl StorageReadView for InMemoryReadTx {
         Ok(Box::new(results.into_iter()))
     }
 
+    fn full_scan(
+        &self,
+        table: &str,
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
+        let table_data = self.snapshot.get(table).cloned().unwrap_or_default();
+
+        let mut entries: Vec<(Vec<u8>, Vec<u8>)> = table_data.into_iter().collect();
+        entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+
+        let results: Vec<PrefixResult> = entries
+            .into_iter()
+            .map(|(k, v)| Ok((k.into_boxed_slice(), v.into_boxed_slice())))
+            .collect();
+
+        Ok(Box::new(results.into_iter()))
+    }
+
     fn first_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError> {
         let Some(table_data) = self.snapshot.get(table) else {
             return Ok(None);
@@ -192,6 +209,7 @@ impl StorageWriteBatch for InMemoryWriteTx {
 
         let db_mut = Arc::make_mut(&mut *db);
         if let Some(table_ref) = db_mut.get_mut(table) {
+            // FxHashMap has no native range — iterate and filter.
             table_ref.retain(|k, _| !(k.as_slice() >= start && k.as_slice() < end));
         }
         Ok(())

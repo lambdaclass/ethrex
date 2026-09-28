@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use ethrex_blockchain::Blockchain;
-use ethrex_common::{Address, U256, types::Block};
+use ethrex_common::{Address, U256};
 use ethrex_l2_sdk::{calldata::encode_calldata, get_last_committed_batch};
 use ethrex_rpc::{EthClient, clients::Overrides};
 use ethrex_storage::Store;
@@ -275,14 +275,11 @@ impl StateUpdater {
 
         debug!("Last committed batch block number: {last_l2_committed_block_number}");
 
-        let last_l2_committed_block_body = self
-            .store
-            .get_block_body(*last_l2_committed_block_number)
-            .await?
-            .ok_or(StateUpdaterError::MissingData(
-                "No block body found for the last committed batch block number".to_string(),
-            ))?;
-
+        // Header only: a block's hash is its header's hash (`Block::hash`), so loading
+        // the body here bought nothing and made this path fail on a pruned block. With
+        // `--history.retention` the body of an old committed block can legitimately be
+        // gone while its canonical header remains, and demanding it would return
+        // `MissingData` and stall the sequencer's status transition.
         let last_l2_committed_block_header = self
             .store
             .get_block_header(*last_l2_committed_block_number)?
@@ -290,10 +287,7 @@ impl StateUpdater {
                 "No block header found for the last committed batch block number".to_string(),
             ))?;
 
-        let last_l2_committed_batch_block =
-            Block::new(last_l2_committed_block_header, last_l2_committed_block_body);
-
-        let last_l2_committed_batch_block_hash = last_l2_committed_batch_block.hash();
+        let last_l2_committed_batch_block_hash = last_l2_committed_block_header.hash();
 
         info!(
             "Reverting uncommitted state to the last committed batch block {last_l2_committed_block_number} with hash {last_l2_committed_batch_block_hash:#x}"

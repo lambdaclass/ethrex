@@ -143,7 +143,7 @@ mod tests {
             .await
             .expect("load genesis");
         store
-            .update_earliest_block_number(earliest)
+            .set_earliest_block_number(earliest)
             .await
             .expect("set earliest");
         store

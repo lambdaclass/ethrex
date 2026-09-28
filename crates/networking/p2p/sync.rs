@@ -12,7 +12,7 @@ mod healing;
 pub mod snap2;
 mod snap_sync;
 
-pub use backfill::{BackfillConfig, run_history_backfill};
+pub use backfill::{BackfillConfig, reconcile_frontier, run_history_backfill};
 
 /// Test-only re-export of the full-sync resume-point predicate so integration tests can
 /// assert that canonical-but-stateless blocks are not treated as already-executed.

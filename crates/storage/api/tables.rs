@@ -118,6 +118,15 @@ pub const STATE_HISTORY: &str = "state_history";
 /// - [`Vec<u8>`] = `serde_json::to_vec(&witness)`
 pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 
+/// Block hashes indexed by number column family: [`Vec<u8>`] => [`Vec<u8>`]
+/// - [`Vec<u8>`] = `block_number.to_be_bytes() ++ block_hash.as_bytes()` (40 bytes)
+/// - [`Vec<u8>`] = empty
+///
+/// Used by the history pruner to enumerate every known hash at a given
+/// block number — canonical and non-canonical. BE encoding so
+/// lexicographic prefix iteration matches numeric block order.
+pub const BLOCK_HASHES_BY_NUMBER: &str = "block_hashes_by_number";
+
 /// Block access lists column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `block_hash.as_bytes().to_vec()`
 /// - [`Vec<u8>`] = RLP-encoded `BlockAccessList`
@@ -129,7 +138,7 @@ pub const BLOCK_ACCESS_LISTS: &str = "block_access_lists";
 /// - [`Vec<u8>`] = RLP-encoded `Vec<Block>` (sorted by descending block number)
 pub const BAD_BLOCKS: &str = "bad_blocks";
 
-pub const TABLES: [&str; 22] = [
+pub const TABLES: [&str; 23] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -149,7 +158,21 @@ pub const TABLES: [&str; 22] = [
     STORAGE_FLATKEYVALUE,
     MISC_VALUES,
     EXECUTION_WITNESSES,
+    BLOCK_HASHES_BY_NUMBER,
     BLOCK_ACCESS_LISTS,
     STATE_HISTORY,
     BAD_BLOCKS,
 ];
+
+#[cfg(test)]
+mod tables_tests {
+    use super::*;
+
+    #[test]
+    fn block_hashes_by_number_in_tables() {
+        assert!(
+            TABLES.contains(&BLOCK_HASHES_BY_NUMBER),
+            "BLOCK_HASHES_BY_NUMBER must be listed in TABLES"
+        );
+    }
+}
