@@ -222,14 +222,12 @@ impl NewPayloadV4Request {
         context: RpcApiContext,
         make_witness: bool,
     ) -> Result<Value, RpcErr> {
-        // EIP-7928 / Amsterdam: V4 payloads MUST NOT include the BAL field — that
-        // field belongs to V5. Per engine-API spec, structurally-invalid payloads
-        // return JSON-RPC -32602 (Invalid params), not PayloadStatus.INVALID.
-        if self.payload.block_access_list.is_some() {
-            return Err(RpcErr::WrongParam(
-                "block_access_list not allowed in engine_newPayloadV4".to_string(),
-            ));
-        }
+        // A V4 payload carrying the V5-only BAL field is not a malformed request:
+        // the field is ignored -- a V4 block has no BAL-hash header field, so the
+        // reconstructed header omits it and the block-hash check rejects the block
+        // with status INVALID. This matches EELS and geth, whose JSON decoding
+        // ignores unknown payload members, and the fork-transition fixtures pin
+        // exactly this outcome (INVALID_BLOCK_HASH, not error -32602).
 
         // validate the received requests
         validate_execution_requests(&self.execution_requests)?;
@@ -267,6 +265,25 @@ impl NewPayloadV4Request {
                 "{:?}",
                 chain_config.get_fork(block.header.timestamp)
             )));
+        }
+
+        // A V4 payload carrying the V5-only `blockAccessList` field: the field
+        // itself never poisons params parsing, because the interesting failure is
+        // block-shaped. If the *header* also committed to a BAL hash, the block
+        // hash cannot match a V4 reconstruction (which has no such header field),
+        // and the fixtures pin that as status INVALID_BLOCK_HASH -- so the hash
+        // check runs first. A well-formed pre-Amsterdam block that merely carries
+        // the extra param is a version mismatch on the method itself, pinned as
+        // JSON-RPC -32602.
+        if self.payload.block_access_list.is_some() {
+            if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(&self.payload, &block) {
+                return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
+                    &error_msg,
+                ))?);
+            }
+            return Err(RpcErr::WrongParam(
+                "block_access_list not allowed in engine_newPayloadV4".to_string(),
+            ));
         }
 
         // A pre-Amsterdam header that carries block_access_list_hash produces a
@@ -1045,9 +1062,13 @@ fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPaylo
 /// The Amsterdam payload fields (EIP-7928 block access list, EIP-7843 slot number) must be
 /// absent from every pre-Amsterdam payload version.
 fn reject_amsterdam_payload_fields(payload: &ExecutionPayload) -> Result<(), RpcErr> {
-    if payload.block_access_list.is_some() {
-        return Err(RpcErr::WrongParam("block_access_list".to_string()));
-    }
+    // The two Amsterdam-only fields are deliberately treated differently on
+    // pre-V5 methods. A stray `blockAccessList` is *ignored*: no pre-V5 header
+    // field derives from it, so the reconstructed header omits the BAL hash and
+    // the block-hash check rejects the block with status INVALID -- the outcome
+    // EELS and geth produce, and the one the fork-transition fixtures pin
+    // (INVALID_BLOCK_HASH, no error code). `slotNumber` stays a params error:
+    // the same fixtures pin -32602 for it.
     if payload.slot_number.is_some() {
         return Err(RpcErr::WrongParam("slot_number".to_string()));
     }
