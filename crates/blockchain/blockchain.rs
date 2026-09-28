@@ -563,6 +563,19 @@ struct BalStateWorkItem {
     storage_root: Option<H256>,
 }
 
+/// Whether the block pipeline checks the block body against its header.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BodyCheck {
+    /// The header came from elsewhere (a peer, a file, storage, a test), so the
+    /// transactions root, withdrawals root and ommers must be checked against
+    /// the body.
+    Verify,
+    /// The header's body commitments were computed from this very body, as the
+    /// engine handler does when it assembles a block from a payload, so they
+    /// match by construction.
+    DerivedFromBody,
+}
+
 impl Blockchain {
     /// Build a fresh 17-thread merkleization pool.
     ///
@@ -834,6 +847,9 @@ impl Blockchain {
     }
 
     /// Executes a block withing a new vm instance and state
+    ///
+    /// `body_check` says whether the body still has to be checked against the
+    /// header; see [`BodyCheck`].
     #[instrument(
         level = "trace",
         name = "Execute Block",
@@ -847,6 +863,7 @@ impl Blockchain {
         vm: &mut Evm,
         bal: Option<Arc<BlockAccessList>>,
         collect_witness: bool,
+        body_check: BodyCheck,
     ) -> Result<BlockExecutionPipelineResult, ChainError> {
         let start_instant = Instant::now();
 
@@ -855,8 +872,17 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         self.validate_l1_transaction_types(block)?;
-        validate_block_body(&block.header, &block.body, &NativeCrypto)
-            .map_err(|e| ChainError::InvalidBlock(InvalidBlockError::InvalidBody(e)))?;
+        match body_check {
+            BodyCheck::Verify => validate_block_body(&block.header, &block.body, &NativeCrypto)
+                .map_err(|e| ChainError::InvalidBlock(InvalidBlockError::InvalidBody(e)))?,
+            // The header's body commitments were computed from this body, so they
+            // match by construction. Debug builds still compare them, so a caller
+            // that marks a block assembled any other way fails loudly in tests.
+            BodyCheck::DerivedFromBody => debug_assert!(
+                validate_block_body(&block.header, &block.body, &NativeCrypto).is_ok(),
+                "a block whose header was built from its body does not match that header"
+            ),
+        }
         let block_validated_instant = Instant::now();
 
         let exec_merkle_start = Instant::now();
@@ -2613,7 +2639,8 @@ impl Blockchain {
         block: Block,
         bal: Option<Arc<BlockAccessList>>,
     ) -> Result<(), ChainError> {
-        let (_, _, result) = self.add_block_pipeline_inner(block, bal, false, None)?;
+        let (_, _, result) =
+            self.add_block_pipeline_inner(block, bal, false, None, None, BodyCheck::Verify)?;
         result
     }
 
@@ -2630,8 +2657,14 @@ impl Blockchain {
         bal: Option<Arc<BlockAccessList>>,
         commit_depth: usize,
     ) -> Result<Option<BlockAccessList>, ChainError> {
-        let (produced_bal, _, result) =
-            self.add_block_pipeline_inner(block, bal, false, Some(commit_depth))?;
+        let (produced_bal, _, result) = self.add_block_pipeline_inner(
+            block,
+            bal,
+            false,
+            Some(commit_depth),
+            None,
+            BodyCheck::Verify,
+        )?;
         result?;
         Ok(produced_bal)
     }
@@ -2647,9 +2680,49 @@ impl Blockchain {
         block: Block,
         bal: Option<Arc<BlockAccessList>>,
     ) -> Result<Option<BlockAccessList>, ChainError> {
-        let (produced_bal, _, result) = self.add_block_pipeline_inner(block, bal, false, None)?;
+        let (produced_bal, _, result) =
+            self.add_block_pipeline_inner(block, bal, false, None, None, BodyCheck::Verify)?;
         result?;
         Ok(produced_bal)
+    }
+
+    /// Pipeline entry for `engine_newPayload`: the caller has already looked the
+    /// parent up, so it is passed in instead of read again. Returns the witness only
+    /// when one was requested.
+    ///
+    /// The block must have been assembled from the payload with
+    /// `ExecutionPayload::into_block`, which computes the header's transactions
+    /// root, withdrawals root and empty ommers from the payload's own body, after
+    /// which the engine handler checks the payload's block hash against that
+    /// header. Checking the body against the header again would rebuild both
+    /// tries on the executor thread, before execution can start, only to compare
+    /// their roots with themselves, so this entry point skips that one check.
+    /// Everything else (pre-execution header rules, execution, receipts,
+    /// requests, state root) runs exactly as for any other block. A block whose
+    /// header came from anywhere else must go through one of the other entry
+    /// points.
+    pub fn add_block_pipeline_from_payload(
+        &self,
+        block: Block,
+        bal: Option<Arc<BlockAccessList>>,
+        parent_header: Option<BlockHeader>,
+        collect_witness: bool,
+    ) -> Result<Option<ExecutionWitness>, ChainError> {
+        let (_, witness, result) = self.add_block_pipeline_inner(
+            block,
+            bal,
+            collect_witness,
+            None,
+            parent_header,
+            BodyCheck::DerivedFromBody,
+        )?;
+        result?;
+        if !collect_witness {
+            return Ok(None);
+        }
+        witness.map(Some).ok_or_else(|| {
+            ChainError::Custom("Block executed with witness collection but produced none".into())
+        })
     }
 
     /// Same as [`add_block_pipeline`] but returns the execution witness produced
@@ -2659,7 +2732,8 @@ impl Blockchain {
         block: Block,
         bal: Option<Arc<BlockAccessList>>,
     ) -> Result<ExecutionWitness, ChainError> {
-        let (_, witness, result) = self.add_block_pipeline_inner(block, bal, true, None)?;
+        let (_, witness, result) =
+            self.add_block_pipeline_inner(block, bal, true, None, None, BodyCheck::Verify)?;
         result?;
         witness.ok_or_else(|| {
             ChainError::WitnessGeneration(
@@ -2682,12 +2756,23 @@ impl Blockchain {
         bal: Option<Arc<BlockAccessList>>,
         force_witness: bool,
         commit_depth: Option<usize>,
+        parent_header: Option<BlockHeader>,
+        body_check: BodyCheck,
     ) -> Result<AddBlockPipelineInnerResult, ChainError> {
-        // Validate if it can be the new head and find the parent
-        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
-            // If the parent is not present, we store it as pending.
-            self.storage.add_pending_block(block)?;
-            return Err(ChainError::ParentNotFound);
+        // Validate if it can be the new head and find the parent. The engine path has
+        // already read the parent while deciding whether the block is executable, so
+        // it hands it over rather than having it read again here; anything it passes
+        // is verified against the block's own parent hash before being trusted.
+        let parent_header = match parent_header {
+            Some(header) if header.hash() == block.header.parent_hash => header,
+            _ => match find_parent_header(&block.header, &self.storage) {
+                Ok(header) => header,
+                Err(_) => {
+                    // If the parent is not present, we store it as pending.
+                    self.storage.add_pending_block(block)?;
+                    return Err(ChainError::ParentNotFound);
+                }
+            },
         };
 
         let should_store_witness = self.options.precompute_witnesses && self.is_synced();
@@ -2735,7 +2820,16 @@ impl Blockchain {
             merkle_queue_length,
             instants,
             warmer_duration,
-        ) = { self.execute_block_pipeline(&block, &parent_header, &mut vm, bal, collect_witness)? };
+        ) = {
+            self.execute_block_pipeline(
+                &block,
+                &parent_header,
+                &mut vm,
+                bal,
+                collect_witness,
+                body_check,
+            )?
+        };
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -2777,10 +2871,19 @@ impl Blockchain {
         // On the parallel Amsterdam validation path the BAL is supplied via the header
         // and `produced_bal` is None, so fall back to the validated incoming `bal`.
         // Pre-Amsterdam blocks have no BAL on either source, so nothing is stored.
-        if let Some(bal) = produced_bal.as_ref().or(input_bal.as_deref())
-            && let Err(err) = self.storage.store_block_access_list(block_hash, bal)
-        {
-            warn!("Failed to store block access list for block {block_hash}: {err}");
+        // Encode the BAL once: the same bytes are written to storage and sized for
+        // the metric below, instead of encoding (and re-sorting) it a second time
+        // just to measure it.
+        let mut _bal_size_bytes = 0usize;
+        if let Some(bal) = produced_bal.as_ref().or(input_bal.as_deref()) {
+            let encoded = bal.encode_to_vec();
+            _bal_size_bytes = encoded.len();
+            if let Err(err) = self
+                .storage
+                .store_block_access_list_encoded(block_hash, encoded)
+            {
+                warn!("Failed to store block access list for block {block_hash}: {err}");
+            }
         }
 
         let result = self.store_block_with_depth(block, account_updates_list, res, commit_depth);
@@ -2812,7 +2915,7 @@ impl Blockchain {
             if let Some(bal_ref) = produced_bal.as_ref().or(input_bal.as_deref()) {
                 let account_count = bal_ref.accounts().len() as u64;
                 let slot_count = bal_ref.item_count().saturating_sub(account_count);
-                let size_bytes = bal_ref.length() as f64;
+                let size_bytes = _bal_size_bytes as f64;
                 METRICS_BAL.blocks_total.inc();
                 METRICS_BAL.size_bytes.set(size_bytes);
                 METRICS_BAL.size_bytes_histogram.observe(size_bytes);
