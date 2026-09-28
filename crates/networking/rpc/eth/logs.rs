@@ -304,24 +304,29 @@ async fn collect_block_logs(
             "Missing receipt for block {block_num} tx {tx_index}"
         )))?;
 
-        if receipt.succeeded {
-            for log in &receipt.logs {
-                if address_filter.is_empty() || address_filter.contains(&log.address) {
-                    // Some extra data is needed when
-                    // forming the RPC response.
-                    logs.push(RpcLog {
-                        log: log.clone().into(),
-                        log_index: block_log_index,
-                        transaction_hash: tx_hash,
-                        transaction_index: tx_index as u64,
-                        block_number: block_num,
-                        block_hash,
-                        block_timestamp: block_header.timestamp,
-                        removed: false,
-                    });
-                }
-                block_log_index += 1;
+        // Every log a receipt carries is settled: a reverted transaction of
+        // any pre-frame type has none, and an EIP-8141 frame transaction whose
+        // status is failure because a later frame reverted keeps the logs of
+        // the frames that committed before it, which the receipt, the block
+        // bloom and the receipts root all already include. Gating on the
+        // transaction status here dropped exactly those logs, so a wallet or
+        // indexer reading this method missed state changes the receipt shows.
+        for log in &receipt.logs {
+            if address_filter.is_empty() || address_filter.contains(&log.address) {
+                // Some extra data is needed when
+                // forming the RPC response.
+                logs.push(RpcLog {
+                    log: log.clone().into(),
+                    log_index: block_log_index,
+                    transaction_hash: tx_hash,
+                    transaction_index: tx_index as u64,
+                    block_number: block_num,
+                    block_hash,
+                    block_timestamp: block_header.timestamp,
+                    removed: false,
+                });
             }
+            block_log_index += 1;
         }
     }
     Ok(())
@@ -595,6 +600,105 @@ mod tests {
             fetch_logs_with_filter(&filter_for(unknown), storage).await,
             Err(RpcErr::BadParams(_))
         ));
+    }
+
+    /// An EIP-8141 frame transaction whose final frame reverted has receipt
+    /// status failure and keeps the logs of the frames that committed; the
+    /// receipt, the block bloom and the receipts root all carry them. Reported
+    /// against the testnet: `eth_getLogs` gated on the status and returned
+    /// nothing for such a block. The log indices must also stay aligned with
+    /// the receipt's, which number every receipt's logs in order.
+    #[tokio::test]
+    async fn logs_of_a_partially_reverted_frame_transaction_are_returned() {
+        use ethrex_common::types::{Block, BlockBody, LegacyTransaction, Log, Receipt, TxType};
+        use ethrex_storage::EngineType;
+
+        let storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        let settled = H160::repeat_byte(0xAA);
+        let later = H160::repeat_byte(0xBB);
+        // The header bloom covers every receipt's logs, as block execution
+        // computes it; an address-filtered query is answered from it first.
+        let header = BlockHeader {
+            number: 1,
+            logs_bloom: bloom_with(&[settled, later], &[]),
+            ..Default::default()
+        };
+        let body = BlockBody {
+            transactions: vec![
+                ethrex_common::types::Transaction::LegacyTransaction(LegacyTransaction::default()),
+                ethrex_common::types::Transaction::LegacyTransaction(LegacyTransaction {
+                    nonce: 1,
+                    ..Default::default()
+                }),
+                ethrex_common::types::Transaction::LegacyTransaction(LegacyTransaction {
+                    nonce: 2,
+                    ..Default::default()
+                }),
+            ],
+            ommers: Default::default(),
+            withdrawals: Default::default(),
+        };
+        let block = Block::new(header, body);
+        let block_hash = block.hash();
+        let log_from = |address: H160| Log {
+            address,
+            topics: vec![],
+            data: Default::default(),
+        };
+        storage.add_block(block).await.unwrap();
+        storage
+            .add_receipts(
+                block_hash,
+                vec![
+                    // An ordinary reverted transaction: status failure, no logs.
+                    Receipt::new(TxType::Legacy, false, 21000, vec![]),
+                    // Frame statuses [1, 1, 0]: two committed frames logged, the
+                    // last reverted, so the transaction status is failure.
+                    Receipt::new(
+                        TxType::Frame,
+                        false,
+                        200_000,
+                        vec![log_from(settled), log_from(settled)],
+                    ),
+                    Receipt::new(TxType::Legacy, true, 21000, vec![log_from(later)]),
+                ],
+            )
+            .await
+            .unwrap();
+        storage
+            .forkchoice_update(vec![(1, block_hash)], 1, block_hash, None, None)
+            .await
+            .unwrap();
+
+        let filter = LogsFilter {
+            from_block: BlockIdentifier::Number(1),
+            to_block: BlockIdentifier::Number(1),
+            block_hash: None,
+            address_filters: None,
+            topics: vec![],
+        };
+        let logs = fetch_logs_with_filter(&filter, storage.clone())
+            .await
+            .unwrap();
+        let summary: Vec<(H160, u64, u64)> = logs
+            .iter()
+            .map(|l| (l.log.address, l.transaction_index, l.log_index))
+            .collect();
+        assert_eq!(
+            summary,
+            vec![(settled, 1, 0), (settled, 1, 1), (later, 2, 2)],
+            "the committed frames' logs are returned, numbered as the receipts number them"
+        );
+
+        // The same through an address filter, which is the shape indexers use.
+        let filtered = LogsFilter {
+            address_filters: Some(AddressFilter::Single(settled)),
+            ..filter
+        };
+        let logs = fetch_logs_with_filter(&filtered, storage).await.unwrap();
+        assert_eq!(logs.len(), 2, "{logs:?}");
+        assert!(logs.iter().all(|l| l.log.address == settled));
     }
 
     #[test]
