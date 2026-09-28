@@ -1,4 +1,4 @@
-.PHONY: download-test-vectors clean-vectors test test-levm test-stateless zkevm-vectors zkevm-benchmark-vectors
+.PHONY: download-test-vectors clean-vectors test test-levm test-stateless zkevm-vectors zkevm-benchmark-vectors frames-vectors
 
 VECTORS_ROOT := vectors
 FIXTURES_FILE := ../.fixtures_url
@@ -27,6 +27,16 @@ LEGACYTEST_ARCHIVE_ROOT := legacytests-$(LEGACYTEST_COMMIT)/Cancun/BlockchainTes
 # Both bundles extract a `for_amsterdam/` subtree, so we keep the zkevm bundle in
 # a separate root that only the stateless harness reads, to avoid overlaying the
 # regular Amsterdam fixtures.
+# EIP-8141 frame transactions ship as their own release: the whole suite refilled
+# at the `Bogota` pseudo-fork (Amsterdam + EIP-8141), not just the 8141 tests, so
+# this subtree also re-covers every other Amsterdam EIP with frames active. Fold
+# it into the base bundle once a `tests@` release ships EIP-8141.
+FRAMES_FIXTURES_FILE := ../.fixtures_url_frames
+FRAMES_ARTIFACT := frames-tests.tar.gz
+FRAMES_URL := $(shell cat $(FRAMES_FIXTURES_FILE))
+FRAMES_SUBTREE := for_bogota
+FRAMES_STAMP := $(SPECTEST_VECTORS_DIR)/.frames_url
+
 ZKEVM_VECTORS_ROOT := vectors_zkevm
 ZKEVM_VECTORS_DIR := $(ZKEVM_VECTORS_ROOT)/eest
 # The same bundle's Engine API fixtures. Since tests-zkevm@v21.0.1 their payloads
@@ -131,16 +141,33 @@ zkevm-benchmark-vectors: ## 📥 Download the zkEVM benchmark fixtures (519MB co
 
 zkevm-vectors: $(ZKEVM_VECTORS_DIR)
 
+# Keyed on the release URL: a `for_bogota/` tree left
+# by another branch says nothing in its mtime about which release produced it, and
+# clearing the subtree first drops fixtures a later release renamed or removed.
+frames-vectors: | $(SPECTEST_VECTORS_DIR) ## 📥 Overlay the frames-devnet fixtures, re-fetching when the pinned release changed
+	@have=$$(cat $(FRAMES_STAMP) 2>/dev/null); \
+	[ -d $(SPECTEST_VECTORS_DIR)/$(FRAMES_SUBTREE) ] || have=; \
+	if [ "$$have" = "$(FRAMES_URL)" ]; then \
+		echo "Frames fixtures already overlaid from $(FRAMES_URL)"; \
+	else \
+		curl -fL -o $(FRAMES_ARTIFACT).part $(FRAMES_URL) && \
+		mv $(FRAMES_ARTIFACT).part $(FRAMES_ARTIFACT) && \
+		rm -rf $(SPECTEST_VECTORS_DIR)/$(FRAMES_SUBTREE) && \
+		tar -xzf $(FRAMES_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) \
+			fixtures/blockchain_tests/$(FRAMES_SUBTREE) && \
+		echo "$(FRAMES_URL)" > $(FRAMES_STAMP); \
+	fi
+
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-download-test-vectors: $(VECTORS_TARGETS) zkevm-vectors ## 📥 Download test vectors
+download-test-vectors: $(VECTORS_TARGETS) frames-vectors zkevm-vectors ## 📥 Download test vectors
 
 clean-vectors: ## 🗑️  Clean test vectors
 	rm -rf $(VECTORS_ROOT) $(ZKEVM_VECTORS_ROOT) $(ZKEVM_ENGINE_VECTORS_ROOT) $(ZKEVM_BENCH_VECTORS_ROOT)
-	rm -f $(SPECTEST_ARTIFACT) $(LEGACYTEST_ARTIFACT) $(ZKEVM_ARTIFACT) $(ZKEVM_BENCH_ARTIFACT)
+	rm -f $(SPECTEST_ARTIFACT) $(LEGACYTEST_ARTIFACT) $(FRAMES_ARTIFACT) $(FRAMES_ARTIFACT).part $(ZKEVM_ARTIFACT) $(ZKEVM_BENCH_ARTIFACT)
 
-test-levm: $(VECTORS_TARGETS) ## 🧪 Run blockchain tests with LEVM
+test-levm: $(VECTORS_TARGETS) frames-vectors ## 🧪 Run blockchain tests with LEVM
 	cargo test --profile release-fast
 
 test-stateless: zkevm-vectors
