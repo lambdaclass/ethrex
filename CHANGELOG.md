@@ -14,6 +14,7 @@
 
 ### 2026-09-28
 
+- Hash the top subtries of the transactions, receipts and withdrawals tries in parallel: together with #7325 the engine handler's root-and-recovery step drops from 1.12 to 0.89 ms at the median on mainnet [#7326](https://github.com/lambdaclass/ethrex/pull/7326)
 - Recover a block's senders once, alongside the payload's transactions root, instead of in two racing passes after it: about 0.8 ms less before the first transaction at the median and 1.2 to 1.6 ms less at p90 on mainnet [#7325](https://github.com/lambdaclass/ethrex/pull/7325)
 - Build the receipts' blooms and encodings in parallel for blocks with 128 receipts or more: the receipts root after the last transaction drops from 1.28 to 1.10 ms at the median and from 2.96 to 1.80 ms at p90 on mainnet [#7324](https://github.com/lambdaclass/ethrex/pull/7324)
 - Add a bloom filter to the headers and bodies tables and rewrite them once in the background, so the known-block lookup at the start of every `engine_newPayload` stops reading every level of the headers table: 2.78 ms to 10 µs at the median on mainnet [#7323](https://github.com/lambdaclass/ethrex/pull/7323)
