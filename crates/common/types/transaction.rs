@@ -3164,10 +3164,15 @@ mod serde_impl {
         pub mode: u64,
         #[serde(with = "crate::serde_utils::u64::hex_str")]
         pub flags: u64,
+        #[serde(rename = "target")]
         pub to: Option<Address>,
-        #[serde(with = "crate::serde_utils::u64::hex_str")]
+        #[serde(rename = "executionGas", with = "crate::serde_utils::u64::hex_str")]
         pub gas_limit: u64,
-        #[serde(default, with = "crate::serde_utils::u64::hex_str")]
+        #[serde(
+            default,
+            rename = "stateGas",
+            with = "crate::serde_utils::u64::hex_str"
+        )]
         pub state_gas_limit: u64,
         #[serde(
             default,
@@ -5668,6 +5673,32 @@ mod tests {
         assert_eq!(generic.frames.as_ref().unwrap().len(), tx.frames.len());
         assert_eq!(generic.signatures.len(), tx.signatures.len());
         assert_eq!(FrameTransaction::try_from(&generic).unwrap(), tx);
+    }
+
+    #[test]
+    fn frame_transaction_serializes_rpc_frame_fields() {
+        let mut tx = make_test_frame_tx();
+        tx.frames[0].target = None;
+        tx.frames[0].state_gas_limit = 512;
+        let json = serde_json::to_value(&tx).unwrap();
+        assert_eq!(
+            json["frames"][0],
+            serde_json::json!({
+                "mode": "0x1",
+                "flags": "0x3",
+                "target": null,
+                "executionGas": "0x186a0",
+                "stateGas": "0x200",
+                "value": "0x0",
+                "data": "0x7665726966795f64617461"
+            })
+        );
+        assert_eq!(
+            json["frames"][1]["target"],
+            "0x0000000000000000000000000000000000001234"
+        );
+        let entry: FrameEntry = serde_json::from_value(json["frames"][0].clone()).unwrap();
+        assert_eq!(Frame::from(entry), tx.frames[0]);
     }
 
     fn make_frame_tx_with_gas_limits(limits: Vec<u64>) -> FrameTransaction {
