@@ -38,7 +38,21 @@ impl core::fmt::Debug for Evm {
     }
 }
 
+pub struct FrameSimulationResult {
+    pub report: ExecutionReport,
+    pub outputs: Vec<(ethrex_common::Bytes, Option<VMError>)>,
+    pub access_list: AccessList,
+}
+
 impl Evm {
+    pub fn simulate_frame_tx(
+        &mut self,
+        tx: &ethrex_common::types::FrameTransaction,
+        header: &BlockHeader,
+    ) -> Result<FrameSimulationResult, EvmError> {
+        LEVM::simulate_frame_tx(tx, header, &mut self.db, self.vm_type, self.crypto.as_ref())
+    }
+
     /// Creates a new EVM instance, but with block hash in zero, so if we want to execute a block or transaction we have to set it.
     pub fn new_for_l1(db: impl VmDatabase + 'static, crypto: Arc<dyn Crypto>) -> Self {
         let wrapped_db: DynVmDatabase = Box::new(db);

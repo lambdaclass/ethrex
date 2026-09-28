@@ -3108,6 +3108,48 @@ impl LEVM {
         Ok(())
     }
 
+    pub fn simulate_frame_tx(
+        frame: &ethrex_common::types::FrameTransaction,
+        header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<super::FrameSimulationResult, EvmError> {
+        let tx = Transaction::FrameTransaction(frame.clone());
+        let mut simulation_header = header.clone();
+        if frame.max_fee_per_gas.is_zero() {
+            simulation_header.base_fee_per_gas = Some(0);
+        }
+        let mut env = Self::setup_env(&tx, frame.sender, &simulation_header, db, vm_type)?;
+        if frame.max_fee_per_blob_gas.is_zero() {
+            env.base_blob_fee_per_gas = U256::zero();
+        }
+        env.disable_nonce_check = true;
+        adjust_disabled_base_fee(&mut env);
+        let mut vm = VM::new(
+            env,
+            db,
+            &tx,
+            LevmCallTracer::disabled(),
+            vm_type,
+            crypto,
+            None,
+        )?;
+        vm.frame_simulation = true;
+        let report = vm.execute()?;
+        let access_list = vm
+            .substate
+            .make_access_list()
+            .into_iter()
+            .map(|entry| (entry.address, entry.storage_keys))
+            .collect();
+        Ok(super::FrameSimulationResult {
+            report,
+            outputs: vm.frame_outputs,
+            access_list,
+        })
+    }
+
     pub fn simulate_tx_from_generic(
         // The transaction to execute.
         tx: &GenericTransaction,

@@ -638,6 +638,9 @@ pub struct VM<'a> {
     pub vm_type: VMType,
     /// Frame transaction context (EIP-8141). Set when executing a frame tx.
     pub frame_tx_context: Option<FrameTxContext>,
+    /// RPC simulations accept empty signature placeholders without changing consensus validation.
+    pub frame_simulation: bool,
+    pub frame_outputs: Vec<(Bytes, Option<VMError>)>,
 
     /// Whether the top-level call-frame backup must be PRESERVED (deep-cloned) on the
     /// revert / invalid-tx paths because a `BackupHook` will read it in `finalize_execution`
@@ -1116,6 +1119,8 @@ impl<'a> VM<'a> {
             ),
             env,
             frame_tx_context: None,
+            frame_simulation: false,
+            frame_outputs: Vec::new(),
             opcode_table: VM::build_opcode_table(fork),
             crypto,
             stateless_validator,
@@ -1748,7 +1753,7 @@ impl<'a> VM<'a> {
 
         // Check nonce matches
         let sender_info = self.db.get_account(sender)?.info.clone();
-        if sender_info.nonce != frame_tx.nonce {
+        if !self.env.disable_nonce_check && sender_info.nonce != frame_tx.nonce {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::NonceMismatch {
                     expected: sender_info.nonce,
@@ -1810,8 +1815,14 @@ impl<'a> VM<'a> {
 
         // EIP-8141: every outer signature must validate
         // before any frame executes; otherwise the whole transaction is invalid.
+        let signatures = frame_tx
+            .signatures
+            .iter()
+            .filter(|signature| !self.frame_simulation || !signature.signature.is_empty())
+            .cloned()
+            .collect::<Vec<_>>();
         if !validate_frame_signatures(
-            &frame_tx.signatures,
+            &signatures,
             sig_hash,
             frame_tx.sender,
             self.env.config.fork,
@@ -1900,6 +1911,9 @@ impl<'a> VM<'a> {
                         0,
                         Vec::new(),
                     ));
+                    if self.frame_simulation {
+                        self.frame_outputs.push((Bytes::new(), None));
+                    }
                     if frame_idx == end_idx {
                         skip_until_batch_end = None;
                         in_atomic_batch = false;
@@ -2226,6 +2240,8 @@ impl<'a> VM<'a> {
                 .map(|c| c.frame_results.iter().map(|r| r.2).collect())
                 .unwrap_or_default();
 
+            let mut frame_output = Bytes::new();
+            let mut frame_error = None;
             // The access charge precedes the balance check: a frame that cannot pay it halts
             // with its whole limit, even when the sender also cannot fund `value`.
             let (frame_success, frame_gas_used, frame_logs) = if frame_entry_gas > frame.gas_limit {
@@ -2336,6 +2352,10 @@ impl<'a> VM<'a> {
                     Ok(ctx_result) => {
                         let gas_used = ctx_result.gas_used;
                         let success = ctx_result.is_success();
+                        frame_output = ctx_result.output;
+                        if let TxResult::Revert(error) = ctx_result.result {
+                            frame_error = Some(error);
+                        }
 
                         if success {
                             // The inner frame is the initial call frame (call_frames
@@ -2363,7 +2383,8 @@ impl<'a> VM<'a> {
                             (false, frame_entry_gas.saturating_add(gas_used), Vec::new())
                         }
                     }
-                    Err(_e) => {
+                    Err(error) => {
+                        frame_error = Some(error);
                         // A `VMError` propagates out of `run_execution` before it reaches
                         // `handle_state_backup`, so this frame's backup is still live and
                         // must be reverted (and the cache restored) here.
@@ -2487,6 +2508,13 @@ impl<'a> VM<'a> {
                 frame_state_gas_used,
                 frame_logs,
             ));
+
+            if self.frame_simulation {
+                if !frame_success && frame_error.is_none() {
+                    frame_error = Some(VMError::RevertOpcode);
+                }
+                self.frame_outputs.push((frame_output, frame_error));
+            }
 
             // Atomic batch: if a frame in the batch reverted, revert the
             // batch-level snapshot and skip remaining frames in the batch.
@@ -2814,13 +2842,26 @@ impl<'a> VM<'a> {
         // (EIP-7778 -- block regular gas is `gas_used - state_gas_used`), and
         // `gas_spent` carries the post-refund payer total plus state, which is what
         // a receipt's `cumulative_gas_used` accumulates.
+        let output = if self.frame_simulation {
+            let index = ctx
+                .frame_results
+                .iter()
+                .position(|result| result.0 != 1)
+                .unwrap_or_else(|| ctx.frame_results.len().saturating_sub(1));
+            self.frame_outputs
+                .get(index)
+                .map(|result| result.0.clone())
+                .unwrap_or_default()
+        } else {
+            Bytes::new()
+        };
         let report = ExecutionReport {
             result,
             gas_used: block_execution_gas.saturating_add(state_gas_used),
             gas_spent: total_gas_used.saturating_add(state_gas_used),
             gas_refunded: gas_refund,
             state_gas_used,
-            output: Bytes::new(),
+            output,
             logs: all_logs,
             payer_address: ctx.payer_address,
             frame_results: Some(ctx.frame_results),
@@ -4043,6 +4084,8 @@ impl<'a> VM<'a> {
             stateless_validator: None,
             validation_observer: ValidationObserver::disabled(),
             frame_tx_context: None,
+            frame_simulation: false,
+            frame_outputs: Vec::new(),
         }
     }
 

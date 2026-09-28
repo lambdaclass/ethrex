@@ -1,3 +1,6 @@
+use super::frame::{
+    FrameTransactionRequest, estimated_max_gas, parse_transaction, require_success,
+};
 use std::sync::Arc;
 
 use crate::{
@@ -29,6 +32,7 @@ pub const CALL_STIPEND: u64 = 2_300; // Free gas given at beginning of call.
 pub const TRANSACTION_GAS: u64 = 21_000; // Per transaction not creating a contract. NOTE: Not payable on data of calls between transactions.
 
 pub struct CallRequest {
+    frame_transaction: Option<FrameTransactionRequest>,
     transaction: GenericTransaction,
     block: Option<BlockIdentifierOrHash>,
 }
@@ -52,10 +56,12 @@ pub struct GetTransactionReceiptRequest {
 }
 
 pub struct CreateAccessListRequest {
+    frame_transaction: Option<FrameTransactionRequest>,
     pub transaction: GenericTransaction,
     pub block: Option<BlockIdentifier>,
 }
 pub struct EstimateGasRequest {
+    frame_transaction: Option<FrameTransactionRequest>,
     pub transaction: GenericTransaction,
     pub block: Option<BlockIdentifier>,
 }
@@ -93,8 +99,10 @@ impl RpcHandler for CallRequest {
             Some(value) => Some(BlockIdentifierOrHash::parse(value.clone(), 1)?),
             None => None,
         };
+        let (transaction, frame_transaction) = parse_transaction(&params[0])?;
         Ok(CallRequest {
-            transaction: serde_json::from_value(params[0].clone())?,
+            transaction,
+            frame_transaction,
             block,
         })
     }
@@ -109,6 +117,14 @@ impl RpcHandler for CallRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
+        if let Some(frame) = &self.frame_transaction {
+            let (_, result) = frame.prepare(&self.transaction, &header, &context).await?;
+            require_success(&result)?;
+            return Ok(Value::String(format!(
+                "0x{}",
+                hex::encode(result.report.output)
+            )));
+        }
         // Run transaction
         let result = simulate_tx(
             &self.transaction,
@@ -331,8 +347,10 @@ impl RpcHandler for CreateAccessListRequest {
             Some(value) => Some(BlockIdentifier::parse(value.clone(), 1)?),
             None => None,
         };
+        let (transaction, frame_transaction) = parse_transaction(&params[0])?;
         Ok(CreateAccessListRequest {
-            transaction: serde_json::from_value(params[0].clone())?,
+            transaction,
+            frame_transaction,
             block,
         })
     }
@@ -348,6 +366,23 @@ impl RpcHandler for CreateAccessListRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
+
+        if let Some(frame) = &self.frame_transaction {
+            let (_, result) = frame.prepare(&self.transaction, &header, &context).await?;
+            return serde_json::to_value(AccessListResult {
+                access_list: result
+                    .access_list
+                    .into_iter()
+                    .map(|(address, storage_keys)| AccessListEntry {
+                        address,
+                        storage_keys,
+                    })
+                    .collect(),
+                error: (!result.report.is_success()).then(|| "execution reverted".to_string()),
+                gas_used: result.report.gas_spent,
+            })
+            .map_err(|error| RpcErr::Internal(error.to_string()));
+        }
 
         let vm_db = StoreVmDatabase::new(context.storage.clone(), header.clone())?;
         let mut vm = context.blockchain.new_evm(vm_db)?;
@@ -431,8 +466,10 @@ impl RpcHandler for EstimateGasRequest {
             Some(value) => Some(BlockIdentifier::parse(value.clone(), 1)?),
             None => None,
         };
+        let (transaction, frame_transaction) = parse_transaction(&params[0])?;
         Ok(EstimateGasRequest {
-            transaction: serde_json::from_value(params[0].clone())?,
+            transaction,
+            frame_transaction,
             block,
         })
     }
@@ -449,6 +486,13 @@ impl RpcHandler for EstimateGasRequest {
             _ => return Ok(Value::Null),
         };
 
+        if let Some(frame) = &self.frame_transaction {
+            let (tx, result) = frame
+                .prepare(&self.transaction, &block_header, &context)
+                .await?;
+            require_success(&result)?;
+            return Ok(Value::String(format!("{:#x}", estimated_max_gas(&tx))));
+        }
         let current_fork = chain_config.fork(block_header.timestamp);
 
         let transaction = match self.transaction.nonce {
