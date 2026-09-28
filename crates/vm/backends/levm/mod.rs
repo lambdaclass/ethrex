@@ -3991,6 +3991,15 @@ fn env_from_generic(
 /// Split out from `vm_from_generic` so the caller owns the resulting `Transaction` for at least
 /// the VM's lifetime — `VM` now borrows its tx (`&'a Transaction`) instead of cloning it.
 fn generic_tx_to_transaction(tx: &GenericTransaction) -> Result<Transaction, VMError> {
+    if tx.frames.is_some() || tx.r#type == ethrex_common::types::TxType::Frame {
+        return ethrex_common::types::FrameTransaction::try_from(tx)
+            .map(Transaction::FrameTransaction)
+            .map_err(|error| {
+                VMError::TxValidation(TxValidationError::InvalidFrameTransactionFormat(
+                    error.to_string(),
+                ))
+            });
+    }
     Ok(match &tx.authorization_list {
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match tx.to {
@@ -4035,7 +4044,7 @@ fn vm_from_generic<'a>(
     stateless_validator: Option<&'a dyn StatelessValidator>,
 ) -> Result<VM<'a>, VMError> {
     let vm_type = adjust_disabled_l2_fees(&env, vm_type);
-    VM::new(
+    let mut vm = VM::new(
         env,
         db,
         tx,
@@ -4043,7 +4052,9 @@ fn vm_from_generic<'a>(
         vm_type,
         crypto,
         stateless_validator,
-    )
+    )?;
+    vm.frame_simulation = matches!(tx, Transaction::FrameTransaction(_));
+    Ok(vm)
 }
 
 pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {

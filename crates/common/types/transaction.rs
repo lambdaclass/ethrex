@@ -32,8 +32,8 @@ pub static GLOBAL_SIGNER_CACHE: LazyLock<Mutex<LruCache<H256, Address>>> = LazyL
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{
-    AccessListEntry, AuthorizationTupleEntry, FrameEntry, GenericTransaction,
-    GenericTransactionError,
+    AccessListEntry, AuthorizationTupleEntry, FrameEntry, FrameRequest, FrameSignatureRequest,
+    GenericTransaction, GenericTransactionError,
 };
 
 /// The serialized length of a default eip1559 transaction
@@ -3901,6 +3901,58 @@ mod serde_impl {
         InvalidField(String),
     }
 
+    #[derive(Clone, Debug, Deserialize, PartialEq)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    pub struct FrameRequest {
+        #[serde(with = "crate::serde_utils::u8::hex_str")]
+        pub mode: u8,
+        #[serde(default, with = "crate::serde_utils::u8::hex_str")]
+        pub flags: u8,
+        pub target: Option<Address>,
+        #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
+        pub execution_gas: Option<u64>,
+        #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
+        pub state_gas: Option<u64>,
+        #[serde(default)]
+        pub value: U256,
+        #[serde(default, with = "crate::serde_utils::bytes")]
+        pub data: Bytes,
+    }
+
+    #[derive(Clone, Debug, Deserialize, PartialEq)]
+    #[serde(deny_unknown_fields)]
+    pub struct FrameSignatureRequest {
+        #[serde(with = "crate::serde_utils::u8::hex_str")]
+        pub scheme: u8,
+        #[serde(default, deserialize_with = "empty_signer")]
+        pub signer: Option<Address>,
+        #[serde(default, deserialize_with = "nullable_bytes")]
+        pub msg: Bytes,
+        #[serde(default, deserialize_with = "nullable_bytes")]
+        pub signature: Bytes,
+    }
+
+    fn empty_signer<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Address>, D::Error> {
+        let value = Option::<String>::deserialize(deserializer)?;
+        match value.as_deref() {
+            None | Some("0x") => Ok(None),
+            Some(value) => value.parse().map(Some).map_err(serde::de::Error::custom),
+        }
+    }
+
+    fn nullable_bytes<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Bytes, D::Error> {
+        let value = Option::<String>::deserialize(deserializer)?;
+        let value = value.as_deref().unwrap_or("0x");
+        let data = value
+            .strip_prefix("0x")
+            .ok_or_else(|| serde::de::Error::custom("expected hex bytes"))?;
+        hex::decode(data)
+            .map(Bytes::from)
+            .map_err(serde::de::Error::custom)
+    }
+
     /// Unsigned Transaction struct generic to all types which may not contain all required transaction fields
     /// Used to perform gas estimations and access list creation
     #[derive(Deserialize, Debug, PartialEq, Clone, Default)]
@@ -3908,6 +3960,10 @@ mod serde_impl {
     pub struct GenericTransaction {
         #[serde(default)]
         pub r#type: TxType,
+        #[serde(default)]
+        pub frames: Option<Vec<FrameRequest>>,
+        #[serde(default)]
+        pub signatures: Vec<FrameSignatureRequest>,
         #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
         pub nonce: Option<u64>,
         pub to: TxKind,
@@ -3981,6 +4037,8 @@ mod serde_impl {
         fn from(value: EIP1559Transaction) -> Self {
             Self {
                 r#type: TxType::EIP1559,
+                frames: None,
+                signatures: vec![],
                 nonce: Some(value.nonce),
                 to: value.to,
                 gas: Some(value.gas_limit),
@@ -4041,6 +4099,8 @@ mod serde_impl {
         fn from(value: EIP4844Transaction) -> Self {
             Self {
                 r#type: TxType::EIP4844,
+                frames: None,
+                signatures: vec![],
                 nonce: Some(value.nonce),
                 to: TxKind::Call(value.to),
                 gas: Some(value.gas),
@@ -4130,6 +4190,8 @@ mod serde_impl {
         fn from(value: EIP7702Transaction) -> Self {
             Self {
                 r#type: TxType::EIP7702,
+                frames: None,
+                signatures: vec![],
                 nonce: Some(value.nonce),
                 to: TxKind::Call(value.to),
                 gas: Some(value.gas_limit),
@@ -4204,6 +4266,8 @@ mod serde_impl {
         fn from(value: PrivilegedL2Transaction) -> Self {
             Self {
                 r#type: TxType::Privileged,
+                frames: None,
+                signatures: vec![],
                 nonce: Some(value.nonce),
                 to: value.to,
                 gas: Some(value.gas_limit),
@@ -4264,6 +4328,8 @@ mod serde_impl {
         fn from(value: FeeTokenTransaction) -> Self {
             Self {
                 r#type: TxType::FeeToken,
+                frames: None,
+                signatures: vec![],
                 nonce: Some(value.nonce),
                 to: value.to,
                 gas: Some(value.gas_limit),
@@ -4329,6 +4395,8 @@ mod serde_impl {
         fn from(value: LegacyTransaction) -> Self {
             Self {
                 r#type: TxType::Legacy,
+                frames: None,
+                signatures: vec![],
                 nonce: Some(value.nonce),
                 to: value.to,
                 from: Address::default(),
@@ -4354,6 +4422,8 @@ mod serde_impl {
         fn from(value: EIP2930Transaction) -> Self {
             Self {
                 r#type: TxType::EIP2930,
+                frames: None,
+                signatures: vec![],
                 nonce: Some(value.nonce),
                 to: value.to,
                 from: Address::default(),
@@ -4397,10 +4467,87 @@ mod serde_impl {
         }
     }
 
+    impl TryFrom<&GenericTransaction> for FrameTransaction {
+        type Error = GenericTransactionError;
+
+        fn try_from(value: &GenericTransaction) -> Result<Self, Self::Error> {
+            let frames = value.frames.as_ref().ok_or_else(|| {
+                GenericTransactionError::InvalidField("frame transaction requires frames".into())
+            })?;
+            let transaction = Self {
+                sender: value.from,
+                chain_id: value.chain_id.unwrap_or_default(),
+                nonce: value.nonce.unwrap_or_default(),
+                max_fee_per_gas: value
+                    .max_fee_per_gas
+                    .map(U256::from)
+                    .unwrap_or(value.gas_price),
+                max_priority_fee_per_gas: value
+                    .max_priority_fee_per_gas
+                    .map(U256::from)
+                    .unwrap_or_default(),
+                max_fee_per_blob_gas: value.max_fee_per_blob_gas.unwrap_or_default(),
+                blob_versioned_hashes: value.blob_versioned_hashes.clone(),
+                frames: frames
+                    .iter()
+                    .map(|frame| Frame {
+                        mode: frame.mode,
+                        flags: frame.flags,
+                        target: frame.target,
+                        gas_limit: frame.execution_gas.unwrap_or_default(),
+                        state_gas_limit: frame.state_gas.unwrap_or_default(),
+                        value: frame.value,
+                        data: frame.data.clone(),
+                    })
+                    .collect(),
+                signatures: value
+                    .signatures
+                    .iter()
+                    .map(|signature| FrameSignature {
+                        scheme: signature.scheme,
+                        signer: signature.signer,
+                        msg: signature.msg.clone(),
+                        signature: signature.signature.clone(),
+                    })
+                    .collect(),
+                ..Default::default()
+            };
+            transaction
+                .validate_static_constraints()
+                .map_err(GenericTransactionError::InvalidField)?;
+            Ok(transaction)
+        }
+    }
+
     impl From<FrameTransaction> for GenericTransaction {
         fn from(value: FrameTransaction) -> Self {
             Self {
                 r#type: TxType::Frame,
+                frames: Some(
+                    value
+                        .frames
+                        .iter()
+                        .map(|frame| FrameRequest {
+                            mode: frame.mode,
+                            flags: frame.flags,
+                            target: frame.target,
+                            execution_gas: Some(frame.gas_limit),
+                            state_gas: Some(frame.state_gas_limit),
+                            value: frame.value,
+                            data: frame.data.clone(),
+                        })
+                        .collect(),
+                ),
+                signatures: value
+                    .signatures
+                    .iter()
+                    .map(|signature| FrameSignatureRequest {
+                        scheme: signature.scheme,
+                        signer: signature.signer,
+                        msg: signature.msg.clone(),
+                        signature: signature.signature.clone(),
+                    })
+                    .collect(),
                 nonce: Some(value.nonce),
                 to: TxKind::Call(value.sender),
                 from: value.sender,
@@ -4814,6 +4961,8 @@ mod tests {
             ]
         }"#;
         let deserialized_generic_transaction = GenericTransaction {
+            frames: None,
+            signatures: vec![],
             r#type: TxType::EIP2930,
             nonce: Some(2),
             to: TxKind::Create,
@@ -4869,6 +5018,8 @@ mod tests {
             ]
         }"#;
         let deserialized_generic_transaction = GenericTransaction {
+            frames: None,
+            signatures: vec![],
             r#type: TxType::EIP2930,
             nonce: Some(2),
             to: TxKind::Create,
@@ -5508,6 +5659,15 @@ mod tests {
         assert!(sigs[0].get("signer").is_some());
         assert!(sigs[0].get("signature").is_some());
         assert!(sigs[0].get("msg").is_some());
+    }
+
+    #[test]
+    fn frame_transaction_survives_generic_conversion() {
+        let tx = make_test_frame_tx();
+        let generic = GenericTransaction::from(tx.clone());
+        assert_eq!(generic.frames.as_ref().unwrap().len(), tx.frames.len());
+        assert_eq!(generic.signatures.len(), tx.signatures.len());
+        assert_eq!(FrameTransaction::try_from(&generic).unwrap(), tx);
     }
 
     fn make_frame_tx_with_gas_limits(limits: Vec<u64>) -> FrameTransaction {

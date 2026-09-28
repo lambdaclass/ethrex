@@ -1,6 +1,4 @@
-use super::frame::{
-    FrameTransactionRequest, estimated_max_gas, parse_transaction, require_success,
-};
+use super::frame::{estimated_max_gas, parse_transaction, prepare, require_success};
 use std::sync::Arc;
 
 use crate::{
@@ -32,7 +30,6 @@ pub const CALL_STIPEND: u64 = 2_300; // Free gas given at beginning of call.
 pub const TRANSACTION_GAS: u64 = 21_000; // Per transaction not creating a contract. NOTE: Not payable on data of calls between transactions.
 
 pub struct CallRequest {
-    frame_transaction: Option<FrameTransactionRequest>,
     transaction: GenericTransaction,
     block: Option<BlockIdentifierOrHash>,
 }
@@ -56,12 +53,10 @@ pub struct GetTransactionReceiptRequest {
 }
 
 pub struct CreateAccessListRequest {
-    frame_transaction: Option<FrameTransactionRequest>,
     pub transaction: GenericTransaction,
     pub block: Option<BlockIdentifier>,
 }
 pub struct EstimateGasRequest {
-    frame_transaction: Option<FrameTransactionRequest>,
     pub transaction: GenericTransaction,
     pub block: Option<BlockIdentifier>,
 }
@@ -99,10 +94,8 @@ impl RpcHandler for CallRequest {
             Some(value) => Some(BlockIdentifierOrHash::parse(value.clone(), 1)?),
             None => None,
         };
-        let (transaction, frame_transaction) = parse_transaction(&params[0])?;
         Ok(CallRequest {
-            transaction,
-            frame_transaction,
+            transaction: parse_transaction(&params[0])?,
             block,
         })
     }
@@ -117,8 +110,8 @@ impl RpcHandler for CallRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
-        if let Some(frame) = &self.frame_transaction {
-            let (_, result) = frame.prepare(&self.transaction, &header, &context).await?;
+        if self.transaction.frames.is_some() {
+            let (_, result) = prepare(&self.transaction, &header, &context).await?;
             require_success(&result)?;
             return Ok(Value::String(format!(
                 "0x{}",
@@ -347,10 +340,8 @@ impl RpcHandler for CreateAccessListRequest {
             Some(value) => Some(BlockIdentifier::parse(value.clone(), 1)?),
             None => None,
         };
-        let (transaction, frame_transaction) = parse_transaction(&params[0])?;
         Ok(CreateAccessListRequest {
-            transaction,
-            frame_transaction,
+            transaction: parse_transaction(&params[0])?,
             block,
         })
     }
@@ -367,8 +358,8 @@ impl RpcHandler for CreateAccessListRequest {
             _ => return Ok(Value::Null),
         };
 
-        if let Some(frame) = &self.frame_transaction {
-            let (_, result) = frame.prepare(&self.transaction, &header, &context).await?;
+        if self.transaction.frames.is_some() {
+            let (_, result) = prepare(&self.transaction, &header, &context).await?;
             return serde_json::to_value(AccessListResult {
                 access_list: result
                     .access_list
@@ -466,10 +457,8 @@ impl RpcHandler for EstimateGasRequest {
             Some(value) => Some(BlockIdentifier::parse(value.clone(), 1)?),
             None => None,
         };
-        let (transaction, frame_transaction) = parse_transaction(&params[0])?;
         Ok(EstimateGasRequest {
-            transaction,
-            frame_transaction,
+            transaction: parse_transaction(&params[0])?,
             block,
         })
     }
@@ -486,10 +475,8 @@ impl RpcHandler for EstimateGasRequest {
             _ => return Ok(Value::Null),
         };
 
-        if let Some(frame) = &self.frame_transaction {
-            let (tx, result) = frame
-                .prepare(&self.transaction, &block_header, &context)
-                .await?;
+        if self.transaction.frames.is_some() {
+            let (tx, result) = prepare(&self.transaction, &block_header, &context).await?;
             require_success(&result)?;
             return Ok(Value::String(format!("{:#x}", estimated_max_gas(&tx))));
         }
