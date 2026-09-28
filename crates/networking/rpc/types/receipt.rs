@@ -4,8 +4,8 @@ use ethrex_common::{
     evm::calculate_create_address,
     serde_utils,
     types::{
-        BlockHash, BlockHeader, BlockNumber, FrameReceipt, Log, Receipt, Transaction, TxKind,
-        TxType, bloom_from_logs,
+        BlockHash, BlockHeader, BlockNumber, Log, Receipt, Transaction, TxKind, TxType,
+        bloom_from_logs,
     },
 };
 use ethrex_crypto::NativeCrypto;
@@ -37,27 +37,13 @@ pub struct RpcFrameReceipt {
     /// (atomic-batch failure). Serialized as a hex-encoded byte.
     #[serde(with = "serde_utils::u8::hex_str")]
     pub status: u8,
-    /// `gas_used.execution` of the consensus frame receipt.
     #[serde(with = "serde_utils::u64::hex_str")]
     pub gas_used: u64,
-    /// `gas_used.state` of the consensus frame receipt: the frame's final
-    /// state-gas attribution. Omitting it made the receipt look as if state gas
-    /// were charged at transaction level, when the consensus encoding attributes
-    /// it per frame.
+    #[serde(with = "serde_utils::u64::hex_str")]
+    pub execution_gas_used: u64,
     #[serde(with = "serde_utils::u64::hex_str")]
     pub state_gas_used: u64,
-    pub logs: Vec<RpcLogInfo>,
-}
-
-impl From<FrameReceipt> for RpcFrameReceipt {
-    fn from(fr: FrameReceipt) -> Self {
-        Self {
-            status: fr.status,
-            gas_used: fr.gas_used,
-            state_gas_used: fr.state_gas_used,
-            logs: fr.logs.into_iter().map(RpcLogInfo::from).collect(),
-        }
-    }
+    pub logs: Vec<RpcLog>,
 }
 
 impl RpcReceipt {
@@ -74,10 +60,30 @@ impl RpcReceipt {
             log_index += 1;
         }
         let payer = receipt.payer;
-        let frame_receipts = receipt
-            .frame_receipts
-            .clone()
-            .map(|frs| frs.into_iter().map(RpcFrameReceipt::from).collect());
+        let mut frame_log_index = init_log_index;
+        let frame_receipts = receipt.frame_receipts.clone().map(|frames| {
+            frames
+                .into_iter()
+                .map(|frame| {
+                    let logs = frame
+                        .logs
+                        .into_iter()
+                        .map(|log| {
+                            let log = RpcLog::new(log, frame_log_index, &tx_info, &block_info);
+                            frame_log_index += 1;
+                            log
+                        })
+                        .collect();
+                    RpcFrameReceipt {
+                        status: frame.status,
+                        gas_used: frame.gas_used + frame.state_gas_used,
+                        execution_gas_used: frame.gas_used,
+                        state_gas_used: frame.state_gas_used,
+                        logs,
+                    }
+                })
+                .collect()
+        });
         Self {
             receipt: receipt.into(),
             logs,
@@ -263,7 +269,7 @@ mod tests {
     use super::*;
     use ethrex_common::{
         Bytes,
-        types::{FrameTransaction, Log, TxType},
+        types::{FrameReceipt, FrameTransaction, Log, TxType},
     };
     use hex_literal::hex;
 
@@ -303,6 +309,94 @@ mod tests {
         );
         let expected = r#"{"type":"0x3","status":"0x1","cumulativeGasUsed":"0x93","logsBloom":"0x00000000000000000080000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","logs":[{"address":"0x0000000000000000000000000000000000000000","topics":[],"data":"0x73747261776265727279","logIndex":"0x0","removed":false,"transactionHash":"0x0000000000000000000000000000000000000000000000000000000000000000","transactionIndex":"0x1","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000","blockNumber":"0x3"}],"transactionHash":"0x0000000000000000000000000000000000000000000000000000000000000000","transactionIndex":"0x1","from":"0x0000000000000000000000000000000000000000","to":"0x7435ed30a8b4aeb0877cef0c6e8cffe834eb865f","contractAddress":null,"gasUsed":"0x93","effectiveGasPrice":"0x9d","blockHash":"0x0000000000000000000000000000000000000000000000000000000000000000","blockNumber":"0x3"}"#;
         assert_eq!(serde_json::to_string(&receipt).unwrap(), expected);
+    }
+
+    #[test]
+    fn frame_receipts_include_gas_dimensions_and_global_log_metadata() {
+        let log = Log {
+            address: Address::repeat_byte(1),
+            topics: vec![],
+            data: Bytes::new(),
+        };
+        let receipt = RpcReceipt::new(
+            Receipt {
+                tx_type: TxType::Frame,
+                succeeded: false,
+                cumulative_gas_used: 30_000,
+                logs: vec![log.clone(), log.clone()],
+                payer: Some(Address::repeat_byte(2)),
+                frame_receipts: Some(vec![
+                    FrameReceipt {
+                        status: 1,
+                        gas_used: 256,
+                        state_gas_used: 512,
+                        logs: vec![log.clone()],
+                    },
+                    FrameReceipt {
+                        status: 0,
+                        gas_used: 128,
+                        state_gas_used: 0,
+                        logs: vec![],
+                    },
+                    FrameReceipt {
+                        status: 2,
+                        gas_used: 0,
+                        state_gas_used: 0,
+                        logs: vec![],
+                    },
+                    FrameReceipt {
+                        status: 1,
+                        gas_used: 256,
+                        state_gas_used: 0,
+                        logs: vec![log],
+                    },
+                ]),
+            },
+            RpcReceiptTxInfo {
+                transaction_hash: H256::repeat_byte(3),
+                transaction_index: 2,
+                from: Address::repeat_byte(1),
+                to: None,
+                contract_address: None,
+                gas_used: 30_000,
+                effective_gas_price: 1,
+                blob_gas_price: None,
+                blob_gas_used: None,
+            },
+            RpcReceiptBlockInfo {
+                block_hash: H256::repeat_byte(4),
+                block_number: 5,
+            },
+            7,
+        );
+        let value = serde_json::to_value(receipt).unwrap();
+        let frames = &value["frameReceipts"];
+        assert_eq!(frames[0]["gasUsed"], "0x300");
+        assert_eq!(frames[0]["executionGasUsed"], "0x100");
+        assert_eq!(frames[0]["stateGasUsed"], "0x200");
+        assert_eq!(
+            frames[0]["logs"][0],
+            serde_json::json!({
+                "address": "0x0101010101010101010101010101010101010101",
+                "topics": [], "data": "0x", "logIndex": "0x7", "removed": false,
+                "transactionHash": "0x0303030303030303030303030303030303030303030303030303030303030303",
+                "transactionIndex": "0x2",
+                "blockHash": "0x0404040404040404040404040404040404040404040404040404040404040404",
+                "blockNumber": "0x5"
+            })
+        );
+        assert_eq!(frames[0]["logs"][0], value["logs"][0]);
+        assert_eq!(frames[3]["logs"][0], value["logs"][1]);
+        assert_eq!(frames[3]["logs"][0]["logIndex"], "0x8");
+        assert_eq!(
+            frames[2],
+            serde_json::json!({
+                "status": "0x2", "gasUsed": "0x0", "executionGasUsed": "0x0",
+                "stateGasUsed": "0x0", "logs": []
+            })
+        );
+        assert_eq!(frames[1]["gasUsed"], "0x80");
+        assert_eq!(frames[1]["logs"], serde_json::json!([]));
     }
 
     // EIP-8141: a frame transaction has no top-level recipient and creates nothing at the top level,
