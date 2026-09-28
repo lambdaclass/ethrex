@@ -1090,6 +1090,42 @@ impl From<Trie> for ProofTrie {
     }
 }
 
+/// Branch levels, counted from the root, whose children are hashed in parallel.
+#[cfg(feature = "std")]
+const PARALLEL_HASH_LEVELS: usize = 4;
+
+/// Hashes the subtries under the top branch levels on all cores, caching each
+/// hash in its node reference, so the root hash computed afterwards only has to
+/// combine them.
+///
+/// Every leaf of a transactions or receipts trie holds a whole encoded
+/// transaction or receipt, so hashing the leaves is most of the cost of those
+/// roots, and subtries hash independently. Index keys are skewed: every index
+/// from 128 to 255 sits under the path `8, 1`, so one subtrie two levels down
+/// holds half the leaves of a typical block. Going four levels deep splits it.
+#[cfg(feature = "std")]
+fn hash_top_subtries_in_parallel(node_ref: &NodeRef, crypto: &dyn Crypto, level: usize) {
+    use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+    let NodeRef::Node(node, _) = node_ref else {
+        return;
+    };
+    if level >= PARALLEL_HASH_LEVELS {
+        return;
+    }
+    match node.as_ref() {
+        Node::Branch(branch) => branch.choices.par_iter().for_each(|child| {
+            if child.is_valid() {
+                hash_top_subtries_in_parallel(child, crypto, level + 1);
+                child.compute_hash_ref(crypto);
+            }
+        }),
+        Node::Extension(extension) => {
+            hash_top_subtries_in_parallel(&extension.child, crypto, level)
+        }
+        Node::Leaf(_) => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1129,41 +1165,5 @@ mod tests {
     #[test]
     fn empty_trie_hash_matches_keccak() {
         assert_eq!(EMPTY_TRIE_HASH, H256(keccak_hash([RLP_NULL])));
-    }
-}
-
-/// Branch levels, counted from the root, whose children are hashed in parallel.
-#[cfg(feature = "std")]
-const PARALLEL_HASH_LEVELS: usize = 4;
-
-/// Hashes the subtries under the top branch levels on all cores, caching each
-/// hash in its node reference, so the root hash computed afterwards only has to
-/// combine them.
-///
-/// Every leaf of a transactions or receipts trie holds a whole encoded
-/// transaction or receipt, so hashing the leaves is most of the cost of those
-/// roots, and subtries hash independently. Index keys are skewed: every index
-/// from 128 to 255 sits under the path `8, 1`, so one subtrie two levels down
-/// holds half the leaves of a typical block. Going four levels deep splits it.
-#[cfg(feature = "std")]
-fn hash_top_subtries_in_parallel(node_ref: &NodeRef, crypto: &dyn Crypto, level: usize) {
-    use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-    let NodeRef::Node(node, _) = node_ref else {
-        return;
-    };
-    if level >= PARALLEL_HASH_LEVELS {
-        return;
-    }
-    match node.as_ref() {
-        Node::Branch(branch) => branch.choices.par_iter().for_each(|child| {
-            if child.is_valid() {
-                hash_top_subtries_in_parallel(child, crypto, level + 1);
-                child.compute_hash_ref(crypto);
-            }
-        }),
-        Node::Extension(extension) => {
-            hash_top_subtries_in_parallel(&extension.child, crypto, level)
-        }
-        Node::Leaf(_) => {}
     }
 }
