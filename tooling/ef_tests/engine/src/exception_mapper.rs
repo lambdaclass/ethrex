@@ -68,7 +68,7 @@ const PATTERNS: &[Entry] = &[
 
     // ─── mapping_regex ────────────────────────────────────────────────────────────
     Entry { canonical: "TransactionException.INVALID_SIGNATURE_VRS", kind: Kind::Re,
-        text: r"Couldn't recover addresses with error: invalid signature|Error decoding field 'signature_y_parity' of type bool: MalformedBoolean" },
+        text: r"Couldn't recover addresses with error: (invalid signature|recovery failed)|Error decoding field 'signature_y_parity' of type bool: MalformedBoolean" },
     Entry { canonical: "TransactionException.PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS", kind: Kind::Re,
         text: r"(?i)priority fee.* is greater than max fee.*" },
     Entry { canonical: "TransactionException.TYPE_4_EMPTY_AUTHORIZATION_LIST", kind: Kind::Re,
@@ -235,6 +235,11 @@ mod tests {
         assert!(matches_canonical(
             "TransactionException.INVALID_SIGNATURE_VRS",
             "Invalid transaction: Couldn't recover addresses with error: invalid signature",
+        ));
+        // Well-formed r/s from which no public key can be recovered.
+        assert!(matches_canonical(
+            "TransactionException.INVALID_SIGNATURE_VRS",
+            "Invalid transaction: Couldn't recover addresses with error: recovery failed",
         ));
         // Typed tx with a non-bool y_parity (RLP decode rejects the signature).
         assert!(matches_canonical(
