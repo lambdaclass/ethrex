@@ -1540,8 +1540,14 @@ impl Store {
             let prefix = block_hash.as_bytes().to_vec();
             // Seek directly to block_hash || start_index to avoid O(start_index) scan.
             // Keys are big-endian u64, so lexicographic order matches numeric order.
+            // From index 0 the bare block hash is the same seek point on RocksDB, and
+            // it is the only form the in-memory backend answers fully: that backend
+            // filters keys by the whole argument rather than seeking to it, so a
+            // 40-byte seek key there yields the first receipt alone.
             let mut seek_key = prefix.clone();
-            seek_key.extend_from_slice(&start_index.to_be_bytes());
+            if start_index > 0 {
+                seek_key.extend_from_slice(&start_index.to_be_bytes());
+            }
             let iter = txn.prefix_iterator(RECEIPTS_V2, &seek_key)?;
             let mut receipts = Vec::new();
             for result in iter {
