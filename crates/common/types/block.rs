@@ -1137,11 +1137,14 @@ mod test {
     #[test]
     fn senders_recovered_once_are_read_back_unchanged() {
         let crypto = ethrex_crypto::NativeCrypto;
-        let legacy = Transaction::decode_canonical(&hex!("f86e81fa843127403882f61894db8d964741c53e55df9c2d4e9414c6c96482874e870aa87bee538000808360306ca03aa421df67a101c45ff9cb06ce28f518a5d8d8dbb76a79361280071909650a27a05a447ff053c4ae601cfe81859b58d5603f2d0a73481c50f348089032feb0b073")).unwrap();
-        // Recovered on a throwaway clone, so the body's copies start unrecovered.
-        let expected = legacy.clone().sender(&crypto).unwrap();
+        let raw = hex!(
+            "f86e81fa843127403882f61894db8d964741c53e55df9c2d4e9414c6c96482874e870aa87bee538000808360306ca03aa421df67a101c45ff9cb06ce28f518a5d8d8dbb76a79361280071909650a27a05a447ff053c4ae601cfe81859b58d5603f2d0a73481c50f348089032feb0b073"
+        );
+        let decode = || Transaction::decode_canonical(&raw).unwrap();
+        // Recovered on its own decoded copy, so the body's copies start unrecovered.
+        let expected = decode().sender(&crypto).unwrap();
         let body = BlockBody {
-            transactions: vec![legacy.clone(), legacy.clone(), legacy],
+            transactions: vec![decode(), decode(), decode()],
             ommers: vec![],
             withdrawals: None,
         };
