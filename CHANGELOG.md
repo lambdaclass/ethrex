@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-09-28
+
+- Hash the top subtries of the transactions, receipts and withdrawals tries in parallel: together with #7325 the engine handler's root-and-recovery step drops from 1.12 to 0.89 ms at the median on mainnet [#7326](https://github.com/lambdaclass/ethrex/pull/7326)
+
 ### 2026-09-14
 
 - Stop copying the stateless input one byte at a time, hash the block access list once instead of twice, and route `validate_public_keys` through the injected `Crypto`: −8.81% guest instructions on mainnet block 25453112 [#7277](https://github.com/lambdaclass/ethrex/pull/7277)
