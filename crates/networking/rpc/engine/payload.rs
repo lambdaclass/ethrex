@@ -16,10 +16,11 @@ use serde_json::Value;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
+use crate::engine::inclusion_list::block_satisfies_inclusion_list;
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::payload::{
     ExecutionPayload, ExecutionPayloadBody, ExecutionPayloadBodyV2, ExecutionPayloadResponse,
-    PayloadStatus,
+    PayloadStatus, PayloadValidationStatus,
 };
 use crate::utils::RpcErr;
 use crate::utils::{RpcRequest, parse_json_hex};
@@ -270,6 +271,15 @@ impl RpcHandler for NewPayloadV4Request {
     }
 }
 
+/// `validationError` for a present-but-undecodable `blockAccessList`, shared by
+/// `engine_newPayloadV5` and `engine_newPayloadV6`. Wording matters: EEST's
+/// ethrex exception mapper resolves `BlockException.INVALID_BLOCK_ACCESS_LIST`
+/// by matching the substring "Failed to RLP decode BAL" (the serde-layer
+/// message this path predates), so it stays the prefix for consume-engine to
+/// attribute the INVALID status to the right exception.
+const UNDECODABLE_BAL_ERROR: &str = "Failed to RLP decode BAL: blockAccessList is not a valid RLP \
+     encoding of the block access list";
+
 pub struct NewPayloadV5Request {
     pub payload: ExecutionPayload,
     pub expected_blob_versioned_hashes: Vec<H256>,
@@ -376,14 +386,8 @@ impl NewPayloadV5Request {
         // newPayloadV5 spec 3). The field was dropped from `self.payload` at parse
         // time, so falling through would misreport it as missing (-32602).
         if self.undecodable_bal {
-            // Wording matters: EEST's ethrex exception mapper resolves
-            // BlockException.INVALID_BLOCK_ACCESS_LIST by matching the substring
-            // "Failed to RLP decode BAL" (the serde-layer message this path
-            // predates). Keep it as the prefix so consume-engine attributes the
-            // INVALID status to the right exception.
             return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
-                "Failed to RLP decode BAL: blockAccessList is not a valid RLP \
-                 encoding of the block access list",
+                UNDECODABLE_BAL_ERROR,
             ))?);
         }
         validate_execution_payload_v5(&self.payload)?;
@@ -412,6 +416,15 @@ impl NewPayloadV5Request {
         };
 
         let chain_config = context.storage.get_chain_config();
+
+        // Pre-Hegotá guard: V5 cannot accept Hegotá-timestamp payloads. Runs
+        // unconditionally (not feature-gated) so a non-FOCIL build still rejects
+        // when the chain config has hegota_time set.
+        if chain_config.is_hegota_activated(block.header.timestamp) {
+            return Err(RpcErr::UnsupportedFork(
+                "engine_newPayloadV5 cannot accept Hegotá payloads".to_string(),
+            ));
+        }
 
         // Pre-Amsterdam timestamps must use V4, not V5. Per engine-API spec
         // (amsterdam.md): "Client software MUST return -38005: Unsupported fork
@@ -475,6 +488,44 @@ impl From<NewPayloadWithWitnessV5Request> for RpcRequest {
     }
 }
 
+/// `engine_newPayloadV6` — extends `engine_newPayloadV5` with an
+/// `inclusionListTransactions` parameter and answers with `PayloadStatusV2`
+/// (EIP-7805).
+///
+/// A payload that omits a validly-includable inclusion-list transaction is
+/// still `VALID`: the verdict is reported through
+/// `PayloadStatusV2.inclusionListSatisfied` so the consensus layer knows not to
+/// attest to it. The list is retained under the payload's block hash so
+/// `engine_forkchoiceUpdatedV5` can report the same verdict for a head it is
+/// later told to adopt.
+pub struct NewPayloadV6Request {
+    pub payload: ExecutionPayload,
+    pub expected_blob_versioned_hashes: Vec<H256>,
+    pub parent_beacon_block_root: H256,
+    pub execution_requests: Vec<EncodedRequests>,
+    pub inclusion_list_transactions: Vec<bytes::Bytes>,
+    pub raw_bal_hash: Option<H256>,
+    /// See [`NewPayloadV5Request::undecodable_bal`]; bogota.md defines
+    /// `engine_newPayloadV6` as V5 plus changes, none of which relax that rule.
+    pub undecodable_bal: bool,
+}
+
+impl From<NewPayloadV6Request> for RpcRequest {
+    fn from(val: NewPayloadV6Request) -> Self {
+        RpcRequest {
+            method: "engine_newPayloadV6".to_string(),
+            params: Some(vec![
+                serde_json::json!(val.payload),
+                serde_json::json!(val.expected_blob_versioned_hashes),
+                serde_json::json!(val.parent_beacon_block_root),
+                serde_json::json!(val.execution_requests),
+                serde_json::json!(val.inclusion_list_transactions),
+            ]),
+            ..Default::default()
+        }
+    }
+}
+
 impl RpcHandler for NewPayloadWithWitnessV5Request {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
         NewPayloadV5Request::parse(params).map(Self)
@@ -483,6 +534,178 @@ impl RpcHandler for NewPayloadWithWitnessV5Request {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         self.0.handle_with_witness(context, true).await
     }
+}
+
+impl RpcHandler for NewPayloadV6Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 5 {
+            return Err(RpcErr::BadParams("Expected 5 params".to_owned()));
+        }
+
+        // The first four params are exactly `engine_newPayloadV5`'s, with its
+        // `blockAccessList` handling (mandatory `0x` prefix, an undecodable list
+        // flagged for an INVALID status rather than -32602), so parse them with
+        // V5's parser instead of a copy that can drift from it.
+        let base = NewPayloadV5Request::parse(&Some(params[..4].to_vec()))?;
+        Ok(Self {
+            payload: base.payload,
+            expected_blob_versioned_hashes: base.expected_blob_versioned_hashes,
+            parent_beacon_block_root: base.parent_beacon_block_root,
+            execution_requests: base.execution_requests,
+            inclusion_list_transactions: parse_il_transactions(&params[4])?,
+            raw_bal_hash: base.raw_bal_hash,
+            undecodable_bal: base.undecodable_bal,
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        // Must precede every other check, as in V5: the undecodable field was
+        // dropped from `self.payload` at parse time, so the payload validation
+        // below would misreport it as missing (-32602). The status is INVALID,
+        // so `inclusionListSatisfied` is `null` (bogota.md newPayloadV6 2.2).
+        if self.undecodable_bal {
+            return Ok(serde_json::to_value(
+                PayloadStatus::invalid_with_err(UNDECODABLE_BAL_ERROR)
+                    .with_inclusion_list_satisfied(None),
+            )?);
+        }
+
+        validate_execution_payload_v4(&self.payload)?;
+        validate_execution_requests(&self.execution_requests)?;
+
+        // Per the FOCIL spec (and the hive engine-focil "garbage bytes" test),
+        // malformed IL byte strings MUST be tolerated as if they were empty IL
+        // entries — the V6 call should not be rejected wholesale. Real RLP
+        // decoding for the satisfaction check happens below; entries that
+        // fail to decode are simply skipped. No upper size cap on the receive
+        // path either — that constraint applies only to engine_getInclusionListV1
+        // (the local builder).
+
+        let requests_hash = compute_requests_hash(&self.execution_requests);
+        let block_access_list_hash = self.raw_bal_hash;
+
+        let block = match get_block_from_payload(
+            &self.payload,
+            Some(self.parent_beacon_block_root),
+            Some(requests_hash),
+            block_access_list_hash,
+        ) {
+            Ok(block) => block,
+            Err(err) => {
+                // Still a `PayloadStatusV2`, so the key is emitted as `null`
+                // rather than dropped even on this early bail-out.
+                return Ok(serde_json::to_value(
+                    PayloadStatus::invalid_with_err(&err.to_string())
+                        .with_inclusion_list_satisfied(None),
+                )?);
+            }
+        };
+
+        let chain_config = context.storage.get_chain_config();
+        if !chain_config.is_hegota_activated(block.header.timestamp) {
+            return Err(RpcErr::UnsupportedFork(
+                "engine_newPayloadV6 requires Hegotá-active timestamp".to_string(),
+            ));
+        }
+
+        // Note re: spec rule "INVALID_BLOCK_HASH replaced by INVALID" — ethrex
+        // already returns INVALID for hash mismatches (PayloadValidationStatus
+        // has no InvalidBlockHash variant). Spec compliance by construction.
+        let bal = self.payload.block_access_list.clone();
+
+        // Decode IL transactions for the satisfaction check. Per the FOCIL
+        // spec, malformed entries are tolerated — they're treated as if they
+        // were empty IL items (no obligation imposed on the block). Skip
+        // anything that fails to decode rather than rejecting the whole
+        // newPayload call.
+        let mut decoded_il: Vec<ethrex_common::types::Transaction> =
+            Vec::with_capacity(self.inclusion_list_transactions.len());
+        for (i, raw) in self.inclusion_list_transactions.iter().enumerate() {
+            match ethrex_common::types::Transaction::decode_canonical(raw.as_ref()) {
+                Ok(tx) => decoded_il.push(tx),
+                Err(e) => {
+                    debug!(
+                        index = i,
+                        error = %e,
+                        "engine_newPayloadV6: skipping malformed IL byte string (treated as empty entry)"
+                    );
+                }
+            }
+        }
+
+        let block_hash_for_il = block.hash();
+        let payload_status = handle_new_payload_v4(
+            &self.payload,
+            context.clone(),
+            block,
+            self.expected_blob_versioned_hashes.clone(),
+            bal,
+            false,
+        )
+        .await?;
+
+        // Retain the inclusion list so `engine_forkchoiceUpdatedV5` can report
+        // `inclusionListSatisfied` for this block if the consensus layer later
+        // names it as head. Mandatory for `ACCEPTED` payloads, whose IL check is
+        // deferred until execution happens; also done for `VALID` ones so the
+        // forkchoice call need not be given the list again.
+        if matches!(
+            payload_status.status,
+            PayloadValidationStatus::Valid | PayloadValidationStatus::Accepted
+        ) {
+            match context.retained_inclusion_lists.lock() {
+                Ok(mut retained) => retained.insert(block_hash_for_il, decoded_il.clone()),
+                Err(e) => {
+                    return Err(RpcErr::Internal(format!(
+                        "retained inclusion list lock poisoned: {e}"
+                    )));
+                }
+            }
+        }
+
+        // A verdict is computed only for a `VALID` payload; every other status
+        // reports `null`. The key is present either way — this is a
+        // `PayloadStatusV2` response, and bogota.md requires
+        // `inclusionListSatisfied` to be `null` rather than absent when there is
+        // no verdict. An unsatisfied list does not make the payload invalid —
+        // the consensus layer simply will not attest to it.
+        let satisfied = if payload_status.status == PayloadValidationStatus::Valid {
+            Some(block_satisfies_inclusion_list(&context, block_hash_for_il, &decoded_il).await?)
+        } else {
+            None
+        };
+        serde_json::to_value(payload_status.with_inclusion_list_satisfied(satisfied))
+            .map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+fn parse_il_transactions(value: &Value) -> Result<Vec<bytes::Bytes>, RpcErr> {
+    let array = value.as_array().ok_or_else(|| {
+        RpcErr::WrongParam("inclusionListTransactions: expected array".to_string())
+    })?;
+    let mut out = Vec::with_capacity(array.len());
+    for (i, entry) in array.iter().enumerate() {
+        let s = entry.as_str().ok_or_else(|| {
+            RpcErr::WrongParam(format!(
+                "inclusionListTransactions[{i}]: expected hex string"
+            ))
+        })?;
+        let bytes = hex::decode(s.trim_start_matches("0x")).map_err(|_| {
+            RpcErr::WrongParam(format!("inclusionListTransactions[{i}]: invalid hex"))
+        })?;
+        out.push(bytes::Bytes::from(bytes));
+    }
+    // EIP-7805 (FOCIL): MAX_BYTES_PER_INCLUSION_LIST = 8192 is a constraint on
+    // what `engine_getInclusionListV1` BUILDS, not on what V5/V6 RECEIVE. The
+    // CL may forward an IL of arbitrary size and the EL must accept it (per
+    // the Hive engine-focil "accepts IL larger than MAX_BYTES_PER_INCLUSION_LIST"
+    // test). The size cap is enforced in
+    // `crates/blockchain/inclusion_list_builder.rs` on the build side; this
+    // receive path imposes no upper bound.
+    Ok(out)
 }
 
 // GetPayload V1-V2-V3 implementations
@@ -1806,5 +2029,78 @@ mod tests {
         };
         let result = request.handle(test_context().await.clone()).await;
         assert!(matches!(result, Err(RpcErr::TooLargeRequest)));
+    }
+}
+
+#[cfg(test)]
+mod v6_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parse_il_transactions_accepts_empty_array() {
+        let parsed = parse_il_transactions(&json!([])).expect("empty IL parses");
+        assert!(parsed.is_empty());
+    }
+
+    #[test]
+    fn parse_il_transactions_accepts_hex_strings() {
+        let parsed =
+            parse_il_transactions(&json!(["0xdeadbeef", "0xcafe"])).expect("valid hex parses");
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].as_ref(), &[0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(parsed[1].as_ref(), &[0xca, 0xfe]);
+    }
+
+    #[test]
+    fn parse_il_transactions_rejects_non_array() {
+        let err = parse_il_transactions(&json!("0xdeadbeef")).unwrap_err();
+        assert!(matches!(err, RpcErr::WrongParam(_)));
+    }
+
+    #[test]
+    fn parse_il_transactions_rejects_non_string_entries() {
+        let err = parse_il_transactions(&json!([123])).unwrap_err();
+        assert!(matches!(err, RpcErr::WrongParam(_)));
+    }
+
+    #[test]
+    fn parse_il_transactions_rejects_invalid_hex() {
+        let err = parse_il_transactions(&json!(["0xZZ"])).unwrap_err();
+        assert!(matches!(err, RpcErr::WrongParam(_)));
+    }
+
+    /// Hive engine-focil testForkchoiceUpdatedAcceptsLargeIL: V5/V6 receive
+    /// paths must NOT enforce MAX_BYTES_PER_INCLUSION_LIST. The 8 KiB cap
+    /// only applies to engine_getInclusionListV1 (the local builder).
+    #[test]
+    fn parse_il_transactions_accepts_oversized_inputs() {
+        // 10 KiB single entry (well over the 8 KiB build cap) must round-trip
+        // through the receive-side parser without error.
+        let big_hex = format!("0x{}", "42".repeat(10 * 1024));
+        let parsed = parse_il_transactions(&json!([big_hex])).expect("oversized parses");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].len(), 10 * 1024);
+    }
+
+    /// Hive engine-focil "garbage bytes" test: bytes that aren't valid RLP
+    /// transactions (`0xdeadbeef`, empty, `0x02c0`) MUST round-trip through
+    /// `parse_il_transactions` without error — RLP decode failures are
+    /// downstream concerns handled by skip-and-continue.
+    #[test]
+    fn parse_il_transactions_tolerates_garbage_bytes() {
+        let parsed =
+            parse_il_transactions(&json!(["0xdeadbeef", "", "0x02c0"])).expect("garbage parses");
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[0].as_ref(), &[0xde, 0xad, 0xbe, 0xef]);
+        assert!(parsed[1].is_empty());
+        assert_eq!(parsed[2].as_ref(), &[0x02, 0xc0]);
+    }
+
+    #[test]
+    fn newpayload_v6_parse_rejects_wrong_param_count() {
+        let four_only =
+            NewPayloadV6Request::parse(&Some(vec![json!({}), json!([]), json!("0x"), json!([])]));
+        assert!(matches!(four_only, Err(RpcErr::BadParams(_))));
     }
 }

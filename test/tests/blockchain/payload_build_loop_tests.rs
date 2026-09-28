@@ -105,6 +105,7 @@ fn payload_block(store: &Store) -> Block {
         version: 3,
         elasticity_multiplier: 1,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        inclusion_list_transactions: None,
     };
     create_payload(&args, store, Bytes::new()).unwrap()
 }
@@ -154,11 +155,11 @@ async fn cancelled_loop_still_drains_mempool_when_payload_is_empty() {
 
     // Mempool is empty: the initial build produces an empty payload.
     let token = CancellationToken::new();
-    let mut fut = std::pin::pin!(
-        blockchain
-            .clone()
-            .build_payload_loop(payload_block(&store), token.clone())
-    );
+    let mut fut = std::pin::pin!(blockchain.clone().build_payload_loop(
+        payload_block(&store),
+        token.clone(),
+        Vec::new()
+    ));
     poll_once_pending!(fut);
 
     // The tx lands, then getPayload cancels before any rebuild completes.
@@ -194,11 +195,11 @@ async fn cancelled_loop_returns_held_payload_without_final_rebuild() {
     let early_hash = blockchain.add_transaction_to_pool(early_tx).await.unwrap();
 
     let token = CancellationToken::new();
-    let mut fut = std::pin::pin!(
-        blockchain
-            .clone()
-            .build_payload_loop(payload_block(&store), token.clone())
-    );
+    let mut fut = std::pin::pin!(blockchain.clone().build_payload_loop(
+        payload_block(&store),
+        token.clone(),
+        Vec::new()
+    ));
     poll_once_pending!(fut);
 
     // getPayload cancels; only afterwards does another tx land.
@@ -261,7 +262,7 @@ async fn getpayload_latency_under_sustained_mempool_inflow() {
     let payload_id = 1;
     blockchain
         .clone()
-        .initiate_payload_build(payload_block(&store), payload_id)
+        .initiate_payload_build(payload_block(&store), payload_id, Vec::new())
         .await;
     let feeder_blockchain = blockchain.clone();
     let feeder_key = keys[SENDERS];

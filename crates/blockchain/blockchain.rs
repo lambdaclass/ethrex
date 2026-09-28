@@ -45,6 +45,8 @@
 pub mod constants;
 pub mod error;
 pub mod fork_choice;
+pub mod inclusion_list_builder;
+pub mod inclusion_list_validator;
 pub mod mempool;
 pub mod payload;
 pub mod prewarm;
@@ -111,12 +113,12 @@ use mempool::{BalanceCheck, Mempool, SenderAdmission};
 use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::LazyLock;
 use std::sync::OnceLock;
 use std::sync::mpsc::Sender;
 use std::sync::{
-    Arc, RwLock,
+    Arc, Mutex, RwLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc::{Receiver, channel},
 };
@@ -217,6 +219,43 @@ pub struct L2Config {
     pub fee_config: Arc<RwLock<FeeConfig>>,
 }
 
+/// Upper bound on blocks whose EIP-8037 gas dimensions are kept. A block's
+/// dimensions are only needed while its inclusion list may still be checked,
+/// so this matches the window `engine_newPayloadV6` retains lists for.
+const MAX_BLOCK_GAS_DIMENSIONS: usize = 64;
+
+/// EIP-8037 `(regular, state)` gas totals of recently executed blocks, keyed by
+/// block hash, FIFO-evicted.
+///
+/// The EIP-7805 satisfaction check needs both totals (EELS
+/// `check_block_gas_capacity` budgets each dimension separately), but the
+/// header records only their maximum and the check runs on a stored block. On
+/// a miss (a block executed before a restart, or evicted) the check falls back
+/// to the header's single total, which is exact for any tx whose gas is within
+/// `TX_MAX_GAS_LIMIT` and too strict above it.
+#[derive(Debug, Default)]
+struct BlockGasDimensions {
+    by_block: HashMap<H256, (u64, u64)>,
+    order: VecDeque<H256>,
+}
+
+impl BlockGasDimensions {
+    fn insert(&mut self, block_hash: H256, dimensions: (u64, u64)) {
+        if self.by_block.insert(block_hash, dimensions).is_none() {
+            self.order.push_back(block_hash);
+        }
+        while self.order.len() > MAX_BLOCK_GAS_DIMENSIONS {
+            if let Some(evicted) = self.order.pop_front() {
+                self.by_block.remove(&evicted);
+            }
+        }
+    }
+
+    fn get(&self, block_hash: &H256) -> Option<(u64, u64)> {
+        self.by_block.get(block_hash).copied()
+    }
+}
+
 /// Core blockchain implementation for block validation and execution.
 ///
 /// The `Blockchain` struct is the main entry point for all blockchain operations:
@@ -281,6 +320,9 @@ pub struct Blockchain {
     /// Cache handoff slot from the mempool prewarmer to
     /// `execute_block_pipeline`; see `PrewarmedCache` and `crate::prewarm`.
     prewarmed: PrewarmedCache,
+    /// EIP-8037 gas totals of recently executed blocks, for the EIP-7805
+    /// satisfaction check; see [`BlockGasDimensions`].
+    gas_dimensions: Mutex<BlockGasDimensions>,
 }
 
 /// Newtype around the prewarmer's cache-handoff slot so `Blockchain` can keep
@@ -613,6 +655,7 @@ impl Blockchain {
             options: blockchain_opts,
             merkle_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
+            gas_dimensions: Mutex::default(),
         }
     }
 
@@ -641,6 +684,7 @@ impl Blockchain {
             },
             merkle_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
+            gas_dimensions: Mutex::default(),
         }
     }
 
@@ -691,6 +735,7 @@ impl Blockchain {
             options,
             merkle_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
+            gas_dimensions: Mutex::default(),
         }
     }
 
@@ -2724,6 +2769,124 @@ impl Blockchain {
         })
     }
 
+    /// EIP-7805 (FOCIL) variant of [`add_block_pipeline`]. Runs the standard
+    /// import pipeline and, if the chain has activated Hegotá and the
+    /// caller-provided context carries a non-empty inclusion list, runs the
+    /// satisfaction algorithm against the post-execution state.
+    ///
+    /// Returns `Err(ChainError::IlUnsatisfied { tx_hash })` if the block
+    /// imports successfully but fails the IL satisfaction check. The V6
+    /// `engine_newPayloadV6` handler maps this to
+    /// `PayloadStatus::inclusion_list_unsatisfied()`.
+    ///
+    /// Per Decision 4 in `design.md`, the satisfaction algorithm is a pure
+    /// state-comparison pass — no EVM re-execution. The validator is
+    /// initialized from post-state directly (one read per IL sender) rather
+    /// than incrementally tracked during execution; this keeps the hot path
+    /// untouched while preserving spec correctness (a missing IL tx is
+    /// classified by post-state regardless of how it was reached).
+    pub fn add_block_pipeline_with_il(
+        &self,
+        block: Block,
+        bal: Option<Arc<BlockAccessList>>,
+        context: &ethrex_common::validation::BlockValidationContext,
+    ) -> Result<(), ChainError> {
+        use std::collections::HashSet;
+
+        let block_timestamp = block.header.timestamp;
+        let chain_config = self.storage.get_chain_config();
+        let parent_hash = block.header.parent_hash;
+        // Snapshot what we need for the satisfaction check BEFORE the inner
+        // pipeline consumes `block`. (`block` is moved into
+        // `add_block_pipeline_inner`.)
+        let pre_state_root = self
+            .storage
+            .get_block_header_by_hash(parent_hash)?
+            .map(|h| h.state_root);
+        let block_tx_hashes: HashSet<H256> = block
+            .body
+            .transactions
+            .iter()
+            .map(|tx| tx.hash(&NativeCrypto))
+            .collect();
+        let post_state_root = block.header.state_root;
+        let block_hash = block.hash();
+        // Snapshot the header for the satisfaction check (intrinsic-gas fork +
+        // base fee) before `block` is moved into the inner pipeline.
+        let header = block.header.clone();
+        // Withdrawals too: the satisfaction check evaluates senders at the
+        // post-transactions, PRE-withdrawals point (EELS `apply_body` order),
+        // so their credits must be discounted from the post-state balances.
+        let withdrawals = block.body.withdrawals.clone().unwrap_or_default();
+
+        let (_, _, result) =
+            self.add_block_pipeline_inner(block, bal, false, None, None, BodyCheck::Verify)?;
+        result?;
+
+        // Only run the satisfaction check on the V6 path: Hegotá-active
+        // chain AND a non-empty IL was carried in the context.
+        if !chain_config.is_hegota_activated(block_timestamp) {
+            return Ok(());
+        }
+        let Some(il) = context.inclusion_list.as_ref() else {
+            return Ok(());
+        };
+        if il.is_empty() {
+            return Ok(());
+        }
+        let Some(pre_state_root) = pre_state_root else {
+            // Unreachable — the inner pipeline would have failed if the
+            // parent header wasn't found.
+            return Ok(());
+        };
+
+        let pre_state = inclusion_list_validator::StoreIlStateProvider {
+            store: &self.storage,
+            state_root: pre_state_root,
+        };
+        let post_state = inclusion_list_validator::StoreIlStateProvider {
+            store: &self.storage,
+            state_root: post_state_root,
+        };
+        let crypto = NativeCrypto;
+
+        let mut validator = inclusion_list_validator::InclusionListSatisfactionValidator::new(
+            il, &pre_state, &crypto,
+        )
+        .map_err(|e| ChainError::Custom(format!("IL validator init failed: {e}")))?;
+
+        // Initialize tracker from POST-state: equivalent to "observe every
+        // executed tx" since the post-state already reflects all updates.
+        // O(|IL senders|) reads, not O(block_size).
+        validator
+            .refresh_all_from(&post_state, &crypto)
+            .map_err(|e| ChainError::Custom(format!("IL validator refresh failed: {e}")))?;
+        validator.discount_withdrawals(&withdrawals);
+
+        match validator.check(
+            il,
+            &block_tx_hashes,
+            self.block_gas_dimensions(&block_hash),
+            &header,
+            &chain_config,
+            &crypto,
+        ) {
+            Ok(()) => Ok(()),
+            Err(unsat) => Err(ChainError::IlUnsatisfied {
+                tx_hash: unsat.tx_hash,
+            }),
+        }
+    }
+
+    /// EIP-8037 `(regular, state)` gas totals of a block this node executed,
+    /// while still retained; see [`BlockGasDimensions`].
+    pub fn block_gas_dimensions(&self, block_hash: &H256) -> Option<(u64, u64)> {
+        self.gas_dimensions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(block_hash)
+    }
+
     /// Runs the full block pipeline (execute + merkleize + store).
     ///
     /// Returns a two-level Result:
@@ -2820,6 +2983,19 @@ impl Blockchain {
             block.body.transactions.len(),
         );
         let block_hash = block.hash();
+        // EIP-7805: keep the EIP-8037 gas totals, which exist only during
+        // execution, for the inclusion-list satisfaction check. `res` moves
+        // into storage below.
+        if self
+            .storage
+            .get_chain_config()
+            .is_hegota_activated(block.header.timestamp)
+        {
+            self.gas_dimensions
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .insert(block_hash, res.gas_dimensions());
+        }
 
         let mut witness = None;
         if let Some(logger) = logger
@@ -4885,6 +5061,7 @@ mod tests {
             version: 1,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
             gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+            inclusion_list_transactions: None,
         };
         let block_template = create_payload(&args, &store, Bytes::new()).unwrap();
         let result = blockchain.build_payload(block_template).unwrap();

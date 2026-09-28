@@ -22,7 +22,7 @@ use ethrex_blockchain::error::MempoolError;
 /// - `-32602`: Invalid params
 /// - `-32603`: Internal error
 /// - `-32000`: Generic server error
-/// - `-38001` to `-38006`: Engine API specific errors
+/// - `-38001` to `-38007`: Engine API specific errors
 /// - `3`: Execution reverted/halted
 #[derive(Debug, thiserror::Error)]
 pub enum RpcErr {
@@ -76,6 +76,8 @@ pub enum RpcErr {
     TooDeepReorg(String),
     #[error("Unknown payload: {0}")]
     UnknownPayload(String),
+    #[error("Unknown parent: {0}")]
+    UnknownParent(String),
     // EIP-8025 proof errors (-39001 .. -39004)
     #[error("Invalid proof format: {0}")]
     InvalidProofFormat(String),
@@ -216,6 +218,11 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: -38001,
                 data: None,
                 message: format!("Unknown payload: {context}"),
+            },
+            RpcErr::UnknownParent(parent_hash) => RpcErrorMetadata {
+                code: -38007,
+                data: Some(parent_hash),
+                message: "Unknown parent".to_string(),
             },
             // EIP-8025 proof error codes
             RpcErr::InvalidProofFormat(context) => RpcErrorMetadata {
@@ -547,5 +554,14 @@ mod tests {
     #[test]
     fn mempool_renders_as_its_cli_name() {
         assert_eq!(RpcNamespace::Mempool.as_prefix(), "txpool");
+    }
+
+    #[test]
+    fn unknown_parent_maps_to_38007() {
+        let err = RpcErr::UnknownParent("0xdeadbeef".to_string());
+        let metadata: RpcErrorMetadata = err.into();
+        assert_eq!(metadata.code, -38007);
+        assert_eq!(metadata.message, "Unknown parent");
+        assert_eq!(metadata.data, Some("0xdeadbeef".to_string()));
     }
 }

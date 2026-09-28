@@ -213,6 +213,27 @@ pub struct PayloadStatus {
         with = "optional_hex_bytes"
     )]
     pub witness: Option<Bytes>,
+    /// EIP-7805 (FOCIL) `PayloadStatusV2.inclusionListSatisfied`.
+    ///
+    /// Three-state on purpose, because the spec distinguishes an ABSENT field
+    /// from a `null` one and serde alone cannot express both with a plain
+    /// `Option<bool>`:
+    ///
+    /// - `None` — omit the key. `PayloadStatusV1` has no such field, so every
+    ///   pre-Bogotá method (`engine_newPayloadV1`..`V5`,
+    ///   `engine_forkchoiceUpdatedV1`..`V4`) must not emit it at all.
+    /// - `Some(None)` — emit `null`. execution-apis `bogota.md`: "Otherwise,
+    ///   `inclusionListSatisfied` **MUST** be `null`", i.e. every V2 response
+    ///   whose status is not `VALID` still carries the key.
+    /// - `Some(Some(v))` — emit the verdict. An unsatisfied list does not make
+    ///   the payload invalid; it stays `VALID` and reports `false` so the
+    ///   consensus layer knows not to attest to it.
+    ///
+    /// Omitting the key where the spec wants `null` is not cosmetic: EEST's
+    /// `consume-engine` asserts the key is present, and dropping it failed
+    /// 5,489 Bogotá engine fixtures while every in-repo suite stayed green.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inclusion_list_satisfied: Option<Option<bool>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -233,6 +254,7 @@ impl PayloadStatus {
             latest_valid_hash: Some(latest_valid_hash),
             validation_error: Some(error),
             witness: None,
+            inclusion_list_satisfied: None,
         }
     }
 
@@ -243,6 +265,7 @@ impl PayloadStatus {
             latest_valid_hash: None,
             validation_error: Some(error.to_string()),
             witness: None,
+            inclusion_list_satisfied: None,
         }
     }
 
@@ -253,6 +276,7 @@ impl PayloadStatus {
             latest_valid_hash: Some(hash),
             validation_error: None,
             witness: None,
+            inclusion_list_satisfied: None,
         }
     }
 
@@ -263,6 +287,7 @@ impl PayloadStatus {
             latest_valid_hash: None,
             validation_error: None,
             witness: None,
+            inclusion_list_satisfied: None,
         }
     }
 
@@ -273,6 +298,7 @@ impl PayloadStatus {
             latest_valid_hash: Some(hash),
             validation_error: None,
             witness: None,
+            inclusion_list_satisfied: None,
         }
     }
     /// Creates a PayloadStatus with valid status and latest valid hash
@@ -282,6 +308,7 @@ impl PayloadStatus {
             latest_valid_hash: None,
             validation_error: None,
             witness: None,
+            inclusion_list_satisfied: None,
         }
     }
 
@@ -295,7 +322,18 @@ impl PayloadStatus {
             latest_valid_hash: None,
             validation_error: None,
             witness: None,
+            inclusion_list_satisfied: None,
         }
+    }
+
+    /// Marks this status as a `PayloadStatusV2`, carrying the EIP-7805 (FOCIL)
+    /// inclusion-list verdict. `Some(v)` reports the verdict for a `VALID`
+    /// payload; `None` emits the spec-mandated `null` for every other status.
+    /// Either way the key is present, which is what distinguishes a V2 response
+    /// from a V1 one.
+    pub fn with_inclusion_list_satisfied(mut self, satisfied: Option<bool>) -> Self {
+        self.inclusion_list_satisfied = Some(satisfied);
+        self
     }
 }
 

@@ -275,6 +275,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             String::new(),
             all_namespaces_for_tests(),
             tokio_util::sync::CancellationToken::new(),
+            crate::rpc::IlConfig::default(),
         )
         .await
         .unwrap()
@@ -429,6 +430,8 @@ pub async fn default_context_with_storage(storage: Store) -> TestContext {
         block_worker_channel,
         ws: None,
         allowed_namespaces: Arc::new(all_namespaces_for_tests()),
+        il_config: crate::rpc::IlConfig::default(),
+        retained_inclusion_lists: Default::default(),
     };
     TestContext {
         context: Some(context),
@@ -553,6 +556,20 @@ pub fn parse_v4(
     params: &Option<Vec<Value>>,
 ) -> Result<(ForkChoiceState, Option<PayloadAttributesV4>, Option<u128>), RpcErr> {
     crate::engine::fork_choice::parse_v4(params)
+}
+
+/// Shim over the crate-private `engine::fork_choice::parse_v5`.
+pub fn parse_v5(
+    params: &Option<Vec<Value>>,
+) -> Result<
+    (
+        ForkChoiceState,
+        Option<crate::types::fork_choice::PayloadAttributesV5>,
+        Option<u128>,
+    ),
+    RpcErr,
+> {
+    crate::engine::fork_choice::parse_v5(params)
 }
 
 /// Shim over the crate-private `engine::fork_choice::parse_custody_columns`.

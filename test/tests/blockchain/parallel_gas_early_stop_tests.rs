@@ -118,6 +118,7 @@ async fn build_empty_block(store: &Store) -> (Block, BlockAccessList) {
         version: 1,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        inclusion_list_transactions: None,
     };
     let payload = create_payload(&args, store, Bytes::new()).unwrap();
     let result = blockchain.build_payload(payload).unwrap();

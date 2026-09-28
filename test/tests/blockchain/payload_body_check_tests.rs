@@ -53,6 +53,7 @@ fn build_block(store: &Store, parent: &BlockHeader) -> Block {
         version: 1,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        inclusion_list_transactions: None,
     };
     let blockchain = Blockchain::default_with_store(store.clone());
     let block = create_payload(&args, store, Bytes::new()).expect("payload creation");

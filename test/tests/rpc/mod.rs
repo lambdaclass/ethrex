@@ -8,6 +8,7 @@ mod eth72_engine_tests;
 mod fork_choice_tests;
 mod get_block_by_hash_tests;
 mod http_batch_tests;
+mod inclusion_list_engine_tests;
 mod missing_rpc_methods_tests;
 mod new_payload_bal_tests;
 mod precompile_move_tests;

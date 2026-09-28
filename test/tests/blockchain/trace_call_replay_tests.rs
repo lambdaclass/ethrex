@@ -233,6 +233,7 @@ async fn chain_with_three_txs() -> (Store, Blockchain, Block, Address, Address) 
         version: 1,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        inclusion_list_transactions: None,
     };
     let payload = create_payload(&args, &store, Bytes::new()).unwrap();
     let block = blockchain.build_payload(payload).unwrap().payload;

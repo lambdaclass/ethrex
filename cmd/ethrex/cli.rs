@@ -546,6 +546,33 @@ pub struct Options {
         env = "ETHREX_MAX_REORG_DEPTH"
     )]
     pub max_reorg_depth: Option<u64>,
+    #[arg(
+        long = "il-policy",
+        default_value = "production",
+        value_name = "POLICY",
+        help = "EIP-7805 (FOCIL) inclusion-list selection policy: production (default), priority-fee, or random",
+        help_heading = "EIP-7805 (FOCIL) options",
+        env = "ETHREX_IL_POLICY"
+    )]
+    pub il_policy: String,
+    #[arg(
+        long = "il-per-sender-cap",
+        default_value_t = 2,
+        value_name = "N",
+        help = "EIP-7805 (FOCIL) per-sender inclusion-list cap. Range 1..=64.",
+        help_heading = "EIP-7805 (FOCIL) options",
+        env = "ETHREX_IL_PER_SENDER_CAP"
+    )]
+    pub il_per_sender_cap: usize,
+    #[arg(
+        long = "il-max-bytes",
+        default_value_t = 8192,
+        value_name = "BYTES",
+        help = "EIP-7805 (FOCIL) inclusion-list byte cap. Hard-capped at 8192 in non-test builds; the spec mandates 8192.",
+        help_heading = "EIP-7805 (FOCIL) options",
+        env = "ETHREX_IL_MAX_BYTES"
+    )]
+    pub il_max_bytes: usize,
 }
 
 impl Options {
@@ -649,6 +676,9 @@ impl Default for Options {
             blob_sampling: false,
             blob_eager_provider: false,
             max_reorg_depth: None,
+            il_policy: "production".to_string(),
+            il_per_sender_cap: 2,
+            il_max_bytes: 8192,
         }
     }
 }

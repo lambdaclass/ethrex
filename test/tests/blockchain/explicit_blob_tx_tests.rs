@@ -107,6 +107,7 @@ async fn explicit_blob_tx_is_accepted_with_empty_bundle() {
         version: 3,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        inclusion_list_transactions: None,
     };
     let payload = create_payload(&args, &store, Bytes::new()).unwrap();
     let blockchain = Blockchain::default_with_store(store);

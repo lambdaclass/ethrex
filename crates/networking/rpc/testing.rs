@@ -154,6 +154,7 @@ impl RpcHandler for BuildBlockV1Request {
             version: 3,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
             gas_ceil: context.gas_ceil,
+            inclusion_list_transactions: None,
         };
 
         let payload = match create_payload(&args, &context.storage, self.extra_data.clone()) {

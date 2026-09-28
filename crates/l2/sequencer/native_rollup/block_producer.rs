@@ -177,6 +177,10 @@ impl NativeBlockProducer {
             version: 3,
             elasticity_multiplier: 2, // EIP-1559 default
             gas_ceil: self.config.block_gas_limit,
+            // EIP-7805 (FOCIL) is a fork-choice mechanism driven by an L1
+            // consensus layer; a native rollup has no IL committee, so its
+            // sequencer never carries an inclusion list.
+            inclusion_list_transactions: None,
         };
         let payload = create_payload(&args, &self.store, Bytes::new())?;
         let block_number = payload.header.number;
