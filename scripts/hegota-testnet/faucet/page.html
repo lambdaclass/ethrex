@@ -93,7 +93,7 @@
     <a href="https://github.com/lambdaclass/ethrex">ethrex</a>. Test ETH has no value.
   </p>
   <p style="margin:-1.1rem 0 1.75rem;font-size:14px;color:var(--muted)">
-    Latest change: 2026-09-25 · <a href="#changelog">changelog</a>
+    Latest change: 2026-09-28 · <a href="#changelog">changelog</a>
   </p>
 
   <div class="panel">
@@ -387,6 +387,19 @@ lighthouse beacon_node \
   <h2 id="changelog">Changelog</h2>
   <div class="panel">
     <table>
+      <tr>
+        <td>2026-09-28<br><span style="font-weight:400">19:26 UTC</span></td>
+        <td class="desc"><strong>RPC fix, no re-genesis.</strong> <code>eth_getLogs</code>,
+          <code>eth_getFilterLogs</code> and <code>eth_getFilterChanges</code> returned nothing
+          for a frame transaction whose last frame reverted, although the receipt carried the
+          logs of the frames that committed and the block bloom included them; the handler was
+          skipping every receipt with a failed status. They now return every log a receipt
+          holds, numbered as the receipt numbers them. Nothing on chain changed: same blocks,
+          same receipts, same bundle. All three nodes run <code>hegota-testnet-hotfix</code>
+          at <code>473868142</code>, swapped in place; anyone indexing this chain from their
+          own ethrex node should update to the same commit and re-scan blocks holding frame
+          transactions with a failed final frame. Reported by an external user; thank you.</td>
+      </tr>
       <tr>
         <td>2026-09-25<br><span style="font-weight:400">08:52 UTC</span></td>
         <td class="desc"><strong>Node hotfix, no re-genesis.</strong> A frame transaction whose
