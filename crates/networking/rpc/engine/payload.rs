@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::PayloadBuildResult;
+use ethrex_common::constants::AMSTERDAM_MAX_CODE_SIZE;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::{
     ExecutionWitness, ExtWitness, RpcExecutionWitness,
@@ -8,6 +9,7 @@ use ethrex_common::types::block_execution_witness::{
 use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Fork};
+use ethrex_common::validate_bal_code_sizes;
 use ethrex_common::{H256, U256};
 use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::sync::SyncMode;
@@ -1181,10 +1183,13 @@ async fn handle_new_payload_v4(
     bal: Option<BlockAccessList>,
     make_witness: bool,
 ) -> Result<PayloadStatus, RpcErr> {
-    if let Some(bal) = &bal
-        && let Err(err) = bal.validate_ordering()
-    {
-        return Ok(PayloadStatus::invalid_with_err(&err));
+    if let Some(bal) = &bal {
+        if let Err(err) = bal.validate_ordering() {
+            return Ok(PayloadStatus::invalid_with_err(&err));
+        }
+        if let Err(err) = validate_bal_code_sizes(bal, AMSTERDAM_MAX_CODE_SIZE) {
+            return Ok(PayloadStatus::invalid_with_err(&err.to_string()));
+        }
     }
     handle_new_payload_v3(
         payload,
@@ -1247,10 +1252,11 @@ pub async fn add_block(
     block: Block,
     bal: Option<BlockAccessList>,
     make_witness: bool,
+    parent_header: Option<BlockHeader>,
 ) -> Result<Option<ExecutionWitness>, ChainError> {
     let (notify_send, notify_recv) = oneshot::channel();
     ctx.block_worker_channel
-        .send((notify_send, block, bal, make_witness))
+        .send((notify_send, block, bal, make_witness, parent_header))
         .map_err(|e| {
             ChainError::Custom(format!(
                 "failed to send block execution request to worker: {e}"
@@ -1347,7 +1353,8 @@ async fn try_execute_payload(
     // If the parent is itself unknown, fall through to `add_block` which
     // returns `ChainError::ParentNotFound` and stashes the block; handled
     // below as `SYNCING`, preserving existing behavior.
-    if let Some(parent_header) = storage.get_block_header_by_hash(block.header.parent_hash)? {
+    let parent_header = storage.get_block_header_by_hash(block.header.parent_hash)?;
+    if let Some(parent_header) = &parent_header {
         let parent_state = parent_header.state_root;
         let in_cache = storage.is_state_in_layer_cache(parent_state)?;
         let on_disk = !in_cache && storage.has_state_root(parent_state)?;
@@ -1371,7 +1378,7 @@ async fn try_execute_payload(
     // this happens once per newPayload and is negligible next to block execution.
     let bad_block_candidate = block.clone();
 
-    match add_block(context, block, bal, make_witness).await {
+    match add_block(context, block, bal, make_witness, parent_header).await {
         Err(ChainError::ParentNotFound) => {
             // Start sync
             syncer.sync_to_head(block_hash);

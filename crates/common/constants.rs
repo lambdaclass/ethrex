@@ -91,6 +91,9 @@ pub const BLOB_BASE_COST: u64 = 8192;
 pub const POST_OSAKA_GAS_LIMIT_CAP: u64 = 16777216;
 pub const TX_MAX_GAS_LIMIT_AMSTERDAM: u64 = 1 << 24; // 16,777,216
 
+/// EIP-7954 (Amsterdam): maximum size of deployed bytecode, 64 KiB.
+pub const AMSTERDAM_MAX_CODE_SIZE: u64 = 0x10000;
+
 // === EIP-8037 constant ===
 // https://eips.ethereum.org/EIPS/eip-8037
 /// Ceiling on a transaction's whole `gas` field from Amsterdam on, reservoir
