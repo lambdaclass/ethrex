@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-09-28
+
+- Build the receipts' blooms and encodings in parallel for blocks with 128 receipts or more: the receipts root after the last transaction drops from 1.28 to 1.10 ms at the median and from 2.96 to 1.80 ms at p90 on mainnet [#7324](https://github.com/lambdaclass/ethrex/pull/7324)
+
 ### 2026-09-14
 
 - Stop copying the stateless input one byte at a time, hash the block access list once instead of twice, and route `validate_public_keys` through the injected `Crypto`: −8.81% guest instructions on mainnet block 25453112 [#7277](https://github.com/lambdaclass/ethrex/pull/7277)
