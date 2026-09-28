@@ -1373,6 +1373,9 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_createAccessList" => CreateAccessListRequest::call(req, context).await,
         "eth_blockNumber" => BlockNumberRequest::call(req, context).await,
         "eth_call" => CallRequest::call(req, context).await,
+        "eth_fillTransaction" => {
+            crate::eth::fill_transaction::FillTransactionRequest::call(req, context).await
+        }
         "eth_blobBaseFee" => GetBlobBaseFee::call(req, context).await,
         "eth_getTransactionCount" => GetTransactionCountRequest::call(req, context).await,
         "eth_feeHistory" => FeeHistoryRequest::call(req, context).await,
