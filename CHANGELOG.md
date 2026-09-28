@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-09-28
+
+- Recover a block's senders once, alongside the payload's transactions root, instead of in two racing passes after it: about 0.8 ms less before the first transaction at the median and 1.2 to 1.6 ms less at p90 on mainnet [#7325](https://github.com/lambdaclass/ethrex/pull/7325)
+
 ### 2026-09-14
 
 - Stop copying the stateless input one byte at a time, hash the block access list once instead of twice, and route `validate_public_keys` through the injected `Crypto`: −8.81% guest instructions on mainnet block 25453112 [#7277](https://github.com/lambdaclass/ethrex/pull/7277)
