@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-09-29
+
+- Raise the bytecode cache to 1 GiB (about 16k contracts of 64 KiB) and warm block access list accounts and their code in parallel chunks of 64 instead of all states first: Plataberget blocks 294611–294805, which CALL thousands of distinct 64 KiB contracts in sequence, go from 145.3 to 34.2 ms per block in replay [#7346](https://github.com/lambdaclass/ethrex/pull/7346)
+
 ### 2026-09-28
 
 - Deserialize `engine_newPayloadV5` params in a single pass: from the borrowed `Value`, with the block access list RLP-decoded once inside serde and hashed from the wire bytes; RPC dispatch to handler 0.39 → 0.34 ms per block on Plataberget [#7301](https://github.com/lambdaclass/ethrex/pull/7301)
