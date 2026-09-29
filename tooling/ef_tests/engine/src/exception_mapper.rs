@@ -236,7 +236,15 @@ mod tests {
             "TransactionException.INVALID_SIGNATURE_VRS",
             "Invalid transaction: Couldn't recover addresses with error: invalid signature",
         ));
-        // Well-formed r/s from which no public key can be recovered.
+        // Well-formed r/s from which no public key can be recovered, as ethrex
+        // reports it: named as an invalid signature, so a mapper that only knows
+        // "invalid signature" still resolves it.
+        assert!(matches_canonical(
+            "TransactionException.INVALID_SIGNATURE_VRS",
+            "Invalid transaction: Couldn't recover addresses with error: invalid signature: recovers no public key",
+        ));
+        // The same failure in the wording ethrex used before, which EEST's mapper
+        // also accepts (execution-specs #3566).
         assert!(matches_canonical(
             "TransactionException.INVALID_SIGNATURE_VRS",
             "Invalid transaction: Couldn't recover addresses with error: recovery failed",

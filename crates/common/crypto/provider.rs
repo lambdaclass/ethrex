@@ -15,7 +15,13 @@ pub enum CryptoError {
     InvalidSignature,
     #[error("invalid recovery id")]
     InvalidRecoveryId,
-    #[error("recovery failed")]
+    /// A signature whose r, s and recovery id are each in range but from which no
+    /// public key can be recovered (e.g. r is not the x-coordinate of a curve point).
+    /// The spec treats this as an invalid signature like any other (EELS raises
+    /// `InvalidSignatureError` for both), so the message names that category first:
+    /// consensus test harnesses classify rejections by it, and one that only knows
+    /// "invalid signature" must still see this case as INVALID_SIGNATURE_VRS.
+    #[error("invalid signature: recovers no public key")]
     RecoveryFailed,
     #[error("invalid point: {0}")]
     InvalidPoint(&'static str),
