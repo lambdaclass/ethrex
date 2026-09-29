@@ -36,7 +36,10 @@ use ethrex_common::{
     },
 };
 #[cfg(feature = "rayon")]
-use ethrex_common::{BigEndianHash, validate_block_access_list_size, validate_header_bal_indices};
+use ethrex_common::{
+    BigEndianHash, constants::AMSTERDAM_MAX_CODE_SIZE, validate_bal_code_sizes,
+    validate_block_access_list_size, validate_header_bal_indices,
+};
 use ethrex_crypto::Crypto;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::StatelessValidator;
@@ -491,8 +494,18 @@ impl LEVM {
             )));
         }
 
-        // Set BAL index for post-execution phase (requests + withdrawals)
-        // Order must match geth: requests (system calls) BEFORE withdrawals.
+        // Set BAL index for post-execution phase (withdrawals + requests)
+        //
+        // Withdrawals are applied BEFORE the request system calls. EIP-7002 places its
+        // system call "at the end of processing any execution block ... after processing
+        // all transactions and after performing the block body withdrawal requests
+        // validations", and EELS `apply_body` calls `process_withdrawals` then
+        // `process_general_purpose_requests`. The order is observable only when a
+        // withdrawal credits an address whose own system call then spends that balance in
+        // the same block, which no real predeploy does; the EEST case
+        // `bal_withdrawals_and_dequeues_net_balance_at_last_index` constructs exactly that.
+        // geth runs its request system calls first (`PostExecution` precedes `Finalize`),
+        // so this follows the spec rather than geth.
         if is_amsterdam {
             let post_tx_index =
                 u32::try_from(block.body.transactions.len() + 1).unwrap_or(u32::MAX);
@@ -508,6 +521,10 @@ impl LEVM {
             }
         }
 
+        if let Some(withdrawals) = &block.body.withdrawals {
+            Self::process_withdrawals(db, withdrawals)?;
+        }
+
         // TODO: I don't like deciding the behavior based on the VMType here.
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
         // in L2 execution, but its implementation behaves differently based on this.
@@ -515,10 +532,6 @@ impl LEVM {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?,
             VMType::L2(_) => Default::default(),
         };
-
-        if let Some(withdrawals) = &block.body.withdrawals {
-            Self::process_withdrawals(db, withdrawals)?;
-        }
 
         // Extract BAL if recording was enabled
         let bal = db.take_bal();
@@ -590,11 +603,15 @@ impl LEVM {
         {
             // Validate header BAL structural properties before execution.
             // This catches index-out-of-bounds early, before wasting execution time.
-            // Note: size cap validation is deferred until after transaction processing
-            // so that transaction-level errors (e.g. gas allowance exceeded) take
-            // priority, matching the reference implementation's validation order.
+            // Note: the EIP-7928 item-count cap is deferred until after transaction
+            // processing so that transaction-level errors (e.g. gas allowance exceeded)
+            // take priority, matching the reference implementation's validation order.
             validate_header_bal_indices(&bal, block.body.transactions.len())
                 .map_err(|e| EvmError::Custom(e.to_string()))?;
+            // Each transaction that loads an account builds its code from the BAL, so an
+            // oversized code change must be rejected before any of them run.
+            validate_bal_code_sizes(&bal, AMSTERDAM_MAX_CODE_SIZE)
+                .map_err(|e| EvmError::Custom(format!("BAL validation failed: {e}")))?;
 
             // Shadow-record the system phases: their account cache also holds internal
             // loads the recorder never sees, so it can't say what they touched.
@@ -685,18 +702,21 @@ impl LEVM {
             db.enable_bal_recording();
             db.set_bal_index(withdrawal_bal_idx);
 
-            // Order must match geth: requests (system calls) BEFORE withdrawals.
+            // Withdrawals precede the request system calls; see the ordering note on
+            // the sequential path above. The db was seeded at `last_tx_idx` (post-tx,
+            // pre-withdrawal), so applying withdrawals here and then extracting
+            // requests lets the system calls observe the withdrawal credits.
             let post_block_result = (|| -> Result<Vec<Requests>, EvmError> {
+                if let Some(withdrawals) = &block.body.withdrawals {
+                    Self::process_withdrawals(db, withdrawals)?;
+                }
+
                 let requests = match vm_type {
                     VMType::L1 => {
                         extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?
                     }
                     VMType::L2(_) => Default::default(),
                 };
-
-                if let Some(withdrawals) = &block.body.withdrawals {
-                    Self::process_withdrawals(db, withdrawals)?;
-                }
                 Ok(requests)
             })();
             let post_block_bal = db.take_bal().unwrap_or_default();
@@ -985,8 +1005,8 @@ impl LEVM {
             LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
         }
 
-        // Set BAL index for post-execution phase (requests + withdrawals)
-        // Order must match geth: requests (system calls) BEFORE withdrawals.
+        // Set BAL index for post-execution phase (withdrawals + requests); see the
+        // ordering note on the sequential path above.
         if is_amsterdam {
             let post_tx_index =
                 u32::try_from(block.body.transactions.len() + 1).unwrap_or(u32::MAX);
@@ -1000,6 +1020,12 @@ impl LEVM {
             }
         }
 
+        // Withdrawals precede the request system calls; see the ordering note on the
+        // sequential path above.
+        if let Some(withdrawals) = &block.body.withdrawals {
+            Self::process_withdrawals(db, withdrawals)?;
+        }
+
         // TODO: I don't like deciding the behavior based on the VMType here.
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
         // in L2 execution, but its implementation behaves differently based on this.
@@ -1007,10 +1033,6 @@ impl LEVM {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?,
             VMType::L2(_) => Default::default(),
         };
-
-        if let Some(withdrawals) = &block.body.withdrawals {
-            Self::process_withdrawals(db, withdrawals)?;
-        }
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
         // Extract BAL if recording was enabled

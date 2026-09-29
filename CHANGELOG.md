@@ -12,9 +12,15 @@
 
 ## Perf
 
-### 2026-09-22
+### 2026-09-28
 
 - Deserialize `engine_newPayloadV5` params in a single pass: from the borrowed `Value`, with the block access list RLP-decoded once inside serde and hashed from the wire bytes; RPC dispatch to handler 0.39 → 0.34 ms per block on Plataberget [#7301](https://github.com/lambdaclass/ethrex/pull/7301)
+- Stop cloning every payload's block before execution; the `debug_getBadBlocks` record is rebuilt from the payload only when execution rejects the block [#7302](https://github.com/lambdaclass/ethrex/pull/7302)
+- Run the JUMPDEST analysis on 64-byte blocks without a branch that depends on the bytecode, using 16-lane table lookups (NEON, SSSE3), so it takes the same time on any code: the random-bytecode `test_jumpdest_analysis` blocks of execution-specs#3631 go from 38–54 to 570 MGas/s on Zen 2, and 1573 mainnet contracts are analyzed 6.1x faster [#7311](https://github.com/lambdaclass/ethrex/pull/7311)
+
+### 2026-09-22
+
+- Stop redoing work around the block pipeline on the engine path: the block access list is RLP-encoded once (the size metric used to re-encode and re-sort it) and the parent header the newPayload handler already fetched is passed into the pipeline instead of read again; executor time outside the pipeline timer 0.26 → 0.06 ms per block on Plataberget [#7300](https://github.com/lambdaclass/ethrex/pull/7300)
 
 ### 2026-09-14
 
