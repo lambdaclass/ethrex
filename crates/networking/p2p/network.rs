@@ -565,7 +565,7 @@ async fn phase_metrics(step: CurrentStepValue, phase_start: &PhaseCounters) -> S
                 .global_storage_tries_leafs_healed
                 .load(Ordering::Relaxed)
                 .saturating_sub(phase_start.healed_storage);
-            format!("{} storage accounts healed", format_thousands(healed))
+            format!("{} storage slots healed", format_thousands(healed))
         }
         CurrentStepValue::RequestingBytecodes => {
             let downloaded = METRICS
