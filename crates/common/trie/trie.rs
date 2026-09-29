@@ -601,7 +601,9 @@ impl Trie {
             trie.insert(path, value).unwrap();
         }
         #[cfg(feature = "std")]
-        hash_top_subtries_in_parallel(&trie.root, crypto, 0);
+        if let Some(pool) = ordered_trie_pool() {
+            pool.install(|| hash_top_subtries_in_parallel(&trie.root, crypto, 0));
+        }
         trie.hash_no_commit(crypto)
     }
 
@@ -1094,6 +1096,28 @@ impl From<Trie> for ProofTrie {
 #[cfg(feature = "std")]
 const PARALLEL_HASH_LEVELS: usize = 4;
 
+/// The pool that hashes the top subtries of ordered tries, built on first use.
+///
+/// Not rayon's global pool: these roots are computed on async request paths (the
+/// engine API builds a block's header, transactions root included, on a tokio
+/// worker), and a caller outside a pool blocks until one of its workers takes the
+/// job. The global pool can stay busy for tens of minutes (the post-snap-sync
+/// storage trie validation keeps every worker busy), and tokio workers blocked
+/// behind it stopped the node's RPC. On its own pool a root waits only for itself.
+///
+/// `None` if the pool cannot be built; the root is then hashed sequentially.
+#[cfg(feature = "std")]
+fn ordered_trie_pool() -> Option<&'static rayon::ThreadPool> {
+    static POOL: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .thread_name(|index| format!("ordered-trie-{index}"))
+            .build()
+            .ok()
+    })
+    .as_ref()
+}
+
 /// Hashes the subtries under the top branch levels on all cores, caching each
 /// hash in its node reference, so the root hash computed afterwards only has to
 /// combine them.
@@ -1157,6 +1181,54 @@ mod tests {
                 "root differs for {count} leaves"
             );
         }
+    }
+
+    /// Ordered-trie roots are computed on async request paths: the engine API
+    /// builds a block's header, transactions root included, on a tokio worker. So
+    /// the parallel hashing must not wait behind other work on rayon's global
+    /// pool, which can stay busy for tens of minutes (the post-snap-sync storage
+    /// trie validation keeps every worker busy). A caller outside the pool would
+    /// block until a worker freed up, and once every tokio worker blocked like
+    /// that the node stopped answering RPC.
+    #[test]
+    fn ordered_trie_root_does_not_wait_on_a_busy_global_pool() {
+        use ethrex_rlp::encode::RLPEncode;
+        use std::sync::{
+            Arc, Barrier,
+            atomic::{AtomicBool, Ordering},
+        };
+        use std::time::Duration;
+
+        let workers = rayon::current_num_threads();
+        let all_busy = Arc::new(Barrier::new(workers + 1));
+        let release = Arc::new(AtomicBool::new(false));
+        for _ in 0..workers {
+            let (all_busy, release) = (all_busy.clone(), release.clone());
+            rayon::spawn(move || {
+                all_busy.wait();
+                while !release.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            });
+        }
+        all_busy.wait();
+
+        let leaves: Vec<(Vec<u8>, Vec<u8>)> = (0..300usize)
+            .map(|i| (i.encode_to_vec(), vec![(i % 251) as u8; 200]))
+            .collect();
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done.send(Trie::compute_hash_from_unsorted_iter(
+                leaves.into_iter(),
+                &NativeCrypto,
+            ));
+        });
+        let outcome = finished.recv_timeout(Duration::from_secs(5));
+        release.store(true, Ordering::Relaxed);
+        assert!(
+            outcome.is_ok(),
+            "the root waited on the busy global rayon pool"
+        );
     }
     use ethrex_crypto::keccak::keccak_hash;
 
