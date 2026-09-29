@@ -98,7 +98,10 @@ fn shard_count(n: usize) -> usize {
 /// keeps the filter/index working set resident plus hot EVM state; a sweep on a
 /// synced mainnet node (32 GiB cap) found 8-16 GiB all keep up with head-following,
 /// with larger giving no gain (the OS page cache backstops the uncompressed state
-/// CFs) and ~8 GiB the floor where the filter set starts to thrash.
+/// CFs) and ~8 GiB the floor where the filter set starts to thrash. That sweep
+/// predates the 4KB block size on the trie-node/flat-KV CFs (#6940), which raises
+/// their index/filter block count ~4x, so the floor is likely now somewhat above
+/// 8 GiB and warrants a re-sweep.
 pub const MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES: usize = 12 * 1024 * 1024 * 1024;
 
 /// Floor on the RocksDB shared block cache: 512 MiB. Below this the per-SST
