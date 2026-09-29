@@ -301,6 +301,28 @@ pub async fn run_history_backfill(
     }
 }
 
+/// The next range of blocks to fill, or `None` when there is nothing left.
+///
+/// Returns an inclusive `(lo, hi)`. The first batch of a run includes the
+/// frontier block itself; later batches stop just below it. On a snap-synced node
+/// the frontier is the pivot, which snap stored a body for but no receipts, so
+/// finishing before that block is filled would leave it permanently short of them
+/// while the frontier advertised it as complete. That is also why reaching
+/// `frontier == floor` is not yet done when `first_batch` is set.
+fn next_batch_range(
+    frontier: BlockNumber,
+    floor: BlockNumber,
+    first_batch: bool,
+    batch_size: u64,
+) -> Option<(BlockNumber, BlockNumber)> {
+    if frontier < floor || (frontier == floor && !first_batch) {
+        return None;
+    }
+    let hi = if first_batch { frontier } else { frontier - 1 };
+    let lo = hi.saturating_sub(batch_size - 1).max(floor);
+    Some((lo, hi))
+}
+
 /// Performs one backfill step: resolve the floor, read the next batch of
 /// (already-canonical) headers just below the frontier, fetch and validate their
 /// bodies and receipts, persist them, and lower the frontier.
@@ -366,18 +388,12 @@ async fn backfill_step(
         diag.backfill_frontier = Some(frontier);
         diag.backfill_complete = frontier <= floor;
     }
-    // The first batch still has work to do at `frontier == floor`: that block is
-    // the snap pivot, which has a body but no receipts (see below), so completing
-    // here would leave the floor block permanently short of its receipts.
-    if frontier <= floor && !plan.first_batch {
+    let Some((batch_lo, batch_hi)) =
+        next_batch_range(frontier, floor, plan.first_batch, BACKFILL_BATCH_SIZE)
+    else {
         info!(floor, "Historical chain backfill complete");
         return Ok(BackfillProgress::Complete);
-    }
-    if frontier < floor {
-        // Already below the floor: nothing to repair even on the first batch.
-        info!(floor, "Historical chain backfill complete");
-        return Ok(BackfillProgress::Complete);
-    }
+    };
 
     // Read headers top-down (highest first): the peer returns bodies/receipts in
     // request order, so a truncated response still yields a contiguous run adjacent
@@ -390,13 +406,6 @@ async fn backfill_step(
     // `eth_getBlockReceipts`/`eth_getTransactionReceipt` would stay wrong for that
     // one block while the frontier advertised it as complete. Re-fetching one body
     // is the cost of repairing it.
-    let batch_hi = if plan.first_batch {
-        frontier
-    } else {
-        frontier - 1
-    };
-    let batch_lo = batch_hi.saturating_sub(BACKFILL_BATCH_SIZE - 1).max(floor);
-    debug_assert!(batch_lo <= batch_hi, "batch range must be non-empty");
     let mut headers: Vec<BlockHeader> = Vec::with_capacity((batch_hi - batch_lo + 1) as usize);
     for number in (batch_lo..=batch_hi).rev() {
         let header = store
@@ -739,5 +748,65 @@ mod tests {
                 .unwrap(),
             None
         );
+    }
+    // --- next_batch_range: which blocks the next batch covers ---
+
+    /// A mid-run batch stops just below the frontier, since the frontier block
+    /// already has its data.
+    #[test]
+    fn a_later_batch_stops_below_the_frontier() {
+        assert_eq!(next_batch_range(1_000, 0, false, 64), Some((936, 999)));
+    }
+
+    /// The first batch of a run includes the frontier block itself, to fill the
+    /// snap pivot's missing receipts.
+    #[test]
+    fn the_first_batch_includes_the_frontier() {
+        assert_eq!(next_batch_range(1_000, 0, true, 64), Some((937, 1_000)));
+    }
+
+    /// Regression guard: at `frontier == floor` the run is finished for every
+    /// batch but the first, which still has the pivot's receipts to repair. Before
+    /// this, a node whose pivot landed exactly on the floor kept that block
+    /// without receipts forever while reporting itself complete.
+    #[test]
+    fn the_floor_block_is_still_filled_on_the_first_batch() {
+        assert_eq!(
+            next_batch_range(15_537_394, 15_537_394, true, 64),
+            Some((15_537_394, 15_537_394)),
+            "the floor block itself must still be fetched once"
+        );
+        assert_eq!(next_batch_range(15_537_394, 15_537_394, false, 64), None);
+    }
+
+    /// Below the floor there is nothing to repair, first batch or not.
+    #[test]
+    fn below_the_floor_is_always_complete() {
+        assert_eq!(next_batch_range(10, 20, true, 64), None);
+        assert_eq!(next_batch_range(10, 20, false, 64), None);
+    }
+
+    /// A batch never reaches past the floor.
+    #[test]
+    fn a_batch_is_clamped_at_the_floor() {
+        let (lo, hi) = next_batch_range(120, 100, false, 64).expect("work remains");
+        assert_eq!((lo, hi), (100, 119));
+        assert!(lo >= 100, "must not fetch below the floor");
+    }
+
+    /// Ranges stay non-empty and never wrap, including at genesis.
+    #[test]
+    fn ranges_are_never_empty_or_wrapped() {
+        for (frontier, floor, first) in [
+            (1u64, 0u64, false),
+            (1, 0, true),
+            (0, 0, true),
+            (64, 0, false),
+        ] {
+            if let Some((lo, hi)) = next_batch_range(frontier, floor, first, 64) {
+                assert!(lo <= hi, "range {lo}..={hi} must be non-empty");
+                assert!(hi <= frontier, "must never fetch above the frontier");
+            }
+        }
     }
 }
