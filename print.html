@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-e833aa2f.js";
+            window.path_to_searchindex_js = "searchindex-d54b6cae.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-f6d73635.js"></script>
@@ -10643,7 +10643,7 @@ HIVE_BRANCH ?= master
 </code></pre>
 <h3 id="workflow-configuration-githubworkflowsdaily_hive_reportyaml"><a class="header" href="#workflow-configuration-githubworkflowsdaily_hive_reportyaml">Workflow Configuration (.github/workflows/daily_hive_report.yaml)</a></h3>
 <p>Fixtures come from <a href="https://github.com/ethereum/execution-specs">ethereum/execution-specs</a> (the archived <code>ethereum/execution-spec-tests</code> repo is no longer used). The workflow uses fork-specific fixtures to ensure comprehensive test coverage, pinned via config files under <code>.github/config/hive/</code>:</p>
-<pre><code class="language-yaml"># Amsterdam tests use the glamsterdam-devnet bundle (.github/config/hive/amsterdam.yaml)
+<pre><code class="language-yaml"># Amsterdam tests read their pin from .github/config/hive/amsterdam.yaml
 if [[ "$SIM_LIMIT" == *"fork_Amsterdam"* ]]; then
   FLAGS+=" --sim.buildarg fixtures=$AMSTERDAM_FIXTURES"
   FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
@@ -10657,16 +10657,13 @@ fi
 <h3 id="fixtures-url-files"><a class="header" href="#fixtures-url-files">Fixtures URL Files</a></h3>
 <p>Local ef_tests runners (blockchain, state, engine) share one set of fixture URL files under <code>tooling/ef_tests/</code>:</p>
 <ul>
-<li><code>tooling/ef_tests/.fixtures_url</code> — mainnet bundle</li>
-<li><code>tooling/ef_tests/.fixtures_url_amsterdam</code> — Amsterdam (glamsterdam-devnet) fixtures with BAL support</li>
+<li><code>tooling/ef_tests/.fixtures_url</code> — mainnet bundle, which from <code>tests@v21.0.0</code> on also carries the Amsterdam and BAL fixtures</li>
 <li><code>tooling/ef_tests/.fixtures_url_zkevm</code> — zkEVM (EIP-8025 stateless) fixtures</li>
 </ul>
+<p>There is no separate Amsterdam file any more. The mainnet bundle absorbed the <code>tests-glamsterdam-devnet</code> series and ships more Amsterdam fixtures than it did, so overlaying the devnet bundle on top would replace the richer subtrees with poorer ones.</p>
 <p>Contents:</p>
 <pre><code># .fixtures_url
-https://github.com/ethereum/execution-specs/releases/download/tests%40v20.0.1/fixtures.tar.gz
-
-# .fixtures_url_amsterdam
-https://github.com/ethereum/execution-specs/releases/download/tests-glamsterdam-devnet%40v8.0.0/fixtures_glamsterdam-devnet.tar.gz
+https://github.com/ethereum/execution-specs/releases/download/tests%40v21.0.0/fixtures.tar.gz
 </code></pre>
 <p>The CI hive config lives in <code>.github/config/hive/{mainnet,amsterdam}.yaml</code>, each pinning a <code>fixtures</code> URL and an <code>eels_commit</code> (the execution-specs commit used to build the hive consumer).</p>
 <h2 id="updating-repository-versions"><a class="header" href="#updating-repository-versions">Updating Repository Versions</a></h2>
@@ -10683,14 +10680,14 @@ https://github.com/ethereum/execution-specs/releases/download/tests-glamsterdam-
 <pre><code class="language-yaml">fixtures: https://github.com/ethereum/execution-specs/releases/download/tests%40&lt;version&gt;/fixtures.tar.gz
 eels_commit: &lt;execution-specs-commit&gt;
 </code></pre>
-<p>For Amsterdam, edit <code>.github/config/hive/amsterdam.yaml</code> the same way with the glamsterdam-devnet bundle.</p>
+<p>Edit <code>.github/config/hive/amsterdam.yaml</code> the same way. It takes the same <code>tests@</code> bundle as mainnet, kept on its own file because the Amsterdam sims may need to run against a different release while a fork is in flight. The local <code>run-hive-eels-amsterdam</code> and <code>run-hive-build-block</code> targets read this file too, so a bump here reaches both CI and local runs.</p>
 </li>
 <li>
 <p><strong>Update fixtures URL files</strong> shared by the local runners (blockchain / state / engine):</p>
-<pre><code class="language-bash"># Mainnet fixtures
+<pre><code class="language-bash"># Mainnet fixtures (Amsterdam included)
 echo "https://github.com/ethereum/execution-specs/releases/download/tests%40&lt;version&gt;/fixtures.tar.gz" &gt; tooling/ef_tests/.fixtures_url
-# Amsterdam fixtures
-echo "https://github.com/ethereum/execution-specs/releases/download/tests-glamsterdam-devnet%40&lt;version&gt;/fixtures_glamsterdam-devnet.tar.gz" &gt; tooling/ef_tests/.fixtures_url_amsterdam
+# zkEVM (EIP-8025 stateless) fixtures, which share the mainnet release numbering
+echo "https://github.com/ethereum/execution-specs/releases/download/tests-zkevm%40&lt;version&gt;/fixtures_zkevm.tar.gz" &gt; tooling/ef_tests/.fixtures_url_zkevm
 </code></pre>
 </li>
 <li>
