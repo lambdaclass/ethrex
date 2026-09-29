@@ -17,17 +17,12 @@ Next fork: **Glamsterdam** (CL Gloas, EL Amsterdam). Mainnet date not yet schedu
 **glamsterdam-devnet-8**
 
 - Spec baseline: [`devnets/glamsterdam/8`](https://github.com/ethereum/execution-specs/tree/devnets/glamsterdam/8)
-- Fixtures: [`tests-glamsterdam-devnet@v8.1.1`](https://github.com/ethereum/execution-specs/releases/tag/tests-glamsterdam-devnet@v8.1.1)
-- EELS commit: `32f597f7e56e3843198a83c7cf437a0b49aa6c0e` (the v8.1.1 tag, also the tip of `devnets/glamsterdam/8`)
-- Status: 🟢 aligned — blockchain, state and engine ef-tests green on the v8.1.1 bundle
+- Fixtures: [`tests@v21.0.0`](https://github.com/ethereum/execution-specs/releases/tag/tests@v21.0.0), the first mainnet bundle to carry Amsterdam, which is why there is no longer a separate devnet pin
+- EELS commit: `faf66377663259411f7c150f5490cbac683d3cc9`
+- Status: 🟢 aligned, blockchain, state and engine ef-tests green on the v21.0.0 bundle
 - Tracking: [#6583]
 
-**Bumping to a new bundle:** edit `tooling/ef_tests/.fixtures_url_amsterdam` and
-`.github/config/hive/amsterdam.yaml` (`fixtures` + `eels_commit`) — both, always, since
-grading one release's client against another's bundle fails every fixture the releases
-disagree on — then re-run the three ef-test suites and hive `eels/consume-engine`
-Amsterdam. Upstream expects at least two follow-up releases on this devnet; v8.1.0 and
-v8.1.1 have shipped, carrying coverage rather than new semantics.
+**Bumping to a new bundle:** edit `tooling/ef_tests/.fixtures_url` and `.github/config/hive/amsterdam.yaml` (`fixtures` plus `eels_commit`), both, always, since grading one release's client against another's bundle fails every fixture the releases disagree on, then re-run the three ef-test suites and hive `eels/consume-engine` Amsterdam. The overlay file that used to add the devnet bundle on top of the mainnet one is gone: v21.0.0 ships more Amsterdam fixtures than the last devnet release did (`for_amsterdam` 3277 against 3118, `for_bpo2toamsterdamattime15k` 58 against 41), so an overlay would now downgrade coverage instead of adding to it.
 
 v8.1.1 was announced as coverage-only, which holds for the numbers: the amsterdam fork
 diff is a `Uint` -> `ExecutionGas` type-wrapper refactor with every value unchanged. One
