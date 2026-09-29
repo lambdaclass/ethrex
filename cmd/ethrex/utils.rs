@@ -224,9 +224,23 @@ pub fn get_minimal_client_version() -> String {
     format!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
 }
 
+/// Logs a multi-line banner one line at a time so every line carries the log
+/// formatter's prefix instead of only the first.
+fn log_banner(banner: &str) {
+    for line in banner.lines() {
+        info!("{line}");
+    }
+}
+
 pub fn display_chain_initialization(genesis: &Genesis) {
     const BANNER: &str = include_str!("banner.txt");
-    info!("\n{BANNER}");
+    info!("");
+    log_banner(BANNER);
+    if genesis.config.amsterdam_time.is_some() {
+        // Polar bear adapted from Lodestar's Gloas fork banner (ChainSafe, Apache-2.0).
+        const GLAMSTERDAM_BANNER: &str = include_str!("glamsterdam_banner.txt");
+        log_banner(GLAMSTERDAM_BANNER);
+    }
     let border = "═".repeat(70);
 
     info!("{border}");
