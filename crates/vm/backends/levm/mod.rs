@@ -71,7 +71,9 @@ use ethrex_levm::{
     vm::VM,
 };
 #[cfg(feature = "rayon")]
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
+#[cfg(feature = "rayon")]
+use rayon::slice::ParallelSlice;
 #[cfg(feature = "rayon")]
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::min;
@@ -80,6 +82,12 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
+
+/// Accounts per task in [`LEVM::warm_block_from_bal`]. Small enough that the first
+/// warmed states and code reach the executor within a few point reads, large enough
+/// to keep the per-chunk batch read worthwhile.
+#[cfg(feature = "rayon")]
+const BAL_WARM_CHUNK_ACCOUNTS: usize = 64;
 
 /// EIP-7928 `block_access_index` of the pre-block system calls.
 /// Only the parallel BAL path reads it, and that path is rayon-gated.
@@ -3308,38 +3316,36 @@ impl LEVM {
             return Ok(());
         }
 
-        // Phase 1: Prefetch all account states — parallel inner fetch + single write-lock.
-        // This warms the CachingDatabase account cache and the TrieLayerCache with
-        // state trie nodes. Storage slots are prefetched synchronously before the
-        // executor starts (see `bal_storage_slots` at the call site), so this warmer
-        // only needs to cover account states and contract code, which overlap exec.
-        let account_addresses: Vec<Address> = accounts.iter().map(|ac| ac.address).collect();
-        store
-            .prefetch_accounts(&account_addresses)
-            .map_err(|e| EvmError::Custom(format!("prefetch_accounts: {e}")))?;
-
-        if cancelled.load(Ordering::Relaxed) {
-            return Ok(());
-        }
-
-        // Phase 2: Code prefetch — collect code hashes from Phase 1 account states
-        // (already cached after Phase 1 prefetch), then batch-fetch codes in parallel.
-        // Uses par_iter for collection since blocks can have thousands of accounts.
-        let code_hashes: Vec<ethrex_common::H256> = accounts
-            .par_iter()
-            .filter_map(|ac| {
+        // Warm the accounts in chunks, in parallel, each chunk's states and then its
+        // code, so that whatever is warmed first is usable by the executor right away.
+        // Fetching every state as one batch before any code published nothing until
+        // the whole batch was read: on a block whose transactions walk thousands of
+        // distinct contracts, the executor cold-loaded each one itself while the
+        // warmer read the same data in the background, and both finished together.
+        // Storage slots are prefetched synchronously before the executor starts (see
+        // `bal_storage_slots` at the call site), so only states and code are left here.
+        accounts
+            .par_chunks(BAL_WARM_CHUNK_ACCOUNTS)
+            .try_for_each(|chunk| -> Result<(), EvmError> {
+                if cancelled.load(Ordering::Relaxed) {
+                    return Ok(());
+                }
+                let addresses: Vec<Address> = chunk.iter().map(|ac| ac.address).collect();
                 store
-                    .get_account_state(ac.address)
-                    .ok()
-                    .filter(|s| s.code_hash != *EMPTY_KECCAK_HASH)
-                    .map(|s| s.code_hash)
+                    .prefetch_accounts(&addresses)
+                    .map_err(|e| EvmError::Custom(format!("prefetch_accounts: {e}")))?;
+                for address in addresses {
+                    if cancelled.load(Ordering::Relaxed) {
+                        return Ok(());
+                    }
+                    if let Ok(state) = store.get_account_state(address)
+                        && state.code_hash != *EMPTY_KECCAK_HASH
+                    {
+                        let _ = store.get_account_code(state.code_hash);
+                    }
+                }
+                Ok(())
             })
-            .collect();
-        code_hashes.par_iter().for_each(|&h| {
-            let _ = store.get_account_code(h);
-        });
-
-        Ok(())
     }
 
     fn send_state_transitions_tx(
