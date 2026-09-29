@@ -6,6 +6,7 @@ use ethrex_common::types::{
 };
 use ethrex_common::types::{Genesis, GenesisAccount, Withdrawal};
 use ethrex_common::{Address, Bloom, H64, H256, U256, types::BlockHeader};
+use ethrex_rlp::decode::RLPDecode;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -343,6 +344,14 @@ impl BlockWithRLP {
             Some(BlockInner::DecodedRLP(ref decoded)) => Some(&decoded.rlp_decoded),
             None => None,
         }
+    }
+
+    /// The block this fixture commits to, decoded from `rlp`.
+    ///
+    /// The decoded fields beside it are informational: executing them instead
+    /// would skip everything that lives only in the encoding.
+    pub fn decoded_block(&self) -> Result<CoreBlock, String> {
+        CoreBlock::decode(self.rlp.as_ref()).map_err(|e| format!("Failed to decode block RLP: {e}"))
     }
 }
 impl From<Block> for CoreBlock {
