@@ -143,7 +143,11 @@ async fn build_block_with_txs(
 /// its sharded-worker performance optimization: the resulting Merkle root is a
 /// pure function of the final account states, so this single-threaded replay
 /// via public `Store` APIs reproduces the identical value production computes.
-fn forge_state_root(store: &Store, parent_header: &BlockHeader, bal: &BlockAccessList) -> H256 {
+pub(crate) fn forge_state_root(
+    store: &Store,
+    parent_header: &BlockHeader,
+    bal: &BlockAccessList,
+) -> H256 {
     let synthesis = synthesize_bal_updates(bal);
     let updates: Vec<AccountUpdate> = synthesis
         .into_iter()
@@ -192,6 +196,13 @@ fn parallel_blockchain(store: Store) -> Blockchain {
         store,
         BlockchainOptions {
             bal_parallel_exec_enabled: true,
+            // These tests exercise BAL content validation, not mempool
+            // admission policy, and their fixtures submit zero-tip txs
+            // (`eip1559_tx` sets `max_priority_fee_per_gas: 0`). Opt out of the
+            // min-tip floor so they stay decoupled from admission defaults —
+            // raising the fixture's tip instead would change gas payment and
+            // perturb the exact balance deltas these tests assert on.
+            min_tip_wei: 0,
             ..Default::default()
         },
     )

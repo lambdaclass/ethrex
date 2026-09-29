@@ -64,7 +64,7 @@ fn main() {
 
     let backend = ethrex_storage::backend::rocksdb::RocksDBBackend::open(
         db_path,
-        ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+        ethrex_storage::default_rocksdb_block_cache_size(),
     )
     .expect("Failed to open RocksDB");
 

@@ -59,11 +59,24 @@ fn run_execute(
     calldata: &Bytes,
     gas_remaining: &mut u64,
 ) -> Result<Bytes, VMError> {
-    use ethrex_common::types::stateless_ssz::SszStatelessInput;
+    use ethrex_common::types::stateless_ssz::{
+        STATELESS_INPUT_SCHEMA_ID, STATELESS_INPUT_SCHEMA_ID_SIZE, SszStatelessInput,
+    };
     use libssz::SszDecode;
 
-    // Attacker-controlled input: SSZ decode failure is a CALL-level failure, not an invariant.
-    let input = SszStatelessInput::from_ssz_bytes(calldata)
+    // Schema-prefixed `statelessInputBytes`: a 2-byte big-endian schema id, then
+    // the SSZ body. Since execution-specs #3278 the prefix is the only thing
+    // identifying the fork, so an unexpected id must be rejected. All of it is
+    // attacker-controlled, hence CALL-level failures rather than invariants.
+    let (schema_bytes, body) = calldata
+        .split_first_chunk::<STATELESS_INPUT_SCHEMA_ID_SIZE>()
+        .ok_or(VMError::from(PrecompileError::ExecuteInvalidInput))?;
+    let schema_id = u16::from_be_bytes(*schema_bytes);
+    if schema_id != STATELESS_INPUT_SCHEMA_ID {
+        return Err(VMError::from(PrecompileError::ExecuteInvalidInput));
+    }
+
+    let input = SszStatelessInput::from_ssz_bytes(body)
         .map_err(|_| VMError::from(PrecompileError::ExecuteInvalidInput))?;
 
     validate_l2_constraints(&input)?;
@@ -121,12 +134,22 @@ fn validate_l2_constraints(
         return Err(PrecompileError::ExecuteInvalidInput.into());
     }
     let reqs = &input.new_payload_request.execution_requests;
-    if !reqs.deposits.is_empty() || !reqs.withdrawals.is_empty() || !reqs.consolidations.is_empty()
+    if !reqs.deposits.is_empty()
+        || !reqs.withdrawals.is_empty()
+        || !reqs.consolidations.is_empty()
+        || !reqs.builder_deposits.is_empty()
+        || !reqs.builder_exits.is_empty()
     {
         return Err(PrecompileError::ExecuteInvalidInput.into());
     }
     for tx_bytes in payload.transactions.iter() {
-        if let Some(&0x03) = tx_bytes.iter().next() {
+        // Rejected by leading EIP-2718 envelope byte: `0x03` (EIP-4844) because
+        // L2 blocks carry no blobs, and `0x06` (frame) / `0x7e` (privileged)
+        // because they carry an explicit sender and no signature — the stateless
+        // input commits one public key per transaction, so admitting them would
+        // make a well-formed block unrepresentable. Native rollups relay L1→L2
+        // messages as signed EIP-1559 transactions, so this costs no function.
+        if let Some(&(0x03 | 0x06 | 0x7e)) = tx_bytes.iter().next() {
             return Err(PrecompileError::ExecuteInvalidInput.into());
         }
     }
@@ -145,8 +168,8 @@ mod tests {
     use super::{EXECUTE_GAS_PER_WITNESS_BYTE, run_execute};
     use bytes::Bytes;
     use ethrex_common::types::stateless_ssz::{
-        Bytes20, DepositRequest, ExecutionPayload, ExecutionRequests, NewPayloadRequest,
-        SszChainConfig, SszExecutionWitness, SszForkActivation, SszForkConfig, SszStatelessInput,
+        BuilderDepositRequest, BuilderExitRequest, Bytes20, DepositRequest, ExecutionPayload,
+        ExecutionRequests, NewPayloadRequest, SszExecutionWitness, SszStatelessInput,
         SszStatelessValidationResult, Withdrawal,
     };
     use libssz::SszEncode;
@@ -163,22 +186,39 @@ mod tests {
             let result = SszStatelessValidationResult {
                 new_payload_request_root: [0u8; 32],
                 successful_validation: true,
-                chain_config: SszChainConfig {
-                    chain_id: 1,
-                    active_fork: SszForkConfig {
-                        fork: 0,
-                        activation: SszForkActivation {
-                            block_number: vec![].try_into().expect("empty block_number"),
-                            timestamp: vec![].try_into().expect("empty timestamp"),
-                        },
-                        blob_schedule: vec![].try_into().expect("empty blob_schedule"),
-                    },
-                },
+                chain_id: 1,
+                schema_id: 0x1501,
             };
             let mut buf = Vec::new();
             result.ssz_append(&mut buf);
             Ok(buf)
         }
+    }
+
+    /// Encode an input as `statelessInputBytes`: the 2-byte big-endian schema id
+    /// followed by the SSZ body. Every test must go through this — a bare body is
+    /// rejected at the prefix check, which would silently turn each constraint
+    /// test below into a test of the prefix check.
+    fn calldata_for(input: &SszStatelessInput) -> Bytes {
+        let mut buf = ethrex_common::types::stateless_ssz::STATELESS_INPUT_SCHEMA_ID
+            .to_be_bytes()
+            .to_vec();
+        input.ssz_append(&mut buf);
+        Bytes::from(buf)
+    }
+
+    /// Assert an error is the constraint rejection `ExecuteInvalidInput`, and is a
+    /// CALL-level failure (includable, attacker pays) rather than a tx-abort.
+    fn assert_invalid_input(err: &crate::errors::VMError, what: &str) {
+        assert_eq!(
+            err,
+            &crate::errors::VMError::from(crate::errors::PrecompileError::ExecuteInvalidInput),
+            "{what} must be rejected as ExecuteInvalidInput; got: {err:?}"
+        );
+        assert!(
+            !err.should_propagate(),
+            "{what} must be a CALL-level failure (non-propagating); got: {err:?}"
+        );
     }
 
     /// Build a minimal L2-valid `SszStatelessInput` with the given gas fields.
@@ -201,19 +241,21 @@ mod tests {
                     extra_data: vec![].try_into().expect("extra_data"),
                     base_fee_per_gas: [0u8; 32],
                     block_hash: [0u8; 32],
-                    transactions: vec![].try_into().expect("transactions"),
-                    withdrawals: vec![].try_into().expect("withdrawals"),
+                    transactions: Vec::new().into(),
+                    withdrawals: Vec::new().into(),
                     blob_gas_used: 0,
                     excess_blob_gas: 0,
-                    block_access_list: vec![].try_into().expect("block_access_list"),
+                    block_access_list: Vec::new().into(),
                     slot_number: 0,
                 },
-                versioned_hashes: vec![].try_into().expect("versioned_hashes"),
+                versioned_hashes: Vec::new().into(),
                 parent_beacon_block_root: [0u8; 32],
                 execution_requests: ExecutionRequests {
-                    deposits: vec![].try_into().expect("deposits"),
-                    withdrawals: vec![].try_into().expect("withdrawals"),
-                    consolidations: vec![].try_into().expect("consolidations"),
+                    deposits: Vec::new().into(),
+                    withdrawals: Vec::new().into(),
+                    consolidations: Vec::new().into(),
+                    builder_deposits: Vec::new().into(),
+                    builder_exits: Vec::new().into(),
                 },
             },
             witness: SszExecutionWitness {
@@ -221,17 +263,7 @@ mod tests {
                 codes: vec![].try_into().expect("codes"),
                 headers: vec![].try_into().expect("headers"),
             },
-            chain_config: SszChainConfig {
-                chain_id: 1,
-                active_fork: SszForkConfig {
-                    fork: 0,
-                    activation: SszForkActivation {
-                        block_number: vec![].try_into().expect("block_number"),
-                        timestamp: vec![].try_into().expect("timestamp"),
-                    },
-                    blob_schedule: vec![].try_into().expect("blob_schedule"),
-                },
-            },
+            chain_id: 1,
             public_keys: vec![].try_into().expect("public_keys"),
         }
     }
@@ -241,17 +273,8 @@ mod tests {
             let result = SszStatelessValidationResult {
                 new_payload_request_root: [0u8; 32],
                 successful_validation: false,
-                chain_config: SszChainConfig {
-                    chain_id: 1,
-                    active_fork: SszForkConfig {
-                        fork: 0,
-                        activation: SszForkActivation {
-                            block_number: vec![].try_into().expect("empty block_number"),
-                            timestamp: vec![].try_into().expect("empty timestamp"),
-                        },
-                        blob_schedule: vec![].try_into().expect("empty blob_schedule"),
-                    },
-                },
+                chain_id: 1,
+                schema_id: 0x1501,
             };
             let mut buf = Vec::new();
             result.ssz_append(&mut buf);
@@ -264,9 +287,7 @@ mod tests {
     #[test]
     fn execute_fails_closed_on_invalid() {
         let input = l2_valid_input(0, 1_000_000);
-        let mut calldata_buf = Vec::new();
-        input.ssz_append(&mut calldata_buf);
-        let calldata = Bytes::from(calldata_buf);
+        let calldata = calldata_for(&input);
 
         // Invalid result → must Err (fail-closed) with a NON-propagating error so the tx is
         // INCLUDABLE and the attacker pays Task 1's gas charge (I1×I13 regression guard).
@@ -292,9 +313,7 @@ mod tests {
     #[test]
     fn execute_charges_gas_limit_not_gas_used() {
         let input = l2_valid_input(0, 1_000_000);
-        let mut calldata_buf = Vec::new();
-        input.ssz_append(&mut calldata_buf);
-        let calldata = Bytes::from(calldata_buf);
+        let calldata = calldata_for(&input);
 
         let start_gas = 100_000_000u64;
         let mut gas_remaining = start_gas;
@@ -333,10 +352,7 @@ mod tests {
         let mut gas = 100_000_000u64;
         let err = run_execute(&MockValidator, &calldata, &mut gas)
             .expect_err("malformed SSZ input must be rejected");
-        assert!(
-            !err.should_propagate(),
-            "malformed EXECUTE input must be a CALL-level failure (non-propagating), not a tx-abort; got: {err:?}"
-        );
+        assert_invalid_input(&err, "malformed SSZ input");
     }
 
     // ── Negative constraint tests (I11) ──────────────────────────────────────
@@ -354,16 +370,11 @@ mod tests {
     fn execute_rejects_blob_gas_used_nonzero() {
         let mut input = l2_valid_input(0, 1_000_000);
         input.new_payload_request.execution_payload.blob_gas_used = 1;
-        let mut buf = Vec::new();
-        input.ssz_append(&mut buf);
-        let calldata = Bytes::from(buf);
+        let calldata = calldata_for(&input);
         let mut gas = 100_000_000u64;
         let err = run_execute(&MockValidator, &calldata, &mut gas)
             .expect_err("blob_gas_used != 0 must be rejected");
-        assert!(
-            !err.should_propagate(),
-            "blob_gas_used violation must be a CALL-level failure (non-propagating); got: {err:?}"
-        );
+        assert_invalid_input(&err, "blob_gas_used != 0");
     }
 
     /// Constraint 2: `excess_blob_gas` must be zero.
@@ -371,16 +382,11 @@ mod tests {
     fn execute_rejects_excess_blob_gas_nonzero() {
         let mut input = l2_valid_input(0, 1_000_000);
         input.new_payload_request.execution_payload.excess_blob_gas = 1;
-        let mut buf = Vec::new();
-        input.ssz_append(&mut buf);
-        let calldata = Bytes::from(buf);
+        let calldata = calldata_for(&input);
         let mut gas = 100_000_000u64;
         let err = run_execute(&MockValidator, &calldata, &mut gas)
             .expect_err("excess_blob_gas != 0 must be rejected");
-        assert!(
-            !err.should_propagate(),
-            "excess_blob_gas violation must be a CALL-level failure (non-propagating); got: {err:?}"
-        );
+        assert_invalid_input(&err, "excess_blob_gas != 0");
     }
 
     /// Constraint 3: `withdrawals` list must be empty.
@@ -395,16 +401,11 @@ mod tests {
         }]
         .try_into()
         .expect("withdrawals");
-        let mut buf = Vec::new();
-        input.ssz_append(&mut buf);
-        let calldata = Bytes::from(buf);
+        let calldata = calldata_for(&input);
         let mut gas = 100_000_000u64;
         let err = run_execute(&MockValidator, &calldata, &mut gas)
             .expect_err("non-empty withdrawals must be rejected");
-        assert!(
-            !err.should_propagate(),
-            "withdrawals violation must be a CALL-level failure (non-propagating); got: {err:?}"
-        );
+        assert_invalid_input(&err, "non-empty withdrawals");
     }
 
     /// Constraint 4: `execution_requests` (deposits/withdrawals/consolidations) must all be empty.
@@ -421,35 +422,120 @@ mod tests {
         }]
         .try_into()
         .expect("deposits");
-        let mut buf = Vec::new();
-        input.ssz_append(&mut buf);
-        let calldata = Bytes::from(buf);
+        let calldata = calldata_for(&input);
         let mut gas = 100_000_000u64;
         let err = run_execute(&MockValidator, &calldata, &mut gas)
             .expect_err("non-empty execution_requests must be rejected");
-        assert!(
-            !err.should_propagate(),
-            "execution_requests violation must be a CALL-level failure (non-propagating); got: {err:?}"
-        );
+        assert_invalid_input(&err, "non-empty execution_requests");
     }
 
-    /// Constraint 5: no transaction may have type byte `0x03` (blob tx).
+    /// Constraint 4b: the EIP-8282 builder request lists must be empty too. They
+    /// were added to `ExecutionRequests` after the original three, so this pins
+    /// them against being reached by the constraint check only by accident.
     #[test]
-    fn execute_rejects_blob_typed_transaction() {
+    fn execute_rejects_nonempty_builder_requests() {
         let mut input = l2_valid_input(0, 1_000_000);
-        // A minimal blob-typed transaction: first byte is 0x03.
-        let blob_tx = vec![0x03u8, 0x00, 0x00].try_into().expect("blob_tx bytes");
-        input.new_payload_request.execution_payload.transactions =
-            vec![blob_tx].try_into().expect("transactions");
-        let mut buf = Vec::new();
-        input.ssz_append(&mut buf);
-        let calldata = Bytes::from(buf);
+        input
+            .new_payload_request
+            .execution_requests
+            .builder_deposits = vec![BuilderDepositRequest {
+            pubkey: [0u8; 48],
+            withdrawal_credentials: [0u8; 32],
+            amount: 1,
+            signature: [0u8; 96],
+        }]
+        .try_into()
+        .expect("builder_deposits");
         let mut gas = 100_000_000u64;
-        let err = run_execute(&MockValidator, &calldata, &mut gas)
-            .expect_err("blob-typed transaction must be rejected");
-        assert!(
-            !err.should_propagate(),
-            "blob tx type violation must be a CALL-level failure (non-propagating); got: {err:?}"
-        );
+        let err = run_execute(&MockValidator, &calldata_for(&input), &mut gas)
+            .expect_err("non-empty builder_deposits must be rejected");
+        assert_invalid_input(&err, "non-empty builder_deposits");
+
+        let mut input = l2_valid_input(0, 1_000_000);
+        input.new_payload_request.execution_requests.builder_exits = vec![BuilderExitRequest {
+            source_address: Bytes20([0u8; 20]),
+            pubkey: [0u8; 48],
+        }]
+        .try_into()
+        .expect("builder_exits");
+        let mut gas = 100_000_000u64;
+        let err = run_execute(&MockValidator, &calldata_for(&input), &mut gas)
+            .expect_err("non-empty builder_exits must be rejected");
+        assert_invalid_input(&err, "non-empty builder_exits");
+    }
+
+    /// Constraint 5: no transaction may carry a rejected EIP-2718 type byte.
+    ///
+    /// `0x03` is a blob transaction. `0x06` (frame) and `0x7e` (privileged) carry
+    /// an explicit sender and no signature, so no public key can be recovered for
+    /// them — and the stateless input commits one key per transaction. Rejecting
+    /// them here is what makes "every transaction in the payload is
+    /// signature-bearing" an enforced invariant rather than a property of the
+    /// current producer, which `build_ssz_stateless_input` relies on to populate
+    /// `public_keys` without gaps.
+    #[test]
+    fn execute_rejects_unsupported_transaction_types() {
+        for (type_byte, what) in [
+            (0x03u8, "blob-typed transaction"),
+            (0x06u8, "frame transaction"),
+            (0x7eu8, "privileged transaction"),
+        ] {
+            let mut input = l2_valid_input(0, 1_000_000);
+            let tx = vec![type_byte, 0x00, 0x00].try_into().expect("tx bytes");
+            input.new_payload_request.execution_payload.transactions =
+                vec![tx].try_into().expect("transactions");
+            let calldata = calldata_for(&input);
+            let mut gas = 100_000_000u64;
+            let err = run_execute(&MockValidator, &calldata, &mut gas)
+                .expect_err("unsupported transaction type must be rejected");
+            assert_invalid_input(&err, what);
+        }
+
+        // A type byte just outside the rejected set must still be accepted, so the
+        // test cannot pass by rejecting everything.
+        let mut input = l2_valid_input(0, 1_000_000);
+        let tx = vec![0x02u8, 0x00, 0x00].try_into().expect("tx bytes");
+        input.new_payload_request.execution_payload.transactions =
+            vec![tx].try_into().expect("transactions");
+        let calldata = calldata_for(&input);
+        let mut gas = 100_000_000u64;
+        run_execute(&MockValidator, &calldata, &mut gas)
+            .expect("an EIP-1559 transaction must be accepted");
+    }
+
+    /// The schema prefix is mandatory, and only `STATELESS_INPUT_SCHEMA_ID` is
+    /// accepted. Since #3278 removed chain configuration from the wire, the prefix
+    /// is the sole carrier of the fork, so an unexpected id must reject rather than
+    /// be validated under Amsterdam rules by default.
+    #[test]
+    fn execute_requires_the_expected_schema_prefix() {
+        let input = l2_valid_input(0, 1_000_000);
+        let mut body = Vec::new();
+        input.ssz_append(&mut body);
+
+        // No prefix at all: the body's first bytes are an SSZ offset, not a schema id.
+        let mut gas = 100_000_000u64;
+        let err = run_execute(&MockValidator, &Bytes::from(body.clone()), &mut gas)
+            .expect_err("unprefixed input must be rejected");
+        assert_invalid_input(&err, "unprefixed input");
+
+        // A well-formed but different schema id.
+        let mut wrong = vec![0x15u8, 0x02];
+        wrong.extend_from_slice(&body);
+        let mut gas = 100_000_000u64;
+        let err = run_execute(&MockValidator, &Bytes::from(wrong), &mut gas)
+            .expect_err("unexpected schema id must be rejected");
+        assert_invalid_input(&err, "unexpected schema id");
+
+        // Too short to hold an id at all.
+        let mut gas = 100_000_000u64;
+        let err = run_execute(&MockValidator, &Bytes::from(vec![0x15u8]), &mut gas)
+            .expect_err("truncated input must be rejected");
+        assert_invalid_input(&err, "input too short for a schema id");
+
+        // And the expected prefix is accepted, so the test is not vacuous.
+        let mut gas = 100_000_000u64;
+        run_execute(&MockValidator, &calldata_for(&input), &mut gas)
+            .expect("the expected schema prefix must be accepted");
     }
 }

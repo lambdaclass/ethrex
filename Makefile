@@ -1,7 +1,7 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
-		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
+		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs run-hive-snap2 \
 		load-test-fibonacci load-test-io run-hive-eels-blobs run-hive-eels-amsterdam \
-		run-hive-eels-bal-quick run-hive-build-block bench-rlp
+		run-hive-eels-bal-quick run-hive-build-block bench-rlp zkevm-bench-setup
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -61,6 +61,17 @@ build-image: ## 🐳 Build the Docker image (override tag with TAG=foo)
 		--build-arg GIT_BRANCH=$(GIT_BRANCH) \
 		--build-arg VERSION=$(VERSION) \
 		-t $(IMAGE) .
+
+# Enables the `sync-test` feature, which lets MIN_FULL_BLOCKS, SNAP_LIMIT and
+# SECONDS_PER_BLOCK be set from the environment. A devnet cannot reach snap
+# sync at their production values. Never deploy this image.
+build-image-sync-test: ## 🐳 Build a Docker image whose sync thresholds can be overridden
+	docker build \
+		--build-arg GIT_SHA=$(GIT_SHA) \
+		--build-arg GIT_BRANCH=$(GIT_BRANCH) \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg BUILD_FLAGS="--features sync-test" \
+		-t ethrex:sync-test .
 
 run-image: build-image ## 🏃 Run the Docker image
 	docker run --rm -p 127.0.0.1:8545:8545 $(IMAGE) --http.addr 0.0.0.0
@@ -152,6 +163,9 @@ TEST_PATTERN_EELS ?= .*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Pra
 run-hive-eels: build-image setup-hive ## 🧪 Generic command for running Hive EELS tests. Specify EELS_SIM
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(EELS_SIM) --sim.limit "$(TEST_PATTERN_EELS)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(shell cat tooling/ef_tests/.fixtures_url)
 
+run-hive-snap2: build-image ## 🧪 Run the hive devp2p snap/2 (EIP-8189) conformance suite
+	cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim devp2p --sim.limit "snap2" --sim.loglevel $(SIM_LOG_LEVEL)
+
 run-hive-eels-engine: ## Run hive EELS Engine tests
 	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/consume-engine
 
@@ -161,21 +175,28 @@ run-hive-eels-rlp: ## Run hive EELS RLP tests
 run-hive-eels-blobs: ## Run hive EELS Blobs tests
 	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/execute-blobs
 
-AMSTERDAM_FIXTURES_URL ?= $(shell cat tooling/ef_tests/.fixtures_url_amsterdam)
-AMSTERDAM_FIXTURES_BRANCH ?= devnets/glamsterdam/7
+# Local hive runs read the same Amsterdam pin CI does, so a bundle bump lands in one
+# place and the two can't drift. Both keys are plain scalars, so `sed` extracts them
+# without making the Makefile depend on `yq`.
+AMSTERDAM_HIVE_CONFIG := .github/config/hive/amsterdam.yaml
+AMSTERDAM_FIXTURES_URL ?= $(shell sed -n 's/^fixtures: *//p' $(AMSTERDAM_HIVE_CONFIG))
+AMSTERDAM_FIXTURES_BRANCH ?= $(shell sed -n 's/^eels_commit: *//p' $(AMSTERDAM_HIVE_CONFIG))
+# `fork_.*Amsterdam` rather than `fork_Amsterdam` so the BPO2->Amsterdam activation
+# fixtures (`fork_BPO2ToAmsterdamAtTime15k`) are swept alongside the Amsterdam ones.
+AMSTERDAM_FORK_PATTERN ?= .*fork_.*Amsterdam.*
 run-hive-eels-amsterdam: build-image setup-hive ## 🧪 Run hive EELS Amsterdam Engine tests
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit ".*fork_Amsterdam.*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(AMSTERDAM_FIXTURES_URL) --sim.buildarg branch=$(AMSTERDAM_FIXTURES_BRANCH)
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit "$(AMSTERDAM_FORK_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(AMSTERDAM_FIXTURES_URL) --sim.buildarg branch=$(AMSTERDAM_FIXTURES_BRANCH)
 
-run-hive-eels-bal-quick: build-image setup-hive ## 🧪 Run hive EELS quick tests for the glam-7 EIPs
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit ".*(8024|7708|7778|7843|7928|7954|8037|8038|2780|7997|7610|8246|8282).*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(AMSTERDAM_FIXTURES_URL) --sim.buildarg branch=$(AMSTERDAM_FIXTURES_BRANCH)
+run-hive-eels-bal-quick: build-image setup-hive ## 🧪 Run hive EELS quick tests for the Amsterdam EIPs
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit ".*(2780|7708|7732|7778|7843|7928|7954|7975|7976|7981|7997|8024|8037|8038|8045|8061|8070|8159|8246|8282).*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(AMSTERDAM_FIXTURES_URL) --sim.buildarg branch=$(AMSTERDAM_FIXTURES_BRANCH)
 
 # Block-building simulator (execution-specs PR #2679). Not yet upstream in Hive,
 # so we install the simulator Dockerfile into the hive clone and patch the
 # ethrex hive client to expose the `testing` namespace (testing_buildBlockV1
 # lives on the public HTTP port). Defaults to the Amsterdam/BAL fixtures.
-# Defaults to the BAL EIP set (mirrors run-hive-eels-bal-quick) rather than all
-# .*fork_Amsterdam.* fixtures, which pull in ~21k cross-fork cases. Override with
-# BUILD_BLOCK_TEST_PATTERN=.*fork_Amsterdam.* for the full sweep.
+# Defaults to the EIPs whose block-building behaviour this simulator exercises, rather
+# than every Amsterdam fixture, which pulls in ~21k cross-fork cases. Override with
+# BUILD_BLOCK_TEST_PATTERN=$(AMSTERDAM_FORK_PATTERN) for the full sweep.
 BUILD_BLOCK_TEST_PATTERN ?= .*(7708|7778|7843|7928|7954|7976|7981|8024|8037).*
 run-hive-build-block: build-image setup-hive ## 🧱 Run hive build-block simulator (testing_buildBlockV1)
 	mkdir -p hive/simulators/ethereum/eels/build-block
@@ -225,6 +246,19 @@ sort-genesis-files:
 bench-rlp: ## ⚡ Bench the RLP decoder/encoder
 	cd ./crates/common/rlp && cargo bench
 
+zkevm-bench-setup: ## Install ZisK v1.1.0-alpha toolchain for the zkEVM benchmark (Linux)
+	sudo apt-get update
+	sudo apt-get install -y xz-utils jq curl build-essential qemu-system libomp-dev libgmp-dev nlohmann-json3-dev protobuf-compiler uuid-dev libgrpc++-dev libsecp256k1-dev libsodium-dev libpqxx-dev nasm libopenmpi-dev openmpi-bin openmpi-common libclang-dev clang gcc-riscv64-unknown-elf
+	mkdir -p $(HOME)/.zisk/bin
+	curl -fsSL "https://raw.githubusercontent.com/0xPolygonHermez/zisk/v1.1.0-alpha/ziskup/ziskup" -o $(HOME)/.zisk/bin/ziskup
+	chmod +x $(HOME)/.zisk/bin/ziskup
+	$(HOME)/.zisk/bin/ziskup -v 1.1.0-alpha --nokey -y
+	# ziskup installs whatever Rust toolchain release is latest; pin it to the same
+	# one CI uses so a guest built here links the same way. See the comment in
+	# .github/actions/install-zisk/action.yml for why the two versions are coupled.
+	ZISK_HOME=$(HOME)/.zisk $(HOME)/.zisk/bin/cargo-zisk toolchain install -t zisk-3.0.0
+	@echo "Add $(HOME)/.zisk/bin to PATH (e.g. export PATH=$(HOME)/.zisk/bin:$$PATH). --nokey skips the (large) proving key — emulation doesn't need it."
+
 # Using & so make calls this recipe only once per run
 mermaid-init.js mermaid.min.js &:
 	@# Required for mdbook-mermaid to work
@@ -250,10 +284,21 @@ update-cargo-lock: ## 📦 Update Cargo.lock files
 	# (v2.1.7-risczero.0), so its lockfile can't resolve. Re-add once a >=2.1.8 tag exists.
 	cargo tree --manifest-path crates/guest-program/bin/zisk/Cargo.toml
 	cargo tree --manifest-path crates/guest-program/bin/openvm/Cargo.toml
+	cargo tree --manifest-path crates/guest-program/stateless-validator/Cargo.toml
+	cargo tree --manifest-path crates/guest-program/stateless-validator/bin/sp1/Cargo.toml
+	cargo tree --manifest-path crates/guest-program/stateless-validator/bin/zisk/Cargo.toml
+	cargo tree --manifest-path crates/guest-program/stateless-validator/bin/openvm/Cargo.toml
 	cargo tree --manifest-path crates/l2/tee/quote-gen/Cargo.toml
 	cargo tree --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml
+	cargo tree --manifest-path tooling/zkevm_bench/Cargo.toml
 	cargo tree --manifest-path tooling/Cargo.toml
 	cargo tree --manifest-path tooling/ef_tests/state/Cargo.toml
+
+check-ere-pins: ## 🔍 Check the stateless-validator guests agree on one ere release
+	# Prints the tag on success. Fails if any manifest has moved off it, including
+	# to a bare rev -- a rev cannot be matched against the ere compiler/server
+	# image tags the release workflow pulls.
+	@tag=$$(.github/scripts/zkvm-version.sh --ere-tag) && echo "ere pins agree: $$tag"
 
 check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
 	cargo metadata --locked > /dev/null
@@ -264,7 +309,18 @@ check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
 	# if changes made to the source code CI will run with the toolchain
 	cargo metadata --locked --manifest-path crates/guest-program/bin/zisk/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/guest-program/bin/openvm/Cargo.toml > /dev/null
+	# The stateless-validator crate and guest bins are each their own workspace, and
+	# tag_release builds + signs them with `--guest-dir`. Without a committed
+	# lock the published ELF/VK bytes are not pinned. openvm is checked too:
+	# `cargo metadata` only resolves, so the newer-rustc requirement that keeps
+	# it out of the pr_nostd build matrix does not apply here.
+	cargo metadata --locked --manifest-path crates/guest-program/stateless-validator/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path crates/guest-program/stateless-validator/bin/sp1/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path crates/guest-program/stateless-validator/bin/zisk/Cargo.toml > /dev/null
+	cargo metadata --locked --manifest-path crates/guest-program/stateless-validator/bin/openvm/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/l2/tee/quote-gen/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml > /dev/null
+	# zkevm_bench is a standalone workspace (x86-64-only zisk dep); metadata avoids needing the toolchain
+	cargo metadata --locked --manifest-path tooling/zkevm_bench/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path tooling/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path tooling/ef_tests/state/Cargo.toml > /dev/null

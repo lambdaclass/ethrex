@@ -87,6 +87,11 @@
     "amsterdamTime": 0,
     "berlinBlock": 0,
     "blobSchedule": {
+      "amsterdam": {
+        "baseFeeUpdateFraction": 11684671,
+        "max": 21,
+        "target": 14
+      },
       "bpo1": {
         "baseFeeUpdateFraction": 8346193,
         "max": 15,

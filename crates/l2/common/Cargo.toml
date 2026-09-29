@@ -24,8 +24,6 @@ rkyv.workspace = true
 k256.workspace = true
 tracing.workspace = true
 
-secp256k1 = { workspace = true, optional = true }
-
 [lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"
@@ -34,10 +32,3 @@ as_conversions = "deny"
 unnecessary_cast = "warn"
 panic = "deny"
 redundant_clone = "warn"
-
-[features]
-default = ["secp256k1"]
-secp256k1 = ["dep:secp256k1"]
-risc0 = []
-sp1 = []
-zisk = []

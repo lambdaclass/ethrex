@@ -12,10 +12,9 @@ pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01; // Defined in [EIP-4844](https:
 /// Minimum tip, obtained from geth's default miner config (https://github.com/ethereum/go-ethereum/blob/f750117ad19d623622cc4a46ea361a716ba7407e/miner/miner.go#L56)
 ///
 /// Scope: this constant is consumed only by the RPC gas-price estimators
-/// (`eth_gasPrice`, `eth_maxPriorityFeePerGas`). It is NOT a mempool
-/// admission gate — zero-tip transactions are currently admitted.
-///
-/// TODO: This should be configurable along with the tip filter on https://github.com/lambdaclass/ethrex/issues/680
+/// (`eth_gasPrice`, `eth_maxPriorityFeePerGas`). The mempool admission
+/// floor is a separate, lower default (see
+/// `ethrex_blockchain::DEFAULT_MIN_TIP_WEI`).
 pub const MIN_GAS_TIP: u64 = 1000000;
 
 // Blob size related
@@ -32,6 +31,10 @@ pub const FIELD_ELEMENTS_PER_EXT_BLOB: usize = 2 * FIELD_ELEMENTS_PER_BLOB;
 pub const FIELD_ELEMENTS_PER_CELL: usize = 64;
 pub const BYTES_PER_CELL: usize = FIELD_ELEMENTS_PER_CELL * BYTES_PER_FIELD_ELEMENT;
 pub const CELLS_PER_EXT_BLOB: usize = FIELD_ELEMENTS_PER_EXT_BLOB / FIELD_ELEMENTS_PER_CELL;
+/// Maximum blobs a single transaction may carry from Osaka onwards.
+pub const MAX_BLOB_COUNT: usize = 6;
+/// Maximum blobs a single transaction may carry before Osaka.
+pub const MAX_BLOB_COUNT_ELECTRA: usize = 9;
 
 // Mempool admission size caps — peer-policy defaults, not consensus.
 // Matches geth `txMaxSize` (legacypool) and `txMaxSize` (blobpool), reth

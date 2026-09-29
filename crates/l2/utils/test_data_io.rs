@@ -32,7 +32,7 @@ pub async fn generate_rlp(
     up_to_block_number: u64,
     store: &Store,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if store.get_latest_block_number().await? == up_to_block_number {
+    if store.get_latest_block_number()? == up_to_block_number {
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let file_name = "l2-test.rlp";
 

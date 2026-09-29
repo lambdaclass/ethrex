@@ -29,6 +29,7 @@ hive/
 ethereum-package/
 tooling/ef_tests/blockchain/vectors
 tooling/ef_tests/blockchain/vectors_zkevm
+tooling/ef_tests/blockchain/vectors_zkevm_benchmark
 tooling/ef_tests/state/vectors
 tooling/sync/multisync_logs/
 dev_ethrex_l1/

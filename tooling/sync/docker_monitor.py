@@ -37,6 +37,7 @@ NETWORK_PORTS = {
     "sepolia": 8546,
     "mainnet": 8547,
     "hoodi-2": 8548,
+    "plataberget": 8549,
 }
 
 # Logging configuration
@@ -56,7 +57,7 @@ PHASE_COMPLETION_PATTERNS = {
     "Storage Ranges": r"✓ STORAGE RANGES complete: ([\d,]+) storage slots in (\d+:\d{2}:\d{2})",
     "Storage Insertion": r"✓ STORAGE INSERTION complete: ([\d,]+) storage slots inserted in (\d+:\d{2}:\d{2})",
     "State Healing": r"✓ STATE HEALING complete: ([\d,]+) state paths healed in (\d+:\d{2}:\d{2})",
-    "Storage Healing": r"✓ STORAGE HEALING complete: ([\d,]+) storage accounts healed in (\d+:\d{2}:\d{2})",
+    "Storage Healing": r"✓ STORAGE HEALING complete: ([\d,]+) storage (?:slots|accounts) healed in (\d+:\d{2}:\d{2})",
     "Bytecodes": r"✓ BYTECODES complete: ([\d,]+) bytecodes in (\d+:\d{2}:\d{2})",
 }
 

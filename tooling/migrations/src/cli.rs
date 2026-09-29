@@ -87,13 +87,13 @@ async fn migrate_libmdbx_to_rocksdb(
     .await
     .expect("Cannot create rocksdb store");
 
+    // `old_store` is the pinned v1.0.0 libmdbx store, where this accessor is still async.
     let last_block_number = old_store
         .get_latest_block_number()
         .await
         .expect("Cannot get latest block from libmdbx store");
     let last_known_block = new_store
         .get_latest_block_number()
-        .await
         .expect("Cannot get latest known block from rocksdb store");
 
     if last_known_block >= last_block_number {

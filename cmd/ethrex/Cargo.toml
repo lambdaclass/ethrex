@@ -80,12 +80,17 @@ path = "./lib.rs"
 
 [features]
 debug = ["ethrex-vm/debug"]
-default = ["rocksdb", "c-kzg", "secp256k1", "metrics", "jemalloc", "dev"]
+default = ["rocksdb", "c-kzg", "secp256k1", "metrics", "jemalloc", "dev", "rayon"]
 dev = ["dep:ethrex-dev"]
 secp256k1 = [
   "ethrex-vm/secp256k1",
   "ethrex-common/secp256k1",
   "ethrex-blockchain/secp256k1",
+]
+rayon = [
+  "ethrex-vm/rayon",
+  "ethrex-common/rayon",
+  "ethrex-blockchain/rayon",
 ]
 c-kzg = [
   "ethrex-vm/c-kzg",
@@ -93,6 +98,9 @@ c-kzg = [
   "ethrex-blockchain/c-kzg",
   "ethrex-p2p/c-kzg",
   "ethrex-crypto/c-kzg",
+  # forward to the RPC crate so engine_getBlobsV4 can derive blob cells; without
+  # it the handler compiles its no-KZG branch and serves null for every cell
+  "ethrex-rpc/c-kzg",
 ]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics", "ethrex-p2p/metrics"]
 rocksdb = ["ethrex-storage/rocksdb", "ethrex-p2p/rocksdb", "ethrex-l2?/rocksdb"]

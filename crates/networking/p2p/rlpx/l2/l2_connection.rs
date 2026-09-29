@@ -227,7 +227,7 @@ pub(crate) fn broadcast_l2_message(
 pub(crate) async fn send_new_block(
     established: &mut Established,
 ) -> Result<(), PeerConnectionError> {
-    let latest_block_number = established.storage.get_latest_block_number().await?;
+    let latest_block_number = established.storage.get_latest_block_number()?;
     let latest_block_sent = established
         .l2_state
         .connection_state_mut()?
@@ -520,7 +520,7 @@ pub(crate) async fn send_sealed_batch(
         {
             return Ok(());
         }
-        let l1_fork = established.blockchain.current_fork().await?;
+        let l1_fork = established.blockchain.current_fork()?;
         let Some(batch) = l2_state
             .store_rollup
             .get_batch(next_batch_to_send, l1_fork)

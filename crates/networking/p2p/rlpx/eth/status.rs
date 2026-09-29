@@ -45,13 +45,19 @@ impl StatusDataPost68 {
         let genesis_header = storage
             .get_block_header(0)?
             .ok_or(PeerConnectionError::NotFound("Genesis Block".to_string()))?;
-        let latest_block = storage.get_latest_block_number().await?;
+        let latest_block = storage.get_latest_block_number()?;
         let block_header =
             storage
                 .get_block_header(latest_block)?
                 .ok_or(PeerConnectionError::NotFound(format!(
                     "Block {latest_block}"
                 )))?;
+
+        // The earliest block we can actually serve. Advertising 0 unconditionally
+        // claims history from genesis, which is already untrue on any snap-synced
+        // node (earliest is the pivot) and becomes materially wrong once history
+        // pruning lands: peers select us for ranges we cannot answer.
+        let earliest_block = storage.get_earliest_block_number().await?;
 
         let genesis = genesis_header.hash();
         let latest_block_hash = block_header.hash();
@@ -67,7 +73,7 @@ impl StatusDataPost68 {
             network_id,
             genesis,
             fork_id,
-            earliest_block: 0,
+            earliest_block,
             latest_block,
             latest_block_hash,
         })
@@ -119,5 +125,65 @@ impl StatusDataPost68 {
             latest_block,
             latest_block_hash,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rlpx::eth::update::BlockRangeUpdate;
+    use ethrex_storage::EngineType;
+
+    /// An in-memory store whose earliest retained block has been moved off zero,
+    /// which is the shape a snap-synced (and, later, a pruned) node presents.
+    async fn store_with_earliest(earliest: u64) -> Store {
+        let mut store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        store
+            .add_initial_state(ethrex_common::types::Genesis::default())
+            .await
+            .expect("load genesis");
+        store
+            .update_earliest_block_number(earliest)
+            .await
+            .expect("set earliest");
+        store
+    }
+
+    /// Advertising 0 unconditionally tells peers we hold history from genesis. That
+    /// is already false on a snap-synced node, and peers use the advertised range to
+    /// decide what to ask us for.
+    #[tokio::test]
+    async fn status_advertises_the_real_earliest_block() {
+        let store = store_with_earliest(12_345).await;
+        for eth_version in [69, 70, 71] {
+            let status = StatusDataPost68::new(eth_version, &store)
+                .await
+                .expect("build status");
+            assert_eq!(
+                status.earliest_block, 12_345,
+                "eth/{eth_version} status must advertise the earliest retained block"
+            );
+        }
+    }
+
+    /// The ongoing half of the same advertisement: the handshake value goes stale as
+    /// the barrier moves, so BlockRangeUpdate has to track it too. Only genesis is
+    /// stored here, so the only earliest consistent with `validate`'s
+    /// `earliest <= latest` invariant is 0 — this pins that the field is read from
+    /// the store rather than hardcoded, without manufacturing an impossible range.
+    #[tokio::test]
+    async fn block_range_update_reads_earliest_from_the_store() {
+        let store = store_with_earliest(0).await;
+        let update = BlockRangeUpdate::new(&store).await.expect("build update");
+        assert_eq!(update.earliest_block, 0);
+        update.validate().expect("a consistent range must validate");
+    }
+
+    /// Genesis-synced nodes must keep advertising 0, so the change is a no-op for them.
+    #[tokio::test]
+    async fn a_full_history_node_still_advertises_zero() {
+        let store = store_with_earliest(0).await;
+        let status = StatusDataPost68::new(69, &store).await.expect("status");
+        assert_eq!(status.earliest_block, 0);
     }
 }

@@ -3,7 +3,7 @@ use ethrex_storage::{Store, error::StoreError};
 
 use crate::rlpx::{error::PeerConnectionError, eth::status::StatusMessage, p2p::Capability};
 
-pub async fn validate_status<ST: StatusMessage>(
+pub fn validate_status<ST: StatusMessage>(
     msg_data: ST,
     storage: &Store,
     eth_capability: &Capability,
@@ -32,7 +32,7 @@ pub async fn validate_status<ST: StatusMessage>(
         ));
     }
     // Check ForkID
-    if !is_fork_id_valid(storage, &msg_data.get_fork_id()).await? {
+    if !is_fork_id_valid(storage, &msg_data.get_fork_id())? {
         return Err(PeerConnectionError::HandshakeError(
             "Invalid Fork Id".to_string(),
         ));
@@ -41,15 +41,12 @@ pub async fn validate_status<ST: StatusMessage>(
 }
 
 /// Validates the fork id from a remote node is valid.
-pub async fn is_fork_id_valid(
-    storage: &Store,
-    remote_fork_id: &ForkId,
-) -> Result<bool, StoreError> {
+pub fn is_fork_id_valid(storage: &Store, remote_fork_id: &ForkId) -> Result<bool, StoreError> {
     let chain_config = storage.get_chain_config();
     let genesis_header = storage
         .get_block_header(0)?
         .ok_or(StoreError::Custom("Latest block not in DB".to_string()))?;
-    let latest_block_number = storage.get_latest_block_number().await?;
+    let latest_block_number = storage.get_latest_block_number()?;
     let latest_block_header = storage
         .get_block_header(latest_block_number)?
         .ok_or(StoreError::Custom("Latest block not in DB".to_string()))?;

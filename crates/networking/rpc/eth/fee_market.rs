@@ -219,7 +219,7 @@ async fn get_range(
     // Get earliest block
     let earliest_block_num = storage.get_earliest_block_number().await?;
     // Get latest block
-    let latest_block_num = storage.get_latest_block_number().await?;
+    let latest_block_num = storage.get_latest_block_number()?;
     // Get the expected finish block number from the parameter
     let expected_finish_block_num = expected_finish_block
         .resolve_block_number(storage)

@@ -47,9 +47,10 @@ hex = "0.4.3"
 path = "./lib.rs"
 
 [features]
-default = ["c-kzg", "secp256k1"]
+default = ["c-kzg", "secp256k1", "rayon"]
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
 secp256k1 = ["ethrex-blockchain/secp256k1", "ethrex-common/secp256k1", "ethrex-vm/secp256k1"]
+rayon = ["ethrex-blockchain/rayon", "ethrex-common/rayon", "ethrex-vm/rayon"]
 # Runs EF tests with no_std-compatible crypto fallbacks (k256, num-bigint, kzg-rs)
 nostd-crypto = ["ethrex-crypto/kzg-rs"]
 

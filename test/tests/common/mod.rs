@@ -1,4 +1,5 @@
 mod amsterdam_header_tests;
+mod bal_code_size_tests;
 mod bal_input_tests;
 mod base64_tests;
 #[cfg(feature = "c-kzg")]
@@ -6,8 +7,10 @@ mod blobs_bundle_tests;
 mod code_serde_tests;
 mod eip7702_authorization_tests;
 mod frame_tx_validation_tests;
+mod jumpdest_bitmap_tests;
 mod legacy_signature_tests;
 mod logs_bloom_validation_tests;
+mod progressive_ssz_tests;
 mod requests_eip8282_tests;
 mod rkyv_utils_tests;
 mod serde_utils_tests;

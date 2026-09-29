@@ -13,9 +13,11 @@
 pub mod codec;
 mod discv4_handlers;
 mod discv5_handlers;
+pub mod ip_predictor;
 pub mod lookup;
 pub mod server;
 
+pub use ip_predictor::IpPredictor;
 pub use server::{DiscoveryServer, DiscoveryServerError, is_discv4_packet};
 
 use std::time::Duration;
@@ -25,26 +27,20 @@ use std::time::Duration;
 pub struct DiscoveryConfig {
     pub discv4_enabled: bool,
     pub discv5_enabled: bool,
-    pub initial_lookup_interval: f64,
+    /// Set to true when `--nat extip:<addr>` was supplied; locks the IP predictor
+    /// from overwriting the user-specified external address.
+    pub nat_extip_set: bool,
 }
 
-impl Default for DiscoveryConfig {
-    fn default() -> Self {
-        Self {
-            discv4_enabled: true,
-            discv5_enabled: true,
-            initial_lookup_interval: INITIAL_LOOKUP_INTERVAL_MS,
-        }
-    }
-}
-
-/// Lookup interval constants shared by discv4, discv5, and RLPx initiator.
+/// Lookup interval bounds for the RLPx initiator's connection attempts. The
+/// discovery server has its own bounds, since each of its iterative lookups
+/// emits far more traffic than a single connection attempt.
 pub const INITIAL_LOOKUP_INTERVAL_MS: f64 = 100.0; // 10 per second
 pub const LOOKUP_INTERVAL_MS: f64 = 600.0; // 100 per minute
 
-/// Smooth easing curve for discovery lookup intervals based on peer completion progress.
+/// Smooth easing curve for lookup intervals based on peer completion progress.
 ///
-/// Shared by discv4, discv5, and RLPx initiator.
+/// Shared by the discovery server and the RLPx initiator.
 pub fn lookup_interval_function(progress: f64, lower_limit: f64, upper_limit: f64) -> Duration {
     // Smooth progression curve
     // See https://easings.net/#easeInOutCubic

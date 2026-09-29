@@ -208,6 +208,7 @@ mod tests {
             Some(record),
             None,
             vec![Capability::eth(68), Capability::snap(1)],
+            Some(Capability::eth(68)),
         );
         // Set node capabilities and other relevant data
         peer.is_connection_inbound = false;

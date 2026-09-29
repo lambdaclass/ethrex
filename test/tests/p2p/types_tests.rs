@@ -1,12 +1,15 @@
 use bytes::Bytes;
 use ethrex_common::H512;
-use ethrex_p2p::types::{Node, NodeRecord};
+use ethrex_p2p::types::{Node, NodeRecord, NodeRecordPairs};
 use ethrex_p2p::utils::public_key_from_signing_key;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{EngineType, Store};
 use secp256k1::SecretKey;
-use std::{net::SocketAddr, str::FromStr};
+use std::{
+    net::{Ipv4Addr, SocketAddr},
+    str::FromStr,
+};
 
 const TEST_GENESIS: &str = include_str!("../../../fixtures/genesis/l1.json");
 
@@ -166,20 +169,290 @@ fn verify_enr_signature_fails_when_decode_drops_unknown_pairs() {
     let decoded = NodeRecord::decode(&raw_record).unwrap();
     let pairs = decoded.pairs();
 
-    assert!(!pairs.other.is_empty());
+    assert!(!pairs.extra_fields.is_empty());
     assert!(
         pairs
-            .other
+            .extra_fields
             .iter()
             .any(|(key, _)| key == &Bytes::from_static(b"attnets"))
     );
     assert!(
         pairs
-            .other
+            .extra_fields
             .iter()
             .any(|(key, _)| key == &Bytes::from_static(b"eth2"))
     );
     assert_eq!(decoded.pairs().tcp_port, Some(13000));
     assert_eq!(decoded.encode_to_vec(), raw_record);
     assert!(decoded.verify_signature());
+
+    // The accessors hand the payloads back without ethrex having to know what
+    // shape they are meant to be in.
+    assert_eq!(pairs.extra(b"attnets"), Some(Bytes::from_static(&[0; 8])));
+    assert_eq!(
+        pairs.extra(b"eth2"),
+        Some(Bytes::from_static(&[
+            0xfd, 0xca, 0x39, 0xb0, 0x00, 0x00, 0x01, 0x21, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff,
+        ]))
+    );
+}
+
+#[test]
+fn unknown_pairs_survive_a_decode_encode_round_trip() {
+    // Same intent as the assertions above, on a key nothing will ever start
+    // recognising: an entry outside the dictionary has to come back verbatim
+    // through decode and re-encode, or the signature over it stops verifying.
+    let mut pairs = NodeRecordPairs {
+        ip: Some(Ipv4Addr::LOCALHOST),
+        udp_port: Some(30303),
+        ..Default::default()
+    };
+    assert!(pairs.set_extra(b"zzz-not-a-real-entry", Bytes::from_static(b"abc")));
+    let record = NodeRecord::from_pairs(1, &test_signer(), pairs).unwrap();
+
+    let decoded = through_enr_url(&record);
+    assert_eq!(decoded.pairs().extra_fields, record.pairs().extra_fields);
+    assert_eq!(decoded.encode_to_vec(), record.encode_to_vec());
+    assert!(decoded.verify_signature());
+}
+
+// --- extra ENR entries + `from_pairs` ---
+
+fn test_signer() -> SecretKey {
+    SecretKey::from_slice(&[
+        16, 125, 177, 238, 167, 212, 168, 215, 239, 165, 77, 224, 199, 143, 55, 205, 9, 194, 87,
+        139, 92, 46, 30, 191, 74, 37, 68, 242, 38, 225, 104, 246,
+    ])
+    .unwrap()
+}
+
+/// Round-trip a record through the `enr:` URL form, the way a remote peer
+/// would receive it.
+fn through_enr_url(record: &NodeRecord) -> NodeRecord {
+    let url = record.enr_url().unwrap();
+    let raw = ethrex_common::base64::decode(&url.as_bytes()[4..]);
+    NodeRecord::decode(&raw).unwrap()
+}
+
+/// An entry set covering both shapes the helpers encode: an opaque payload
+/// ethrex never interprets, and an integer.
+fn with_extra_entries(pairs: &mut NodeRecordPairs) {
+    pairs.set_extra(b"opaque", Bytes::from_static(&[0xfd, 0xca, 0x39, 0xb0]));
+    pairs.set_extra_int(b"quic", 9001);
+}
+
+#[test]
+fn set_extra_round_trips_every_extra_entry() {
+    let mut pairs = NodeRecordPairs {
+        ip: Some(Ipv4Addr::LOCALHOST),
+        udp_port: Some(30303),
+        ..Default::default()
+    };
+    with_extra_entries(&mut pairs);
+    let record = NodeRecord::from_pairs(1, &test_signer(), pairs).unwrap();
+
+    let decoded = through_enr_url(&record);
+    assert!(decoded.verify_signature());
+
+    let pairs = decoded.pairs();
+    assert_eq!(
+        pairs.extra(b"opaque"),
+        Some(Bytes::from_static(&[0xfd, 0xca, 0x39, 0xb0]))
+    );
+    assert_eq!(pairs.extra_int::<u16>(b"quic"), Some(9001));
+}
+
+#[test]
+fn set_extra_encodes_a_byte_string_not_a_list() {
+    // The footgun this helper exists to remove. A bare `Vec<u8>` hits the
+    // blanket `Vec<T>` impl and emits an RLP *list* of per-byte scalars, which
+    // round-trips fine locally and is unreadable to every other client. Pin the
+    // encoded bytes so the distinction cannot silently regress.
+    let mut pairs = NodeRecordPairs::default();
+    pairs.set_extra(b"opaque", Bytes::from_static(&[0xaa, 0xbb]));
+
+    let (_, value) = pairs
+        .extra_fields
+        .iter()
+        .find(|(key, _)| key.as_ref() == b"opaque")
+        .expect("opaque present");
+
+    // 0x82 = byte string of length 2. A list would be 0xc2.
+    assert_eq!(value.as_ref(), [0x82, 0xaa, 0xbb]);
+}
+
+#[test]
+fn a_malformed_extra_entry_reads_as_missing_and_keeps_the_record_usable() {
+    // Why the accessors answer `None` instead of propagating a decode error. A
+    // peer emitting `quic` as a non-minimal integer, or an opaque payload as an
+    // RLP list, must cost us that one entry and nothing more. Failing the whole
+    // decode would cost the record, and because a discv5 NODES response decodes
+    // `nodes` as a single field, every other peer in the batch with it.
+    let mut pairs = NodeRecordPairs {
+        ip: Some(Ipv4Addr::LOCALHOST),
+        udp_port: Some(30303),
+        ..Default::default()
+    };
+    // Pushed rather than set, because no setter will produce these: they are
+    // what arrives from a peer, and this record stands in for that one.
+    // 0x81 0x0a: non-minimal encoding of 10.
+    pairs.extra_fields.push((
+        Bytes::from_static(b"quic"),
+        Bytes::from_static(&[0x81, 0x0a]),
+    ));
+    // 0xc2 ...: a list where a byte string belongs.
+    pairs.extra_fields.push((
+        Bytes::from_static(b"opaque"),
+        Bytes::from_static(&[0xc2, 0x01, 0x02]),
+    ));
+    let record = NodeRecord::from_pairs(1, &test_signer(), pairs).unwrap();
+
+    // The record survives, byte-exact, signature intact.
+    let decoded = through_enr_url(&record);
+    assert!(decoded.verify_signature());
+    assert_eq!(decoded.encode_to_vec(), record.encode_to_vec());
+    assert_eq!(decoded.pairs().udp_port, Some(30303));
+
+    // Only the unreadable entries are unavailable.
+    assert_eq!(decoded.pairs().extra_int::<u16>(b"quic"), None);
+    assert_eq!(decoded.pairs().extra(b"opaque"), None);
+}
+
+#[test]
+fn set_extra_replaces_rather_than_duplicating_a_key() {
+    // EIP-778 requires unique keys and `encode_pairs` does not deduplicate, so
+    // an appended second entry would verify locally and be rejected by every
+    // remote, with no local symptom.
+    let mut pairs = NodeRecordPairs::default();
+    pairs.set_extra_int(b"quic", 9001);
+    pairs.set_extra_int(b"quic", 9002);
+
+    assert_eq!(pairs.extra_fields.len(), 1);
+    assert_eq!(pairs.extra_int::<u16>(b"quic"), Some(9002));
+}
+
+#[test]
+fn a_dictionary_key_is_refused_as_an_extra_entry() {
+    // The same unique-key rule, across the split rather than within the bag.
+    // `tcp` already comes from `tcp_port`, so a second one from here would be
+    // emitted twice: valid-looking locally, rejected by every remote.
+    let mut pairs = NodeRecordPairs {
+        ip: Some(Ipv4Addr::LOCALHOST),
+        tcp_port: Some(30303),
+        udp_port: Some(30303),
+        ..Default::default()
+    };
+
+    assert!(!pairs.set_extra_int(b"tcp", 9999));
+    assert!(!pairs.set_extra(b"id", Bytes::from_static(b"v5")));
+    assert!(!pairs.set_extra(b"secp256k1", Bytes::from_static(b"\x01")));
+    assert!(pairs.extra_fields.is_empty());
+
+    // ...and the one key that is genuinely ours still goes in.
+    assert!(pairs.set_extra_int(b"quic", 9001));
+
+    let record = NodeRecord::from_pairs(1, &test_signer(), pairs).unwrap();
+    let keys: Vec<_> = record
+        .pairs()
+        .encode_pairs()
+        .into_iter()
+        .map(|(key, _)| key)
+        .collect();
+    let mut unique = keys.clone();
+    unique.dedup();
+    assert_eq!(keys, unique, "EIP-778 requires keys to be unique");
+    assert_eq!(record.pairs().tcp_port, Some(30303));
+    assert!(through_enr_url(&record).verify_signature());
+}
+
+#[test]
+fn from_pairs_overwrites_the_identity_entries_it_owns() {
+    // `id` and `secp256k1` are fixed by the v4 scheme and the signer, so a
+    // caller stating them differently must not be able to sign a record that
+    // claims another identity.
+    let signer = test_signer();
+    let record = NodeRecord::from_pairs(
+        1,
+        &signer,
+        NodeRecordPairs {
+            id: Some("v5".to_string()),
+            secp256k1: Some(ethrex_common::H264::zero()),
+            ip: Some(Ipv4Addr::LOCALHOST),
+            udp_port: Some(30303),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(record.pairs().id.as_deref(), Some("v4"));
+    assert_ne!(record.pairs().secp256k1, Some(ethrex_common::H264::zero()));
+    assert_eq!(
+        Node::from_enr(&record).unwrap().public_key,
+        public_key_from_signing_key(&signer)
+    );
+    assert!(through_enr_url(&record).verify_signature());
+}
+
+#[test]
+fn edit_bumps_seq_once_and_preserves_untouched_entries() {
+    // The whole point of `edit` over rebuilding from a `Node`: entries the
+    // closure never mentions have to survive, extra ones included, and the
+    // record must be re-signed exactly once.
+    let signer = test_signer();
+    let mut pairs = NodeRecordPairs {
+        ip: Some(Ipv4Addr::LOCALHOST),
+        udp_port: Some(30303),
+        ..Default::default()
+    };
+    with_extra_entries(&mut pairs);
+    let record = NodeRecord::from_pairs(1, &signer, pairs).unwrap();
+
+    let mut edited = record.clone();
+    let new_ip = Ipv4Addr::new(203, 0, 113, 7);
+    edited
+        .edit(&signer, |pairs| pairs.ip = Some(new_ip))
+        .unwrap();
+
+    assert_eq!(edited.seq, record.seq + 1, "exactly one seq bump");
+    assert!(
+        edited.verify_signature(),
+        "must be re-signed after the edit"
+    );
+
+    let pairs = through_enr_url(&edited).pairs().clone();
+    assert_eq!(pairs.ip, Some(new_ip));
+    assert_eq!(pairs.udp_port, Some(30303));
+    assert_eq!(pairs.extra_int::<u16>(b"quic"), Some(9001));
+    assert_eq!(
+        pairs.extra(b"opaque"),
+        Some(Bytes::from_static(&[0xfd, 0xca, 0x39, 0xb0]))
+    );
+}
+
+#[test]
+fn an_extra_int_of_zero_encodes_as_the_empty_byte_string() {
+    // ENR integers are big-endian with no leading zero bytes, so zero is the
+    // empty byte string. RLP's integer codec already does exactly that, so what
+    // this pins is that `set_extra_int` routes through it rather than padding
+    // the value to a fixed width.
+    let mut pairs = NodeRecordPairs::default();
+    pairs.set_extra_int(b"counter", 0);
+    let record = NodeRecord::from_pairs(1, &test_signer(), pairs).unwrap();
+
+    let (_, value) = record
+        .pairs()
+        .encode_pairs()
+        .into_iter()
+        .find(|(key, _)| key.as_ref() == b"counter")
+        .expect("counter entry present");
+    assert_eq!(value.as_ref(), [0x80], "RLP empty byte string");
+
+    // Zero must also stay distinguishable from an absent entry.
+    assert_eq!(
+        through_enr_url(&record)
+            .pairs()
+            .extra_int::<u64>(b"counter"),
+        Some(0)
+    );
 }

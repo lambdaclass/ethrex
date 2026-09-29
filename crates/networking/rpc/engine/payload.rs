@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::PayloadBuildResult;
+use ethrex_common::constants::AMSTERDAM_MAX_CODE_SIZE;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::{
     ExecutionWitness, ExtWitness, RpcExecutionWitness,
@@ -8,6 +9,7 @@ use ethrex_common::types::block_execution_witness::{
 use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Fork};
+use ethrex_common::validate_bal_code_sizes;
 use ethrex_common::{H256, U256};
 use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::sync::SyncMode;
@@ -278,6 +280,12 @@ pub struct NewPayloadV5Request {
     /// The BAL hash computed from the raw RLP bytes as received (no re-encoding/sorting).
     /// This preserves the exact encoding from the payload for block hash validation.
     pub raw_bal_hash: Option<H256>,
+    /// Set when `blockAccessList` was present as well-formed DATA (0x-prefixed hex)
+    /// whose bytes are not a valid RLP encoding of the block access list. The engine
+    /// spec mandates `{status: INVALID, latestValidHash: null}` for this — not a
+    /// -32602 error, which is reserved for a missing or schema-invalid field
+    /// (execution-apis amsterdam.md, engine_newPayloadV5 spec 3).
+    pub undecodable_bal: bool,
 }
 
 impl From<NewPayloadV5Request> for RpcRequest {
@@ -307,7 +315,9 @@ impl RpcHandler for NewPayloadV5Request {
         // Extract the raw BAL hash from the JSON payload before deserialization.
         // We hash the raw RLP bytes as-received to preserve the exact encoding
         // (including any ordering) for accurate block hash validation.
-        let raw_bal_hash = params[0]
+        let mut payload_value = params[0].clone();
+        let mut undecodable_bal = false;
+        let raw_bal_hash = payload_value
             .get("blockAccessList")
             .map(|v| {
                 let hex_str = v
@@ -320,12 +330,26 @@ impl RpcHandler for NewPayloadV5Request {
                     .ok_or(RpcErr::WrongParam("blockAccessList".to_string()))?;
                 let bytes = hex::decode(hex_body)
                     .map_err(|_| RpcErr::WrongParam("blockAccessList".to_string()))?;
+                // Well-formed DATA whose bytes don't RLP-decode into a BAL must yield
+                // `{status: INVALID}`, not -32602. Flag it here (the decision belongs
+                // to `handle`, which can return a status) rather than failing parse.
+                if BlockAccessList::decode(&bytes).is_err() {
+                    undecodable_bal = true;
+                }
                 Ok::<_, RpcErr>(ethrex_common::utils::keccak(bytes))
             })
             .transpose()?;
+        if undecodable_bal {
+            // `ExecutionPayload`'s serde RLP-decodes the field and would fail the
+            // whole params parse with -32602; drop it so deserialization succeeds
+            // and `handle` can answer with the mandated INVALID status.
+            if let Some(obj) = payload_value.as_object_mut() {
+                obj.remove("blockAccessList");
+            }
+        }
 
         Ok(Self {
-            payload: serde_json::from_value(params[0].clone())
+            payload: serde_json::from_value(payload_value)
                 .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
             expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
                 .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
@@ -334,6 +358,7 @@ impl RpcHandler for NewPayloadV5Request {
             execution_requests: serde_json::from_value(params[3].clone())
                 .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
             raw_bal_hash,
+            undecodable_bal,
         })
     }
 
@@ -348,6 +373,21 @@ impl NewPayloadV5Request {
         context: RpcApiContext,
         make_witness: bool,
     ) -> Result<Value, RpcErr> {
+        // Must precede every other check: a present-but-undecodable BAL answers
+        // `{status: INVALID, latestValidHash: null}` (engine spec, amsterdam.md
+        // newPayloadV5 spec 3). The field was dropped from `self.payload` at parse
+        // time, so falling through would misreport it as missing (-32602).
+        if self.undecodable_bal {
+            // Wording matters: EEST's ethrex exception mapper resolves
+            // BlockException.INVALID_BLOCK_ACCESS_LIST by matching the substring
+            // "Failed to RLP decode BAL" (the serde-layer message this path
+            // predates). Keep it as the prefix so consume-engine attributes the
+            // INVALID status to the right exception.
+            return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
+                "Failed to RLP decode BAL: blockAccessList is not a valid RLP \
+                 encoding of the block access list",
+            ))?);
+        }
         validate_execution_payload_v5(&self.payload)?;
 
         // validate the received requests
@@ -754,7 +794,7 @@ impl RpcHandler for GetPayloadBodiesByRangeV1Request {
         if self.count > GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
-        let latest_block_number = context.storage.get_latest_block_number().await?;
+        let latest_block_number = context.storage.get_latest_block_number()?;
         // NOTE: we truncate the range because the spec says we "MUST NOT return trailing
         // null values if the request extends past the current latest known block"
         let last = latest_block_number.min(self.start + self.count - 1);
@@ -888,7 +928,7 @@ impl RpcHandler for GetPayloadBodiesByRangeV2Request {
         if self.count > GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
-        let latest_block_number = context.storage.get_latest_block_number().await?;
+        let latest_block_number = context.storage.get_latest_block_number()?;
         // NOTE: we truncate the range because the spec says we "MUST NOT return trailing
         // null values if the request extends past the current latest known block"
         let last = latest_block_number.min(self.start + self.count - 1);
@@ -935,6 +975,19 @@ fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPaylo
     serde_json::from_value(params[0].clone()).map_err(|_| RpcErr::WrongParam("payload".to_string()))
 }
 
+/// The Amsterdam payload fields (EIP-7928 block access list, EIP-7843 slot number) must be
+/// absent from every pre-Amsterdam payload version.
+fn reject_amsterdam_payload_fields(payload: &ExecutionPayload) -> Result<(), RpcErr> {
+    if payload.block_access_list.is_some() {
+        return Err(RpcErr::WrongParam("block_access_list".to_string()));
+    }
+    if payload.slot_number.is_some() {
+        return Err(RpcErr::WrongParam("slot_number".to_string()));
+    }
+
+    Ok(())
+}
+
 fn validate_execution_payload_v1(payload: &ExecutionPayload) -> Result<(), RpcErr> {
     // Validate that only the required arguments are present
     if payload.withdrawals.is_some() {
@@ -947,7 +1000,7 @@ fn validate_execution_payload_v1(payload: &ExecutionPayload) -> Result<(), RpcEr
         return Err(RpcErr::WrongParam("excess_blob_gas".to_string()));
     }
 
-    Ok(())
+    reject_amsterdam_payload_fields(payload)
 }
 
 fn validate_execution_payload_v2(payload: &ExecutionPayload) -> Result<(), RpcErr> {
@@ -962,11 +1015,11 @@ fn validate_execution_payload_v2(payload: &ExecutionPayload) -> Result<(), RpcEr
         return Err(RpcErr::WrongParam("excess_blob_gas".to_string()));
     }
 
-    Ok(())
+    reject_amsterdam_payload_fields(payload)
 }
 
-fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcErr> {
-    // Validate that only the required arguments are present
+/// Fields shared by every payload version from Cancun onwards.
+fn validate_execution_payload_cancun_fields(payload: &ExecutionPayload) -> Result<(), RpcErr> {
     if payload.withdrawals.is_none() {
         return Err(RpcErr::WrongParam("withdrawals".to_string()));
     }
@@ -980,16 +1033,25 @@ fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcEr
     Ok(())
 }
 
+/// Shared by `engine_newPayloadV3` and `engine_newPayloadV4`, both of which predate Amsterdam.
+fn validate_execution_payload_v3(payload: &ExecutionPayload) -> Result<(), RpcErr> {
+    // Validate that only the required arguments are present
+    validate_execution_payload_cancun_fields(payload)?;
+
+    reject_amsterdam_payload_fields(payload)
+}
+
 #[inline]
 fn validate_execution_payload_v4(payload: &ExecutionPayload) -> Result<(), RpcErr> {
-    // This method follows the same specification as `engine_newPayloadV4` additionally
-    // rejects payload without block access list
+    // The Amsterdam payload shape: the Cancun fields plus a block access list. Reached only
+    // through `validate_execution_payload_v5`, so the Amsterdam fields are required here
+    // rather than rejected.
 
     if payload.block_access_list.is_none() {
         return Err(RpcErr::WrongParam("block_access_list".to_string()));
     }
 
-    validate_execution_payload_v3(payload)?;
+    validate_execution_payload_cancun_fields(payload)?;
 
     Ok(())
 }
@@ -1083,8 +1145,15 @@ async fn handle_new_payload_v1_v2(
     }
 
     // All checks passed, execute payload
-    let payload_status =
-        try_execute_payload(block, &context, latest_valid_hash, bal, make_witness).await?;
+    let payload_status = try_execute_payload(
+        payload,
+        block,
+        &context,
+        latest_valid_hash,
+        bal,
+        make_witness,
+    )
+    .await?;
     Ok(payload_status)
 }
 
@@ -1121,10 +1190,13 @@ async fn handle_new_payload_v4(
     bal: Option<BlockAccessList>,
     make_witness: bool,
 ) -> Result<PayloadStatus, RpcErr> {
-    if let Some(bal) = &bal
-        && let Err(err) = bal.validate_ordering()
-    {
-        return Ok(PayloadStatus::invalid_with_err(&err));
+    if let Some(bal) = &bal {
+        if let Err(err) = bal.validate_ordering() {
+            return Ok(PayloadStatus::invalid_with_err(&err));
+        }
+        if let Err(err) = validate_bal_code_sizes(bal, AMSTERDAM_MAX_CODE_SIZE) {
+            return Ok(PayloadStatus::invalid_with_err(&err.to_string()));
+        }
     }
     handle_new_payload_v3(
         payload,
@@ -1187,10 +1259,11 @@ pub async fn add_block(
     block: Block,
     bal: Option<BlockAccessList>,
     make_witness: bool,
+    parent_header: Option<BlockHeader>,
 ) -> Result<Option<ExecutionWitness>, ChainError> {
     let (notify_send, notify_recv) = oneshot::channel();
     ctx.block_worker_channel
-        .send((notify_send, block, bal, make_witness))
+        .send((notify_send, block, bal, make_witness, parent_header))
         .map_err(|e| {
             ChainError::Custom(format!(
                 "failed to send block execution request to worker: {e}"
@@ -1202,6 +1275,7 @@ pub async fn add_block(
 }
 
 async fn try_execute_payload(
+    payload: &ExecutionPayload,
     block: Block,
     context: &RpcApiContext,
     latest_valid_hash: H256,
@@ -1287,7 +1361,8 @@ async fn try_execute_payload(
     // If the parent is itself unknown, fall through to `add_block` which
     // returns `ChainError::ParentNotFound` and stashes the block; handled
     // below as `SYNCING`, preserving existing behavior.
-    if let Some(parent_header) = storage.get_block_header_by_hash(block.header.parent_hash)? {
+    let parent_header = storage.get_block_header_by_hash(block.header.parent_hash)?;
+    if let Some(parent_header) = &parent_header {
         let parent_state = parent_header.state_root;
         let in_cache = storage.is_state_in_layer_cache(parent_state)?;
         let on_disk = !in_cache && storage.has_state_root(parent_state)?;
@@ -1309,9 +1384,29 @@ async fn try_execute_payload(
     // Retain a copy so we can record it via `debug_getBadBlocks` if it turns out
     // to be invalid. `add_block` consumes the block, so we must clone beforehand;
     // this happens once per newPayload and is negligible next to block execution.
-    let bad_block_candidate = block.clone();
+    // A block that turns out invalid is recorded for debug_getBadBlocks. Rebuilding
+    // it from the payload on that path is far cheaper than cloning every block on
+    // the way in, since almost all of them are valid.
+    let (parent_beacon_block_root, requests_hash, block_access_list_hash) = (
+        block.header.parent_beacon_block_root,
+        block.header.requests_hash,
+        block.header.block_access_list_hash,
+    );
+    let rebuild_bad_block = || {
+        get_block_from_payload(
+            payload,
+            parent_beacon_block_root,
+            requests_hash,
+            block_access_list_hash,
+        )
+        .map_err(|e| {
+            RpcErr::Internal(format!(
+                "failed to rebuild the invalid block from its payload: {e}"
+            ))
+        })
+    };
 
-    match add_block(context, block, bal, make_witness).await {
+    match add_block(context, block, bal, make_witness, parent_header).await {
         Err(ChainError::ParentNotFound) => {
             // Start sync
             syncer.sync_to_head(block_hash);
@@ -1332,7 +1427,7 @@ async fn try_execute_payload(
                 .storage
                 .set_latest_valid_ancestor(block_hash, latest_valid_hash)
                 .await?;
-            context.storage.add_bad_block(bad_block_candidate).await?;
+            context.storage.add_bad_block(rebuild_bad_block()?).await?;
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
                 error.to_string(),
@@ -1344,7 +1439,7 @@ async fn try_execute_payload(
                 .storage
                 .set_latest_valid_ancestor(block_hash, latest_valid_hash)
                 .await?;
-            context.storage.add_bad_block(bad_block_candidate).await?;
+            context.storage.add_bad_block(rebuild_bad_block()?).await?;
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
                 error.to_string(),
@@ -1528,7 +1623,7 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::default_context_with_storage;
+    use crate::test_utils::{TestContext, default_context_with_storage};
     use ethrex_common::types::ChainConfig;
     use ethrex_rlp::encode::RLPEncode;
     use ethrex_storage::{EngineType, Store};
@@ -1662,7 +1757,7 @@ mod tests {
         assert_eq!(encoded.as_ref(), expected.as_slice());
     }
 
-    async fn test_context() -> RpcApiContext {
+    async fn test_context() -> TestContext {
         let storage = Store::new("test-payload-bodies", EngineType::InMemory)
             .expect("Failed to create test store");
         default_context_with_storage(storage).await
@@ -1675,7 +1770,7 @@ mod tests {
         let request = GetPayloadBodiesByHashV1Request {
             hashes: vec![BlockHash::default(); GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE as usize],
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -1684,7 +1779,7 @@ mod tests {
         let request = GetPayloadBodiesByHashV1Request {
             hashes: vec![BlockHash::default(); GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE as usize + 1],
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -1694,7 +1789,7 @@ mod tests {
             start: 1,
             count: GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE,
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -1704,7 +1799,7 @@ mod tests {
             start: 1,
             count: GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE + 1,
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -1713,7 +1808,7 @@ mod tests {
         let request = GetPayloadBodiesByHashV2Request {
             hashes: vec![BlockHash::default(); (GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE) as usize],
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -1722,7 +1817,7 @@ mod tests {
         let request = GetPayloadBodiesByHashV2Request {
             hashes: vec![BlockHash::default(); (GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE + 1) as usize],
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -1732,7 +1827,7 @@ mod tests {
             start: 1,
             count: GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE,
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -1742,7 +1837,7 @@ mod tests {
             start: 1,
             count: GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE + 1,
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 }
