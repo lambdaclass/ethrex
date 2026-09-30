@@ -16,8 +16,11 @@
 //! ## Pruning model
 //!
 //! When a `forkchoice_update` advances the finalized block, `forkchoice_update_inner`
-//! calls `delete_range(STATE_HISTORY, 0, finalized_number + 1)`, removing all journal
-//! entries at or below the new finality boundary. The surviving entries cover
+//! calls `delete_range(STATE_HISTORY, lowest, finalized_number + 1)`, where `lowest`
+//! is the lowest entry still present, removing all journal entries at or below the
+//! new finality boundary. No range is written when `lowest` is above finality. The
+//! ranges never overlap, which keeps RocksDB's unflushed range tombstones cheap to
+//! fragment (overlapping ones grow as N²). The surviving entries cover
 //! `[finalized_number+1, cache_edge_D]`, which is exactly the window a future
 //! deep reorg could need. After pruning, `Store::lowest_state_history_block_number`
 //! reflects the new floor.
