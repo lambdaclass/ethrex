@@ -29,6 +29,17 @@ LEGACYTEST_ARCHIVE_ROOT := legacytests-$(LEGACYTEST_COMMIT)/Cancun/BlockchainTes
 # regular Amsterdam fixtures.
 ZKEVM_VECTORS_ROOT := vectors_zkevm
 ZKEVM_VECTORS_DIR := $(ZKEVM_VECTORS_ROOT)/eest
+# The same bundle's Engine API fixtures. Since tests-zkevm@v21.0.1 their payloads
+# carry stateless bytes too, including the payload mutations (block access list,
+# slot number) that have no RLP-block form, so they cover strictly more invalid
+# inputs than the blockchain fixtures do. A separate root keeps the blockchain
+# runner from parsing them.
+ZKEVM_ENGINE_VECTORS_ROOT := vectors_zkevm_engine
+ZKEVM_ENGINE_VECTORS_DIR := $(ZKEVM_ENGINE_VECTORS_ROOT)/eest
+# Subtrees extracted from both fixture kinds. `for_bpo2toamsterdamattime15k` holds
+# the fork-activation fixtures, whose witnesses carry pre-Amsterdam headers, so
+# omitting it leaves the guest untested across the fork boundary.
+ZKEVM_SUBTREES := for_amsterdam for_bpo2toamsterdamattime15k
 ZKEVM_FIXTURES_FILE := ../.fixtures_url_zkevm
 ZKEVM_ARTIFACT := zkevm-tests.tar.gz
 ZKEVM_URL := $(shell cat $(ZKEVM_FIXTURES_FILE))
@@ -72,9 +83,12 @@ $(ZKEVM_ARTIFACT): $(ZKEVM_FIXTURES_FILE)
 	$(DOWNLOAD) $(ZKEVM_URL) $(ZKEVM_ARTIFACT)
 
 $(ZKEVM_VECTORS_DIR): $(ZKEVM_ARTIFACT)
-	rm -rf $(ZKEVM_VECTORS_DIR)
-	mkdir -p $(ZKEVM_VECTORS_DIR)
-	tar -xzf $(ZKEVM_ARTIFACT) --strip-components=2 -C $(ZKEVM_VECTORS_DIR) fixtures/blockchain_tests/for_amsterdam
+	rm -rf $(ZKEVM_VECTORS_DIR) $(ZKEVM_ENGINE_VECTORS_DIR)
+	mkdir -p $(ZKEVM_VECTORS_DIR) $(ZKEVM_ENGINE_VECTORS_DIR)
+	tar -xzf $(ZKEVM_ARTIFACT) --strip-components=2 -C $(ZKEVM_VECTORS_DIR) \
+		$(addprefix fixtures/blockchain_tests/,$(ZKEVM_SUBTREES))
+	tar -xzf $(ZKEVM_ARTIFACT) --strip-components=2 -C $(ZKEVM_ENGINE_VECTORS_DIR) \
+		$(addprefix fixtures/blockchain_tests_engine/,$(ZKEVM_SUBTREES))
 
 $(ZKEVM_BENCH_ARTIFACT): $(ZKEVM_BENCH_FIXTURES_FILE)
 	$(DOWNLOAD) $(ZKEVM_BENCH_URL) $(ZKEVM_BENCH_ARTIFACT)
@@ -123,7 +137,7 @@ help: ## 📚 Show help for each of the Makefile recipes
 download-test-vectors: $(VECTORS_TARGETS) zkevm-vectors ## 📥 Download test vectors
 
 clean-vectors: ## 🗑️  Clean test vectors
-	rm -rf $(VECTORS_ROOT) $(ZKEVM_VECTORS_ROOT) $(ZKEVM_BENCH_VECTORS_ROOT)
+	rm -rf $(VECTORS_ROOT) $(ZKEVM_VECTORS_ROOT) $(ZKEVM_ENGINE_VECTORS_ROOT) $(ZKEVM_BENCH_VECTORS_ROOT)
 	rm -f $(SPECTEST_ARTIFACT) $(LEGACYTEST_ARTIFACT) $(ZKEVM_ARTIFACT) $(ZKEVM_BENCH_ARTIFACT)
 
 test-levm: $(VECTORS_TARGETS) ## 🧪 Run blockchain tests with LEVM
