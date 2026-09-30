@@ -378,9 +378,12 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
     let cancel = req.cancel.clone();
     let deadline = req.deadline_unix;
     // End the slot once its cache holds as much bytecode as the node's code cache is
-    // configured to keep. The cache is never evicted during the slot and is handed to the
-    // next block, and the gas budget alone (6x the gas limit, per pass) would let pending
-    // transactions that each call thousands of distinct large contracts keep tens of GiB.
+    // configured to keep. Nothing warmed in a slot is evicted: the cache is shared by every
+    // pass and handed to the next block, and each sender group's database keeps every code
+    // its transactions touched until the group ends. The gas budget alone (6x the gas
+    // limit, per pass) let pending transactions that each call thousands of distinct large
+    // contracts hold tens of GiB. Transactions already running finish, so the slot can pass
+    // the budget by what they load.
     let code_budget = blockchain.storage.code_cache_budget_bytes();
     let budget_cache = cache.clone();
     let should_stop = move || {
