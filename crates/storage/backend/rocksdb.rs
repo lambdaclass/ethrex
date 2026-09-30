@@ -4,8 +4,8 @@ use crate::api::tables::{
     STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
 };
 use crate::api::{
-    PrefixResult, StorageBackend, StorageLockedView, StorageReadView, StorageWriteBatch,
-    tables::TABLES,
+    BorrowedValueVisitor, PrefixResult, StorageBackend, StorageLockedView, StorageReadView,
+    StorageWriteBatch, tables::TABLES,
 };
 use crate::error::StoreError;
 use rocksdb::DBWithThreadMode;
@@ -549,7 +549,7 @@ impl StorageReadView for RocksDBReadTx {
         &self,
         table: &'static str,
         keys: &[&[u8]],
-        f: &mut dyn FnMut(usize, Result<Option<&[u8]>, StoreError>),
+        f: &mut BorrowedValueVisitor<'_>,
     ) {
         let Some(cf) = self.db.cf_handle(table) else {
             for i in 0..keys.len() {
@@ -805,14 +805,7 @@ mod tests {
         rv.multi_get_with(ACCOUNT_CODES, &keys, &mut |i, v| {
             seen.push((i, v.unwrap().map(<[u8]>::to_vec)));
         });
-        assert_eq!(
-            seen,
-            vec![
-                (0, None),
-                (1, Some(large.clone())),
-                (2, Some(small.clone()))
-            ]
-        );
+        assert_eq!(seen, vec![(0, None), (1, Some(large)), (2, Some(small))]);
     }
 
     /// End-to-end guard for the associative merge operator at the real RocksDB

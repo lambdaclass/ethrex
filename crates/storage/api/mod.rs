@@ -26,6 +26,10 @@ pub mod tables;
 /// Type alias for the result of a prefix iterator.
 pub type PrefixResult = Result<(Box<[u8]>, Box<[u8]>), StoreError>;
 
+/// Callback of [`StorageReadView::multi_get_with`]: a key's index and its borrowed value
+/// (`Ok(None)` when the key is missing), or that key's read error.
+pub type BorrowedValueVisitor<'a> = dyn FnMut(usize, Result<Option<&[u8]>, StoreError>) + 'a;
+
 /// Per-column-family on-disk statistics, for DB observability.
 #[derive(Debug, Clone, Default)]
 pub struct CfStats {
@@ -147,16 +151,13 @@ pub trait StorageReadView: Send + Sync {
         &self,
         table: &'static str,
         keys: &[&[u8]],
-        f: &mut dyn FnMut(usize, Result<Option<&[u8]>, StoreError>),
+        f: &mut BorrowedValueVisitor<'_>,
     ) {
         for (i, value) in self.multi_get(table, keys).into_iter().enumerate() {
-            f(
-                i,
-                value
-                    .as_ref()
-                    .map(|v| v.as_deref())
-                    .map_err(|e| StoreError::Custom(e.to_string())),
-            );
+            match value {
+                Ok(value) => f(i, Ok(value.as_deref())),
+                Err(e) => f(i, Err(e)),
+            }
         }
     }
 
