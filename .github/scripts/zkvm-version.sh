@@ -59,7 +59,8 @@ for manifest in "${MANIFESTS[@]}"; do
         echo "Every stateless-validator manifest must pin the same ere release,"
         echo "by tag rather than rev. If ere was bumped, update the zkvm_version"
         echo "table in this script to the SDK versions that ere-catalog resolves"
-        echo "at the new tag, then update ERE_TAG."
+        echo "at the new tag, then update ERE_TAG. .github/scripts/bump-ere.sh does"
+        echo "all of this."
     } >&2
     exit 1
 done
