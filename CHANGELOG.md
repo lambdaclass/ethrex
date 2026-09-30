@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-09-30
+
+- Build blst with runtime ISA dispatch (`blst/portable`, `c-kzg/portable`): `-Ctarget-cpu=x86-64-v3` has no ADX, so blst had compiled only its MULQ arithmetic and never used MULX on hosts that support it; Plataberget blocks 287100–287500, dominated by point-evaluation calls, go from 376.7 to 332.8 ms per block in replay, and EIP-2537 operations are 9–14% faster [#7351](https://github.com/lambdaclass/ethrex/pull/7351)
+
 ### 2026-09-29
 
 - Raise the bytecode cache to 1 GiB (about 16k contracts of 64 KiB) and warm block access list accounts and their code in parallel chunks of 64 instead of all states first: Plataberget blocks 294611–294805, which CALL thousands of distinct 64 KiB contracts in sequence, go from 145.3 to 34.2 ms per block in replay [#7346](https://github.com/lambdaclass/ethrex/pull/7346)
