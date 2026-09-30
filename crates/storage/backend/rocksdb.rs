@@ -274,11 +274,7 @@ impl RocksDBBackend {
                         cf_opts.set_enable_blob_files(true);
                         // Small bytecodes should go inline (mainly for delegation indicators)
                         cf_opts.set_min_blob_size(32);
-                        // Uncompressed: every code-cache miss reads its blob, and LZ4 on
-                        // bytecode crafted to decompress slowly dominated the miss path.
-                        // Blob files record their own compression, so blobs written with
-                        // LZ4 before this change stay readable.
-                        cf_opts.set_blob_compression_type(rocksdb::DBCompressionType::None);
+                        cf_opts.set_blob_compression_type(rocksdb::DBCompressionType::Lz4);
                     }
 
                     let mut block_opts = BlockBasedOptions::default();
