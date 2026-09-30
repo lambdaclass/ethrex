@@ -69,7 +69,10 @@ impl HiveResult {
             "sync" => ("Sync", "Node Syncing"),
             "eels/consume-rlp" => ("EVM - Consume RLP", fork.as_str()),
             "eels/consume-engine" => ("EVM - Consume Engine", fork.as_str()),
-            "eels/execute-blobs" => ("EVM - Execute Blobs", "Execute Blobs"),
+            // The name the simulator registers its suite under, which is not the
+            // `--sim` name `eels/execute-blobs`; matching the latter silently
+            // dropped every execute run as an unknown suite.
+            "eels/execute, hive mode" => ("EVM - Execute Blobs", fork.as_str()),
             other => {
                 eprintln!("Warn: Unknown suite: {other}. Skipping");
                 ("", "")
@@ -269,6 +272,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 aggregate_result(&mut aggregated_results, result_prague);
                 aggregate_result(&mut aggregated_results, result_osaka);
                 aggregate_result(&mut aggregated_results, result_amsterdam);
+            } else if json_data.name.as_str() == "eels/execute, hive mode" {
+                // Runs once per fork (see daily_hive_report.yaml). Without the split
+                // both runs land in the same row and a fork-specific regression is
+                // invisible.
+                aggregate_result(
+                    &mut aggregated_results,
+                    create_fork_result(&json_data, "Osaka", "fork_Osaka"),
+                );
+                aggregate_result(
+                    &mut aggregated_results,
+                    create_fork_result(&json_data, "Amsterdam", "fork_Amsterdam"),
+                );
             } else {
                 let total_tests = json_data.test_cases.len();
                 let passed_tests = json_data

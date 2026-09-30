@@ -21,6 +21,7 @@ mod l2_hook_tests;
 mod l2_privileged_tx_tests;
 mod memory_tests;
 mod opcode_tracer_tests;
+mod precompile_cache_tests;
 mod precompile_tests;
 mod prestate_tracer_tests;
 mod requests_eip8282_extraction_tests;

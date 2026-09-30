@@ -81,6 +81,8 @@ GEMINI.md
 openspec/
 .github/prompts/opsx-*
 .github/skills/openspec-*
+# Superpowers SDD scratch output (plans/specs) — working files, not published docs
+docs/superpowers/
 
 # RKYV
 *.bin

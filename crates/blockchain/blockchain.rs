@@ -61,10 +61,13 @@ use ::tracing::debug;
 use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
-use ethrex_common::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
+use ethrex_common::constants::{
+    EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS, TX_MAX_TOTAL_GAS_LIMIT_AMSTERDAM,
+};
 
 use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
+use crate::vm::{OverlaidVmDatabase, StateOverride, precompile_moves};
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::EIP4844Transaction;
 #[cfg(feature = "c-kzg")]
@@ -101,6 +104,7 @@ use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieLogger, TrieNode}
 #[cfg(feature = "rayon")]
 use ethrex_vm::backends::BLOATED_BATCH_THRESHOLD;
 use ethrex_vm::backends::CachingDatabase;
+use ethrex_vm::backends::VMType;
 #[cfg(feature = "rayon")]
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
@@ -255,6 +259,8 @@ pub struct Blockchain {
     /// Set to true after initial sync completes, never reset to false.
     /// Does not reflect whether an ongoing sync is in progress.
     is_synced: AtomicBool,
+    /// Whether a snap state sync is currently in progress.
+    snap_syncing: AtomicBool,
     /// Set while a deep-reorg apply pass is in flight. Concurrent
     /// FCUs from the engine API short-circuit to SYNCING while this is set,
     /// and journal pruning in `forkchoice_update_inner` defers until the apply
@@ -544,6 +550,19 @@ struct BalStateWorkItem {
     storage_root: Option<H256>,
 }
 
+/// Whether the block pipeline checks the block body against its header.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BodyCheck {
+    /// The header came from elsewhere (a peer, a file, storage, a test), so the
+    /// transactions root, withdrawals root and ommers must be checked against
+    /// the body.
+    Verify,
+    /// The header's body commitments were computed from this very body, as the
+    /// engine handler does when it assembles a block from a payload, so they
+    /// match by construction.
+    DerivedFromBody,
+}
+
 impl Blockchain {
     /// Build a fresh 17-thread merkleization pool.
     ///
@@ -593,6 +612,7 @@ impl Blockchain {
             storage: store,
             mempool,
             is_synced: AtomicBool::new(false),
+            snap_syncing: AtomicBool::new(false),
             reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
@@ -615,6 +635,7 @@ impl Blockchain {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
+            snap_syncing: AtomicBool::new(false),
             reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions {
@@ -669,6 +690,7 @@ impl Blockchain {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
+            snap_syncing: AtomicBool::new(false),
             reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options,
@@ -812,6 +834,9 @@ impl Blockchain {
     }
 
     /// Executes a block withing a new vm instance and state
+    ///
+    /// `body_check` says whether the body still has to be checked against the
+    /// header; see [`BodyCheck`].
     #[instrument(
         level = "trace",
         name = "Execute Block",
@@ -825,6 +850,7 @@ impl Blockchain {
         vm: &mut Evm,
         bal: Option<Arc<BlockAccessList>>,
         collect_witness: bool,
+        body_check: BodyCheck,
     ) -> Result<BlockExecutionPipelineResult, ChainError> {
         let start_instant = Instant::now();
 
@@ -833,8 +859,17 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         self.validate_l1_transaction_types(block)?;
-        validate_block_body(&block.header, &block.body, &NativeCrypto)
-            .map_err(|e| ChainError::InvalidBlock(InvalidBlockError::InvalidBody(e)))?;
+        match body_check {
+            BodyCheck::Verify => validate_block_body(&block.header, &block.body, &NativeCrypto)
+                .map_err(|e| ChainError::InvalidBlock(InvalidBlockError::InvalidBody(e)))?,
+            // The header's body commitments were computed from this body, so they
+            // match by construction. Debug builds still compare them, so a caller
+            // that marks a block assembled any other way fails loudly in tests.
+            BodyCheck::DerivedFromBody => debug_assert!(
+                validate_block_body(&block.header, &block.body, &NativeCrypto).is_ok(),
+                "a block whose header was built from its body does not match that header"
+            ),
+        }
         let block_validated_instant = Instant::now();
 
         let exec_merkle_start = Instant::now();
@@ -2492,7 +2527,7 @@ impl Blockchain {
         Ok(ExecutionWitness {
             codes,
             block_headers_bytes,
-            first_block_number: parent_header.number,
+            first_block_number: block.header.number,
             chain_config: self.storage.get_chain_config(),
             state_trie_root,
             storage_trie_roots,
@@ -2591,7 +2626,8 @@ impl Blockchain {
         block: Block,
         bal: Option<Arc<BlockAccessList>>,
     ) -> Result<(), ChainError> {
-        let (_, _, result) = self.add_block_pipeline_inner(block, bal, false, None)?;
+        let (_, _, result) =
+            self.add_block_pipeline_inner(block, bal, false, None, None, BodyCheck::Verify)?;
         result
     }
 
@@ -2608,8 +2644,14 @@ impl Blockchain {
         bal: Option<Arc<BlockAccessList>>,
         commit_depth: usize,
     ) -> Result<Option<BlockAccessList>, ChainError> {
-        let (produced_bal, _, result) =
-            self.add_block_pipeline_inner(block, bal, false, Some(commit_depth))?;
+        let (produced_bal, _, result) = self.add_block_pipeline_inner(
+            block,
+            bal,
+            false,
+            Some(commit_depth),
+            None,
+            BodyCheck::Verify,
+        )?;
         result?;
         Ok(produced_bal)
     }
@@ -2625,9 +2667,49 @@ impl Blockchain {
         block: Block,
         bal: Option<Arc<BlockAccessList>>,
     ) -> Result<Option<BlockAccessList>, ChainError> {
-        let (produced_bal, _, result) = self.add_block_pipeline_inner(block, bal, false, None)?;
+        let (produced_bal, _, result) =
+            self.add_block_pipeline_inner(block, bal, false, None, None, BodyCheck::Verify)?;
         result?;
         Ok(produced_bal)
+    }
+
+    /// Pipeline entry for `engine_newPayload`: the caller has already looked the
+    /// parent up, so it is passed in instead of read again. Returns the witness only
+    /// when one was requested.
+    ///
+    /// The block must have been assembled from the payload with
+    /// `ExecutionPayload::into_block`, which computes the header's transactions
+    /// root, withdrawals root and empty ommers from the payload's own body, after
+    /// which the engine handler checks the payload's block hash against that
+    /// header. Checking the body against the header again would rebuild both
+    /// tries on the executor thread, before execution can start, only to compare
+    /// their roots with themselves, so this entry point skips that one check.
+    /// Everything else (pre-execution header rules, execution, receipts,
+    /// requests, state root) runs exactly as for any other block. A block whose
+    /// header came from anywhere else must go through one of the other entry
+    /// points.
+    pub fn add_block_pipeline_from_payload(
+        &self,
+        block: Block,
+        bal: Option<Arc<BlockAccessList>>,
+        parent_header: Option<BlockHeader>,
+        collect_witness: bool,
+    ) -> Result<Option<ExecutionWitness>, ChainError> {
+        let (_, witness, result) = self.add_block_pipeline_inner(
+            block,
+            bal,
+            collect_witness,
+            None,
+            parent_header,
+            BodyCheck::DerivedFromBody,
+        )?;
+        result?;
+        if !collect_witness {
+            return Ok(None);
+        }
+        witness.map(Some).ok_or_else(|| {
+            ChainError::Custom("Block executed with witness collection but produced none".into())
+        })
     }
 
     /// Same as [`add_block_pipeline`] but returns the execution witness produced
@@ -2637,7 +2719,8 @@ impl Blockchain {
         block: Block,
         bal: Option<Arc<BlockAccessList>>,
     ) -> Result<ExecutionWitness, ChainError> {
-        let (_, witness, result) = self.add_block_pipeline_inner(block, bal, true, None)?;
+        let (_, witness, result) =
+            self.add_block_pipeline_inner(block, bal, true, None, None, BodyCheck::Verify)?;
         result?;
         witness.ok_or_else(|| {
             ChainError::WitnessGeneration(
@@ -2660,12 +2743,23 @@ impl Blockchain {
         bal: Option<Arc<BlockAccessList>>,
         force_witness: bool,
         commit_depth: Option<usize>,
+        parent_header: Option<BlockHeader>,
+        body_check: BodyCheck,
     ) -> Result<AddBlockPipelineInnerResult, ChainError> {
-        // Validate if it can be the new head and find the parent
-        let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
-            // If the parent is not present, we store it as pending.
-            self.storage.add_pending_block(block)?;
-            return Err(ChainError::ParentNotFound);
+        // Validate if it can be the new head and find the parent. The engine path has
+        // already read the parent while deciding whether the block is executable, so
+        // it hands it over rather than having it read again here; anything it passes
+        // is verified against the block's own parent hash before being trusted.
+        let parent_header = match parent_header {
+            Some(header) if header.hash() == block.header.parent_hash => header,
+            _ => match find_parent_header(&block.header, &self.storage) {
+                Ok(header) => header,
+                Err(_) => {
+                    // If the parent is not present, we store it as pending.
+                    self.storage.add_pending_block(block)?;
+                    return Err(ChainError::ParentNotFound);
+                }
+            },
         };
 
         let should_store_witness = self.options.precompute_witnesses && self.is_synced();
@@ -2713,7 +2807,16 @@ impl Blockchain {
             merkle_queue_length,
             instants,
             warmer_duration,
-        ) = { self.execute_block_pipeline(&block, &parent_header, &mut vm, bal, collect_witness)? };
+        ) = {
+            self.execute_block_pipeline(
+                &block,
+                &parent_header,
+                &mut vm,
+                bal,
+                collect_witness,
+                body_check,
+            )?
+        };
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -2755,10 +2858,19 @@ impl Blockchain {
         // On the parallel Amsterdam validation path the BAL is supplied via the header
         // and `produced_bal` is None, so fall back to the validated incoming `bal`.
         // Pre-Amsterdam blocks have no BAL on either source, so nothing is stored.
-        if let Some(bal) = produced_bal.as_ref().or(input_bal.as_deref())
-            && let Err(err) = self.storage.store_block_access_list(block_hash, bal)
-        {
-            warn!("Failed to store block access list for block {block_hash}: {err}");
+        // Encode the BAL once: the same bytes are written to storage and sized for
+        // the metric below, instead of encoding (and re-sorting) it a second time
+        // just to measure it.
+        let mut _bal_size_bytes = 0usize;
+        if let Some(bal) = produced_bal.as_ref().or(input_bal.as_deref()) {
+            let encoded = bal.encode_to_vec();
+            _bal_size_bytes = encoded.len();
+            if let Err(err) = self
+                .storage
+                .store_block_access_list_encoded(block_hash, encoded)
+            {
+                warn!("Failed to store block access list for block {block_hash}: {err}");
+            }
         }
 
         let result = self.store_block_with_depth(block, account_updates_list, res, commit_depth);
@@ -2790,7 +2902,7 @@ impl Blockchain {
             if let Some(bal_ref) = produced_bal.as_ref().or(input_bal.as_deref()) {
                 let account_count = bal_ref.accounts().len() as u64;
                 let slot_count = bal_ref.item_count().saturating_sub(account_count);
-                let size_bytes = bal_ref.length() as f64;
+                let size_bytes = _bal_size_bytes as f64;
                 METRICS_BAL.blocks_total.inc();
                 METRICS_BAL.size_bytes.set(size_bytes);
                 METRICS_BAL.size_bytes_histogram.observe(size_bytes);
@@ -3626,10 +3738,20 @@ impl Blockchain {
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config();
 
+        // Every fork gate below must resolve the fork exactly like execution does,
+        // i.e. through the fork ordinal. A per-field activation check
+        // (`is_amsterdam_activated`) is not equivalent: on a chain that schedules a
+        // fork after Amsterdam without setting an explicit `amsterdamTime`, the
+        // ordinal is already `>= Fork::Amsterdam` while the field is unset, so a
+        // field-based gate diverges from execution in whichever direction the gate
+        // points, over-rejecting transactions execution accepts or admitting ones it
+        // rejects.
+        let fork = config.fork(header.timestamp);
+
         // EIP-8141 fork gating: reject frame transactions before Hegota activates.
         // Prevents FrameTransaction (type 0x06) from entering the mempool or being
         // forwarded over P2P on chains where EIP-8141 has not yet activated.
-        if is_frame_tx && !config.is_hegota_activated(header.timestamp) {
+        if is_frame_tx && fork < Fork::Hegota {
             return Err(MempoolError::FrameTxPreFork);
         }
 
@@ -3694,7 +3816,7 @@ impl Blockchain {
                 &frame_tx.signatures,
                 sig_hash,
                 frame_tx.sender,
-                config.fork(header.timestamp),
+                fork,
                 &NativeCrypto,
             ) {
                 return Err(MempoolError::InvalidFrameSignature);
@@ -3727,24 +3849,32 @@ impl Blockchain {
         }
 
         // Check init code size
-        // [EIP-7954] - Amsterdam increases the limit
-        let max_initcode_size = if config.is_amsterdam_activated(header.timestamp) {
+        // [EIP-7954] - Amsterdam increases the limit.
+        // Mirrors levm's `validate_init_code_size`.
+        let max_initcode_size = if fork >= Fork::Amsterdam {
             AMSTERDAM_MAX_INITCODE_SIZE
         } else {
             MAX_INITCODE_SIZE
         };
-        if config.is_shanghai_activated(header.timestamp)
+        if fork >= Fork::Shanghai
             && tx.is_contract_creation()
             && tx.data().len() > max_initcode_size as usize
         {
             return Err(MempoolError::TxMaxInitCodeSizeError);
         }
 
-        if config.is_osaka_activated(header.timestamp)
-            && !config.is_amsterdam_activated(header.timestamp)
-            && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
-        {
-            // https://eips.ethereum.org/EIPS/eip-7825
+        // EIP-7825's flat per-tx gas cap applies from Osaka until Amsterdam, which
+        // supersedes it with the EIP-8037 gas model: there EIP-7825 bounds the
+        // execution-gas dimension and `tx.gas` as a whole is capped at
+        // TX_MAX_TOTAL_GAS_LIMIT_AMSTERDAM instead. Mirrors levm's `default_hook`,
+        // so the pool does not accept a transaction execution would reject.
+        let total_gas_cap = if fork >= Fork::Amsterdam {
+            TX_MAX_TOTAL_GAS_LIMIT_AMSTERDAM
+        } else {
+            POST_OSAKA_GAS_LIMIT_CAP
+        };
+        if fork >= Fork::Osaka && tx.gas_limit() > total_gas_cap {
+            // https://eips.ethereum.org/EIPS/eip-7825, https://eips.ethereum.org/EIPS/eip-8037
             return Err(MempoolError::TxMaxGasLimitExceededError(
                 tx.hash(&NativeCrypto),
                 tx.gas_limit(),
@@ -3789,7 +3919,7 @@ impl Blockchain {
         // at admission so invalid type-4 txs never enter the pool.
         if let Transaction::EIP7702Transaction(eip7702) = tx {
             // Type-4 txs only exist from Prague onward.
-            if !config.is_prague_activated(header.timestamp) {
+            if fork < Fork::Prague {
                 return Err(MempoolError::Eip7702TxPreFork);
             }
             // An empty authorization_list makes the tx invalid.
@@ -4138,6 +4268,25 @@ impl Blockchain {
         self.is_synced.load(Ordering::Relaxed)
     }
 
+    /// Records whether this node's state sync still depends on `GetTrieNodes`.
+    pub fn set_state_sync_needs_trie_nodes(&self, needs: bool) {
+        self.snap_syncing.store(needs, Ordering::Relaxed);
+    }
+
+    /// Returns whether this node's state sync still depends on `GetTrieNodes`.
+    ///
+    /// This is what decides whether snap/2 may be offered to a peer. snap/2
+    /// removes `GetTrieNodes`, so negotiating it costs a node the only trie
+    /// reconciliation snap/1 has. A snap sync therefore starts out withholding
+    /// snap/2 and only offers it once it has committed to the snap/2 path,
+    /// which never asks for trie nodes.
+    ///
+    /// Unlike [`Self::is_synced`], which only says whether the chain is up to
+    /// date, this tracks the state sync itself.
+    pub fn state_sync_needs_trie_nodes(&self) -> bool {
+        self.snap_syncing.load(Ordering::Relaxed)
+    }
+
     pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {
         // --mempool.private: never serve private txs over P2P, even if a peer
         // somehow learned the hash. The spec for `GetPooledTransactions`
@@ -4188,8 +4337,39 @@ impl Blockchain {
         Ok(result)
     }
 
-    pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
+    pub fn new_evm<D: VmDatabase + 'static>(&self, vm_db: D) -> Result<Evm, EvmError> {
         new_evm(&self.options.r#type, vm_db)
+    }
+
+    /// The [`VMType`] this chain executes with. Exposed so the RPC layer can answer
+    /// fork-and-VM-dependent questions — whether an address is a precompile, say — without
+    /// having to build an [`Evm`] first.
+    pub fn vm_type(&self) -> Result<VMType, EvmError> {
+        vm_type_for(&self.options.r#type)
+    }
+
+    /// [`Blockchain::new_evm`] for the RPC simulation paths that honor geth's State
+    /// Override Set (`eth_call`, `eth_estimateGas`, `eth_createAccessList`,
+    /// `debug_traceCall`).
+    ///
+    /// A State Override Set has two independent effects and they must be installed
+    /// together: the per-account overlay ([`OverlaidVmDatabase`]) and the
+    /// `movePrecompileToAddress` relocations, which live in the EVM rather than the
+    /// database because they change dispatch, not state. This constructor is the only
+    /// way to build the overlay, so the relocations can't be forgotten at a call site.
+    ///
+    /// `base_block_number` is the number of the real header the call is made against;
+    /// see [`OverlaidVmDatabase::new`].
+    pub fn new_overlaid_evm<D: VmDatabase + Clone + 'static>(
+        &self,
+        inner: D,
+        overrides: Arc<BTreeMap<Address, StateOverride>>,
+        base_block_number: BlockNumber,
+    ) -> Result<Evm, EvmError> {
+        let moves = precompile_moves(&overrides);
+        let mut evm = self.new_evm(OverlaidVmDatabase::new(inner, overrides, base_block_number))?;
+        evm.set_precompile_moves(moves);
+        Ok(evm)
     }
 
     /// Get the current fork of the chain, based on the latest block's timestamp
@@ -4753,7 +4933,23 @@ fn handle_subtrie(
     Ok(())
 }
 
-pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
+/// The [`VMType`] a given [`BlockchainType`] executes with.
+pub fn vm_type_for(blockchain_type: &BlockchainType) -> Result<VMType, EvmError> {
+    Ok(match blockchain_type {
+        BlockchainType::L1 => VMType::L1,
+        BlockchainType::L2(l2_config) => VMType::L2(
+            *l2_config
+                .fee_config
+                .read()
+                .map_err(|_| EvmError::Custom("Fee config lock was poisoned".to_string()))?,
+        ),
+    })
+}
+
+pub fn new_evm<D: VmDatabase + 'static>(
+    blockchain_type: &BlockchainType,
+    vm_db: D,
+) -> Result<Evm, EvmError> {
     let mut evm = match blockchain_type {
         BlockchainType::L1 => Evm::new_for_l1(vm_db, Arc::new(NativeCrypto)),
         BlockchainType::L2(l2_config) => {
@@ -5121,6 +5317,21 @@ mod tests {
         let block_template = create_payload(&args, &store, Bytes::new()).unwrap();
         let result = blockchain.build_payload(block_template).unwrap();
         (blockchain, vec![result.payload])
+    }
+
+    #[tokio::test]
+    async fn imported_block_witness_supports_stateless_validation() {
+        let (blockchain, blocks) = build_test_blockchain_with_one_block().await;
+        let witness = blockchain
+            .add_block_pipeline_with_witness(blocks[0].clone(), None)
+            .expect("import block with witness");
+
+        ethrex_guest_program::l1::validate_blocks_statelessly(
+            &blocks,
+            witness,
+            Arc::new(NativeCrypto),
+        )
+        .expect("imported block witness must support stateless validation");
     }
 
     #[tokio::test]
