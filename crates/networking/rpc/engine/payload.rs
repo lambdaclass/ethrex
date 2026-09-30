@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::PayloadBuildResult;
+use ethrex_common::constants::AMSTERDAM_MAX_CODE_SIZE;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::{
     ExecutionWitness, ExtWitness, RpcExecutionWitness,
@@ -8,10 +9,12 @@ use ethrex_common::types::block_execution_witness::{
 use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Fork};
+use ethrex_common::validate_bal_code_sizes;
 use ethrex_common::{H256, U256};
 use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::sync::SyncMode;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
+use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
@@ -313,47 +316,62 @@ impl RpcHandler for NewPayloadV5Request {
         // Extract the raw BAL hash from the JSON payload before deserialization.
         // We hash the raw RLP bytes as-received to preserve the exact encoding
         // (including any ordering) for accurate block hash validation.
-        let mut payload_value = params[0].clone();
-        let mut undecodable_bal = false;
-        let raw_bal_hash = payload_value
+        let payload_value = &params[0];
+
+        // The header's `block_access_list_hash` commits to the BAL exactly as it came
+        // over the wire, so it is hashed from the raw bytes rather than from a
+        // re-encoding of the decoded list.
+        let raw_bal = payload_value
             .get("blockAccessList")
             .map(|v| {
-                let hex_str = v
+                let hex_body = v
                     .as_str()
+                    .and_then(|s| s.strip_prefix("0x"))
                     .ok_or(RpcErr::WrongParam("blockAccessList".to_string()))?;
-                // EIP-7928 blockAccessList is a DATA field: the `0x` prefix is
-                // mandatory. Reject an unprefixed value rather than trimming it.
-                let hex_body = hex_str
-                    .strip_prefix("0x")
-                    .ok_or(RpcErr::WrongParam("blockAccessList".to_string()))?;
-                let bytes = hex::decode(hex_body)
-                    .map_err(|_| RpcErr::WrongParam("blockAccessList".to_string()))?;
-                // Well-formed DATA whose bytes don't RLP-decode into a BAL must yield
-                // `{status: INVALID}`, not -32602. Flag it here (the decision belongs
-                // to `handle`, which can return a status) rather than failing parse.
-                if BlockAccessList::decode(&bytes).is_err() {
-                    undecodable_bal = true;
-                }
-                Ok::<_, RpcErr>(ethrex_common::utils::keccak(bytes))
+                hex::decode(hex_body).map_err(|_| RpcErr::WrongParam("blockAccessList".to_string()))
             })
             .transpose()?;
-        if undecodable_bal {
-            // `ExecutionPayload`'s serde RLP-decodes the field and would fail the
-            // whole params parse with -32602; drop it so deserialization succeeds
-            // and `handle` can answer with the mandated INVALID status.
-            if let Some(obj) = payload_value.as_object_mut() {
-                obj.remove("blockAccessList");
-            }
-        }
+        let raw_bal_hash = raw_bal.as_deref().map(ethrex_common::utils::keccak);
 
+        // Deserialize straight from the borrowed value. The payload is the bulk of the
+        // request — tens of kilobytes of transactions on a busy chain — and this runs
+        // for every block, so it is walked once: the BAL is RLP-decoded inside serde
+        // and nowhere else.
+        let (payload, undecodable_bal) = match ExecutionPayload::deserialize(payload_value) {
+            // Serde's BAL deserializer reads an empty `"0x"` as absent, while the
+            // strict decoder that governs the header hash rejects empty input. Keep
+            // the strict verdict: a BAL that is present but empty is undecodable,
+            // not missing, so the payload is answered INVALID rather than rejected
+            // as malformed params.
+            Ok(payload) => (payload, raw_bal.as_deref().is_some_and(<[u8]>::is_empty)),
+            Err(_) => {
+                // The one failure tolerated here is a BAL that does not RLP-decode: the
+                // block must still be rebuilt so it can be answered INVALID under its
+                // own hash instead of being rejected as a malformed request. Anything
+                // else is a malformed payload. This is the rare path, so it may afford
+                // a copy.
+                let bal_undecodable = raw_bal
+                    .as_deref()
+                    .is_some_and(|bytes| BlockAccessList::decode(bytes).is_err());
+                if !bal_undecodable {
+                    return Err(RpcErr::WrongParam("payload".to_string()));
+                }
+                let mut stripped = payload_value.clone();
+                if let Some(obj) = stripped.as_object_mut() {
+                    obj.remove("blockAccessList");
+                }
+                let payload = serde_json::from_value(stripped)
+                    .map_err(|_| RpcErr::WrongParam("payload".to_string()))?;
+                (payload, true)
+            }
+        };
         Ok(Self {
-            payload: serde_json::from_value(payload_value)
-                .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
-            expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
+            payload,
+            expected_blob_versioned_hashes: Deserialize::deserialize(&params[1])
                 .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
-            parent_beacon_block_root: serde_json::from_value(params[2].clone())
+            parent_beacon_block_root: Deserialize::deserialize(&params[2])
                 .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
-            execution_requests: serde_json::from_value(params[3].clone())
+            execution_requests: Deserialize::deserialize(&params[3])
                 .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
             raw_bal_hash,
             undecodable_bal,
@@ -1143,8 +1161,15 @@ async fn handle_new_payload_v1_v2(
     }
 
     // All checks passed, execute payload
-    let payload_status =
-        try_execute_payload(block, &context, latest_valid_hash, bal, make_witness).await?;
+    let payload_status = try_execute_payload(
+        payload,
+        block,
+        &context,
+        latest_valid_hash,
+        bal,
+        make_witness,
+    )
+    .await?;
     Ok(payload_status)
 }
 
@@ -1181,10 +1206,13 @@ async fn handle_new_payload_v4(
     bal: Option<BlockAccessList>,
     make_witness: bool,
 ) -> Result<PayloadStatus, RpcErr> {
-    if let Some(bal) = &bal
-        && let Err(err) = bal.validate_ordering()
-    {
-        return Ok(PayloadStatus::invalid_with_err(&err));
+    if let Some(bal) = &bal {
+        if let Err(err) = bal.validate_ordering() {
+            return Ok(PayloadStatus::invalid_with_err(&err));
+        }
+        if let Err(err) = validate_bal_code_sizes(bal, AMSTERDAM_MAX_CODE_SIZE) {
+            return Ok(PayloadStatus::invalid_with_err(&err.to_string()));
+        }
     }
     handle_new_payload_v3(
         payload,
@@ -1247,10 +1275,11 @@ pub async fn add_block(
     block: Block,
     bal: Option<BlockAccessList>,
     make_witness: bool,
+    parent_header: Option<BlockHeader>,
 ) -> Result<Option<ExecutionWitness>, ChainError> {
     let (notify_send, notify_recv) = oneshot::channel();
     ctx.block_worker_channel
-        .send((notify_send, block, bal, make_witness))
+        .send((notify_send, block, bal, make_witness, parent_header))
         .map_err(|e| {
             ChainError::Custom(format!(
                 "failed to send block execution request to worker: {e}"
@@ -1262,6 +1291,7 @@ pub async fn add_block(
 }
 
 async fn try_execute_payload(
+    payload: &ExecutionPayload,
     block: Block,
     context: &RpcApiContext,
     latest_valid_hash: H256,
@@ -1347,7 +1377,8 @@ async fn try_execute_payload(
     // If the parent is itself unknown, fall through to `add_block` which
     // returns `ChainError::ParentNotFound` and stashes the block; handled
     // below as `SYNCING`, preserving existing behavior.
-    if let Some(parent_header) = storage.get_block_header_by_hash(block.header.parent_hash)? {
+    let parent_header = storage.get_block_header_by_hash(block.header.parent_hash)?;
+    if let Some(parent_header) = &parent_header {
         let parent_state = parent_header.state_root;
         let in_cache = storage.is_state_in_layer_cache(parent_state)?;
         let on_disk = !in_cache && storage.has_state_root(parent_state)?;
@@ -1369,9 +1400,29 @@ async fn try_execute_payload(
     // Retain a copy so we can record it via `debug_getBadBlocks` if it turns out
     // to be invalid. `add_block` consumes the block, so we must clone beforehand;
     // this happens once per newPayload and is negligible next to block execution.
-    let bad_block_candidate = block.clone();
+    // A block that turns out invalid is recorded for debug_getBadBlocks. Rebuilding
+    // it from the payload on that path is far cheaper than cloning every block on
+    // the way in, since almost all of them are valid.
+    let (parent_beacon_block_root, requests_hash, block_access_list_hash) = (
+        block.header.parent_beacon_block_root,
+        block.header.requests_hash,
+        block.header.block_access_list_hash,
+    );
+    let rebuild_bad_block = || {
+        get_block_from_payload(
+            payload,
+            parent_beacon_block_root,
+            requests_hash,
+            block_access_list_hash,
+        )
+        .map_err(|e| {
+            RpcErr::Internal(format!(
+                "failed to rebuild the invalid block from its payload: {e}"
+            ))
+        })
+    };
 
-    match add_block(context, block, bal, make_witness).await {
+    match add_block(context, block, bal, make_witness, parent_header).await {
         Err(ChainError::ParentNotFound) => {
             // Start sync
             syncer.sync_to_head(block_hash);
@@ -1392,7 +1443,7 @@ async fn try_execute_payload(
                 .storage
                 .set_latest_valid_ancestor(block_hash, latest_valid_hash)
                 .await?;
-            context.storage.add_bad_block(bad_block_candidate).await?;
+            context.storage.add_bad_block(rebuild_bad_block()?).await?;
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
                 error.to_string(),
@@ -1404,7 +1455,7 @@ async fn try_execute_payload(
                 .storage
                 .set_latest_valid_ancestor(block_hash, latest_valid_hash)
                 .await?;
-            context.storage.add_bad_block(bad_block_candidate).await?;
+            context.storage.add_bad_block(rebuild_bad_block()?).await?;
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
                 error.to_string(),
@@ -1588,7 +1639,7 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::default_context_with_storage;
+    use crate::test_utils::{TestContext, default_context_with_storage};
     use ethrex_common::types::ChainConfig;
     use ethrex_rlp::encode::RLPEncode;
     use ethrex_storage::{EngineType, Store};
@@ -1638,6 +1689,32 @@ mod tests {
 
         assert_eq!(request.0.payload.slot_number, Some(0));
         assert!(request.0.raw_bal_hash.is_some());
+    }
+
+    /// `"0x"` must be treated as an undecodable BAL, not an absent one: the strict
+    /// decoder rejects empty input, and the engine answer for that is INVALID.
+    #[test]
+    fn new_payload_v5_empty_bal_string_is_undecodable_not_missing() {
+        let mut payload = serde_json::json!(v5_payload());
+        payload["blockAccessList"] = serde_json::Value::String("0x".to_string());
+        let params = Some(vec![
+            payload,
+            serde_json::json!(Vec::<H256>::new()),
+            serde_json::json!(H256::zero()),
+            serde_json::json!(Vec::<EncodedRequests>::new()),
+        ]);
+
+        let parsed = NewPayloadV5Request::parse(&params).expect("an empty BAL must still parse");
+
+        assert!(
+            parsed.undecodable_bal,
+            "an empty BAL must be flagged undecodable"
+        );
+        assert!(parsed.payload.block_access_list.is_none());
+        assert!(
+            parsed.raw_bal_hash.is_some(),
+            "the empty bytes are still hashed"
+        );
     }
 
     #[test]
@@ -1722,7 +1799,7 @@ mod tests {
         assert_eq!(encoded.as_ref(), expected.as_slice());
     }
 
-    async fn test_context() -> RpcApiContext {
+    async fn test_context() -> TestContext {
         let storage = Store::new("test-payload-bodies", EngineType::InMemory)
             .expect("Failed to create test store");
         default_context_with_storage(storage).await
@@ -1735,7 +1812,7 @@ mod tests {
         let request = GetPayloadBodiesByHashV1Request {
             hashes: vec![BlockHash::default(); GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE as usize],
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -1744,7 +1821,7 @@ mod tests {
         let request = GetPayloadBodiesByHashV1Request {
             hashes: vec![BlockHash::default(); GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE as usize + 1],
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -1754,7 +1831,7 @@ mod tests {
             start: 1,
             count: GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE,
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -1764,7 +1841,7 @@ mod tests {
             start: 1,
             count: GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE + 1,
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -1773,7 +1850,7 @@ mod tests {
         let request = GetPayloadBodiesByHashV2Request {
             hashes: vec![BlockHash::default(); (GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE) as usize],
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -1782,7 +1859,7 @@ mod tests {
         let request = GetPayloadBodiesByHashV2Request {
             hashes: vec![BlockHash::default(); (GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE + 1) as usize],
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -1792,7 +1869,7 @@ mod tests {
             start: 1,
             count: GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE,
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -1802,7 +1879,7 @@ mod tests {
             start: 1,
             count: GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE + 1,
         };
-        let result = request.handle(test_context().await).await;
+        let result = request.handle(test_context().await.clone()).await;
         assert!(matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 }

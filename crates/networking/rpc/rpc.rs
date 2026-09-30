@@ -74,9 +74,9 @@ use axum_extra::{
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
-use ethrex_common::types::Block;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
+use ethrex_common::types::{Block, BlockHeader};
 use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
@@ -197,6 +197,8 @@ type BlockWorkerMessage = (
     Block,
     Option<BlockAccessList>,
     bool,
+    // The block's parent header when the caller already has it.
+    Option<BlockHeader>,
 );
 
 /// This struct contains all the dependencies that RPC handlers need to process requests,
@@ -458,35 +460,47 @@ pub const FILTER_DURATION: Duration = {
 ///
 /// # Returns
 ///
-/// An unbounded channel sender for submitting blocks. Each submission includes
-/// a oneshot channel for receiving the execution result.
+/// An unbounded channel sender for submitting blocks (each submission includes
+/// a oneshot channel for receiving the execution result), plus the executor
+/// thread's `JoinHandle`.
+///
+/// The thread runs until every sender is dropped. Long-lived callers (the node)
+/// drop the handle and leave it detached; callers that must reclaim the thread
+/// deterministically drop the sender first and then join, which is what
+/// `test_utils::TestContext` does so a test's threads do not outlive it.
 ///
 /// # Panics
 ///
 /// Panics if the worker thread cannot be spawned.
-pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<BlockWorkerMessage> {
+pub fn start_block_executor(
+    blockchain: Arc<Blockchain>,
+) -> (
+    UnboundedSender<BlockWorkerMessage>,
+    std::thread::JoinHandle<()>,
+) {
     let (block_worker_channel, mut block_receiver) = unbounded_channel::<BlockWorkerMessage>();
     let prewarmer = ethrex_blockchain::prewarm::MempoolPrewarmer::spawn(blockchain.clone());
-    std::thread::Builder::new()
+    let executor = std::thread::Builder::new()
         .name("block_executor".to_string())
         .spawn(move || {
-            while let Some((notify, block, bal, make_witness)) = block_receiver.blocking_recv() {
+            while let Some((notify, block, bal, make_witness, parent_header)) =
+                block_receiver.blocking_recv()
+            {
                 // Kill any in-flight warming before touching the executor's
                 // resources.
                 if let Some(handle) = &prewarmer {
                     handle.cancel_current();
                 }
                 let imported_header = prewarmer.as_ref().map(|_| block.header.clone());
-                let result = (|| {
-                    let bal = bal.map(Arc::new);
-                    if make_witness {
-                        let witness = blockchain.add_block_pipeline_with_witness(block, bal)?;
-                        Ok(Some(witness))
-                    } else {
-                        blockchain.add_block_pipeline(block, bal)?;
-                        Ok(None)
-                    }
-                })();
+                // Every block on this channel was assembled from an engine payload
+                // (`engine::payload::add_block` is the only sender), which is what
+                // `add_block_pipeline_from_payload` requires.
+                let result = blockchain.add_block_pipeline_from_payload(
+                    block,
+                    bal.map(Arc::new),
+                    parent_header,
+                    make_witness,
+                );
                 // One pass per cleanly imported block, only when synced and
                 // idle (no queued blocks): warm the child of the new head.
                 if let (Some(handle), Some(header), true) =
@@ -502,7 +516,7 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
             }
         })
         .expect("Falied to spawn block_executor thread");
-    block_worker_channel
+    (block_worker_channel, executor)
 }
 
 /// Binds the JSON-RPC API listeners and returns them ready to serve.
@@ -574,7 +588,9 @@ pub async fn bind_api(
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
-    let block_worker_channel = start_block_executor(blockchain.clone());
+    // The node runs for the lifetime of the process, so the executor thread is
+    // left detached; only test harnesses join it (see `test_utils::TestContext`).
+    let (block_worker_channel, _executor) = start_block_executor(blockchain.clone());
     let service_context = RpcApiContext {
         storage,
         blockchain,
@@ -1678,7 +1694,7 @@ mod tests {
         let mut context = default_context_with_storage(storage).await;
         context.allowed_namespaces = Arc::new(crate::DEFAULT_HTTP_API.iter().copied().collect());
 
-        let result = map_http_requests(&request, context).await;
+        let result = map_http_requests(&request, context.clone()).await;
         match result {
             Err(RpcErr::MethodNotServedHere { method, reason }) => {
                 assert_eq!(method, "debug_traceTransaction");
@@ -1873,7 +1889,7 @@ mod tests {
         let mut context = default_context_with_storage(storage).await;
         context.allowed_namespaces = Arc::new(crate::DEFAULT_HTTP_API.iter().copied().collect());
 
-        let result = map_http_requests(&request, context).await;
+        let result = map_http_requests(&request, context.clone()).await;
         match result {
             Err(RpcErr::MethodNotServedHere { method, reason }) => {
                 assert_eq!(method, "engine_forkchoiceUpdatedV3");
@@ -1909,7 +1925,7 @@ mod tests {
         all_with_engine.insert(RpcNamespace::Engine);
         context.allowed_namespaces = Arc::new(all_with_engine);
 
-        let result = map_http_requests(&request, context).await;
+        let result = map_http_requests(&request, context.clone()).await;
         match result {
             Err(RpcErr::MethodNotServedHere { method, reason }) => {
                 assert_eq!(method, "engine_forkchoiceUpdatedV3");
@@ -1945,7 +1961,7 @@ mod tests {
             let enr_url = guard.record.enr_url().unwrap();
             (node, enr_url)
         };
-        let result = map_http_requests(&request, context).await;
+        let result = map_http_requests(&request, context.clone()).await;
         let rpc_response = rpc_response(request.id, result).unwrap();
         let blob_schedule = serde_json::json!({
             "cancun": { "baseFeeUpdateFraction": 3338477, "max": 6, "target": 3,  },
@@ -2044,7 +2060,7 @@ mod tests {
             .expect("Failed to add genesis block to DB");
         // Process request
         let context = default_context_with_storage(storage).await;
-        let result = map_http_requests(&request, context).await;
+        let result = map_http_requests(&request, context.clone()).await;
         let response = rpc_response(request.id, result).unwrap();
         let expected_response = to_rpc_response_success_value(
             r#"{"jsonrpc":"2.0","id":1,"result":{"accessList":[],"gasUsed":"0x5208"}}"#,
@@ -2095,7 +2111,7 @@ mod tests {
         storage.set_chain_config(&config).await.unwrap();
         let context = default_context_with_storage(storage).await;
 
-        let result = map_http_requests(&request, context).await;
+        let result = map_http_requests(&request, context.clone()).await;
         assert!(
             result.is_ok(),
             "admin_nodeInfo should not fail with large terminal_total_difficulty"
@@ -2123,7 +2139,7 @@ mod tests {
         let chain_id = storage.get_chain_config().chain_id.to_string();
         let context = default_context_with_storage(storage).await;
         // Process request
-        let result = map_http_requests(&request, context).await;
+        let result = map_http_requests(&request, context.clone()).await;
         let response = rpc_response(request.id, result).unwrap();
         let expected_response_string =
             format!(r#"{{"id":67,"jsonrpc": "2.0","result": "{chain_id}"}}"#);
@@ -2142,7 +2158,7 @@ mod tests {
             .await
             .unwrap();
         let context = default_context_with_storage(storage).await;
-        let result = map_http_requests(&request, context).await;
+        let result = map_http_requests(&request, context.clone()).await;
         let response = rpc_response(request.id, result).unwrap();
         let expected_response =
             to_rpc_response_success_value(r#"{"id":67,"jsonrpc": "2.0","result": true}"#);
@@ -2161,7 +2177,7 @@ mod tests {
         .await
         .expect("Failed to create test DB");
         let context = default_context_with_storage(storage).await;
-        let result = map_http_requests(&request, context).await;
+        let result = map_http_requests(&request, context.clone()).await;
         let rpc_response = rpc_response(request.id, result).unwrap();
         let json = serde_json::json!({
             "id": 1,

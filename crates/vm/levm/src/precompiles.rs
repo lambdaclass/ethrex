@@ -7,6 +7,7 @@ use ethrex_common::{
 use ethrex_crypto::{Crypto, CryptoError};
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet, hash_map::Entry};
 use std::sync::RwLock;
 
 use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
@@ -280,22 +281,131 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
 }
 
-/// Per-block cache for precompile results shared between warmer and executor.
-pub struct PrecompileCache {
-    cache: RwLock<FxHashMap<(Address, Bytes), (Bytes, u64)>>,
+/// Precompile-dispatch changes requested by a geth State Override Set. Simulation-only:
+/// this is `None` on every consensus path, in which case precompile dispatch is
+/// bit-identical to [`is_precompile`].
+///
+/// Two independent effects, both matching geth's `StateOverride.Apply`:
+///
+/// - `movePrecompileToAddress` makes a destination address dispatch the precompile that
+///   lives at the named source.
+/// - **Any** overridden address stops dispatching as a precompile. geth does
+///   `delete(precompiles, addr)` for every address in the override set, not only the
+///   sources of a move, so overriding `0x04`'s balance alone takes the identity precompile
+///   out of the active set and leaves an ordinary account behind.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct PrecompileMoves {
+    /// Overridden addresses, which no longer dispatch as precompiles.
+    suppressed: BTreeSet<Address>,
+    /// Destination -> the original precompile address whose implementation runs there.
+    relocated: BTreeMap<Address, Address>,
 }
 
-impl Default for PrecompileCache {
-    fn default() -> Self {
-        Self {
-            cache: RwLock::new(FxHashMap::default()),
+impl PrecompileMoves {
+    /// Build from the `(precompile_address, destination_address)` relocations and the full
+    /// set of overridden addresses.
+    ///
+    /// A later pair wins if two moves name the same destination, which is also what
+    /// geth's `StateOverride.Apply` does: it assigns `precompiles[dest]` per move, in
+    /// address order, and only refuses a destination that is itself overridden.
+    pub fn from_parts(
+        moves: impl IntoIterator<Item = (Address, Address)>,
+        overridden: impl IntoIterator<Item = Address>,
+    ) -> Self {
+        let mut result = Self {
+            suppressed: overridden.into_iter().collect(),
+            relocated: BTreeMap::new(),
+        };
+        for (source, destination) in moves {
+            result.relocated.insert(destination, source);
         }
+        result
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.suppressed.is_empty() && self.relocated.is_empty()
+    }
+
+    /// True if `address` is overridden and so no longer dispatches as a precompile.
+    pub fn is_suppressed(&self, address: &Address) -> bool {
+        self.suppressed.contains(address)
+    }
+
+    /// The address whose precompile implementation should run when `address` is
+    /// called, or `None` if `address` is not a relocation destination.
+    pub fn source_for(&self, address: &Address) -> Option<Address> {
+        self.relocated.get(address).copied()
+    }
+}
+
+/// [`is_precompile`], honoring any simulation-only precompile relocations.
+///
+/// With `moves == None` this is exactly [`is_precompile`] — the consensus path.
+pub fn is_precompile_with_moves(
+    address: &Address,
+    fork: Fork,
+    vm_type: VMType,
+    moves: Option<&PrecompileMoves>,
+) -> bool {
+    let Some(moves) = moves else {
+        return is_precompile(address, fork, vm_type);
+    };
+    // A destination wins over the address's own identity: `movePrecompileToAddress`
+    // may legitimately target an address that is itself a precompile. A destination
+    // cannot also be overridden — the RPC layer rejects that, as geth does — so this
+    // never has to arbitrate between a relocation and a suppression.
+    if let Some(source) = moves.source_for(address) {
+        return is_precompile(&source, fork, vm_type);
+    }
+    if moves.is_suppressed(address) {
+        return false;
+    }
+    is_precompile(address, fork, vm_type)
+}
+
+/// The address whose precompile implementation should execute for a call to
+/// `address`. Identity mapping unless `address` is a relocation destination.
+pub fn effective_precompile_address(address: Address, moves: Option<&PrecompileMoves>) -> Address {
+    moves
+        .and_then(|m| m.source_for(&address))
+        .unwrap_or(address)
+}
+
+/// Upper bound on the memory one [`PrecompileCache`] may hold. A cache lives for a
+/// single block, and a block's working set sits far below this, so in normal operation
+/// no result is ever turned away.
+pub const PRECOMPILE_CACHE_MAX_BYTES: usize = 128 * 1024 * 1024;
+
+#[derive(Default)]
+struct PrecompileCacheEntries {
+    map: FxHashMap<(Address, Bytes), (Bytes, u64)>,
+    /// Sum of [`PrecompileCache::entry_size`] over `map`.
+    used_bytes: usize,
+}
+
+/// Per-block cache for precompile results shared between warmer and executor.
+///
+/// Holds at most [`PRECOMPILE_CACHE_MAX_BYTES`], as counted by
+/// [`PrecompileCache::entry_size`]; once full, further results are simply not cached.
+/// Nothing is evicted: the cache is dropped with its block, so there is no recency worth
+/// tracking, and lookups stay on the shared read lock.
+#[derive(Default)]
+pub struct PrecompileCache {
+    cache: RwLock<PrecompileCacheEntries>,
 }
 
 impl PrecompileCache {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Bytes one entry is charged against the budget: its calldata and output, plus
+    /// the fixed size of the key and value it is stored as. Hash-table slack is not
+    /// counted, so the budget is approximate, not an exact resident size.
+    pub fn entry_size(calldata_len: usize, output_len: usize) -> usize {
+        calldata_len
+            .saturating_add(output_len)
+            .saturating_add(size_of::<((Address, Bytes), (Bytes, u64))>())
     }
 
     pub fn get(&self, address: &Address, calldata: &Bytes) -> Option<(Bytes, u64)> {
@@ -305,15 +415,28 @@ impl PrecompileCache {
         self.cache
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .map
             .get(&(*address, calldata.clone()))
             .cloned()
     }
 
     pub fn insert(&self, address: Address, calldata: Bytes, output: Bytes, gas_cost: u64) {
-        self.cache
+        let entry_size = Self::entry_size(calldata.len(), output.len());
+        let mut guard = self
+            .cache
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert((address, calldata), (output, gas_cost));
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let entries = &mut *guard;
+        let used_bytes = entries.used_bytes.saturating_add(entry_size);
+        if used_bytes > PRECOMPILE_CACHE_MAX_BYTES {
+            return;
+        }
+        // The warmer and the executor can both compute the same call; the result is
+        // identical, so keep the first one and charge it once.
+        if let Entry::Vacant(slot) = entries.map.entry((address, calldata)) {
+            slot.insert((output, gas_cost));
+            entries.used_bytes = used_bytes;
+        }
     }
 }
 

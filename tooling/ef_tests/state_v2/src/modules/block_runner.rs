@@ -190,7 +190,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
 
     // 3. Create Blockchain and add block.
 
-    let blockchain = Blockchain::default_with_store_and_pool(store, merkle_pool());
+    let blockchain = Blockchain::for_test_harness_with_pool(store, merkle_pool());
 
     let result = blockchain.add_block_pipeline(block, None);
 

@@ -57,11 +57,13 @@ pub async fn engine_only_context(storage: Store) -> RpcApiContext {
         .get_or_init(|| async { Arc::new(dummy_sync_manager().await) })
         .await
         .clone();
-    let blockchain = Arc::new(Blockchain::default_with_store_and_pool(
+    let blockchain = Arc::new(Blockchain::for_test_harness_with_pool(
         storage.clone(),
         thread_local_merkle_pool(),
     ));
-    let block_worker_channel = start_block_executor(blockchain.clone());
+    // The runner owns this context for its whole lifetime, so the executor thread
+    // is left detached.
+    let (block_worker_channel, _executor) = start_block_executor(blockchain.clone());
     RpcApiContext {
         storage,
         blockchain,

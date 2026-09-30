@@ -4,7 +4,7 @@ use bytes::Bytes;
 use ethrex_common::{
     H256,
     serde_utils::{self},
-    types::{BYTES_PER_CELL, Blob, CELLS_PER_EXT_BLOB, Proof},
+    types::{BYTES_PER_CELL, Blob, BlobsBundle, CELLS_PER_EXT_BLOB, Proof},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -213,17 +213,19 @@ fn get_blobs_and_proof(
 
 /// Per-blob response for `engine_getBlobsV4`.
 ///
-/// Both `blob_cells` and `proofs` are **sparse, fixed-length** matrices of
-/// length `CELLS_PER_EXT_BLOB` (128), indexed by absolute column index. The
-/// entry at index `i` is non-null only when bit `i` of `indices_bitarray` is
-/// set **and** the cell is available locally; every other index is `null`.
-/// Cell and proof are always both-null or both-present at a given index, so a
-/// caller can verify each cell against its positionally-aligned proof.
+/// Both `blob_cells` and `proofs` are **compact** matrices carrying only the
+/// columns selected by the request's `indices_bitarray`, in ascending column
+/// order, so `blob_cells[k]` is the k-th requested column (execution-apis
+/// amsterdam.md, `engine_getBlobsV4` §1). An entry is `null` only when that
+/// requested cell is unavailable locally (§4). Cell and proof are always
+/// both-null or both-present at a position, so a caller can verify each cell
+/// against its positionally-aligned proof.
 ///
-/// This matches the EIP-8070 "partial matrix ... with nil entries for missing
-/// cells" wording and the execution-spec-tests `getBlobsV4` validator
-/// (execution-specs PR #2948), which requires length-128 matrices with `null`
-/// at every non-requested index.
+/// The field descriptions in EIP-8070 and execution-apis ("partial matrix ...
+/// with `null` entries for missing cells") read as though this were a
+/// fixed length-128 matrix indexed by absolute column, `null` at unrequested
+/// indices. It is not: §1 is decisive, and a length-128 response fails every
+/// partial-mask conformance test.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlobCellsAndProofsV1 {
@@ -277,6 +279,23 @@ mod opt_proofs_vec {
         }
         seq.end()
     }
+}
+
+/// Derive all `CELLS_PER_EXT_BLOB` cells of `bundle.blobs[blob_idx]` from the full
+/// blob. Returns `None` when the blob is elided from the bundle, or when KZG cell
+/// support is not compiled in.
+///
+/// One call extends the entire blob (~3.7 ms in release) however few columns the
+/// request selects, so callers derive at most once per blob and only when a
+/// requested cell is not already held.
+#[cfg(feature = "c-kzg")]
+fn derive_blob_cells(bundle: &BlobsBundle, blob_idx: usize) -> Option<Vec<[u8; BYTES_PER_CELL]>> {
+    ethrex_crypto::kzg::compute_cells(bundle.blobs.get(blob_idx)?).ok()
+}
+
+#[cfg(not(feature = "c-kzg"))]
+fn derive_blob_cells(_bundle: &BlobsBundle, _blob_idx: usize) -> Option<Vec<[u8; BYTES_PER_CELL]>> {
+    None
 }
 
 /// Request body for `engine_getBlobsV4`.
@@ -372,36 +391,35 @@ impl RpcHandler for BlobsV4Request {
                     continue;
                 }
 
-                // Sparse length-128 matrices indexed by absolute column index:
-                // null at every non-requested or unheld column. Cell and proof
-                // are kept in lock-step (both Some or both None) so the caller can
+                // Compact matrices: only the mask-selected columns, ascending, so
+                // `blob_cells[k]` is the k-th requested column (amsterdam.md
+                // getBlobsV4 §1). Cell and proof stay in lock-step so the caller can
                 // verify each cell against its positionally-aligned proof.
-                let mut cells: Vec<Option<Bytes>> = Vec::with_capacity(CELLS_PER_EXT_BLOB);
-                let mut proofs: Vec<Option<Proof>> = Vec::with_capacity(CELLS_PER_EXT_BLOB);
+                let requested: Vec<usize> = (0..CELLS_PER_EXT_BLOB)
+                    .filter(|col| (mask >> col) & 1 == 1)
+                    .collect();
+                let mut cells: Vec<Option<Bytes>> = Vec::with_capacity(requested.len());
+                let mut proofs: Vec<Option<Proof>> = Vec::with_capacity(requested.len());
 
-                // Optionally compute all cells from the bundle blob (when the blob is present).
-                #[cfg(feature = "c-kzg")]
-                let computed_cells: Option<Vec<[u8; BYTES_PER_CELL]>> = bundle
-                    .blobs
-                    .get(blob_idx)
-                    .and_then(|b| ethrex_common::crypto::kzg::compute_cells(b).ok());
-                #[cfg(not(feature = "c-kzg"))]
-                let computed_cells: Option<Vec<[u8; BYTES_PER_CELL]>> = None;
+                // Cells sampled from peers are served as-is. Whatever is missing is
+                // derived from the full blob; that extends all 128 columns at once, so
+                // it runs at most once per blob and only on the first miss.
+                let mut derived_cells: Option<Vec<[u8; BYTES_PER_CELL]>> = None;
+                let mut derivation_attempted = false;
 
-                for col in 0..CELLS_PER_EXT_BLOB {
-                    // Non-requested column: null cell + null proof.
-                    if (mask >> col) & 1 == 0 {
-                        cells.push(None);
-                        proofs.push(None);
-                        continue;
-                    }
-                    // Cell: prefer stored (verified), then computed from full blob, else null.
+                for col in requested {
+                    // Cell: prefer stored (verified), then derived from the full blob.
                     let cell_opt = if let Some(cell) = mempool.get_cell(tx_hash, blob_idx, col) {
                         Some(Bytes::copy_from_slice(cell.as_ref()))
-                    } else if let Some(ref all) = computed_cells {
-                        all.get(col).map(|c| Bytes::copy_from_slice(c.as_ref()))
                     } else {
-                        None
+                        if !derivation_attempted {
+                            derivation_attempted = true;
+                            derived_cells = derive_blob_cells(&bundle, blob_idx);
+                        }
+                        derived_cells
+                            .as_ref()
+                            .and_then(|all| all.get(col))
+                            .map(|cell| Bytes::copy_from_slice(cell.as_ref()))
                     };
                     // Only emit a cell when we also have its sidecar proof; a cell
                     // without a verifiable proof is useless to the caller, so emit
@@ -464,7 +482,7 @@ pub(crate) fn parse_indices_bitarray(value: &Value) -> Result<u128, RpcErr> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::default_context_with_storage;
+    use crate::test_utils::{TestContext, default_context_with_storage};
     use ethrex_common::{
         Address, H256,
         types::{
@@ -538,7 +556,7 @@ mod tests {
         }
     }
 
-    async fn context_with_chain_config(osaka_active: bool) -> RpcApiContext {
+    async fn context_with_chain_config(osaka_active: bool) -> TestContext {
         let mut storage =
             Store::new("test-blobs", EngineType::InMemory).expect("Failed to create test store");
         storage
@@ -562,7 +580,7 @@ mod tests {
             blob_versioned_hashes: vec![hashes[0], H256::from_low_u64_be(999)],
         };
 
-        let result = request.handle(context).await.unwrap();
+        let result = request.handle(context.clone()).await.unwrap();
         assert_eq!(result, serde_json::Value::Null);
     }
 
@@ -580,7 +598,7 @@ mod tests {
             blob_versioned_hashes: hashes.clone(),
         };
 
-        let result = request.handle(context).await.unwrap();
+        let result = request.handle(context.clone()).await.unwrap();
         let expected = serde_json::to_value(vec![
             Some(blob_and_proof(&bundle, 0)),
             Some(blob_and_proof(&bundle, 1)),
@@ -603,7 +621,7 @@ mod tests {
             blob_versioned_hashes: vec![hashes[0], H256::from_low_u64_be(999)],
         };
 
-        let result = request.handle(context).await.unwrap();
+        let result = request.handle(context.clone()).await.unwrap();
         let expected = serde_json::to_value(vec![Some(blob_and_proof(&bundle, 0)), None]).unwrap();
         assert_eq!(result, expected);
     }
@@ -622,7 +640,7 @@ mod tests {
             blob_versioned_hashes: hashes,
         };
 
-        let result = request.handle(context).await.unwrap();
+        let result = request.handle(context.clone()).await.unwrap();
         let expected = serde_json::to_value(vec![Some(BlobAndProofV1 {
             blob: bundle.blobs[0],
             proof: bundle.proofs[0],
@@ -648,7 +666,7 @@ mod tests {
             blob_versioned_hashes: hashes,
         };
 
-        let result = request.handle(context).await.unwrap();
+        let result = request.handle(context.clone()).await.unwrap();
         let expected = serde_json::to_value(vec![None::<BlobAndProofV1>]).unwrap();
         assert_eq!(result, expected);
     }
@@ -660,7 +678,7 @@ mod tests {
             blob_versioned_hashes: vec![H256::from_low_u64_be(1)],
         };
 
-        let err = request.handle(context).await.unwrap_err();
+        let err = request.handle(context.clone()).await.unwrap_err();
         assert!(matches!(err, RpcErr::UnsupportedFork(_)));
     }
 
@@ -674,7 +692,7 @@ mod tests {
             blob_versioned_hashes: vec![H256::from_low_u64_be(1), H256::from_low_u64_be(2)],
         };
 
-        let result = request.handle(context).await.unwrap();
+        let result = request.handle(context.clone()).await.unwrap();
         let expected = serde_json::to_value(vec![None::<BlobAndProofV2>, None]).unwrap();
         assert_eq!(result, expected);
     }
@@ -686,7 +704,7 @@ mod tests {
             blob_versioned_hashes: vec![H256::zero(); GET_BLOBS_V1_REQUEST_MAX_SIZE + 1],
         };
 
-        let err = request.handle(context).await.unwrap_err();
+        let err = request.handle(context.clone()).await.unwrap_err();
         assert!(matches!(err, RpcErr::TooLargeRequest));
     }
 
@@ -697,7 +715,7 @@ mod tests {
         let request = BlobsV3Request {
             blob_versioned_hashes: vec![H256::zero(); GET_BLOBS_V1_REQUEST_MAX_SIZE],
         };
-        let result = request.handle(context).await;
+        let result = request.handle(context.clone()).await;
         assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
@@ -707,10 +725,363 @@ mod tests {
         let request = BlobsV1Request {
             blob_versioned_hashes: vec![H256::zero(); GET_BLOBS_V1_REQUEST_MAX_SIZE],
         };
-        let result = request.handle(context).await;
+        let result = request.handle(context.clone()).await;
         assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
     // NOTE: the BlobsV4 (eth/72 / EIP-8070) unit tests were moved to
     // test/tests/rpc/eth72_engine_tests.rs.
+    /// Bundle whose proof at absolute index `blob * 128 + col` encodes `(blob, col)`,
+    /// so a compact response's proof-to-column mapping can be checked positionally.
+    fn sample_bundle_tagged(count: usize) -> (BlobsBundle, Vec<H256>) {
+        let blobs = vec![[1u8; BYTES_PER_BLOB]; count];
+        let commitments: Vec<Commitment> = (0..count).map(|i| [i as u8; 48]).collect();
+        let mut proofs: Vec<Proof> = vec![[0u8; 48]; count * CELLS_PER_EXT_BLOB];
+        for blob in 0..count {
+            for col in 0..CELLS_PER_EXT_BLOB {
+                let proof = &mut proofs[blob * CELLS_PER_EXT_BLOB + col];
+                proof[0] = blob as u8;
+                proof[1] = col as u8;
+            }
+        }
+        let hashes = commitments
+            .iter()
+            .map(kzg_commitment_to_versioned_hash)
+            .collect();
+        let bundle = BlobsBundle {
+            blobs,
+            commitments,
+            proofs,
+            version: 1,
+        };
+        (bundle, hashes)
+    }
+
+    /// Bundle as a sparse-blobpool node holds it after eth/72 elision: commitments
+    /// and cell proofs are kept, the blobs themselves are gone, so cells can only
+    /// come from what was sampled from peers.
+    fn sample_bundle_elided(count: usize) -> (BlobsBundle, Vec<H256>) {
+        let (mut bundle, hashes) = sample_bundle_tagged(count);
+        bundle.blobs.clear();
+        (bundle, hashes)
+    }
+
+    /// Store sampled cells whose bytes encode `(blob_index, column)`. Seeding the
+    /// mempool keeps these tests independent of the `c-kzg` feature: the handler
+    /// serves stored cells before it derives any.
+    fn seed_cells(context: &TestContext, tx_hash: H256, blob_count: usize, columns: &[usize]) {
+        let cells = (0..blob_count)
+            .flat_map(|blob| {
+                columns.iter().map(move |&col| {
+                    let mut cell = Box::new([0u8; BYTES_PER_CELL]);
+                    cell[0] = blob as u8;
+                    cell[1] = col as u8;
+                    (blob, col, cell)
+                })
+            })
+            .collect();
+        context
+            .blockchain
+            .mempool
+            .store_cells(tx_hash, blob_count, cells)
+            .unwrap();
+    }
+
+    fn hex_opt_array(value: &Value) -> Vec<Option<Vec<u8>>> {
+        value
+            .as_array()
+            .expect("expected a JSON array")
+            .iter()
+            .map(|entry| {
+                entry
+                    .as_str()
+                    .map(|s| hex::decode(s.trim_start_matches("0x")).expect("hex-encoded entry"))
+            })
+            .collect()
+    }
+
+    /// Decode the `blob_cells` / `proofs` arrays of one `getBlobsV4` entry, or
+    /// `None` when the client reported that blob as unavailable.
+    #[allow(clippy::type_complexity)]
+    fn v4_entry(
+        result: &Value,
+        index: usize,
+    ) -> Option<(Vec<Option<Vec<u8>>>, Vec<Option<Vec<u8>>>)> {
+        let entry = result.as_array().expect("expected a JSON array")[index].as_object()?;
+        Some((
+            hex_opt_array(&entry["blobCells"]),
+            hex_opt_array(&entry["proofs"]),
+        ))
+    }
+
+    fn mask_of(columns: &[usize]) -> u128 {
+        columns.iter().fold(0u128, |mask, col| mask | 1u128 << col)
+    }
+
+    /// The response carries only the mask-selected columns, ascending, so position
+    /// `k` holds the k-th requested column — not column `k` of a length-128 matrix
+    /// (execution-apis amsterdam.md, `engine_getBlobsV4` §1).
+    #[tokio::test]
+    async fn blobs_v4_compacts_requested_columns_in_ascending_order() {
+        let context = context_with_chain_config(true).await;
+        let (bundle, hashes) = sample_bundle_tagged(1);
+        let tx_hash = H256::from_low_u64_be(1);
+        context
+            .blockchain
+            .mempool
+            .add_blobs_bundle(tx_hash, bundle)
+            .unwrap();
+        let columns = [3usize, 7, 100];
+        seed_cells(&context, tx_hash, 1, &columns);
+
+        let result = BlobsV4Request {
+            versioned_blob_hashes: vec![hashes[0]],
+            indices_bitarray: mask_of(&columns),
+        }
+        .handle(context.clone())
+        .await
+        .unwrap();
+
+        let (cells, proofs) = v4_entry(&result, 0).expect("blob is available");
+        assert_eq!(cells.len(), columns.len());
+        assert_eq!(proofs.len(), columns.len());
+        for (position, &col) in columns.iter().enumerate() {
+            let cell = cells[position].as_ref().expect("requested cell is held");
+            assert_eq!((cell[0], cell[1]), (0, col as u8), "cell at {position}");
+            let proof = proofs[position]
+                .as_ref()
+                .expect("proof accompanies its cell");
+            assert_eq!((proof[0], proof[1]), (0, col as u8), "proof at {position}");
+        }
+    }
+
+    /// An empty mask selects nothing, so both matrices are empty rather than 128
+    /// nulls.
+    #[tokio::test]
+    async fn blobs_v4_returns_empty_matrices_for_empty_mask() {
+        let context = context_with_chain_config(true).await;
+        let (bundle, hashes) = sample_bundle_tagged(1);
+        context
+            .blockchain
+            .mempool
+            .add_blobs_bundle(H256::from_low_u64_be(1), bundle)
+            .unwrap();
+
+        let result = BlobsV4Request {
+            versioned_blob_hashes: vec![hashes[0]],
+            indices_bitarray: 0,
+        }
+        .handle(context.clone())
+        .await
+        .unwrap();
+
+        let (cells, proofs) = v4_entry(&result, 0).expect("blob is available");
+        assert!(cells.is_empty());
+        assert!(proofs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn blobs_v4_full_mask_returns_every_column_in_order() {
+        let context = context_with_chain_config(true).await;
+        let (bundle, hashes) = sample_bundle_tagged(1);
+        let tx_hash = H256::from_low_u64_be(1);
+        context
+            .blockchain
+            .mempool
+            .add_blobs_bundle(tx_hash, bundle)
+            .unwrap();
+        let all: Vec<usize> = (0..CELLS_PER_EXT_BLOB).collect();
+        seed_cells(&context, tx_hash, 1, &all);
+
+        let result = BlobsV4Request {
+            versioned_blob_hashes: vec![hashes[0]],
+            indices_bitarray: u128::MAX,
+        }
+        .handle(context.clone())
+        .await
+        .unwrap();
+
+        let (cells, proofs) = v4_entry(&result, 0).expect("blob is available");
+        assert_eq!(cells.len(), CELLS_PER_EXT_BLOB);
+        assert_eq!(proofs.len(), CELLS_PER_EXT_BLOB);
+        for col in all {
+            let cell = cells[col].as_ref().expect("cell is held");
+            assert_eq!(cell[1], col as u8);
+        }
+    }
+
+    /// A requested column we do not hold is `null` at its own position, and takes
+    /// its proof down with it, leaving the surrounding positions intact
+    /// (amsterdam.md `engine_getBlobsV4` §4). Uses an elided bundle, because with
+    /// the full blob present every column is derivable and nothing is ever unheld.
+    #[tokio::test]
+    async fn blobs_v4_nulls_only_the_unheld_requested_columns() {
+        let context = context_with_chain_config(true).await;
+        let (bundle, hashes) = sample_bundle_elided(1);
+        let tx_hash = H256::from_low_u64_be(1);
+        context
+            .blockchain
+            .mempool
+            .add_blobs_bundle(tx_hash, bundle)
+            .unwrap();
+        // Request three columns but only hold the outer two.
+        seed_cells(&context, tx_hash, 1, &[3, 100]);
+
+        let result = BlobsV4Request {
+            versioned_blob_hashes: vec![hashes[0]],
+            indices_bitarray: mask_of(&[3, 7, 100]),
+        }
+        .handle(context.clone())
+        .await
+        .unwrap();
+
+        let (cells, proofs) = v4_entry(&result, 0).expect("blob is available");
+        assert_eq!(cells.len(), 3);
+        assert_eq!(cells[0].as_ref().expect("column 3 is held")[1], 3);
+        assert!(cells[1].is_none(), "column 7 is not held");
+        assert!(proofs[1].is_none(), "proof follows its cell");
+        assert_eq!(cells[2].as_ref().expect("column 100 is held")[1], 100);
+    }
+
+    /// Proofs for the second blob of a bundle live at absolute index
+    /// `blob_idx * 128 + col`, so a compact response must not read them from the
+    /// first blob's range.
+    #[tokio::test]
+    async fn blobs_v4_maps_columns_of_a_later_blob() {
+        let context = context_with_chain_config(true).await;
+        let (bundle, hashes) = sample_bundle_tagged(2);
+        let tx_hash = H256::from_low_u64_be(1);
+        context
+            .blockchain
+            .mempool
+            .add_blobs_bundle(tx_hash, bundle)
+            .unwrap();
+        let columns = [0usize, 42];
+        seed_cells(&context, tx_hash, 2, &columns);
+
+        let result = BlobsV4Request {
+            versioned_blob_hashes: vec![hashes[1]],
+            indices_bitarray: mask_of(&columns),
+        }
+        .handle(context.clone())
+        .await
+        .unwrap();
+
+        let (cells, proofs) = v4_entry(&result, 0).expect("second blob is available");
+        assert_eq!(cells.len(), columns.len());
+        for (position, &col) in columns.iter().enumerate() {
+            let cell = cells[position].as_ref().expect("cell is held");
+            assert_eq!((cell[0], cell[1]), (1, col as u8), "cell at {position}");
+            let proof = proofs[position].as_ref().expect("proof is present");
+            assert_eq!((proof[0], proof[1]), (1, col as u8), "proof at {position}");
+        }
+    }
+
+    /// Unavailable blobs are `null` at their own position; the array keeps the
+    /// length and order of the request (amsterdam.md `engine_getBlobsV4` §3).
+    #[tokio::test]
+    async fn blobs_v4_nulls_unknown_hashes_and_keeps_order() {
+        let context = context_with_chain_config(true).await;
+        let (bundle, hashes) = sample_bundle_tagged(1);
+        let tx_hash = H256::from_low_u64_be(1);
+        context
+            .blockchain
+            .mempool
+            .add_blobs_bundle(tx_hash, bundle)
+            .unwrap();
+        seed_cells(&context, tx_hash, 1, &[5]);
+
+        let result = BlobsV4Request {
+            versioned_blob_hashes: vec![H256::from_low_u64_be(999), hashes[0]],
+            indices_bitarray: mask_of(&[5]),
+        }
+        .handle(context.clone())
+        .await
+        .unwrap();
+
+        assert_eq!(result.as_array().expect("array").len(), 2);
+        assert!(v4_entry(&result, 0).is_none(), "unknown hash is null");
+        let (cells, _) = v4_entry(&result, 1).expect("known hash is served");
+        assert_eq!(cells[0].as_ref().expect("cell is held")[1], 5);
+    }
+
+    #[tokio::test]
+    async fn blobs_v4_returns_null_before_amsterdam() {
+        let context = context_with_chain_config(false).await;
+        let (bundle, hashes) = sample_bundle_tagged(1);
+        let tx_hash = H256::from_low_u64_be(1);
+        context
+            .blockchain
+            .mempool
+            .add_blobs_bundle(tx_hash, bundle)
+            .unwrap();
+        seed_cells(&context, tx_hash, 1, &[0]);
+
+        let result = BlobsV4Request {
+            versioned_blob_hashes: vec![hashes[0]],
+            indices_bitarray: u128::MAX,
+        }
+        .handle(context.clone())
+        .await
+        .unwrap();
+
+        assert_eq!(result, serde_json::to_value(vec![None::<u8>]).unwrap());
+    }
+
+    #[tokio::test]
+    async fn blobs_v4_rejects_too_many_hashes_but_accepts_the_maximum() {
+        let context = context_with_chain_config(true).await;
+        let at_max = BlobsV4Request {
+            versioned_blob_hashes: vec![H256::zero(); GET_BLOBS_V1_REQUEST_MAX_SIZE],
+            indices_bitarray: 1,
+        }
+        .handle(context.clone())
+        .await;
+        assert!(!matches!(at_max, Err(RpcErr::TooLargeRequest)));
+
+        let over_max = BlobsV4Request {
+            versioned_blob_hashes: vec![H256::zero(); GET_BLOBS_V1_REQUEST_MAX_SIZE + 1],
+            indices_bitarray: 1,
+        }
+        .handle(context.clone())
+        .await;
+        assert!(matches!(over_max, Err(RpcErr::TooLargeRequest)));
+    }
+
+    /// With no sampled cells the handler falls back to deriving them from the full
+    /// blob, which is the path hive's `execute` mode exercises: blob txs arrive over
+    /// `eth_sendRawTransaction`, so nothing is ever sampled from peers.
+    #[cfg(feature = "c-kzg")]
+    #[tokio::test]
+    async fn blobs_v4_derives_cells_when_none_were_sampled() {
+        let context = context_with_chain_config(true).await;
+        let (bundle, hashes) = sample_bundle_tagged(1);
+        context
+            .blockchain
+            .mempool
+            .add_blobs_bundle(H256::from_low_u64_be(1), bundle.clone())
+            .unwrap();
+        let columns = [0usize, 64, 127];
+
+        let result = BlobsV4Request {
+            versioned_blob_hashes: vec![hashes[0]],
+            indices_bitarray: mask_of(&columns),
+        }
+        .handle(context.clone())
+        .await
+        .unwrap();
+
+        let expected = ethrex_crypto::kzg::compute_cells(&bundle.blobs[0]).unwrap();
+        let (cells, proofs) = v4_entry(&result, 0).expect("blob is available");
+        assert_eq!(cells.len(), columns.len());
+        for (position, &col) in columns.iter().enumerate() {
+            let cell = cells[position].as_ref().expect("cell was derived");
+            assert_eq!(
+                cell.as_slice(),
+                expected[col].as_slice(),
+                "cell at {position}"
+            );
+            assert!(proofs[position].is_some(), "proof at {position}");
+        }
+    }
 }
