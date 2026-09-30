@@ -528,6 +528,55 @@ impl StorageReadView for RocksDBReadTx {
             .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
     }
 
+    fn get_with(
+        &self,
+        table: &'static str,
+        key: &[u8],
+        f: &mut dyn FnMut(&[u8]),
+    ) -> Result<bool, StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+        let value = self
+            .db
+            .get_pinned_cf(&cf, key)
+            .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))?;
+        Ok(value.map(|value| f(&value)).is_some())
+    }
+
+    fn multi_get_with(
+        &self,
+        table: &'static str,
+        keys: &[&[u8]],
+        f: &mut dyn FnMut(usize, Result<Option<&[u8]>, StoreError>),
+    ) {
+        let Some(cf) = self.db.cf_handle(table) else {
+            for i in 0..keys.len() {
+                f(
+                    i,
+                    Err(StoreError::Custom(format!("Table {} not found", table))),
+                );
+            }
+            return;
+        };
+        // `sorted_input=false`: rocksdb sorts internally. Caller may pass arbitrary order.
+        for (i, res) in self
+            .db
+            .batched_multi_get_cf(&cf, keys.iter().copied(), false)
+            .into_iter()
+            .enumerate()
+        {
+            match res {
+                Ok(value) => f(i, Ok(value.as_deref())),
+                Err(e) => f(
+                    i,
+                    Err(StoreError::Custom(format!("multi_get {}: {}", table, e))),
+                ),
+            }
+        }
+    }
+
     fn multi_get(
         &self,
         table: &'static str,
@@ -718,6 +767,53 @@ mod tests {
     use ethrex_common::H256;
     use ethrex_common::types::{BlockHash, BlockNumber, Index};
     use ethrex_rlp::decode::RLPDecode;
+
+    /// Borrowed reads SHALL see exactly what `get` sees, including values stored as blob
+    /// files (the account-code table) and missing keys, and the batched form SHALL answer
+    /// every key in order.
+    #[test]
+    fn borrowed_reads_match_owned_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend =
+            RocksDBBackend::open(dir.path(), crate::store::MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES)
+                .unwrap();
+        let large = vec![0x5bu8; 64 * 1024];
+        let small = vec![0xefu8, 0x01, 0x00];
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(ACCOUNT_CODES, b"large", &large).unwrap();
+        tx.put(ACCOUNT_CODES, b"small", &small).unwrap();
+        tx.commit().unwrap();
+        // Flush so the large value is read back from a blob file, not the memtable.
+        backend
+            .db
+            .flush_cf(&backend.db.cf_handle(ACCOUNT_CODES).unwrap())
+            .unwrap();
+
+        let rv = backend.begin_read().unwrap();
+        for key in [&b"large"[..], &b"small"[..], &b"missing"[..]] {
+            let owned = rv.get(ACCOUNT_CODES, key).unwrap();
+            let mut borrowed = None;
+            let found = rv
+                .get_with(ACCOUNT_CODES, key, &mut |v| borrowed = Some(v.to_vec()))
+                .unwrap();
+            assert_eq!(found, owned.is_some());
+            assert_eq!(borrowed, owned);
+        }
+
+        let keys: Vec<&[u8]> = vec![b"missing", b"large", b"small"];
+        let mut seen = Vec::new();
+        rv.multi_get_with(ACCOUNT_CODES, &keys, &mut |i, v| {
+            seen.push((i, v.unwrap().map(<[u8]>::to_vec)));
+        });
+        assert_eq!(
+            seen,
+            vec![
+                (0, None),
+                (1, Some(large.clone())),
+                (2, Some(small.clone()))
+            ]
+        );
+    }
 
     /// End-to-end guard for the associative merge operator at the real RocksDB
     /// layer: write many operands for the same key, each flushed into its own
