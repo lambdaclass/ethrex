@@ -1,4 +1,4 @@
-.PHONY: download-evm-ef-tests clean-evm-ef-tests run-evm-ef-tests test-levm test-levm-nostd-crypto test-revm run-evm-ef-tests flamegraph-run-ef-tests samply-run-ef-tests amsterdam-vectors
+.PHONY: download-evm-ef-tests clean-evm-ef-tests run-evm-ef-tests test-levm test-levm-nostd-crypto test-revm run-evm-ef-tests flamegraph-run-ef-tests samply-run-ef-tests
 
 FIXTURES_FILE := ../.fixtures_url
 STATETEST_ARTIFACT := test.tar.gz
@@ -17,9 +17,6 @@ COMMIT_LEGACY_TESTS_FOR_TAG := b3f67fe
 
 STATETEST_URL := $(shell cat $(FIXTURES_FILE))
 
-AMSTERDAM_FIXTURES_FILE := ../.fixtures_url_amsterdam
-AMSTERDAM_ARTIFACT := amsterdam-tests.tar.gz
-AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 
 $(STATETEST_ARTIFACT): $(FIXTURES_FILE)
 	$(MAKE) clean-evm-ef-tests
@@ -31,27 +28,6 @@ $(VECTORS_DIR): $(STATETEST_ARTIFACT)
 	tar -xzf $(STATETEST_ARTIFACT) --strip-components=2 -C $(VECTORS_DIR)/state_tests fixtures/state_tests
 	rm -rf $(TMP_DIR)
 
-AMSTERDAM_SUBTREE := $(VECTORS_DIR)/state_tests/for_amsterdam
-AMSTERDAM_STAMP := $(VECTORS_DIR)/state_tests/.amsterdam_overlay
-
-# The overlay is keyed on the release URL it was built from, recorded in
-# $(AMSTERDAM_STAMP). Timestamps cannot express this: a bundle left on disk by
-# another branch says nothing in its mtime about which release it came from, so one
-# that merely looks newer than the URL file would be re-extracted as if it were the
-# requested release. Clearing the subtree before extracting also drops fixtures that
-# upstream renamed or removed, which would otherwise survive and run against the
-# current client. $(DOWNLOAD) fetches through a temporary file, so a failed download
-# leaves the previous bundle and stamp untouched instead of truncating them.
-amsterdam-vectors: | $(VECTORS_DIR) ## 📥 Overlay Amsterdam fixtures, re-fetching when the pinned release changed
-	@if [ "$$(cat $(AMSTERDAM_STAMP) 2>/dev/null)" = "$(AMSTERDAM_URL)" ] && [ -d $(AMSTERDAM_SUBTREE) ]; then \
-		echo "Amsterdam fixtures already overlaid from $(AMSTERDAM_URL)"; \
-	else \
-		$(DOWNLOAD) $(AMSTERDAM_URL) $(AMSTERDAM_ARTIFACT) && \
-		rm -rf $(AMSTERDAM_SUBTREE) && \
-		tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(VECTORS_DIR)/state_tests \
-			fixtures/state_tests/for_amsterdam && \
-		echo "$(AMSTERDAM_URL)" > $(AMSTERDAM_STAMP); \
-	fi
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -69,12 +45,12 @@ clone-ef-tests: ## 📥 Download Ethereum Tests repository with submodules
 	cp -r $(TESTS_REPO)/GeneralStateTests/* $(VECTORS_DIR)/GeneralStateTests/
 	cp -r $(TESTS_REPO)/LegacyTests/Cancun/GeneralStateTests/* $(VECTORS_DIR)/LegacyTests/Cancun/GeneralStateTests/;
 
-download-evm-ef-tests: $(VECTORS_DIR) amsterdam-vectors ## 📥 Download and setup state tests fixtures
+download-evm-ef-tests: $(VECTORS_DIR) ## 📥 Download and setup state tests fixtures
 
 clean-evm-ef-tests: ## 🗑️ Clean test vectors and temporary files
 	rm -rf $(VECTORS_DIR)
 	rm -rf $(TMP_DIR)
-	rm -f $(STATETEST_ARTIFACT) $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_ARTIFACT).part
+	rm -f $(STATETEST_ARTIFACT)
 
 refresh-evm-ef-tests: clean-evm-ef-tests download-evm-ef-tests ## Cleans and re-downloads tests, useful when they are outdated!
 
@@ -87,10 +63,10 @@ run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 		time cargo test --test all --profile release-fast -- $(flags);\
 	fi
 
-run-evm-ef-tests-ci: $(VECTORS_DIR) amsterdam-vectors ## 🏃‍♂️ Run EF Tests only with LEVM and without spinner, for CI.
+run-evm-ef-tests-ci: $(VECTORS_DIR) ## 🏃‍♂️ Run EF Tests only with LEVM and without spinner, for CI.
 	time cargo test -p ef_tests-state --test all --profile release-fast -- --summary
 
-test-levm: $(VECTORS_DIR) amsterdam-vectors
+test-levm: $(VECTORS_DIR)
 	$(MAKE) run-evm-ef-tests flags="--summary"
 
 test-levm-nostd-crypto: $(VECTORS_DIR) ## 🧪 Run EF state tests with no_std crypto fallbacks

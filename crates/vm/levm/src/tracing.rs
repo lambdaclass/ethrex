@@ -64,10 +64,6 @@ impl LevmCallTracer {
         if !self.active {
             return;
         }
-        if self.only_top_call && !self.callframes.is_empty() {
-            // Only create callframe if it's the first one to be created.
-            return;
-        }
 
         // geth traces STATICCALL with a nil value; every other call type carries one.
         let value = if matches!(call_type, CallType::STATICCALL) {
@@ -120,10 +116,6 @@ impl LevmCallTracer {
         if !self.active {
             return Ok(());
         }
-        if self.only_top_call && !is_top_call {
-            // We just want to register top call
-            return Ok(());
-        }
         if is_top_call {
             // After finishing transaction execution clear all logs of callframes that reverted,
             // then assign block-absolute indices to the survivors in emission order.
@@ -140,6 +132,15 @@ impl LevmCallTracer {
             let mut next_index = self.next_log_index;
             assign_log_indices(self.current_callframe_mut()?, &mut next_index);
             self.next_log_index = next_index;
+            // onlyTopCall drops the subcalls only now: the full tree is needed above so
+            // the unreported nested logs still consume their block-absolute indices.
+            if self.only_top_call {
+                let callframe = self.current_callframe_mut()?;
+                callframe.calls.clear();
+                for log in &mut callframe.logs {
+                    log.position = 0;
+                }
+            }
         }
         // The top-level frame reports the transaction's total gas used, matching the
         // receipt (post-refund). geth does the same: `callstack[0].GasUsed = receipt.GasUsed`.
@@ -176,7 +177,7 @@ impl LevmCallTracer {
         gas_used: u64,
         error: Option<String>,
     ) -> Result<(), InternalError> {
-        if !self.active || self.only_top_call {
+        if !self.active {
             return Ok(());
         }
         // Early-out reasons are internal tokens (e.g. "OutOfFund"); normalize to the
@@ -189,10 +190,6 @@ impl LevmCallTracer {
     /// Note: Logs of callframes that reverted will be removed at end of execution.
     pub fn log(&mut self, log: &Log) -> Result<(), InternalError> {
         if !self.active || !self.with_log {
-            return Ok(());
-        }
-        if self.only_top_call && self.callframes.len() > 1 {
-            // Register logs for top call only.
             return Ok(());
         }
         let callframe = self.current_callframe_mut()?;

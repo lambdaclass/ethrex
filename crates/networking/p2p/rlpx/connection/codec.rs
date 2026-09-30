@@ -2,7 +2,7 @@ use std::sync::{Arc, RwLock};
 
 use crate::rlpx::{
     error::PeerConnectionError,
-    message::{self as rlpx, EthCapVersion},
+    message::{self as rlpx, EthCapVersion, SnapCapVersion},
     utils::ecdh_xchng,
 };
 
@@ -34,6 +34,7 @@ pub struct RLPxCodec {
     pub(crate) ingress_aes: Aes256Ctr64BE,
     pub(crate) egress_aes: Aes256Ctr64BE,
     pub(crate) eth_version: Arc<RwLock<EthCapVersion>>,
+    pub(crate) snap_version: Arc<RwLock<Option<SnapCapVersion>>>,
 }
 
 impl RLPxCodec {
@@ -42,6 +43,7 @@ impl RLPxCodec {
         remote_state: &RemoteState,
         hashed_nonces: [u8; 32],
         eth_version: Arc<RwLock<EthCapVersion>>,
+        snap_version: Arc<RwLock<Option<SnapCapVersion>>>,
     ) -> Result<Self, PeerConnectionError> {
         let ephemeral_key_secret =
             ecdh_xchng(&local_state.ephemeral_key, &remote_state.ephemeral_key).map_err(
@@ -78,6 +80,7 @@ impl RLPxCodec {
             ingress_aes,
             egress_aes,
             eth_version,
+            snap_version,
         })
     }
 }
@@ -92,6 +95,7 @@ impl std::fmt::Debug for RLPxCodec {
             .field("ingress_aes", &"Aes256Ctr64BE")
             .field("egress_aes", &"Aes256Ctr64BE")
             .field("eth_version", &self.eth_version)
+            .field("snap_version", &self.snap_version)
             .finish()
     }
 }
@@ -229,13 +233,16 @@ impl Decoder for RLPxCodec {
             })?;
 
         let (msg_id, msg_data): (u8, _) = RLPDecode::decode_unfinished(frame_data)?;
+        let eth_ver = *self
+            .eth_version
+            .read()
+            .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?;
+        let snap_ver = *self
+            .snap_version
+            .read()
+            .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?;
         Ok(Some(rlpx::Message::decode(
-            msg_id,
-            msg_data,
-            *self
-                .eth_version
-                .read()
-                .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?,
+            msg_id, msg_data, eth_ver, snap_ver,
         )?))
     }
 

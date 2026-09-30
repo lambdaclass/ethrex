@@ -99,10 +99,17 @@ jobs:
               parallelism: 2,
             }
           - {
-              name: "Execute Blobs tests",
-              file_name: execute-blobs,
+              name: "Execute Blobs tests (Osaka)",
+              file_name: execute-blobs-osaka,
               simulation: ethereum/eels/execute-blobs,
               limit: "",
+            }
+          - {
+              name: "Execute Blobs tests (Amsterdam)",
+              file_name: execute-blobs-amsterdam,
+              simulation: ethereum/eels/execute-blobs,
+              limit: "",
+              amsterdam: true,
             }
 
     steps:
@@ -162,6 +169,25 @@ jobs:
               FLAGS+=" --sim.buildarg branch=$MAINNET_EELS_COMMIT"
             fi
             FLAGS+=" --client.checktimelimit=180s"
+          fi
+
+          # The execute simulators drive a live client over RPC instead of consuming
+          # fixtures, so they take `fork` where the consume ones take `fixtures`, and
+          # fall back to Osaka when it is not given. Left unpinned the image also
+          # clones whatever execution-specs default branch happens to be; that has
+          # drifted far enough that collection aborts with "No spec type format found
+          # in the test item" and the job uploads zero suites while still reporting
+          # success. Both fork runs share the Amsterdam EELS pin because it carries
+          # every fork and collects cleanly, whereas the mainnet pin (tests@v20.0.1)
+          # aborts collection here inside its own fork-filter plugin.
+          if [[ "$SIMULATION" == "ethereum/eels/execute-blobs" ]]; then
+            FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
+            if [[ "$AMSTERDAM" == "true" ]]; then
+              FLAGS+=" --sim.buildarg fork=Amsterdam"
+            else
+              FLAGS+=" --sim.buildarg fork=Osaka"
+            fi
+            FLAGS+=" --client.checktimelimit=300s"
           fi
 
           if [[ "$SIMULATION" == "ethereum/rpc-compat" ]]; then

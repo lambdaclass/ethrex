@@ -19,6 +19,7 @@ use crate::account::LevmAccount;
 use crate::call_frame::CallFrameBackup;
 use crate::errors::InternalError;
 use crate::errors::VMError;
+use crate::precompiles::PrecompileMoves;
 use crate::utils::account_to_levm_account;
 use crate::utils::restore_cache_state;
 use crate::vm::VM;
@@ -228,6 +229,9 @@ pub struct GeneralizedDatabase {
     /// Optional BAL cursor for lazy per-read prefix materialization.
     /// When set, account loads and storage reads consult the BAL before hitting the store.
     pub lazy_bal: Option<LazyBalCursor>,
+    /// Simulation-only precompile relocations (`movePrecompileToAddress`).
+    /// `None` on every consensus path, where dispatch is unchanged.
+    pub precompile_moves: Option<Arc<PrecompileMoves>>,
 }
 
 impl GeneralizedDatabase {
@@ -244,6 +248,7 @@ impl GeneralizedDatabase {
             skip_initial_tracking: false,
             accessed_accounts: None,
             lazy_bal: None,
+            precompile_moves: None,
         }
     }
 
@@ -277,6 +282,7 @@ impl GeneralizedDatabase {
             skip_initial_tracking: true,
             accessed_accounts: None,
             lazy_bal: None,
+            precompile_moves: None,
         }
     }
 
@@ -336,6 +342,7 @@ impl GeneralizedDatabase {
             skip_initial_tracking: false,
             accessed_accounts: None,
             lazy_bal: None,
+            precompile_moves: None,
         }
     }
 
