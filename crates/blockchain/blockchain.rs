@@ -85,12 +85,12 @@ use ethrex_common::types::{EIP7702_DELEGATED_CODE_LEN, is_eip7702_delegation};
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
+use ethrex_common::validate_block_access_list_size;
 use ethrex_common::{Address, H256, U256};
 pub use ethrex_common::{
     get_total_blob_gas, validate_block_access_list_hash, validate_block_pre_execution,
     validate_gas_used, validate_receipts_root_and_logs_bloom, validate_requests_hash,
 };
-use ethrex_common::validate_block_access_list_size;
 use ethrex_crypto::NativeCrypto;
 use ethrex_metrics::metrics;
 use ethrex_rlp::constants::RLP_NULL;
