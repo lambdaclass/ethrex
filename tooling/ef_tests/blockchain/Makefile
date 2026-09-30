@@ -18,11 +18,12 @@ LEGACYTEST_URL := https://github.com/ethereum/legacytests/archive/$(LEGACYTEST_C
 LEGACYTEST_ARCHIVE_ROOT := legacytests-$(LEGACYTEST_COMMIT)/Cancun/BlockchainTests
 
 # The zkevm bundle is the Amsterdam fixtures plus the EIP-8025 stateless witness
-# fields (executionWitness / statelessInputBytes / statelessOutputBytes). Its
-# releases track the base fixture release they are filled from -- `tests-zkevm`
-# now shares the `tests@vA.B.C` numbering -- so bump it in step with
-# `.fixtures_url` above: when the two drift, the bundles describe slightly
-# different chains.
+# fields (executionWitness / statelessInputBytes / statelessOutputBytes). Each
+# release is filled from a base `tests@` release, named in its release notes,
+# and that base must match `.fixtures_url` above: when the two drift, the bundles
+# describe slightly different chains. The zkevm line shares the base's major and
+# minor numbers but ships patch releases of its own, so a zkevm-only bump such as
+# v21.0.1, on the unchanged tests@v21.0.0 base, leaves `.fixtures_url` alone.
 # Both bundles extract a `for_amsterdam/` subtree, so we keep the zkevm bundle in
 # a separate root that only the stateless harness reads, to avoid overlaying the
 # regular Amsterdam fixtures.
