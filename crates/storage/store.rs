@@ -293,15 +293,18 @@ enum FKVGeneratorControlMessage {
 /// key-values (which the RocksDB block cache serves), but a cold code read costs a
 /// blob-file fetch plus decompression, so caching contracts pays for itself.
 ///
-/// 1 GiB holds ~14.5k max-size contracts: a 64 KiB contract (EIP-7954) is accounted
-/// at ~72 KiB, its padded bytecode plus the 8 KiB jumpdest bitmap.
-const CODE_CACHE_MAX_SIZE: u64 = 1024 * 1024 * 1024;
+/// 2 GiB holds ~29k max-size contracts: a 64 KiB contract (EIP-7954) is accounted
+/// at ~72 KiB, its padded bytecode plus the 8 KiB jumpdest bitmap. The budget is only
+/// reached by blocks that keep reusing tens of thousands of distinct large contracts;
+/// every entry is code a block actually loaded, so a node that never sees such a
+/// working set never holds that much.
+const CODE_CACHE_MAX_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 
 /// Entry bound for [`Store::code_metadata_cache`], derived from a 16 MiB ceiling at the
 /// ~64 B an `LruCache` entry costs (32 B key + 8 B value + list/table overhead). Sized
-/// against the code cache it shadows: at 1 GiB that holds ~16k max-size or ~130k
-/// typical contracts, so this keeps a length for every code that could be resident and
-/// then some, while bounding what an `EXTCODESIZE` sweep over unique contracts can pin.
+/// against the code cache it shadows: at 2 GiB that holds ~29k max-size or ~260k
+/// typical contracts, so this keeps a length for every code that could be resident,
+/// while bounding what an `EXTCODESIZE` sweep over unique contracts can pin.
 const CODE_METADATA_CACHE_MAX_ENTRIES: usize = (16 * 1024 * 1024) / 64;
 
 /// Key used to persist the `flushed_upto` block number in `MISC_VALUES`.
