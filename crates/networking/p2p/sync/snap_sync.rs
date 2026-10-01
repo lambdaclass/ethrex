@@ -25,7 +25,7 @@ use rayon::iter::{ParallelBridge, ParallelIterator};
 use tracing::{debug, error, info, warn};
 
 use crate::metrics::{CurrentStepValue, METRICS};
-use crate::peer_handler::PeerHandler;
+use crate::peer_handler::{BlockRequestOrder, HeaderFetchOutcome, PeerHandler};
 use crate::peer_table::PeerTableServerProtocol as _;
 use crate::rlpx::p2p::{Capability, SUPPORTED_ETH_CAPABILITIES};
 use crate::snap::{
@@ -570,7 +570,22 @@ pub async fn snap_sync(
     // The pivot the local state is known to match in full. `None` until a healing pass
     // completes, since BAL replay can only build on a state whose root was verified.
     let mut completed_pivot: Option<BlockHeader> = None;
-    while !healing_done {
+    loop {
+        // The state matches the pivot, but the pivot can still be reorged out. Once
+        // snap sync finishes nothing can recover from that short of a new snap sync,
+        // since we hold no state for the pivot's parent. Until then it only costs a
+        // heal against the new head, so confirm the pivot here and re-heal if needed.
+        if healing_done {
+            let Some(new_pivot) =
+                confirm_pivot(peers, &pivot_header, block_sync_state, diagnostics).await?
+            else {
+                break;
+            };
+            pivot_header = new_pivot;
+            // The local state matches the abandoned pivot, which no replay can build on.
+            completed_pivot = None;
+        }
+
         // This if is an edge case for the skip snap sync scenario
         if block_is_stale(&pivot_header) {
             pivot_header = update_pivot(
@@ -1139,6 +1154,142 @@ pub async fn update_pivot(
             }
         }
     }
+}
+
+/// How many block times old the pivot must be before snap sync finishes on it. It only
+/// needs to sit comfortably past the depth real reorgs reach, not be exact.
+const PIVOT_CONFIRMATION_BLOCKS: u64 = 20;
+
+/// Waits until the pivot is `PIVOT_CONFIRMATION_BLOCKS` block times old, then checks that it
+/// is still an ancestor of the consensus client's latest forkchoice head.
+///
+/// Returns `None` when it is, and also when it cannot be checked, which keeps the previous
+/// behavior of finishing on the pivot. When the pivot was reorged out, returns the forkchoice
+/// head as the new pivot, with `block_sync_state` rewritten to follow the new chain.
+///
+/// The wait is measured in time rather than in blocks built on the pivot, so it still ends
+/// when the chain stops producing blocks.
+async fn confirm_pivot(
+    peers: &mut PeerHandler,
+    pivot: &BlockHeader,
+    block_sync_state: &mut SnapBlockSyncState,
+    diagnostics: &Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
+) -> Result<Option<BlockHeader>, SyncError> {
+    let confirmed_at = pivot.timestamp + PIVOT_CONFIRMATION_BLOCKS * *SECONDS_PER_BLOCK;
+    let wait = confirmed_at.saturating_sub(current_unix_time());
+    if wait > 0 {
+        debug!(
+            pivot = pivot.number,
+            wait_seconds = wait,
+            "Waiting for the snap sync pivot to age before trusting it"
+        );
+        tokio::time::sleep(Duration::from_secs(wait)).await;
+    }
+
+    let fcu_head = *peers.latest_fcu_head.lock().await;
+    if fcu_head.is_zero() {
+        return Ok(None);
+    }
+
+    let mut attempts = 0;
+    // The forkchoice head followed by its ancestors, newest first.
+    let head_chain = loop {
+        match peers
+            .request_block_headers_from_hash(fcu_head, BlockRequestOrder::NewToOld)
+            .await?
+        {
+            HeaderFetchOutcome::Headers(headers) => break headers,
+            outcome => {
+                attempts += 1;
+                if attempts >= MAX_HEADER_FETCH_ATTEMPTS {
+                    warn!(
+                        pivot = pivot.number,
+                        reason = outcome.failure_reason(),
+                        "Could not fetch the forkchoice head's ancestry; finishing snap sync on an unconfirmed pivot"
+                    );
+                    return Ok(None);
+                }
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        }
+    };
+
+    let Some(head) = head_chain.first().cloned() else {
+        return Ok(None);
+    };
+    match head_chain
+        .iter()
+        .find(|header| header.number == pivot.number)
+    {
+        Some(header) if header.hash() == pivot.hash() => return Ok(None),
+        Some(_) => {}
+        // The head is behind the pivot (the consensus client is still catching up) or too
+        // far ahead for one batch to reach back to it. Neither says the pivot was reorged.
+        None => return Ok(None),
+    }
+
+    let Some(fork_point) =
+        newest_shared_block(&block_sync_state.block_hashes, pivot.number, &head_chain)
+    else {
+        warn!(
+            pivot = pivot.number,
+            head = head.number,
+            "Snap sync pivot was reorged out below the headers we hold; finishing on it"
+        );
+        return Ok(None);
+    };
+
+    // Drop the abandoned branch and append the new one up to the head.
+    let kept = block_sync_state.block_hashes.len() - (pivot.number - fork_point) as usize;
+    block_sync_state.block_hashes.truncate(kept);
+    let mut new_branch: Vec<BlockHeader> = head_chain
+        .into_iter()
+        .take_while(|header| header.number > fork_point)
+        .collect();
+    new_branch.reverse();
+    block_sync_state
+        .process_incoming_headers(new_branch.into_iter())
+        .await?;
+
+    warn!(
+        old_pivot = pivot.number,
+        new_pivot = head.number,
+        fork_point,
+        "Snap sync pivot was reorged out; healing against the forkchoice head"
+    );
+    {
+        let mut diag = diagnostics.write().await;
+        diag.push_pivot_change(super::PivotChangeEvent {
+            timestamp: current_unix_time(),
+            old_pivot_number: pivot.number,
+            new_pivot_number: head.number,
+            outcome: "reorg".to_string(),
+            failure_reason: None,
+        });
+        diag.pivot_block_number = Some(head.number);
+        diag.pivot_timestamp = Some(head.timestamp);
+    }
+    *METRICS.sync_head_hash.lock().await = head.hash();
+    Ok(Some(head))
+}
+
+/// The number of the newest block in `head_chain` (newest first) that `block_hashes` also
+/// holds. `block_hashes` ends at the pivot, so its hash for block `number` sits
+/// `pivot_number - number` entries from the end.
+fn newest_shared_block(
+    block_hashes: &[H256],
+    pivot_number: u64,
+    head_chain: &[BlockHeader],
+) -> Option<u64> {
+    let synced_hash_at = |number: u64| {
+        let back = usize::try_from(pivot_number.checked_sub(number)?).ok()?;
+        let index = block_hashes.len().checked_sub(back + 1)?;
+        Some(block_hashes[index])
+    };
+    head_chain
+        .iter()
+        .find(|header| synced_hash_at(header.number) == Some(header.hash()))
+        .map(|header| header.number)
 }
 
 pub fn block_is_stale(block_header: &BlockHeader) -> bool {
@@ -1768,6 +1919,49 @@ async fn insert_storages(
 mod block_sync_state_tests {
     use super::*;
     use ethrex_storage::EngineType;
+
+    /// `len` chained headers starting at `first_number`, made distinct per branch by `tag`.
+    fn branch(parent: H256, first_number: u64, len: usize, tag: u8) -> Vec<BlockHeader> {
+        let mut parent_hash = parent;
+        (0..len)
+            .map(|i| {
+                let header = BlockHeader {
+                    number: first_number + i as u64,
+                    parent_hash,
+                    extra_data: vec![tag].into(),
+                    ..Default::default()
+                };
+                parent_hash = header.hash();
+                header
+            })
+            .collect()
+    }
+
+    // Synced 10..=20 with the pivot at 20; the head's chain forked off after 17.
+    #[test]
+    fn newest_shared_block_finds_the_fork_point() {
+        let synced = branch(H256::zero(), 10, 11, 0);
+        let block_hashes: Vec<H256> = synced.iter().map(BlockHeader::hash).collect();
+        let mut head_chain = synced[..8].to_vec();
+        head_chain.extend(branch(synced[7].hash(), 18, 10, 1));
+        head_chain.reverse();
+
+        assert_eq!(
+            newest_shared_block(&block_hashes, 20, &head_chain),
+            Some(17)
+        );
+    }
+
+    // The head's chain shares nothing with the hashes we hold.
+    #[test]
+    fn newest_shared_block_is_none_without_a_shared_block() {
+        let synced = branch(H256::zero(), 10, 11, 0);
+        let block_hashes: Vec<H256> = synced.iter().map(BlockHeader::hash).collect();
+        let mut head_chain = branch(H256::repeat_byte(1), 5, 20, 1);
+        head_chain.reverse();
+
+        assert_eq!(newest_shared_block(&block_hashes, 20, &head_chain), None);
+    }
 
     // A crash between writing the header-download checkpoint and the headers
     // themselves leaves a checkpoint pointing at an unknown header. Resuming
