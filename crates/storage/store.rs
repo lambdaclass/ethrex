@@ -1188,16 +1188,19 @@ impl Store {
             return Ok(Some(code));
         }
 
-        let Some(bytes) = self
-            .backend
+        // Decode straight from the backend's buffer: `Code` makes its own padded copy of
+        // the bytecode, so an intermediate owned copy of the value would be pure overhead
+        // (one extra allocation and copy of up to the max code size per miss).
+        let mut decoded = None;
+        self.backend
             .begin_read()?
-            .get(ACCOUNT_CODES, code_hash.as_bytes())?
-        else {
+            .get_with(ACCOUNT_CODES, code_hash.as_bytes(), &mut |bytes| {
+                decoded = Some(decode_code(code_hash, bytes))
+            })?;
+        let Some(decoded) = decoded else {
             return Ok(None);
         };
-        let (bytecode_slice, jumpdests) = decode_bytes(&bytes)?;
-        let (jumpdests, was_legacy) = decode_jumpdests(bytecode_slice, jumpdests)?;
-        let code = Code::from_parts_unchecked(code_hash, bytecode_slice, jumpdests);
+        let (code, was_legacy) = decoded?;
 
         // Self-heal a legacy (pre-bitmap) row so the jumpdest recompute above is
         // paid at most once. Fire-and-forget, and only when a Tokio runtime is
@@ -1302,28 +1305,24 @@ impl Store {
         let read_view = self.backend.begin_read()?;
         // Both paths decode in whatever thread did the read, so rebuilding the jumpdest
         // bitmap for a legacy entry stays off the caller's thread and stays parallel.
-        let decode = |hash: &H256, value: Option<Vec<u8>>| -> Result<Option<Code>, StoreError> {
-            let Some(bytes) = value else { return Ok(None) };
-            let (bytecode_slice, jumpdests) = decode_bytes(&bytes)?;
-            // This is the bulk prefetch warm path; a legacy row is recomputed here
-            // and self-healed later when `get_account_code` reads it on the hot path.
-            let (jumpdests, _was_legacy) = decode_jumpdests(bytecode_slice, jumpdests)?;
-            Ok(Some(Code::from_parts_unchecked(
-                *hash,
-                bytecode_slice,
-                jumpdests,
-            )))
+        // This is the bulk prefetch warm path; a legacy row is recomputed here and
+        // self-healed later when `get_account_code` reads it on the hot path.
+        let decode = |hash: &H256, value: Option<&[u8]>| -> Result<Option<Code>, StoreError> {
+            value
+                .map(|bytes| decode_code(*hash, bytes).map(|(code, _was_legacy)| code))
+                .transpose()
         };
         let decoded: Vec<Result<Option<Code>, StoreError>> = if shards > parallelism {
             let chunk = missing.len().div_ceil(shards);
             let rv = read_view.as_ref();
             let read_shard = |hashes: &[H256]| -> Vec<Result<Option<Code>, StoreError>> {
                 let keys: Vec<&[u8]> = hashes.iter().map(|h| h.as_bytes()).collect();
-                rv.multi_get(ACCOUNT_CODES, &keys)
-                    .into_iter()
-                    .zip(hashes.iter())
-                    .map(|(value, hash)| decode(hash, value?))
-                    .collect()
+                let mut out: Vec<Result<Option<Code>, StoreError>> =
+                    Vec::with_capacity(hashes.len());
+                rv.multi_get_with(ACCOUNT_CODES, &keys, &mut |i, value| {
+                    out.push(value.and_then(|value| decode(&hashes[i], value)));
+                });
+                out
             };
             std::thread::scope(|scope| {
                 let handles: Vec<_> = missing
@@ -1356,7 +1355,13 @@ impl Store {
             let rv = read_view.as_ref();
             missing
                 .par_iter()
-                .map(|hash| decode(hash, rv.get(ACCOUNT_CODES, hash.as_bytes())?))
+                .map(|hash| {
+                    let mut decoded = Ok(None);
+                    rv.get_with(ACCOUNT_CODES, hash.as_bytes(), &mut |bytes| {
+                        decoded = decode(hash, Some(bytes));
+                    })?;
+                    decoded
+                })
                 .collect()
         };
 
@@ -5759,6 +5764,17 @@ pub fn encode_code(code: &Code) -> Vec<u8> {
     code.code().encode(&mut buf);
     jumpdests.encode(&mut buf);
     buf
+}
+
+/// Builds a [`Code`] from an [`ACCOUNT_CODES`] value. The bool is `true` when the stored
+/// jumpdests were in the legacy format (see [`decode_jumpdests`]).
+fn decode_code(hash: H256, bytes: &[u8]) -> Result<(Code, bool), StoreError> {
+    let (bytecode_slice, jumpdests) = decode_bytes(bytes)?;
+    let (jumpdests, was_legacy) = decode_jumpdests(bytecode_slice, jumpdests)?;
+    Ok((
+        Code::from_parts_unchecked(hash, bytecode_slice, jumpdests),
+        was_legacy,
+    ))
 }
 
 /// Decodes the JUMPDEST bitmap stored after the bytecode in an [`ACCOUNT_CODES`] value.

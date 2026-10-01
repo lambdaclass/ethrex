@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-10-01
+
+- Decode bytecode straight from RocksDB's pinned buffer on a code-cache miss instead of copying it into an intermediate `Vec` first: Plataberget blocks 300628–301300, which CALL tens of thousands of distinct 64 KiB contracts, go from 88.26 to 81.42 ms per block in replay; mainnet −0.60% [#7355](https://github.com/lambdaclass/ethrex/pull/7355)
+
 ### 2026-09-29
 
 - Raise the bytecode cache to 1 GiB (about 16k contracts of 64 KiB) and warm block access list accounts and their code in parallel chunks of 64 instead of all states first: Plataberget blocks 294611–294805, which CALL thousands of distinct 64 KiB contracts in sequence, go from 145.3 to 34.2 ms per block in replay [#7346](https://github.com/lambdaclass/ethrex/pull/7346)

@@ -26,6 +26,10 @@ pub mod tables;
 /// Type alias for the result of a prefix iterator.
 pub type PrefixResult = Result<(Box<[u8]>, Box<[u8]>), StoreError>;
 
+/// Callback of [`StorageReadView::multi_get_with`]: a key's index and its borrowed value
+/// (`Ok(None)` when the key is missing), or that key's read error.
+pub type BorrowedValueVisitor<'a> = dyn FnMut(usize, Result<Option<&[u8]>, StoreError>) + 'a;
+
 /// Per-column-family on-disk statistics, for DB observability.
 #[derive(Debug, Clone, Default)]
 pub struct CfStats {
@@ -122,6 +126,39 @@ pub trait StorageReadView: Send + Sync {
         keys: &[&[u8]],
     ) -> Vec<Result<Option<Vec<u8>>, StoreError>> {
         keys.iter().map(|k| self.get(table, k)).collect()
+    }
+
+    /// Reads a value and lends it to `f` without copying it out of the backend first.
+    ///
+    /// Returns whether the key existed (`f` is called only then). For callers that build
+    /// their own owned representation from the bytes, such as a padded bytecode buffer,
+    /// this saves the intermediate `Vec` that [`Self::get`] allocates and fills. The
+    /// default goes through `get`; backends that can hand out a borrowed view (RocksDB's
+    /// pinned reads) should override it.
+    fn get_with(
+        &self,
+        table: &'static str,
+        key: &[u8],
+        f: &mut dyn FnMut(&[u8]),
+    ) -> Result<bool, StoreError> {
+        Ok(self.get(table, key)?.map(|value| f(&value)).is_some())
+    }
+
+    /// Batched [`Self::get_with`]: calls `f(index, value)` once for every key, in order,
+    /// with `Ok(None)` for missing keys and a per-key error for failed reads. Default:
+    /// `multi_get`.
+    fn multi_get_with(
+        &self,
+        table: &'static str,
+        keys: &[&[u8]],
+        f: &mut BorrowedValueVisitor<'_>,
+    ) {
+        for (i, value) in self.multi_get(table, keys).into_iter().enumerate() {
+            match value {
+                Ok(value) => f(i, Ok(value.as_deref())),
+                Err(e) => f(i, Err(e)),
+            }
+        }
     }
 
     /// Returns an iterator over all key-value pairs with the given prefix.
