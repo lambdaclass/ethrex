@@ -56,6 +56,7 @@ use ethrex_blockchain::{
 use ethrex_common::H256;
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
+use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::{P2PTransaction, Receipt};
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::encode::RLPEncode;
@@ -2399,10 +2400,7 @@ pub fn build_block_access_lists_response(
 ) -> BlockAccessLists {
     use crate::rlpx::eth::block_access_lists::BLOCK_ACCESS_LIST_LIMIT;
     let hashes = &block_hashes[..block_hashes.len().min(BLOCK_ACCESS_LIST_LIMIT)];
-    let mut verified: HashMap<
-        H256,
-        Option<ethrex_common::types::block_access_list::BlockAccessList>,
-    > = HashMap::new();
+    let mut verified: HashMap<H256, Option<BlockAccessList>> = HashMap::new();
     let mut block_access_lists = Vec::with_capacity(hashes.len());
     let mut bytes_used: u64 = 0;
     for hash in hashes {
@@ -2426,7 +2424,7 @@ pub fn build_block_access_lists_response(
 fn verified_block_access_list(
     hash: H256,
     storage: &ethrex_storage::Store,
-) -> Option<ethrex_common::types::block_access_list::BlockAccessList> {
+) -> Option<BlockAccessList> {
     match storage.get_block_access_list(hash) {
         Ok(Some(bal)) => {
             let commitment = match storage.get_block_header_by_hash(hash) {
@@ -2484,8 +2482,7 @@ pub fn build_snap2_bal_response(
     // present entry is served directly. When no BAL is stored — pre-Amsterdam, pruned, or
     // unknown block — the slot is `None` regardless. Lists are read one at a time and only
     // until the byte budget is spent, so the budget also bounds what gets decoded.
-    let mut bals: Vec<Option<ethrex_common::types::block_access_list::BlockAccessList>> =
-        Vec::with_capacity(hashes.len());
+    let mut bals: Vec<Option<BlockAccessList>> = Vec::with_capacity(hashes.len());
     let mut bytes_used: u64 = 0;
 
     for hash in hashes {
