@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-10-01
+
+- Build each code change in a supplied block access list once per block and share it across the parallel transactions, instead of hashing, analyzing and copying it for every transaction that reads the account: Plataberget 297947–299844 −1.23% per block in replay [#7361](https://github.com/lambdaclass/ethrex/pull/7361)
+
 ### 2026-09-29
 
 - Raise the bytecode cache to 1 GiB (about 16k contracts of 64 KiB) and warm block access list accounts and their code in parallel chunks of 64 instead of all states first: Plataberget blocks 294611–294805, which CALL thousands of distinct 64 KiB contracts in sequence, go from 145.3 to 34.2 ms per block in replay [#7346](https://github.com/lambdaclass/ethrex/pull/7346)

@@ -674,13 +674,7 @@ impl LEVM {
                 Err(parallel_err) => {
                     let last_tx_idx =
                         u32::try_from(block.body.transactions.len()).unwrap_or(u32::MAX);
-                    if Self::seed_db_from_bal(
-                        db,
-                        &bal,
-                        last_tx_idx,
-                        &validation_index.accounts_by_min_index,
-                    )
-                    .is_ok()
+                    if Self::seed_db_from_bal(db, &bal, last_tx_idx, &validation_index).is_ok()
                         && let VMType::L1 = vm_type
                         && let Err(e @ EvmError::SystemContractCallFailed(_)) =
                             extract_all_requests_levm(&[], db, &block.header, vm_type, crypto)
@@ -697,12 +691,7 @@ impl LEVM {
             // withdrawal balances (process_withdrawals handles those below).
             let last_tx_idx = u32::try_from(block.body.transactions.len()).unwrap_or(u32::MAX);
             // Eager seed retained: lazy_bal cursor is per-tx only; outer DB has no cursor.
-            Self::seed_db_from_bal(
-                db,
-                &bal,
-                last_tx_idx,
-                &validation_index.accounts_by_min_index,
-            )?;
+            Self::seed_db_from_bal(db, &bal, last_tx_idx, &validation_index)?;
 
             let withdrawal_bal_idx = u32::try_from(block.body.transactions.len())
                 .map(|n| n.saturating_add(1))
@@ -1429,12 +1418,13 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         bal: &BlockAccessList,
         max_idx: u32,
-        accounts_by_min_index: &[(u32, usize)],
+        index: &BalAddressIndex,
     ) -> Result<(), EvmError> {
+        let accounts_by_min_index = &index.accounts_by_min_index;
         let end = accounts_by_min_index.partition_point(|(min_idx, _)| *min_idx <= max_idx);
         let bal_accounts = bal.accounts();
         for &(_, acct_idx) in &accounts_by_min_index[..end] {
-            seed_one_address_info_from_bal(db, bal, acct_idx, max_idx)
+            seed_one_address_info_from_bal(db, bal, index, acct_idx, max_idx)
                 .map_err(|e| EvmError::Custom(format!("seed_db_from_bal: {e}")))?;
 
             let acct_changes = &bal_accounts[acct_idx];
