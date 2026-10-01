@@ -133,14 +133,29 @@ pub const ROCKSDB_BLOCK_CACHE_MEMORY_PERCENT: usize = 40;
 /// [`MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES`]. Falls back to the ceiling when the limit
 /// cannot be detected, preserving the previous behavior.
 pub fn default_rocksdb_block_cache_size() -> usize {
-    let physical = physical_memory_bytes();
-    let cgroup = cgroup_memory_limit_bytes();
-    let limit = [physical, cgroup].into_iter().flatten().min();
+    let (limit, source) = detected_memory_limit();
     let size = rocksdb_block_cache_size_for(limit);
     // The cache size used to be a knowable constant; now it depends on the
     // environment, on a code path that exists because a mis-sized cache was
     // only ever discovered via an OOM kill. Leave the whole derivation in the
     // log: which detector won, what it read, and what that resolved to.
+    info!(
+        detected_limit_bytes = ?limit,
+        source,
+        cache_bytes = size,
+        "sized RocksDB block cache"
+    );
+    size
+}
+
+/// The memory this process may use: the smaller of physical memory and the cgroup
+/// limit, so a container is sized against its own allowance rather than the machine it
+/// lands on. `None` when neither can be read. The second value names the detector that
+/// won, for the sizing logs.
+fn detected_memory_limit() -> (Option<usize>, &'static str) {
+    let physical = physical_memory_bytes();
+    let cgroup = cgroup_memory_limit_bytes();
+    let limit = [physical, cgroup].into_iter().flatten().min();
     let source = match (physical, cgroup) {
         (None, None) => "undetected, falling back to the ceiling",
         (Some(_), None) => "physical memory",
@@ -153,13 +168,44 @@ pub fn default_rocksdb_block_cache_size() -> usize {
             }
         }
     };
+    (limit, source)
+}
+
+/// Floor on the default bytecode cache: 256 MiB. The contracts a stretch of mainnet
+/// blocks reuses fit well within it (600 consecutive blocks peaked at 141 MiB).
+pub const MIN_CODE_CACHE_SIZE_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Share of the host's (or cgroup's) memory the bytecode cache may hold by default:
+/// 655 MiB on a 16 GiB host, 1.3 GiB on 32 GiB, and the [`CODE_CACHE_MAX_SIZE`] ceiling
+/// from 50 GiB up.
+pub const CODE_CACHE_MEMORY_PERCENT: u64 = 4;
+
+/// Default bytecode cache budget, derived from the memory this process may use the same
+/// way as [`default_rocksdb_block_cache_size`], so a small host does not reserve the
+/// ceiling sized for blocks that cycle through tens of thousands of large contracts.
+pub fn default_code_cache_size() -> u64 {
+    let (limit, source) = detected_memory_limit();
+    let size = code_cache_size_for(limit);
     info!(
         detected_limit_bytes = ?limit,
         source,
         cache_bytes = size,
-        "sized RocksDB block cache"
+        "sized bytecode cache"
     );
     size
+}
+
+/// Pure part of [`default_code_cache_size`]: the clamp, with the detected memory limit
+/// supplied by the caller. `None` means detection failed.
+pub fn code_cache_size_for(memory_limit: Option<usize>) -> u64 {
+    let Some(limit) = memory_limit else {
+        return CODE_CACHE_MAX_SIZE;
+    };
+    (u64::try_from(limit)
+        .unwrap_or(u64::MAX)
+        .saturating_mul(CODE_CACHE_MEMORY_PERCENT)
+        / 100)
+        .clamp(MIN_CODE_CACHE_SIZE_BYTES, CODE_CACHE_MAX_SIZE)
 }
 
 /// Pure part of [`default_rocksdb_block_cache_size`]: the clamp, with the detected
@@ -254,6 +300,9 @@ pub struct StoreConfig {
     /// the effective ceiling on RocksDB's resident memory. Ignored for
     /// in-memory backends.
     pub rocksdb_block_cache_size: usize,
+    /// Byte budget of the bytecode cache. `None` derives it from the memory this process
+    /// may use ([`default_code_cache_size`]) when the store is opened.
+    pub code_cache_size: Option<u64>,
     /// Bound on the persist worker's channel: number of staged (acked) live
     /// messages whose flush may still be in flight. Once full, the next send
     /// blocks — that is the backpressure that throttles `newPayload`.
@@ -269,6 +318,7 @@ impl StoreConfig {
     pub fn with_rocksdb_block_cache_size(rocksdb_block_cache_size: usize) -> Self {
         Self {
             rocksdb_block_cache_size,
+            code_cache_size: None,
             persist_channel_capacity: DEFAULT_PERSIST_CHANNEL_CAPACITY,
         }
     }
@@ -287,7 +337,8 @@ enum FKVGeneratorControlMessage {
     Continue,
 }
 
-/// Byte budget for the in-memory bytecode cache.
+/// Ceiling of the bytecode cache budget, which by default scales with the host's memory
+/// ([`default_code_cache_size`]).
 ///
 /// Bytecode is a small fraction of the working set next to trie nodes and flat
 /// key-values (which the RocksDB block cache serves), but a cold code read costs a
@@ -2299,6 +2350,20 @@ impl Store {
 
     /// Opens (or creates) a store at `path`, applying the supplied [`StoreConfig`].
     pub fn new_with_config(
+        path: impl AsRef<Path>,
+        engine_type: EngineType,
+        config: StoreConfig,
+    ) -> Result<Self, StoreError> {
+        let code_cache_size = config.code_cache_size;
+        let store = Self::open_with_config(path, engine_type, config)?;
+        let budget = code_cache_size.unwrap_or_else(default_code_cache_size);
+        if let Ok(mut cache) = store.account_code_cache.lock() {
+            cache.max_size = budget;
+        }
+        Ok(store)
+    }
+
+    fn open_with_config(
         path: impl AsRef<Path>,
         engine_type: EngineType,
         // `config` only feeds the RocksDB backend; without that feature it is unused.
@@ -6222,6 +6287,38 @@ mod account_code_tests {
     #[test]
     fn default_cache_uses_the_configured_budget() {
         assert_eq!(CodeCache::default().max_size, CODE_CACHE_MAX_SIZE);
+    }
+
+    /// The default budget SHALL scale with the memory the process may use, between the
+    /// floor and the ceiling, and fall back to the ceiling when nothing can be detected.
+    #[test]
+    fn code_cache_budget_scales_with_memory() {
+        const GIB: usize = 1024 * 1024 * 1024;
+        assert_eq!(code_cache_size_for(None), CODE_CACHE_MAX_SIZE);
+        assert_eq!(
+            code_cache_size_for(Some(4 * GIB)),
+            MIN_CODE_CACHE_SIZE_BYTES
+        );
+        assert_eq!(
+            code_cache_size_for(Some(16 * GIB)),
+            (16 * GIB as u64) * 4 / 100
+        );
+        assert_eq!(
+            code_cache_size_for(Some(32 * GIB)),
+            (32 * GIB as u64) * 4 / 100
+        );
+        assert_eq!(code_cache_size_for(Some(64 * GIB)), CODE_CACHE_MAX_SIZE);
+    }
+
+    /// An explicit budget in the store config SHALL be the one the code cache enforces.
+    #[test]
+    fn store_uses_the_configured_code_cache_budget() {
+        let config = StoreConfig {
+            code_cache_size: Some(300 * 1024 * 1024),
+            ..StoreConfig::with_rocksdb_block_cache_size(MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES)
+        };
+        let store = Store::new_with_config("", EngineType::InMemory, config).unwrap();
+        assert_eq!(store.code_cache_budget_bytes(), 300 * 1024 * 1024);
     }
 }
 

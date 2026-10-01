@@ -249,6 +249,11 @@ Storage options:
           
           [env: ETHREX_ROCKSDB_BLOCK_CACHE_SIZE=]
 
+      --code-cache-size <BYTES>
+          Byte budget of the in-memory bytecode cache. Defaults to 4% of the memory available to the process (physical or cgroup limit, whichever is lower), clamped to 256 MiB..=2 GiB; where no limit can be detected it defaults to the 2 GiB ceiling.
+          
+          [env: ETHREX_CODE_CACHE_SIZE=]
+
 RPC options:
       --http.addr <ADDRESS>
           Listening address for the HTTP JSON-RPC server. Defaults to 127.0.0.1 so the endpoint is only reachable from localhost; pass 0.0.0.0 to bind on all interfaces (only recommended when the node sits behind a trusted firewall or reverse proxy).
