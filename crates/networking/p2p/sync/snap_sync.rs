@@ -33,7 +33,7 @@ use crate::snap::{
     constants::{
         ACCOUNT_RANGE_CHUNK_COUNT, BYTECODE_CHUNK_SIZE, MAX_HEADER_FETCH_ATTEMPTS,
         MAX_PENDING_ACCOUNTS_FOR_HEALING_FALLBACK, MAX_STORAGE_RANGE_REQUEST_ATTEMPTS,
-        MIN_FULL_BLOCKS, MISSING_SLOTS_PERCENTAGE, SECONDS_PER_BLOCK, SNAP_LIMIT,
+        MIN_FULL_BLOCKS, MISSING_SLOTS_PERCENTAGE, PIVOT_DISTANCE, SECONDS_PER_BLOCK, SNAP_LIMIT,
     },
     request_account_range, request_bytecodes, request_storage_ranges,
 };
@@ -952,11 +952,13 @@ pub async fn update_pivot(
     let new_pivot_block_number = block_number
         + ((current_unix_time().saturating_sub(block_timestamp) / *SECONDS_PER_BLOCK) as f64
             * MISSING_SLOTS_PERCENTAGE) as u64;
-    // Prefer the consensus client's latest forkchoice head as the new pivot. The estimate
-    // above assumes blocks were produced every slot since the stale pivot; when they were
-    // not (a shadowfork forking off its parent network hours after the pivot block, a long
-    // outage), it lands past our chain's head, and the only peers that can answer it by
-    // number are ones following another chain with the same history.
+    // Prefer the block `PIVOT_DISTANCE` below the consensus client's latest forkchoice
+    // head as the new pivot. The estimate above assumes blocks were produced every slot
+    // since the stale pivot; when they were not (a shadowfork forking off its parent
+    // network hours after the pivot block, a long outage), it lands past our chain's head,
+    // and the only peers that can answer it by number are ones following another chain
+    // with the same history. Staying `PIVOT_DISTANCE` back keeps a reorg of the head from
+    // taking the pivot with it.
     let fcu_head = peers
         .latest_fcu_head
         .try_lock()
@@ -969,7 +971,7 @@ pub async fn update_pivot(
         if fcu_head.is_zero() {
             format!("number {new_pivot_block_number}")
         } else {
-            format!("forkchoice head {fcu_head:?}")
+            format!("{PIVOT_DISTANCE} blocks below forkchoice head {fcu_head:?}")
         }
     );
 
@@ -1068,16 +1070,16 @@ pub async fn update_pivot(
                 .await
         } else {
             peers
-                .get_block_header_by_hash(&mut connection, permit, fcu_head)
+                .get_block_header_behind(&mut connection, permit, fcu_head, PIVOT_DISTANCE)
                 .await
         };
 
         match outcome {
             Ok(Some(pivot)) if pivot.number < block_number => {
-                // The forkchoice head is behind the current pivot (e.g. the CL is
-                // still catching up); keep looking rather than moving the pivot back.
+                // The new pivot is behind the current one (e.g. the CL is still
+                // catching up); keep looking rather than moving the pivot back.
                 debug!(
-                    "update_pivot: forkchoice head {} is behind the current pivot {block_number}",
+                    "update_pivot: new pivot {} is behind the current pivot {block_number}",
                     pivot.number
                 );
                 excluded_peers.push(peer_id);

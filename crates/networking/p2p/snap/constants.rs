@@ -174,6 +174,14 @@ pub const SECONDS_PER_BLOCK_DEFAULT: u64 = 12;
 /// blocks in the chain that are unlikely to be re-orged.
 pub const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
 
+/// How many blocks below the consensus client's forkchoice head snap sync places its pivot.
+///
+/// A pivot that gets reorged out forces a whole new snap sync, so it stays far enough
+/// back for that to be unlikely. 25 is where the time-based estimate used to land: a pivot
+/// refreshed after `SNAP_LIMIT` blocks and moved `MISSING_SLOTS_PERCENTAGE` of the way
+/// trails the tip by ~25 blocks.
+pub const PIVOT_DISTANCE: u64 = 25;
+
 // =============================================================================
 // PROGRESS REPORTING
 // =============================================================================

@@ -1016,36 +1016,62 @@ impl PeerHandler {
         permit: RequestPermit,
         block_number: u64,
     ) -> Result<Option<BlockHeader>, PeerHandlerError> {
-        self.get_block_header_at(connection, permit, HashOrNumber::Number(block_number))
-            .await
+        let headers = self
+            .request_headers_at(
+                connection,
+                permit,
+                HashOrNumber::Number(block_number),
+                1,
+                0,
+                false,
+            )
+            .await?;
+        Ok(headers.last().cloned())
     }
 
-    /// Like [`Self::get_block_header`], but asks for the header with the given hash.
-    pub async fn get_block_header_by_hash(
+    /// Requests the header `distance` blocks below the block with hash `head`, as the
+    /// `distance + 1` consecutive headers walking back from `head`. Consecutive headers can
+    /// be checked to chain from `head` down to the returned one, and peers serve them from a
+    /// hash whether or not it is canonical for them yet, which is not true of a request
+    /// that skips blocks. Anything but that chain is reported as `None`.
+    pub async fn get_block_header_behind(
         &mut self,
         connection: &mut PeerConnection,
         permit: RequestPermit,
-        block_hash: H256,
+        head: H256,
+        distance: u64,
     ) -> Result<Option<BlockHeader>, PeerHandlerError> {
-        self.get_block_header_at(connection, permit, HashOrNumber::Hash(block_hash))
-            .await
+        let headers = self
+            .request_headers_at(
+                connection,
+                permit,
+                HashOrNumber::Hash(head),
+                distance.saturating_add(1),
+                0,
+                true,
+            )
+            .await?;
+        Ok(header_behind(&headers, head, distance))
     }
 
-    async fn get_block_header_at(
+    async fn request_headers_at(
         &mut self,
         connection: &mut PeerConnection,
         _permit: RequestPermit,
         startblock: HashOrNumber,
-    ) -> Result<Option<BlockHeader>, PeerHandlerError> {
+        limit: u64,
+        skip: u64,
+        reverse: bool,
+    ) -> Result<Vec<BlockHeader>, PeerHandlerError> {
         let request_id = rand::random();
         let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
             id: request_id,
             startblock,
-            limit: 1,
-            skip: 0,
-            reverse: false,
+            limit,
+            skip,
+            reverse,
         });
-        debug!("get_block_header: requesting header {startblock:?}");
+        debug!("get_block_header: requesting {limit} header(s) from {startblock:?}");
         match connection
             .outgoing_request(request, PEER_REPLY_TIMEOUT)
             .await
@@ -1053,16 +1079,7 @@ impl PeerHandler {
             Ok(RLPxMessage::BlockHeaders(BlockHeaders {
                 id: _,
                 block_headers,
-            })) => {
-                if !block_headers.is_empty() {
-                    return Ok(Some(
-                        block_headers
-                            .last()
-                            .ok_or(PeerHandlerError::BlockHeaders)?
-                            .clone(),
-                    ));
-                }
-            }
+            })) => return Ok(block_headers),
             Ok(_other_msgs) => {
                 debug!("Received unexpected message from peer");
             }
@@ -1076,7 +1093,7 @@ impl PeerHandler {
             }
         }
 
-        Ok(None)
+        Ok(Vec::new())
     }
 }
 
@@ -1087,6 +1104,20 @@ fn are_block_headers_chained(block_headers: &[BlockHeader], order: &BlockRequest
         BlockRequestOrder::OldToNew => headers[1].parent_hash == headers[0].hash(),
         BlockRequestOrder::NewToOld => headers[0].parent_hash == headers[1].hash(),
     })
+}
+
+/// Picks the header `distance` blocks below `head` out of an answer to
+/// [`PeerHandler::get_block_header_behind`]: `distance + 1` headers from `head` down, each
+/// the parent of the one before, so the pivot is known to be an ancestor of `head`.
+fn header_behind(headers: &[BlockHeader], head: H256, distance: u64) -> Option<BlockHeader> {
+    let first = headers.first()?;
+    let last = headers.last()?;
+    let expected_len = usize::try_from(distance).ok()?.checked_add(1)?;
+    (headers.len() == expected_len
+        && first.hash() == head
+        && first.number.checked_sub(distance) == Some(last.number)
+        && are_block_headers_chained(headers, &BlockRequestOrder::NewToOld))
+    .then(|| last.clone())
 }
 
 /// Truncates headers sorted old to new to their longest prefix that forms a single chain,
@@ -1189,6 +1220,26 @@ mod tests {
         let mut headers = chain(H256::zero(), 10, 5, 0);
         assert_eq!(truncate_to_single_chain(&mut headers), 0);
         assert_eq!(headers.len(), 5);
+    }
+
+    /// An answer walking back from the head SHALL yield the header `distance` below it, and
+    /// only when it is the full chain from the head down to that header.
+    #[test]
+    fn header_behind_takes_the_ancestor_below_the_head() {
+        let mut answer = chain(H256::zero(), 1000, 26, 0);
+        answer.reverse();
+        let head = answer[0].hash();
+        let below = answer[25].clone();
+
+        assert_eq!(header_behind(&answer, head, 25), Some(below));
+        // The peer started from another block.
+        assert_eq!(header_behind(&answer, H256::repeat_byte(1), 25), None);
+        // The peer stopped short of the pivot.
+        assert_eq!(header_behind(&answer[..25], head, 25), None);
+        // A header in the middle is not on the head's chain.
+        let mut broken = answer.clone();
+        broken[10] = chain(H256::repeat_byte(2), 990, 1, 1).remove(0);
+        assert_eq!(header_behind(&broken, head, 25), None);
     }
 
     #[test]
