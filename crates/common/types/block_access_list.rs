@@ -9,6 +9,7 @@ use indexmap::{IndexMap, IndexSet};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::OnceLock;
 
 use crate::constants::{EMPTY_BLOCK_ACCESS_LIST_HASH, SYSTEM_ADDRESS};
 use crate::types::Code;
@@ -604,9 +605,12 @@ impl BlockAccessList {
         let mut accounts_by_min_index: Vec<(u32, usize)> = Vec::new();
         let mut slot_idx_by_account: Vec<FxHashMap<H256, usize>> =
             Vec::with_capacity(self.inner.len().min(PREALLOC_CAP));
+        let mut built_codes: Vec<Box<[BuiltCode]>> =
+            Vec::with_capacity(self.inner.len().min(PREALLOC_CAP));
 
         for (i, acct) in self.inner.iter().enumerate() {
             addr_to_idx.insert(acct.address, i);
+            built_codes.push(acct.code_changes.iter().map(|_| OnceLock::new()).collect());
 
             // Collect all block_access_indices where this account has changes
             let mut seen_indices = BTreeSet::new();
@@ -652,9 +656,13 @@ impl BlockAccessList {
             tx_to_accounts,
             accounts_by_min_index,
             slot_idx_by_account,
+            built_codes,
         }
     }
 }
+
+/// A BAL code change's hash and built [`Code`] (`None` for empty code), filled on first use.
+pub type BuiltCode = OnceLock<(H256, Option<Code>)>;
 
 /// Pre-computed index for fast per-tx BAL validation lookups.
 /// Built once per block, shared read-only across parallel tx validations.
@@ -673,6 +681,10 @@ pub struct BalAddressIndex {
     /// the same `acct_idx` used by `addr_to_idx`; empty inner map for accounts with no
     /// storage writes. Slot uniqueness is enforced by canonical-ordering validation.
     pub slot_idx_by_account: Vec<FxHashMap<H256, usize>>,
+    /// Per account, one slot per `code_changes` entry holding its hash and built [`Code`].
+    /// Every transaction that reads the account needs the same code, so it is built once,
+    /// on first use, and shared, instead of hashed, analyzed and copied per transaction.
+    pub built_codes: Vec<Box<[BuiltCode]>>,
 }
 
 /// Binary search for exact match at `idx` in balance changes (sorted by block_access_index).

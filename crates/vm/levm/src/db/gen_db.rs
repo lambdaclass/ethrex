@@ -48,6 +48,7 @@ pub struct LazyBalCursor {
 pub fn seed_one_address_info_from_bal(
     db: &mut GeneralizedDatabase,
     bal: &BlockAccessList,
+    index: &BalAddressIndex,
     acct_idx: usize,
     max_idx: u32,
 ) -> Result<bool, InternalError> {
@@ -76,11 +77,17 @@ pub fn seed_one_address_info_from_bal(
     // Compute code update before borrowing acc (borrow checker: can't access
     // db.codes while acc holds a mutable borrow of db).
     let code_update = if code_pos > 0 {
+        let change = code_pos.saturating_sub(1);
         let entry = acct_changes
             .code_changes
-            .get(code_pos.saturating_sub(1))
+            .get(change)
             .ok_or(InternalError::AccountNotFound)?;
-        Some(code_from_bal(&entry.new_code))
+        let built = index
+            .built_codes
+            .get(acct_idx)
+            .and_then(|codes| codes.get(change))
+            .ok_or(InternalError::AccountNotFound)?;
+        Some(built.get_or_init(|| code_from_bal(&entry.new_code)).clone())
     } else {
         None
     };
@@ -414,8 +421,14 @@ impl GeneralizedDatabase {
                 let max_idx = cursor.bal_index.saturating_sub(1);
                 if let Some(&acct_idx) = cursor.index.addr_to_idx.get(&address) {
                     Some(
-                        seed_one_address_info_from_bal(self, &cursor.bal, acct_idx, max_idx)
-                            .map(|_| true),
+                        seed_one_address_info_from_bal(
+                            self,
+                            &cursor.bal,
+                            &cursor.index,
+                            acct_idx,
+                            max_idx,
+                        )
+                        .map(|_| true),
                     )
                 } else {
                     None

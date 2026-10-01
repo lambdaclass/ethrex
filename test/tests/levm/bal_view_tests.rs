@@ -14,8 +14,8 @@ mod inner {
     use ethrex_common::{
         Address, U256,
         types::block_access_list::{
-            AccountChanges, BalAddressIndex, BalanceChange, BlockAccessList, SlotChange,
-            StorageChange,
+            AccountChanges, BalAddressIndex, BalanceChange, BlockAccessList, CodeChange,
+            NonceChange, SlotChange, StorageChange,
         },
         utils::u256_to_h256,
     };
@@ -83,7 +83,8 @@ mod inner {
         let db_backend = Arc::new(TestDatabase::new());
         let mut db = GeneralizedDatabase::new(db_backend);
 
-        let applied = seed_one_address_info_from_bal(&mut db, &bal, 0, 1)
+        let index = bal.build_validation_index();
+        let applied = seed_one_address_info_from_bal(&mut db, &bal, &index, 0, 1)
             .expect("seed_one_address_info_from_bal should not fail");
 
         assert!(applied, "balance change should have been applied");
@@ -226,5 +227,37 @@ mod inner {
             acc.info.balance, balance_val,
             "balance overlay from BAL should have been applied"
         );
+    }
+
+    /// Every transaction that reads an account whose code changed in the block SHALL get the
+    /// same built code: it is built once per block from the shared index, not once per read.
+    #[test]
+    fn code_from_the_bal_is_built_once_per_block() {
+        let code = bytes::Bytes::from(vec![0x5b; 4096]);
+        let acct = AccountChanges::new(CONTRACT)
+            .with_balance_changes(vec![BalanceChange::new(1, U256::from(1u64))])
+            .with_nonce_changes(vec![NonceChange::new(1, 1)])
+            .with_code_changes(vec![CodeChange::new(1, code.clone())]);
+        let bal = BlockAccessList::from_accounts(vec![acct]);
+        let index = bal.build_validation_index();
+
+        let mut first = GeneralizedDatabase::new(Arc::new(TestDatabase::new()));
+        let mut second = GeneralizedDatabase::new(Arc::new(TestDatabase::new()));
+        seed_one_address_info_from_bal(&mut first, &bal, &index, 0, 1).unwrap();
+        seed_one_address_info_from_bal(&mut second, &bal, &index, 0, 1).unwrap();
+
+        let (hash, built) = index.built_codes[0][0].get().expect("built on first use");
+        let built = built.as_ref().expect("non-empty code");
+        assert_eq!(built.code(), &code[..]);
+        for db in [&first, &second] {
+            let seeded = db
+                .codes
+                .get(hash)
+                .expect("code seeded into the transaction's db");
+            assert!(
+                std::ptr::eq(seeded.code().as_ptr(), built.code().as_ptr()),
+                "both transactions must share the one built copy"
+            );
+        }
     }
 }
