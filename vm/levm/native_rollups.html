@@ -34,7 +34,7 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-6720753b.js";
+            window.path_to_searchindex_js = "../../searchindex-5e479277.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../toc-f6d73635.js"></script>
@@ -221,7 +221,6 @@
     pub new_payload_request: NewPayloadRequest,  // Full block as SSZ
     pub witness: SszExecutionWitness,            // State trie, storage tries, codes
     pub chain_id: u64,                           // #3278: the only config on the wire
-    pub public_keys: SszList&lt;...&gt;,               // One recovered tx public key per tx
 }
 <span class="boring">}</span></code></pre>
 <p>The <code>NewPayloadRequest</code> contains:</p>
@@ -417,7 +416,6 @@ with <code>schema_id</code> little-endian at offset 41.</li>
 <tr><td>ZK variant</td><td>Specified (proof-carrying tx + PROOFROOT)</td><td>Not implemented (re-execution only)</td><td><strong>Gap (by design)</strong></td></tr>
 <tr><td>Forced transactions</td><td>WIP (FOCIL)</td><td>Not implemented</td><td><strong>Gap</strong></td></tr>
 <tr><td>DA cost pricing</td><td>WIP</td><td>Not implemented</td><td><strong>Both WIP</strong></td></tr>
-<tr><td><code>public_keys</code></td><td>Pre-recovered tx keys</td><td>Populated by the advancer, checked against recovered senders</td><td><strong>Aligned</strong></td></tr>
 </tbody>
 </table>
 </div>
