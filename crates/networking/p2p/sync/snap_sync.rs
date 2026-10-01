@@ -952,9 +952,25 @@ pub async fn update_pivot(
     let new_pivot_block_number = block_number
         + ((current_unix_time().saturating_sub(block_timestamp) / *SECONDS_PER_BLOCK) as f64
             * MISSING_SLOTS_PERCENTAGE) as u64;
+    // Prefer the consensus client's latest forkchoice head as the new pivot. The estimate
+    // above assumes blocks were produced every slot since the stale pivot; when they were
+    // not (a shadowfork forking off its parent network hours after the pivot block, a long
+    // outage), it lands past our chain's head, and the only peers that can answer it by
+    // number are ones following another chain with the same history.
+    let fcu_head = peers
+        .latest_fcu_head
+        .try_lock()
+        .map(|head| *head)
+        .unwrap_or_default();
     debug!(
-        "Current pivot is stale (number: {}, timestamp: {}). New pivot number: {}",
-        block_number, block_timestamp, new_pivot_block_number
+        "Current pivot is stale (number: {}, timestamp: {}). New pivot: {}",
+        block_number,
+        block_timestamp,
+        if fcu_head.is_zero() {
+            format!("number {new_pivot_block_number}")
+        } else {
+            format!("forkchoice head {fcu_head:?}")
+        }
     );
 
     let mut rotation_count: u64 = 0;
@@ -1046,11 +1062,26 @@ pub async fn update_pivot(
 
         // One attempt per peer per rotation. A peer that fails is excluded for
         // this rotation and will be retried (with backoff) in the next one.
-        let outcome = peers
-            .get_block_header(&mut connection, permit, new_pivot_block_number)
-            .await;
+        let outcome = if fcu_head.is_zero() {
+            peers
+                .get_block_header(&mut connection, permit, new_pivot_block_number)
+                .await
+        } else {
+            peers
+                .get_block_header_by_hash(&mut connection, permit, fcu_head)
+                .await
+        };
 
         match outcome {
+            Ok(Some(pivot)) if pivot.number < block_number => {
+                // The forkchoice head is behind the current pivot (e.g. the CL is
+                // still catching up); keep looking rather than moving the pivot back.
+                debug!(
+                    "update_pivot: forkchoice head {} is behind the current pivot {block_number}",
+                    pivot.number
+                );
+                excluded_peers.push(peer_id);
+            }
             Ok(Some(pivot)) => {
                 peers.peer_table.record_success(peer_id)?;
                 #[cfg(feature = "metrics")]
