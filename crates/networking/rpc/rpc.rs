@@ -93,7 +93,7 @@ use std::{
 };
 use tokio::net::TcpListener;
 use tokio::sync::{
-    Mutex as TokioMutex,
+    Mutex as TokioMutex, Semaphore, SemaphorePermit,
     mpsc::{UnboundedSender, unbounded_channel},
     oneshot,
 };
@@ -1446,13 +1446,22 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_getBlockAccessList" => BlockAccessListRequest::call(req, context).await,
         "eth_getTransactionByHash" => GetTransactionByHashRequest::call(req, context).await,
         "eth_getTransactionReceipt" => GetTransactionReceiptRequest::call(req, context).await,
-        "eth_createAccessList" => CreateAccessListRequest::call(req, context).await,
+        "eth_createAccessList" => {
+            let _turn = simulation_permit().await?;
+            CreateAccessListRequest::call(req, context).await
+        }
         "eth_blockNumber" => BlockNumberRequest::call(req, context).await,
-        "eth_call" => CallRequest::call(req, context).await,
+        "eth_call" => {
+            let _turn = simulation_permit().await?;
+            CallRequest::call(req, context).await
+        }
         "eth_blobBaseFee" => GetBlobBaseFee::call(req, context).await,
         "eth_getTransactionCount" => GetTransactionCountRequest::call(req, context).await,
         "eth_feeHistory" => FeeHistoryRequest::call(req, context).await,
-        "eth_estimateGas" => EstimateGasRequest::call(req, context).await,
+        "eth_estimateGas" => {
+            let _turn = simulation_permit().await?;
+            EstimateGasRequest::call(req, context).await
+        }
         "eth_getLogs" => LogsFilter::call(req, context).await,
         "eth_newFilter" => {
             NewFilterRequest::stateful_call(req, context.storage, context.active_filters).await
@@ -1475,6 +1484,25 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_config" => Config::call(req, context).await,
         unknown_eth_method => Err(RpcErr::MethodNotFound(unknown_eth_method.to_owned())),
     }
+}
+
+/// How many simulation and tracing requests run at once: half the cores, at least one.
+/// Each runs EVM execution inline on a runtime worker and holds everything it loads (up to
+/// a block's worth of contract code for a trace) until it returns, so this bounds both
+/// their memory and how many workers they can occupy. The rest wait their turn.
+fn simulation_concurrency() -> usize {
+    (std::thread::available_parallelism().map_or(2, |n| n.get()) / 2).max(1)
+}
+
+static SIMULATION_PERMITS: std::sync::LazyLock<Semaphore> =
+    std::sync::LazyLock::new(|| Semaphore::new(simulation_concurrency()));
+
+/// Waits for a turn to run a simulation or a trace; the turn ends when the permit drops.
+async fn simulation_permit() -> Result<SemaphorePermit<'static>, RpcErr> {
+    SIMULATION_PERMITS
+        .acquire()
+        .await
+        .map_err(|e| RpcErr::Internal(e.to_string()))
 }
 
 /// Routes `testing_*` namespace requests to their handlers.
@@ -1504,17 +1532,33 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
         "debug_getRawTransaction" => GetRawTransaction::call(req, context).await,
         "debug_getRawReceipts" => GetRawReceipts::call(req, context).await,
         "debug_getRawBlockAccessList" => RawBlockAccessListRequest::call(req, context).await,
-        "debug_executionWitness" => ExecutionWitnessRequest::call(req, context).await,
+        "debug_executionWitness" => {
+            let _turn = simulation_permit().await?;
+            ExecutionWitnessRequest::call(req, context).await
+        }
         "debug_executionWitnessByBlockHash" => {
+            let _turn = simulation_permit().await?;
             ExecutionWitnessByBlockHashRequest::call(req, context).await
         }
         "debug_chainConfig" => ChainConfigRequest::call(req, context).await,
         "debug_getBadBlocks" => GetBadBlocksRequest::call(req, context).await,
         "debug_setHead" => SetHeadRequest::call(req, context).await,
-        "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
-        "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
-        "debug_traceBlockByHash" => TraceBlockByHashRequest::call(req, context).await,
-        "debug_traceCall" => TraceCallRequest::call(req, context).await,
+        "debug_traceTransaction" => {
+            let _turn = simulation_permit().await?;
+            TraceTransactionRequest::call(req, context).await
+        }
+        "debug_traceBlockByNumber" => {
+            let _turn = simulation_permit().await?;
+            TraceBlockByNumberRequest::call(req, context).await
+        }
+        "debug_traceBlockByHash" => {
+            let _turn = simulation_permit().await?;
+            TraceBlockByHashRequest::call(req, context).await
+        }
+        "debug_traceCall" => {
+            let _turn = simulation_permit().await?;
+            TraceCallRequest::call(req, context).await
+        }
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
     }
 }
@@ -2019,6 +2063,43 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":1,"result":{"accessList":[],"gasUsed":"0x5208"}}"#,
         );
         assert_eq!(response.to_string(), expected_response.to_string());
+    }
+
+    /// A simulation SHALL wait while every simulation turn is taken, and run once one frees.
+    #[tokio::test]
+    async fn simulations_wait_for_a_free_turn() {
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"eth_createAccessList","params":[{"from":"0x0c2c51a0990aee1d73c1228de158688341557508","nonce":"0x0","to":"0x0100000000000000000000000000000000000000","value":"0xa"},"0x00"]}"#;
+        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        let mut storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        storage
+            .add_initial_state(read_execution_api_genesis_file())
+            .await
+            .expect("Failed to add genesis block to DB");
+        let context = default_context_with_storage(storage).await;
+
+        let all_turns = SIMULATION_PERMITS
+            .acquire_many(u32::try_from(simulation_concurrency()).unwrap())
+            .await
+            .unwrap();
+        let waiting = timeout(
+            Duration::from_millis(200),
+            map_http_requests(&request, context.clone()),
+        )
+        .await;
+        assert!(
+            waiting.is_err(),
+            "a simulation must wait while every turn is taken"
+        );
+
+        drop(all_turns);
+        let result = timeout(
+            Duration::from_secs(10),
+            map_http_requests(&request, context.clone()),
+        )
+        .await
+        .expect("a simulation must run once a turn frees");
+        assert!(result.is_ok(), "{result:?}");
     }
 
     fn example_chain_config() -> ChainConfig {
