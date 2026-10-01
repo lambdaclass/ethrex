@@ -959,6 +959,12 @@ pub async fn update_pivot(
     // and the only peers that can answer it by number are ones following another chain
     // with the same history. Staying `PIVOT_DISTANCE` back keeps a reorg of the head from
     // taking the pivot with it.
+    //
+    // A pivot goes stale `SNAP_LIMIT` blocks after its own, so the new one is ahead of it
+    // only while it trails the head by less than that. Halving `SNAP_LIMIT` keeps a
+    // shortened window (devnet runs that force pivot moves) from rejecting every
+    // refresh; at the default `SNAP_LIMIT` the distance stays `PIVOT_DISTANCE`.
+    let pivot_distance = PIVOT_DISTANCE.min(*SNAP_LIMIT as u64 / 2);
     let fcu_head = peers
         .latest_fcu_head
         .try_lock()
@@ -971,7 +977,7 @@ pub async fn update_pivot(
         if fcu_head.is_zero() {
             format!("number {new_pivot_block_number}")
         } else {
-            format!("{PIVOT_DISTANCE} blocks below forkchoice head {fcu_head:?}")
+            format!("{pivot_distance} blocks below forkchoice head {fcu_head:?}")
         }
     );
 
@@ -1058,9 +1064,15 @@ pub async fn update_pivot(
             rotation = rotation_count,
             "update_pivot: attempting with peer"
         );
-        debug!(
-            "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
-        );
+        if fcu_head.is_zero() {
+            debug!(
+                "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
+            );
+        } else {
+            debug!(
+                "Trying to update pivot to {pivot_distance} blocks below {fcu_head:?} with peer {peer_id} (score: {peer_score})"
+            );
+        }
 
         // One attempt per peer per rotation. A peer that fails is excluded for
         // this rotation and will be retried (with backoff) in the next one.
@@ -1070,7 +1082,7 @@ pub async fn update_pivot(
                 .await
         } else {
             peers
-                .get_block_header_behind(&mut connection, permit, fcu_head, PIVOT_DISTANCE)
+                .get_block_header_behind(&mut connection, permit, fcu_head, pivot_distance)
                 .await
         };
 

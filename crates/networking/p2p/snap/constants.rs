@@ -179,7 +179,8 @@ pub const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
 /// A pivot that gets reorged out forces a whole new snap sync, so it stays far enough
 /// back for that to be unlikely. 25 is where the time-based estimate used to land: a pivot
 /// refreshed after `SNAP_LIMIT` blocks and moved `MISSING_SLOTS_PERCENTAGE` of the way
-/// trails the tip by ~25 blocks.
+/// trails the tip by ~25 blocks. `update_pivot` uses at most half of `SNAP_LIMIT`, so a
+/// shortened staleness window still lets the pivot move forward.
 pub const PIVOT_DISTANCE: u64 = 25;
 
 // =============================================================================
