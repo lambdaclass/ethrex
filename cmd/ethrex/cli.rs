@@ -114,17 +114,6 @@ pub struct Options {
         env = "ETHREX_ROCKSDB_BLOCK_CACHE_SIZE"
     )]
     pub rocksdb_block_cache_size: Option<usize>,
-    #[arg(
-        long = "code-cache-size",
-        value_name = "BYTES",
-        help = "Byte budget of the in-memory bytecode cache. Defaults to 4% of the memory \
-                available to the process (physical or cgroup limit, whichever is lower), \
-                clamped to 256 MiB..=2 GiB; where no limit can be detected it defaults to the \
-                2 GiB ceiling.",
-        help_heading = "Storage options",
-        env = "ETHREX_CODE_CACHE_SIZE"
-    )]
-    pub code_cache_size: Option<u64>,
     #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options", env = "ETHREX_SYNCMODE")]
     pub syncmode: SyncMode,
     #[arg(
@@ -629,7 +618,6 @@ impl Default for Options {
             bootnodes: Default::default(),
             datadir: Default::default(),
             rocksdb_block_cache_size: None,
-            code_cache_size: None,
             syncmode: Default::default(),
             history_chain: Default::default(),
             history_transactions: Default::default(),
