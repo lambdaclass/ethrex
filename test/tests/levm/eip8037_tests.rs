@@ -2231,3 +2231,48 @@ fn test_calldata_floor_just_below_tx_max_gas_limit_is_accepted() {
     );
     validate_tx(Fork::Amsterdam, &tx).expect("a floor under the cap must be accepted");
 }
+
+/// The block's regular dimension SHALL count at most `TX_MAX_GAS_LIMIT` per transaction,
+/// even when the transaction's gas limit is higher and it runs out of gas. The payload
+/// builder relies on this: its pre-execution check reserves `min(gas_limit,
+/// TX_MAX_GAS_LIMIT)` regular gas and the full gas limit as state gas, so a transaction
+/// that passed it can never overflow either dimension after executing.
+#[test]
+fn test_regular_gas_of_a_transaction_is_capped_at_tx_max_gas_limit() {
+    // JUMPDEST; PUSH1 0; JUMP: loops until regular gas runs out.
+    let code = vec![0x5B, 0x60, 0x00, 0x56];
+    let gas_limit = 2 * TX_MAX_GAS_LIMIT_AMSTERDAM;
+    let mut env = exec_env(Fork::Amsterdam);
+    env.gas_limit = gas_limit;
+    env.block_gas_limit = gas_limit;
+    let mut db = exec_db(code, false, &[]);
+    let Transaction::EIP1559Transaction(mut inner) = exec_call_tx() else {
+        unreachable!()
+    };
+    inner.gas_limit = gas_limit;
+    let tx = Transaction::EIP1559Transaction(inner);
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L1,
+        &NativeCrypto,
+        None,
+    )
+    .expect("VM::new");
+    let report = vm.execute().expect("execute");
+
+    assert!(
+        !report.is_success(),
+        "the loop must run out of gas: {report:?}"
+    );
+    let regular = report.gas_used.saturating_sub(report.state_gas_used);
+    assert!(
+        regular <= TX_MAX_GAS_LIMIT_AMSTERDAM,
+        "regular gas {regular} exceeds TX_MAX_GAS_LIMIT {TX_MAX_GAS_LIMIT_AMSTERDAM} \
+         (gas_used {}, state_gas_used {})",
+        report.gas_used,
+        report.state_gas_used
+    );
+}
