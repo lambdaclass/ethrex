@@ -314,6 +314,12 @@ const BAD_BLOCKS_KEY: &[u8] = b"bad_blocks";
 /// Maximum number of bad blocks retained for `debug_getBadBlocks`.
 const MAX_BAD_BLOCKS: usize = 16;
 
+/// Heap bytes a [`CodeCache`] entry costs beyond [`Code::size`]: the LRU node, its slot in
+/// the hash table and the headers of the two shared buffers. Measured at 126 to 133 bytes
+/// requested per entry, before the allocator rounds them up to its size classes. Without
+/// it, a cache full of small contracts held nearly twice its budget (1.87x at 32 bytes).
+const CODE_CACHE_ENTRY_OVERHEAD: u64 = 160;
+
 #[derive(Debug)]
 struct CodeCache {
     inner_cache: LruCache<H256, Code, FxBuildHasher>,
@@ -332,6 +338,11 @@ impl Default for CodeCache {
 }
 
 impl CodeCache {
+    /// What one cached `code` costs against `max_size`.
+    fn entry_size(code: &Code) -> u64 {
+        (code.size() as u64).saturating_add(CODE_CACHE_ENTRY_OVERHEAD)
+    }
+
     fn get(&mut self, code_hash: &H256) -> Result<Option<Code>, StoreError> {
         Ok(self.inner_cache.get(code_hash).cloned())
     }
@@ -344,12 +355,12 @@ impl CodeCache {
             return Ok(());
         }
 
-        self.cache_size += code.size() as u64;
+        self.cache_size += Self::entry_size(code);
         self.inner_cache.put(code.hash, code.clone());
 
         while self.cache_size > self.max_size {
             if let Some((_, code)) = self.inner_cache.pop_lru() {
-                self.cache_size -= code.size() as u64;
+                self.cache_size -= Self::entry_size(&code);
             } else {
                 break;
             }
@@ -1241,6 +1252,10 @@ impl Store {
     ///
     /// Results are returned in the order of `code_hashes`. Duplicate hashes are read
     /// once. `None` means the hash is absent from the database.
+    ///
+    /// Every requested code is held at once until the result is dropped, and nothing here
+    /// bounds that by the code cache budget: a caller reading many contracts it does not
+    /// control must chunk `code_hashes` and charge each chunk against its own budget.
     pub fn get_account_codes_batch(
         &self,
         code_hashes: &[H256],
@@ -6124,6 +6139,27 @@ mod account_code_tests {
 
         assert!(cache.cache_size <= cache.max_size);
         assert!(cache.inner_cache.len() < 16);
+    }
+
+    /// Small contracts SHALL be charged what an entry costs besides their bytes, so a cache
+    /// full of them stays within its budget instead of holding nearly twice it.
+    #[test]
+    fn small_contracts_are_charged_their_entry_overhead() {
+        let mut cache = CodeCache {
+            max_size: 160 * 1024,
+            ..Default::default()
+        };
+        let mut charged = 0;
+        for i in 0..4096u64 {
+            let mut bytecode = vec![JUMPDEST; 32];
+            bytecode[..8].copy_from_slice(&i.to_be_bytes());
+            let code = Code::from_bytecode_unchecked(bytecode.into(), H256::from_low_u64_be(i));
+            charged = code.size() as u64 + CODE_CACHE_ENTRY_OVERHEAD;
+            cache.insert(&code).unwrap();
+        }
+
+        assert!(cache.cache_size <= cache.max_size);
+        assert_eq!(cache.inner_cache.len() as u64, cache.max_size / charged);
     }
 
     /// The default budget SHALL be the one the cache actually enforces, so a change to
