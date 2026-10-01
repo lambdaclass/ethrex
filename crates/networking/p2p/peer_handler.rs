@@ -32,7 +32,7 @@ use ethrex_crypto::NativeCrypto;
 use spawned_concurrency::{error::ActorError, tasks::ActorRef};
 use std::{
     collections::{HashSet, VecDeque},
-    sync::atomic::Ordering,
+    sync::{Arc, atomic::Ordering},
     time::{Duration, SystemTime},
 };
 use tracing::{debug, error, trace, warn};
@@ -52,6 +52,12 @@ pub use crate::snap::{DumpError, RequestMetadata, RequestStorageTrieNodesError, 
 pub struct PeerHandler {
     pub peer_table: PeerTable,
     pub initiator: ActorRef<RLPxInitiator>,
+    /// Latest forkchoice head received from the consensus client, shared with the
+    /// `SyncManager` (which owns the writes) and every clone of this handler.
+    /// Snap sync uses it to pick pivots on the chain the CL actually follows, instead of
+    /// guessing a block number that any peer — including one on a different chain with
+    /// the same history (e.g. a shadowfork's parent network) — may answer.
+    pub latest_fcu_head: Arc<tokio::sync::Mutex<H256>>,
 }
 
 pub enum BlockRequestOrder {
@@ -155,6 +161,7 @@ impl PeerHandler {
         Self {
             peer_table,
             initiator,
+            latest_fcu_head: Arc::new(tokio::sync::Mutex::new(H256::zero())),
         }
     }
 
@@ -256,6 +263,7 @@ impl PeerHandler {
         METRICS
             .sync_head_block
             .store(sync_head_number, Ordering::Relaxed);
+        let resolved_sync_head_number = sync_head_number;
         sync_head_number = sync_head_number.min(start + MAX_HEADER_CHUNK);
 
         let sync_head_number_retrieval_elapsed = sync_head_number_retrieval_start
@@ -268,7 +276,22 @@ impl PeerHandler {
             Some(sync_head_number_retrieval_elapsed);
         *METRICS.sync_head_hash.lock().await = sync_head;
 
-        let block_count = sync_head_number + 1 - start;
+        // A start past the sync head means the headers we already stored are not on the
+        // sync head's chain (e.g. a pivot was taken from a peer following another chain
+        // with the same history). Subtracting would wrap around and split ~2^64 blocks
+        // into chunks no peer can serve, spinning forever on empty responses.
+        let Some(block_count) = (sync_head_number + 1)
+            .checked_sub(start)
+            .filter(|count| *count > 0)
+        else {
+            warn!(
+                start,
+                sync_head_number,
+                %sync_head,
+                "Header download start is past the sync head: stored headers are not on the sync head's chain"
+            );
+            return Ok(None);
+        };
         let chunk_count = if block_count < 800_u64 { 1 } else { 800_u64 };
 
         // 2) partition the amount of headers in `K` tasks
@@ -452,6 +475,31 @@ impl PeerHandler {
         }
 
         ret.sort_by(|x, y| x.number.cmp(&y.number));
+
+        // Chunks are requested by number from different peers. A peer following another
+        // chain with the same history (a shadowfork's parent network, a deep reorg) answers
+        // with its own headers past the fork point, and each chunk is still internally
+        // chained. Keep only the prefix that forms a single chain.
+        let dropped = truncate_to_single_chain(&mut ret);
+        if dropped > 0 {
+            warn!(
+                kept = ret.len(),
+                dropped, "Downloaded headers do not form a single chain, dropping the tail"
+            );
+        }
+        // Reaching the sync head's height, the batch must end at the sync head itself.
+        if let Some(last) = ret.last()
+            && last.number == resolved_sync_head_number
+            && last.hash() != sync_head
+        {
+            warn!(
+                number = last.number,
+                got = %last.hash(),
+                %sync_head,
+                "Downloaded headers reach the sync head's height on another chain, discarding them"
+            );
+            return Ok(None);
+        }
         Ok(Some(ret))
     }
 
@@ -965,18 +1013,39 @@ impl PeerHandler {
     pub async fn get_block_header(
         &mut self,
         connection: &mut PeerConnection,
-        _permit: RequestPermit,
+        permit: RequestPermit,
         block_number: u64,
+    ) -> Result<Option<BlockHeader>, PeerHandlerError> {
+        self.get_block_header_at(connection, permit, HashOrNumber::Number(block_number))
+            .await
+    }
+
+    /// Like [`Self::get_block_header`], but asks for the header with the given hash.
+    pub async fn get_block_header_by_hash(
+        &mut self,
+        connection: &mut PeerConnection,
+        permit: RequestPermit,
+        block_hash: H256,
+    ) -> Result<Option<BlockHeader>, PeerHandlerError> {
+        self.get_block_header_at(connection, permit, HashOrNumber::Hash(block_hash))
+            .await
+    }
+
+    async fn get_block_header_at(
+        &mut self,
+        connection: &mut PeerConnection,
+        _permit: RequestPermit,
+        startblock: HashOrNumber,
     ) -> Result<Option<BlockHeader>, PeerHandlerError> {
         let request_id = rand::random();
         let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
             id: request_id,
-            startblock: HashOrNumber::Number(block_number),
+            startblock,
             limit: 1,
             skip: 0,
             reverse: false,
         });
-        debug!("get_block_header: requesting header with number {block_number}");
+        debug!("get_block_header: requesting header {startblock:?}");
         match connection
             .outgoing_request(request, PEER_REPLY_TIMEOUT)
             .await
@@ -1018,6 +1087,20 @@ fn are_block_headers_chained(block_headers: &[BlockHeader], order: &BlockRequest
         BlockRequestOrder::OldToNew => headers[1].parent_hash == headers[0].hash(),
         BlockRequestOrder::NewToOld => headers[0].parent_hash == headers[1].hash(),
     })
+}
+
+/// Truncates headers sorted old to new to their longest prefix that forms a single chain,
+/// returning how many were dropped.
+fn truncate_to_single_chain(block_headers: &mut Vec<BlockHeader>) -> usize {
+    let Some(break_at) = block_headers
+        .windows(2)
+        .position(|pair| pair[1].parent_hash != pair[0].hash())
+    else {
+        return 0;
+    };
+    let dropped = block_headers.len() - break_at - 1;
+    block_headers.truncate(break_at + 1);
+    dropped
 }
 
 fn format_duration(duration: Duration) -> String {
@@ -1078,5 +1161,45 @@ impl PeerHandlerError {
             PeerHandlerError::PeerTableError(ActorError::ActorStopped) => false,
             PeerHandlerError::StorageFull | PeerHandlerError::Snap(_) => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chain(parent: H256, first_number: u64, len: usize, extra_data: u8) -> Vec<BlockHeader> {
+        let mut parent_hash = parent;
+        (0..len)
+            .map(|i| {
+                let header = BlockHeader {
+                    number: first_number + i as u64,
+                    parent_hash,
+                    extra_data: vec![extra_data].into(),
+                    ..Default::default()
+                };
+                parent_hash = header.hash();
+                header
+            })
+            .collect()
+    }
+
+    #[test]
+    fn single_chain_is_kept() {
+        let mut headers = chain(H256::zero(), 10, 5, 0);
+        assert_eq!(truncate_to_single_chain(&mut headers), 0);
+        assert_eq!(headers.len(), 5);
+    }
+
+    #[test]
+    fn foreign_tail_is_dropped() {
+        // Ours: 10..=14. A peer on another chain with the same history served 15..=19,
+        // forked off at 12: its 15 does not link to our 14.
+        let mut headers = chain(H256::zero(), 10, 5, 0);
+        let fork_parent = headers[2].hash();
+        let foreign = chain(fork_parent, 13, 7, 1);
+        headers.extend(foreign.into_iter().skip(2));
+        assert_eq!(truncate_to_single_chain(&mut headers), 5);
+        assert_eq!(headers.last().map(|h| h.number), Some(14));
     }
 }
