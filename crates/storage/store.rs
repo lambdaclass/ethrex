@@ -254,6 +254,8 @@ pub struct StoreConfig {
     /// the effective ceiling on RocksDB's resident memory. Ignored for
     /// in-memory backends.
     pub rocksdb_block_cache_size: usize,
+    /// Byte budget of the bytecode cache. `None` keeps [`CODE_CACHE_MAX_SIZE`].
+    pub code_cache_size: Option<u64>,
     /// Bound on the persist worker's channel: number of staged (acked) live
     /// messages whose flush may still be in flight. Once full, the next send
     /// blocks — that is the backpressure that throttles `newPayload`.
@@ -269,6 +271,7 @@ impl StoreConfig {
     pub fn with_rocksdb_block_cache_size(rocksdb_block_cache_size: usize) -> Self {
         Self {
             rocksdb_block_cache_size,
+            code_cache_size: None,
             persist_channel_capacity: DEFAULT_PERSIST_CHANNEL_CAPACITY,
         }
     }
@@ -2299,6 +2302,20 @@ impl Store {
 
     /// Opens (or creates) a store at `path`, applying the supplied [`StoreConfig`].
     pub fn new_with_config(
+        path: impl AsRef<Path>,
+        engine_type: EngineType,
+        config: StoreConfig,
+    ) -> Result<Self, StoreError> {
+        let code_cache_size = config.code_cache_size.unwrap_or(CODE_CACHE_MAX_SIZE);
+        let store = Self::open_with_config(path, engine_type, config)?;
+        if let Ok(mut cache) = store.account_code_cache.lock() {
+            cache.max_size = code_cache_size;
+        }
+        info!(cache_bytes = code_cache_size, "sized bytecode cache");
+        Ok(store)
+    }
+
+    fn open_with_config(
         path: impl AsRef<Path>,
         engine_type: EngineType,
         // `config` only feeds the RocksDB backend; without that feature it is unused.
@@ -6222,6 +6239,22 @@ mod account_code_tests {
     #[test]
     fn default_cache_uses_the_configured_budget() {
         assert_eq!(CodeCache::default().max_size, CODE_CACHE_MAX_SIZE);
+    }
+
+    /// A store opened with an explicit code cache size SHALL enforce it, and one opened
+    /// without SHALL keep the default budget.
+    #[test]
+    fn store_uses_the_configured_code_cache_budget() {
+        let config = StoreConfig {
+            code_cache_size: Some(300 * 1024 * 1024),
+            ..StoreConfig::with_rocksdb_block_cache_size(MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES)
+        };
+        let store = Store::new_with_config("", EngineType::InMemory, config).unwrap();
+        assert_eq!(store.code_cache_budget_bytes(), 300 * 1024 * 1024);
+
+        let config = StoreConfig::with_rocksdb_block_cache_size(MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES);
+        let store = Store::new_with_config("", EngineType::InMemory, config).unwrap();
+        assert_eq!(store.code_cache_budget_bytes(), CODE_CACHE_MAX_SIZE);
     }
 }
 
