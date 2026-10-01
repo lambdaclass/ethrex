@@ -290,13 +290,17 @@ enum FKVGeneratorControlMessage {
 ///
 /// Bytecode is a small fraction of the working set next to trie nodes and flat
 /// key-values (which the RocksDB block cache serves), but a cold code read costs a
-/// blob-file fetch, so caching contracts pays for itself: 256 MiB holds ~10k max-size
-/// (24 KiB) contracts, or ~100k of typical size.
-const CODE_CACHE_MAX_SIZE: u64 = 256 * 1024 * 1024;
+/// blob-file fetch plus decompression, so caching contracts pays for itself.
+///
+/// 1 GiB holds ~16k max-size contracts (64 KiB since EIP-7954). A smaller budget
+/// loses to any sequence of blocks that cycles through more max-size contracts than
+/// it holds: an LRU scanned cyclically by a set larger than itself evicts every
+/// entry before its reuse.
+const CODE_CACHE_MAX_SIZE: u64 = 1024 * 1024 * 1024;
 
 /// Entry bound for [`Store::code_metadata_cache`], derived from a 16 MiB ceiling at the
 /// ~64 B an `LruCache` entry costs (32 B key + 8 B value + list/table overhead). Sized
-/// against the code cache it shadows: at 256 MiB that holds ~10k max-size or ~100k
+/// against the code cache it shadows: at 1 GiB that holds ~16k max-size or ~130k
 /// typical contracts, so this keeps a length for every code that could be resident and
 /// then some, while bounding what an `EXTCODESIZE` sweep over unique contracts can pin.
 const CODE_METADATA_CACHE_MAX_ENTRIES: usize = (16 * 1024 * 1024) / 64;

@@ -36,7 +36,10 @@ use ethrex_common::{
     },
 };
 #[cfg(feature = "rayon")]
-use ethrex_common::{BigEndianHash, validate_block_access_list_size, validate_header_bal_indices};
+use ethrex_common::{
+    BigEndianHash, constants::AMSTERDAM_MAX_CODE_SIZE, validate_bal_code_sizes,
+    validate_block_access_list_size, validate_header_bal_indices,
+};
 use ethrex_crypto::Crypto;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::StatelessValidator;
@@ -68,7 +71,9 @@ use ethrex_levm::{
     vm::VM,
 };
 #[cfg(feature = "rayon")]
-use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
+#[cfg(feature = "rayon")]
+use rayon::slice::ParallelSlice;
 #[cfg(feature = "rayon")]
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::min;
@@ -77,6 +82,12 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
+
+/// Accounts per task in [`LEVM::warm_block_from_bal`]. Small enough that the first
+/// warmed states and code reach the executor within a few point reads, large enough
+/// to keep the per-chunk batch read worthwhile.
+#[cfg(feature = "rayon")]
+const BAL_WARM_CHUNK_ACCOUNTS: usize = 64;
 
 /// EIP-7928 `block_access_index` of the pre-block system calls.
 /// Only the parallel BAL path reads it, and that path is rayon-gated.
@@ -491,8 +502,18 @@ impl LEVM {
             )));
         }
 
-        // Set BAL index for post-execution phase (requests + withdrawals)
-        // Order must match geth: requests (system calls) BEFORE withdrawals.
+        // Set BAL index for post-execution phase (withdrawals + requests)
+        //
+        // Withdrawals are applied BEFORE the request system calls. EIP-7002 places its
+        // system call "at the end of processing any execution block ... after processing
+        // all transactions and after performing the block body withdrawal requests
+        // validations", and EELS `apply_body` calls `process_withdrawals` then
+        // `process_general_purpose_requests`. The order is observable only when a
+        // withdrawal credits an address whose own system call then spends that balance in
+        // the same block, which no real predeploy does; the EEST case
+        // `bal_withdrawals_and_dequeues_net_balance_at_last_index` constructs exactly that.
+        // geth runs its request system calls first (`PostExecution` precedes `Finalize`),
+        // so this follows the spec rather than geth.
         if is_amsterdam {
             let post_tx_index =
                 u32::try_from(block.body.transactions.len() + 1).unwrap_or(u32::MAX);
@@ -508,6 +529,10 @@ impl LEVM {
             }
         }
 
+        if let Some(withdrawals) = &block.body.withdrawals {
+            Self::process_withdrawals(db, withdrawals)?;
+        }
+
         // TODO: I don't like deciding the behavior based on the VMType here.
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
         // in L2 execution, but its implementation behaves differently based on this.
@@ -515,10 +540,6 @@ impl LEVM {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?,
             VMType::L2(_) => Default::default(),
         };
-
-        if let Some(withdrawals) = &block.body.withdrawals {
-            Self::process_withdrawals(db, withdrawals)?;
-        }
 
         // Extract BAL if recording was enabled
         let bal = db.take_bal();
@@ -590,11 +611,15 @@ impl LEVM {
         {
             // Validate header BAL structural properties before execution.
             // This catches index-out-of-bounds early, before wasting execution time.
-            // Note: size cap validation is deferred until after transaction processing
-            // so that transaction-level errors (e.g. gas allowance exceeded) take
-            // priority, matching the reference implementation's validation order.
+            // Note: the EIP-7928 item-count cap is deferred until after transaction
+            // processing so that transaction-level errors (e.g. gas allowance exceeded)
+            // take priority, matching the reference implementation's validation order.
             validate_header_bal_indices(&bal, block.body.transactions.len())
                 .map_err(|e| EvmError::Custom(e.to_string()))?;
+            // Each transaction that loads an account builds its code from the BAL, so an
+            // oversized code change must be rejected before any of them run.
+            validate_bal_code_sizes(&bal, AMSTERDAM_MAX_CODE_SIZE)
+                .map_err(|e| EvmError::Custom(format!("BAL validation failed: {e}")))?;
 
             // Shadow-record the system phases: their account cache also holds internal
             // loads the recorder never sees, so it can't say what they touched.
@@ -685,18 +710,21 @@ impl LEVM {
             db.enable_bal_recording();
             db.set_bal_index(withdrawal_bal_idx);
 
-            // Order must match geth: requests (system calls) BEFORE withdrawals.
+            // Withdrawals precede the request system calls; see the ordering note on
+            // the sequential path above. The db was seeded at `last_tx_idx` (post-tx,
+            // pre-withdrawal), so applying withdrawals here and then extracting
+            // requests lets the system calls observe the withdrawal credits.
             let post_block_result = (|| -> Result<Vec<Requests>, EvmError> {
+                if let Some(withdrawals) = &block.body.withdrawals {
+                    Self::process_withdrawals(db, withdrawals)?;
+                }
+
                 let requests = match vm_type {
                     VMType::L1 => {
                         extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?
                     }
                     VMType::L2(_) => Default::default(),
                 };
-
-                if let Some(withdrawals) = &block.body.withdrawals {
-                    Self::process_withdrawals(db, withdrawals)?;
-                }
                 Ok(requests)
             })();
             let post_block_bal = db.take_bal().unwrap_or_default();
@@ -985,8 +1013,8 @@ impl LEVM {
             LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
         }
 
-        // Set BAL index for post-execution phase (requests + withdrawals)
-        // Order must match geth: requests (system calls) BEFORE withdrawals.
+        // Set BAL index for post-execution phase (withdrawals + requests); see the
+        // ordering note on the sequential path above.
         if is_amsterdam {
             let post_tx_index =
                 u32::try_from(block.body.transactions.len() + 1).unwrap_or(u32::MAX);
@@ -1000,6 +1028,12 @@ impl LEVM {
             }
         }
 
+        // Withdrawals precede the request system calls; see the ordering note on the
+        // sequential path above.
+        if let Some(withdrawals) = &block.body.withdrawals {
+            Self::process_withdrawals(db, withdrawals)?;
+        }
+
         // TODO: I don't like deciding the behavior based on the VMType here.
         // TODO2: Revise this, apparently extract_all_requests_levm is not called
         // in L2 execution, but its implementation behaves differently based on this.
@@ -1007,10 +1041,6 @@ impl LEVM {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?,
             VMType::L2(_) => Default::default(),
         };
-
-        if let Some(withdrawals) = &block.body.withdrawals {
-            Self::process_withdrawals(db, withdrawals)?;
-        }
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
         // Extract BAL if recording was enabled
@@ -2985,7 +3015,14 @@ impl LEVM {
         let pre_account = |addr: Address| -> Result<(U256, u64, H256), EvmError> {
             let s = db.store.get_account_state(addr).map_err(|e| {
                 EvmError::Custom(format!(
-                    "BAL validation failed for pre-exec: db error reading account {addr:?}: {e}"
+                    // "system_tx" names the pre-execution system-call phase, block
+                    // access index 0. The label is part of the wire contract, not just
+                    // prose: the EEST exception mappers resolve
+                    // BlockException.INVALID_BLOCK_ACCESS_LIST by matching
+                    // "BAL validation failed for (tx N|system_tx|withdrawal)", so a
+                    // phase name outside that set leaves a correct rejection classified
+                    // as some other exception and the conformance test fails.
+                    "BAL validation failed for system_tx: db error reading account {addr:?}: {e}"
                 ))
             })?;
             Ok((s.balance, s.nonce, s.code_hash))
@@ -3004,21 +3041,21 @@ impl LEVM {
                     Some(a) if a.info.balance == expected => {
                         if expected == pre_account(addr)?.0 {
                             return Err(EvmError::Custom(format!(
-                                "BAL validation failed for pre-exec: account {addr:?} has spurious \
+                                "BAL validation failed for system_tx: account {addr:?} has spurious \
                                  no-op balance change at index 0: post==pre=={expected}"
                             )));
                         }
                     }
                     Some(a) => {
                         return Err(EvmError::Custom(format!(
-                            "BAL validation failed for pre-exec: account {addr:?} balance mismatch \
+                            "BAL validation failed for system_tx: account {addr:?} balance mismatch \
                              at index 0: BAL={expected}, actual={}",
                             a.info.balance
                         )));
                     }
                     None => {
                         return Err(EvmError::Custom(format!(
-                            "BAL validation failed for pre-exec: account {addr:?} has balance \
+                            "BAL validation failed for system_tx: account {addr:?} has balance \
                              change at index 0 but was not touched by the pre-exec phase"
                         )));
                     }
@@ -3033,21 +3070,21 @@ impl LEVM {
                     Some(a) if a.info.nonce == expected => {
                         if expected == pre_account(addr)?.1 {
                             return Err(EvmError::Custom(format!(
-                                "BAL validation failed for pre-exec: account {addr:?} has spurious \
+                                "BAL validation failed for system_tx: account {addr:?} has spurious \
                                  no-op nonce change at index 0: post==pre=={expected}"
                             )));
                         }
                     }
                     Some(a) => {
                         return Err(EvmError::Custom(format!(
-                            "BAL validation failed for pre-exec: account {addr:?} nonce mismatch \
+                            "BAL validation failed for system_tx: account {addr:?} nonce mismatch \
                              at index 0: BAL={expected}, actual={}",
                             a.info.nonce
                         )));
                     }
                     None => {
                         return Err(EvmError::Custom(format!(
-                            "BAL validation failed for pre-exec: account {addr:?} has nonce \
+                            "BAL validation failed for system_tx: account {addr:?} has nonce \
                              change at index 0 but was not touched by the pre-exec phase"
                         )));
                     }
@@ -3067,20 +3104,20 @@ impl LEVM {
                     Some(a) if a.info.code_hash == expected_hash => {
                         if expected_hash == pre_account(addr)?.2 {
                             return Err(EvmError::Custom(format!(
-                                "BAL validation failed for pre-exec: account {addr:?} has spurious \
+                                "BAL validation failed for system_tx: account {addr:?} has spurious \
                                  no-op code change at index 0"
                             )));
                         }
                     }
                     Some(_) => {
                         return Err(EvmError::Custom(format!(
-                            "BAL validation failed for pre-exec: account {addr:?} code mismatch \
+                            "BAL validation failed for system_tx: account {addr:?} code mismatch \
                              at index 0"
                         )));
                     }
                     None => {
                         return Err(EvmError::Custom(format!(
-                            "BAL validation failed for pre-exec: account {addr:?} has code \
+                            "BAL validation failed for system_tx: account {addr:?} has code \
                              change at index 0 but was not touched by the pre-exec phase"
                         )));
                     }
@@ -3098,21 +3135,21 @@ impl LEVM {
                 let actual_value = actual.and_then(|a| a.storage.get(&key)).copied();
                 if actual_value != Some(expected_value) {
                     return Err(EvmError::Custom(format!(
-                        "BAL validation failed for pre-exec: account {addr:?} storage slot {} \
+                        "BAL validation failed for system_tx: account {addr:?} storage slot {} \
                          mismatch at index 0: BAL={expected_value}, actual={actual_value:?}",
                         sc.slot
                     )));
                 }
                 let pre_value = db.store.get_storage_value(addr, key).map_err(|e| {
                     EvmError::Custom(format!(
-                        "BAL validation failed for pre-exec: db error reading storage {addr:?} \
+                        "BAL validation failed for system_tx: db error reading storage {addr:?} \
                          slot {}: {e}",
                         sc.slot
                     ))
                 })?;
                 if expected_value == pre_value {
                     return Err(EvmError::Custom(format!(
-                        "BAL validation failed for pre-exec: account {addr:?} has spurious no-op \
+                        "BAL validation failed for system_tx: account {addr:?} has spurious no-op \
                          storage change for slot {} at index 0: post==pre=={expected_value}",
                         sc.slot
                     )));
@@ -3279,38 +3316,36 @@ impl LEVM {
             return Ok(());
         }
 
-        // Phase 1: Prefetch all account states — parallel inner fetch + single write-lock.
-        // This warms the CachingDatabase account cache and the TrieLayerCache with
-        // state trie nodes. Storage slots are prefetched synchronously before the
-        // executor starts (see `bal_storage_slots` at the call site), so this warmer
-        // only needs to cover account states and contract code, which overlap exec.
-        let account_addresses: Vec<Address> = accounts.iter().map(|ac| ac.address).collect();
-        store
-            .prefetch_accounts(&account_addresses)
-            .map_err(|e| EvmError::Custom(format!("prefetch_accounts: {e}")))?;
-
-        if cancelled.load(Ordering::Relaxed) {
-            return Ok(());
-        }
-
-        // Phase 2: Code prefetch — collect code hashes from Phase 1 account states
-        // (already cached after Phase 1 prefetch), then batch-fetch codes in parallel.
-        // Uses par_iter for collection since blocks can have thousands of accounts.
-        let code_hashes: Vec<ethrex_common::H256> = accounts
-            .par_iter()
-            .filter_map(|ac| {
+        // Warm the accounts in chunks, in parallel, each chunk's states and then its
+        // code, so that whatever is warmed first is usable by the executor right away.
+        // Fetching every state as one batch before any code published nothing until
+        // the whole batch was read: on a block whose transactions walk thousands of
+        // distinct contracts, the executor cold-loaded each one itself while the
+        // warmer read the same data in the background, and both finished together.
+        // Storage slots are prefetched synchronously before the executor starts (see
+        // `bal_storage_slots` at the call site), so only states and code are left here.
+        accounts
+            .par_chunks(BAL_WARM_CHUNK_ACCOUNTS)
+            .try_for_each(|chunk| -> Result<(), EvmError> {
+                if cancelled.load(Ordering::Relaxed) {
+                    return Ok(());
+                }
+                let addresses: Vec<Address> = chunk.iter().map(|ac| ac.address).collect();
                 store
-                    .get_account_state(ac.address)
-                    .ok()
-                    .filter(|s| s.code_hash != *EMPTY_KECCAK_HASH)
-                    .map(|s| s.code_hash)
+                    .prefetch_accounts(&addresses)
+                    .map_err(|e| EvmError::Custom(format!("prefetch_accounts: {e}")))?;
+                for address in addresses {
+                    if cancelled.load(Ordering::Relaxed) {
+                        return Ok(());
+                    }
+                    if let Ok(state) = store.get_account_state(address)
+                        && state.code_hash != *EMPTY_KECCAK_HASH
+                    {
+                        let _ = store.get_account_code(state.code_hash);
+                    }
+                }
+                Ok(())
             })
-            .collect();
-        code_hashes.par_iter().for_each(|&h| {
-            let _ = store.get_account_code(h);
-        });
-
-        Ok(())
     }
 
     fn send_state_transitions_tx(
