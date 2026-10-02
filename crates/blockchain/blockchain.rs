@@ -162,7 +162,8 @@ const STATE_SHARD_PREFETCH_THRESHOLD: usize = 4;
 const STREAM_STORAGE_PREFETCH_THRESHOLD: usize = 4;
 // Cap on the per-worker, per-trie slot buffer before an opportunistic mid-routing
 // flush (one sorted `prefetch_sorted` + the inserts). Bounds transient memory for
-// very heavy single-account blocks; smaller buffers just flush once at RoutingDone.
+// very heavy single-account blocks; smaller buffers flush when the worker goes
+// idle, or at RoutingDone.
 const STREAM_STORAGE_FLUSH_BATCH: usize = 1024;
 /// Default mempool occupancy percentage (0-100) at which gapped-nonce
 /// transaction admission is denied. Set to 100 to disable the check.
@@ -4568,7 +4569,8 @@ fn handle_subtrie(
     let mut storage_tries: FxHashMap<H256, Trie> = Default::default();
     let mut pre_collected_storage: FxHashMap<H256, Vec<TrieNode>> = Default::default();
     // Per storage trie, slots buffered until they can be flushed as a prefetched
-    // batch (see `flush_storage_buffer`). Value is (storage_root, pending slots).
+    // batch (see `flush_storage_buffer`): at the next idle moment while routing is
+    // still going, or at `RoutingDone`. Value is (storage_root, pending slots).
     // Cleared on delete; fully drained before storage collection begins.
     let mut storage_buffer: FxHashMap<H256, (H256, Vec<(H256, U256)>)> = Default::default();
 
@@ -4636,6 +4638,26 @@ fn handle_subtrie(
                         return Err(StoreError::Custom("shard worker shutdown".into()));
                     }
                     if dirty {
+                        // Apply the storage slots buffered so far while execution is
+                        // still running. Otherwise every buffered slot waits for
+                        // `RoutingDone`, so all of this shard's storage-trie inserts,
+                        // with their batched prefetch, land after the last transaction
+                        // on the path to the state root. Slots that arrive later are
+                        // buffered again and applied at the next idle moment or at
+                        // `RoutingDone`, in arrival order, so the last write still
+                        // wins. The pre-collect below then hashes them early too.
+                        if !collecting_storages {
+                            for (prefix, (root, slots)) in storage_buffer.drain() {
+                                flush_storage_buffer(
+                                    &mut storage_tries,
+                                    &storage,
+                                    parent_state_root,
+                                    prefix,
+                                    root,
+                                    slots,
+                                )?;
+                            }
+                        }
                         // Pre-collect state trie — safe during storage
                         // collection too, since StorageShard resolution only
                         // dirties specific paths that get re-committed later.
