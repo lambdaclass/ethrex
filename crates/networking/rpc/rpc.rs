@@ -7,7 +7,8 @@ use crate::debug::set_head::SetHeadRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request, BlobsV4Request};
 use crate::engine::client_version::GetClientVersionV1Request;
 use crate::engine::payload::{
-    GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request, NewPayloadWithWitnessV5Request,
+    GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request, NewPayloadWithWitnessV4Request,
+    NewPayloadWithWitnessV5Request,
 };
 use crate::engine::{
     ExchangeCapabilitiesRequest,
@@ -73,9 +74,9 @@ use axum_extra::{
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
-use ethrex_common::types::Block;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
+use ethrex_common::types::{Block, BlockHeader};
 use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
@@ -196,6 +197,8 @@ type BlockWorkerMessage = (
     Block,
     Option<BlockAccessList>,
     bool,
+    // The block's parent header when the caller already has it.
+    Option<BlockHeader>,
 );
 
 /// This struct contains all the dependencies that RPC handlers need to process requests,
@@ -480,23 +483,24 @@ pub fn start_block_executor(
     let executor = std::thread::Builder::new()
         .name("block_executor".to_string())
         .spawn(move || {
-            while let Some((notify, block, bal, make_witness)) = block_receiver.blocking_recv() {
+            while let Some((notify, block, bal, make_witness, parent_header)) =
+                block_receiver.blocking_recv()
+            {
                 // Kill any in-flight warming before touching the executor's
                 // resources.
                 if let Some(handle) = &prewarmer {
                     handle.cancel_current();
                 }
                 let imported_header = prewarmer.as_ref().map(|_| block.header.clone());
-                let result = (|| {
-                    let bal = bal.map(Arc::new);
-                    if make_witness {
-                        let witness = blockchain.add_block_pipeline_with_witness(block, bal)?;
-                        Ok(Some(witness))
-                    } else {
-                        blockchain.add_block_pipeline(block, bal)?;
-                        Ok(None)
-                    }
-                })();
+                // Every block on this channel was assembled from an engine payload
+                // (`engine::payload::add_block` is the only sender), which is what
+                // `add_block_pipeline_from_payload` requires.
+                let result = blockchain.add_block_pipeline_from_payload(
+                    block,
+                    bal.map(Arc::new),
+                    parent_header,
+                    make_witness,
+                );
                 // One pass per cleanly imported block, only when synced and
                 // idle (no queued blocks): warm the child of the new head.
                 if let (Some(handle), Some(header), true) =
@@ -1523,7 +1527,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
 ///
 /// Handles:
 /// - Fork choice: `engine_forkchoiceUpdatedV1/V2/V3`
-/// - Payload submission: `engine_newPayloadV1/V2/V3/V4/V5`, `engine_newPayloadWithWitnessV5`
+/// - Payload submission: `engine_newPayloadV1/V2/V3/V4/V5`, `engine_newPayloadWithWitnessV4/V5`
 /// - Payload retrieval: `engine_getPayloadV1/V2/V3/V4/V5/V6`
 /// - Payload bodies: `engine_getPayloadBodiesByHashV1`, `engine_getPayloadBodiesByRangeV1`
 /// - Blob retrieval: `engine_getBlobsV1/V2/V3/V4`
@@ -1547,6 +1551,9 @@ pub async fn map_engine_requests(
         // poll overflows the 2 MB tokio worker stack in unoptimized debug builds.
         "engine_newPayloadWithWitnessV5" => {
             Box::pin(NewPayloadWithWitnessV5Request::call(req, context)).await
+        }
+        "engine_newPayloadWithWitnessV4" => {
+            Box::pin(NewPayloadWithWitnessV4Request::call(req, context)).await
         }
         "engine_newPayloadV5" => Box::pin(NewPayloadV5Request::call(req, context)).await,
         "engine_newPayloadV4" => Box::pin(NewPayloadV4Request::call(req, context)).await,

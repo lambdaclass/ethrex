@@ -129,6 +129,8 @@ impl SyncManager {
 
         let diagnostics = Arc::new(tokio::sync::RwLock::new(SyncDiagnostics::default()));
         let blockchain_for_manager = blockchain.clone();
+        // Shared with every clone of the peer handler so snap sync can pivot onto it.
+        let last_fcu_head = peer_handler.latest_fcu_head.clone();
         let syncer = Arc::new(Mutex::new(Syncer::new(
             peer_handler,
             snap_enabled.clone(),
@@ -159,7 +161,7 @@ impl SyncManager {
             snap_enabled,
             blockchain: blockchain_for_manager,
             syncer,
-            last_fcu_head: Arc::new(Mutex::new(H256::zero())),
+            last_fcu_head,
             store: store.clone(),
             diagnostics,
         };
