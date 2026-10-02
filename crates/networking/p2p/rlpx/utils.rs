@@ -166,7 +166,8 @@ pub fn snappy_decompress_prefix(data: &[u8], len: usize) -> Result<Vec<u8>, RLPD
                 let literal = data
                     .get(pos..pos + run)
                     .ok_or_else(|| malformed("truncated literal"))?;
-                out.extend_from_slice(literal);
+                // A literal can run for a whole 64 KiB block; take only what is wanted.
+                out.extend_from_slice(&literal[..run.min(want - out.len())]);
                 pos += run;
                 continue;
             }
@@ -196,11 +197,10 @@ pub fn snappy_decompress_prefix(data: &[u8], len: usize) -> Result<Vec<u8>, RLPD
             return Err(malformed("copy offset outside the output"));
         }
         // Copies may overlap their own output, so go byte by byte.
-        for _ in 0..run {
+        for _ in 0..run.min(want - out.len()) {
             out.push(out[out.len() - offset]);
         }
     }
-    out.truncate(want);
     Ok(out)
 }
 
