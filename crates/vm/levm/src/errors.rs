@@ -275,7 +275,7 @@ pub struct ExecutionReport {
     pub payer_address: Option<Address>,
     /// For frame transactions: per-frame results (status, gas_used, logs).
     /// `status` is a `FRAME_RECEIPT_STATUS_*` code (0 = failure, 1 = success,
-    /// 3 = skipped due to failed atomic batch, per EIP-8141 receipt encoding).
+    /// 2 = skipped due to failed atomic batch, per EIP-8141 receipt encoding).
     pub frame_results: Option<Vec<(u8, u64, Vec<Log>)>>,
 }
 
