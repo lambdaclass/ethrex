@@ -2699,6 +2699,22 @@ impl<'a> VM<'a> {
                 .checked_add(frame_gas_used)
                 .ok_or(VMError::Internal(InternalError::Overflow))?;
 
+            // Later validation frames may inspect earlier statuses with FRAMEPARAM.
+            // Keep results in frame order, including interleaved expiry frames,
+            // just as full transaction execution does.
+            let status = if frame_success {
+                ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS
+            } else {
+                ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE
+            };
+            self.frame_tx_context
+                .as_mut()
+                .ok_or(VMError::Internal(InternalError::Custom(
+                    "missing frame tx context".to_string(),
+                )))?
+                .frame_results
+                .push((status, frame_gas_used, Vec::new()));
+
             if !frame_success {
                 any_revert = true;
             }
