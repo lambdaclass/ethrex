@@ -67,6 +67,7 @@ pub mod discovery;
 pub mod discv4;
 pub mod discv5;
 pub(crate) mod metrics;
+pub mod netrestrict;
 pub mod network;
 pub mod peer_filter;
 pub mod peer_handler;
@@ -83,5 +84,6 @@ pub mod utils;
 pub mod test_utils;
 
 pub use discovery::DiscoveryConfig;
+pub use netrestrict::NetRestrict;
 pub use network::periodically_show_peer_stats;
 pub use network::start_network;

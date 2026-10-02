@@ -74,16 +74,20 @@ impl RLPxInitiator {
         _msg: rlpx_initiator_protocol::LookForPeer,
         ctx: &Context<Self>,
     ) {
-        let _ = self
+        let dialed = self
             .do_look_for_peer()
             .await
-            .inspect_err(|e| error!(err=?e, "Error looking for peers"));
+            .inspect_err(|e| error!(err=?e, "Error looking for peers"))
+            .unwrap_or(false);
 
-        send_after(
-            self.get_lookup_interval().await,
-            ctx.clone(),
-            rlpx_initiator_protocol::LookForPeer,
-        );
+        // With nothing to dial (target reached, or every candidate connected or
+        // backing off) there is no point polling the table ten times a second.
+        let interval = if dialed {
+            self.get_lookup_interval().await
+        } else {
+            Duration::from_millis(LOOKUP_INTERVAL_MS as u64)
+        };
+        send_after(interval, ctx.clone(), rlpx_initiator_protocol::LookForPeer);
     }
 
     #[send_handler]
@@ -105,16 +109,18 @@ impl RLPxInitiator {
         ctx.stop();
     }
 
-    async fn do_look_for_peer(&mut self) -> Result<(), RLPxInitiatorError> {
+    /// Dials one candidate if the table has one to offer. Returns whether it did.
+    async fn do_look_for_peer(&mut self) -> Result<bool, RLPxInitiatorError> {
         if !self.context.table.target_peers_reached().await? {
             if let Some(contact) = self.context.table.get_contact_to_initiate().await? {
                 PeerConnection::spawn_as_initiator(self.context.clone(), &contact.node);
                 METRICS.record_new_rlpx_conn_attempt().await;
-            };
+                return Ok(true);
+            }
         } else {
             debug!("Target peer connections reached, no need to initiate new connections.");
         }
-        Ok(())
+        Ok(false)
     }
 
     // We use the same lookup intervals as Discovery to try to get both process to check at the same rate
