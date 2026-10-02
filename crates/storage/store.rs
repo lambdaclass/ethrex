@@ -308,7 +308,7 @@ const CODE_CACHE_MAX_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 /// Entry bound for [`Store::code_metadata_cache`], derived from a 16 MiB ceiling at the
 /// ~64 B an `LruCache` entry costs (32 B key + 8 B value + list/table overhead). The
 /// ~262k lengths it keeps cover every code the 2 GiB code cache can hold while cached
-/// contracts average at least 8 KiB (~10.7 KiB on mainnet). A cache of smaller ones,
+/// contracts average at least 8 KiB (~10.5 KiB on mainnet). A cache of smaller ones,
 /// such as EIP-7702 delegations, holds more codes than that, and `EXTCODESIZE` on
 /// those falls through to `ACCOUNT_CODE_METADATA`. The bound caps what an
 /// `EXTCODESIZE` sweep over unique contracts can pin.
