@@ -391,7 +391,10 @@ impl Encoder<rlpx::Message> for RLPxCodec {
 mod tests {
     use super::*;
     use crate::rlpx::{
-        eth::block_access_lists::{BlockAccessLists, GetBlockAccessLists},
+        eth::{
+            block_access_lists::{BlockAccessLists, GetBlockAccessLists},
+            blocks::BlockHeaders,
+        },
         message::{Message, RLPxMessage as _},
         snap::{Snap2BlockAccessLists, Snap2GetBlockAccessLists},
         utils::snappy_compress,
@@ -534,6 +537,40 @@ mod tests {
             Message::routed_response_id(code, &data, EthCapVersion::V71, None).unwrap(),
             Some(7)
         );
+    }
+
+    /// Only a response the negotiated capabilities can carry SHALL be read as a routed
+    /// response: block access lists from eth/71, and snap/2 access lists only over snap/2.
+    #[test]
+    fn routed_responses_follow_the_negotiated_capabilities() {
+        let mut encoded = Vec::new();
+        RlpEncoder::new(&mut encoded)
+            .encode_field(&7u64)
+            .encode_field(&Vec::<u8>::new())
+            .finish();
+        let data = snappy_compress(encoded).unwrap();
+        let id = |code: u8, eth: EthCapVersion, snap: Option<SnapCapVersion>| {
+            Message::routed_response_id(code, &data, eth, snap).unwrap()
+        };
+
+        let headers = |eth: EthCapVersion| eth.eth_capability_offset() + BlockHeaders::CODE;
+        assert_eq!(
+            id(headers(EthCapVersion::V68), EthCapVersion::V68, None),
+            Some(7)
+        );
+
+        let bals = |eth: EthCapVersion| eth.eth_capability_offset() + BlockAccessLists::CODE;
+        assert_eq!(
+            id(bals(EthCapVersion::V71), EthCapVersion::V71, None),
+            Some(7)
+        );
+        assert_eq!(id(bals(EthCapVersion::V70), EthCapVersion::V70, None), None);
+
+        let snap_bals = EthCapVersion::V71.snap_capability_offset() + Snap2BlockAccessLists::CODE;
+        let v71 = EthCapVersion::V71;
+        assert_eq!(id(snap_bals, v71, Some(SnapCapVersion::V2)), Some(7));
+        assert_eq!(id(snap_bals, v71, Some(SnapCapVersion::V1)), None);
+        assert_eq!(id(snap_bals, v71, None), None);
     }
 
     #[test]

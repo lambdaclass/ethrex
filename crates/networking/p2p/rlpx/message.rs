@@ -25,10 +25,10 @@ use super::l2::messages::{BatchSealed, L2Message, NewBlock};
 #[cfg(feature = "l2")]
 use super::l2::{self, messages};
 use super::p2p::{DisconnectMessage, HelloMessage, PingMessage, PongMessage};
-use super::utils::snappy_decompress;
+use super::utils::snappy_decompress_prefix;
 
+use ethrex_rlp::decode::RLPDecode as _;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_rlp::structs::Decoder;
 
 const ETH_CAPABILITY_OFFSET: u8 = 0x10;
 const SNAP_CAPABILITY_OFFSET_ETH_68: u8 = 0x21;
@@ -526,8 +526,19 @@ impl Message {
         if !is_routed_response {
             return Ok(None);
         }
-        let decompressed = snappy_decompress(data)?;
-        let (id, _): (u64, _) = Decoder::new(&decompressed)?.decode_field("request-id")?;
+        // The id is the list's first field, so the list header (at most 9 bytes) and the id
+        // (at most 9) are all that has to be decompressed to read it.
+        let prefix = snappy_decompress_prefix(data, 18)?;
+        let header_len = match prefix.first() {
+            Some(0xc0..=0xf7) => 1,
+            Some(&first) if first >= 0xf8 => 1 + usize::from(first - 0xf7),
+            _ => return Err(RLPDecodeError::MalformedData),
+        };
+        let (id, _) = u64::decode_unfinished(
+            prefix
+                .get(header_len..)
+                .ok_or(RLPDecodeError::MalformedData)?,
+        )?;
         Ok(Some(id))
     }
 

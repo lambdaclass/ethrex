@@ -111,6 +111,99 @@ pub fn snappy_decompress_bounded(
         .map_err(|e| RLPDecodeError::InvalidCompression(e.to_string()))
 }
 
+/// The first `len` bytes a raw snappy block decompresses to (all of it, if shorter), without
+/// decompressing the rest. Lets a caller read a message's leading fields, such as a response's
+/// request id, before deciding whether the whole message is worth decompressing.
+///
+/// Raw snappy is a varint of the decompressed length followed by elements, each a literal run
+/// or a copy of earlier output. Elements are decoded in order until `len` bytes are out.
+pub fn snappy_decompress_prefix(data: &[u8], len: usize) -> Result<Vec<u8>, RLPDecodeError> {
+    fn malformed(what: &str) -> RLPDecodeError {
+        RLPDecodeError::InvalidCompression(format!("snappy block: {what}"))
+    }
+    fn le(bytes: &[u8]) -> usize {
+        bytes
+            .iter()
+            .rev()
+            .fold(0, |value, byte| (value << 8) | usize::from(*byte))
+    }
+
+    // Decompressed length: a varint of at most five bytes.
+    let mut total: usize = 0;
+    let mut pos = 0;
+    loop {
+        let byte = *data.get(pos).ok_or_else(|| malformed("truncated length"))?;
+        total |= usize::from(byte & 0x7f) << (7 * pos);
+        pos += 1;
+        if byte & 0x80 == 0 {
+            break;
+        }
+        if pos == 5 {
+            return Err(malformed("length varint too long"));
+        }
+    }
+    if total > MAX_SNAPPY_DECOMPRESSED_LEN {
+        return Err(malformed("decompressed length exceeds the maximum"));
+    }
+
+    let want = len.min(total);
+    let mut out = Vec::with_capacity(want);
+    while out.len() < want {
+        let tag = *data
+            .get(pos)
+            .ok_or_else(|| malformed("truncated element"))?;
+        pos += 1;
+        // Bytes the element holds after the tag, and its length and copy offset.
+        let (extra, run, offset) = match tag & 3 {
+            0 => {
+                let short = usize::from(tag >> 2);
+                let len_bytes = short.saturating_sub(59);
+                let len_field = data
+                    .get(pos..pos + len_bytes)
+                    .ok_or_else(|| malformed("truncated literal length"))?;
+                let run = if len_bytes == 0 { short } else { le(len_field) } + 1;
+                pos += len_bytes;
+                let literal = data
+                    .get(pos..pos + run)
+                    .ok_or_else(|| malformed("truncated literal"))?;
+                out.extend_from_slice(literal);
+                pos += run;
+                continue;
+            }
+            1 => {
+                let low = *data.get(pos).ok_or_else(|| malformed("truncated copy"))?;
+                (
+                    1,
+                    4 + usize::from((tag >> 2) & 7),
+                    (usize::from(tag >> 5) << 8) | usize::from(low),
+                )
+            }
+            2 => {
+                let field = data
+                    .get(pos..pos + 2)
+                    .ok_or_else(|| malformed("truncated copy"))?;
+                (2, 1 + usize::from(tag >> 2), le(field))
+            }
+            _ => {
+                let field = data
+                    .get(pos..pos + 4)
+                    .ok_or_else(|| malformed("truncated copy"))?;
+                (4, 1 + usize::from(tag >> 2), le(field))
+            }
+        };
+        pos += extra;
+        if offset == 0 || offset > out.len() {
+            return Err(malformed("copy offset outside the output"));
+        }
+        // Copies may overlap their own output, so go byte by byte.
+        for _ in 0..run {
+            out.push(out[out.len() - offset]);
+        }
+    }
+    out.truncate(want);
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,5 +272,50 @@ mod tests {
         let compressed = snappy_compress(data.clone()).expect("compress");
         let out = snappy_decompress_bounded(&compressed, 4 * 1024 * 1024).expect("decompress");
         assert_eq!(out, data);
+    }
+
+    /// The prefix SHALL be exactly the start of the full decompression, for literals, short
+    /// and overlapping copies, and lengths past the end.
+    #[test]
+    fn snappy_prefix_matches_full_decompression() {
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let mut inputs: Vec<Vec<u8>> = vec![Vec::new(), vec![7], vec![0; 100_000]];
+        for size in [1usize, 17, 64, 1000, 70_000] {
+            // Random bytes (literals), a short repeating pattern (overlapping copies) and a
+            // mix of both (copies with long offsets).
+            inputs.push((0..size).map(|_| next() as u8).collect());
+            inputs.push((0..size).map(|i| (i % 5) as u8).collect());
+            inputs.push(
+                (0..size)
+                    .map(|i| {
+                        if i % 97 < 60 {
+                            (i % 7) as u8
+                        } else {
+                            next() as u8
+                        }
+                    })
+                    .collect(),
+            );
+        }
+        for input in inputs {
+            let compressed = snappy_compress(input.clone()).unwrap();
+            let full = snappy_decompress(&compressed).unwrap();
+            assert_eq!(full, input);
+            for len in [0, 1, 2, 18, 63, 64, 65, 4096, input.len(), input.len() + 10] {
+                let expected = &full[..len.min(full.len())];
+                assert_eq!(
+                    snappy_decompress_prefix(&compressed, len).unwrap(),
+                    expected,
+                    "prefix of {len} bytes of a {}-byte input",
+                    input.len()
+                );
+            }
+        }
     }
 }
