@@ -301,8 +301,8 @@ enum FKVGeneratorControlMessage {
 /// at ~72 KiB, its padded bytecode plus the 8 KiB jumpdest bitmap. Entries never
 /// expire and every read that misses inserts (block execution, snap `GetByteCodes`
 /// serving, `eth_getCode`, `eth_call`), so a long-running node fills the budget.
-/// [`Code::size`] leaves out the map's per-entry overhead and the allocation headers,
-/// so resident memory runs above the budget, by the most for the smallest contracts.
+/// Each entry is also charged [`CODE_CACHE_ENTRY_OVERHEAD`] for its map slot and
+/// buffer headers, so small contracts cannot hold the cache far over its budget.
 const CODE_CACHE_MAX_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 
 /// Entry bound for [`Store::code_metadata_cache`], derived from a 16 MiB ceiling at the
@@ -322,6 +322,13 @@ const BAD_BLOCKS_KEY: &[u8] = b"bad_blocks";
 
 /// Maximum number of bad blocks retained for `debug_getBadBlocks`.
 const MAX_BAD_BLOCKS: usize = 16;
+
+/// Heap bytes a [`CodeCache`] entry costs beyond [`Code::size`]: its slot in the map's
+/// entry vector and index, and the headers of the two shared buffers. Measured at 126 to
+/// 133 bytes requested per entry, before the allocator rounds them up to its size classes.
+/// Without it, a cache full of small contracts held nearly twice its budget (1.87x at 32
+/// bytes).
+const CODE_CACHE_ENTRY_OVERHEAD: u64 = 160;
 
 /// Bytecode cache that evicts a uniformly random entry when over budget.
 ///
@@ -363,6 +370,11 @@ impl Default for CodeCache {
 }
 
 impl CodeCache {
+    /// What one cached `code` costs against `max_size`.
+    fn entry_size(code: &Code) -> u64 {
+        (code.size() as u64).saturating_add(CODE_CACHE_ENTRY_OVERHEAD)
+    }
+
     fn get(&self, code_hash: &H256) -> Result<Option<Code>, StoreError> {
         Ok(self.entries.get(code_hash).cloned())
     }
@@ -379,7 +391,7 @@ impl CodeCache {
         }
         // An entry larger than the whole budget would hold the cache over it, so it is
         // not cached; the caller already has its copy.
-        let size = code.size() as u64;
+        let size = Self::entry_size(code);
         if size > self.max_size {
             return Ok(());
         }
@@ -389,7 +401,7 @@ impl CodeCache {
         while self.cache_size + size > self.max_size && !self.entries.is_empty() {
             let victim = (self.next_random() % self.entries.len() as u64) as usize;
             if let Some((_, evicted)) = self.entries.swap_remove_index(victim) {
-                self.cache_size -= evicted.size() as u64;
+                self.cache_size -= Self::entry_size(&evicted);
             }
         }
         self.cache_size += size;
@@ -1288,6 +1300,10 @@ impl Store {
     ///
     /// Results are returned in the order of `code_hashes`. Duplicate hashes are read
     /// once. `None` means the hash is absent from the database.
+    ///
+    /// Every requested code is held at once until the result is dropped, and nothing here
+    /// bounds that by the code cache budget: a caller reading many contracts it does not
+    /// control must chunk `code_hashes` and charge each chunk against its own budget.
     pub fn get_account_codes_batch(
         &self,
         code_hashes: &[H256],
@@ -6201,7 +6217,7 @@ mod account_code_tests {
     /// LRU serves none of them, because it evicts every entry just before its reuse.
     #[test]
     fn a_cyclic_scan_larger_than_the_budget_still_hits() {
-        let entry_size = numbered_code(0, 4096).size() as u64;
+        let entry_size = CodeCache::entry_size(&numbered_code(0, 4096));
         let mut cache = CodeCache {
             max_size: 400 * entry_size,
             rng: TEST_RNG_SEED,
@@ -6234,7 +6250,7 @@ mod account_code_tests {
     /// The entry being inserted SHALL stay cached, since its caller reads it next.
     #[test]
     fn eviction_keeps_the_entry_being_inserted() {
-        let entry_size = numbered_code(0, 4096).size() as u64;
+        let entry_size = CodeCache::entry_size(&numbered_code(0, 4096));
         let mut cache = CodeCache {
             max_size: 2 * entry_size,
             rng: TEST_RNG_SEED,
@@ -6254,19 +6270,19 @@ mod account_code_tests {
     fn an_entry_larger_than_the_budget_is_not_cached() {
         let small = numbered_code(0, 1024);
         let mut cache = CodeCache {
-            max_size: 4 * small.size() as u64,
+            max_size: 4 * CodeCache::entry_size(&small),
             rng: TEST_RNG_SEED,
             ..Default::default()
         };
         cache.insert(&small).unwrap();
 
         let large = numbered_code(1, 8192);
-        assert!(large.size() as u64 > cache.max_size);
+        assert!(CodeCache::entry_size(&large) > cache.max_size);
         cache.insert(&large).unwrap();
 
         assert!(!cache.contains(&large.hash));
         assert!(cache.contains(&small.hash));
-        assert_eq!(cache.cache_size, small.size() as u64);
+        assert_eq!(cache.cache_size, CodeCache::entry_size(&small));
     }
 
     /// Formatting the cache SHALL NOT print the cached code: `Store` derives `Debug`, and
@@ -6277,6 +6293,28 @@ mod account_code_tests {
         cache.insert(&numbered_code(7, 4096)).unwrap();
         let printed = format!("{cache:?}");
         assert!(printed.len() < 200, "{printed}");
+    }
+
+    /// Small contracts SHALL be charged what an entry costs besides their bytes, so a cache
+    /// full of them stays within its budget instead of holding nearly twice it.
+    #[test]
+    fn small_contracts_are_charged_their_entry_overhead() {
+        let mut cache = CodeCache {
+            max_size: 160 * 1024,
+            rng: TEST_RNG_SEED,
+            ..Default::default()
+        };
+        let mut charged = 0;
+        for i in 0..4096u64 {
+            let mut bytecode = vec![JUMPDEST; 32];
+            bytecode[..8].copy_from_slice(&i.to_be_bytes());
+            let code = Code::from_bytecode_unchecked(bytecode.into(), H256::from_low_u64_be(i));
+            charged = code.size() as u64 + CODE_CACHE_ENTRY_OVERHEAD;
+            cache.insert(&code).unwrap();
+        }
+
+        assert!(cache.cache_size <= cache.max_size);
+        assert_eq!(cache.entries.len() as u64, cache.max_size / charged);
     }
 
     /// The default budget SHALL be the one the cache actually enforces, so a change to
