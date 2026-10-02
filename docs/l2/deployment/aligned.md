@@ -53,7 +53,7 @@ ethrex l2 deploy \
 
 > [!NOTE]
 > This command requires the `COMPILE_CONTRACTS` env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
-> In this step we are initializing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers; you can find the address for the aligned aggregator service [here](https://docs.alignedlayer.com/guides/7_contract_addresses).
+> In this step we are initializing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers; you can find the address for the aligned aggregator service [here](https://docs.alignedlayer.com/guides/8_contract_addresses).
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
 > Accounts for the deployer, on-chain proposer owner, bridge owner, and proof sender must have funds. Add `--bridge-owner-pk <PRIVATE_KEY>` if you want the deployer to immediately call `acceptOwnership` on behalf of that owner; otherwise, they can accept later.
 
