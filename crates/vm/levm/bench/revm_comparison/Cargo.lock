@@ -1267,6 +1267,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "fastbloom",
+ "indexmap 2.14.0",
  "lru",
  "rayon",
  "rustc-hash",

@@ -41,9 +41,10 @@ use ethrex_rlp::{
 };
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
 use ethrex_trie::{Node, NodeRLP};
+use indexmap::IndexMap;
 use lru::LruCache;
 use rayon::prelude::*;
-use rustc_hash::{FxBuildHasher, FxHashMap};
+use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, HashSet, hash_map::Entry},
@@ -297,17 +298,20 @@ enum FKVGeneratorControlMessage {
 /// blob-file fetch plus decompression, so caching contracts pays for itself.
 ///
 /// 2 GiB holds ~29k max-size contracts: a 64 KiB contract (EIP-7954) is accounted
-/// at ~72 KiB, its padded bytecode plus the 8 KiB jumpdest bitmap. The budget is only
-/// reached by blocks that keep reusing tens of thousands of distinct large contracts;
-/// every entry is code a block actually loaded, so a node that never sees such a
-/// working set never holds that much.
+/// at ~72 KiB, its padded bytecode plus the 8 KiB jumpdest bitmap. Entries never
+/// expire and every read that misses inserts (block execution, snap `GetByteCodes`
+/// serving, `eth_getCode`, `eth_call`), so a long-running node fills the budget.
+/// [`Code::size`] leaves out the map's per-entry overhead and the allocation headers,
+/// so resident memory runs above the budget, by the most for the smallest contracts.
 const CODE_CACHE_MAX_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 
 /// Entry bound for [`Store::code_metadata_cache`], derived from a 16 MiB ceiling at the
-/// ~64 B an `LruCache` entry costs (32 B key + 8 B value + list/table overhead). Sized
-/// against the code cache it shadows: at 2 GiB that holds ~29k max-size or ~260k
-/// typical contracts, so this keeps a length for every code that could be resident,
-/// while bounding what an `EXTCODESIZE` sweep over unique contracts can pin.
+/// ~64 B an `LruCache` entry costs (32 B key + 8 B value + list/table overhead). The
+/// ~262k lengths it keeps cover every code the 2 GiB code cache can hold while cached
+/// contracts average at least 8 KiB (~10.7 KiB on mainnet). A cache of smaller ones,
+/// such as EIP-7702 delegations, holds more codes than that, and `EXTCODESIZE` on
+/// those falls through to `ACCOUNT_CODE_METADATA`. The bound caps what an
+/// `EXTCODESIZE` sweep over unique contracts can pin.
 const CODE_METADATA_CACHE_MAX_ENTRIES: usize = (16 * 1024 * 1024) / 64;
 
 /// Key used to persist the `flushed_upto` block number in `MISC_VALUES`.
@@ -324,25 +328,32 @@ const MAX_BAD_BLOCKS: usize = 16;
 /// Not LRU on purpose: blocks can walk the same set of contracts over and over, and
 /// once that set outgrows the budget an LRU evicts every entry just before its next
 /// use, so the hit rate collapses to zero. A random victim has no such pathology: with
-/// a set 1.25x the budget about two thirds of the reads still hit, and the hit rate
-/// shrinks gradually as the set grows instead of falling off a cliff. When everything
-/// fits, which is the normal case, nothing is evicted and the policy does not matter.
-#[derive(Debug)]
+/// a set 1.25x the budget about 62% of the reads still hit, and the hit rate shrinks
+/// gradually as the set grows instead of falling off a cliff.
 struct CodeCache {
-    entries: Vec<(H256, Code)>,
-    /// Position of each cached hash in `entries`.
-    index: FxHashMap<H256, usize>,
+    entries: IndexMap<H256, Code, FxBuildHasher>,
     cache_size: u64,
     max_size: u64,
     /// xorshift64* state; seeded per process so the victims cannot be predicted.
     rng: u64,
 }
 
+// Not derived: `Store` derives `Debug`, and a derived impl here would format every cached
+// bytecode (up to the whole budget) and the RNG state.
+impl std::fmt::Debug for CodeCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CodeCache")
+            .field("len", &self.entries.len())
+            .field("cache_size", &self.cache_size)
+            .field("max_size", &self.max_size)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Default for CodeCache {
     fn default() -> Self {
         Self {
-            entries: Vec::new(),
-            index: FxHashMap::default(),
+            entries: IndexMap::default(),
             cache_size: 0,
             max_size: CODE_CACHE_MAX_SIZE,
             // xorshift must not start at zero.
@@ -353,37 +364,36 @@ impl Default for CodeCache {
 
 impl CodeCache {
     fn get(&self, code_hash: &H256) -> Result<Option<Code>, StoreError> {
-        Ok(self
-            .index
-            .get(code_hash)
-            .map(|&position| self.entries[position].1.clone()))
+        Ok(self.entries.get(code_hash).cloned())
+    }
+
+    fn contains(&self, code_hash: &H256) -> bool {
+        self.entries.contains_key(code_hash)
     }
 
     fn insert(&mut self, code: &Code) -> Result<(), StoreError> {
         // A hash already cached must not be added to `cache_size` again, or the counter
         // drifts up permanently and evicts entries that fit.
-        if self.index.contains_key(&code.hash) {
+        if self.entries.contains_key(&code.hash) {
+            return Ok(());
+        }
+        // An entry larger than the whole budget would hold the cache over it, so it is
+        // not cached; the caller already has its copy.
+        let size = code.size() as u64;
+        if size > self.max_size {
             return Ok(());
         }
 
-        self.cache_size += code.size() as u64;
-        self.index.insert(code.hash, self.entries.len());
-        self.entries.push((code.hash, code.clone()));
-
-        while self.cache_size > self.max_size && self.entries.len() > 1 {
-            let mut victim = (self.next_random() % self.entries.len() as u64) as usize;
-            // Keep the entry being inserted: its caller is about to use it.
-            if self.entries[victim].0 == code.hash {
-                victim = (victim + 1) % self.entries.len();
+        // Evicting before the insert keeps the new entry out of the draw, so it stays
+        // cached for the caller about to read it and every victim is equally likely.
+        while self.cache_size + size > self.max_size && !self.entries.is_empty() {
+            let victim = (self.next_random() % self.entries.len() as u64) as usize;
+            if let Some((_, evicted)) = self.entries.swap_remove_index(victim) {
+                self.cache_size -= evicted.size() as u64;
             }
-            let (evicted_hash, evicted) = self.entries.swap_remove(victim);
-            self.index.remove(&evicted_hash);
-            // `swap_remove` moved the last entry into the victim's slot.
-            if let Some((moved_hash, _)) = self.entries.get(victim) {
-                self.index.insert(*moved_hash, victim);
-            }
-            self.cache_size -= evicted.size() as u64;
         }
+        self.cache_size += size;
+        self.entries.insert(code.hash, code.clone());
 
         let cache_len = self.entries.len();
         let current_size = self.cache_size;
@@ -1207,7 +1217,7 @@ impl Store {
 
     /// Get account code by its hash.
     ///
-    /// Checks the in-memory block-data buffer first, then the LRU cache
+    /// Checks the in-memory block-data buffer first, then the bytecode cache
     /// (`account_code_cache`), and finally the database.  Code that has been
     /// inserted via `engine_newPayload` but not yet flushed to disk is therefore
     /// visible to callers without an explicit flush.
@@ -1270,11 +1280,11 @@ impl Store {
 
     /// Batched [`Self::get_account_code`].
     ///
-    /// Resolves the buffer and the LRU first, then reads whatever is left by whichever
+    /// Resolves the buffer and the bytecode cache first, then reads whatever is left by whichever
     /// of two strategies gets more of those reads in flight for a batch this size: a
     /// parallel fan-out of point gets, or sorted keys split into contiguous shards read
     /// concurrently. See the comment on the read below for how the choice is made. The
-    /// LRU is locked once for the whole batch rather than twice per code.
+    /// cache is locked once for the whole batch rather than twice per code.
     ///
     /// Results are returned in the order of `code_hashes`. Duplicate hashes are read
     /// once. `None` means the hash is absent from the database.
@@ -1435,8 +1445,7 @@ impl Store {
             .account_code_cache
             .lock()
             .map_err(|_| StoreError::LockError)?
-            .get(&code_hash)?
-            .is_some()
+            .contains(&code_hash)
         {
             return Ok(true);
         }
@@ -6155,10 +6164,14 @@ mod account_code_tests {
         assert!(cache.cache_size >= (code.len() + code.jumpdests().len()) as u64);
     }
 
+    /// Fixed xorshift seed, so a failure of an eviction test reproduces.
+    const TEST_RNG_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
+
     #[test]
     fn cache_evicts_down_to_its_budget() {
         let mut cache = CodeCache {
             max_size: 128 * 1024,
+            rng: TEST_RNG_SEED,
             ..Default::default()
         };
 
@@ -6191,6 +6204,7 @@ mod account_code_tests {
         let entry_size = numbered_code(0, 4096).size() as u64;
         let mut cache = CodeCache {
             max_size: 400 * entry_size,
+            rng: TEST_RNG_SEED,
             ..Default::default()
         };
         // 500 contracts against room for 400: the set is 1.25x the budget.
@@ -6223,6 +6237,7 @@ mod account_code_tests {
         let entry_size = numbered_code(0, 4096).size() as u64;
         let mut cache = CodeCache {
             max_size: 2 * entry_size,
+            rng: TEST_RNG_SEED,
             ..Default::default()
         };
         for i in 0..64 {
@@ -6230,8 +6245,38 @@ mod account_code_tests {
             cache.insert(&code).unwrap();
             assert!(cache.get(&code.hash).unwrap().is_some());
             assert!(cache.cache_size <= cache.max_size);
-            assert_eq!(cache.index.len(), cache.entries.len());
         }
+    }
+
+    /// An entry larger than the whole budget SHALL NOT be cached, so the cache never
+    /// holds more than its budget, and the entries already cached SHALL stay.
+    #[test]
+    fn an_entry_larger_than_the_budget_is_not_cached() {
+        let small = numbered_code(0, 1024);
+        let mut cache = CodeCache {
+            max_size: 4 * small.size() as u64,
+            rng: TEST_RNG_SEED,
+            ..Default::default()
+        };
+        cache.insert(&small).unwrap();
+
+        let large = numbered_code(1, 8192);
+        assert!(large.size() as u64 > cache.max_size);
+        cache.insert(&large).unwrap();
+
+        assert!(!cache.contains(&large.hash));
+        assert!(cache.contains(&small.hash));
+        assert_eq!(cache.cache_size, small.size() as u64);
+    }
+
+    /// Formatting the cache SHALL NOT print the cached code: `Store` derives `Debug`, and
+    /// the cache can hold its whole budget of bytecode.
+    #[test]
+    fn debug_output_leaves_out_the_cached_code() {
+        let mut cache = CodeCache::default();
+        cache.insert(&numbered_code(7, 4096)).unwrap();
+        let printed = format!("{cache:?}");
+        assert!(printed.len() < 200, "{printed}");
     }
 
     /// The default budget SHALL be the one the cache actually enforces, so a change to
