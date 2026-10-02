@@ -19,7 +19,6 @@ use ethrex_rlp::{
     error::RLPDecodeError,
     structs::{Decoder, Encoder},
 };
-use ethrex_trie::Trie;
 #[cfg(feature = "rayon")]
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
@@ -359,21 +358,19 @@ impl BlockBody {
 }
 
 pub fn compute_transactions_root(transactions: &[Transaction], crypto: &dyn Crypto) -> H256 {
-    let iter = transactions.iter().enumerate().map(|(idx, tx)| {
-        // Key: RLP(tx_index)
-        // Value: tx_type || RLP(tx)  if tx_type != 0
-        //                   RLP(tx)  else
-        (idx.encode_to_vec(), tx.encode_canonical_to_vec())
-    });
-    Trie::compute_hash_from_unsorted_iter(iter, crypto)
+    ethrex_trie::ordered_root::ordered_root(
+        transactions.len(),
+        |i| transactions[i].encode_canonical_to_vec(),
+        crypto,
+    )
 }
 
 pub fn compute_receipts_root(receipts: &[Receipt], crypto: &dyn Crypto) -> H256 {
-    let iter = receipts
-        .iter()
-        .enumerate()
-        .map(|(idx, receipt)| (idx.encode_to_vec(), receipt.encode_inner_with_bloom(crypto)));
-    Trie::compute_hash_from_unsorted_iter(iter, crypto)
+    ethrex_trie::ordered_root::ordered_root(
+        receipts.len(),
+        |i| receipts[i].encode_inner_with_bloom(crypto),
+        crypto,
+    )
 }
 
 /// Computes the receipts root and the aggregate header `logs_bloom` in a single pass,
@@ -385,25 +382,26 @@ pub fn compute_receipts_root_and_logs_bloom(
     crypto: &dyn Crypto,
 ) -> (H256, Bloom) {
     let mut logs_bloom = Bloom::zero();
-    let iter = receipts.iter().enumerate().map(|(idx, receipt)| {
-        let bloom = crate::types::bloom_from_logs(&receipt.logs, crypto);
-        logs_bloom |= bloom;
-        (
-            idx.encode_to_vec(),
-            receipt.encode_inner_with_precomputed_bloom(bloom),
-        )
-    });
-    let receipts_root = Trie::compute_hash_from_unsorted_iter(iter, crypto);
+    let receipts_root = ethrex_trie::ordered_root::ordered_root(
+        receipts.len(),
+        |idx| {
+            let receipt = &receipts[idx];
+            let bloom = crate::types::bloom_from_logs(&receipt.logs, crypto);
+            logs_bloom |= bloom;
+            receipt.encode_inner_with_precomputed_bloom(bloom)
+        },
+        crypto,
+    );
     (receipts_root, logs_bloom)
 }
 
 // See [EIP-4895](https://eips.ethereum.org/EIPS/eip-4895)
 pub fn compute_withdrawals_root(withdrawals: &[Withdrawal], crypto: &dyn Crypto) -> H256 {
-    let iter = withdrawals
-        .iter()
-        .enumerate()
-        .map(|(idx, withdrawal)| (idx.encode_to_vec(), withdrawal.encode_to_vec()));
-    Trie::compute_hash_from_unsorted_iter(iter, crypto)
+    ethrex_trie::ordered_root::ordered_root(
+        withdrawals.len(),
+        |i| withdrawals[i].encode_to_vec(),
+        crypto,
+    )
 }
 
 impl RLPEncode for BlockBody {

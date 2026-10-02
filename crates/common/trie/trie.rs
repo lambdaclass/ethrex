@@ -20,6 +20,7 @@ pub mod logger;
 mod nibbles;
 pub mod node;
 mod node_hash;
+pub mod ordered_root;
 pub mod rkyv_utils;
 mod rlp;
 #[cfg(test)]
