@@ -42,9 +42,10 @@ The API used is the ethereum capability snap/1, documented at https://github.com
 pub struct GetTrieNodes {    
     pub id: u64,    
     pub root_hash: H256,    
-    // [[acc_path, slot_path_1, slot_path_2,...]...]    
-    // The paths can be either full paths (hash) or 
-    // only the partial path (compact-encoded nibbles)    
+    // [[acc_path, slot_path_1, slot_path_2,...]...]
+    // Account-trie node: one compact-encoded path (pathset length 1).
+    // Storage-trie nodes: pathset[0] = 32-byte account hash;
+    // pathset[1..] = compact-encoded paths in that storage trie.
     pub paths: Vec<Vec<Bytes>>,    
     pub bytes: u64,
 }
