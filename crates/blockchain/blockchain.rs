@@ -61,7 +61,9 @@ use ::tracing::debug;
 use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
-use ethrex_common::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
+use ethrex_common::constants::{
+    EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS, TX_MAX_TOTAL_GAS_LIMIT_AMSTERDAM,
+};
 
 use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
@@ -3862,12 +3864,17 @@ impl Blockchain {
         }
 
         // EIP-7825's flat per-tx gas cap applies from Osaka until Amsterdam, which
-        // supersedes it with the EIP-8037 gas model. Mirrors levm's `default_hook`.
-        if fork >= Fork::Osaka
-            && fork < Fork::Amsterdam
-            && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
-        {
-            // https://eips.ethereum.org/EIPS/eip-7825
+        // supersedes it with the EIP-8037 gas model: there EIP-7825 bounds the
+        // execution-gas dimension and `tx.gas` as a whole is capped at
+        // TX_MAX_TOTAL_GAS_LIMIT_AMSTERDAM instead. Mirrors levm's `default_hook`,
+        // so the pool does not accept a transaction execution would reject.
+        let total_gas_cap = if fork >= Fork::Amsterdam {
+            TX_MAX_TOTAL_GAS_LIMIT_AMSTERDAM
+        } else {
+            POST_OSAKA_GAS_LIMIT_CAP
+        };
+        if fork >= Fork::Osaka && tx.gas_limit() > total_gas_cap {
+            // https://eips.ethereum.org/EIPS/eip-7825, https://eips.ethereum.org/EIPS/eip-8037
             return Err(MempoolError::TxMaxGasLimitExceededError(
                 tx.hash(&NativeCrypto),
                 tx.gas_limit(),

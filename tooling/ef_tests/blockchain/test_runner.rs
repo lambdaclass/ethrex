@@ -948,6 +948,66 @@ fn describe_witness_item(section: &str, bytes: &[u8]) -> String {
     format!("0x{prefix}… ({} bytes)", bytes.len())
 }
 
+/// Check every `engineNewPayloads` entry of a `blockchain_test_engine` fixture
+/// file that carries stateless bytes: its `statelessInputBytes` must produce its
+/// `statelessOutputBytes`.
+///
+/// Engine fixtures are a superset of the `blockchain_test` ones for stateless
+/// purposes. They carry every stateless input the RLP-block fixtures do, plus the
+/// payload mutations that only exist at the Engine API layer, such as a tampered
+/// block access list or slot number, which cannot be expressed as an RLP block.
+/// Only the bytes contract is checked here: the node-side execution of the same
+/// payloads is the engine runner's job.
+#[cfg(feature = "stateless")]
+pub fn check_engine_stateless_bytes(path: &Path) -> datatest_stable::Result<()> {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct EngineFixture {
+        #[serde(default)]
+        engine_new_payloads: Vec<EnginePayload>,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct EnginePayload {
+        #[serde(default)]
+        params: Vec<serde_json::Value>,
+        stateless_input_bytes: Option<String>,
+        stateless_output_bytes: Option<String>,
+    }
+
+    let raw = std::fs::read_to_string(path)?;
+    let fixtures: HashMap<String, EngineFixture> = serde_json::from_str(&raw)?;
+
+    let mut failures = Vec::new();
+    for (test_key, fixture) in &fixtures {
+        for payload in &fixture.engine_new_payloads {
+            let (Some(input), Some(output)) = (
+                payload.stateless_input_bytes.as_deref(),
+                payload.stateless_output_bytes.as_deref(),
+            ) else {
+                continue;
+            };
+            // `params[0]` is the execution payload; its block number only labels
+            // a failure, so an unreadable one falls back to 0 rather than failing.
+            let block_number = payload
+                .params
+                .first()
+                .and_then(|execution_payload| execution_payload.get("blockNumber"))
+                .and_then(|number| number.as_str())
+                .and_then(|hex| u64::from_str_radix(hex.trim_start_matches("0x"), 16).ok())
+                .unwrap_or_default();
+            if let Err(e) = run_stateless_from_input_bytes(test_key, block_number, input, output) {
+                failures.push(e);
+            }
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n").into())
+    }
+}
+
 /// Run a fixture's `statelessInputBytes` (2-byte BE schema-id followed by
 /// SSZ-encoded `SszStatelessInput`) through the canonical-input path the
 /// production guest binary uses.

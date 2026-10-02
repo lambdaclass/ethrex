@@ -82,7 +82,7 @@ pub struct GetTransactionReceiptRequest {
 #[derive(Default)]
 pub struct CreateAccessListRequest {
     pub transaction: GenericTransaction,
-    pub block: Option<BlockIdentifier>,
+    pub block: Option<BlockIdentifierOrHash>,
     /// Optional 3rd JSON-RPC param: geth State Override Set.
     ///
     /// An ethrex extension: geth's `eth_createAccessList` takes two params only
@@ -94,7 +94,7 @@ pub struct CreateAccessListRequest {
 #[derive(Default)]
 pub struct EstimateGasRequest {
     pub transaction: GenericTransaction,
-    pub block: Option<BlockIdentifier>,
+    pub block: Option<BlockIdentifierOrHash>,
     /// Optional 3rd JSON-RPC param: geth State Override Set.
     pub state_overrides: Option<StateOverrideSet>,
     /// Optional 4th JSON-RPC param: geth Block Override Set.
@@ -392,7 +392,7 @@ impl RpcHandler for CreateAccessListRequest {
         }
         let block = match params.get(1) {
             // Differentiate between missing and bad block param
-            Some(value) => Some(BlockIdentifier::parse(value.clone(), 1)?),
+            Some(value) => Some(BlockIdentifierOrHash::parse(value.clone(), 1)?),
             None => None,
         };
         let state_overrides = match params.get(2) {
@@ -406,7 +406,10 @@ impl RpcHandler for CreateAccessListRequest {
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let block = self.block.clone().unwrap_or_default();
+        let block = self
+            .block
+            .clone()
+            .unwrap_or(BlockIdentifierOrHash::Identifier(BlockIdentifier::default()));
         debug!("Requested access list creation for tx on block: {}", block);
         let block_number = match block.resolve_block_number(&context.storage).await? {
             Some(block_number) => block_number,
@@ -553,7 +556,7 @@ impl RpcHandler for EstimateGasRequest {
         }
         let block = match params.get(1) {
             // Differentiate between missing and bad block param
-            Some(value) => Some(BlockIdentifier::parse(value.clone(), 1)?),
+            Some(value) => Some(BlockIdentifierOrHash::parse(value.clone(), 1)?),
             None => None,
         };
         let state_overrides = match params.get(2) {
@@ -574,7 +577,10 @@ impl RpcHandler for EstimateGasRequest {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         let storage = &context.storage;
         let blockchain = &context.blockchain;
-        let block = self.block.clone().unwrap_or_default();
+        let block = self
+            .block
+            .clone()
+            .unwrap_or(BlockIdentifierOrHash::Identifier(BlockIdentifier::default()));
         let chain_config = storage.get_chain_config();
 
         debug!("Requested estimate on block: {}", block);
@@ -1076,6 +1082,22 @@ mod override_parse_tests {
             Err(e) => assert!(format!("{e}").contains("Expected"), "{e}"),
             Ok(_) => panic!("expected BadParams"),
         }
+    }
+
+    #[test]
+    fn estimate_gas_request_accepts_block_hash() {
+        let hash = "0xd226371d0b1551adb03fb52b71f08e3e11247fe9b1af994768af8cdaa8e7dcd7";
+        let params = Some(vec![make_tx(), json!(hash)]);
+        let req = EstimateGasRequest::parse(&params).unwrap();
+        assert!(matches!(req.block, Some(BlockIdentifierOrHash::Hash(_))));
+    }
+
+    #[test]
+    fn create_access_list_accepts_block_hash() {
+        let hash = "0xd226371d0b1551adb03fb52b71f08e3e11247fe9b1af994768af8cdaa8e7dcd7";
+        let params = Some(vec![make_tx(), json!(hash)]);
+        let req = CreateAccessListRequest::parse(&params).unwrap();
+        assert!(matches!(req.block, Some(BlockIdentifierOrHash::Hash(_))));
     }
 
     #[test]

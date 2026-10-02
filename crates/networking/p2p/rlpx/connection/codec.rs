@@ -267,6 +267,12 @@ impl Encoder<rlpx::Message> for RLPxCodec {
                 .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?,
         )?;
 
+        // The frame header carries the size in 3 bytes, and peers reject frames above
+        // MAX_MESSAGE_SIZE: refuse to send one rather than announce a truncated size.
+        if frame_data.len() > MAX_MESSAGE_SIZE as usize {
+            return Err(PeerConnectionError::InvalidMessageLength);
+        }
+
         let mac_aes_cipher = Aes256Enc::new_from_slice(&self.mac_key.0)?;
 
         // header = frame-size || header-data || header-padding
