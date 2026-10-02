@@ -1497,7 +1497,7 @@ async fn try_execute_payload(
             if reexecuting_canonical_block =>
         {
             error!(%block_hash, %block_number, "Re-executing a canonical block failed, keeping it: {error}");
-            payload_status_for_existing_block(&bad_block_candidate, context, make_witness).await
+            payload_status_for_existing_block(&rebuild_bad_block()?, context, make_witness).await
         }
         Err(ChainError::InvalidBlock(error)) => {
             warn!(%block_hash, %block_number, "Error executing block: {error}");
