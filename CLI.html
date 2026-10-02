@@ -34,7 +34,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-5e479277.js";
+            window.path_to_searchindex_js = "searchindex-121882af.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-f6d73635.js"></script>
@@ -423,6 +423,11 @@ Storage options:
           RocksDB shared block cache size in bytes, the effective ceiling on RocksDB's resident memory. Defaults to 40% of the memory available to the process (physical or cgroup limit, whichever is lower), clamped to 512 MiB..=12 GiB; where no limit can be detected (no readable /proc, e.g. outside Linux) it defaults to the 12 GiB ceiling.
           
           [env: ETHREX_ROCKSDB_BLOCK_CACHE_SIZE=]
+
+      --code-cache-size &lt;BYTES&gt;
+          Byte budget of the in-memory bytecode cache. Defaults to 2 GiB, which holds ~29k max-size contracts; the cache only grows with code that blocks actually load. Lower it on memory-constrained hosts, or raise it for workloads that keep reusing more distinct contracts than that.
+          
+          [env: ETHREX_CODE_CACHE_SIZE=]
 
 RPC options:
       --http.addr &lt;ADDRESS&gt;
