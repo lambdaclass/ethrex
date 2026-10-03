@@ -83,10 +83,12 @@ fn the_proof_bound_is_a_small_share_of_the_block() {
         (MAX_RECURSIVE_STARK_PROOF_BYTES as u64) < MAX_RLP_BLOCK_SIZE / 4,
         "a proof must not be able to crowd out the transactions it exists to serve"
     );
-    assert!(
-        MAX_RECURSIVE_STARK_PROOF_BYTES >= 512 * 1024,
-        "must leave room for leanVM's ~300 KiB aggregates plus recursion"
-    );
+    const {
+        assert!(
+            MAX_RECURSIVE_STARK_PROOF_BYTES >= 512 * 1024,
+            "must leave room for leanVM's ~300 KiB aggregates plus recursion"
+        )
+    };
 }
 
 /// leanSTARK has no counterpart in leanVM, and the seam says so by name rather

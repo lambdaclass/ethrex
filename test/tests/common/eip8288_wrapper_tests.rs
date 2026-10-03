@@ -106,7 +106,7 @@ fn one_transaction_can_fill_an_entire_wrapper() {
         "and at most one leanSTARK dependency may propagate per aggregation round"
     );
     // Not a limit anyone hits: the per-frame cap is far above what a wrapper admits.
-    assert!(FRAME_TX_MAX_FRAMES > MAX_LEANSIG_DEPS_PER_WRAPPER);
+    const { assert!(FRAME_TX_MAX_FRAMES > MAX_LEANSIG_DEPS_PER_WRAPPER) };
 }
 
 #[test]

@@ -172,7 +172,7 @@ fn a_mode_zero_wrapper_yields_reusable_witnesses() {
     let wrapper = MempoolWrapper {
         transactions: vec![WrapperEntry::Hash(H256::from_low_u64_be(9))],
         content: WrapperContent::Direct {
-            deps: deps.clone(),
+            deps,
             proofs: vec![vec![1u8; 4], vec![2u8; 4]],
         },
     };

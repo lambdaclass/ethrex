@@ -172,7 +172,7 @@ fn a_block_carrying_a_real_aggregate_satisfies_both_rules() {
     // A header that declares a different digest fails rule 1 while the proof still
     // verifies -- which is why rule 1 is not redundant.
     let tampered = RecursiveStark {
-        proof: header_entry.proof.clone(),
+        proof: header_entry.proof,
         block_deps_hash: H256::from_low_u64_be(0xBAD),
     };
     assert_ne!(tampered.block_deps_hash, body.block_deps_hash());
@@ -215,7 +215,7 @@ fn bench_aggregation_cost() {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(4);
-    assert!(n >= 1 && n <= 256, "1..=256 dependencies");
+    assert!((1..=256).contains(&n), "1..=256 dependencies");
 
     let built = Instant::now();
     let agg = LeanVmAggregator::new();
@@ -284,7 +284,7 @@ fn bench_recursive_absorption() {
     // Round two: absorb that aggregate as a child and add one new dependency, which
     // is what a mempool node does every AGGREGATION_INTERVAL.
     let (extra_t, extra_w) = dependency(250, [0xEE; 32]);
-    let mut union = expected.clone();
+    let mut union = expected;
     union.push(extra_t);
     let union = deduplicate_and_sort_dependencies(union);
 
