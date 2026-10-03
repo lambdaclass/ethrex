@@ -955,6 +955,12 @@ impl Blockchain {
         // parent's post-state. Only the sequential path records its state changes on the
         // cache, and witness collection must start cold, as above.
         let carry = bal.is_none() && !collect_witness;
+        // Execution recovers senders one at a time as it reaches them, relying on the warmer
+        // to recover them all in parallel first. Witness collection runs no warmer, so recover
+        // them in parallel here instead; a failure is reported by execution.
+        if collect_witness {
+            let _ = block.body.get_transactions_with_sender(&NativeCrypto);
+        }
         let carried = &self.carried;
         let block_fork = chain_config.fork(block.header.timestamp);
         if carry
