@@ -42,6 +42,21 @@ pub trait Database: Send + Sync {
     fn precompile_cache(&self) -> Option<&PrecompileCache> {
         None
     }
+    /// The account state this layer already holds in memory, without reading the backing
+    /// store. Default: `None`, for layers that keep nothing.
+    fn cached_account_state(&self, _address: Address) -> Option<AccountState> {
+        None
+    }
+    /// The storage value this layer already holds in memory, without reading the backing
+    /// store. Default: `None`.
+    fn cached_storage_value(&self, _address: Address, _key: H256) -> Option<U256> {
+        None
+    }
+    /// The bytecode this layer already holds in memory, without reading the backing store.
+    /// Default: `None`.
+    fn cached_account_code(&self, _code_hash: H256) -> Option<Code> {
+        None
+    }
     /// Batch lookup. Default: loop. Backends with a batched read path (e.g. rocksdb
     /// `multi_get_cf` on the flat key-value table) should override this and the
     /// caching layer above will dispatch to it.
@@ -380,6 +395,18 @@ impl Database for CachingDatabase {
 
     fn precompile_cache(&self) -> Option<&PrecompileCache> {
         self.precompile_cache.as_ref()
+    }
+
+    fn cached_account_state(&self, address: Address) -> Option<AccountState> {
+        self.read_accounts().ok()?.get(&address).copied()
+    }
+
+    fn cached_storage_value(&self, address: Address, key: H256) -> Option<U256> {
+        self.read_storage().ok()?.get(&(address, key)).copied()
+    }
+
+    fn cached_account_code(&self, code_hash: H256) -> Option<Code> {
+        self.read_code().ok()?.get(&code_hash).cloned()
     }
 
     /// Warms every address through [`Self::prefetch_accounts`], then answers from the
