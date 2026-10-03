@@ -24,13 +24,11 @@ blake3.workspace = true
 # which exists in the layout below. The blast radius of a rename therefore has to
 # stay at one file, which is why nothing outside this crate may name a leanVM type.
 # Pinned to a revision for the same reason the rest of the workspace pins versions.
-lean_vm = { git = "https://github.com/leanEthereum/leanVM.git", rev = "7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03", optional = true }
-rec_aggregation = { git = "https://github.com/leanEthereum/leanVM.git", rev = "7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03", optional = true }
-sphincs = { git = "https://github.com/leanEthereum/leanVM.git", rev = "7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03", optional = true }
-
-# Only for `test_support`, which builds deterministic signing material for tests
-# that live outside this crate. Pulled in by `leanvm`, never by a default build.
-rand = { version = "0.9", optional = true }
+# The revision is the head of leanVM's `nicetry` branch, whose SPHINCS profile is
+# the one the Daisugi testnet's wallet signs with; `main` aggregates a different one.
+lean_vm = { git = "https://github.com/leanEthereum/leanVM.git", rev = "b7b3b742af8dda100a0263b22c36e33963cc165c", optional = true }
+rec_aggregation = { git = "https://github.com/leanEthereum/leanVM.git", rev = "b7b3b742af8dda100a0263b22c36e33963cc165c", optional = true }
+sphincs = { git = "https://github.com/leanEthereum/leanVM.git", rev = "b7b3b742af8dda100a0263b22c36e33963cc165c", optional = true }
 
 [features]
 default = []
@@ -38,4 +36,4 @@ default = []
 # proving stack, and producing an aggregate peaks around 9-11 GiB of resident
 # memory. A node built without it can still enforce EIP-8288 block-validity rule 1
 # and will reject any block carrying a proof rather than accept one it cannot check.
-leanvm = ["dep:lean_vm", "dep:rec_aggregation", "dep:sphincs", "dep:rand"]
+leanvm = ["dep:lean_vm", "dep:rec_aggregation", "dep:sphincs"]

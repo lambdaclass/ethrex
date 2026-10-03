@@ -16,17 +16,16 @@ use crate::leanvm::leansphincs_verification_key_hash;
 
 /// One leanSPHINCS dependency and the witness that discharges it.
 ///
-/// Deterministic from `seed`, both for the key and for the randomness signing
-/// samples: a test that fails intermittently against a proving system is not worth
-/// having, and a failure that cannot be replayed is not worth debugging.
+/// Deterministic from `seed`: the key is derived from it, and signing in this
+/// SPHINCS profile draws no randomness (the randomizer is a keyed hash of the
+/// message). A test that fails intermittently against a proving system is not
+/// worth having, and a failure that cannot be replayed is not worth debugging.
 pub fn leansphincs_dependency_from_seed(
     seed: u8,
     message: [u8; 32],
 ) -> (DependencyTriple, DependencyWitness) {
     let (secret, public) = sphincs::key_gen_from_seed([seed; 32]);
-    let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(seed as u64);
-    let signature =
-        sphincs::sign(&mut rng, &secret, &message).expect("signing with a fresh key must succeed");
+    let signature = sphincs::sign(&secret, &message);
 
     let triple = DependencyTriple {
         scheme: DEPENDENCY_SCHEME_LEANSPHINCS,

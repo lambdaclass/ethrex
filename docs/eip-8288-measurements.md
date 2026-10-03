@@ -15,13 +15,13 @@ Re-run after changing the pinned leanVM revision, and replace the recorded run.
 
 | | |
 |---|---|
-| leanVM revision | `7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03` |
-| ethrex commit | `2b3f394ea` (branch `eip-8288`) |
+| leanVM revision | `b7b3b742af8dda100a0263b22c36e33963cc165c`, the head of branch `nicetry` |
+| ethrex commit | `b5c3a098c` (branch `eip-8288`) with the leanVM pin bumped as in the commit that records this run |
 | rustc | 1.93.0 (254b59607 2026-01-19) |
 | Machine | Apple M3 Max, 14 cores, 36 GiB |
 | OS | macOS 26.6.2 |
 | Profile | `--release` |
-| Recorded | 2026-09-12 |
+| Recorded | 2026-10-02 |
 
 Peak resident set is measured per process by `/usr/bin/time -l`, one dependency count
 per invocation, so the figure belongs to a single aggregate rather than to a whole
@@ -60,20 +60,21 @@ own dependencies before any aggregation has happened.
 
 | dependencies | prove | verify | proof size | peak RSS |
 |---|---|---|---|---|
-| 1 | 75 ms | 5 ms | 225,136 B | 481 MB |
-| 2 | 76 ms | 5 ms | 221,608 B | 491 MB |
-| 4 | 80 ms | 4 ms | 234,008 B | 543 MB |
-| 8 | 141 ms | 3 ms | 234,128 B | 965 MB |
-| 16 | 224 ms | 4 ms | 256,920 B | 1.71 GB |
-| 32 | 485 ms | 5 ms | 270,112 B | 3.21 GB |
-| 48 | 458 ms | 5 ms | 287,040 B | 3.47 GB |
-| 64 | 2,029 ms | 8 ms | 286,560 B | 5.49 GB |
-| 128 | 3,156 ms | 10 ms | 304,872 B | 6.44 GB |
+| 1 | 150 ms | 11 ms | 264,840 B | 818 MB |
+| 2 | 284 ms | 13 ms | 260,672 B | 1.26 GB |
+| 4 | 318 ms | 11 ms | 276,432 B | 2.13 GB |
+| 8 | 1,017 ms | 14 ms | 287,192 B | 4.02 GB |
+| 16 | 2,755 ms | 34 ms | 299,592 B | 6.45 GB |
+| 32 | 5,179 ms | 23 ms | 314,512 B | 7.36 GB |
+| 64 | 12,829 ms | 21 ms | 341,928 B | 11.1 GB |
+| 128 | 93,215 ms | 104 ms | 357,296 B | 19.0 GB |
 
-The 48-dependency row being marginally faster than the 32 one is single-sample noise,
-not an inversion.
+The 128-dependency row was taken at 19 GB resident on a 36 GiB machine, and both its
+proving time and its verification time step up far more than the doubling from 64
+would predict. It is a single sample and should be read as a memory-pressure point,
+not as the circuit's cost curve.
 
-Circuit warm-up, which `LeanVmAggregator::new` pays once per process, was 316 to 337 ms
+Circuit warm-up, which `LeanVmAggregator::new` pays once per process, was 516 to 544 ms
 across every run and is excluded from the proving column.
 
 ## Results: absorbing a child
@@ -83,9 +84,9 @@ aggregate as a nested proof and add one new dependency.
 
 | dependencies the child covers | prove that set flat | absorb it and add one |
 |---|---|---|
-| 8 | 133 ms | 295 ms |
-| 16 | 223 ms | 273 ms |
-| 32 | 417 ms | 237 ms |
+| 8 | 508 ms | 395 ms |
+| 16 | 856 ms | 385 ms |
+| 32 | 1,558 ms | 415 ms |
 
 Absorption does not grow with what the child covers. Flat proving does. This is the
 result that decides whether `AGGREGATION_INTERVAL` is meetable, and it is the reason
@@ -99,8 +100,8 @@ Three independence properties, each visible as a shape rather than a value:
 | property | evidence |
 |---|---|
 | Proof size is independent of claim count | 128-fold increase in dependencies, 1.35-fold increase in size |
-| Verification cost is independent of claim count | 3 to 10 ms across that whole range |
-| Absorbing a child is independent of what it covers | 295, 273, 237 ms for children covering 8, 16, 32 |
+| Verification cost is independent of claim count | 11 to 34 ms up to 64 dependencies; the 104 ms at 128 is the memory-pressure sample noted above |
+| Absorbing a child is independent of what it covers | 395, 385, 415 ms for children covering 8, 16, 32 |
 
 These follow from recursion itself rather than from tuning, so they should hold for
 any circuit that supports the design. They are what the spec contribution proposes
@@ -108,6 +109,14 @@ stating as requirements.
 
 Everything else on this page is a snapshot: the absolute milliseconds, the megabytes,
 the point at which flat proving crosses `AGGREGATION_INTERVAL`.
+
+The previous recorded run, at leanVM `7f9777da` (SPHINCS over BLAKE2s, 4,924-byte
+signatures, 2026-09-12, same machine), shows how far the snapshot moves with the
+circuit. Flat proving crossed 1,000 ms between 32 and 64 dependencies there and
+crosses it at 8 here, where the signature's Keccak-256 hashing is proved in-circuit.
+Absorbing a child took 237 to 295 ms there and 385 to 415 ms here, inside
+`AGGREGATION_INTERVAL` both times. Proof size grew 1.35-fold across the 128-fold range
+in both runs. The three properties held in both, which is the point.
 
 ## Demonstrations that need no benchmark
 
