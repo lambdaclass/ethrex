@@ -342,8 +342,7 @@ impl WarmUnit<'_> {
     }
 }
 
-/// One unit per sender, so nonce/balance changes propagate within a group
-/// (inspired by Nethermind's per-sender prewarmer).
+/// One unit per sender, so nonce/balance changes propagate within a group.
 #[cfg(feature = "rayon")]
 fn group_by_sender<'a>(txs_with_sender: &[(&'a Transaction, Address)]) -> Vec<WarmUnit<'a>> {
     let mut sender_groups: FxHashMap<Address, (Vec<&Transaction>, Vec<usize>)> =
@@ -373,12 +372,10 @@ const HEAVY_SENDER_GAS_FRACTION: u64 = 8;
 /// is heavy when its transactions' gas limits add up to more than an eighth of the block's,
 /// and to more than a worker's fair share.
 ///
-/// A group is warmed sequentially, so one sender with several large transactions (batch
-/// bots that put 4-7 transactions and 35-70% of a block's gas used under one sender) makes
-/// the warmer as slow as execution itself, and execution pays every cold read. Gas limits
-/// understate such a sender, since other transactions declare far more gas than they use:
-/// those senders hold only 19-30% of their blocks' gas limit, hence the low threshold. Warming those
-/// transactions in parallel against the parent state reads what their execution reads as
+/// A group is warmed sequentially, so one sender with several large transactions makes the
+/// warmer as slow as execution itself, and execution pays every cold read. Gas limits
+/// understate such a sender, since other transactions declare far more gas than they use,
+/// hence the low threshold. Warming those transactions in parallel against the parent state reads what their execution reads as
 /// long as they do not depend on each other's writes; if one does, its warming just reads
 /// less. Lighter groups stay whole, so their transactions still see their predecessors'
 /// writes, and blocks without a heavy sender warm exactly as before.
@@ -5745,7 +5742,7 @@ mod warm_split_tests {
     /// transaction per unit, with every other sender left whole and units in block order.
     #[test]
     fn a_heavy_sender_is_split_into_one_unit_per_transaction() {
-        // The shape of a batch-claim block: one sender with 7 x 6M gas next to 20 small senders.
+        // One sender with 7 x 6M gas next to 20 small senders.
         let heavy: Vec<Transaction> = (0..7).map(|n| tx(6_000_000, n)).collect();
         let light: Vec<Transaction> = (0..20).map(|_| tx(100_000, 0)).collect();
         let mut txs_with_sender: Vec<(&Transaction, Address)> =
@@ -5775,12 +5772,12 @@ mod warm_split_tests {
         );
     }
 
-    /// A batch sender whose padded-limit neighbours dilute it to about a fifth of the block's
-    /// gas limit (mainnet's batch-claim blocks sit at 19-30%) SHALL still be split.
+    /// A sender whose padded-limit neighbours dilute it to about a fifth of the block's gas
+    /// limit SHALL still be split.
     #[test]
     fn a_batch_sender_diluted_by_padded_limits_is_still_split() {
         let heavy: Vec<Transaction> = (0..7).map(|n| tx(6_000_000, n)).collect();
-        // 150M of declared gas from 100 other senders: 22% share for the batch sender.
+        // 150M of declared gas from 100 other senders: a 22% share for the heavy sender.
         let others: Vec<Transaction> = (0..100).map(|_| tx(1_500_000, 0)).collect();
         let mut txs_with_sender: Vec<(&Transaction, Address)> =
             heavy.iter().map(|t| (t, sender(1))).collect();
