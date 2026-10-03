@@ -291,6 +291,7 @@ pub struct Blockchain {
 
 /// Shallowest trie level read when prefetching the paths of a block's speculative writes. The
 /// top levels are shared by every path and stay cached, so probing them only spends lookups.
+#[cfg(feature = "rayon")]
 const SPECULATIVE_TRIE_PREFETCH_MIN_DEPTH: usize = 3;
 
 /// Newtype around the prewarmer's cache-handoff slot so `Blockchain` can keep
