@@ -110,13 +110,67 @@ stating as requirements.
 Everything else on this page is a snapshot: the absolute milliseconds, the megabytes,
 the point at which flat proving crosses `AGGREGATION_INTERVAL`.
 
-The previous recorded run, at leanVM `7f9777da` (SPHINCS over BLAKE2s, 4,924-byte
-signatures, 2026-09-12, same machine), shows how far the snapshot moves with the
-circuit. Flat proving crossed 1,000 ms between 32 and 64 dependencies there and
-crosses it at 8 here, where the signature's Keccak-256 hashing is proved in-circuit.
-Absorbing a child took 237 to 295 ms there and 385 to 415 ms here, inside
-`AGGREGATION_INTERVAL` both times. Proof size grew 1.35-fold across the 128-fold range
-in both runs. The three properties held in both, which is the point.
+## Comparison across recorded runs
+
+Two runs so far, on the same machine with the same rustc and the same ethrex code
+apart from the leanVM pin. Run 2 is the one recorded above.
+
+| | Run 1 | Run 2 |
+|---|---|---|
+| Recorded | 2026-09-12 | 2026-10-02 |
+| leanVM revision | `7f9777da`, on `main` | `b7b3b742`, head of `nicetry` |
+| SPHINCS profile | SPHINCS over BLAKE2s, with WOTS+C and FORS+C | NiceTry "SPHINCS- v2": Keccak-256, standard WOTS+ and FORS |
+| Signature size | 4,924 bytes | 6,176 bytes |
+| Produced by a wallet today | no | yes, the Daisugi testnet's |
+| Circuit warm-up, once per process | 316 to 337 ms | 516 to 544 ms |
+
+Proving and verification time, aggregating from witnesses:
+
+| dependencies | prove, run 1 | prove, run 2 | verify, run 1 | verify, run 2 |
+|---|---|---|---|---|
+| 1 | 75 ms | 150 ms | 5 ms | 11 ms |
+| 2 | 76 ms | 284 ms | 5 ms | 13 ms |
+| 4 | 80 ms | 318 ms | 4 ms | 11 ms |
+| 8 | 141 ms | 1,017 ms | 3 ms | 14 ms |
+| 16 | 224 ms | 2,755 ms | 4 ms | 34 ms |
+| 32 | 485 ms | 5,179 ms | 5 ms | 23 ms |
+| 64 | 2,029 ms | 12,829 ms | 8 ms | 21 ms |
+| 128 | 3,156 ms | 93,215 ms | 10 ms | 104 ms |
+
+Proof size and peak resident memory for the same runs:
+
+| dependencies | proof size, run 1 | proof size, run 2 | peak RSS, run 1 | peak RSS, run 2 |
+|---|---|---|---|---|
+| 1 | 225 KB | 265 KB | 0.48 GB | 0.82 GB |
+| 2 | 222 KB | 261 KB | 0.49 GB | 1.26 GB |
+| 4 | 234 KB | 276 KB | 0.54 GB | 2.13 GB |
+| 8 | 234 KB | 287 KB | 0.97 GB | 4.02 GB |
+| 16 | 257 KB | 300 KB | 1.71 GB | 6.45 GB |
+| 32 | 270 KB | 315 KB | 3.21 GB | 7.36 GB |
+| 64 | 287 KB | 342 KB | 5.49 GB | 11.1 GB |
+| 128 | 305 KB | 357 KB | 6.44 GB | 19.0 GB |
+
+Absorbing a child aggregate and adding one dependency, the round a mempool node runs:
+
+| child covers | flat prove, run 1 | flat prove, run 2 | absorb and add one, run 1 | absorb and add one, run 2 |
+|---|---|---|---|---|
+| 8 | 133 ms | 508 ms | 295 ms | 395 ms |
+| 16 | 223 ms | 856 ms | 273 ms | 385 ms |
+| 32 | 417 ms | 1,558 ms | 237 ms | 415 ms |
+
+What moved between the runs, and what did not:
+
+| | Run 1 | Run 2 |
+|---|---|---|
+| Flat proving crosses `AGGREGATION_INTERVAL` (1,000 ms) at | between 32 and 64 dependencies | 8 dependencies |
+| Absorb round, slowest of the three | 295 ms | 415 ms |
+| Proof size growth from 1 to 128 dependencies | 1.35x | 1.35x |
+| Verification from 1 to 64 dependencies | 3 to 8 ms | 11 to 34 ms |
+| Absorb cost tracks child size | no | no |
+
+Proving a Keccak-256 hash chain in-circuit is what makes run 2 slower to prove and
+heavier in memory. The three properties the spec contributions state as requirements
+held in both runs.
 
 ## Demonstrations that need no benchmark
 
