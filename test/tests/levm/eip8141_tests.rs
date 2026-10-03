@@ -2454,8 +2454,7 @@ mod validation_observer_tests {
     /// EIP-8288: a dependency verification frame is never executed, but it still
     /// completes and still gets a `frame_results` entry. A prefix frame that reads
     /// it through `FRAMEPARAM(0x05)` must therefore get an answer rather than an
-    /// exceptional halt — the same failure mode a missing entry caused for the
-    /// EIP-8272 recent-root frame.
+    /// exceptional halt.
     ///
     /// This also pins the position rule: the dependency frame sits at index 0,
     /// ahead of the approving frame, exactly as EIP-8288's Test Case 1 describes.

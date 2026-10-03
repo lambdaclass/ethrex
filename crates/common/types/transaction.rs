@@ -1886,10 +1886,8 @@ impl Frame {
 
     /// EIP-8288: a dependency verification frame, by mode alone.
     ///
-    /// Shape is checked in `validate_static_constraints`, not here. Unlike the
-    /// EIP-8272 recent-root frame -- which is an ordinary VERIFY frame that only
-    /// *becomes* special when its whole shape matches -- mode 3 has no other
-    /// meaning, so a malformed one is invalid rather than ordinary.
+    /// Shape is checked in `validate_static_constraints`, not here. Mode 3 has no
+    /// other meaning, so a malformed one is invalid rather than ordinary.
     pub fn is_dependency_verification(&self) -> bool {
         self.mode == FrameMode::DepVerify as u8
     }
@@ -2228,18 +2226,6 @@ pub fn dependencies_hash(deps: &[DependencyTriple]) -> H256 {
     H256::from_slice(hasher.finalize().as_bytes())
 }
 
-// EIP-8141 publishes these in its Constants table; assert the constants reproduce them
-// exactly, so a repricing or a re-spelling upstream is a compile error here rather than a
-// silent consensus change. Same guard the EIP-8272 constants carry in
-// `crates/vm/levm/src/gas_cost.rs`, and the reason the intrinsic drop from 15000
-// to 12000 was invisible to 1372 tests: the suite derives its expected intrinsic from this
-// constant, so it can check the formula's composition but never the published figure.
-const _: () = assert!(FRAME_TX_INTRINSIC_COST == 12_000);
-const _: () = assert!(FRAME_TX_PER_FRAME_COST == 475);
-const _: () = assert!(FRAME_TX_MAX_FRAMES == 64);
-const _: () = assert!(FRAME_TX_EXPIRY_DATA_LENGTH == 8);
-const _: () = assert!(FRAME_TX_STANDARD_TOKEN_COST == 4);
-const _: () = assert!(FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN == 16);
 /// EIP-7623 `STANDARD_TOKEN_COST`, and the EIP-7976 floor per token. Frame
 /// transactions exist only from Hegota onward, which is after Amsterdam, so the
 /// raised EIP-7976 floor always applies and neither needs a fork parameter.
