@@ -3745,6 +3745,9 @@ impl LEVM {
         let base_blob_fee_per_gas = get_base_fee_per_blob_gas(header.excess_blob_gas, &evm_config)?;
 
         let discover = store_reads_are_cold();
+        // Trie paths are only worth reading ahead while reads come from the disk; from a warm
+        // store the merkleizer finds them in memory and the reads only take cores.
+        let writes = writes.filter(|_| discover);
         // Workers take units in order from a shared counter, so units start in the order
         // they were sorted: a parallel iterator would split the list and start halfway in.
         let next = std::sync::atomic::AtomicUsize::new(0);
