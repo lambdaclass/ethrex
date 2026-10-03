@@ -520,6 +520,12 @@ fn warm_merkle_paths(
     use ethrex_storage::hash_key;
     use tracing::debug;
 
+    // Once the pass is told to stop, the block's execution owns this cache and may have
+    // added far more state to it than the slot warmed; collecting its keys would hold
+    // execution's cache writes behind the read locks.
+    if should_stop() {
+        return 0;
+    }
     // Collect only the delta: keys not walked in an earlier pass this slot.
     // The cache grows monotonically, so filtering here keeps the per-pass
     // allocation O(new) instead of re-cloning the whole accumulated set.
