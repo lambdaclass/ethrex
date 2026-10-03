@@ -1,7 +1,7 @@
 use crate::{errors::DatabaseError, precompiles::PrecompileCache};
 use ethrex_common::{
     Address, H256, U256,
-    types::{AccountState, ChainConfig, Code, CodeMetadata},
+    types::{AccountState, AccountUpdate, ChainConfig, Code, CodeMetadata},
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::{
@@ -23,6 +23,18 @@ pub const BLOATED_BATCH_THRESHOLD: usize = 16_384;
 type AccountCache = FxHashMap<Address, AccountState>;
 type StorageCache = FxHashMap<(Address, H256), U256>;
 type CodeCache = FxHashMap<H256, Code>;
+/// State a [`CachingDatabase`] held at the end of a block, moved out so the next block's
+/// cache can start from it instead of empty.
+#[derive(Default)]
+pub struct CarriedEntries {
+    pub accounts: AccountCache,
+    pub storage: StorageCache,
+    pub code: CodeCache,
+    /// The block's state changes, in execution order: what the entries above need
+    /// applied to describe the state after the block instead of before it.
+    pub writes: Vec<AccountUpdate>,
+}
+
 /// Touched-key snapshot returned by [`CachingDatabase::touched_keys_where`].
 pub struct TouchedKeys {
     /// Touched accounts with their storage roots.
@@ -57,6 +69,17 @@ pub trait Database: Send + Sync {
     fn cached_account_code(&self, _code_hash: H256) -> Option<Code> {
         None
     }
+    /// Records state changes the block's execution made, as it sends them to the
+    /// merkleizer. Default: dropped.
+    fn record_block_writes(&self, _updates: &[AccountUpdate]) {}
+    /// Moves out everything this layer holds in memory, leaving it empty. Default: `None`,
+    /// for layers that keep nothing.
+    fn take_entries(&self) -> Option<CarriedEntries> {
+        None
+    }
+    /// Adds `entries` this layer does not hold yet. They must describe the same state as
+    /// this layer's backing store. Default: dropped.
+    fn seed_entries(&self, _entries: CarriedEntries) {}
     /// Batch lookup. Default: loop. Backends with a batched read path (e.g. rocksdb
     /// `multi_get_cf` on the flat key-value table) should override this and the
     /// caching layer above will dispatch to it.
@@ -176,6 +199,9 @@ pub struct CachingDatabase {
     precompile_cache: Option<PrecompileCache>,
     /// Cached chain config (constant for the lifetime of this database)
     chain_config: OnceLock<ChainConfig>,
+    /// State changes the block's execution made, kept so the cache can be carried to the
+    /// next block.
+    block_writes: std::sync::Mutex<Vec<AccountUpdate>>,
 }
 
 impl CachingDatabase {
@@ -188,6 +214,7 @@ impl CachingDatabase {
             code_bytes: AtomicU64::new(0),
             precompile_cache: precompile_cache_enabled.then(PrecompileCache::new),
             chain_config: OnceLock::new(),
+            block_writes: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -407,6 +434,52 @@ impl Database for CachingDatabase {
 
     fn cached_account_code(&self, code_hash: H256) -> Option<Code> {
         self.read_code().ok()?.get(&code_hash).cloned()
+    }
+
+    fn record_block_writes(&self, updates: &[AccountUpdate]) {
+        if let Ok(mut writes) = self.block_writes.lock() {
+            writes.extend_from_slice(updates);
+        }
+    }
+
+    fn take_entries(&self) -> Option<CarriedEntries> {
+        let writes = std::mem::take(&mut *self.block_writes.lock().ok()?);
+        let accounts = std::mem::take(&mut *self.write_accounts().ok()?);
+        let storage = std::mem::take(&mut *self.write_storage().ok()?);
+        let code = std::mem::take(&mut *self.write_code().ok()?);
+        self.code_bytes.store(0, Ordering::Relaxed);
+        Some(CarriedEntries {
+            accounts,
+            storage,
+            code,
+            writes,
+        })
+    }
+
+    fn seed_entries(&self, entries: CarriedEntries) {
+        if let Ok(mut accounts) = self.write_accounts() {
+            if accounts.is_empty() {
+                *accounts = entries.accounts;
+            } else {
+                for (address, state) in entries.accounts {
+                    accounts.entry(address).or_insert(state);
+                }
+            }
+        }
+        if let Ok(mut storage) = self.write_storage() {
+            if storage.is_empty() {
+                *storage = entries.storage;
+            } else {
+                for (key, value) in entries.storage {
+                    storage.entry(key).or_insert(value);
+                }
+            }
+        }
+        if let Ok(mut code) = self.write_code() {
+            for (hash, bytecode) in entries.code {
+                self.keep_code(&mut code, hash, bytecode);
+            }
+        }
     }
 
     /// Warms every address through [`Self::prefetch_accounts`], then answers from the

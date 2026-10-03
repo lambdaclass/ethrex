@@ -406,6 +406,59 @@ fn split_heavy_sender_groups(groups: Vec<WarmUnit<'_>>, workers: usize) -> Vec<W
     units
 }
 
+/// Most storage slots carried from one block's cache to the next; past it the carry starts
+/// over from the last block alone. About 100 bytes each.
+const CARRY_MAX_SLOTS: usize = 2_000_000;
+/// Most accounts carried from one block's cache to the next.
+const CARRY_MAX_ACCOUNTS: usize = 500_000;
+/// Most bytecode bytes carried from one block's cache to the next.
+const CARRY_MAX_CODE_BYTES: usize = 256 * 1024 * 1024;
+
+pub use ethrex_levm::db::CarriedEntries;
+
+/// Brings a block's cache entries, read against its parent state, up to the state after the
+/// block by applying the block's recorded state changes in order.
+///
+/// A written slot takes its new value; an account whose balance, nonce or code changed is
+/// updated in place. An account whose storage changed is dropped instead, since its cached
+/// storage root is stale and only merkleization knows the new one; a removed account, or
+/// one whose storage was cleared, also loses every slot carried for it. Entries the block
+/// did not change are the same after it, so the result describes the state after the block.
+pub fn carry_block_writes(mut entries: CarriedEntries) -> CarriedEntries {
+    let writes = std::mem::take(&mut entries.writes);
+    if entries.storage.len() > CARRY_MAX_SLOTS
+        || entries.accounts.len() > CARRY_MAX_ACCOUNTS
+        || entries.code.values().map(Code::size).sum::<usize>() > CARRY_MAX_CODE_BYTES
+    {
+        entries = CarriedEntries::default();
+    }
+    for update in writes {
+        let address = update.address;
+        if update.removed || update.removed_storage {
+            entries.storage.retain(|(owner, _), _| *owner != address);
+            entries.accounts.remove(&address);
+        }
+        if !update.added_storage.is_empty() {
+            for (key, value) in update.added_storage {
+                entries.storage.insert((address, key), value);
+            }
+            entries.accounts.remove(&address);
+        }
+        if let Some(info) = update.info
+            && !update.removed
+            && let Some(state) = entries.accounts.get_mut(&address)
+        {
+            state.nonce = info.nonce;
+            state.balance = info.balance;
+            state.code_hash = info.code_hash;
+        }
+        if let Some(code) = update.code {
+            entries.code.entry(code.hash).or_insert(code);
+        }
+    }
+    entries
+}
+
 /// Keys a discovery pass asked for that the warming cache did not hold yet.
 #[cfg(feature = "rayon")]
 #[derive(Default)]
@@ -3990,6 +4043,7 @@ impl LEVM {
         queue_length: &AtomicUsize,
     ) -> Result<(), EvmError> {
         let transitions = LEVM::get_state_transitions_tx(db)?;
+        db.store.record_block_writes(&transitions);
         merkleizer
             .send(transitions)
             .map_err(|e| EvmError::Custom(format!("send failed: {e}")))?;

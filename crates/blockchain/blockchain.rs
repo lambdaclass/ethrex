@@ -287,6 +287,30 @@ pub struct Blockchain {
     /// Cache handoff slot from the mempool prewarmer to
     /// `execute_block_pipeline`; see `PrewarmedCache` and `crate::prewarm`.
     prewarmed: PrewarmedCache,
+    /// State cache entries left by the last executed block, brought up to its post-state,
+    /// for its child to start from; see `CarriedCache`.
+    carried: CarriedCache,
+}
+
+/// A block's state cache entries carried to its child. Keyed like [`PrewarmedEntry`] by
+/// the block the entries describe the state after, and by fork for the same reason.
+#[derive(Default)]
+pub(crate) struct CarriedCache(std::sync::Mutex<Option<CarriedState>>);
+
+pub(crate) struct CarriedState {
+    block_hash: H256,
+    fork: Fork,
+    entries: ethrex_vm::backends::levm::CarriedEntries,
+}
+
+impl std::fmt::Debug for CarriedCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let state = match self.0.lock() {
+            Ok(slot) => slot.as_ref().map(|state| (state.block_hash, state.fork)),
+            Err(_) => None,
+        };
+        f.debug_tuple("CarriedCache").field(&state).finish()
+    }
 }
 
 /// Shallowest trie level read when prefetching the paths of a block's speculative writes. The
@@ -624,6 +648,7 @@ impl Blockchain {
             options: blockchain_opts,
             merkle_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
+            carried: CarriedCache::default(),
         }
     }
 
@@ -652,6 +677,7 @@ impl Blockchain {
             },
             merkle_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
+            carried: CarriedCache::default(),
         }
     }
 
@@ -702,6 +728,7 @@ impl Blockchain {
             options,
             merkle_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
+            carried: CarriedCache::default(),
         }
     }
 
@@ -923,6 +950,21 @@ impl Blockchain {
                 self.options.precompile_cache_enabled,
             )),
         };
+
+        // Start from the state the parent block's execution left cached, brought up to the
+        // parent's post-state. Only the sequential path records its state changes on the
+        // cache, and witness collection must start cold, as above.
+        let carry = bal.is_none() && !collect_witness;
+        let carried = &self.carried;
+        let block_fork = chain_config.fork(block.header.timestamp);
+        if carry
+            && let Ok(mut slot) = self.carried.0.lock()
+            && let Some(state) = slot.take()
+            && state.block_hash == block.header.parent_hash
+            && state.fork == block_fork
+        {
+            caching_store.seed_entries(state.entries);
+        }
 
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
@@ -1249,6 +1291,18 @@ impl Blockchain {
                             )
                         {
                             return Err(InvalidBlockError::BlockAccessListHashMismatch.into());
+                        }
+
+                        // Leave this block's cache, brought up to its post-state, for its child.
+                        if carry
+                            && let Some(entries) = vm.db.store.take_entries()
+                            && let Ok(mut slot) = carried.0.lock()
+                        {
+                            *slot = Some(CarriedState {
+                                block_hash: block.hash(),
+                                fork: block_fork,
+                                entries: ethrex_vm::backends::levm::carry_block_writes(entries),
+                            });
                         }
 
                         let exec_end_instant = Instant::now();
