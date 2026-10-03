@@ -567,8 +567,8 @@ const WARM_IO_THREADS: usize = 64;
 type WarmIoJob = Box<dyn FnOnce() + Send + 'static>;
 
 /// Plain threads sleeping on a queue, rather than a rayon pool: idle rayon workers spin
-/// looking for work, and with this many of them that spinning took more CPU than the reads
-/// (100 ms per block on 12 cores) and delayed the executor.
+/// looking for work, and with this many of them the spinning would take cores from
+/// execution.
 #[cfg(feature = "rayon")]
 fn spawn_io_threads(name: &str, count: usize) -> Option<std::sync::mpsc::Sender<WarmIoJob>> {
     let (sender, receiver) = std::sync::mpsc::channel::<WarmIoJob>();
@@ -639,8 +639,7 @@ enum WarmKey {
 static DISK_READ_SHARE_PPM: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(1_000_000);
 
-/// Read time above which a read is taken to have gone to the disk. One served from memory
-/// takes 5-20 us, a cold one 100-200 us.
+/// Read time above which a read is taken to have gone to the disk rather than to memory.
 #[cfg(feature = "rayon")]
 const DISK_READ_NANOS: u128 = 50_000;
 
@@ -3748,7 +3747,8 @@ impl LEVM {
                 let unit = &units[i];
                 // While reads come from memory, a discovery pass only reruns transactions to
                 // save reads that cost next to nothing, so units warm directly; one in
-                // DISCOVERY_PROBE_EVERY still discovers, which keeps the read time measured.
+                // DISCOVERY_PROBE_EVERY still discovers, which keeps the share of disk reads
+                // current.
                 let passes = if discover || i.is_multiple_of(DISCOVERY_PROBE_EVERY) {
                     DISCOVERY_PASSES
                 } else {
