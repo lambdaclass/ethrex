@@ -53,8 +53,7 @@ fn self_verify_frame(gas: u64) -> Frame {
 fn tx(frames: Vec<Frame>) -> FrameTransaction {
     FrameTransaction {
         chain_id: 1,
-        nonce_keys: vec![U256::zero()],
-        nonce_seq: 0,
+        nonce: 0,
         sender: Address::from_low_u64_be(0xABCD),
         frames,
         max_priority_fee_per_gas: U256::from(1u64),
