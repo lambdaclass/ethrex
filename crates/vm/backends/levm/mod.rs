@@ -319,6 +319,104 @@ pub enum BalValidationError {
     Database(String),
 }
 
+/// Transactions a warming worker runs in order on one database.
+#[cfg(feature = "rayon")]
+struct WarmUnit<'a> {
+    sender: Address,
+    txs: Vec<&'a Transaction>,
+    /// Block positions of `txs`.
+    positions: Vec<usize>,
+    /// A single transaction taken out of its sender's group, run against the parent state.
+    split: bool,
+}
+
+#[cfg(feature = "rayon")]
+impl WarmUnit<'_> {
+    fn gas_limit(&self) -> u64 {
+        self.txs.iter().map(|tx| tx.gas_limit()).sum()
+    }
+
+    /// Block position of the unit's first transaction, which execution reaches first.
+    fn first_position(&self) -> usize {
+        self.positions.first().copied().unwrap_or(usize::MAX)
+    }
+}
+
+/// One unit per sender, so nonce/balance changes propagate within a group
+/// (inspired by Nethermind's per-sender prewarmer).
+#[cfg(feature = "rayon")]
+fn group_by_sender<'a>(txs_with_sender: &[(&'a Transaction, Address)]) -> Vec<WarmUnit<'a>> {
+    let mut sender_groups: FxHashMap<Address, (Vec<&Transaction>, Vec<usize>)> =
+        FxHashMap::default();
+    for (position, (tx, sender)) in txs_with_sender.iter().enumerate() {
+        let (txs, positions) = sender_groups.entry(*sender).or_default();
+        txs.push(*tx);
+        positions.push(position);
+    }
+    sender_groups
+        .into_iter()
+        .map(|(sender, (txs, positions))| WarmUnit {
+            sender,
+            txs,
+            positions,
+            split: false,
+        })
+        .collect()
+}
+
+/// Share of a block's transaction gas limit above which a sender's group is split for warming.
+#[cfg(feature = "rayon")]
+const HEAVY_SENDER_GAS_FRACTION: u64 = 8;
+
+/// Splits each heavy sender group into one unit per transaction, then orders the units by
+/// the block position of their first transaction, the order execution reaches them. A group
+/// is heavy when its transactions' gas limits add up to more than an eighth of the block's,
+/// and to more than a worker's fair share.
+///
+/// A group is warmed sequentially, so one sender with several large transactions (batch
+/// bots that put 4-7 transactions and 35-70% of a block's gas used under one sender) makes
+/// the warmer as slow as execution itself, and execution pays every cold read. Gas limits
+/// understate such a sender, since other transactions declare far more gas than they use:
+/// those senders hold only 19-30% of their blocks' gas limit, hence the low threshold. Warming those
+/// transactions in parallel against the parent state reads what their execution reads as
+/// long as they do not depend on each other's writes; if one does, its warming just reads
+/// less. Lighter groups stay whole, so their transactions still see their predecessors'
+/// writes, and blocks without a heavy sender warm exactly as before.
+#[cfg(feature = "rayon")]
+fn split_heavy_sender_groups(groups: Vec<WarmUnit<'_>>, workers: usize) -> Vec<WarmUnit<'_>> {
+    let total_gas: u64 = groups.iter().map(WarmUnit::gas_limit).sum();
+    let threshold = (total_gas / workers.max(1) as u64).max(total_gas / HEAVY_SENDER_GAS_FRACTION);
+    let mut units = Vec::with_capacity(groups.len());
+    for group in groups {
+        if group.txs.len() > 1 && group.gas_limit() > threshold {
+            units.extend(
+                group
+                    .txs
+                    .into_iter()
+                    .zip(group.positions)
+                    .map(|(tx, position)| WarmUnit {
+                        sender: group.sender,
+                        txs: vec![tx],
+                        positions: vec![position],
+                        split: true,
+                    }),
+            );
+        } else {
+            units.push(group);
+        }
+    }
+    units.sort_by_key(WarmUnit::first_position);
+    units
+}
+
+/// Gas limit from which a warming unit counts as heavy and may start ahead of block order.
+#[cfg(feature = "rayon")]
+const HEAVY_UNIT_GAS: u64 = 1_000_000;
+
+/// Warmers that start on the heaviest units before joining block order.
+#[cfg(feature = "rayon")]
+const HEAVY_LANE_WORKERS: usize = 3;
+
 impl LEVM {
     /// Execute a block and return the execution result.
     ///
@@ -426,6 +524,7 @@ impl LEVM {
                 base_blob_fee_per_gas,
                 &mut shared_stack_pool,
                 &mut shared_memory_pool,
+                false,
                 false,
                 crypto,
                 evm_config,
@@ -921,6 +1020,7 @@ impl LEVM {
                 base_blob_fee_per_gas,
                 &mut shared_stack_pool,
                 &mut shared_memory_pool,
+                false,
                 false,
                 crypto,
                 evm_config,
@@ -1665,6 +1765,7 @@ impl LEVM {
                     base_blob_fee_per_gas,
                     &mut stack_pool,
                     &mut memory_pool,
+                    false,
                     false,
                     crypto,
                     evm_config,
@@ -3180,8 +3281,12 @@ impl LEVM {
                 EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
             })?;
 
-        Self::warm_txs(
-            &txs_with_sender,
+        let units = split_heavy_sender_groups(
+            group_by_sender(&txs_with_sender),
+            rayon::current_num_threads(),
+        );
+        Self::warm_units_in_order(
+            units,
             &block.header,
             store.clone(),
             vm_type,
@@ -3228,13 +3333,117 @@ impl LEVM {
         crypto: &dyn Crypto,
         should_stop: &(dyn Fn() -> bool + Sync),
     ) -> Result<(), EvmError> {
-        // Group by sender so nonce/balance changes propagate within a group
-        // (inspired by Nethermind's per-sender prewarmer).
-        let mut sender_groups: FxHashMap<Address, Vec<&Transaction>> = FxHashMap::default();
-        for (tx, sender) in txs_with_sender {
-            sender_groups.entry(*sender).or_default().push(tx);
-        }
+        Self::warm_units(
+            group_by_sender(txs_with_sender),
+            header,
+            store,
+            vm_type,
+            crypto,
+            should_stop,
+        )
+    }
 
+    /// Warms units in parallel, starting them in the order execution reaches them. Workers take
+    /// units from a shared counter, so units start in block order: a parallel iterator would
+    /// split the list and start halfway in, leaving the block's first transactions for later
+    /// while execution needs them first. The first few workers start on the heaviest units
+    /// instead, since in block order those are still warming when execution reaches them.
+    #[cfg(feature = "rayon")]
+    fn warm_units_in_order(
+        units: Vec<WarmUnit<'_>>,
+        header: &BlockHeader,
+        store: Arc<dyn Database>,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+        should_stop: &(dyn Fn() -> bool + Sync),
+    ) -> Result<(), EvmError> {
+        let chain_config = store.get_chain_config()?;
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, header);
+        let chain_id = chain_config.chain_id;
+        let base_blob_fee_per_gas = get_base_fee_per_blob_gas(header.excess_blob_gas, &evm_config)?;
+
+        let warm_one = |stack_pool: &mut Vec<Stack>, unit: &WarmUnit<'_>| {
+            let mut memory_pool = Vec::with_capacity(1);
+            let mut db = GeneralizedDatabase::new(store.clone());
+            for tx in &unit.txs {
+                if should_stop() {
+                    return;
+                }
+                let _ = Self::execute_tx_in_block(
+                    tx,
+                    unit.sender,
+                    header,
+                    &mut db,
+                    vm_type,
+                    base_blob_fee_per_gas,
+                    stack_pool,
+                    &mut memory_pool,
+                    true,
+                    unit.split,
+                    crypto,
+                    evm_config,
+                    chain_id,
+                    // Warming discards results; the EXECUTE precompile is not run
+                    // here (the real execution path carries the validator).
+                    None,
+                );
+            }
+        };
+        let mut heavy: Vec<usize> = (0..units.len())
+            .filter(|&i| units[i].gas_limit() >= HEAVY_UNIT_GAS)
+            .collect();
+        heavy.sort_by_key(|&i| std::cmp::Reverse(units[i].gas_limit()));
+        let claimed: Vec<std::sync::atomic::AtomicBool> = units
+            .iter()
+            .map(|_| std::sync::atomic::AtomicBool::new(false))
+            .collect();
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let next_heavy = std::sync::atomic::AtomicUsize::new(0);
+        let worker = |lane: usize| {
+            let mut stack_pool = Vec::with_capacity(STACK_LIMIT);
+            let take = |i: usize, stack_pool: &mut Vec<Stack>| {
+                if !claimed[i].swap(true, Ordering::Relaxed) {
+                    warm_one(stack_pool, &units[i]);
+                }
+            };
+            if lane < HEAVY_LANE_WORKERS {
+                while let Some(&i) = heavy.get(next_heavy.fetch_add(1, Ordering::Relaxed)) {
+                    if should_stop() {
+                        return;
+                    }
+                    take(i, &mut stack_pool);
+                }
+            }
+            loop {
+                let i = next.fetch_add(1, Ordering::Relaxed);
+                if i >= units.len() || should_stop() {
+                    return;
+                }
+                take(i, &mut stack_pool);
+            }
+        };
+        rayon::scope(|scope| {
+            for i in 0..rayon::current_num_threads() {
+                let worker = &worker;
+                scope.spawn(move |_| worker(i));
+            }
+        });
+        Ok(())
+    }
+
+    /// Runs warming units in parallel, the transactions of each unit in order. A unit is
+    /// either a sender's whole group, whose state carries from one transaction to the next,
+    /// or a single transaction split out of a heavy group (see `split_heavy_sender_groups`),
+    /// which runs against the parent state with the nonce check off.
+    #[cfg(feature = "rayon")]
+    fn warm_units(
+        units: Vec<WarmUnit<'_>>,
+        header: &BlockHeader,
+        store: Arc<dyn Database>,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+        should_stop: &(dyn Fn() -> bool + Sync),
+    ) -> Result<(), EvmError> {
         // Block-invariant EVM config + chain id, computed once and shared (by copy)
         // across the parallel warming workers.
         let chain_config = store.get_chain_config()?;
@@ -3243,27 +3452,27 @@ impl LEVM {
         // Block-invariant base blob fee, computed once and shared across workers.
         let base_blob_fee_per_gas = get_base_fee_per_blob_gas(header.excess_blob_gas, &evm_config)?;
 
-        // Parallel across sender groups, sequential within each group. The stack pool is reused
-        // across all groups a worker handles (it is `Send`).
-        sender_groups.into_par_iter().for_each_with(
-            Vec::with_capacity(STACK_LIMIT),
-            |stack_pool, (sender, txs)| {
+        // Parallel across units, sequential within each unit. The stack pool is reused across
+        // all units a worker handles (it is `Send`).
+        units
+            .into_par_iter()
+            .for_each_with(Vec::with_capacity(STACK_LIMIT), |stack_pool, unit| {
                 if should_stop() {
                     return;
                 }
                 // Memory holds an `Rc` (not `Send`), so its pool can't ride the `for_each_with`
-                // init; keep it local to this group's run, where it still amortizes the buffer
-                // alloc across the group's txs.
+                // init; keep it local to this unit's run, where it still amortizes the buffer
+                // alloc across the unit's txs.
                 let mut memory_pool = Vec::with_capacity(1);
-                // Each sender group gets its own db instance for state propagation
+                // Each unit gets its own db instance for state propagation
                 let mut group_db = GeneralizedDatabase::new(store.clone());
-                for tx in txs {
+                for tx in unit.txs {
                     if should_stop() {
                         return;
                     }
                     let _ = Self::execute_tx_in_block(
                         tx,
-                        sender,
+                        unit.sender,
                         header,
                         &mut group_db,
                         vm_type,
@@ -3271,6 +3480,7 @@ impl LEVM {
                         stack_pool,
                         &mut memory_pool,
                         true,
+                        unit.split,
                         crypto,
                         evm_config,
                         chain_id,
@@ -3279,8 +3489,7 @@ impl LEVM {
                         None,
                     );
                 }
-            },
-        );
+            });
         Ok(())
     }
 
@@ -3484,6 +3693,8 @@ impl LEVM {
         stack_pool: &mut Vec<Stack>,
         memory_pool: &mut Vec<Memory>,
         disable_balance_check: bool,
+        // Only warming sets this, for a transaction run out of order against the parent state.
+        disable_nonce_check: bool,
         crypto: &dyn Crypto,
         config: EVMConfig,
         chain_id: u64,
@@ -3499,6 +3710,7 @@ impl LEVM {
             base_blob_fee_per_gas,
         )?;
         env.disable_balance_check = disable_balance_check;
+        env.disable_nonce_check = disable_nonce_check;
         // Draw the root frame's stack and memory buffer from the shared pools (and adopt the
         // stacks for sub-frames), then return them afterwards so the next tx reuses them instead
         // of allocating + zeroing a fresh 32 KB stack and a fresh memory buffer per transaction.
@@ -5509,5 +5721,124 @@ mod simulated_tx_encoding_tests {
                 data.len(),
             );
         }
+    }
+}
+
+#[cfg(all(test, feature = "rayon"))]
+mod warm_split_tests {
+    use super::*;
+    use ethrex_common::types::EIP1559Transaction;
+
+    fn tx(gas_limit: u64, nonce: u64) -> Transaction {
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            gas_limit,
+            nonce,
+            ..Default::default()
+        })
+    }
+
+    fn sender(n: u64) -> Address {
+        Address::from_low_u64_be(n)
+    }
+
+    /// A sender holding more than an eighth of the block's gas limit SHALL be warmed one
+    /// transaction per unit, with every other sender left whole and units in block order.
+    #[test]
+    fn a_heavy_sender_is_split_into_one_unit_per_transaction() {
+        // The shape of a batch-claim block: one sender with 7 x 6M gas next to 20 small senders.
+        let heavy: Vec<Transaction> = (0..7).map(|n| tx(6_000_000, n)).collect();
+        let light: Vec<Transaction> = (0..20).map(|_| tx(100_000, 0)).collect();
+        let mut txs_with_sender: Vec<(&Transaction, Address)> =
+            heavy.iter().map(|t| (t, sender(1))).collect();
+        txs_with_sender.extend(
+            light
+                .iter()
+                .enumerate()
+                .map(|(i, t)| (t, sender(i as u64 + 2))),
+        );
+
+        let units = split_heavy_sender_groups(group_by_sender(&txs_with_sender), 12);
+
+        let split: Vec<_> = units.iter().filter(|u| u.split).collect();
+        assert_eq!(split.len(), 7);
+        assert!(
+            split
+                .iter()
+                .all(|u| u.sender == sender(1) && u.txs.len() == 1)
+        );
+        assert_eq!(units.iter().filter(|u| !u.split).count(), 20);
+        assert!(
+            units
+                .windows(2)
+                .all(|pair| pair[0].first_position() <= pair[1].first_position()),
+            "units follow the block order of their first transaction"
+        );
+    }
+
+    /// A batch sender whose padded-limit neighbours dilute it to about a fifth of the block's
+    /// gas limit (mainnet's batch-claim blocks sit at 19-30%) SHALL still be split.
+    #[test]
+    fn a_batch_sender_diluted_by_padded_limits_is_still_split() {
+        let heavy: Vec<Transaction> = (0..7).map(|n| tx(6_000_000, n)).collect();
+        // 150M of declared gas from 100 other senders: 22% share for the batch sender.
+        let others: Vec<Transaction> = (0..100).map(|_| tx(1_500_000, 0)).collect();
+        let mut txs_with_sender: Vec<(&Transaction, Address)> =
+            heavy.iter().map(|t| (t, sender(1))).collect();
+        txs_with_sender.extend(
+            others
+                .iter()
+                .enumerate()
+                .map(|(i, t)| (t, sender(i as u64 + 2))),
+        );
+
+        let units = split_heavy_sender_groups(group_by_sender(&txs_with_sender), 12);
+
+        assert_eq!(units.iter().filter(|u| u.split).count(), 7);
+        assert_eq!(units.iter().filter(|u| !u.split).count(), 100);
+    }
+
+    /// A block whose senders all hold less than an eighth of its gas limit SHALL keep one
+    /// unit per sender, so each sender's transactions still see their predecessors' writes,
+    /// even when each of them is above a worker's fair share.
+    #[test]
+    fn a_block_without_a_heavy_sender_keeps_whole_groups() {
+        let txs: Vec<Transaction> = (0..30).map(|n| tx(200_000, n % 3)).collect();
+        let txs_with_sender: Vec<(&Transaction, Address)> = txs
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t, sender((i / 3) as u64)))
+            .collect();
+
+        let units = split_heavy_sender_groups(group_by_sender(&txs_with_sender), 12);
+
+        assert_eq!(units.len(), 10);
+        assert!(units.iter().all(|u| !u.split && u.txs.len() == 3));
+    }
+
+    /// A sender with a single transaction has nothing to split, however heavy it is.
+    #[test]
+    fn a_single_transaction_sender_is_never_split() {
+        let big = tx(30_000_000, 0);
+        let small = tx(21_000, 0);
+        let txs_with_sender = vec![(&big, sender(1)), (&small, sender(2))];
+
+        let units = split_heavy_sender_groups(group_by_sender(&txs_with_sender), 12);
+
+        assert_eq!(units.len(), 2);
+        assert!(units.iter().all(|u| !u.split));
+    }
+
+    /// The threshold SHALL never fall below a worker's fair share: with a single worker no
+    /// group can exceed the whole block, so nothing is split.
+    #[test]
+    fn one_worker_never_splits() {
+        let txs: Vec<Transaction> = (0..7).map(|n| tx(6_000_000, n)).collect();
+        let txs_with_sender: Vec<(&Transaction, Address)> =
+            txs.iter().map(|t| (t, sender(1))).collect();
+
+        let units = split_heavy_sender_groups(group_by_sender(&txs_with_sender), 1);
+
+        assert_eq!(units.len(), 1);
+        assert!(!units[0].split);
     }
 }
