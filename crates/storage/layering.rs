@@ -96,6 +96,9 @@ use crate::{
 
 const BLOOM_SIZE: usize = 1_000_000;
 const FALSE_POSITIVE_RATE: f64 = 0.02;
+/// The global bloom filter is rebuilt once the keys of removed layers it still holds reach
+/// this fraction (1/n) of the live layers' keys. It is sized with that much headroom.
+const BLOOM_STALE_FRACTION: usize = 4;
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
@@ -131,6 +134,9 @@ pub struct TrieLayerCache {
     /// Used to avoid looking up all layers when the given path doesn't exist in any
     /// layer, thus going directly to the database.
     bloom: AtomicBloomFilter<FxBuildHasher>,
+    /// Keys the bloom filter still holds from layers removed since it was last rebuilt. They
+    /// only cost false positives, so the filter is rebuilt once they are a large enough share.
+    stale_keys: usize,
     /// Optional in-memory overlay bridging on-disk state at the cache edge `D` to the
     /// virtual state at a deep-reorg pivot. When installed, reads that miss the layer
     /// chain consult the overlay before falling through to disk. `None` in steady state.
@@ -153,6 +159,7 @@ impl fmt::Debug for TrieLayerCache {
             .field("commit_threshold", &self.commit_threshold)
             .field("layers", &self.layers)
             .field("bloom", &"AtomicBloomFilter")
+            .field("stale_keys", &self.stale_keys)
             .field("overlay", &self.overlay)
             .field("safe_commit_root", &safe_commit)
             .finish()
@@ -171,6 +178,7 @@ impl TrieLayerCache {
     ) -> Self {
         Self {
             bloom: Self::create_filter(BLOOM_SIZE),
+            stale_keys: 0,
             last_id: 0,
             layers: Default::default(),
             commit_threshold,
@@ -412,7 +420,9 @@ impl TrieLayerCache {
         // Pre-compute total keys for optimal filter sizing
         let total_keys: usize = self.layers.values().map(|layer| layer.nodes.len()).sum();
 
-        let filter = Self::create_filter(total_keys.max(BLOOM_SIZE));
+        // Room for the keys new layers add before the next rebuild.
+        let filter =
+            Self::create_filter((total_keys + total_keys / BLOOM_STALE_FRACTION).max(BLOOM_SIZE));
 
         // Parallel insertion - AtomicBloomFilter allows concurrent insert via &self
         self.layers.par_iter().for_each(|(_, layer)| {
@@ -422,6 +432,7 @@ impl TrieLayerCache {
         });
 
         self.bloom = filter;
+        self.stale_keys = 0;
     }
 
     /// Whether `state_root` has a diff layer. Not every canonical root does: [`Self::put_batch`]
@@ -466,7 +477,7 @@ impl TrieLayerCache {
     /// If it isn't, the walk exits immediately and returns `None`.
     ///
     /// After removal, any orphaned layers (older than the committed ones) are pruned, and
-    /// the bloom filter is rebuilt to remove stale entries.
+    /// the bloom filter is rebuilt once the removed layers' stale entries pile up.
     ///
     /// Normal block-by-block sync commits exactly one layer per call. Multi-layer commits
     /// are legitimate for the forkchoice-driven flush of an accumulated backlog (e.g. block
@@ -485,8 +496,21 @@ impl TrieLayerCache {
         // so `.first()` is the newest layer (the one at `state_root` itself).
         let top_layer_id = layers_to_commit.first()?.id;
         // older layers are useless
-        self.layers.retain(|_, item| item.id > top_layer_id);
-        self.rebuild_bloom(); // layers removed, rebuild global bloom filter.
+        let mut removed_keys: usize = layers_to_commit.iter().map(|layer| layer.nodes.len()).sum();
+        self.layers.retain(|_, item| {
+            let keep = item.id > top_layer_id;
+            if !keep {
+                removed_keys += item.nodes.len();
+            }
+            keep
+        });
+        // The removed layers' keys stay in the bloom filter as false positives until it is
+        // rebuilt, which walks every live layer's keys; do that once they are a large share.
+        self.stale_keys += removed_keys;
+        let live_keys: usize = self.layers.values().map(|layer| layer.nodes.len()).sum();
+        if self.stale_keys * BLOOM_STALE_FRACTION > live_keys {
+            self.rebuild_bloom();
+        }
         // Oldest-first: apply/journal in block order so per-block reverse diffs are
         // correct and newer writes overwrite older ones on disk.
         let committed = layers_to_commit
@@ -1685,6 +1709,32 @@ mod tests {
             remaining, expected,
             "commit(safe) must retain only the layers above it"
         );
+    }
+
+    /// The bloom filter keeps removed layers' keys until they are a quarter of the live ones,
+    /// and a lookup SHALL still never find a key in a removed layer.
+    #[test]
+    fn bloom_rebuilds_only_when_stale_keys_pile_up() {
+        let (mut cache, _cell) = cache_with_cell(16, H256::zero());
+        let roots = build_chain(&mut cache, 10);
+        let tip = roots[9];
+
+        cache.commit(roots[1]);
+        assert_eq!(
+            cache.stale_keys, 2,
+            "2 removed keys against 8 live: no rebuild"
+        );
+        assert_eq!(cache.get(tip, key(1).as_ref()), None);
+        assert_eq!(cache.get(tip, key(2).as_ref()), None);
+        assert_eq!(cache.get(tip, key(5).as_ref()), Some(vec![5]));
+
+        cache.commit(roots[3]);
+        assert_eq!(
+            cache.stale_keys, 0,
+            "4 removed keys against 6 live: rebuilt"
+        );
+        assert_eq!(cache.get(tip, key(4).as_ref()), None);
+        assert_eq!(cache.get(tip, key(10).as_ref()), Some(vec![10]));
     }
 
     /// (g) Memory bound: after building > threshold layers and committing at a safe root that
