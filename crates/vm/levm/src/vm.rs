@@ -1902,6 +1902,7 @@ impl<'a> VM<'a> {
             // SENDER frame kept the funds). Static validation guarantees only
             // SENDER frames reach here with a non-zero value.
             let value_transfer_reverted = if !frame.value.is_zero() {
+                self.db.observe_balance(sender);
                 let sender_balance = self.db.get_account(sender)?.info.balance;
                 frame_value_exceeds_balance(sender_balance, frame.value)
             } else {
@@ -2610,6 +2611,7 @@ impl<'a> VM<'a> {
             self.substate.push_backup();
 
             let value_transfer_reverted = if !frame.value.is_zero() {
+                self.db.observe_balance(sender);
                 let sender_balance = self.db.get_account(sender)?.info.balance;
                 frame_value_exceeds_balance(sender_balance, frame.value)
             } else {

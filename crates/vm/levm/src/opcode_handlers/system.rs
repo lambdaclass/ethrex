@@ -721,6 +721,7 @@ impl OpcodeHandler for OpSelfDestructHandler {
         }
 
         let target_account_is_empty = vm.db.get_account(beneficiary)?.is_empty();
+        vm.db.observe_balance(to);
         let balance = vm.db.get_account(to)?.info.balance;
 
         // EIP-7928 (Amsterdam): Two-phase gas check for SELFDESTRUCT.
@@ -899,6 +900,7 @@ impl<'a> VM<'a> {
 
         // Get account info of deployer
         let deployer = self.current_call_frame.to;
+        self.db.observe_balance(deployer);
         let (deployer_balance, deployer_nonce) = {
             let deployer_account = self.db.get_account(deployer)?;
             (deployer_account.info.balance, deployer_account.info.nonce)
@@ -1175,6 +1177,7 @@ impl<'a> VM<'a> {
 
         // Validate sender has enough value
         if should_transfer_value && !value.is_zero() {
+            self.db.observe_balance(msg_sender);
             let sender_balance = self.db.get_account(msg_sender)?.info.balance;
             if sender_balance < value {
                 // EIP-8037: no account is created, refund the new-account state gas.

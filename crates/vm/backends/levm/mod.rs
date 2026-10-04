@@ -576,7 +576,16 @@ impl WarmedTx {
         }
         for (address, before) in &self.reads.accounts {
             let account = db.get_account(*address)?;
-            if account.info != before.info
+            // A balance the transaction only credited, or tested against zero, may differ: its
+            // change is applied on top. The sender's and any it read exactly must match.
+            let balance_holds = if *address == sender || self.reads.balances.contains(address) {
+                account.info.balance == before.info.balance
+            } else {
+                account.info.balance.is_zero() == before.info.balance.is_zero()
+            };
+            if account.info.nonce != before.info.nonce
+                || account.info.code_hash != before.info.code_hash
+                || !balance_holds
                 || account.has_storage != before.has_storage
                 || account.exists != before.exists
                 || matches!(
@@ -603,8 +612,30 @@ impl WarmedTx {
         coinbase: Address,
     ) -> Result<ExecutionReport, EvmError> {
         for (address, after) in self.accounts {
+            let before = self
+                .reads
+                .accounts
+                .get(&address)
+                .map(|before| before.info.balance)
+                .ok_or_else(|| EvmError::Custom("warmed change without its read".to_string()))?;
             let account = db.get_account_mut(address)?;
-            account.info = after.info;
+            // The transaction's change to the balance, on top of the balance execution has.
+            let balance = if after.info.balance >= before {
+                account
+                    .info
+                    .balance
+                    .checked_add(after.info.balance - before)
+            } else {
+                account
+                    .info
+                    .balance
+                    .checked_sub(before - after.info.balance)
+            }
+            .ok_or_else(|| EvmError::Custom("warmed balance change out of range".to_string()))?;
+            account.info = ethrex_common::types::AccountInfo {
+                balance,
+                ..after.info
+            };
             account.has_storage = after.has_storage;
             account.exists = after.exists;
         }
@@ -6942,16 +6973,62 @@ mod reuse_tests {
             .insert(key(), U256::from(8));
         assert!(!warmed().holds(&mut changed_slot, &tx(4), sender()).unwrap());
 
-        let mut changed_balance = db();
-        changed_balance
-            .get_account_mut(pool())
-            .unwrap()
-            .info
-            .balance = U256::from(1);
+        let with_pool_balance = |balance: u64| {
+            let mut db = db();
+            db.get_account_mut(pool()).unwrap().info.balance = U256::from(balance);
+            db
+        };
+        // A balance the transaction did not read exactly may differ, but not whether it is zero.
+        assert!(
+            warmed()
+                .holds(&mut with_pool_balance(1), &tx(4), sender())
+                .unwrap()
+        );
         assert!(
             !warmed()
-                .holds(&mut changed_balance, &tx(4), sender())
+                .holds(&mut with_pool_balance(0), &tx(4), sender())
                 .unwrap()
+        );
+        let mut read_exactly = warmed();
+        read_exactly.reads.balances.insert(pool());
+        assert!(
+            !read_exactly
+                .holds(&mut with_pool_balance(1), &tx(4), sender())
+                .unwrap()
+        );
+        // The sender's balance always counts.
+        let mut sender_balance = db();
+        sender_balance
+            .get_account_mut(sender())
+            .unwrap()
+            .info
+            .balance = U256::from(99);
+        assert!(
+            !warmed()
+                .holds(&mut sender_balance, &tx(4), sender())
+                .unwrap()
+        );
+    }
+
+    /// A credit to an account whose balance the transaction did not read is applied on top of
+    /// the balance execution has.
+    #[test]
+    fn apply_adds_a_credit_to_the_current_balance() {
+        let mut warmed = warmed();
+        let mut credited = AccountSnapshot::of(&{
+            let mut db = db();
+            db.get_account(pool()).unwrap().clone()
+        });
+        credited.info.balance = U256::from(130);
+        warmed.accounts.push((pool(), credited));
+        let mut db = db();
+        db.get_account_mut(pool()).unwrap().info.balance = U256::from(500);
+
+        assert!(warmed.holds(&mut db, &tx(4), sender()).unwrap());
+        warmed.apply(&mut db, coinbase()).unwrap();
+        assert_eq!(
+            db.current_accounts_state[&pool()].info.balance,
+            U256::from(530)
         );
     }
 

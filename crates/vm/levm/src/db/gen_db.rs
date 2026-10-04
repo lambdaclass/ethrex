@@ -211,6 +211,9 @@ pub fn code_from_bal(new_code: &bytes::Bytes) -> (H256, Option<Code>) {
 pub struct TxReads {
     pub accounts: FxHashMap<Address, AccountSnapshot>,
     pub slots: FxHashMap<(Address, H256), U256>,
+    /// Accounts whose exact balance the transaction used, rather than only whether it is zero
+    /// or what it added to it.
+    pub balances: FxHashSet<Address>,
 }
 
 /// An account as a transaction can observe it, without its storage.
@@ -585,6 +588,16 @@ impl GeneralizedDatabase {
         let metadata = self.get_code_metadata(code_hash)?;
         #[expect(clippy::as_conversions, reason = "same sized types (on 64bit)")]
         Ok(metadata.length as usize)
+    }
+
+    /// Records in `tx_reads`, if that is on, that the transaction uses `address`'s exact
+    /// balance.
+    pub fn observe_balance(&mut self, address: Address) {
+        if !self.reads_paused
+            && let Some(reads) = self.tx_reads.as_mut()
+        {
+            reads.balances.insert(address);
+        }
     }
 
     /// Gets the storage value of an account loaded before, caching it if not already cached,
