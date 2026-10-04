@@ -1138,14 +1138,6 @@ impl LEVM {
             "tx count overflows u32 BlockAccessIndex"
         );
 
-        let transactions_with_sender =
-            block
-                .body
-                .get_transactions_with_sender(crypto)
-                .map_err(|error| {
-                    EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-                })?;
-
         #[cfg(not(feature = "rayon"))]
         // Without rayon there is no parallel BAL path, so these are unused.
         // Adding dummy let to avoid unused warnings.
@@ -1167,6 +1159,12 @@ impl LEVM {
             // take priority, matching the reference implementation's validation order.
             validate_header_bal_indices(&bal, block.body.transactions.len())
                 .map_err(|e| EvmError::Custom(e.to_string()))?;
+            let transactions_with_sender = block
+                .body
+                .get_transactions_with_sender(crypto)
+                .map_err(|error| {
+                    EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+                })?;
             // Each transaction that loads an account builds its code from the BAL, so an
             // oversized code change must be rejected before any of them run.
             validate_bal_code_sizes(&bal, AMSTERDAM_MAX_CODE_SIZE)
@@ -1429,7 +1427,14 @@ impl LEVM {
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
 
-        for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
+        for (tx_idx, tx) in block.body.transactions.iter().enumerate() {
+            // Senders are recovered as execution reaches them rather than all up front. The
+            // block warmer recovers them in parallel into the same per-transaction cache, so
+            // this is usually a cache read; recovering them here on the rayon pool made
+            // execution wait behind warming for a worker before its first transaction.
+            let tx_sender = tx.sender(crypto).map_err(|error| {
+                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+            })?;
             // Pre-tx gas limit guard:
             // Pre-Amsterdam: reject tx if cumulative post-refund gas + tx.gas > block limit.
             // Amsterdam+: skip — EIP-8037's 2D gas model means cumulative gas (regular +
