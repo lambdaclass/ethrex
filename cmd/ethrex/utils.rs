@@ -236,11 +236,6 @@ pub fn display_chain_initialization(genesis: &Genesis) {
     const BANNER: &str = include_str!("banner.txt");
     info!("");
     log_banner(BANNER);
-    if genesis.config.amsterdam_time.is_some() {
-        // Polar bear adapted from Lodestar's Gloas fork banner (ChainSafe, Apache-2.0).
-        const GLAMSTERDAM_BANNER: &str = include_str!("glamsterdam_banner.txt");
-        log_banner(GLAMSTERDAM_BANNER);
-    }
     let border = "═".repeat(70);
 
     info!("{border}");
