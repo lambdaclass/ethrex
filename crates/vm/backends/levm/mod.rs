@@ -342,6 +342,10 @@ impl WarmUnit<'_> {
     fn first_position(&self) -> usize {
         self.positions.first().copied().unwrap_or(usize::MAX)
     }
+
+    fn last_position(&self) -> usize {
+        self.positions.last().copied().unwrap_or(usize::MAX)
+    }
 }
 
 /// One unit per sender, so nonce/balance changes propagate within a group.
@@ -637,20 +641,25 @@ fn coinbase_balance(
 }
 
 /// One slot per transaction of a block, filled by the warmer and taken by execution.
-pub struct WarmedTxs(Box<[std::sync::Mutex<Option<WarmedTx>>]>);
+pub struct WarmedTxs {
+    slots: Box<[std::sync::Mutex<Option<WarmedTx>>]>,
+    /// How many of the block's transactions execution has finished.
+    executed: AtomicUsize,
+}
 
 impl WarmedTxs {
     pub fn new(transactions: usize) -> Self {
-        Self(
-            (0..transactions)
+        Self {
+            slots: (0..transactions)
                 .map(|_| std::sync::Mutex::new(None))
                 .collect(),
-        )
+            executed: AtomicUsize::new(0),
+        }
     }
 
     #[cfg(feature = "rayon")]
     fn put(&self, position: usize, warmed: WarmedTx) {
-        if let Some(slot) = self.0.get(position)
+        if let Some(slot) = self.slots.get(position)
             && let Ok(mut slot) = slot.lock()
         {
             *slot = Some(warmed);
@@ -658,7 +667,14 @@ impl WarmedTxs {
     }
 
     fn take(&self, position: usize) -> Option<WarmedTx> {
-        self.0.get(position)?.lock().ok()?.take()
+        self.slots.get(position)?.lock().ok()?.take()
+    }
+
+    /// Whether execution has finished every transaction of `unit`, so warming it would only
+    /// take cores and disk reads from the units still ahead of execution.
+    #[cfg(feature = "rayon")]
+    fn passed(&self, unit: &WarmUnit<'_>) -> bool {
+        self.executed.load(Ordering::Relaxed) > unit.last_position()
     }
 }
 
@@ -1684,6 +1700,10 @@ impl LEVM {
                     stateless_validator,
                 )?,
             };
+
+            if let Some(warmed) = warmed {
+                warmed.executed.store(tx_idx + 1, Ordering::Relaxed);
+            }
 
             tx_gas_breakdowns.push(TxGasBreakdown::from_report(
                 tx_idx,
@@ -4055,6 +4075,7 @@ impl LEVM {
             let first = first_split.entry(unit.sender).or_insert(usize::MAX);
             *first = (*first).min(unit.first_position());
         }
+        let passed = |unit: &WarmUnit<'_>| results.is_some_and(|results| results.passed(unit));
         let warm_one = |stack_pool: &mut Vec<Stack>, unit: &WarmUnit<'_>, passes: usize| {
             let mut memory_pool = Vec::with_capacity(1);
             // A whole sender group runs each transaction after the ones before it, as execution
@@ -4143,7 +4164,7 @@ impl LEVM {
                 warmed
             };
             for _ in 0..passes {
-                if should_stop() {
+                if should_stop() || passed(unit) {
                     return;
                 }
                 let view = Arc::new(DiscoveryDb::new(store.clone()));
@@ -4194,6 +4215,9 @@ impl LEVM {
                     return;
                 }
                 let unit = &units[i];
+                if passed(unit) {
+                    return;
+                }
                 // While reads come from memory, a discovery pass only reruns transactions to
                 // save reads that cost next to nothing, so units warm directly; one in
                 // DISCOVERY_PROBE_EVERY still discovers, which keeps the share of disk reads
