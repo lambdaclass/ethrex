@@ -2886,10 +2886,6 @@ impl Blockchain {
 
         let result = self.store_block_with_depth(block, account_updates_list, res, commit_depth);
 
-        if is_first_amsterdam_block && result.is_ok() {
-            glamsterdam::log_once(block_number, block_hash);
-        }
-
         let stored = Instant::now();
 
         let instants = std::array::from_fn(move |i| {
@@ -2911,6 +2907,11 @@ impl Blockchain {
                 warmer_duration,
                 instants,
             );
+        }
+
+        // After the block's own performance log, so the banner follows the block it marks.
+        if is_first_amsterdam_block && result.is_ok() {
+            glamsterdam::log_once(block_number, block_hash);
         }
 
         metrics!(

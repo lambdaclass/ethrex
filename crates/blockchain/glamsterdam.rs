@@ -31,7 +31,6 @@ pub(crate) fn is_first_amsterdam_block(
 /// imports it afterwards, and the banner should appear once.
 pub(crate) fn log_once(block_number: u64, block_hash: H256) {
     SHOWN.call_once(|| {
-        info!("");
         for line in BANNER.lines() {
             info!("{line}");
         }
