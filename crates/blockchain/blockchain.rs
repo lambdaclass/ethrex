@@ -944,6 +944,11 @@ impl Blockchain {
                 (entry.parent_hash == block.header.parent_hash && entry.fork == block_fork)
                     .then_some(entry.cache)
             });
+        // The mempool prewarmer already read the state of the transactions it saw, so what the
+        // block warmer misses in its cache is little, and discovery passes would only take
+        // cores from execution.
+        #[cfg(feature = "rayon")]
+        let discovery = prewarmed.is_none();
         let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = match prewarmed {
             Some(cache) => cache,
             None => Arc::new(CachingDatabase::new(
@@ -1135,6 +1140,7 @@ impl Blockchain {
                                             cancelled_ref,
                                             None,
                                             None,
+                                            false,
                                         ) {
                                             debug!("Block warming failed (non-fatal): {e}");
                                         }
@@ -1168,6 +1174,7 @@ impl Blockchain {
                                         cancelled_ref,
                                         Some(&warm_trie_paths),
                                         warmed,
+                                        discovery,
                                     ) {
                                         debug!("Block warming failed (non-fatal): {e}");
                                     }

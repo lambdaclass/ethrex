@@ -3933,6 +3933,7 @@ impl LEVM {
     /// parallel workers can benefit from shared caching. The same cache should
     /// be used by the sequential execution phase.
     #[cfg(feature = "rayon")]
+    #[allow(clippy::too_many_arguments)]
     pub fn warm_block(
         block: &Block,
         store: Arc<dyn Database>,
@@ -3941,6 +3942,8 @@ impl LEVM {
         cancelled: &AtomicBool,
         writes: Option<WarmWritesSink<'_>>,
         results: Option<&WarmedTxs>,
+        // Whether units may run discovery passes while the store reads from the disk.
+        discovery: bool,
     ) -> Result<(), EvmError> {
         let txs_with_sender = block
             .body
@@ -3979,6 +3982,7 @@ impl LEVM {
                     &should_stop,
                     writes,
                     results,
+                    discovery,
                 )
             },
         );
@@ -4030,13 +4034,14 @@ impl LEVM {
         should_stop: &(dyn Fn() -> bool + Sync),
         writes: Option<WarmWritesSink<'_>>,
         results: Option<&WarmedTxs>,
+        discovery: bool,
     ) -> Result<(), EvmError> {
         let chain_config = store.get_chain_config()?;
         let evm_config = EVMConfig::new_from_chain_config(&chain_config, header);
         let chain_id = chain_config.chain_id;
         let base_blob_fee_per_gas = get_base_fee_per_blob_gas(header.excess_blob_gas, &evm_config)?;
 
-        let discover = store_reads_are_cold();
+        let discover = discovery && store_reads_are_cold();
         // Trie paths are only worth reading ahead while reads come from the disk; from a warm
         // store the merkleizer finds them in memory and the reads only take cores.
         let writes = writes.filter(|_| discover);
@@ -4193,7 +4198,7 @@ impl LEVM {
                 // save reads that cost next to nothing, so units warm directly; one in
                 // DISCOVERY_PROBE_EVERY still discovers, which keeps the share of disk reads
                 // current.
-                let passes = if discover || i.is_multiple_of(DISCOVERY_PROBE_EVERY) {
+                let passes = if discover || (discovery && i.is_multiple_of(DISCOVERY_PROBE_EVERY)) {
                     DISCOVERY_PASSES
                 } else {
                     0
