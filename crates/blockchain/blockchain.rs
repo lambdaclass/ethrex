@@ -163,7 +163,8 @@ const STATE_SHARD_PREFETCH_THRESHOLD: usize = 4;
 const STREAM_STORAGE_PREFETCH_THRESHOLD: usize = 4;
 // Cap on the per-worker, per-trie slot buffer before an opportunistic mid-routing
 // flush (one sorted `prefetch_sorted` + the inserts). Bounds transient memory for
-// very heavy single-account blocks; smaller buffers just flush once at RoutingDone.
+// very heavy single-account blocks; smaller buffers flush when the worker is idle after
+// the block warmer is done, and what is left at RoutingDone.
 const STREAM_STORAGE_FLUSH_BATCH: usize = 1024;
 /// Default mempool occupancy percentage (0-100) at which gapped-nonce
 /// transaction admission is denied. Set to 100 to disable the check.
@@ -987,6 +988,9 @@ impl Blockchain {
         vm.db.store = caching_store.clone();
 
         let cancelled = AtomicBool::new(false);
+        // Set once the block warmer is done; until then merkle workers leave storage slots
+        // buffered, so their trie reads don't compete with warming for the disk and cores.
+        let warming_done = AtomicBool::new(!cfg!(feature = "rayon"));
         // Witness collection also forces sequential execution: parallel lanes
         // re-read in-block-created state (e.g. a code deployed by an earlier
         // tx) from the logged store, while sequential execution serves it from
@@ -1102,6 +1106,7 @@ impl Blockchain {
                 #[cfg(feature = "rayon")]
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
+                let warming_done_ref = &warming_done;
                 #[cfg(feature = "rayon")]
                 let bal_prefetch_enabled = self.options.bal_prefetch_enabled;
                 #[cfg(feature = "rayon")]
@@ -1179,6 +1184,7 @@ impl Blockchain {
                                         debug!("Block warming failed (non-fatal): {e}");
                                     }
                                 }
+                                warming_done_ref.store(true, Ordering::Relaxed);
                                 start.elapsed()
                             })
                             .map_err(|e| {
@@ -1186,6 +1192,10 @@ impl Blockchain {
                             })
                     })
                     .transpose()?;
+                #[cfg(feature = "rayon")]
+                if warm_handle.is_none() {
+                    warming_done_ref.store(true, Ordering::Relaxed);
+                }
 
                 // Warm the merkleizer's trie-node reads concurrently with execution
                 // instead of up front. Touches different CFs than execution, so no
@@ -1384,6 +1394,7 @@ impl Blockchain {
                                 queue_length_ref,
                                 max_queue_length_ref,
                                 collect_witness,
+                                warming_done_ref,
                             )?,
                         };
                         let merkle_end_instant = Instant::now();
@@ -1472,6 +1483,7 @@ impl Blockchain {
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
         collect_witness: bool,
+        warming_done: &AtomicBool,
     ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
         let parent_state_root = parent_header.state_root;
 
@@ -1510,6 +1522,7 @@ impl Blockchain {
                             i as u8,
                             all_senders,
                             shutdown_rx,
+                            warming_done,
                         )
                     }));
                     let result = match result {
@@ -4672,6 +4685,7 @@ fn handle_subtrie(
     index: u8,
     worker_senders: Vec<cb::Sender<WorkerRequest>>,
     shutdown_rx: cb::Receiver<()>,
+    warming_done: &AtomicBool,
 ) -> Result<(), StoreError> {
     let mut state_trie = storage.open_state_trie(parent_state_root)?;
     let mut storage_nodes: Vec<(H256, Vec<TrieNode>)> = vec![];
@@ -4753,6 +4767,22 @@ fn handle_subtrie(
                         return Err(StoreError::Custom("shard worker shutdown".into()));
                     }
                     if dirty {
+                        // Once warming is done, apply the buffered slots while execution
+                        // still runs, so the drain after its last update only has what
+                        // arrived since. Batches of one trie apply in arrival order, so the
+                        // last write still wins.
+                        if !collecting_storages && warming_done.load(Ordering::Relaxed) {
+                            for (prefix, (root, slots)) in storage_buffer.drain() {
+                                flush_storage_buffer(
+                                    &mut storage_tries,
+                                    &storage,
+                                    parent_state_root,
+                                    prefix,
+                                    root,
+                                    slots,
+                                )?;
+                            }
+                        }
                         // Pre-collect state trie — safe during storage
                         // collection too, since StorageShard resolution only
                         // dirties specific paths that get re-committed later.
