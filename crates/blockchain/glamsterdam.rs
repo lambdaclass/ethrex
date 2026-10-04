@@ -6,7 +6,6 @@ use std::sync::Once;
 use ethrex_common::{H256, types::ChainConfig};
 use tracing::info;
 
-/// Polar bear adapted from Lodestar's Gloas fork banner (ChainSafe, Apache-2.0).
 const BANNER: &str = include_str!("glamsterdam_banner.txt");
 
 static SHOWN: Once = Once::new();
@@ -31,6 +30,7 @@ pub(crate) fn is_first_amsterdam_block(
 /// imports it afterwards, and the banner should appear once.
 pub(crate) fn log_once(block_number: u64, block_hash: H256) {
     SHOWN.call_once(|| {
+        info!("");
         for line in BANNER.lines() {
             info!("{line}");
         }
