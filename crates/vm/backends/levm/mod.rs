@@ -13,6 +13,7 @@ use bytes::Bytes;
 use ethrex_common::H256;
 #[cfg(feature = "rayon")]
 use ethrex_common::constants::EMPTY_KECCAK_HASH;
+use ethrex_common::constants::EMPTY_TRIE_HASH;
 use ethrex_common::types::Code;
 #[cfg(feature = "rayon")]
 use ethrex_common::types::TxType;
@@ -404,6 +405,80 @@ fn split_heavy_sender_groups(groups: Vec<WarmUnit<'_>>, workers: usize) -> Vec<W
     }
     units.sort_by_key(WarmUnit::first_position);
     units
+}
+
+/// Most storage slots carried from one block's cache to the next; past it the carry starts
+/// over from the last block alone. About 100 bytes each.
+const CARRY_MAX_SLOTS: usize = 2_000_000;
+/// Most accounts carried from one block's cache to the next.
+const CARRY_MAX_ACCOUNTS: usize = 500_000;
+/// Most bytecode bytes carried from one block's cache to the next.
+const CARRY_MAX_CODE_BYTES: u64 = 256 * 1024 * 1024;
+
+pub use ethrex_levm::db::CarriedEntries;
+
+/// Brings a block's cache entries, read against its parent state, up to the state after the
+/// block by applying the block's recorded state changes in order.
+///
+/// A written slot takes its new value; an account whose balance, nonce or code changed is
+/// updated in place. An account whose storage changed is dropped instead, since its cached
+/// storage root is stale and only merkleization knows the new one. An account whose storage
+/// was cleared, or that was removed while it may have had storage, loses every slot carried
+/// for it; the slots of an account removed with an empty storage root were all zero and stay
+/// zero. Entries the block did not change are the same after it, so the result describes
+/// the state after the block.
+pub fn carry_block_writes(mut entries: CarriedEntries) -> CarriedEntries {
+    let writes = std::mem::take(&mut entries.writes);
+    if entries.storage.len() > CARRY_MAX_SLOTS
+        || entries.accounts.len() > CARRY_MAX_ACCOUNTS
+        || entries.code_bytes > CARRY_MAX_CODE_BYTES
+    {
+        entries = CarriedEntries::default();
+    }
+    let mut cleared = rustc_hash::FxHashSet::default();
+    for update in writes {
+        let address = update.address;
+        if update.removed_storage
+            || (update.removed
+                && entries
+                    .accounts
+                    .get(&address)
+                    .is_none_or(|state| state.storage_root != *EMPTY_TRIE_HASH))
+        {
+            cleared.insert(address);
+        }
+        if update.removed || update.removed_storage {
+            entries.accounts.remove(&address);
+        }
+        if !update.added_storage.is_empty() {
+            for (key, value) in update.added_storage {
+                entries.storage.insert((address, key), value);
+            }
+            entries.accounts.remove(&address);
+        }
+        if let Some(info) = update.info
+            && !update.removed
+            && let Some(state) = entries.accounts.get_mut(&address)
+        {
+            state.nonce = info.nonce;
+            state.balance = info.balance;
+            state.code_hash = info.code_hash;
+        }
+        if let Some(code) = update.code
+            && let std::collections::hash_map::Entry::Vacant(entry) = entries.code.entry(code.hash)
+        {
+            let size = u64::try_from(code.size()).unwrap_or(u64::MAX);
+            entries.code_bytes = entries.code_bytes.saturating_add(size);
+            entry.insert(code);
+        }
+    }
+    // Dropping a slot is always safe, so clearing after the block's later writes is too.
+    if !cleared.is_empty() {
+        entries
+            .storage
+            .retain(|(owner, _), _| !cleared.contains(owner));
+    }
+    entries
 }
 
 /// Keys a discovery pass asked for that the warming cache did not hold yet.
@@ -3990,6 +4065,7 @@ impl LEVM {
         queue_length: &AtomicUsize,
     ) -> Result<(), EvmError> {
         let transitions = LEVM::get_state_transitions_tx(db)?;
+        db.store.record_block_writes(&transitions);
         merkleizer
             .send(transitions)
             .map_err(|e| EvmError::Custom(format!("send failed: {e}")))?;
@@ -6267,5 +6343,123 @@ mod warm_split_tests {
 
         assert_eq!(units.len(), 1);
         assert!(!units[0].split);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::as_conversions)]
+mod carry_tests {
+    use super::*;
+    use ethrex_common::types::{AccountInfo, AccountState};
+
+    fn address(n: u64) -> Address {
+        Address::from_low_u64_be(n)
+    }
+
+    fn slot(n: u64) -> H256 {
+        H256::from_low_u64_be(n)
+    }
+
+    fn account(storage_root: H256) -> AccountState {
+        AccountState {
+            nonce: 1,
+            storage_root,
+            ..Default::default()
+        }
+    }
+
+    /// Two accounts with one carried slot each, the first with no storage in the trie.
+    fn entries(writes: Vec<AccountUpdate>) -> CarriedEntries {
+        let mut entries = CarriedEntries {
+            writes,
+            ..Default::default()
+        };
+        entries
+            .accounts
+            .insert(address(1), account(*EMPTY_TRIE_HASH));
+        entries.accounts.insert(address(2), account(slot(99)));
+        entries.storage.insert((address(1), slot(1)), U256::zero());
+        entries.storage.insert((address(2), slot(2)), U256::from(7));
+        entries
+    }
+
+    fn removed(n: u64) -> AccountUpdate {
+        AccountUpdate {
+            removed: true,
+            ..AccountUpdate::new(address(n))
+        }
+    }
+
+    #[test]
+    fn removed_account_keeps_slots_only_without_storage() {
+        let carried = carry_block_writes(entries(vec![removed(1), removed(2)]));
+        assert_eq!(
+            carried.storage.get(&(address(1), slot(1))),
+            Some(&U256::zero())
+        );
+        assert!(!carried.storage.contains_key(&(address(2), slot(2))));
+        assert!(carried.accounts.is_empty());
+    }
+
+    #[test]
+    fn removed_account_with_slots_written_this_block_loses_them() {
+        let mut write = AccountUpdate::new(address(1));
+        write.added_storage.insert(slot(3), U256::from(5));
+        let carried = carry_block_writes(entries(vec![write, removed(1)]));
+        assert!(
+            !carried
+                .storage
+                .keys()
+                .any(|(owner, _)| *owner == address(1))
+        );
+    }
+
+    #[test]
+    fn cleared_storage_drops_slots_and_writes_update_entries() {
+        let cleared = AccountUpdate {
+            removed_storage: true,
+            ..AccountUpdate::new(address(2))
+        };
+        let mut write = AccountUpdate::new(address(1));
+        write.added_storage.insert(slot(1), U256::from(4));
+        let funded = AccountUpdate {
+            info: Some(AccountInfo {
+                code_hash: *ethrex_common::constants::EMPTY_KECCAK_HASH,
+                balance: U256::from(3),
+                nonce: 9,
+            }),
+            ..AccountUpdate::new(address(3))
+        };
+        let mut start = entries(vec![cleared, write, funded]);
+        start.accounts.insert(address(3), account(*EMPTY_TRIE_HASH));
+        let carried = carry_block_writes(start);
+
+        assert!(!carried.storage.contains_key(&(address(2), slot(2))));
+        assert_eq!(
+            carried.storage.get(&(address(1), slot(1))),
+            Some(&U256::from(4))
+        );
+        // Its storage root is stale until merkleization.
+        assert!(!carried.accounts.contains_key(&address(1)));
+        let state = carried.accounts.get(&address(3)).unwrap();
+        assert_eq!((state.nonce, state.balance), (9, U256::from(3)));
+    }
+
+    #[test]
+    fn new_code_is_counted_once_and_a_full_carry_starts_over() {
+        let code = Code::from_bytecode_unchecked(Bytes::from(vec![0x5b; 100]), slot(5));
+        let deploy = AccountUpdate {
+            code: Some(code.clone()),
+            ..AccountUpdate::new(address(4))
+        };
+        let carried = carry_block_writes(entries(vec![deploy.clone(), deploy.clone()]));
+        assert_eq!(carried.code_bytes, code.size() as u64);
+
+        let mut full = entries(vec![deploy]);
+        full.code_bytes = CARRY_MAX_CODE_BYTES + 1;
+        let carried = carry_block_writes(full);
+        assert!(carried.accounts.is_empty() && carried.storage.is_empty());
+        assert_eq!(carried.code.len(), 1);
+        assert_eq!(carried.code_bytes, code.size() as u64);
     }
 }

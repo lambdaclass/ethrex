@@ -1,7 +1,7 @@
 use crate::{errors::DatabaseError, precompiles::PrecompileCache};
 use ethrex_common::{
     Address, H256, U256,
-    types::{AccountState, ChainConfig, Code, CodeMetadata},
+    types::{AccountState, AccountUpdate, ChainConfig, Code, CodeMetadata},
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::{
@@ -23,6 +23,20 @@ pub const BLOATED_BATCH_THRESHOLD: usize = 16_384;
 type AccountCache = FxHashMap<Address, AccountState>;
 type StorageCache = FxHashMap<(Address, H256), U256>;
 type CodeCache = FxHashMap<H256, Code>;
+/// State a [`CachingDatabase`] held at the end of a block, moved out so the next block's
+/// cache can start from it instead of empty.
+#[derive(Default)]
+pub struct CarriedEntries {
+    pub accounts: AccountCache,
+    pub storage: StorageCache,
+    pub code: CodeCache,
+    /// Sum of [`Code::size`] over `code`.
+    pub code_bytes: u64,
+    /// The block's state changes, in execution order: what the entries above need
+    /// applied to describe the state after the block instead of before it.
+    pub writes: Vec<AccountUpdate>,
+}
+
 /// Touched-key snapshot returned by [`CachingDatabase::touched_keys_where`].
 pub struct TouchedKeys {
     /// Touched accounts with their storage roots.
@@ -57,6 +71,17 @@ pub trait Database: Send + Sync {
     fn cached_account_code(&self, _code_hash: H256) -> Option<Code> {
         None
     }
+    /// Records state changes the block's execution made, as it sends them to the
+    /// merkleizer. Default: dropped.
+    fn record_block_writes(&self, _updates: &[AccountUpdate]) {}
+    /// Moves out everything this layer holds in memory, leaving it empty. Default: `None`,
+    /// for layers that keep nothing.
+    fn take_entries(&self) -> Option<CarriedEntries> {
+        None
+    }
+    /// Adds `entries` this layer does not hold yet. They must describe the same state as
+    /// this layer's backing store. Default: dropped.
+    fn seed_entries(&self, _entries: CarriedEntries) {}
     /// Batch lookup. Default: loop. Backends with a batched read path (e.g. rocksdb
     /// `multi_get_cf` on the flat key-value table) should override this and the
     /// caching layer above will dispatch to it.
@@ -176,6 +201,9 @@ pub struct CachingDatabase {
     precompile_cache: Option<PrecompileCache>,
     /// Cached chain config (constant for the lifetime of this database)
     chain_config: OnceLock<ChainConfig>,
+    /// State changes the block's execution made, kept so the cache can be carried to the
+    /// next block.
+    block_writes: std::sync::Mutex<Vec<AccountUpdate>>,
 }
 
 impl CachingDatabase {
@@ -188,6 +216,7 @@ impl CachingDatabase {
             code_bytes: AtomicU64::new(0),
             precompile_cache: precompile_cache_enabled.then(PrecompileCache::new),
             chain_config: OnceLock::new(),
+            block_writes: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -317,6 +346,18 @@ fn poison_error_to_db_error<T>(err: PoisonError<T>) -> DatabaseError {
     DatabaseError::Custom(format!("Cache lock poisoned: {err}"))
 }
 
+/// Adds the entries of `other` that `map` lacks. Walks whichever of the two is smaller, so
+/// that a large carried set added to a small cache, or the reverse, costs the small one's
+/// size. Both describe the same state, so which copy of a key is kept does not matter.
+fn add_missing<K: Eq + std::hash::Hash, V>(map: &mut FxHashMap<K, V>, mut other: FxHashMap<K, V>) {
+    if other.len() > map.len() {
+        std::mem::swap(map, &mut other);
+    }
+    for (key, value) in other {
+        map.entry(key).or_insert(value);
+    }
+}
+
 impl Database for CachingDatabase {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
         // Check cache first
@@ -407,6 +448,57 @@ impl Database for CachingDatabase {
 
     fn cached_account_code(&self, code_hash: H256) -> Option<Code> {
         self.read_code().ok()?.get(&code_hash).cloned()
+    }
+
+    fn record_block_writes(&self, updates: &[AccountUpdate]) {
+        if let Ok(mut writes) = self.block_writes.lock() {
+            writes.extend_from_slice(updates);
+        }
+    }
+
+    fn take_entries(&self) -> Option<CarriedEntries> {
+        let writes = std::mem::take(&mut *self.block_writes.lock().ok()?);
+        let accounts = std::mem::take(&mut *self.write_accounts().ok()?);
+        let storage = std::mem::take(&mut *self.write_storage().ok()?);
+        let (code, code_bytes) = {
+            let mut code = self.write_code().ok()?;
+            (
+                std::mem::take(&mut *code),
+                self.code_bytes.swap(0, Ordering::Relaxed),
+            )
+        };
+        Some(CarriedEntries {
+            accounts,
+            storage,
+            code,
+            code_bytes,
+            writes,
+        })
+    }
+
+    fn seed_entries(&self, entries: CarriedEntries) {
+        if let Ok(mut accounts) = self.write_accounts() {
+            add_missing(&mut accounts, entries.accounts);
+        }
+        if let Ok(mut storage) = self.write_storage() {
+            add_missing(&mut storage, entries.storage);
+        }
+        if let Ok(mut code) = self.write_code() {
+            let mut other = entries.code;
+            let mut bytes = self.code_bytes.load(Ordering::Relaxed);
+            if other.len() > code.len() {
+                std::mem::swap(&mut *code, &mut other);
+                bytes = entries.code_bytes;
+            }
+            for (hash, bytecode) in other {
+                if let std::collections::hash_map::Entry::Vacant(entry) = code.entry(hash) {
+                    let size = u64::try_from(bytecode.size()).unwrap_or(u64::MAX);
+                    bytes = bytes.saturating_add(size);
+                    entry.insert(bytecode);
+                }
+            }
+            self.code_bytes.store(bytes, Ordering::Relaxed);
+        }
     }
 
     /// Warms every address through [`Self::prefetch_accounts`], then answers from the
@@ -608,5 +700,38 @@ mod code_bytes_tests {
         cache.prefetch_codes(&hashes).unwrap();
         assert_eq!(cache.code_bytes(), 4 * size);
         assert_eq!(cache.read_code().unwrap().len(), 4);
+    }
+
+    /// Seeding SHALL leave the union of both entry sets, whichever of the two is larger,
+    /// and `code_bytes` SHALL still count every distinct code once.
+    #[test]
+    fn seeding_keeps_the_union_and_counts_code_once() {
+        let size = code_for(H256::zero()).size() as u64;
+        let hash = H256::from_low_u64_be;
+        let address = Address::from_low_u64_be;
+        for (carried_codes, cached_codes) in [(1..=5u64, 5..=6u64), (5..=6u64, 1..=5u64)] {
+            let previous = CachingDatabase::new(Arc::new(BigCodeStore), false);
+            for i in carried_codes {
+                previous.get_account_code(hash(i)).unwrap();
+                previous.get_account_state(address(i)).unwrap();
+                previous.get_storage_value(address(i), hash(i)).unwrap();
+            }
+            let entries = previous.take_entries().unwrap();
+            assert_eq!(previous.code_bytes(), 0);
+            assert_eq!(entries.code_bytes, entries.code.len() as u64 * size);
+
+            let cache = CachingDatabase::new(Arc::new(BigCodeStore), false);
+            for i in cached_codes {
+                cache.get_account_code(hash(i)).unwrap();
+                cache.get_account_state(address(i)).unwrap();
+                cache.get_storage_value(address(i), hash(i)).unwrap();
+            }
+            cache.seed_entries(entries);
+
+            assert_eq!(cache.read_code().unwrap().len(), 6);
+            assert_eq!(cache.code_bytes(), 6 * size);
+            assert_eq!(cache.read_accounts().unwrap().len(), 6);
+            assert_eq!(cache.read_storage().unwrap().len(), 6);
+        }
     }
 }
