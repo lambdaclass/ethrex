@@ -406,6 +406,145 @@ fn split_heavy_sender_groups(groups: Vec<WarmUnit<'_>>, workers: usize) -> Vec<W
     units
 }
 
+/// Keys a discovery pass asked for that the warming cache did not hold yet.
+#[cfg(feature = "rayon")]
+#[derive(Default)]
+struct WarmMisses {
+    accounts: FxHashSet<Address>,
+    slots: FxHashSet<(Address, H256)>,
+    codes: FxHashSet<H256>,
+    code_lengths: FxHashSet<H256>,
+}
+
+#[cfg(feature = "rayon")]
+impl WarmMisses {
+    fn is_empty(&self) -> bool {
+        self.accounts.is_empty()
+            && self.slots.is_empty()
+            && self.codes.is_empty()
+            && self.code_lengths.is_empty()
+    }
+}
+
+/// A view of the warming cache that never waits on the store. Keys the cache holds are
+/// answered from it; any other key is recorded and answered as absent (an empty account, a
+/// zero slot, empty code), so the transaction keeps running and asks for the keys it reads
+/// next instead of stopping for each one. A transaction makes most of its reads one after
+/// another, each waiting on the disk; a pass over this view finds them a few at a time per
+/// dependency step, and the found keys are then fetched together.
+#[cfg(feature = "rayon")]
+struct DiscoveryDb {
+    cache: Arc<dyn Database>,
+    misses: std::sync::Mutex<WarmMisses>,
+}
+
+#[cfg(feature = "rayon")]
+impl DiscoveryDb {
+    fn new(cache: Arc<dyn Database>) -> Self {
+        Self {
+            cache,
+            misses: std::sync::Mutex::new(WarmMisses::default()),
+        }
+    }
+
+    fn record(&self, add: impl FnOnce(&mut WarmMisses)) {
+        if let Ok(mut misses) = self.misses.lock() {
+            add(&mut misses);
+        }
+    }
+
+    fn take_misses(&self) -> WarmMisses {
+        self.misses
+            .lock()
+            .map(|mut misses| std::mem::take(&mut *misses))
+            .unwrap_or_default()
+    }
+}
+
+#[cfg(feature = "rayon")]
+impl Database for DiscoveryDb {
+    fn get_account_state(
+        &self,
+        address: Address,
+    ) -> Result<ethrex_common::types::AccountState, ethrex_levm::errors::DatabaseError> {
+        if let Some(state) = self.cache.cached_account_state(address) {
+            return Ok(state);
+        }
+        self.record(|misses| {
+            misses.accounts.insert(address);
+        });
+        Ok(ethrex_common::types::AccountState::default())
+    }
+
+    fn get_storage_value(
+        &self,
+        address: Address,
+        key: H256,
+    ) -> Result<U256, ethrex_levm::errors::DatabaseError> {
+        if let Some(value) = self.cache.cached_storage_value(address, key) {
+            return Ok(value);
+        }
+        self.record(|misses| {
+            misses.slots.insert((address, key));
+        });
+        Ok(U256::zero())
+    }
+
+    fn get_block_hash(
+        &self,
+        block_number: u64,
+    ) -> Result<H256, ethrex_levm::errors::DatabaseError> {
+        self.cache.get_block_hash(block_number)
+    }
+
+    fn get_chain_config(
+        &self,
+    ) -> Result<ethrex_common::types::ChainConfig, ethrex_levm::errors::DatabaseError> {
+        self.cache.get_chain_config()
+    }
+
+    fn get_account_code(
+        &self,
+        code_hash: H256,
+    ) -> Result<Code, ethrex_levm::errors::DatabaseError> {
+        if code_hash == *EMPTY_KECCAK_HASH {
+            return Ok(Code::default());
+        }
+        if let Some(code) = self.cache.cached_account_code(code_hash) {
+            return Ok(code);
+        }
+        self.record(|misses| {
+            misses.codes.insert(code_hash);
+        });
+        Ok(Code::default())
+    }
+
+    fn get_code_metadata(
+        &self,
+        code_hash: H256,
+    ) -> Result<ethrex_common::types::CodeMetadata, ethrex_levm::errors::DatabaseError> {
+        if code_hash != *EMPTY_KECCAK_HASH {
+            if let Some(code) = self.cache.cached_account_code(code_hash) {
+                return Ok(ethrex_common::types::CodeMetadata {
+                    length: u64::try_from(code.len()).unwrap_or(u64::MAX),
+                });
+            }
+            self.record(|misses| {
+                misses.code_lengths.insert(code_hash);
+            });
+        }
+        Ok(ethrex_common::types::CodeMetadata { length: 0 })
+    }
+
+    fn precompile_cache(&self) -> Option<&ethrex_levm::precompiles::PrecompileCache> {
+        self.cache.precompile_cache()
+    }
+}
+
+/// While warming reads come from memory, one unit in this many still runs discovery passes.
+#[cfg(feature = "rayon")]
+const DISCOVERY_PROBE_EVERY: usize = 16;
+
 /// Gas limit from which a warming unit counts as heavy and may start ahead of block order.
 #[cfg(feature = "rayon")]
 const HEAVY_UNIT_GAS: u64 = 1_000_000;
@@ -413,6 +552,189 @@ const HEAVY_UNIT_GAS: u64 = 1_000_000;
 /// Warmers that start on the heaviest units before joining block order.
 #[cfg(feature = "rayon")]
 const HEAVY_LANE_WORKERS: usize = 3;
+
+/// Most discovery passes a warming unit makes before it runs against the store as before.
+#[cfg(feature = "rayon")]
+const DISCOVERY_PASSES: usize = 16;
+
+/// Threads reading state for warming. They wait on the disk rather than compute, so there
+/// are far more of them than cores: a drive answers many reads at once, and each thread has
+/// one in flight.
+#[cfg(feature = "rayon")]
+const WARM_IO_THREADS: usize = 64;
+
+#[cfg(feature = "rayon")]
+type WarmIoJob = Box<dyn FnOnce() + Send + 'static>;
+
+/// Plain threads sleeping on a queue, rather than a rayon pool: idle rayon workers spin
+/// looking for work, and with this many of them the spinning would take cores from
+/// execution.
+#[cfg(feature = "rayon")]
+fn spawn_io_threads(name: &str, count: usize) -> Option<std::sync::mpsc::Sender<WarmIoJob>> {
+    let (sender, receiver) = std::sync::mpsc::channel::<WarmIoJob>();
+    let receiver = Arc::new(std::sync::Mutex::new(receiver));
+    for i in 0..count {
+        let receiver = receiver.clone();
+        std::thread::Builder::new()
+            .name(format!("{name}-{i}"))
+            .spawn(move || {
+                loop {
+                    let job = match receiver.lock() {
+                        Ok(receiver) => receiver.recv(),
+                        Err(_) => return,
+                    };
+                    let Ok(job) = job else { return };
+                    // A failed read only leaves a key cold; keep the thread.
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
+                }
+            })
+            .ok()?;
+    }
+    Some(sender)
+}
+
+/// Queue for the reads warming waits on (discovery fetches).
+#[cfg(feature = "rayon")]
+fn warm_io_queue() -> Option<&'static std::sync::mpsc::Sender<WarmIoJob>> {
+    static QUEUE: std::sync::OnceLock<Option<std::sync::mpsc::Sender<WarmIoJob>>> =
+        std::sync::OnceLock::new();
+    QUEUE
+        .get_or_init(|| spawn_io_threads("warm-io", WARM_IO_THREADS))
+        .as_ref()
+}
+
+/// Counts outstanding warming reads; the last one to finish (or unwind) wakes the waiter.
+#[cfg(feature = "rayon")]
+struct WarmIoLatch {
+    pending: std::sync::Mutex<usize>,
+    done: std::sync::Condvar,
+}
+
+#[cfg(feature = "rayon")]
+struct WarmIoLatchGuard(Arc<WarmIoLatch>);
+
+#[cfg(feature = "rayon")]
+impl Drop for WarmIoLatchGuard {
+    fn drop(&mut self) {
+        if let Ok(mut pending) = self.0.pending.lock() {
+            *pending = pending.saturating_sub(1);
+            if *pending == 0 {
+                self.0.done.notify_all();
+            }
+        }
+    }
+}
+
+#[cfg(feature = "rayon")]
+enum WarmKey {
+    Account(Address),
+    Slot(Address, H256),
+    Code(H256),
+    CodeLength(H256),
+}
+
+/// Share of recent warming reads that went to the disk, in parts per million: a moving average
+/// that starts at all of them, so a node assumes its store is cold until reads say otherwise.
+#[cfg(feature = "rayon")]
+static DISK_READ_SHARE_PPM: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1_000_000);
+
+/// Read time above which a read is taken to have gone to the disk rather than to memory.
+#[cfg(feature = "rayon")]
+const DISK_READ_NANOS: u128 = 50_000;
+
+/// Share of disk reads above which warming runs discovery passes.
+#[cfg(feature = "rayon")]
+const COLD_STORE_SHARE_PPM: u64 = 50_000;
+
+#[cfg(feature = "rayon")]
+fn record_read_latency(elapsed: std::time::Duration) {
+    let sample = if elapsed.as_nanos() > DISK_READ_NANOS {
+        1_000_000
+    } else {
+        0
+    };
+    let _ = DISK_READ_SHARE_PPM.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |share| {
+        Some(share - share / 64 + sample / 64)
+    });
+}
+
+/// Whether warming reads have lately been going to the disk, which is when discovery passes
+/// pay for rerunning transactions.
+#[cfg(feature = "rayon")]
+fn store_reads_are_cold() -> bool {
+    DISK_READ_SHARE_PPM.load(Ordering::Relaxed) > COLD_STORE_SHARE_PPM
+}
+
+#[cfg(feature = "rayon")]
+fn read_warm_key(store: &Arc<dyn Database>, key: WarmKey) {
+    match key {
+        WarmKey::Account(address) => {
+            // A transaction reads an account's code right after the account when it
+            // calls it; fetching both here saves a pass per call level.
+            if let Ok(state) = store.get_account_state(address)
+                && state.code_hash != *EMPTY_KECCAK_HASH
+            {
+                let _ = store.get_account_code(state.code_hash);
+            }
+        }
+        WarmKey::Slot(address, slot) => {
+            let _ = store.get_storage_value(address, slot);
+        }
+        WarmKey::Code(hash) => {
+            let _ = store.get_account_code(hash);
+        }
+        WarmKey::CodeLength(hash) => {
+            let _ = store.get_code_metadata(hash);
+        }
+    }
+}
+
+/// Reads every missed key through `store`, which keeps what it reads, one read in flight per
+/// I/O thread. Errors are dropped: a key that fails here is read again by whoever needs it.
+#[cfg(feature = "rayon")]
+fn fetch_misses(store: &Arc<dyn Database>, misses: WarmMisses) {
+    let keys: Vec<WarmKey> = misses
+        .accounts
+        .into_iter()
+        .map(WarmKey::Account)
+        .chain(misses.slots.into_iter().map(|(a, k)| WarmKey::Slot(a, k)))
+        .chain(misses.codes.into_iter().map(WarmKey::Code))
+        .chain(misses.code_lengths.into_iter().map(WarmKey::CodeLength))
+        .collect();
+    let read = |store: &Arc<dyn Database>, key: WarmKey| {
+        let start = std::time::Instant::now();
+        read_warm_key(store, key);
+        record_read_latency(start.elapsed());
+    };
+    let Some(queue) = warm_io_queue() else {
+        keys.into_iter().for_each(|key| read(store, key));
+        return;
+    };
+    let latch = Arc::new(WarmIoLatch {
+        pending: std::sync::Mutex::new(keys.len()),
+        done: std::sync::Condvar::new(),
+    });
+    for key in keys {
+        let store = store.clone();
+        let guard = WarmIoLatchGuard(latch.clone());
+        let job: WarmIoJob = Box::new(move || {
+            let _guard = guard;
+            read(&store, key);
+        });
+        if let Err(std::sync::mpsc::SendError(job)) = queue.send(job) {
+            job();
+        }
+    }
+    if let Ok(mut pending) = latch.pending.lock() {
+        while *pending > 0 {
+            match latch.done.wait(pending) {
+                Ok(next) => pending = next,
+                Err(_) => return,
+            }
+        }
+    }
+}
 
 impl LEVM {
     /// Execute a block and return the execution result.
@@ -3282,36 +3604,34 @@ impl LEVM {
             group_by_sender(&txs_with_sender),
             rayon::current_num_threads(),
         );
-        Self::warm_units_in_order(
-            units,
-            &block.header,
-            store.clone(),
-            vm_type,
-            crypto,
-            &|| cancelled.load(Ordering::Relaxed),
-        )?;
-
-        let mut db = GeneralizedDatabase::new(store.clone());
-
-        if cancelled.load(Ordering::Relaxed) {
-            return Ok(());
-        }
-
-        for withdrawal in block
-            .body
-            .withdrawals
-            .iter()
-            .flatten()
-            .filter(|withdrawal| withdrawal.amount > 0)
-        {
-            db.get_account_mut(withdrawal.address).map_err(|_| {
-                EvmError::DB(format!(
-                    "Withdrawal account {} not found",
-                    withdrawal.address
-                ))
-            })?;
-        }
-        Ok(())
+        let should_stop = || cancelled.load(Ordering::Relaxed);
+        // The coinbase and withdrawal recipients are written after the transactions; fetch
+        // them alongside the transactions' warming rather than after it.
+        let mut recipients = WarmMisses::default();
+        recipients.accounts.insert(block.header.coinbase);
+        recipients.accounts.extend(
+            block
+                .body
+                .withdrawals
+                .iter()
+                .flatten()
+                .filter(|withdrawal| withdrawal.amount > 0)
+                .map(|withdrawal| withdrawal.address),
+        );
+        let (_, warmed) = rayon::join(
+            || fetch_misses(&store, recipients),
+            || {
+                Self::warm_units_discovering(
+                    units,
+                    &block.header,
+                    store.clone(),
+                    vm_type,
+                    crypto,
+                    &should_stop,
+                )
+            },
+        );
+        warmed
     }
 
     /// Speculatively executes an arbitrary transaction set against `header`'s
@@ -3340,13 +3660,16 @@ impl LEVM {
         )
     }
 
-    /// Warms units in parallel, starting them in the order execution reaches them. Workers take
-    /// units from a shared counter, so units start in block order: a parallel iterator would
-    /// split the list and start halfway in, leaving the block's first transactions for later
-    /// while execution needs them first. The first few workers start on the heaviest units
-    /// instead, since in block order those are still warming when execution reaches them.
+    /// Warms units in parallel, each one finding its reads before it waits on the store.
+    ///
+    /// A unit first runs against a [`DiscoveryDb`], which answers keys missing from the cache
+    /// as absent and records them; the recorded keys are fetched together on the I/O pool and
+    /// the unit runs again, reaching further into its transactions each time. A run that
+    /// records nothing read only cached state, so it was the unit's warming. A unit still
+    /// finding keys after [`DISCOVERY_PASSES`] runs against the store as before. Units loop
+    /// independently, so a short unit never waits for a long one.
     #[cfg(feature = "rayon")]
-    fn warm_units_in_order(
+    fn warm_units_discovering(
         units: Vec<WarmUnit<'_>>,
         header: &BlockHeader,
         store: Arc<dyn Database>,
@@ -3359,33 +3682,53 @@ impl LEVM {
         let chain_id = chain_config.chain_id;
         let base_blob_fee_per_gas = get_base_fee_per_blob_gas(header.excess_blob_gas, &evm_config)?;
 
-        let warm_one = |stack_pool: &mut Vec<Stack>, unit: &WarmUnit<'_>| {
+        let discover = store_reads_are_cold();
+        // Workers take units in order from a shared counter, so units start in the order
+        // they were sorted: a parallel iterator would split the list and start halfway in.
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let warm_one = |stack_pool: &mut Vec<Stack>, unit: &WarmUnit<'_>, passes: usize| {
             let mut memory_pool = Vec::with_capacity(1);
-            let mut db = GeneralizedDatabase::new(store.clone());
-            for tx in &unit.txs {
+            let mut run = |db: &mut GeneralizedDatabase, disable_nonce_check: bool| {
+                for tx in &unit.txs {
+                    if should_stop() {
+                        return;
+                    }
+                    let _ = Self::execute_tx_in_block(
+                        tx,
+                        unit.sender,
+                        header,
+                        db,
+                        vm_type,
+                        base_blob_fee_per_gas,
+                        stack_pool,
+                        &mut memory_pool,
+                        true,
+                        disable_nonce_check,
+                        crypto,
+                        evm_config,
+                        chain_id,
+                        None,
+                    );
+                }
+            };
+            for _ in 0..passes {
                 if should_stop() {
                     return;
                 }
-                let _ = Self::execute_tx_in_block(
-                    tx,
-                    unit.sender,
-                    header,
-                    &mut db,
-                    vm_type,
-                    base_blob_fee_per_gas,
-                    stack_pool,
-                    &mut memory_pool,
-                    true,
-                    unit.split,
-                    crypto,
-                    evm_config,
-                    chain_id,
-                    // Warming discards results; the EXECUTE precompile is not run
-                    // here (the real execution path carries the validator).
-                    None,
-                );
+                let view = Arc::new(DiscoveryDb::new(store.clone()));
+                // Absent answers can leave the sender's nonce wrong.
+                run(&mut GeneralizedDatabase::new(view.clone()), true);
+                let misses = view.take_misses();
+                if misses.is_empty() {
+                    return;
+                }
+                fetch_misses(&store, misses);
             }
+            run(&mut GeneralizedDatabase::new(store.clone()), unit.split);
         };
+        // Units are taken in block order, except that the first few workers start on the
+        // heaviest units: those take several discovery passes, so in block order they are
+        // still warming when execution reaches them.
         let mut heavy: Vec<usize> = (0..units.len())
             .filter(|&i| units[i].gas_limit() >= HEAVY_UNIT_GAS)
             .collect();
@@ -3394,14 +3737,24 @@ impl LEVM {
             .iter()
             .map(|_| std::sync::atomic::AtomicBool::new(false))
             .collect();
-        let next = std::sync::atomic::AtomicUsize::new(0);
         let next_heavy = std::sync::atomic::AtomicUsize::new(0);
         let worker = |lane: usize| {
             let mut stack_pool = Vec::with_capacity(STACK_LIMIT);
             let take = |i: usize, stack_pool: &mut Vec<Stack>| {
-                if !claimed[i].swap(true, Ordering::Relaxed) {
-                    warm_one(stack_pool, &units[i]);
+                if claimed[i].swap(true, Ordering::Relaxed) {
+                    return;
                 }
+                let unit = &units[i];
+                // While reads come from memory, a discovery pass only reruns transactions to
+                // save reads that cost next to nothing, so units warm directly; one in
+                // DISCOVERY_PROBE_EVERY still discovers, which keeps the share of disk reads
+                // current.
+                let passes = if discover || i.is_multiple_of(DISCOVERY_PROBE_EVERY) {
+                    DISCOVERY_PASSES
+                } else {
+                    0
+                };
+                warm_one(stack_pool, unit, passes);
             };
             if lane < HEAVY_LANE_WORKERS {
                 while let Some(&i) = heavy.get(next_heavy.fetch_add(1, Ordering::Relaxed)) {
