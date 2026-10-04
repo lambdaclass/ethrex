@@ -94,6 +94,7 @@ impl Hook for DefaultHook {
             .checked_mul(vm.env.gas_limit.into())
             .ok_or(TxValidationError::GasLimitPriceProductOverflow)?;
 
+        vm.db.observe_balance(sender_address);
         validate_sender_balance(vm, sender_info.balance)?;
 
         // (2) INSUFFICIENT_MAX_FEE_PER_BLOB_GAS
