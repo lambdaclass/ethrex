@@ -270,7 +270,7 @@ pub fn cold_account_access_cost(fork: Fork) -> u64 {
     }
 }
 
-/// Cold storage slot access cost. EIP-8038 raises this from 2100 to 3000 at Amsterdam.
+/// Cold storage slot access cost. EIP-8038 keeps this at 2100 at Amsterdam.
 pub fn cold_storage_access_cost(fork: Fork) -> u64 {
     if fork >= Fork::Amsterdam {
         COLD_STORAGE_ACCESS_AMSTERDAM
@@ -288,7 +288,7 @@ pub fn access_list_address_cost(fork: Fork) -> u64 {
     }
 }
 
-/// Per-storage-key access-list cost. EIP-8038 raises this from 1900 to 2900 at Amsterdam.
+/// Per-storage-key access-list cost. EIP-8038 raises this from 1900 to 2000 at Amsterdam.
 pub fn access_list_storage_key_cost(fork: Fork) -> u64 {
     if fork >= Fork::Amsterdam {
         ACCESS_LIST_STORAGE_KEY_COST_AMSTERDAM
