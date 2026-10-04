@@ -213,7 +213,7 @@ async fn run_prefetch_effectiveness_test(engine_type: EngineType) {
     let accounts = vec![contract];
 
     let hits = store
-        .prefetch_trie_nodes(&slots, &accounts)
+        .prefetch_trie_nodes(&slots, &accounts, 0)
         .expect("prefetch trie nodes");
 
     // A correct encoding warms the storage trie's branch nodes (hundreds for

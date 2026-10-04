@@ -603,6 +603,32 @@ fn warm_io_queue() -> Option<&'static std::sync::mpsc::Sender<WarmIoJob>> {
         .as_ref()
 }
 
+/// Threads for warming nobody waits on, such as trie paths. Kept apart from
+/// [`warm_io_queue`] so its large batches never sit ahead of a discovery fetch.
+#[cfg(feature = "rayon")]
+const BACKGROUND_IO_THREADS: usize = 16;
+
+#[cfg(feature = "rayon")]
+fn background_io_queue() -> Option<&'static std::sync::mpsc::Sender<WarmIoJob>> {
+    static QUEUE: std::sync::OnceLock<Option<std::sync::mpsc::Sender<WarmIoJob>>> =
+        std::sync::OnceLock::new();
+    QUEUE
+        .get_or_init(|| spawn_io_threads("warm-bg", BACKGROUND_IO_THREADS))
+        .as_ref()
+}
+
+/// Runs `task` on the warming I/O threads without waiting for it: for cache warming whose
+/// result nobody waits on, such as reading the trie paths a block will write.
+#[cfg(feature = "rayon")]
+pub fn spawn_warm_io(task: impl FnOnce() + Send + 'static) {
+    let job: WarmIoJob = Box::new(task);
+    if let Some(queue) = background_io_queue().or_else(warm_io_queue)
+        && let Err(std::sync::mpsc::SendError(job)) = queue.send(job)
+    {
+        job();
+    }
+}
+
 /// Counts outstanding warming reads; the last one to finish (or unwind) wakes the waiter.
 #[cfg(feature = "rayon")]
 struct WarmIoLatch {
@@ -623,6 +649,38 @@ impl Drop for WarmIoLatchGuard {
             }
         }
     }
+}
+
+/// Called with the storage slots and accounts a warming unit wrote, as it finishes.
+#[cfg(feature = "rayon")]
+pub type WarmWritesSink<'a> = &'a (dyn Fn(Vec<(Address, H256)>, Vec<Address>) + Sync);
+
+/// The slots and accounts whose values a warming run changed from the parent state.
+#[cfg(feature = "rayon")]
+fn speculative_writes(db: &GeneralizedDatabase) -> (Vec<(Address, H256)>, Vec<Address>) {
+    let mut slots = Vec::new();
+    let mut accounts = Vec::new();
+    for (address, account) in db.current_accounts_state.iter() {
+        if account.is_unmodified() {
+            continue;
+        }
+        let initial = db.initial_accounts_state.get(address);
+        let written_before = slots.len();
+        for (key, value) in &account.storage {
+            if initial.and_then(|initial| initial.storage.get(key)) != Some(value) {
+                slots.push((*address, *key));
+            }
+        }
+        let info_changed = initial.is_none_or(|initial| {
+            initial.info.balance != account.info.balance
+                || initial.info.nonce != account.info.nonce
+                || initial.info.code_hash != account.info.code_hash
+        });
+        if info_changed || slots.len() > written_before {
+            accounts.push(*address);
+        }
+    }
+    (slots, accounts)
 }
 
 #[cfg(feature = "rayon")]
@@ -3592,6 +3650,7 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
         cancelled: &AtomicBool,
+        writes: Option<WarmWritesSink<'_>>,
     ) -> Result<(), EvmError> {
         let txs_with_sender = block
             .body
@@ -3628,6 +3687,7 @@ impl LEVM {
                     vm_type,
                     crypto,
                     &should_stop,
+                    writes,
                 )
             },
         );
@@ -3669,6 +3729,7 @@ impl LEVM {
     /// finding keys after [`DISCOVERY_PASSES`] runs against the store as before. Units loop
     /// independently, so a short unit never waits for a long one.
     #[cfg(feature = "rayon")]
+    #[allow(clippy::too_many_arguments)]
     fn warm_units_discovering(
         units: Vec<WarmUnit<'_>>,
         header: &BlockHeader,
@@ -3676,6 +3737,7 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
         should_stop: &(dyn Fn() -> bool + Sync),
+        writes: Option<WarmWritesSink<'_>>,
     ) -> Result<(), EvmError> {
         let chain_config = store.get_chain_config()?;
         let evm_config = EVMConfig::new_from_chain_config(&chain_config, header);
@@ -3683,6 +3745,9 @@ impl LEVM {
         let base_blob_fee_per_gas = get_base_fee_per_blob_gas(header.excess_blob_gas, &evm_config)?;
 
         let discover = store_reads_are_cold();
+        // Trie paths are only worth reading ahead while reads come from the disk; from a warm
+        // store the merkleizer finds them in memory and the reads only take cores.
+        let writes = writes.filter(|_| discover);
         // Workers take units in order from a shared counter, so units start in the order
         // they were sorted: a parallel iterator would split the list and start halfway in.
         let next = std::sync::atomic::AtomicUsize::new(0);
@@ -3716,15 +3781,27 @@ impl LEVM {
                     return;
                 }
                 let view = Arc::new(DiscoveryDb::new(store.clone()));
+                let mut db = GeneralizedDatabase::new(view.clone());
                 // Absent answers can leave the sender's nonce wrong.
-                run(&mut GeneralizedDatabase::new(view.clone()), true);
+                run(&mut db, true);
                 let misses = view.take_misses();
                 if misses.is_empty() {
+                    if let Some(writes) = writes {
+                        let (slots, accounts) = speculative_writes(&db);
+                        writes(slots, accounts);
+                    }
                     return;
                 }
                 fetch_misses(&store, misses);
             }
-            run(&mut GeneralizedDatabase::new(store.clone()), unit.split);
+            let mut db = GeneralizedDatabase::new(store.clone());
+            run(&mut db, unit.split);
+            if let Some(writes) = writes
+                && !should_stop()
+            {
+                let (slots, accounts) = speculative_writes(&db);
+                writes(slots, accounts);
+            }
         };
         // Units are taken in block order, except that the first few workers start on the
         // heaviest units: those take several discovery passes, so in block order they are

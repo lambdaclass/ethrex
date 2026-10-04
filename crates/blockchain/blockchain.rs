@@ -290,6 +290,11 @@ pub struct Blockchain {
     prewarmed: PrewarmedCache,
 }
 
+/// Shallowest trie level read when prefetching the paths of a block's speculative writes. The
+/// top levels are shared by every path and stay cached, so probing them only spends lookups.
+#[cfg(feature = "rayon")]
+const SPECULATIVE_TRIE_PREFETCH_MIN_DEPTH: usize = 3;
+
 /// Newtype around the prewarmer's cache-handoff slot so `Blockchain` can keep
 /// deriving `Debug` (`dyn LevmDatabase` has no `Debug` impl).
 ///
@@ -1075,18 +1080,39 @@ impl Blockchain {
                                             vm_type,
                                             &NativeCrypto,
                                             cancelled_ref,
+                                            None,
                                         ) {
                                             debug!("Block warming failed (non-fatal): {e}");
                                         }
                                     }
                                 } else {
-                                    // Pre-Amsterdam / P2P sync: speculative tx re-execution
+                                    // Pre-Amsterdam / P2P sync: speculative tx re-execution.
+                                    // Without a BAL the merkleizer's write set is unknown up
+                                    // front, so the warmer reports what each unit wrote and its
+                                    // trie paths are read on the warming I/O pool, ahead of the
+                                    // merkleizer's walk.
+                                    let storage = &self.storage;
+                                    let warm_trie_paths =
+                                        |slots: Vec<(Address, H256)>, accounts: Vec<Address>| {
+                                            if slots.is_empty() && accounts.is_empty() {
+                                                return;
+                                            }
+                                            let storage = storage.clone();
+                                            ethrex_vm::backends::levm::spawn_warm_io(move || {
+                                                let _ = storage.prefetch_trie_nodes(
+                                                    &slots,
+                                                    &accounts,
+                                                    SPECULATIVE_TRIE_PREFETCH_MIN_DEPTH,
+                                                );
+                                            });
+                                        };
                                     if let Err(e) = LEVM::warm_block(
                                         block,
                                         caching_store,
                                         vm_type,
                                         &NativeCrypto,
                                         cancelled_ref,
+                                        Some(&warm_trie_paths),
                                     ) {
                                         debug!("Block warming failed (non-fatal): {e}");
                                     }
@@ -1119,7 +1145,7 @@ impl Blockchain {
                                 // warm) just means the merkleizer cold-reads that node;
                                 // it never affects block output, so a failure must not
                                 // propagate into block processing.
-                                let _ = storage.prefetch_trie_nodes(&slots, &accounts);
+                                let _ = storage.prefetch_trie_nodes(&slots, &accounts, 0);
                             })
                             .inspect_err(|e| debug!("trie-node prefetch spawn failed: {e}"))
                             .ok()

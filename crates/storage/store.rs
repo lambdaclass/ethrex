@@ -3928,10 +3928,14 @@ impl Store {
     /// On the warm/no-op path this still reports coverage; a near-zero hit count
     /// against a non-empty working set signals a key-encoding mismatch (the
     /// effectiveness test asserts on this).
+    ///
+    /// Prefixes shorter than `min_depth` nibbles are not probed: callers warming many
+    /// small batches skip the top levels, which every path shares and which stay cached.
     pub fn prefetch_trie_nodes(
         &self,
         storage_slots: &[(Address, H256)],
         accounts: &[Address],
+        min_depth: usize,
     ) -> Result<usize, StoreError> {
         // Probe band: nodes live at depth <= ~ceil(log16(trie_size)). 8 nibbles
         // covers tries up to ~16^8 entries near-fully; any deeper node is simply
@@ -3948,7 +3952,7 @@ impl Store {
             let hashed_slot = hash_key_fixed(slot);
             let slot_nibbles = Nibbles::from_bytes(&hashed_slot);
             let max_d = MAX_PREFETCH_DEPTH.min(slot_nibbles.len());
-            for d in 0..=max_d {
+            for d in min_depth.min(max_d)..=max_d {
                 let prefix = apply_prefix(Some(hashed_address), slot_nibbles.slice(0, d));
                 storage_keys.push(prefix.into_vec());
             }
@@ -3961,7 +3965,7 @@ impl Store {
             let hashed_address = hash_address_fixed(address);
             let addr_nibbles = Nibbles::from_bytes(hashed_address.as_bytes());
             let max_d = MAX_PREFETCH_DEPTH.min(addr_nibbles.len());
-            for d in 0..=max_d {
+            for d in min_depth.min(max_d)..=max_d {
                 account_keys.push(addr_nibbles.slice(0, d).into_vec());
             }
         }
