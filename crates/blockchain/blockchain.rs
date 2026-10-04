@@ -964,6 +964,11 @@ impl Blockchain {
         }
         let carried = &self.carried;
         let block_fork = chain_config.fork(block.header.timestamp);
+        // Without a BAL, execution takes the warmer's result for each transaction that read
+        // nothing an earlier transaction changed. Witness collection runs no warmer.
+        let warmed = (bal.is_none() && !collect_witness)
+            .then(|| ethrex_vm::backends::levm::WarmedTxs::new(block.body.transactions.len()));
+        let warmed = warmed.as_ref();
         if carry
             && let Ok(mut slot) = self.carried.0.lock()
             && let Some(state) = slot.take()
@@ -1129,6 +1134,7 @@ impl Blockchain {
                                             &NativeCrypto,
                                             cancelled_ref,
                                             None,
+                                            None,
                                         ) {
                                             debug!("Block warming failed (non-fatal): {e}");
                                         }
@@ -1161,6 +1167,7 @@ impl Blockchain {
                                         &NativeCrypto,
                                         cancelled_ref,
                                         Some(&warm_trie_paths),
+                                        warmed,
                                     ) {
                                         debug!("Block warming failed (non-fatal): {e}");
                                     }
@@ -1236,6 +1243,7 @@ impl Blockchain {
                             queue_length_ref,
                             bal,
                             bal_parallel_exec_enabled,
+                            warmed,
                         );
                         cancelled_ref.store(true, Ordering::Relaxed);
                         let (execution_result, produced_bal) = result?;

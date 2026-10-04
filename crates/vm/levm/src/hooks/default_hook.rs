@@ -530,6 +530,15 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
         recorder.record_touched_address(vm.env.coinbase);
     }
 
+    // The fee is a credit whatever the coinbase holds, so it is not a read of the transaction
+    // (see `GeneralizedDatabase::tx_reads`).
+    let paused = std::mem::replace(&mut vm.db.reads_paused, true);
+    let result = pay_coinbase_fee(vm, coinbase_fee);
+    vm.db.reads_paused = paused;
+    result
+}
+
+fn pay_coinbase_fee(vm: &mut VM<'_>, coinbase_fee: U256) -> Result<(), VMError> {
     // Only pay coinbase if there's actually a fee to pay.
     if !coinbase_fee.is_zero() {
         vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;

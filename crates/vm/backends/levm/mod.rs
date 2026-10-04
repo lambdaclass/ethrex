@@ -44,13 +44,14 @@ use ethrex_common::{
 use ethrex_crypto::Crypto;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::StatelessValidator;
+use ethrex_levm::account::AccountStatus;
 #[cfg(feature = "rayon")]
-use ethrex_levm::account::{AccountStatus, LevmAccount};
+use ethrex_levm::account::LevmAccount;
 use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_MAX_GAS_LIMIT_AMSTERDAM,
 };
-use ethrex_levm::db::gen_db::GeneralizedDatabase;
+use ethrex_levm::db::gen_db::{AccountSnapshot, GeneralizedDatabase, TxReads};
 #[cfg(feature = "rayon")]
 use ethrex_levm::db::gen_db::{
     LazyBalCursor, code_from_bal, post_value_at_or_before, seed_one_address_info_from_bal,
@@ -479,6 +480,186 @@ pub fn carry_block_writes(mut entries: CarriedEntries) -> CarriedEntries {
             .retain(|(owner, _), _| !cleared.contains(owner));
     }
     entries
+}
+
+/// A transaction the block warmer ran after its sender's earlier transactions of the block,
+/// kept so execution can take its result instead of running it again: what it read, what it
+/// changed, and its outcome.
+pub struct WarmedTx {
+    reads: TxReads,
+    /// Accounts the transaction changed, as it left them.
+    accounts: Vec<(Address, AccountSnapshot)>,
+    /// Slots the transaction changed, with their new values.
+    slots: Vec<((Address, H256), U256)>,
+    /// Code the transaction deployed.
+    codes: Vec<Code>,
+    /// What the transaction added to the coinbase's balance (its fee and any transfer).
+    coinbase_credit: U256,
+    report: ExecutionReport,
+}
+
+impl WarmedTx {
+    /// Takes the result of the transaction that just ran on `db` with `db.tx_reads` on, or
+    /// `None` when it can't be replayed from its reads: the transaction read the coinbase,
+    /// or touched an account whose storage a self-destruct cleared.
+    #[cfg(feature = "rayon")]
+    fn capture(
+        db: &mut GeneralizedDatabase,
+        report: ExecutionReport,
+        coinbase: Address,
+        coinbase_before: U256,
+    ) -> Option<Self> {
+        let reads = db.tx_reads.take()?;
+        if reads.accounts.contains_key(&coinbase) {
+            return None;
+        }
+        let destroyed = |status: &AccountStatus| {
+            matches!(
+                status,
+                AccountStatus::Destroyed | AccountStatus::DestroyedModified
+            )
+        };
+        let mut accounts = Vec::new();
+        let mut codes = Vec::new();
+        for (address, before) in &reads.accounts {
+            let after = db.current_accounts_state.get(address)?;
+            if destroyed(&before.status) || destroyed(&after.status) {
+                return None;
+            }
+            let after = AccountSnapshot::of(after);
+            if after == *before {
+                continue;
+            }
+            if after.info.code_hash != before.info.code_hash {
+                codes.push(db.codes.get(&after.info.code_hash)?.clone());
+            }
+            accounts.push((*address, after));
+        }
+        let mut slots = Vec::new();
+        for (&(address, key), before) in &reads.slots {
+            let after = *db.current_accounts_state.get(&address)?.storage.get(&key)?;
+            if after != *before {
+                slots.push(((address, key), after));
+            }
+        }
+        let coinbase_after = coinbase_balance(db, coinbase).ok()?;
+        Some(Self {
+            reads,
+            accounts,
+            slots,
+            codes,
+            coinbase_credit: coinbase_after.checked_sub(coinbase_before)?,
+            report,
+        })
+    }
+
+    /// Whether `db` holds what the transaction read, so running it there would give the
+    /// same result. Loads every account and slot it read into `db`.
+    fn holds(
+        &self,
+        db: &mut GeneralizedDatabase,
+        tx: &Transaction,
+        sender: Address,
+    ) -> Result<bool, EvmError> {
+        // The warmer ran it with the nonce check off.
+        if self
+            .reads
+            .accounts
+            .get(&sender)
+            .is_none_or(|account| account.info.nonce != tx.nonce())
+        {
+            return Ok(false);
+        }
+        for (address, before) in &self.reads.accounts {
+            let account = db.get_account(*address)?;
+            if account.info != before.info
+                || account.has_storage != before.has_storage
+                || account.exists != before.exists
+                || matches!(
+                    account.status,
+                    AccountStatus::Destroyed | AccountStatus::DestroyedModified
+                )
+            {
+                return Ok(false);
+            }
+        }
+        for (&(address, key), before) in &self.reads.slots {
+            if db.storage_value(address, key)? != *before {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Writes the transaction's changes to `db`, which [`Self::holds`] its reads, and returns
+    /// its report.
+    fn apply(
+        self,
+        db: &mut GeneralizedDatabase,
+        coinbase: Address,
+    ) -> Result<ExecutionReport, EvmError> {
+        for (address, after) in self.accounts {
+            let account = db.get_account_mut(address)?;
+            account.info = after.info;
+            account.has_storage = after.has_storage;
+            account.exists = after.exists;
+        }
+        for ((address, key), value) in self.slots {
+            db.get_account_mut(address)?.storage.insert(key, value);
+        }
+        for code in self.codes {
+            db.codes.entry(code.hash).or_insert(code);
+        }
+        if self.coinbase_credit.is_zero() {
+            db.get_account(coinbase)?;
+        } else {
+            let account = db.get_account_mut(coinbase)?;
+            account.info.balance = account
+                .info
+                .balance
+                .checked_add(self.coinbase_credit)
+                .ok_or_else(|| EvmError::Custom("coinbase balance overflow".to_string()))?;
+        }
+        Ok(self.report)
+    }
+}
+
+/// The coinbase's balance, read without recording it as the transaction's read.
+#[cfg(feature = "rayon")]
+fn coinbase_balance(
+    db: &mut GeneralizedDatabase,
+    coinbase: Address,
+) -> Result<U256, InternalError> {
+    let paused = std::mem::replace(&mut db.reads_paused, true);
+    let balance = db.get_account(coinbase).map(|account| account.info.balance);
+    db.reads_paused = paused;
+    balance
+}
+
+/// One slot per transaction of a block, filled by the warmer and taken by execution.
+pub struct WarmedTxs(Box<[std::sync::Mutex<Option<WarmedTx>>]>);
+
+impl WarmedTxs {
+    pub fn new(transactions: usize) -> Self {
+        Self(
+            (0..transactions)
+                .map(|_| std::sync::Mutex::new(None))
+                .collect(),
+        )
+    }
+
+    #[cfg(feature = "rayon")]
+    fn put(&self, position: usize, warmed: WarmedTx) {
+        if let Some(slot) = self.0.get(position)
+            && let Ok(mut slot) = slot.lock()
+        {
+            *slot = Some(warmed);
+        }
+    }
+
+    fn take(&self, position: usize) -> Option<WarmedTx> {
+        self.0.get(position)?.lock().ok()?.take()
+    }
 }
 
 /// Keys a discovery pass asked for that the warming cache did not hold yet.
@@ -1123,6 +1304,7 @@ impl LEVM {
         header_bal: Option<Arc<BlockAccessList>>,
         bal_parallel_exec_enabled: bool,
         stateless_validator: Option<&dyn StatelessValidator>,
+        warmed: Option<&WarmedTxs>,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
@@ -1426,6 +1608,7 @@ impl LEVM {
         // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
+        let mut reused_txs = 0_usize;
 
         for (tx_idx, tx) in block.body.transactions.iter().enumerate() {
             // Senders are recovered as execution reaches them rather than all up front. The
@@ -1468,22 +1651,39 @@ impl LEVM {
                 }
             }
 
-            let report = Self::execute_tx_in_block(
-                tx,
-                tx_sender,
-                &block.header,
-                db,
-                vm_type,
-                base_blob_fee_per_gas,
-                &mut shared_stack_pool,
-                &mut shared_memory_pool,
-                false,
-                false,
-                crypto,
-                evm_config,
-                chain_id,
-                stateless_validator,
-            )?;
+            // A transaction the warmer ran on the same state it reads here gives the same result,
+            // so take that result instead of running it again. The warmer runs without the
+            // stateless validator, which only the LStar EXECUTE precompile uses.
+            let warmed_tx = warmed
+                .filter(|_| {
+                    !is_amsterdam
+                        && !is_lstar
+                        && matches!(vm_type, VMType::L1)
+                        && !matches!(tx, Transaction::FrameTransaction(_))
+                })
+                .and_then(|warmed| warmed.take(tx_idx));
+            let report = match warmed_tx {
+                Some(warmed_tx) if warmed_tx.holds(db, tx, tx_sender)? => {
+                    reused_txs += 1;
+                    warmed_tx.apply(db, block.header.coinbase)?
+                }
+                _ => Self::execute_tx_in_block(
+                    tx,
+                    tx_sender,
+                    &block.header,
+                    db,
+                    vm_type,
+                    base_blob_fee_per_gas,
+                    &mut shared_stack_pool,
+                    &mut shared_memory_pool,
+                    false,
+                    false,
+                    crypto,
+                    evm_config,
+                    chain_id,
+                    stateless_validator,
+                )?,
+            };
 
             tx_gas_breakdowns.push(TxGasBreakdown::from_report(
                 tx_idx,
@@ -1564,6 +1764,15 @@ impl LEVM {
             ::tracing::info!("{}", timings.info_pretty());
             let precompiles_timings = PRECOMPILES_TIMINGS.lock().expect("poison");
             ::tracing::info!("{}", precompiles_timings.info_pretty());
+        }
+
+        if warmed.is_some() {
+            ::tracing::debug!(
+                block = block.header.number,
+                transactions = n_txs,
+                reused = reused_txs,
+                "Reused warmed transactions"
+            );
         }
 
         if queue_length.load(Ordering::Relaxed) == 0 {
@@ -3731,6 +3940,7 @@ impl LEVM {
         crypto: &dyn Crypto,
         cancelled: &AtomicBool,
         writes: Option<WarmWritesSink<'_>>,
+        results: Option<&WarmedTxs>,
     ) -> Result<(), EvmError> {
         let txs_with_sender = block
             .body
@@ -3768,6 +3978,7 @@ impl LEVM {
                     crypto,
                     &should_stop,
                     writes,
+                    results,
                 )
             },
         );
@@ -3818,6 +4029,7 @@ impl LEVM {
         crypto: &dyn Crypto,
         should_stop: &(dyn Fn() -> bool + Sync),
         writes: Option<WarmWritesSink<'_>>,
+        results: Option<&WarmedTxs>,
     ) -> Result<(), EvmError> {
         let chain_config = store.get_chain_config()?;
         let evm_config = EVMConfig::new_from_chain_config(&chain_config, header);
@@ -3831,12 +4043,80 @@ impl LEVM {
         // Workers take units in order from a shared counter, so units start in the order
         // they were sorted: a parallel iterator would split the list and start halfway in.
         let next = std::sync::atomic::AtomicUsize::new(0);
+        // A split-out transaction runs against the parent state, which is the state execution
+        // finds only for its sender's first transaction of the block.
+        let mut first_split: FxHashMap<Address, usize> = FxHashMap::default();
+        for unit in units.iter().filter(|unit| unit.split) {
+            let first = first_split.entry(unit.sender).or_insert(usize::MAX);
+            *first = (*first).min(unit.first_position());
+        }
         let warm_one = |stack_pool: &mut Vec<Stack>, unit: &WarmUnit<'_>, passes: usize| {
             let mut memory_pool = Vec::with_capacity(1);
-            let mut run = |db: &mut GeneralizedDatabase, disable_nonce_check: bool| {
-                for tx in &unit.txs {
+            // A whole sender group runs each transaction after the ones before it, as execution
+            // will, so its results are kept for execution to take.
+            let results = results.filter(|_| {
+                !unit.split || first_split.get(&unit.sender) == Some(&unit.first_position())
+            });
+            let keep_results = results.is_some();
+            // Without discovery a run reads the store itself, so each result is ready as its
+            // transaction ends; a discovery pass only knows at its end whether it read the
+            // parent state.
+            let mut run = |db: &mut GeneralizedDatabase,
+                           disable_nonce_check: bool,
+                           publish: bool| {
+                let mut warmed = Vec::new();
+                for (tx, &position) in unit.txs.iter().zip(&unit.positions) {
                     if should_stop() {
-                        return;
+                        break;
+                    }
+                    if keep_results {
+                        // The balance check stays on: turning it off also skips charging the
+                        // sender, which would leave its balance wrong.
+                        let coinbase_before = coinbase_balance(db, header.coinbase).ok();
+                        db.tx_reads = Some(TxReads::default());
+                        let result = Self::run_tx_in_block(
+                            tx,
+                            unit.sender,
+                            header,
+                            db,
+                            vm_type,
+                            base_blob_fee_per_gas,
+                            stack_pool,
+                            &mut memory_pool,
+                            false,
+                            disable_nonce_check,
+                            crypto,
+                            evm_config,
+                            chain_id,
+                            None,
+                        );
+                        match result {
+                            Ok(Ok(report)) => {
+                                if let Some(coinbase_before) = coinbase_before
+                                    && let Some(result) = WarmedTx::capture(
+                                        db,
+                                        report,
+                                        header.coinbase,
+                                        coinbase_before,
+                                    )
+                                {
+                                    match results {
+                                        Some(results) if publish => results.put(position, result),
+                                        _ => warmed.push((position, result)),
+                                    }
+                                }
+                                db.tx_reads = None;
+                                continue;
+                            }
+                            // Checked before anything changed: warm it unchecked as before.
+                            Ok(Err(VMError::TxValidation(
+                                TxValidationError::InsufficientAccountFunds,
+                            ))) => db.tx_reads = None,
+                            _ => {
+                                db.tx_reads = None;
+                                continue;
+                            }
+                        }
                     }
                     let _ = Self::execute_tx_in_block(
                         tx,
@@ -3855,6 +4135,7 @@ impl LEVM {
                         None,
                     );
                 }
+                warmed
             };
             for _ in 0..passes {
                 if should_stop() {
@@ -3863,9 +4144,15 @@ impl LEVM {
                 let view = Arc::new(DiscoveryDb::new(store.clone()));
                 let mut db = GeneralizedDatabase::new(view.clone());
                 // Absent answers can leave the sender's nonce wrong.
-                run(&mut db, true);
+                let warmed = run(&mut db, true, false);
                 let misses = view.take_misses();
                 if misses.is_empty() {
+                    // Every read came from the cache, so these ran on the parent state.
+                    if let Some(results) = results {
+                        warmed
+                            .into_iter()
+                            .for_each(|(position, warmed)| results.put(position, warmed));
+                    }
                     if let Some(writes) = writes {
                         let (slots, accounts) = speculative_writes(&db);
                         writes(slots, accounts);
@@ -3875,7 +4162,7 @@ impl LEVM {
                 fetch_misses(&store, misses);
             }
             let mut db = GeneralizedDatabase::new(store.clone());
-            run(&mut db, unit.split);
+            run(&mut db, unit.split, true);
             if let Some(writes) = writes
                 && !should_stop()
             {
@@ -4208,6 +4495,44 @@ impl LEVM {
         chain_id: u64,
         stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<ExecutionReport, EvmError> {
+        Self::run_tx_in_block(
+            tx,
+            tx_sender,
+            block_header,
+            db,
+            vm_type,
+            base_blob_fee_per_gas,
+            stack_pool,
+            memory_pool,
+            disable_balance_check,
+            disable_nonce_check,
+            crypto,
+            config,
+            chain_id,
+            stateless_validator,
+        )?
+        .map_err(VMError::into)
+    }
+
+    /// [`Self::execute_tx_in_block`], with the VM's error kept apart from the errors of setting
+    /// it up.
+    #[allow(clippy::too_many_arguments)]
+    fn run_tx_in_block(
+        tx: &Transaction,
+        tx_sender: Address,
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        base_blob_fee_per_gas: U256,
+        stack_pool: &mut Vec<Stack>,
+        memory_pool: &mut Vec<Memory>,
+        disable_balance_check: bool,
+        disable_nonce_check: bool,
+        crypto: &dyn Crypto,
+        config: EVMConfig,
+        chain_id: u64,
+        stateless_validator: Option<&dyn StatelessValidator>,
+    ) -> Result<Result<ExecutionReport, VMError>, EvmError> {
         let mut env = Self::setup_env_with_config(
             tx,
             tx_sender,
@@ -4233,10 +4558,10 @@ impl LEVM {
             stack_pool,
             memory_pool,
         )?;
-        let result = vm.execute().map_err(VMError::into);
+        let result = vm.execute();
         // Runs on both success and error paths (execute borrowed `vm` mutably but left it intact).
         vm.reclaim_into(stack_pool, memory_pool);
-        result
+        Ok(result)
     }
 
     pub fn undo_last_tx(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
@@ -6000,6 +6325,7 @@ mod burned_fees_tests {
             None, // no BAL → sequential path
             false,
             None,
+            None,
         )
         .expect("execute_block_pipeline succeeded");
         assert_eq!(
@@ -6088,6 +6414,7 @@ mod burned_fees_tests {
             None, // no BAL → sequential path (site 3)
             false,
             None,
+            None,
         )
         .expect("execute_block_pipeline sequential with SSTORE clear succeeded");
 
@@ -6123,6 +6450,7 @@ mod burned_fees_tests {
             &crypto,
             Some(std::sync::Arc::new(bal_c)), // ← parallel path (site 2)
             true,
+            None,
             None,
         )
         .expect("execute_block_pipeline parallel with SSTORE clear succeeded");
@@ -6466,5 +6794,164 @@ mod carry_tests {
         assert!(carried.accounts.is_empty() && carried.storage.is_empty());
         assert_eq!(carried.code.len(), 1);
         assert_eq!(carried.code_bytes, code.size() as u64);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod reuse_tests {
+    use super::*;
+    use ethrex_common::types::{
+        AccountInfo, AccountState, ChainConfig, CodeMetadata, EIP1559Transaction,
+    };
+    use ethrex_levm::errors::DatabaseError;
+
+    fn sender() -> Address {
+        Address::repeat_byte(1)
+    }
+
+    fn pool() -> Address {
+        Address::repeat_byte(2)
+    }
+
+    fn coinbase() -> Address {
+        Address::repeat_byte(3)
+    }
+
+    fn key() -> H256 {
+        H256::from_low_u64_be(7)
+    }
+
+    /// Every account has nonce 4 and balance 100; every slot holds 5.
+    struct Store;
+
+    impl Database for Store {
+        fn get_account_state(&self, _: Address) -> Result<AccountState, DatabaseError> {
+            Ok(AccountState {
+                nonce: 4,
+                balance: U256::from(100),
+                ..Default::default()
+            })
+        }
+        fn get_storage_value(&self, _: Address, _: H256) -> Result<U256, DatabaseError> {
+            Ok(U256::from(5))
+        }
+        fn get_block_hash(&self, _: u64) -> Result<H256, DatabaseError> {
+            Ok(H256::zero())
+        }
+        fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+            Ok(ChainConfig::default())
+        }
+        fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
+            Ok(Code::from_bytecode_unchecked(Bytes::new(), code_hash))
+        }
+        fn get_code_metadata(&self, _: H256) -> Result<CodeMetadata, DatabaseError> {
+            Ok(CodeMetadata { length: 0 })
+        }
+    }
+
+    /// An account as the store holds it, with `nonce` and `balance`.
+    fn snapshot(nonce: u64, balance: u64) -> AccountSnapshot {
+        let mut snapshot = AccountSnapshot::of(db().get_account(sender()).unwrap());
+        snapshot.info = AccountInfo {
+            nonce,
+            balance: U256::from(balance),
+            ..snapshot.info
+        };
+        snapshot
+    }
+
+    /// The sender at nonce 4 paid 10 and moved the pool's slot from 5 to 6.
+    fn warmed() -> WarmedTx {
+        let mut reads = TxReads::default();
+        reads.accounts.insert(sender(), snapshot(4, 100));
+        reads.accounts.insert(pool(), snapshot(4, 100));
+        reads.slots.insert((pool(), key()), U256::from(5));
+        WarmedTx {
+            reads,
+            accounts: vec![(sender(), snapshot(5, 90))],
+            slots: vec![((pool(), key()), U256::from(6))],
+            codes: Vec::new(),
+            coinbase_credit: U256::from(3),
+            report: ExecutionReport {
+                result: TxResult::Success,
+                gas_used: 21_000,
+                gas_spent: 21_000,
+                gas_refunded: 0,
+                state_gas_used: 0,
+                output: Bytes::new(),
+                logs: Vec::new(),
+                payer_address: None,
+                frame_results: None,
+            },
+        }
+    }
+
+    fn tx(nonce: u64) -> Transaction {
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            nonce,
+            ..Default::default()
+        })
+    }
+
+    fn db() -> GeneralizedDatabase {
+        GeneralizedDatabase::new(Arc::new(Store))
+    }
+
+    #[test]
+    fn holds_only_where_every_read_is_unchanged() {
+        assert!(warmed().holds(&mut db(), &tx(4), sender()).unwrap());
+        // Run with the nonce check off, so the nonce is checked here.
+        assert!(!warmed().holds(&mut db(), &tx(5), sender()).unwrap());
+
+        let mut changed_slot = db();
+        changed_slot.get_account(pool()).unwrap();
+        changed_slot
+            .get_account_mut(pool())
+            .unwrap()
+            .storage
+            .insert(key(), U256::from(8));
+        assert!(!warmed().holds(&mut changed_slot, &tx(4), sender()).unwrap());
+
+        let mut changed_balance = db();
+        changed_balance
+            .get_account_mut(pool())
+            .unwrap()
+            .info
+            .balance = U256::from(1);
+        assert!(
+            !warmed()
+                .holds(&mut changed_balance, &tx(4), sender())
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn apply_writes_the_changes_and_credits_the_coinbase() {
+        let mut db = db();
+        let warmed = warmed();
+        assert!(warmed.holds(&mut db, &tx(4), sender()).unwrap());
+        let report = warmed.apply(&mut db, coinbase()).unwrap();
+
+        assert_eq!(report.gas_used, 21_000);
+        let sender_after = &db.current_accounts_state[&sender()];
+        assert_eq!(
+            (sender_after.info.nonce, sender_after.info.balance),
+            (5, U256::from(90))
+        );
+        assert_eq!(sender_after.status, AccountStatus::Modified);
+        assert_eq!(
+            db.current_accounts_state[&pool()].storage[&key()],
+            U256::from(6)
+        );
+        assert_eq!(
+            db.current_accounts_state[&coinbase()].info.balance,
+            U256::from(103)
+        );
+        // The original slot value stays the baseline the state diff compares against.
+        assert_eq!(
+            db.initial_accounts_state[&pool()].storage[&key()],
+            U256::from(5)
+        );
     }
 }
