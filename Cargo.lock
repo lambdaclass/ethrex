@@ -4102,6 +4102,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
+ "foldhash 0.2.0",
  "libssz",
  "malachite 0.6.1",
  "rayon",
