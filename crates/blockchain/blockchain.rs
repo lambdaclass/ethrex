@@ -86,6 +86,7 @@ use ethrex_common::types::{EIP7702_DELEGATED_CODE_LEN, is_eip7702_delegation};
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
+use ethrex_common::validate_block_access_list_size;
 use ethrex_common::{Address, H256, U256};
 pub use ethrex_common::{
     get_total_blob_gas, validate_block_access_list_hash, validate_block_pre_execution,
@@ -872,6 +873,17 @@ impl Blockchain {
             ),
         }
         let block_validated_instant = Instant::now();
+
+        // Everything the pipeline drives from a supplied BAL (synthesized trie updates, the
+        // storage and trie-node prefetches, the warmer, the parallel executor's indices)
+        // does work in proportion to the BAL's size rather than to gas. A BAL over the
+        // EIP-7928 item cap belongs to an invalid block, but that is only reported after
+        // execution so that transaction errors take priority. Run such a block on the
+        // sequential path instead, which rebuilds the BAL from execution and rejects the
+        // block by its hash, so the work stays bounded by gas.
+        let bal = bal.filter(|bal| {
+            validate_block_access_list_size(&block.header, &chain_config, bal).is_ok()
+        });
 
         let exec_merkle_start = Instant::now();
         let queue_length = AtomicUsize::new(0);
