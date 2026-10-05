@@ -2,6 +2,7 @@ pub mod blobs;
 pub mod client_version;
 pub mod exchange_transition_config;
 pub mod fork_choice;
+pub(crate) mod in_flight;
 pub mod payload;
 
 use crate::{

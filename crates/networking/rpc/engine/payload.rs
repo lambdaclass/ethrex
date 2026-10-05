@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::PayloadBuildResult;
 use ethrex_common::constants::AMSTERDAM_MAX_CODE_SIZE;
@@ -13,16 +14,20 @@ use ethrex_common::validate_bal_code_sizes;
 use ethrex_common::{H256, U256};
 use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::sync::SyncMode;
+use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
+use ethrex_storage::Store;
 use serde::Deserialize;
 use serde_json::Value;
+use std::sync::Arc;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
+use crate::engine::in_flight::{self, Role};
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::payload::{
     ExecutionPayload, ExecutionPayloadBody, ExecutionPayloadBodyV2, ExecutionPayloadResponse,
-    PayloadStatus,
+    PayloadStatus, PayloadValidationStatus,
 };
 use crate::utils::RpcErr;
 use crate::utils::{RpcRequest, parse_json_hex};
@@ -1316,13 +1321,15 @@ fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), 
     Ok(())
 }
 
-pub async fn add_block(
+/// Queues `block` for the block executor thread, returning the channel its result
+/// arrives on.
+fn enqueue_block(
     ctx: &RpcApiContext,
     block: Block,
     bal: Option<BlockAccessList>,
     make_witness: bool,
     parent_header: Option<BlockHeader>,
-) -> Result<Option<ExecutionWitness>, ChainError> {
+) -> Result<oneshot::Receiver<Result<Option<ExecutionWitness>, ChainError>>, ChainError> {
     let (notify_send, notify_recv) = oneshot::channel();
     ctx.block_worker_channel
         .send((notify_send, block, bal, make_witness, parent_header))
@@ -1331,9 +1338,7 @@ pub async fn add_block(
                 "failed to send block execution request to worker: {e}"
             ))
         })?;
-    notify_recv
-        .await
-        .map_err(|e| ChainError::Custom(format!("failed to receive block execution result: {e}")))?
+    Ok(notify_recv)
 }
 
 async fn try_execute_payload(
@@ -1383,7 +1388,13 @@ async fn try_execute_payload(
         let state_materialized = storage.is_state_in_layer_cache(known_header.state_root)?
             || storage.has_state_root(known_header.state_root)?;
         if state_materialized {
-            return payload_status_for_existing_block(&block, context, make_witness).await;
+            return payload_status_for_existing_block(
+                &block,
+                &context.storage,
+                &context.blockchain,
+                make_witness,
+            )
+            .await;
         }
         // Header known but our state was evicted. Only re-execute when we can:
         // the parent state must be reachable (cache, disk, or overlay-backed)
@@ -1397,11 +1408,17 @@ async fn try_execute_payload(
             None => false,
         };
         if !parent_reachable {
-            return payload_status_for_existing_block(&block, context, make_witness).await;
+            return payload_status_for_existing_block(
+                &block,
+                &context.storage,
+                &context.blockchain,
+                make_witness,
+            )
+            .await;
         }
         reexecuting_canonical_block = block_number <= storage.get_latest_block_number()?
             && storage.get_canonical_block_hash_sync(block_number)? == Some(block_hash);
-        // Fall through ; `add_block` below will re-execute and rebuild the layer.
+        // Fall through ; execution below will rebuild the layer.
     }
 
     // A payload whose parent block is known but whose parent *state* is not
@@ -1415,7 +1432,7 @@ async fn try_execute_payload(
     // shadowed the stash entirely and left the deep-reorg replay with no blocks
     // to reorg to. `has_state_root` already cascades through the layer cache, so
     // that guard fired on precisely the stash's condition.) A parent block that
-    // is entirely absent still falls through to `add_block` below and is
+    // is entirely absent still falls through to execution below and is
     // reported as `SYNCING` via `ParentNotFound`.
 
     // Defer eager execution when the parent block is known but its state is
@@ -1425,7 +1442,7 @@ async fn try_execute_payload(
     // the deep-reorg apply path. Matches geth's `eth/catalyst/api.go` behavior
     // with the `HasBlockAndState` predicate.
     //
-    // If the parent is itself unknown, fall through to `add_block` which
+    // If the parent is itself unknown, fall through to execution, which
     // returns `ChainError::ParentNotFound` and stashes the block; handled
     // below as `SYNCING`, preserving existing behavior.
     let parent_header = storage.get_block_header_by_hash(block.header.parent_hash)?;
@@ -1445,35 +1462,143 @@ async fn try_execute_payload(
         }
     }
 
-    // Execute and store the block
-    debug!(%block_hash, %block_number, "Executing payload");
-
-    // Retain a copy so we can record it via `debug_getBadBlocks` if it turns out
-    // to be invalid. `add_block` consumes the block, so we must clone beforehand;
-    // this happens once per newPayload and is negligible next to block execution.
-    // A block that turns out invalid is recorded for debug_getBadBlocks. Rebuilding
-    // it from the payload on that path is far cheaper than cloning every block on
-    // the way in, since almost all of them are valid.
+    // Execute and store the block, unless a request for it is already doing so: a
+    // consensus client re-sends a slow payload, and the copy must wait for the running
+    // execution instead of queueing the block behind it again.
     let (parent_beacon_block_root, requests_hash, block_access_list_hash) = (
         block.header.parent_beacon_block_root,
         block.header.requests_hash,
         block.header.block_access_list_hash,
     );
-    let rebuild_bad_block = || {
-        get_block_from_payload(
+    let in_flight_payloads = context.block_worker_channel.in_flight();
+    let outcome = match in_flight_payloads.join_or_start(block_hash, || {
+        enqueue_block(context, block, bal, make_witness, parent_header)
+    }) {
+        Ok(Role::Follower { outcome }) => outcome,
+        Ok(Role::Leader {
+            outcome,
+            completion,
+            enqueued: execution_result,
+        }) => {
+            debug!(%block_hash, %block_number, "Executing payload");
+            let execution = PayloadExecution {
+                storage: context.storage.clone(),
+                blockchain: context.blockchain.clone(),
+                syncer: syncer.clone(),
+                payload: payload.clone_without_block_access_list(),
+                block_hash,
+                block_number,
+                latest_valid_hash,
+                reexecuting_canonical_block,
+                make_witness,
+                parent_beacon_block_root,
+                requests_hash,
+                block_access_list_hash,
+            };
+            // A task of its own, so the block's status, and its bad-block record, is
+            // completed even if every request for it has gone away.
+            tokio::spawn(async move {
+                let result = match execution_result.await {
+                    Ok(result) => result,
+                    Err(e) => Err(ChainError::Custom(format!(
+                        "failed to receive block execution result: {e}"
+                    ))),
+                };
+                completion.publish(classify_execution(execution, result).await);
+            });
+            outcome
+        }
+        Err(e) => {
+            error!("{e} for block {block_hash}");
+            return Err(RpcErr::Internal(e.to_string()));
+        }
+    };
+
+    let mut status = in_flight::wait(outcome).await?;
+    if !make_witness {
+        status.witness = None;
+    } else if status.status == PayloadValidationStatus::Valid && status.witness.is_none() {
+        // The execution this request joined didn't collect a witness.
+        let block = rebuild_block(
             payload,
             parent_beacon_block_root,
             requests_hash,
             block_access_list_hash,
+        )?;
+        status =
+            payload_status_for_existing_block(&block, &context.storage, &context.blockchain, true)
+                .await?;
+    }
+    Ok(status)
+}
+
+/// What classifying a block's execution needs, owned so it can outlive the requests for
+/// the block. Not an `RpcApiContext`: a clone of one holds the block executor's channel
+/// open, which would keep the executor alive while a cancelled request's block runs.
+struct PayloadExecution {
+    storage: Store,
+    blockchain: Arc<Blockchain>,
+    syncer: Arc<SyncManager>,
+    /// Without its block access list, which rebuilding the block doesn't need.
+    payload: ExecutionPayload,
+    block_hash: H256,
+    block_number: BlockNumber,
+    latest_valid_hash: H256,
+    reexecuting_canonical_block: bool,
+    make_witness: bool,
+    parent_beacon_block_root: Option<H256>,
+    requests_hash: Option<H256>,
+    block_access_list_hash: Option<H256>,
+}
+
+fn rebuild_block(
+    payload: &ExecutionPayload,
+    parent_beacon_block_root: Option<H256>,
+    requests_hash: Option<H256>,
+    block_access_list_hash: Option<H256>,
+) -> Result<Block, RpcErr> {
+    get_block_from_payload(
+        payload,
+        parent_beacon_block_root,
+        requests_hash,
+        block_access_list_hash,
+    )
+    .map_err(|e| RpcErr::Internal(format!("failed to rebuild the block from its payload: {e}")))
+}
+
+/// Turns the block executor's result into the status every request for the block gets.
+/// Runs once per execution.
+async fn classify_execution(
+    execution: PayloadExecution,
+    result: Result<Option<ExecutionWitness>, ChainError>,
+) -> Result<PayloadStatus, RpcErr> {
+    let PayloadExecution {
+        storage,
+        blockchain,
+        syncer,
+        payload,
+        block_hash,
+        block_number,
+        latest_valid_hash,
+        reexecuting_canonical_block,
+        make_witness,
+        parent_beacon_block_root,
+        requests_hash,
+        block_access_list_hash,
+    } = execution;
+    // A block that turns out invalid is recorded for debug_getBadBlocks. Rebuilding
+    // it from the payload on that path is far cheaper than cloning every block on
+    // the way in, since almost all of them are valid.
+    let rebuild_bad_block = || {
+        rebuild_block(
+            &payload,
+            parent_beacon_block_root,
+            requests_hash,
+            block_access_list_hash,
         )
-        .map_err(|e| {
-            RpcErr::Internal(format!(
-                "failed to rebuild the invalid block from its payload: {e}"
-            ))
-        })
     };
 
-    match add_block(context, block, bal, make_witness, parent_header).await {
+    match result {
         Err(ChainError::ParentNotFound) => {
             // Start sync
             syncer.sync_to_head(block_hash);
@@ -1497,15 +1622,20 @@ async fn try_execute_payload(
             if reexecuting_canonical_block =>
         {
             error!(%block_hash, %block_number, "Re-executing a canonical block failed, keeping it: {error}");
-            payload_status_for_existing_block(&rebuild_bad_block()?, context, make_witness).await
+            payload_status_for_existing_block(
+                &rebuild_bad_block()?,
+                &storage,
+                &blockchain,
+                make_witness,
+            )
+            .await
         }
         Err(ChainError::InvalidBlock(error)) => {
             warn!(%block_hash, %block_number, "Error executing block: {error}");
-            context
-                .storage
+            storage
                 .set_latest_valid_ancestor(block_hash, latest_valid_hash)
                 .await?;
-            context.storage.add_bad_block(rebuild_bad_block()?).await?;
+            storage.add_bad_block(rebuild_bad_block()?).await?;
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
                 error.to_string(),
@@ -1513,11 +1643,10 @@ async fn try_execute_payload(
         }
         Err(ChainError::EvmError(error)) => {
             warn!(%block_hash, %block_number, "Error executing block: {error}");
-            context
-                .storage
+            storage
                 .set_latest_valid_ancestor(block_hash, latest_valid_hash)
                 .await?;
-            context.storage.add_bad_block(rebuild_bad_block()?).await?;
+            storage.add_bad_block(rebuild_bad_block()?).await?;
             Ok(PayloadStatus::invalid_with(
                 latest_valid_hash,
                 error.to_string(),
@@ -1547,14 +1676,15 @@ async fn try_execute_payload(
 
 async fn payload_status_for_existing_block(
     block: &Block,
-    context: &RpcApiContext,
+    storage: &Store,
+    blockchain: &Blockchain,
     make_witness: bool,
 ) -> Result<PayloadStatus, RpcErr> {
     let block_hash = block.hash();
     let mut status = PayloadStatus::valid_with_hash(block_hash);
 
     if make_witness {
-        status.witness = Some(witness_for_existing_block(block, context).await?);
+        status.witness = Some(witness_for_existing_block(block, storage, blockchain).await?);
     }
 
     Ok(status)
@@ -1562,21 +1692,18 @@ async fn payload_status_for_existing_block(
 
 async fn witness_for_existing_block(
     block: &Block,
-    context: &RpcApiContext,
+    storage: &Store,
+    blockchain: &Blockchain,
 ) -> Result<Bytes, RpcErr> {
     let block_hash = block.hash();
-    if let Some(json_bytes) = context
-        .storage
-        .get_witness_json_bytes(block.header.number, block_hash)?
-    {
+    if let Some(json_bytes) = storage.get_witness_json_bytes(block.header.number, block_hash)? {
         let rpc_witness = serde_json::from_slice(&json_bytes).map_err(|error| {
             RpcErr::Internal(format!("Failed to parse cached witness: {error}"))
         })?;
         return encode_rpc_witness_for_engine_rpc(rpc_witness);
     }
 
-    let witness = context
-        .blockchain
+    let witness = blockchain
         .generate_witness_for_blocks(std::slice::from_ref(block))
         .await
         .map_err(|error| RpcErr::Internal(format!("Failed to build execution witness: {error}")))?;
