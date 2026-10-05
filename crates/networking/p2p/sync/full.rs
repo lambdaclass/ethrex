@@ -701,7 +701,12 @@ async fn add_blocks_in_batch(
             .any(|b| chain_config.is_amsterdam_activated(b.header.timestamp));
         if any_amsterdam {
             match peers.request_block_access_lists(&blocks_hashes).await {
-                Ok(Some(bals)) if bals.len() == blocks.len() => bals,
+                // Servers stop a response at a byte budget and keep request order, so a
+                // shorter answer covers the first blocks; the rest run without a BAL.
+                Ok(Some(mut bals)) if !bals.is_empty() && bals.len() <= blocks.len() => {
+                    bals.resize(blocks.len(), None);
+                    bals
+                }
                 _ => {
                     debug!("BAL fetch unavailable or failed, proceeding without BALs");
                     vec![None; blocks.len()]

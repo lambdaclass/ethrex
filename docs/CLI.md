@@ -249,6 +249,11 @@ Storage options:
           
           [env: ETHREX_ROCKSDB_BLOCK_CACHE_SIZE=]
 
+      --code-cache-size <BYTES>
+          Byte budget of the in-memory bytecode cache. Defaults to 2 GiB, which holds ~29k max-size contracts; the cache only grows with code that blocks actually load. Lower it on memory-constrained hosts, or raise it for workloads that keep reusing more distinct contracts than that.
+          
+          [env: ETHREX_CODE_CACHE_SIZE=]
+
 RPC options:
       --http.addr <ADDRESS>
           Listening address for the HTTP JSON-RPC server. Defaults to 127.0.0.1 so the endpoint is only reachable from localhost; pass 0.0.0.0 to bind on all interfaces (only recommended when the node sits behind a trusted firewall or reverse proxy).
@@ -306,7 +311,7 @@ Block building options:
           Block extra data message.
           
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 27.0.0"]
+          [default: "ethrex 28.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -520,7 +525,7 @@ Block building options:
           Block extra data message.
 
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 27.0.0"]
+          [default: "ethrex 28.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
