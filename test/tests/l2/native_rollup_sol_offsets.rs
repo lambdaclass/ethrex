@@ -136,7 +136,6 @@ fn encode_sample_input() -> Vec<u8> {
             headers: vec![].try_into().expect("headers"),
         },
         chain_id: 1,
-        public_keys: vec![].try_into().expect("public_keys"),
     };
     let mut buf = ethrex_common::types::stateless_ssz::STATELESS_INPUT_SCHEMA_ID
         .to_be_bytes()
