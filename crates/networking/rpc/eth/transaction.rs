@@ -25,7 +25,6 @@ use ethrex_common::{
 
 use crate::types::{block_override::BlockOverrideSet, state_override::StateOverrideSet};
 
-use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 
 use ethrex_vm::{ExecutionResult, backends::levm::get_max_allowed_gas_limit};
@@ -493,7 +492,9 @@ impl RpcHandler for GetRawTransactionByBlockAndIndex {
         let Some(tx) = block_body.transactions.get(self.transaction_index) else {
             return Ok(Value::Null);
         };
-        serde_json::to_value(format!("0x{}", &hex::encode(tx.encode_to_vec())))
+        // The EIP-2718 envelope (`type || payload` for typed transactions), not the
+        // RLP form that wraps it in a byte string: its keccak is the transaction hash.
+        serde_json::to_value(format!("0x{}", &hex::encode(tx.encode_canonical_to_vec())))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -535,7 +536,9 @@ impl RpcHandler for GetRawTransaction {
             Some(tx) => tx,
             _ => return Ok(Value::Null),
         };
-        serde_json::to_value(format!("0x{}", &hex::encode(tx.encode_to_vec())))
+        // The EIP-2718 envelope, as `debug_getRawTransaction` specifies and the
+        // `eth_` spellings return elsewhere; see `GetRawTransactionByBlockAndIndex`.
+        serde_json::to_value(format!("0x{}", &hex::encode(tx.encode_canonical_to_vec())))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

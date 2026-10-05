@@ -12,8 +12,17 @@
 
 ## Perf
 
+### 2026-09-30
+
+- Evict a random bytecode cache entry instead of the least recently used one, and raise the budget to 2 GiB (about 29k contracts of 64 KiB; `--code-cache-size` overrides it): on Plataberget blocks 297947–299844, which keep reusing a growing set of 16k+ distinct 64 KiB contracts, the LRU fell from 87% to 68% hits and blocks with two or more such transactions went from 30 to 44 ms, while with this change they stay at 19–21 ms with every code read hitting the cache, in replay; mainnet is unchanged (-0.29%, no evictions) [#7350](https://github.com/lambdaclass/ethrex/pull/7350)
+
+### 2026-09-29
+
+- Raise the bytecode cache to 1 GiB (about 16k contracts of 64 KiB) and warm block access list accounts and their code in parallel chunks of 64 instead of all states first: Plataberget blocks 294611–294805, which CALL thousands of distinct 64 KiB contracts in sequence, go from 145.3 to 34.2 ms per block in replay [#7346](https://github.com/lambdaclass/ethrex/pull/7346)
+
 ### 2026-09-28
 
+- Deserialize `engine_newPayloadV5` params in a single pass: from the borrowed `Value`, with the block access list RLP-decoded once inside serde and hashed from the wire bytes; RPC dispatch to handler 0.39 → 0.34 ms per block on Plataberget [#7301](https://github.com/lambdaclass/ethrex/pull/7301)
 - Stop cloning every payload's block before execution; the `debug_getBadBlocks` record is rebuilt from the payload only when execution rejects the block [#7302](https://github.com/lambdaclass/ethrex/pull/7302)
 - Run the JUMPDEST analysis on 64-byte blocks without a branch that depends on the bytecode, using 16-lane table lookups (NEON, SSSE3), so it takes the same time on any code: the random-bytecode `test_jumpdest_analysis` blocks of execution-specs#3631 go from 38–54 to 570 MGas/s on Zen 2, and 1573 mainnet contracts are analyzed 6.1x faster [#7311](https://github.com/lambdaclass/ethrex/pull/7311)
 
