@@ -56,6 +56,7 @@ use ethrex_blockchain::{
 use ethrex_common::H256;
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
+use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::{P2PTransaction, Receipt};
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::encode::RLPEncode;
@@ -1537,6 +1538,7 @@ async fn handle_incoming_message(
             | Message::GetStorageRanges(_)
             | Message::GetByteCodes(_)
             | Message::GetTrieNodes(_)
+            | Message::GetBlockAccessLists(_)
             | Message::Snap2GetBlockAccessLists(_)
             | Message::GetCells(_)
     );
@@ -1671,45 +1673,14 @@ async fn handle_incoming_message(
         Message::GetBlockAccessLists(GetBlockAccessLists { id, block_hashes })
             if peer_supports_eth =>
         {
-            use crate::rlpx::eth::block_access_lists::BLOCK_ACCESS_LIST_LIMIT;
-            let mut block_access_lists =
-                Vec::with_capacity(block_hashes.len().min(BLOCK_ACCESS_LIST_LIMIT));
-            for hash in &block_hashes {
-                // EIP-8159: only serve a BAL that matches the block header's
-                // commitment. A stored BAL that doesn't hash to the header's
-                // `block_access_list_hash` (e.g. a stale/empty entry from a prior
-                // regeneration) must be reported as unavailable (`0x80`) rather
-                // than served as a wrong BAL, which receiving peers would reject.
-                let bal = match state.storage.get_block_access_list(*hash) {
-                    Ok(Some(bal)) => {
-                        let commitment = match state.storage.get_block_header_by_hash(*hash) {
-                            Ok(Some(header)) => header.block_access_list_hash,
-                            Ok(None) => None,
-                            Err(err) => {
-                                // Don't serve an unverified BAL: degrade to 0x80
-                                // (unavailable), but log so an operator can tell a
-                                // committed BAL was refused due to a DB error.
-                                warn!(
-                                    "Failed to read header for BAL commitment check (hash {hash:#x}): {err}; reporting BAL unavailable"
-                                );
-                                None
-                            }
-                        };
-                        bal.matches_commitment(commitment, &NativeCrypto)
-                            .then_some(bal)
-                    }
-                    Ok(None) => None,
-                    Err(err) => {
-                        error!("Error accessing DB while building BAL response for peer: {err}");
-                        None
-                    }
-                };
-                block_access_lists.push(bal);
-                if block_access_lists.len() >= BLOCK_ACCESS_LIST_LIMIT {
-                    break;
-                }
-            }
-            let response = BlockAccessLists::new(id, block_access_lists);
+            // Offload synchronous storage/RLP/hashing work off the connection task,
+            // as for the snap/2 variant below.
+            let storage = state.storage.clone();
+            let response = tokio::task::spawn_blocking(move || {
+                build_block_access_lists_response(id, &block_hashes, &storage)
+            })
+            .await
+            .map_err(|e| PeerConnectionError::InternalError(e.to_string()))?;
             send(state, Message::BlockAccessLists(response)).await?;
         }
         Message::GetReceipts68(GetReceipts68 { id, block_hashes }) if peer_supports_eth => {
@@ -2420,6 +2391,74 @@ async fn handle_incoming_message(
     Ok(())
 }
 
+/// Build a `BlockAccessLists` (eth/71, EIP-8159) response for a `GetBlockAccessLists` request.
+///
+/// Entries follow the request order; a block access list that is unknown, or does not
+/// match its header's `block_access_list_hash`, is returned as unavailable (`None`).
+/// The response stops growing once its encoded size reaches
+/// [`BAL_RESPONSE_SOFT_CAP_BYTES`] (the first entry is always served), like the other
+/// data-serving replies: a request may name up to [`BLOCK_ACCESS_LIST_LIMIT`] hashes, and
+/// without a byte budget a request repeating the hash of one large block access list
+/// would make the node read, verify and encode that list once per repetition. A hash
+/// repeated within one request is read and verified once.
+pub fn build_block_access_lists_response(
+    id: u64,
+    block_hashes: &[H256],
+    storage: &ethrex_storage::Store,
+) -> BlockAccessLists {
+    use crate::rlpx::eth::block_access_lists::BLOCK_ACCESS_LIST_LIMIT;
+    let hashes = &block_hashes[..block_hashes.len().min(BLOCK_ACCESS_LIST_LIMIT)];
+    let mut verified: HashMap<H256, Option<BlockAccessList>> = HashMap::new();
+    let mut block_access_lists = Vec::with_capacity(hashes.len());
+    let mut bytes_used: u64 = 0;
+    for hash in hashes {
+        if !block_access_lists.is_empty() && bytes_used >= BAL_RESPONSE_SOFT_CAP_BYTES {
+            break;
+        }
+        let bal = verified
+            .entry(*hash)
+            .or_insert_with(|| verified_block_access_list(*hash, storage))
+            .clone();
+        bytes_used += bal.as_ref().map_or(1, |bal| bal.length() as u64);
+        block_access_lists.push(bal);
+    }
+    BlockAccessLists::new(id, block_access_lists)
+}
+
+/// EIP-8159: only serve a BAL that matches the block header's commitment. A stored BAL
+/// that doesn't hash to the header's `block_access_list_hash` (e.g. a stale/empty entry
+/// from a prior regeneration) is reported as unavailable (`0x80`) rather than served as
+/// a wrong BAL, which receiving peers would reject.
+fn verified_block_access_list(
+    hash: H256,
+    storage: &ethrex_storage::Store,
+) -> Option<BlockAccessList> {
+    match storage.get_block_access_list(hash) {
+        Ok(Some(bal)) => {
+            let commitment = match storage.get_block_header_by_hash(hash) {
+                Ok(Some(header)) => header.block_access_list_hash,
+                Ok(None) => None,
+                Err(err) => {
+                    // Don't serve an unverified BAL: degrade to 0x80 (unavailable), but
+                    // log so an operator can tell a committed BAL was refused due to a
+                    // DB error.
+                    warn!(
+                        "Failed to read header for BAL commitment check (hash {hash:#x}): {err}; reporting BAL unavailable"
+                    );
+                    None
+                }
+            };
+            bal.matches_commitment(commitment, &NativeCrypto)
+                .then_some(bal)
+        }
+        Ok(None) => None,
+        Err(err) => {
+            error!("Error accessing DB while building BAL response for peer: {err}");
+            None
+        }
+    }
+}
+
 /// Build a `Snap2BlockAccessLists` response for a `Snap2GetBlockAccessLists` request.
 ///
 /// Per EIP-8189:
@@ -2446,24 +2485,22 @@ pub fn build_snap2_bal_response(
         &req.block_hashes
     };
 
-    // Batched BAL fetch (`Store::iter_block_access_lists_by_hashes`). No per-hash
-    // header lookup is needed to satisfy §100: a stored BAL implies the block was
-    // admitted post-Amsterdam (BAL storage is gated on the Amsterdam fork), so a
-    // present entry is served directly. When no BAL is stored — pre-Amsterdam,
-    // pruned, or unknown block — the slot is `None` regardless.
-    let raw_bals = storage
-        .iter_block_access_lists_by_hashes(hashes)
-        .map_err(|e| PeerConnectionError::InternalError(e.to_string()))?;
-
-    let mut bals: Vec<Option<ethrex_common::types::block_access_list::BlockAccessList>> =
-        Vec::with_capacity(hashes.len());
+    // No per-hash header lookup is needed to satisfy §100: a stored BAL implies the block
+    // was admitted post-Amsterdam (BAL storage is gated on the Amsterdam fork), so a
+    // present entry is served directly. When no BAL is stored — pre-Amsterdam, pruned, or
+    // unknown block — the slot is `None` regardless. Lists are read one at a time and only
+    // until the byte budget is spent, so the budget also bounds what gets decoded.
+    let mut bals: Vec<Option<BlockAccessList>> = Vec::with_capacity(hashes.len());
     let mut bytes_used: u64 = 0;
 
-    for raw_bal in raw_bals.into_iter() {
+    for hash in hashes {
         // Keep at least one entry then stop once cap is exceeded.
         if !bals.is_empty() && bytes_used >= cap {
             break;
         }
+        let raw_bal = storage
+            .get_block_access_list(*hash)
+            .map_err(|e| PeerConnectionError::InternalError(e.to_string()))?;
 
         bytes_used += match &raw_bal {
             Some(bal) => bal.length() as u64,
@@ -2899,5 +2936,170 @@ async fn retry_on_alternates(
         if let Err(e) = conn.enqueue_tx_requests(announcement, hash_list) {
             debug!(error = %e, "Failed to enqueue tx requests on alternate peer");
         }
+    }
+}
+
+#[cfg(test)]
+mod bal_serving_tests {
+    use super::*;
+    use crate::rlpx::eth::block_access_lists::BLOCK_ACCESS_LIST_LIMIT;
+    use crate::snap::constants::{BAL_MAX_REQUEST_HASHES, BAL_RESPONSE_SOFT_CAP_BYTES};
+    use ethrex_common::{
+        Address,
+        types::{
+            BlockHeader,
+            block_access_list::{AccountChanges, BlockAccessList},
+        },
+    };
+    use ethrex_storage::{EngineType, Store, api::tables::HEADERS, rlp::BlockHeaderRLP};
+
+    fn store() -> Store {
+        Store::new("memory", EngineType::InMemory).expect("in-memory store")
+    }
+
+    fn bal_with_accounts(n: u64) -> BlockAccessList {
+        BlockAccessList::from_accounts(
+            (0..n)
+                .map(|i| AccountChanges::new(Address::from_low_u64_be(i + 1)))
+                .collect(),
+        )
+    }
+
+    /// Stores `bal` under `hash` together with a post-Amsterdam header committing to it,
+    /// or to `commitment` when given (to simulate a stored list that does not match).
+    fn store_committed_bal(
+        store: &Store,
+        hash: H256,
+        bal: &BlockAccessList,
+        commitment: Option<H256>,
+    ) {
+        let header = BlockHeader {
+            base_fee_per_gas: Some(0),
+            withdrawals_root: Some(H256::zero()),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Some(H256::zero()),
+            requests_hash: Some(H256::zero()),
+            block_access_list_hash: Some(
+                commitment.unwrap_or_else(|| bal.compute_hash(&NativeCrypto)),
+            ),
+            ..Default::default()
+        };
+        store
+            .write(
+                HEADERS,
+                hash.encode_to_vec(),
+                BlockHeaderRLP::from(header).into_vec(),
+            )
+            .expect("store header");
+        store.store_block_access_list(hash, bal).expect("store BAL");
+    }
+
+    fn encoded_len(bals: &[Option<BlockAccessList>]) -> u64 {
+        bals.iter()
+            .map(|b| b.as_ref().map_or(1, |b| b.length() as u64))
+            .sum()
+    }
+
+    /// A request may repeat one hash up to the entry limit. The response SHALL stop at
+    /// the byte budget instead of carrying one copy of the list per repetition.
+    #[test]
+    fn repeated_hash_of_a_large_list_stays_within_the_byte_budget() {
+        let store = store();
+        let hash = H256::from_low_u64_be(7);
+        let bal = bal_with_accounts(40_000);
+        let one = bal.length() as u64;
+        assert!(
+            one > BAL_RESPONSE_SOFT_CAP_BYTES / 4,
+            "fixture must be large ({one} bytes)"
+        );
+        store_committed_bal(&store, hash, &bal, None);
+
+        let resp =
+            build_block_access_lists_response(1, &vec![hash; BLOCK_ACCESS_LIST_LIMIT], &store);
+
+        assert!(resp.block_access_lists.len() < BLOCK_ACCESS_LIST_LIMIT);
+        assert!(
+            resp.block_access_lists[0].is_some(),
+            "the first entry is always served"
+        );
+        assert!(
+            encoded_len(&resp.block_access_lists) < BAL_RESPONSE_SOFT_CAP_BYTES + one,
+            "response carries at most one list beyond the budget"
+        );
+    }
+
+    /// Entries keep the request order; unknown hashes and lists that do not match their
+    /// header's commitment are reported unavailable.
+    #[test]
+    fn entries_follow_request_order_and_unverified_lists_are_unavailable() {
+        let store = store();
+        let good = H256::from_low_u64_be(1);
+        let mismatched = H256::from_low_u64_be(2);
+        let unknown = H256::from_low_u64_be(3);
+        store_committed_bal(&store, good, &bal_with_accounts(3), None);
+        store_committed_bal(
+            &store,
+            mismatched,
+            &bal_with_accounts(4),
+            Some(H256::repeat_byte(0xAB)),
+        );
+
+        let resp = build_block_access_lists_response(9, &[good, mismatched, unknown, good], &store);
+
+        assert_eq!(resp.id, 9);
+        let served: Vec<bool> = resp
+            .block_access_lists
+            .iter()
+            .map(Option::is_some)
+            .collect();
+        assert_eq!(served, vec![true, false, false, true]);
+    }
+
+    /// Small lists stay far below the budget, so every requested entry is served.
+    #[test]
+    fn repeated_small_lists_are_all_served() {
+        let store = store();
+        let hash = H256::from_low_u64_be(5);
+        store_committed_bal(&store, hash, &bal_with_accounts(1), None);
+
+        let resp = build_block_access_lists_response(2, &vec![hash; 64], &store);
+
+        assert_eq!(resp.block_access_lists.len(), 64);
+        assert!(resp.block_access_lists.iter().all(Option::is_some));
+    }
+
+    /// More hashes than the protocol allows are cut to the entry limit.
+    #[test]
+    fn requests_are_cut_to_the_entry_limit() {
+        let store = store();
+        let hashes: Vec<H256> = (0..(BLOCK_ACCESS_LIST_LIMIT as u64 + 10))
+            .map(H256::from_low_u64_be)
+            .collect();
+
+        let resp = build_block_access_lists_response(3, &hashes, &store);
+
+        assert_eq!(resp.block_access_lists.len(), BLOCK_ACCESS_LIST_LIMIT);
+    }
+
+    /// The snap/2 variant SHALL read lists only until its budget is spent, so repeating
+    /// one large list's hash does not decode it once per repetition first.
+    #[test]
+    fn snap2_repeated_hash_of_a_large_list_stays_within_the_byte_budget() {
+        let store = store();
+        let hash = H256::from_low_u64_be(11);
+        let bal = bal_with_accounts(40_000);
+        let one = bal.length() as u64;
+        store_committed_bal(&store, hash, &bal, None);
+
+        let req = Snap2GetBlockAccessLists {
+            id: 4,
+            block_hashes: vec![hash; BAL_MAX_REQUEST_HASHES],
+            response_bytes: 0,
+        };
+        let resp = build_snap2_bal_response(req, &store).expect("response");
+
+        assert!(resp.bals.len() < BAL_MAX_REQUEST_HASHES);
+        assert!(encoded_len(&resp.bals) < BAL_RESPONSE_SOFT_CAP_BYTES + one);
     }
 }

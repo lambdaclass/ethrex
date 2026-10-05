@@ -175,8 +175,12 @@ run-hive-eels-rlp: ## Run hive EELS RLP tests
 run-hive-eels-blobs: ## Run hive EELS Blobs tests
 	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/execute-blobs
 
-AMSTERDAM_FIXTURES_URL ?= $(shell cat tooling/ef_tests/.fixtures_url_amsterdam)
-AMSTERDAM_FIXTURES_BRANCH ?= devnets/glamsterdam/8
+# Local hive runs read the same Amsterdam pin CI does, so a bundle bump lands in one
+# place and the two can't drift. Both keys are plain scalars, so `sed` extracts them
+# without making the Makefile depend on `yq`.
+AMSTERDAM_HIVE_CONFIG := .github/config/hive/amsterdam.yaml
+AMSTERDAM_FIXTURES_URL ?= $(shell sed -n 's/^fixtures: *//p' $(AMSTERDAM_HIVE_CONFIG))
+AMSTERDAM_FIXTURES_BRANCH ?= $(shell sed -n 's/^eels_commit: *//p' $(AMSTERDAM_HIVE_CONFIG))
 # `fork_.*Amsterdam` rather than `fork_Amsterdam` so the BPO2->Amsterdam activation
 # fixtures (`fork_BPO2ToAmsterdamAtTime15k`) are swept alongside the Amsterdam ones.
 AMSTERDAM_FORK_PATTERN ?= .*fork_.*Amsterdam.*
