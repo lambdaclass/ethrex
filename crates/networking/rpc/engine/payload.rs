@@ -14,6 +14,7 @@ use ethrex_common::{H256, U256};
 use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::sync::SyncMode;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
+use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
@@ -202,6 +203,20 @@ impl RpcHandler for NewPayloadV4Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        self.handle_with_witness(context, false).await
+    }
+}
+
+impl NewPayloadV4Request {
+    /// Shared body of `engine_newPayloadV4` and `engine_newPayloadWithWitnessV4`.
+    /// The two differ only in whether the execution collects a witness, so every
+    /// structural and fork check lives here once; `make_witness` is the only
+    /// thing the witness variant changes, exactly as `NewPayloadV5Request` does.
+    async fn handle_with_witness(
+        &self,
+        context: RpcApiContext,
+        make_witness: bool,
+    ) -> Result<Value, RpcErr> {
         // EIP-7928 / Amsterdam: V4 payloads MUST NOT include the BAL field — that
         // field belongs to V5. Per engine-API spec, structurally-invalid payloads
         // return JSON-RPC -32602 (Invalid params), not PayloadStatus.INVALID.
@@ -265,10 +280,42 @@ impl RpcHandler for NewPayloadV4Request {
             block,
             self.expected_blob_versioned_hashes.clone(),
             None,
-            false,
+            make_witness,
         )
         .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+/// `engine_newPayloadWithWitnessV4`: `engine_newPayloadV4` plus a `witness`
+/// field in the response. Same four params, same status semantics, same
+/// Prague-through-BPO2 fork window; only `make_witness` differs. Mirrors geth's
+/// `NewPayloadWithWitnessV4`, which forwards to its `newPayload` with
+/// `witness = true` after the identical V4 checks.
+pub struct NewPayloadWithWitnessV4Request(pub NewPayloadV4Request);
+
+impl From<NewPayloadWithWitnessV4Request> for RpcRequest {
+    fn from(val: NewPayloadWithWitnessV4Request) -> Self {
+        RpcRequest {
+            method: "engine_newPayloadWithWitnessV4".to_string(),
+            params: Some(vec![
+                serde_json::json!(val.0.payload),
+                serde_json::json!(val.0.expected_blob_versioned_hashes),
+                serde_json::json!(val.0.parent_beacon_block_root),
+                serde_json::json!(val.0.execution_requests),
+            ]),
+            ..Default::default()
+        }
+    }
+}
+
+impl RpcHandler for NewPayloadWithWitnessV4Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        NewPayloadV4Request::parse(params).map(Self)
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        self.0.handle_with_witness(context, true).await
     }
 }
 
@@ -315,47 +362,62 @@ impl RpcHandler for NewPayloadV5Request {
         // Extract the raw BAL hash from the JSON payload before deserialization.
         // We hash the raw RLP bytes as-received to preserve the exact encoding
         // (including any ordering) for accurate block hash validation.
-        let mut payload_value = params[0].clone();
-        let mut undecodable_bal = false;
-        let raw_bal_hash = payload_value
+        let payload_value = &params[0];
+
+        // The header's `block_access_list_hash` commits to the BAL exactly as it came
+        // over the wire, so it is hashed from the raw bytes rather than from a
+        // re-encoding of the decoded list.
+        let raw_bal = payload_value
             .get("blockAccessList")
             .map(|v| {
-                let hex_str = v
+                let hex_body = v
                     .as_str()
+                    .and_then(|s| s.strip_prefix("0x"))
                     .ok_or(RpcErr::WrongParam("blockAccessList".to_string()))?;
-                // EIP-7928 blockAccessList is a DATA field: the `0x` prefix is
-                // mandatory. Reject an unprefixed value rather than trimming it.
-                let hex_body = hex_str
-                    .strip_prefix("0x")
-                    .ok_or(RpcErr::WrongParam("blockAccessList".to_string()))?;
-                let bytes = hex::decode(hex_body)
-                    .map_err(|_| RpcErr::WrongParam("blockAccessList".to_string()))?;
-                // Well-formed DATA whose bytes don't RLP-decode into a BAL must yield
-                // `{status: INVALID}`, not -32602. Flag it here (the decision belongs
-                // to `handle`, which can return a status) rather than failing parse.
-                if BlockAccessList::decode(&bytes).is_err() {
-                    undecodable_bal = true;
-                }
-                Ok::<_, RpcErr>(ethrex_common::utils::keccak(bytes))
+                hex::decode(hex_body).map_err(|_| RpcErr::WrongParam("blockAccessList".to_string()))
             })
             .transpose()?;
-        if undecodable_bal {
-            // `ExecutionPayload`'s serde RLP-decodes the field and would fail the
-            // whole params parse with -32602; drop it so deserialization succeeds
-            // and `handle` can answer with the mandated INVALID status.
-            if let Some(obj) = payload_value.as_object_mut() {
-                obj.remove("blockAccessList");
-            }
-        }
+        let raw_bal_hash = raw_bal.as_deref().map(ethrex_common::utils::keccak);
 
+        // Deserialize straight from the borrowed value. The payload is the bulk of the
+        // request — tens of kilobytes of transactions on a busy chain — and this runs
+        // for every block, so it is walked once: the BAL is RLP-decoded inside serde
+        // and nowhere else.
+        let (payload, undecodable_bal) = match ExecutionPayload::deserialize(payload_value) {
+            // Serde's BAL deserializer reads an empty `"0x"` as absent, while the
+            // strict decoder that governs the header hash rejects empty input. Keep
+            // the strict verdict: a BAL that is present but empty is undecodable,
+            // not missing, so the payload is answered INVALID rather than rejected
+            // as malformed params.
+            Ok(payload) => (payload, raw_bal.as_deref().is_some_and(<[u8]>::is_empty)),
+            Err(_) => {
+                // The one failure tolerated here is a BAL that does not RLP-decode: the
+                // block must still be rebuilt so it can be answered INVALID under its
+                // own hash instead of being rejected as a malformed request. Anything
+                // else is a malformed payload. This is the rare path, so it may afford
+                // a copy.
+                let bal_undecodable = raw_bal
+                    .as_deref()
+                    .is_some_and(|bytes| BlockAccessList::decode(bytes).is_err());
+                if !bal_undecodable {
+                    return Err(RpcErr::WrongParam("payload".to_string()));
+                }
+                let mut stripped = payload_value.clone();
+                if let Some(obj) = stripped.as_object_mut() {
+                    obj.remove("blockAccessList");
+                }
+                let payload = serde_json::from_value(stripped)
+                    .map_err(|_| RpcErr::WrongParam("payload".to_string()))?;
+                (payload, true)
+            }
+        };
         Ok(Self {
-            payload: serde_json::from_value(payload_value)
-                .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
-            expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
+            payload,
+            expected_blob_versioned_hashes: Deserialize::deserialize(&params[1])
                 .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
-            parent_beacon_block_root: serde_json::from_value(params[2].clone())
+            parent_beacon_block_root: Deserialize::deserialize(&params[2])
                 .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
-            execution_requests: serde_json::from_value(params[3].clone())
+            execution_requests: Deserialize::deserialize(&params[3])
                 .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
             raw_bal_hash,
             undecodable_bal,
@@ -1299,6 +1361,9 @@ async fn try_execute_payload(
     if context.blockchain.is_reorg_in_progress() {
         return Ok(PayloadStatus::syncing());
     }
+    // Set when the block is re-executed only to rebuild evicted state for a block we had
+    // already accepted: one on our canonical chain, at or below our head.
+    let mut reexecuting_canonical_block = false;
     // Fast path: if we already have this block's header AND its state is reachable,
     // we know it has been fully validated previously and can reply VALID (with a
     // witness if requested) without re-execution.
@@ -1334,6 +1399,8 @@ async fn try_execute_payload(
         if !parent_reachable {
             return payload_status_for_existing_block(&block, context, make_witness).await;
         }
+        reexecuting_canonical_block = block_number <= storage.get_latest_block_number()?
+            && storage.get_canonical_block_hash_sync(block_number)? == Some(block_hash);
         // Fall through ; `add_block` below will re-execute and rebuild the layer.
     }
 
@@ -1420,6 +1487,17 @@ async fn try_execute_payload(
             debug!(%block_hash, "Parent state not found, returning SYNCING and triggering sync");
             syncer.sync_to_head(block_hash);
             Ok(PayloadStatus::syncing())
+        }
+        // A block already on our canonical chain was validated when it joined it, so a
+        // failed re-execution means the parent state we rebuilt for it is wrong, not that
+        // the block is. Recording it as bad would make us reject our own canonical chain
+        // and everything built on it. Answer as for any known block whose state we
+        // cannot rebuild, as the fast path above does.
+        Err(error @ (ChainError::InvalidBlock(_) | ChainError::EvmError(_)))
+            if reexecuting_canonical_block =>
+        {
+            error!(%block_hash, %block_number, "Re-executing a canonical block failed, keeping it: {error}");
+            payload_status_for_existing_block(&rebuild_bad_block()?, context, make_witness).await
         }
         Err(ChainError::InvalidBlock(error)) => {
             warn!(%block_hash, %block_number, "Error executing block: {error}");
@@ -1660,6 +1738,158 @@ mod tests {
         }
     }
 
+    /// The V4 shape: V5 minus the two Amsterdam-only fields.
+    fn v4_payload() -> ExecutionPayload {
+        ExecutionPayload {
+            slot_number: None,
+            block_access_list: None,
+            ..v5_payload()
+        }
+    }
+
+    #[test]
+    fn new_payload_with_witness_v4_parses_like_v4() {
+        let params = Some(vec![
+            serde_json::json!(v4_payload()),
+            serde_json::json!(Vec::<H256>::new()),
+            serde_json::json!(H256::zero()),
+            serde_json::json!(Vec::<EncodedRequests>::new()),
+        ]);
+
+        let request = NewPayloadWithWitnessV4Request::parse(&params).unwrap();
+
+        assert_eq!(request.0.payload.block_access_list, None);
+        assert_eq!(request.0.execution_requests.len(), 0);
+    }
+
+    /// A Prague-era block built on the `execution-api.json` genesis (Prague at
+    /// t=0, no Amsterdam), returned together with the store it was built on.
+    /// The block is built but not stored, so a newPayload call executes it.
+    async fn prague_block_and_store() -> (Block, Store) {
+        use ethrex_blockchain::Blockchain;
+        use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
+        use ethrex_common::types::{DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Genesis};
+
+        let genesis_path = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../fixtures/genesis/execution-api.json"
+        ));
+        let genesis = Genesis::try_from(genesis_path).expect("load genesis");
+        let mut store = Store::new("v4-witness", EngineType::InMemory).expect("store");
+        store.add_initial_state(genesis).await.expect("genesis");
+        let blockchain = Blockchain::for_test_harness(store.clone());
+        let genesis_header = store.get_block_header(0).unwrap().unwrap();
+        let args = BuildPayloadArgs {
+            parent: genesis_header.hash(),
+            timestamp: genesis_header.timestamp + 12,
+            fee_recipient: Default::default(),
+            random: H256::zero(),
+            withdrawals: Some(Vec::new()),
+            beacon_root: Some(H256::zero()),
+            slot_number: None,
+            version: 1,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        };
+        let template = create_payload(&args, &store, Bytes::new()).expect("template");
+        let built = blockchain.build_payload(template).expect("build payload");
+        (built.payload, store)
+    }
+
+    fn v4_params_for(block: &Block) -> Option<Vec<Value>> {
+        Some(vec![
+            serde_json::json!(ExecutionPayload::from_block(block.clone(), None)),
+            serde_json::json!(Vec::<H256>::new()),
+            serde_json::json!(H256::zero()),
+            serde_json::json!(Vec::<EncodedRequests>::new()),
+        ])
+    }
+
+    /// Upstream ships no V4 payload with an `executionWitness` (the pre-fork
+    /// blocks in the zkevm fixtures carry none), so the fixture runner cannot
+    /// grade this endpoint. The oracle is the witness ethrex itself derives for
+    /// the same block through `generate_witness_for_blocks`, which is what
+    /// `debug_executionWitness` serves: the engine variant must return exactly
+    /// those bytes, and the plain V4 call must return the same status without
+    /// a `witness` field.
+    #[tokio::test]
+    async fn new_payload_with_witness_v4_returns_the_witness_debug_rpc_would() {
+        use ethrex_common::types::block_execution_witness::ExtWitness;
+        use ethrex_rlp::decode::RLPDecode;
+
+        let (block, store) = prague_block_and_store().await;
+        let params = v4_params_for(&block);
+        let ctx = default_context_with_storage(store).await;
+
+        let response = NewPayloadWithWitnessV4Request::parse(&params)
+            .expect("parse")
+            .handle(ctx.clone())
+            .await
+            .expect("handle");
+        assert_eq!(response["status"], "VALID", "{response:?}");
+        assert_eq!(
+            response["latestValidHash"],
+            serde_json::json!(block.hash()),
+            "{response:?}"
+        );
+
+        let witness_hex = response["witness"]
+            .as_str()
+            .expect("with-witness response carries a witness");
+        let witness_bytes = hex::decode(witness_hex.strip_prefix("0x").unwrap()).unwrap();
+        ExtWitness::decode(&witness_bytes).expect("witness is geth's ExtWitness RLP");
+
+        let oracle = ctx
+            .blockchain
+            .generate_witness_for_blocks(std::slice::from_ref(&block))
+            .await
+            .expect("debug witness for the same block");
+        let oracle_bytes = encode_witness_for_engine_rpc(oracle).expect("encode oracle");
+        assert_eq!(witness_bytes, oracle_bytes.as_ref());
+
+        // Same block through plain V4: identical status, and no witness field at
+        // all rather than an empty one (the field is skipped when absent).
+        let plain = NewPayloadV4Request::parse(&params)
+            .expect("parse")
+            .handle(ctx.clone())
+            .await
+            .expect("handle");
+        assert_eq!(plain["status"], "VALID", "{plain:?}");
+        assert!(plain.get("witness").is_none(), "{plain:?}");
+    }
+
+    /// The witness variant shares V4's fork window. An Amsterdam-active
+    /// timestamp must be refused with -38005 before anything is executed,
+    /// exactly as `engine_newPayloadV4` does, so asking for a witness cannot
+    /// be used to slip a V5-era payload through the V4 entry point.
+    #[tokio::test]
+    async fn new_payload_with_witness_v4_rejects_amsterdam_timestamps() {
+        use ethrex_common::types::Genesis;
+
+        let (block, _) = prague_block_and_store().await;
+        let params = v4_params_for(&block);
+
+        let genesis_path = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../fixtures/genesis/execution-api.json"
+        ));
+        let mut genesis = Genesis::try_from(genesis_path).expect("load genesis");
+        genesis.config.osaka_time = Some(0);
+        genesis.config.bpo1_time = Some(0);
+        genesis.config.bpo2_time = Some(0);
+        genesis.config.amsterdam_time = Some(0);
+        let mut store = Store::new("v4-witness-amsterdam", EngineType::InMemory).expect("store");
+        store.add_initial_state(genesis).await.expect("genesis");
+        let ctx = default_context_with_storage(store).await;
+
+        let err = NewPayloadWithWitnessV4Request::parse(&params)
+            .expect("parse")
+            .handle(ctx.clone())
+            .await
+            .expect_err("Amsterdam timestamps are not a V4 concern");
+        assert!(matches!(err, RpcErr::UnsupportedFork(_)), "{err:?}");
+    }
+
     #[test]
     fn new_payload_with_witness_v5_parses_like_v5() {
         let params = Some(vec![
@@ -1673,6 +1903,32 @@ mod tests {
 
         assert_eq!(request.0.payload.slot_number, Some(0));
         assert!(request.0.raw_bal_hash.is_some());
+    }
+
+    /// `"0x"` must be treated as an undecodable BAL, not an absent one: the strict
+    /// decoder rejects empty input, and the engine answer for that is INVALID.
+    #[test]
+    fn new_payload_v5_empty_bal_string_is_undecodable_not_missing() {
+        let mut payload = serde_json::json!(v5_payload());
+        payload["blockAccessList"] = serde_json::Value::String("0x".to_string());
+        let params = Some(vec![
+            payload,
+            serde_json::json!(Vec::<H256>::new()),
+            serde_json::json!(H256::zero()),
+            serde_json::json!(Vec::<EncodedRequests>::new()),
+        ]);
+
+        let parsed = NewPayloadV5Request::parse(&params).expect("an empty BAL must still parse");
+
+        assert!(
+            parsed.undecodable_bal,
+            "an empty BAL must be flagged undecodable"
+        );
+        assert!(parsed.payload.block_access_list.is_none());
+        assert!(
+            parsed.raw_bal_hash.is_some(),
+            "the empty bytes are still hashed"
+        );
     }
 
     #[test]

@@ -4,7 +4,10 @@ use ethrex_common::{
     types::{AccountState, ChainConfig, Code, CodeMetadata},
 };
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{
+    Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
+    atomic::{AtomicU64, Ordering},
+};
 
 pub mod gen_db;
 
@@ -149,6 +152,10 @@ pub struct CachingDatabase {
     storage: RwLock<StorageCache>,
     /// Cached contract code
     code: RwLock<CodeCache>,
+    /// Sum of [`Code::size`] over `code`. Nothing is evicted from the map, so a long-lived
+    /// instance (the mempool prewarmer keeps one for a whole slot) uses this to bound
+    /// how much bytecode it keeps.
+    code_bytes: AtomicU64,
     /// Shared precompile result cache (warmer populates, executor reuses).
     /// `None` when the cache is disabled via `BlockchainOptions::precompile_cache_enabled = false`.
     precompile_cache: Option<PrecompileCache>,
@@ -163,6 +170,7 @@ impl CachingDatabase {
             accounts: RwLock::new(FxHashMap::default()),
             storage: RwLock::new(FxHashMap::default()),
             code: RwLock::new(FxHashMap::default()),
+            code_bytes: AtomicU64::new(0),
             precompile_cache: precompile_cache_enabled.then(PrecompileCache::new),
             chain_config: OnceLock::new(),
         }
@@ -182,6 +190,20 @@ impl CachingDatabase {
 
     fn write_storage(&self) -> Result<RwLockWriteGuard<'_, StorageCache>, DatabaseError> {
         self.storage.write().map_err(poison_error_to_db_error)
+    }
+
+    /// Total [`Code::size`] of the bytecode this cache holds.
+    pub fn code_bytes(&self) -> u64 {
+        self.code_bytes.load(Ordering::Relaxed)
+    }
+
+    /// Inserts `code` if absent and counts its size once.
+    fn keep_code(&self, cache: &mut CodeCache, code_hash: H256, code: Code) {
+        if let std::collections::hash_map::Entry::Vacant(entry) = cache.entry(code_hash) {
+            let size = u64::try_from(code.size()).unwrap_or(u64::MAX);
+            entry.insert(code);
+            self.code_bytes.fetch_add(size, Ordering::Relaxed);
+        }
     }
 
     fn read_code(&self) -> Result<RwLockReadGuard<'_, CodeCache>, DatabaseError> {
@@ -337,7 +359,7 @@ impl Database for CachingDatabase {
         let code = self.inner.get_account_code(code_hash)?;
 
         // Populate cache (Code contains Bytes which is ref-counted, clone is cheap)
-        self.write_code()?.insert(code_hash, code.clone());
+        self.keep_code(&mut *self.write_code()?, code_hash, code.clone());
 
         Ok(code)
     }
@@ -416,7 +438,7 @@ impl Database for CachingDatabase {
             // An absent hash has nothing to warm; the executor reports it if reached.
             if let Some(code) = code {
                 warmed = warmed.saturating_add(u64::try_from(code.size()).unwrap_or(u64::MAX));
-                cache.entry(hash).or_insert(code);
+                self.keep_code(&mut cache, hash, code);
             }
         }
         Ok(warmed)
@@ -497,5 +519,67 @@ impl Database for CachingDatabase {
             cache.entry(key).or_insert(value);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions
+)]
+mod code_bytes_tests {
+    use super::*;
+    use bytes::Bytes;
+
+    /// Serves a distinct 4 KiB contract for every code hash.
+    struct BigCodeStore;
+
+    fn code_for(hash: H256) -> Code {
+        let mut bytecode = vec![0x5b; 4096];
+        bytecode[..32].copy_from_slice(hash.as_bytes());
+        Code::from_bytecode_unchecked(Bytes::from(bytecode), hash)
+    }
+
+    impl Database for BigCodeStore {
+        fn get_account_state(&self, _: Address) -> Result<AccountState, DatabaseError> {
+            Ok(AccountState::default())
+        }
+        fn get_storage_value(&self, _: Address, _: H256) -> Result<U256, DatabaseError> {
+            Ok(U256::zero())
+        }
+        fn get_block_hash(&self, _: u64) -> Result<H256, DatabaseError> {
+            Ok(H256::zero())
+        }
+        fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+            Ok(ChainConfig::default())
+        }
+        fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
+            Ok(code_for(code_hash))
+        }
+        fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
+            Ok(CodeMetadata {
+                length: code_for(code_hash).len() as u64,
+            })
+        }
+    }
+
+    /// `code_bytes` SHALL count every distinct code once, whether it was read on demand
+    /// or prefetched, so the prewarmer's stop condition sees what the map really holds.
+    #[test]
+    fn code_bytes_counts_each_distinct_code_once() {
+        let cache = CachingDatabase::new(Arc::new(BigCodeStore), false);
+        let size = code_for(H256::zero()).size() as u64;
+        let hashes: Vec<H256> = (1..=4u64).map(H256::from_low_u64_be).collect();
+
+        cache.get_account_code(hashes[0]).unwrap();
+        cache.get_account_code(hashes[0]).unwrap();
+        assert_eq!(cache.code_bytes(), size);
+
+        cache.prefetch_codes(&hashes).unwrap();
+        cache.prefetch_codes(&hashes).unwrap();
+        assert_eq!(cache.code_bytes(), 4 * size);
+        assert_eq!(cache.read_code().unwrap().len(), 4);
     }
 }
