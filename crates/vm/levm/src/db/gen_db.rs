@@ -214,6 +214,26 @@ pub struct TxReads {
     /// Accounts whose exact balance the transaction used, rather than only whether it is zero
     /// or what it added to it.
     pub balances: FxHashSet<Address>,
+    /// Accounts whose exact nonce the transaction used (a contract creation's address or an
+    /// authorization's check), rather than only whether it is zero.
+    pub nonces: FxHashSet<Address>,
+    /// Accounts whose balance the transaction only compared against transfer values, with the
+    /// starting balances that give every comparison the same outcome.
+    pub balance_bounds: FxHashMap<Address, BalanceBounds>,
+}
+
+/// The starting balances of an account under which a transaction's `balance >= value` checks
+/// all come out as they did: at least `lower`, and below `upper` where a check failed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BalanceBounds {
+    pub lower: U256,
+    pub upper: Option<U256>,
+}
+
+impl BalanceBounds {
+    pub fn admit(&self, balance: U256) -> bool {
+        balance >= self.lower && self.upper.is_none_or(|upper| balance < upper)
+    }
 }
 
 /// An account as a transaction can observe it, without its storage.
@@ -597,6 +617,52 @@ impl GeneralizedDatabase {
             && let Some(reads) = self.tx_reads.as_mut()
         {
             reads.balances.insert(address);
+        }
+    }
+
+    /// Records in `tx_reads`, if that is on, that the transaction compared `address`'s balance,
+    /// `observed` at that point, against a transfer `value`. The outcome is the same for any
+    /// starting balance that keeps the compared balance on the same side of `value`, since the
+    /// transaction's own earlier transfers to and from `address` are the same.
+    pub fn observe_balance_check(&mut self, address: Address, observed: U256, value: U256) {
+        if self.reads_paused {
+            return;
+        }
+        let Some(reads) = self.tx_reads.as_mut() else {
+            return;
+        };
+        let Some(initial) = reads
+            .accounts
+            .get(&address)
+            .map(|account| account.info.balance)
+        else {
+            // Not recorded as a read: fall back to requiring the exact balance.
+            reads.balances.insert(address);
+            return;
+        };
+        let bounds = reads.balance_bounds.entry(address).or_default();
+        if observed >= value {
+            // `initial + (observed - initial) >= value` keeps holding while the start falls by
+            // at most the slack the check had.
+            let lower = initial.saturating_sub(observed.saturating_sub(value));
+            bounds.lower = bounds.lower.max(lower);
+        } else {
+            match initial.checked_add(value.saturating_sub(observed)) {
+                Some(upper) => bounds.upper = Some(bounds.upper.map_or(upper, |u| u.min(upper))),
+                None => {
+                    reads.balances.insert(address);
+                }
+            }
+        }
+    }
+
+    /// Records in `tx_reads`, if that is on, that the transaction uses `address`'s exact
+    /// nonce.
+    pub fn observe_nonce(&mut self, address: Address) {
+        if !self.reads_paused
+            && let Some(reads) = self.tx_reads.as_mut()
+        {
+            reads.nonces.insert(address);
         }
     }
 

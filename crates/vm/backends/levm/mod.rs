@@ -577,13 +577,26 @@ impl WarmedTx {
         for (address, before) in &self.reads.accounts {
             let account = db.get_account(*address)?;
             // A balance the transaction only credited, or tested against zero, may differ: its
-            // change is applied on top. The sender's and any it read exactly must match.
+            // change is applied on top. The sender's and any it read exactly must match; one it
+            // only compared against transfer values must give those comparisons the same outcome.
             let balance_holds = if *address == sender || self.reads.balances.contains(address) {
                 account.info.balance == before.info.balance
             } else {
                 account.info.balance.is_zero() == before.info.balance.is_zero()
+                    && self
+                        .reads
+                        .balance_bounds
+                        .get(address)
+                        .is_none_or(|bounds| bounds.admit(account.info.balance))
             };
-            if account.info.nonce != before.info.nonce
+            // A nonce only matters exactly where the transaction used it: its own, a contract
+            // creation's or an authorization's. Elsewhere only emptiness is observable.
+            let nonce_holds = if *address == sender || self.reads.nonces.contains(address) {
+                account.info.nonce == before.info.nonce
+            } else {
+                (account.info.nonce == 0) == (before.info.nonce == 0)
+            };
+            if !nonce_holds
                 || account.info.code_hash != before.info.code_hash
                 || !balance_holds
                 || account.has_storage != before.has_storage
@@ -616,24 +629,32 @@ impl WarmedTx {
                 .reads
                 .accounts
                 .get(&address)
-                .map(|before| before.info.balance)
+                .map(|before| (before.info.balance, before.info.nonce))
                 .ok_or_else(|| EvmError::Custom("warmed change without its read".to_string()))?;
             let account = db.get_account_mut(address)?;
-            // The transaction's change to the balance, on top of the balance execution has.
-            let balance = if after.info.balance >= before {
+            // The transaction's changes to the balance and nonce, on top of the values execution
+            // has: both may have moved since the warmer ran where the transaction did not use them.
+            let balance = if after.info.balance >= before.0 {
                 account
                     .info
                     .balance
-                    .checked_add(after.info.balance - before)
+                    .checked_add(after.info.balance - before.0)
             } else {
                 account
                     .info
                     .balance
-                    .checked_sub(before - after.info.balance)
+                    .checked_sub(before.0 - after.info.balance)
             }
             .ok_or_else(|| EvmError::Custom("warmed balance change out of range".to_string()))?;
+            let nonce = if after.info.nonce >= before.1 {
+                account.info.nonce.checked_add(after.info.nonce - before.1)
+            } else {
+                account.info.nonce.checked_sub(before.1 - after.info.nonce)
+            }
+            .ok_or_else(|| EvmError::Custom("warmed nonce change out of range".to_string()))?;
             account.info = ethrex_common::types::AccountInfo {
                 balance,
+                nonce,
                 ..after.info
             };
             account.has_storage = after.has_storage;
@@ -6929,6 +6950,7 @@ mod reuse_tests {
     use ethrex_common::types::{
         AccountInfo, AccountState, ChainConfig, CodeMetadata, EIP1559Transaction,
     };
+    use ethrex_levm::db::gen_db::BalanceBounds;
     use ethrex_levm::errors::DatabaseError;
 
     fn sender() -> Address {
@@ -7073,6 +7095,85 @@ mod reuse_tests {
                 .holds(&mut sender_balance, &tx(4), sender())
                 .unwrap()
         );
+
+        let with_pool_nonce = |nonce: u64| {
+            let mut db = db();
+            db.get_account_mut(pool()).unwrap().info.nonce = nonce;
+            db
+        };
+        // A nonce the transaction did not use exactly may differ, but not whether it is zero.
+        assert!(
+            warmed()
+                .holds(&mut with_pool_nonce(5), &tx(4), sender())
+                .unwrap()
+        );
+        assert!(
+            !warmed()
+                .holds(&mut with_pool_nonce(0), &tx(4), sender())
+                .unwrap()
+        );
+        let mut used_nonce = warmed();
+        used_nonce.reads.nonces.insert(pool());
+        assert!(
+            !used_nonce
+                .holds(&mut with_pool_nonce(5), &tx(4), sender())
+                .unwrap()
+        );
+
+        // A balance only compared against transfer values holds while the comparisons do.
+        let bounded = |lower: u64, upper: Option<u64>| {
+            let mut warmed = warmed();
+            warmed.reads.balance_bounds.insert(
+                pool(),
+                BalanceBounds {
+                    lower: U256::from(lower),
+                    upper: upper.map(U256::from),
+                },
+            );
+            warmed
+        };
+        assert!(
+            bounded(60, None)
+                .holds(&mut with_pool_balance(60), &tx(4), sender())
+                .unwrap()
+        );
+        assert!(
+            !bounded(60, None)
+                .holds(&mut with_pool_balance(59), &tx(4), sender())
+                .unwrap()
+        );
+        assert!(
+            bounded(0, Some(100))
+                .holds(&mut with_pool_balance(99), &tx(4), sender())
+                .unwrap()
+        );
+        assert!(
+            !bounded(0, Some(100))
+                .holds(&mut with_pool_balance(100), &tx(4), sender())
+                .unwrap()
+        );
+    }
+
+    /// The bounds a transfer check leaves follow from the balance it saw and the value: a check
+    /// that passed with slack lets the starting balance fall by that slack; one that failed caps
+    /// it below the start plus the deficit.
+    #[test]
+    fn transfer_checks_bound_the_starting_balance() {
+        let mut db = db();
+        db.tx_reads = Some(TxReads::default());
+        db.get_account(pool()).unwrap();
+        // Start 100; the transaction paid 30 earlier, so it sees 70 and sends 50: slack 20.
+        db.observe_balance_check(pool(), U256::from(70), U256::from(50));
+        let bounds = db.tx_reads.as_ref().unwrap().balance_bounds[&pool()].clone();
+        assert_eq!(bounds.lower, U256::from(80));
+        assert_eq!(bounds.upper, None);
+        // Later it sees 20 and fails to send 25: the start must stay below 105.
+        db.observe_balance_check(pool(), U256::from(20), U256::from(25));
+        let bounds = db.tx_reads.as_ref().unwrap().balance_bounds[&pool()].clone();
+        assert_eq!(bounds.lower, U256::from(80));
+        assert_eq!(bounds.upper, Some(U256::from(105)));
+        assert!(bounds.admit(U256::from(80)) && bounds.admit(U256::from(104)));
+        assert!(!bounds.admit(U256::from(79)) && !bounds.admit(U256::from(105)));
     }
 
     /// A credit to an account whose balance the transaction did not read is applied on top of
@@ -7094,6 +7195,28 @@ mod reuse_tests {
         assert_eq!(
             db.current_accounts_state[&pool()].info.balance,
             U256::from(530)
+        );
+    }
+
+    #[test]
+    fn apply_keeps_a_nonce_the_transaction_did_not_use() {
+        let mut warmed = warmed();
+        let mut touched = AccountSnapshot::of(&{
+            let mut db = db();
+            db.get_account(pool()).unwrap().clone()
+        });
+        let warmed_nonce = touched.info.nonce;
+        touched.info.balance = U256::from(130);
+        warmed.accounts.push((pool(), touched));
+        let mut db = db();
+        db.get_account_mut(pool()).unwrap().info.nonce = warmed_nonce + 7;
+
+        assert!(warmed.holds(&mut db, &tx(4), sender()).unwrap());
+        warmed.apply(&mut db, coinbase()).unwrap();
+        let pool_after = &db.current_accounts_state[&pool()];
+        assert_eq!(
+            (pool_after.info.nonce, pool_after.info.balance),
+            (warmed_nonce + 7, U256::from(130))
         );
     }
 
