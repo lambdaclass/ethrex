@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-10-06
+
+- Key precompile cache entries on the calldata bytes each precompile reads (ECRECOVER and ECADD the first 128, ECMUL the first 96, MODEXP its header and the operands it announces), so calls that differ only in ignored trailing bytes share one entry [#7378](https://github.com/lambdaclass/ethrex/pull/7378)
+
 ### 2026-09-30
 
 - Evict a random bytecode cache entry instead of the least recently used one, and raise the budget to 2 GiB (about 29k contracts of 64 KiB; `--code-cache-size` overrides it): on Plataberget blocks 297947–299844, which keep reusing a growing set of 16k+ distinct 64 KiB contracts, the LRU fell from 87% to 68% hits and blocks with two or more such transactions went from 30 to 44 ms, while with this change they stay at 19–21 ms with every code read hitting the cache, in replay; mainnet is unchanged (-0.29%, no evictions) [#7350](https://github.com/lambdaclass/ethrex/pull/7350)
