@@ -74,10 +74,8 @@ jobs:
           PERF_PROMETHEUS_RANGE: 24h
           # Block time and throughput come from each node's Lighthouse (engine_newPayload wall-clock),
           # measured the same way for every client; the script builds the queries from this list.
-          # ethrex-baseline is the stock ethrex; ethrex-testing is the candidate build under test.
           PERF_NODES: >-
-            ethrex-baseline=ethrex-mainnet-2
-            ethrex-testing=geth-mainnet-1
+            ethrex=ethrex-mainnet-2
             reth=reth-mainnet-1
             nethermind=nethermind-mainnet-1
           # Mainnet slots start 11 s after a multiple of 12 s: the 12 s windows end 1 s before the

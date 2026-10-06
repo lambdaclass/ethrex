@@ -145,12 +145,13 @@ check_response() {
 # No client measures itself, so the numbers are comparable across clients.
 #
 # PERF_NODES lists "display-name=host" pairs. Each host runs Lighthouse metrics on :5054.
-PERF_NODES="${PERF_NODES:-ethrex-baseline=ethrex-mainnet-2 ethrex-testing=geth-mainnet-1 reth=reth-mainnet-1 nethermind=nethermind-mainnet-1}"
+PERF_NODES="${PERF_NODES:-ethrex=ethrex-mainnet-2 reth=reth-mainnet-1 nethermind=nethermind-mainnet-1}"
 # Per-slot values use 12 s windows aligned to slot starts. Mainnet's genesis lands 11 s after a
 # multiple of 12, so the windows end 1 s before Prometheus' 12 s-aligned evaluation points.
 PERF_SLOT_OFFSET="${PERF_SLOT_OFFSET:-1}"
-# The gas of each slot's block is a chain fact: the median of the nodes' last-block gas gauges, so a
-# node one block behind in a slot cannot skew it.
+# The gas of each slot's block is a chain fact: the median of the fleet's last-block gas gauges
+# (every node that follows the chain, reported or not), so a node one block behind in a slot cannot
+# skew it.
 PERF_GAS_SOURCES="${PERF_GAS_SOURCES:-$(cat <<EOF
 last_over_time(gas_used{instance="ethrex-mainnet-2:3701"}[12s] offset ${PERF_SLOT_OFFSET}s)
 or last_over_time(gas_used{instance="geth-mainnet-1:3701"}[12s] offset ${PERF_SLOT_OFFSET}s)
