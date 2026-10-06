@@ -842,6 +842,14 @@ impl Database for DiscoveryDb {
     fn precompile_cache(&self) -> Option<&ethrex_levm::precompiles::PrecompileCache> {
         self.cache.precompile_cache()
     }
+
+    fn cached_keccak64(&self, input: &[u8; 64]) -> Option<[u8; 32]> {
+        self.cache.cached_keccak64(input)
+    }
+
+    fn keep_keccak64(&self, input: [u8; 64], hash: [u8; 32]) {
+        self.cache.keep_keccak64(input, hash);
+    }
 }
 
 /// While warming reads come from memory, one unit in this many still runs discovery passes.

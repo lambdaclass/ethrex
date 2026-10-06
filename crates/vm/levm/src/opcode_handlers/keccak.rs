@@ -43,6 +43,23 @@ impl OpcodeHandler for OpKeccak256Handler {
         // borrowed mutably.
         let hash = if len == 0 {
             EMPTY_KECCAK_U256
+        } else if len == 64 {
+            // A mapping's slot: the block's warming usually hashed this same input already.
+            let input = vm
+                .current_call_frame
+                .memory
+                .with_range(offset, len, |bytes| {
+                    let mut input = [0u8; 64];
+                    input.copy_from_slice(bytes);
+                    input
+                })?;
+            let store = &vm.db.store;
+            let hash = store.cached_keccak64(&input).unwrap_or_else(|| {
+                let hash = vm.crypto.keccak256(&input);
+                store.keep_keccak64(input, hash);
+                hash
+            });
+            u256_from_big_endian(&hash)
         } else {
             let crypto = vm.crypto;
             u256_from_big_endian(&vm.current_call_frame.memory.with_range(
