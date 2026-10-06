@@ -511,25 +511,30 @@ async fn handle_forkchoice(
             }
             // A reorg takes blocks off the canonical chain whose transactions were
             // already removed from the pool when those blocks became head. Put them
-            // back before pruning for the new head. Best-effort housekeeping, like
-            // the pruning below: a failure is logged and the FCU still succeeds.
+            // back. Admission can simulate frame transactions, so this runs off the
+            // forkchoice path rather than delaying the consensus client's answer;
+            // transactions the new chain already holds are refused on their nonce
+            // whenever it runs. Best-effort housekeeping, like the pruning below: a
+            // failure is logged and the FCU still succeeds.
             if let Some(previous_head) = previous_head
                 && previous_head != head.hash()
             {
-                match context
-                    .blockchain
-                    .reinject_retracted_transactions(previous_head)
-                    .await
-                {
-                    Ok(0) => {}
-                    Ok(reinjected) => info!(
-                        reinjected,
-                        "Returned transactions of retracted blocks to the mempool"
-                    ),
-                    Err(err) => {
-                        warn!("Failed to return retracted transactions to the mempool: {err}")
+                let blockchain = context.blockchain.clone();
+                tokio::spawn(async move {
+                    match blockchain
+                        .reinject_retracted_transactions(previous_head)
+                        .await
+                    {
+                        Ok(0) => {}
+                        Ok(reinjected) => info!(
+                            reinjected,
+                            "Returned transactions of retracted blocks to the mempool"
+                        ),
+                        Err(err) => {
+                            warn!("Failed to return retracted transactions to the mempool: {err}")
+                        }
                     }
-                }
+                });
             }
             // Remove included transactions from the mempool after we accept the fork choice.
             // Only the head block's are removed (#797); when the head extends by more

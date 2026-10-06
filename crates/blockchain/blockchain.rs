@@ -3559,13 +3559,22 @@ impl Blockchain {
     /// ancestor, at most `MAX_RETRACTED_BLOCKS` of them, and their
     /// transactions are resubmitted oldest first through ordinary admission,
     /// so whatever the new chain already included is refused on its nonce and
-    /// stays out. Blob-carrying transactions are skipped: their sidecars are
-    /// not kept with the block. Returns how many transactions were re-added.
+    /// stays out. At most `MAX_RETRACTED_TRANSACTIONS` are resubmitted, which
+    /// bounds the admission work, frame-transaction simulations included, that
+    /// one reorg can cause.
+    ///
+    /// Resubmission never broadcasts. A transaction that arrived from peers was
+    /// public already, and one this node built into its own block from a
+    /// private submission (`--mempool.private`) must not reach peers because a
+    /// reorg happened. Transactions still in the pool, and blob-carrying ones,
+    /// whose sidecars are not kept with the block, are skipped. Returns how
+    /// many transactions were re-added.
     pub async fn reinject_retracted_transactions(
         &self,
         previous_head: H256,
     ) -> Result<usize, StoreError> {
         const MAX_RETRACTED_BLOCKS: usize = 64;
+        const MAX_RETRACTED_TRANSACTIONS: usize = 1024;
 
         let mut retracted: Vec<Vec<Transaction>> = Vec::new();
         let mut hash = previous_head;
@@ -3587,20 +3596,24 @@ impl Blockchain {
         }
 
         let mut reinjected = 0;
-        for transactions in retracted.into_iter().rev() {
-            for tx in transactions {
-                if !tx.blob_versioned_hashes().is_empty() {
-                    continue;
-                }
-                let tx_hash = tx.hash(&NativeCrypto);
-                match self.add_transaction_to_pool(tx).await {
-                    Ok(_) => reinjected += 1,
-                    Err(err) => debug!(
-                        %tx_hash,
-                        %err,
-                        "Retracted transaction not returned to the pool"
-                    ),
-                }
+        let candidates = retracted
+            .into_iter()
+            .rev()
+            .flatten()
+            .filter(|tx| !tx.is_blob_carrying())
+            .take(MAX_RETRACTED_TRANSACTIONS);
+        for tx in candidates {
+            let tx_hash = tx.hash(&NativeCrypto);
+            if matches!(self.mempool.contains_tx(tx_hash), Ok(true)) {
+                continue;
+            }
+            match self.add_transaction_to_pool_inner(tx, false).await {
+                Ok(_) => reinjected += 1,
+                Err(err) => debug!(
+                    %tx_hash,
+                    %err,
+                    "Retracted transaction not returned to the pool"
+                ),
             }
         }
         Ok(reinjected)
