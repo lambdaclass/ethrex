@@ -932,6 +932,7 @@ impl L1Committer {
                         block_gas_used: potential_batch_block.header.gas_used,
                         burned_fees: None,
                         tx_gas_breakdowns: Vec::new(),
+                        receipts_commitment: None,
                     },
                 )?;
             } else {

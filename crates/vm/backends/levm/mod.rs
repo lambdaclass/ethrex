@@ -29,11 +29,11 @@ use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
 #[cfg(feature = "rayon")]
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
-    Address, U256,
+    Address, Bloom, U256,
     types::{
         AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, FrameReceipt,
         GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Log, Receipt, Transaction, TxKind,
-        Withdrawal, requests::Requests,
+        Withdrawal, bloom_from_logs, compute_receipts_root_from_encoded, requests::Requests,
     },
 };
 #[cfg(feature = "rayon")]
@@ -41,7 +41,7 @@ use ethrex_common::{
     BigEndianHash, constants::AMSTERDAM_MAX_CODE_SIZE, validate_bal_code_sizes,
     validate_block_access_list_size, validate_header_bal_indices,
 };
-use ethrex_crypto::Crypto;
+use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_levm::EVMConfig;
 use ethrex_levm::StatelessValidator;
 use ethrex_levm::account::AccountStatus;
@@ -669,6 +669,56 @@ fn coinbase_balance(
     let balance = db.get_account(coinbase).map(|account| account.info.balance);
     db.reads_paused = paused;
     balance
+}
+
+/// Hashes a block's receipts as execution produces them, on a thread of its own, so the
+/// receipts root and the aggregate logs bloom are ready when the last transaction finishes
+/// instead of being computed on the execution thread afterwards.
+struct ReceiptHasher {
+    sender: Option<std::sync::mpsc::Sender<Receipt>>,
+    handle: Option<std::thread::JoinHandle<(H256, Bloom)>>,
+}
+
+impl ReceiptHasher {
+    fn start() -> Self {
+        let (sender, receiver) = std::sync::mpsc::channel::<Receipt>();
+        let handle = std::thread::Builder::new()
+            .name("receipts-hasher".to_string())
+            .spawn(move || {
+                let crypto = NativeCrypto;
+                let mut logs_bloom = Bloom::zero();
+                let mut encoded = Vec::new();
+                for receipt in receiver {
+                    let bloom = bloom_from_logs(&receipt.logs, &crypto);
+                    logs_bloom |= bloom;
+                    encoded.push(receipt.encode_inner_with_precomputed_bloom(bloom));
+                }
+                (
+                    compute_receipts_root_from_encoded(encoded, &crypto),
+                    logs_bloom,
+                )
+            })
+            .ok();
+        Self {
+            sender: handle.is_some().then_some(sender),
+            handle,
+        }
+    }
+
+    /// Queues `receipt`, which must be the next one in transaction order.
+    fn push(&self, receipt: &Receipt) {
+        if let Some(sender) = &self.sender {
+            // A failed send means the thread is gone; `finish` then yields `None` and the
+            // block's validation computes the commitment itself.
+            let _ = sender.send(receipt.clone());
+        }
+    }
+
+    /// The receipts root and logs bloom of everything pushed, or `None` if the thread failed.
+    fn finish(mut self) -> Option<(H256, Bloom)> {
+        drop(self.sender.take());
+        self.handle.take()?.join().ok()
+    }
 }
 
 /// One slot per transaction of a block, filled by the warmer and taken by execution.
@@ -1340,6 +1390,7 @@ impl LEVM {
                 burned_fees: is_lstar
                     .then(|| lstar_burned_fees(&chain_config, &block.header, cumulative_gas_used)),
                 tx_gas_breakdowns,
+                receipts_commitment: None,
             },
             bal,
         ))
@@ -1619,6 +1670,7 @@ impl LEVM {
                     block_gas_used,
                     burned_fees: burned_fees_par,
                     tx_gas_breakdowns,
+                    receipts_commitment: None,
                 },
                 None,
             ));
@@ -1664,6 +1716,7 @@ impl LEVM {
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
         let mut reused_txs = 0_usize;
+        let receipt_hasher = ReceiptHasher::start();
 
         for (tx_idx, tx) in block.body.transactions.iter().enumerate() {
             // Senders are recovered as execution reaches them rather than all up front. The
@@ -1801,6 +1854,7 @@ impl LEVM {
                 receipt.frame_receipts = frame_receipts_from(report.frame_results);
             }
 
+            receipt_hasher.push(&receipt);
             receipts.push(receipt);
         }
 
@@ -1868,6 +1922,8 @@ impl LEVM {
         };
         LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
 
+        let receipts_commitment = receipt_hasher.finish();
+
         // Extract BAL if recording was enabled
         let bal = db.take_bal();
 
@@ -1880,6 +1936,7 @@ impl LEVM {
                 burned_fees: is_lstar
                     .then(|| lstar_burned_fees(&chain_config, &block.header, cumulative_gas_used)),
                 tx_gas_breakdowns,
+                receipts_commitment,
             },
             bal,
         ))

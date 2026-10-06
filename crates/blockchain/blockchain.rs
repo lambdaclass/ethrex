@@ -90,7 +90,8 @@ use ethrex_common::validate_block_access_list_size;
 use ethrex_common::{Address, H256, U256};
 pub use ethrex_common::{
     get_total_blob_gas, validate_block_access_list_hash, validate_block_pre_execution,
-    validate_gas_used, validate_receipts_root_and_logs_bloom, validate_requests_hash,
+    validate_gas_used, validate_receipts_commitment, validate_receipts_root_and_logs_bloom,
+    validate_requests_hash,
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_metrics::metrics;
@@ -1277,11 +1278,20 @@ impl Blockchain {
                             );
                             return Err(e.into());
                         }
-                        validate_receipts_root_and_logs_bloom(
-                            &block.header,
-                            &execution_result.receipts,
-                            &NativeCrypto,
-                        )?;
+                        // The pipeline hashes receipts as they are produced; only the
+                        // comparison is left here. Other executors leave both to us.
+                        match execution_result.receipts_commitment {
+                            Some((receipts_root, logs_bloom)) => validate_receipts_commitment(
+                                &block.header,
+                                receipts_root,
+                                logs_bloom,
+                            )?,
+                            None => validate_receipts_root_and_logs_bloom(
+                                &block.header,
+                                &execution_result.receipts,
+                                &NativeCrypto,
+                            )?,
+                        }
                         validate_requests_hash(
                             &block.header,
                             &chain_config,

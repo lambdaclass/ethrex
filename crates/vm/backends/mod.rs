@@ -426,6 +426,9 @@ pub struct BlockExecutionResult {
     /// re-derived data. Used by `validate_gas_used` mismatch logging to localize
     /// which tx and which dimension caused the divergence.
     pub tx_gas_breakdowns: Vec<TxGasBreakdown>,
+    /// The receipts root and aggregate logs bloom of `receipts`, when the executor computed
+    /// them alongside execution; `None` leaves them to the block's validation.
+    pub receipts_commitment: Option<(ethrex_common::H256, ethrex_common::Bloom)>,
 }
 
 /// Per-tx gas-dimension snapshot captured at the block-execution boundary.

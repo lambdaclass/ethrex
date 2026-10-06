@@ -198,6 +198,7 @@ impl BlockProducer {
             block_gas_used: block.header.gas_used,
             burned_fees: None,
             tx_gas_breakdowns: Vec::new(),
+            receipts_commitment: None,
         };
 
         let account_updates_list = self

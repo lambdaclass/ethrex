@@ -397,6 +397,16 @@ pub fn compute_receipts_root_and_logs_bloom(
     (receipts_root, logs_bloom)
 }
 
+/// The receipts root of receipts already encoded for the trie (see
+/// [`Receipt::encode_inner_with_precomputed_bloom`]), given in transaction order.
+pub fn compute_receipts_root_from_encoded(encoded: Vec<Vec<u8>>, crypto: &dyn Crypto) -> H256 {
+    let iter = encoded
+        .into_iter()
+        .enumerate()
+        .map(|(idx, value)| (idx.encode_to_vec(), value));
+    Trie::compute_hash_from_unsorted_iter(iter, crypto)
+}
+
 // See [EIP-4895](https://eips.ethereum.org/EIPS/eip-4895)
 pub fn compute_withdrawals_root(withdrawals: &[Withdrawal], crypto: &dyn Crypto) -> H256 {
     let iter = withdrawals
