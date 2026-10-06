@@ -104,8 +104,8 @@ pub const MISC_VALUES: &str = "misc_values";
 /// - [`u8; 8`] = `block_number.to_be_bytes()` (big-endian so lex order == numeric order)
 /// - [`Vec<u8>`] = `JournalEntry::encode()`
 ///
-/// Stores one reverse-diff entry per committed block, enabling reorgs deeper
-/// than the in-memory `TrieLayerCache`. Pruned at finality.
+/// Stores one reverse-diff entry per committed block that is not yet final, enabling
+/// reorgs deeper than the in-memory `TrieLayerCache`. Pruned at finality.
 pub const STATE_HISTORY: &str = "state_history";
 
 /// Execution witnesses column family: [`Vec<u8>`] => [`Vec<u8>`]

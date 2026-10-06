@@ -1163,8 +1163,8 @@ pub async fn regenerate_head_state(
         unreachable!("Database is empty, genesis block should be present");
     };
 
-    // The persist worker journals every committed trie layer under its block
-    // number. An entry above the head means the full-sync batch that produced it
+    // The persist worker journals every trie layer it commits above the head under
+    // its block number. An entry above the head means the full-sync batch that produced it
     // was interrupted before its forkchoice update, and the walk below would
     // descend to genesis (or to the snap pivot) without a hit: the only state on
     // disk is above the head. Try the O(1) recovery first.
@@ -1256,8 +1256,10 @@ pub async fn regenerate_head_state(
 /// store) belongs to a later block, and the downward walk in
 /// `regenerate_head_state` can never find it.
 ///
-/// The persist worker journals every layer it commits into `STATE_HISTORY`, keyed
-/// by block number and carrying the block hash, and it flushes the block data up
+/// The persist worker journals every layer it commits above the head into
+/// `STATE_HISTORY`, keyed by block number and carrying the block hash (it may skip
+/// layers at or below both the head and finality, which this never needs), and it
+/// flushes the block data up
 /// to and including the block being executed before each commit. So the newest
 /// journal entry names the block whose post-state is on disk, and the headers
 /// from there back to the head are on disk by hash. Verify the root, walk the
