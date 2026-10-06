@@ -72,83 +72,17 @@ jobs:
         env:
           PERF_PROMETHEUS_URL: http://localhost:9090
           PERF_PROMETHEUS_RANGE: 24h
-          PERF_PROMETHEUS_QUERY: >-
-            label_replace(avg_over_time(gigagas{instance=~"ethrex-mainnet-2(:[0-9]+)?"}[24h]), "client", "ethrex", "", "")
-            or label_replace(rate(reth_consensus_engine_beacon_new_payload_gas_per_second_sum{instance=~"reth-mainnet-1(:[0-9]+)?"}[24h]) / rate(reth_consensus_engine_beacon_new_payload_gas_per_second_count{instance=~"reth-mainnet-1(:[0-9]+)?"}[24h]) / 1e9, "client", "reth", "", "")
-            or label_replace(avg_over_time(nethermind_mgas_per_sec{instance=~"nethermind-mainnet-1(:[0-9]+)?"}[24h]) / 1000, "client", "nethermind", "", "")
-            or label_replace(avg_over_time(chain_mgasps{instance=~"geth-mainnet-1(:[0-9]+)?",quantile="0.5"}[24h]) / 1000, "client", "geth", "", "")
-            or label_replace(avg_over_time(chain_mgasps{instance=~"geth-mainnet-1(:[0-9]+)?",quantile="0.999"}[24h]) / 1000, "client", "geth", "", "")
-          BLOCK_TIME_PROMETHEUS_RANGE: 24h
-          BLOCK_TIME_PROMETHEUS_QUERY: >-
-            label_replace(
-              (
-                sum by (method, instance) (
-                  increase(rpc_request_duration_seconds_sum{
-                    job="ethrex L1",
-                    instance=~"ethrex-mainnet-2:3701",
-                    method="engine_newPayloadV4",
-                    namespace="engine"
-                  }[24h])
-                )
-                /
-                sum by (method, instance) (
-                  increase(rpc_request_duration_seconds_count{
-                    job="ethrex L1",
-                    instance=~"ethrex-mainnet-2:3701",
-                    method="engine_newPayloadV4",
-                    namespace="engine"
-                  }[24h])
-                )
-              ) * 10e2,
-              "client",
-              "ethrex",
-              "",
-              ""
-            )
-            or label_replace(
-              avg_over_time(
-                (
-                  max without (BuildTimestamp,Commit,Version) (
-                    nethermind_last_block_processing_time_in_ms{instance="nethermind-mainnet-1:6060"}
-                  )
-                )[24h:]
-              ),
-              "client",
-              "nethermind",
-              "",
-              ""
-            )
-            or label_replace(
-              rate(reth_consensus_engine_beacon_new_payload_latency_sum{instance="reth-mainnet-1:6060"}[24h])
-              / rate(reth_consensus_engine_beacon_new_payload_latency_count{instance="reth-mainnet-1:6060"}[24h])
-              * 1000,
-              "client",
-              "reth",
-              "",
-              ""
-            )
-            or label_replace(
-              avg_over_time(
-                (
-                  (rpc_duration_engine_newPayloadV4_success{instance="geth-mainnet-1:6060",quantile="0.999"} / 1e6) > 0
-                )[24h:15s]
-              ),
-              "client",
-              "geth",
-              "",
-              ""
-            )
-            or label_replace(
-              avg_over_time(
-                (
-                  (rpc_duration_engine_newPayloadV4_success{instance="geth-mainnet-1:6060",quantile="0.5"} / 1e6) > 0
-                )[24h:15s]
-              ),
-              "client",
-              "geth",
-              "",
-              ""
-            )
+          # Block time and throughput come from each node's Lighthouse (engine_newPayload wall-clock),
+          # measured the same way for every client; the script builds the queries from this list.
+          # ethrex-baseline is the stock ethrex; ethrex-testing is the candidate build under test.
+          PERF_NODES: >-
+            ethrex-baseline=ethrex-mainnet-2
+            ethrex-testing=geth-mainnet-1
+            reth=reth-mainnet-1
+            nethermind=nethermind-mainnet-1
+          # Mainnet slots start 11 s after a multiple of 12 s: the 12 s windows end 1 s before the
+          # 12 s-aligned evaluation points.
+          PERF_SLOT_OFFSET: "1"
         run: |
           bash .github/scripts/generate_combined_report.sh
 

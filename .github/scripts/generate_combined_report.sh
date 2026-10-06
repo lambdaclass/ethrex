@@ -102,20 +102,18 @@ if [[ -f "$LOC_JSON" ]]; then
   loc_text+="$(fmt_top_row "• LEVM" "$loc_levm" "$loc_old_levm" "$loc_total")"
 fi
 
-BASE_URL="${PERF_PROMETHEUS_URL:-${BLOCK_TIME_PROMETHEUS_URL:-${PROMETHEUS_URL:-}}}"
+BASE_URL="${PERF_PROMETHEUS_URL:-${PROMETHEUS_URL:-}}"
 if [[ -z "$BASE_URL" ]]; then
   echo "Set PERF_PROMETHEUS_URL to build the Prometheus query endpoint." >&2
   exit 1
 fi
 QUERY_URL="${BASE_URL%/}/api/v1/query"
+RANGE="${PERF_PROMETHEUS_RANGE:-24h}"
 
-PERF_RANGE="${PERF_PROMETHEUS_RANGE:-24h}"
-BLOCK_TIME_RANGE="${BLOCK_TIME_PROMETHEUS_RANGE:-24h}"
-
-# Build auth args (same Prometheus instance for both queries)
+# Build auth args
 auth_args=()
-_bearer="${PERF_PROMETHEUS_BEARER_TOKEN:-${BLOCK_TIME_PROMETHEUS_BEARER_TOKEN:-${PROMETHEUS_BEARER_TOKEN:-}}}"
-_basic="${PERF_PROMETHEUS_BASIC_AUTH:-${BLOCK_TIME_PROMETHEUS_BASIC_AUTH:-${PROMETHEUS_BASIC_AUTH:-}}}"
+_bearer="${PERF_PROMETHEUS_BEARER_TOKEN:-${PROMETHEUS_BEARER_TOKEN:-}}"
+_basic="${PERF_PROMETHEUS_BASIC_AUTH:-${PROMETHEUS_BASIC_AUTH:-}}"
 if [[ -n "$_bearer" ]]; then auth_args+=(-H "Authorization: Bearer $_bearer"); fi
 if [[ -n "$_basic"  ]]; then auth_args+=(-u "$_basic"); fi
 
@@ -141,188 +139,145 @@ check_response() {
   fi
 }
 
-# --- Throughput query ---
-PERF_SELECTOR="${PERF_PROMETHEUS_SELECTOR:-job=\"ethrex-l1\"}"
-DEFAULT_PERF_QUERY="avg(avg_over_time(gigagas{${PERF_SELECTOR}}[${PERF_RANGE}]))"
-PERF_QUERY="${PERF_PROMETHEUS_QUERY:-$DEFAULT_PERF_QUERY}"
+# --- Fair per-block numbers ---
+# Every node is fronted by its own Lighthouse, which times each block's engine_newPayload the same
+# way for every client. Block time is that duration; throughput is the block's gas divided by it.
+# No client measures itself, so the numbers are comparable across clients.
+#
+# PERF_NODES lists "display-name=host" pairs. Each host runs Lighthouse metrics on :5054.
+PERF_NODES="${PERF_NODES:-ethrex-baseline=ethrex-mainnet-2 ethrex-testing=geth-mainnet-1 reth=reth-mainnet-1 nethermind=nethermind-mainnet-1}"
+# Per-slot values use 12 s windows aligned to slot starts. Mainnet's genesis lands 11 s after a
+# multiple of 12, so the windows end 1 s before Prometheus' 12 s-aligned evaluation points.
+PERF_SLOT_OFFSET="${PERF_SLOT_OFFSET:-1}"
+# The gas of each slot's block is a chain fact: the median of the nodes' last-block gas gauges, so a
+# node one block behind in a slot cannot skew it.
+PERF_GAS_SOURCES="${PERF_GAS_SOURCES:-$(cat <<EOF
+last_over_time(gas_used{instance="ethrex-mainnet-2:3701"}[12s] offset ${PERF_SLOT_OFFSET}s)
+or last_over_time(gas_used{instance="geth-mainnet-1:3701"}[12s] offset ${PERF_SLOT_OFFSET}s)
+or last_over_time(reth_consensus_engine_beacon_new_payload_total_gas_last{instance="reth-mainnet-1:6060"}[12s] offset ${PERF_SLOT_OFFSET}s)
+or last_over_time(nethermind_gas_used{instance="nethermind-mainnet-1:6060"}[12s] offset ${PERF_SLOT_OFFSET}s)
+EOF
+)}"
+SLOT_GAS="quantile(0.5, ${PERF_GAS_SOURCES})"
+OFF_A="offset ${PERF_SLOT_OFFSET}s"
+OFF_B="offset $((PERF_SLOT_OFFSET + 12))s"
 
-perf_response=$(prometheus_query "$PERF_QUERY")
-check_response "$perf_response" "throughput"
+# Slot-aligned newPayload duration (s) of one node: Δsum/Δcount over the slot, only where a call happened.
+slot_time() {
+  local host="$1"
+  local s="execution_layer_request_times_sum{method=\"new_payload\",instance=\"${host}:5054\"}"
+  local c="execution_layer_request_times_count{method=\"new_payload\",instance=\"${host}:5054\"}"
+  printf '(((%s %s - %s %s) / (%s %s - %s %s)) and ((%s %s - %s %s) >= 1))' \
+    "$s" "$OFF_A" "$s" "$OFF_B" "$c" "$OFF_A" "$c" "$OFF_B" "$c" "$OFF_A" "$c" "$OFF_B"
+}
 
-# --- Block time query ---
-BLOCK_TIME_SELECTOR="${BLOCK_TIME_PROMETHEUS_SELECTOR:-job=\"ethrex-l1\"}"
-DEFAULT_BLOCK_TIME_QUERY="avg(avg_over_time(block_time{${BLOCK_TIME_SELECTOR}}[${BLOCK_TIME_RANGE}]))"
-BLOCK_TIME_QUERY="${BLOCK_TIME_PROMETHEUS_QUERY:-$DEFAULT_BLOCK_TIME_QUERY}"
+tag() { # tag EXPR NAME [QUANTILE]: label the series with client=NAME and, optionally, quantile=Q
+  local expr="label_replace($1, \"client\", \"$2\", \"\", \"\")"
+  if [[ -n "${3:-}" ]]; then expr="label_replace($expr, \"quantile\", \"$3\", \"\", \"\")"; fi
+  printf '%s' "$expr"
+}
+
+bt_parts=()
+tput_parts=()
+for pair in $PERF_NODES; do
+  name="${pair%%=*}"; host="${pair#*=}"
+  s="execution_layer_request_times_sum{method=\"new_payload\",instance=\"${host}:5054\"}"
+  c="execution_layer_request_times_count{method=\"new_payload\",instance=\"${host}:5054\"}"
+  t="$(slot_time "$host")"
+  # Block time (ms): mean over every call in the range; p50/p99 over the per-slot durations.
+  bt_parts+=("$(tag "1000 * increase(${s}[${RANGE}]) / increase(${c}[${RANGE}])" "$name")")
+  bt_parts+=("$(tag "quantile_over_time(0.5, (1000 * ${t})[${RANGE}:12s])" "$name" 0.5)")
+  bt_parts+=("$(tag "quantile_over_time(0.99, (1000 * ${t})[${RANGE}:12s])" "$name" 0.99)")
+  # Throughput (Ggas/s): gas-weighted = Σ block gas / Σ newPayload time over the slots the node
+  # processed; median = median over slots of block gas / newPayload time.
+  tput_parts+=("$(tag "sum_over_time((scalar(${SLOT_GAS}) * (${t} > bool 0))[${RANGE}:12s]) / sum_over_time((${t})[${RANGE}:12s]) / 1e9" "$name")")
+  tput_parts+=("$(tag "quantile_over_time(0.5, (scalar(${SLOT_GAS}) / 1e9 / ${t})[${RANGE}:12s])" "$name" 0.5)")
+done
+join_or() { local IFS=; printf '%s' "${1}"; shift; for p in "$@"; do printf ' or %s' "$p"; done; }
+BLOCK_TIME_QUERY="${BLOCK_TIME_PROMETHEUS_QUERY:-$(join_or "${bt_parts[@]}")}"
+PERF_QUERY="${PERF_PROMETHEUS_QUERY:-$(join_or "${tput_parts[@]}")}"
 
 block_time_response=$(prometheus_query "$BLOCK_TIME_QUERY")
 check_response "$block_time_response" "block time"
 
+perf_response=$(prometheus_query "$PERF_QUERY")
+check_response "$perf_response" "throughput"
+
 # --- Version queries ---
-# For reth/geth/nethermind: use eth_exe_web3_client_version (version string already contains short commit)
+# ethrex exposes ethrex_info with version/branch/commit labels; every client answers web3_clientVersion.
 version_response=$(prometheus_query "eth_exe_web3_client_version")
+ethrex_info_response=$(prometheus_query 'ethrex_info')
 
-# For ethrex: use ethrex_info with separate version/branch/commit labels
-ethrex_info_response=$(prometheus_query 'ethrex_info{instance=~"ethrex-mainnet-2:.*"}')
-
-# Extract version for reth/geth/nethermind by instance pattern (bash 3.2 compatible)
-# Extracts only the version portion (e.g., "v1.2.3" from "Client/v1.2.3/platform")
-get_version_by_instance() {
-  local instance_pattern="$1"
-  jq -r --arg pattern "$instance_pattern" '
+node_version() {
+  local host="$1" info ver branch commit
+  info=$(jq -c --arg inst "${host}:3701" '.data.result[] | select(.metric.instance == $inst) | .metric' <<<"$ethrex_info_response" 2>/dev/null | head -1)
+  if [[ -n "$info" ]]; then
+    ver=$(jq -r '.version // ""' <<<"$info"); branch=$(jq -r '.branch // ""' <<<"$info"); commit=$(jq -r '.commit // ""' <<<"$info")
+    if [[ -n "$ver" && -n "$commit" ]]; then
+      # A detached build reports branch HEAD; the commit identifies it.
+      if [[ -n "$branch" && "$branch" != "HEAD" ]]; then printf 'v%s-%s-%s' "$ver" "$branch" "${commit:0:8}"; else printf 'v%s-%s' "$ver" "${commit:0:8}"; fi
+      return
+    fi
+  fi
+  # Version portion of "Client/v1.2.3/platform/..."
+  jq -r --arg pattern "^${host}:" '
     .data.result[] | select(.metric.instance | test($pattern)) | .metric.version // "unknown" | split("/")[1] // "unknown"
   ' <<<"$version_response" 2>/dev/null | head -1
 }
 
-# Compose ethrex version from ethrex_info labels: v{version}-{branch}-{commit[:8]}
-ethrex_info_version=$(jq -r '.data.result[0].metric.version // ""' <<<"$ethrex_info_response" 2>/dev/null)
-ethrex_info_branch=$(jq -r '.data.result[0].metric.branch // ""' <<<"$ethrex_info_response" 2>/dev/null)
-ethrex_info_commit=$(jq -r '.data.result[0].metric.commit // ""' <<<"$ethrex_info_response" 2>/dev/null)
+# --- Parse the responses into "client|stat|value" rows (bash 3.2 compatible, no associative arrays) ---
+parse_rows() {
+  jq -r '
+    .data.result[]
+    | [ (.metric.client // "series"),
+        (if (.metric.quantile // "") == "" then "mean" else "p" + ((.metric.quantile | tonumber) * 100 | tostring) end),
+        (.value[1]) ]
+    | join("|")
+  ' <<<"$1"
+}
+bt_rows=$(parse_rows "$block_time_response")
+tput_rows=$(parse_rows "$perf_response")
 
-if [[ -n "$ethrex_info_version" && -n "$ethrex_info_branch" && -n "$ethrex_info_commit" ]]; then
-  version_ethrex="v${ethrex_info_version}-${ethrex_info_branch}-${ethrex_info_commit:0:8}"
-else
-  version_ethrex=$(get_version_by_instance "^ethrex-mainnet-2:")
-fi
-: "${version_ethrex:=unknown}"
+stat_of() { # stat_of ROWS CLIENT STAT -> value or empty
+  printf '%s\n' "$1" | awk -F'|' -v c="$2" -v s="$3" '$1 == c && $2 == s { print $3; exit }'
+}
 
-version_reth=$(get_version_by_instance "^reth-mainnet-1:")
-version_geth=$(get_version_by_instance "^geth-mainnet-1:")
-version_nethermind=$(get_version_by_instance "^nethermind-mainnet-1:")
-: "${version_reth:=unknown}"
-: "${version_geth:=unknown}"
-: "${version_nethermind:=unknown}"
+clients=()
+for pair in $PERF_NODES; do clients+=("${pair%%=*}"); done
+name_width=0
+for name in "${clients[@]}"; do (( ${#name} > name_width )) && name_width=${#name}; done
 
-# --- Parse throughput data ---
-ethrex_tput=""
-nether_tput=""
-reth_tput=""
-geth_tput_p50=""
-geth_tput_p999=""
+# Sort clients: block time ascending by mean, throughput descending by gas-weighted mean.
+bt_order=()
+while read -r _val client; do bt_order+=("$client"); done < <(
+  for name in "${clients[@]}"; do v=$(stat_of "$bt_rows" "$name" mean); [[ -n "$v" ]] && echo "$v $name"; done | LC_ALL=C sort -n)
+tput_order=()
+while read -r _val client; do tput_order+=("$client"); done < <(
+  for name in "${clients[@]}"; do v=$(stat_of "$tput_rows" "$name" mean); [[ -n "$v" ]] && echo "$v $name"; done | LC_ALL=C sort -rn)
 
-raw_perf=()
-while IFS= read -r line; do
-  raw_perf+=("$line")
-done < <(jq -r '
-  .data.result[]
-  | [
-      (.metric.client // .metric.instance // .metric.job // "series"),
-      (.value[1]),
-      (.metric.instance // "unknown-instance"),
-      (.metric.quantile // "")
-    ]
-  | @tsv
-  ' <<<"$perf_response")
+fmt_bt_row() {
+  printf "%${name_width}s: %7.2f ms (mean) | %7.2f ms (p50) | %8.2f ms (p99)\n" "$1" \
+    "$(stat_of "$bt_rows" "$1" mean)" "$(stat_of "$bt_rows" "$1" p50)" "$(stat_of "$bt_rows" "$1" p99)"
+}
+fmt_tput_row() {
+  printf "%${name_width}s: %5.2f Ggas/s (gas-weighted) | %5.2f Ggas/s (median block)\n" "$1" \
+    "$(stat_of "$tput_rows" "$1" mean)" "$(stat_of "$tput_rows" "$1" p50)"
+}
 
-for row in "${raw_perf[@]}"; do
-  IFS=$'\t' read -r series_name series_value series_instance series_quantile <<<"$row"
-  if [[ -n "$series_quantile" ]]; then
-    case "$series_quantile" in
-      0.5) qualifier="p50" ;;
-      0.999) qualifier="p99.9" ;;
-      *) qualifier="p${series_quantile}" ;;
-    esac
-  else
-    qualifier="mean"
-  fi
-  case "${series_name}:${qualifier}" in
-    ethrex:mean)     ethrex_tput="$series_value" ;;
-    reth:mean)       reth_tput="$series_value" ;;
-    nethermind:mean) nether_tput="$series_value" ;;
-    geth:p50)        geth_tput_p50="$series_value" ;;
-    geth:p99.9)      geth_tput_p999="$series_value" ;;
-    *) echo "WARNING: unmatched series ${series_name}:${qualifier} (instance: ${series_instance})" >&2 ;;
-  esac
+# "Comparing ..." line in block time order, with each node's version
+comparing_line=""
+for name in "${bt_order[@]}"; do
+  for pair in $PERF_NODES; do [[ "${pair%%=*}" == "$name" ]] && host="${pair#*=}"; done
+  ver=$(node_version "$host"); : "${ver:=unknown}"
+  comparing_line+="${name} (${ver}), "
 done
-
-# --- Parse block time data ---
-ethrex_bt=""
-nether_bt=""
-reth_bt=""
-geth_bt_p50=""
-geth_bt_p999=""
-
-raw_bt=()
-while IFS= read -r line; do
-  raw_bt+=("$line")
-done < <(jq -r '
-  .data.result[]
-  | [
-      (.metric.client // .metric.instance // .metric.job // "series"),
-      (.value[1]),
-      (.metric.instance // "unknown-instance"),
-      (.metric.quantile // "")
-    ]
-  | @tsv
-  ' <<<"$block_time_response")
-
-for row in "${raw_bt[@]}"; do
-  IFS=$'\t' read -r series_name series_value series_instance series_quantile <<<"$row"
-  if [[ -n "$series_quantile" ]]; then
-    case "$series_quantile" in
-      0.5) qualifier="p50" ;;
-      0.999) qualifier="p99.9" ;;
-      *) qualifier="p${series_quantile}" ;;
-    esac
-  else
-    qualifier="mean"
-  fi
-  case "${series_name}:${qualifier}" in
-    ethrex:mean)     ethrex_bt="$series_value" ;;
-    reth:mean)       reth_bt="$series_value" ;;
-    geth:p50)        geth_bt_p50="$series_value" ;;
-    geth:p99.9)      geth_bt_p999="$series_value" ;;
-    nethermind:mean) nether_bt="$series_value" ;;
-    *) echo "WARNING: unmatched series ${series_name}:${qualifier} (instance: ${series_instance})" >&2 ;;
-  esac
-done
+comparing_line="${comparing_line%, }"
 
 header_text="Daily ethrex report"
+perf_title="Comparative performance report (${RANGE})"
+perf_method="Measured by each node's Lighthouse: wall-clock of engine_newPayload per block, the same way for every client. Throughput = block gas / that time."
 
-# Sort entries for block time (ascending) and throughput (descending)
-bt_sort_entries=()
-[[ -n "$ethrex_bt" ]]                          && bt_sort_entries+=("$ethrex_bt ethrex")
-[[ -n "$reth_bt" ]] && bt_sort_entries+=("$reth_bt reth")
-[[ -n "$geth_bt_p50"   || -n "$geth_bt_p999"  ]] && bt_sort_entries+=("${geth_bt_p50:-0} geth")
-[[ -n "$nether_bt" ]]                          && bt_sort_entries+=("$nether_bt nethermind")
-
-tput_sort_entries=()
-[[ -n "$ethrex_tput" ]]                            && tput_sort_entries+=("$ethrex_tput ethrex")
-[[ -n "$reth_tput" ]]                              && tput_sort_entries+=("$reth_tput reth")
-[[ -n "$geth_tput_p50" || -n "$geth_tput_p999" ]] && tput_sort_entries+=("${geth_tput_p50:-0} geth")
-[[ -n "$nether_tput" ]]                            && tput_sort_entries+=("$nether_tput nethermind")
-
-# "Comparing ..." line, listed in block time order
-comparing_line=""
-while read -r _val client; do
-  case "$client" in
-    ethrex)     comparing_line+="ethrex (${version_ethrex}), " ;;
-    reth)       comparing_line+="reth (${version_reth}), " ;;
-    geth)       comparing_line+="geth (${version_geth}), " ;;
-    nethermind) comparing_line+="nethermind (${version_nethermind}), " ;;
-  esac
-done < <(printf '%s\n' "${bt_sort_entries[@]}" | LC_ALL=C sort -n)
-comparing_line="${comparing_line%, }"  # strip trailing ", "
-
-# Per-row formatters — right-align name to 10 chars so ":" lines up
-fmt_bt_row() {
-  case "$1" in
-    ethrex)     printf "%10s: %.3fms (mean)\n"                    "ethrex"     "${ethrex_bt:-0}" ;;
-    reth)       printf "%10s: %.3fms (mean)\n"                    "reth"       "${reth_bt:-0}" ;;
-    geth)       printf "%10s: %.3fms (p50) | %.3fms (p99.9)\n"   "geth"       "${geth_bt_p50:-0}" "${geth_bt_p999:-0}" ;;
-    nethermind) printf "%10s: %.3fms (mean)\n"                    "nethermind" "${nether_bt:-0}" ;;
-  esac
-}
-
-fmt_tput_row() {
-  case "$1" in
-    ethrex)     printf "%10s: %.3f Ggas/s (mean)\n"                       "ethrex"     "${ethrex_tput:-0}" ;;
-    reth)       printf "%10s: %.3f Ggas/s (mean)\n"                       "reth"       "${reth_tput:-0}" ;;
-    geth)       printf "%10s: %.3f Ggas/s (p50) | %.3f Ggas/s (p99.9)\n" "geth"       "${geth_tput_p50:-0}" "${geth_tput_p999:-0}" ;;
-    nethermind) printf "%10s: %.3f Ggas/s (mean)\n"                       "nethermind" "${nether_tput:-0}" ;;
-  esac
-}
-
-# --- Generate text report for GitHub/Telegram ---
+# --- Generate text report for GitHub ---
 {
   echo "# ${header_text}"
   echo
@@ -334,21 +289,21 @@ fmt_tput_row() {
     echo
   fi
 
-  echo "## Comparative performance report (24h average)"
+  echo "## ${perf_title}"
+  echo
+  echo "${perf_method}"
   echo
   echo "Comparing ${comparing_line}"
   echo
 
   echo "### Block Time"
   echo
-  while read -r _val client; do fmt_bt_row "$client"; done \
-    < <(printf '%s\n' "${bt_sort_entries[@]}" | LC_ALL=C sort -n)
+  for name in "${bt_order[@]}"; do fmt_bt_row "$name"; done
   echo
 
   echo "### Throughput"
   echo
-  while read -r _val client; do fmt_tput_row "$client"; done \
-    < <(printf '%s\n' "${tput_sort_entries[@]}" | LC_ALL=C sort -rn)
+  for name in "${tput_order[@]}"; do fmt_tput_row "$name"; done
 } >"${OUTPUT_DIR}/daily_report_github.txt"
 
 # --- Generate Slack JSON ---
@@ -361,21 +316,18 @@ if [[ -n "$loc_text" ]]; then
   slack_text+='```'$'\n\n'
 fi
 
-slack_text+="*Comparative performance report (24h average)*"$'\n'
+slack_text+="*${perf_title}*"$'\n'
+slack_text+="${perf_method}"$'\n'
 slack_text+="Comparing ${comparing_line}"$'\n\n'
 
 slack_text+="*Block Time*"$'\n'
 slack_text+='```'$'\n'
-while read -r _val client; do
-  slack_text+="$(fmt_bt_row "$client")"$'\n'
-done < <(printf '%s\n' "${bt_sort_entries[@]}" | LC_ALL=C sort -n)
+for name in "${bt_order[@]}"; do slack_text+="$(fmt_bt_row "$name")"$'\n'; done
 slack_text+='```'$'\n\n'
 
 slack_text+="*Throughput*"$'\n'
 slack_text+='```'$'\n'
-while read -r _val client; do
-  slack_text+="$(fmt_tput_row "$client")"$'\n'
-done < <(printf '%s\n' "${tput_sort_entries[@]}" | LC_ALL=C sort -rn)
+for name in "${tput_order[@]}"; do slack_text+="$(fmt_tput_row "$name")"$'\n'; done
 slack_text+='```'$'\n'
 
 jq -n --arg header "$header_text" --arg text "$slack_text" '{
@@ -406,21 +358,18 @@ if [[ -n "$loc_text" ]]; then
   tg_text+="</pre>"$'\n\n'
 fi
 
-tg_text+="<b>Comparative performance report (24h average)</b>"$'\n'
+tg_text+="<b>${perf_title}</b>"$'\n'
+tg_text+="$(escape_html "$perf_method")"$'\n'
 tg_text+="Comparing $(escape_html "$comparing_line")"$'\n\n'
 
 tg_text+="<b>Block Time</b>"$'\n'
 tg_text+="<pre>"$'\n'
-while read -r _val client; do
-  tg_text+="$(fmt_bt_row "$client")"$'\n'
-done < <(printf '%s\n' "${bt_sort_entries[@]}" | LC_ALL=C sort -n)
+for name in "${bt_order[@]}"; do tg_text+="$(fmt_bt_row "$name")"$'\n'; done
 tg_text+="</pre>"$'\n\n'
 
 tg_text+="<b>Throughput</b>"$'\n'
 tg_text+="<pre>"$'\n'
-while read -r _val client; do
-  tg_text+="$(fmt_tput_row "$client")"$'\n'
-done < <(printf '%s\n' "${tput_sort_entries[@]}" | LC_ALL=C sort -rn)
+for name in "${tput_order[@]}"; do tg_text+="$(fmt_tput_row "$name")"$'\n'; done
 tg_text+="</pre>"
 
 printf "%s" "$tg_text" >"${OUTPUT_DIR}/daily_report_telegram.txt"
