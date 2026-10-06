@@ -4367,7 +4367,8 @@ impl Store {
 
     /// Returns the highest block number with a `STATE_HISTORY` entry; the cache
     /// edge `D` (the deepest block whose post-state is on disk). Returns `None`
-    /// if the journal is empty (no commits since boot, or fully pruned by finality).
+    /// if the journal is empty (no commits since boot, fully pruned by finality, or
+    /// every layer committed since was already final; see `journal_skip_ceiling`).
     ///
     /// O(1) via reverse seek on the column family's last key.
     pub fn highest_state_history_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
@@ -4387,7 +4388,8 @@ impl Store {
     /// Returns the hash of the block whose trie-layer commit the `STATE_HISTORY`
     /// entry at `block_number` journals, or `None` when there is no entry.
     ///
-    /// The persist worker stages one entry per committed layer, so the entry at
+    /// While the journal is non-empty the persist worker stages one entry per
+    /// committed layer (see `journal_skip_ceiling`), so the entry at
     /// [`Self::highest_state_history_block_number`] identifies the block whose
     /// post-state is the one on disk.
     pub fn get_state_history_block_hash(
@@ -5149,9 +5151,10 @@ fn apply_trie_phase1(
 ///
 /// `is_batch` is independent of the gate and only selects journaling (see
 /// [`commit_to_disk`]). It tracks `wait_for_flush`, not `commit_depth.is_some()`, so every
-/// per-block path journals and only the bespoke batch path skips it. That keeps the
-/// full-sync tail and the import tail journaling exactly as they did when `commit_depth`
-/// and `wait_for_flush` were a single flag.
+/// per-block path journals (layers already final aside, see [`journal_skip_ceiling`]) and
+/// only the bespoke batch path skips it. That keeps the full-sync tail and the import
+/// tail journaling exactly as they did when `commit_depth` and `wait_for_flush` were a
+/// single flag.
 ///
 /// Startup state regeneration is the one path where this is new behavior rather than
 /// preserved behavior: it runs before any forkchoice update, so the safe-commit cell is
@@ -5325,11 +5328,33 @@ fn commit_to_disk(
         .as_ref()
         .map(|ov| (ov.to_block(), ov.from_block()));
 
+    // Layers at or below finality are committed without a journal entry. An entry only
+    // serves a reorg that unwinds its block, no reorg unwinds a finalized block, and
+    // finality pruning deletes such entries on the next advance anyway. Layers commit
+    // ~DB_COMMIT_THRESHOLD blocks behind the head, which on a finalizing chain is already
+    // final (an L2 finalizes its head every block, L1 finality trails the head by two or
+    // three epochs), so otherwise every entry is written only to be range-deleted. The
+    // reconciliation layer of a deep reorg always journals. `None` journals every layer.
+    let skip_journal_upto = if is_batch || overlay_for_reconciliation.is_some() {
+        None
+    } else {
+        journal_skip_ceiling(read_view.as_ref())
+    };
+    let journals_layer = |block_number: BlockNumber| {
+        !is_batch && skip_journal_upto.is_none_or(|upto| block_number > upto)
+    };
+    // Skipped layers come first (layers are oldest-first), and a journaled layer after them
+    // must see their staged writes as its pre-images, so they still feed the overlay below.
+    let track_overlay = committed_layers
+        .iter()
+        .any(|layer| journals_layer(layer.block_number));
+
     // Intra-batch overlay of values already staged in THIS write batch, so each block's
     // reverse diff records the value as of the *previous* committed block's write, not
     // just the pre-batch on-disk value. `None` means an earlier block deleted the key.
     // For the common single-layer commit this stays empty and every pre-image comes
-    // straight from `read_view`. Only consulted/maintained when journaling (`!is_batch`).
+    // straight from `read_view`. Only maintained when some layer of this commit journals
+    // (`track_overlay`).
     //
     // PERF: the first touch of each key does one synchronous `read_view.get(table, &key)`.
     // For large state diffs this is O(N) extra reads on the per-block critical path.
@@ -5341,10 +5366,12 @@ fn commit_to_disk(
         // Reverse-diff accumulators for this block's journal entry, one per CF. Each entry
         // stores the on-disk key as-is (storage CFs carry their nibble-encoded account-hash
         // prefix), so a future rollback applies diffs directly without interpretation. For
-        // the legacy batch-store path (`is_batch == true`) no journal entry is written.
-        // Every per-block path journals — including full sync through the unified
-        // pipeline, whose interrupted-batch recovery at startup relies on the newest
-        // entry naming the block whose state is on disk.
+        // the legacy batch-store path (`is_batch == true`) and for layers at or below
+        // `skip_journal_upto` no journal entry is written. Every other per-block commit
+        // journals — including full sync through the unified pipeline, whose
+        // interrupted-batch recovery at startup relies on the newest entry naming the
+        // block whose state is on disk.
+        let journal_layer = journals_layer(layer.block_number);
         let mut journal_account_trie: FlatDiff = Vec::new();
         let mut journal_storage_trie: FlatDiff = Vec::new();
         let mut journal_account_flat: FlatDiff = Vec::new();
@@ -5400,8 +5427,8 @@ fn commit_to_disk(
 
             // Pre-image: the intra-batch overlay wins over the pivot overlay, which wins
             // over disk, so multi-layer commits record each block's true pre-state and the
-            // reconciliation layer records the pivot's. Skipped for batch (full-sync) commits.
-            let prev_value = if !is_batch {
+            // reconciliation layer records the pivot's. Skipped for layers that don't journal.
+            let prev_value = if journal_layer {
                 match overlay.get(key) {
                     Some(v) => Some(v.clone()),
                     None => match pivot_overlay
@@ -5442,8 +5469,10 @@ fn commit_to_disk(
                     (true, false) => &mut journal_storage_flat,
                 };
                 bucket.push((key.clone(), prev));
-                // Advance the overlay so a later block in this same commit sees this
-                // block's write as its pre-image.
+            }
+            // Advance the overlay so a later block in this same commit sees this
+            // block's write as its pre-image.
+            if track_overlay {
                 overlay.insert(key.clone(), new_value);
             }
         }
@@ -5485,7 +5514,7 @@ fn commit_to_disk(
         // land atomically (or none do on commit failure). Each entry is keyed and identified
         // by its own COMMITTED block, not the in-flight block whose insertion triggered this
         // commit (that block commits later, one cadence behind).
-        if !is_batch {
+        if journal_layer {
             let entry = JournalEntry {
                 block_hash: layer.block_hash,
                 parent_state_root: layer.parent_state_root,
@@ -5525,6 +5554,40 @@ fn commit_to_disk(
     // See the Ping comment in `install_overlay_for_reorg`.
     *trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
     Ok(())
+}
+
+/// Highest block number whose layer [`commit_to_disk`] may commit without a journal
+/// entry, or `None` to journal every layer.
+///
+/// A layer is skipped only when its block is at or below finality, at or below the head,
+/// and the journal is empty. Together these leave `STATE_HISTORY` in a state it already
+/// reaches without skipping (layers committed, then pruned by a finality advance before
+/// anything read them), so no reader of the journal sees anything new:
+/// - Finality: no reorg unwinds a finalized block, so no deep-reorg overlay needs the entry.
+/// - Head: interrupted-batch recovery adopts the newest entry only when it is above the
+///   head, so it never needs a skipped one. Finality is normally at or below the head,
+///   but a head rewound without a finality update (an L2 revert, a restart clamping the
+///   head to the flushed blocks) can leave it above.
+/// - Empty journal: a surviving entry below a skipped layer would hold pre-images against
+///   a state the disk has moved past, and would no longer be the newest entry naming the
+///   block whose state is on disk. Skipping resumes once finality pruning has cleared it.
+///
+/// A failed or malformed read journals, the conservative choice.
+fn journal_skip_ceiling(read_view: &dyn StorageReadView) -> Option<BlockNumber> {
+    let read_number = |index| {
+        read_view
+            .get(CHAIN_DATA, &chain_data_key(index))
+            .ok()
+            .flatten()
+            .and_then(|bytes| <[u8; 8]>::try_from(bytes.as_slice()).ok())
+            .map(BlockNumber::from_le_bytes)
+    };
+    let finalized = read_number(ChainDataIndex::FinalizedBlockNumber)?;
+    let head = read_number(ChainDataIndex::LatestBlockNumber)?;
+    match read_view.first_key(STATE_HISTORY) {
+        Ok(None) => Some(finalized.min(head)),
+        _ => None,
+    }
 }
 
 // NOTE: we don't receive `Store` here to avoid cyclic dependencies
@@ -7420,6 +7483,229 @@ mod state_history_tests {
 
         assert!(ranges.lock().unwrap().is_empty());
         assert!(journal_entry_exists(&backend, 20));
+    }
+
+    fn journal_store() -> (Store, Arc<dyn StorageBackend>, tempfile::TempDir) {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+        (store, backend, dir)
+    }
+
+    /// Writes the head and finalized numbers the persist worker reads to decide which
+    /// committed layers journal, as a forkchoice update would.
+    fn set_head_and_finalized(
+        backend: &Arc<dyn StorageBackend>,
+        head: BlockNumber,
+        finalized: BlockNumber,
+    ) {
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(
+            CHAIN_DATA,
+            &chain_data_key(ChainDataIndex::LatestBlockNumber),
+            &head.to_le_bytes(),
+        )
+        .unwrap();
+        tx.put(
+            CHAIN_DATA,
+            &chain_data_key(ChainDataIndex::FinalizedBlockNumber),
+            &finalized.to_le_bytes(),
+        )
+        .unwrap();
+        tx.commit().unwrap();
+    }
+
+    /// Stores block `number` on top of `parent_hash`, rewriting `shared` to `[number]`,
+    /// and returns the block's hash and state root.
+    fn store_block_rewriting(
+        store: &Store,
+        number: BlockNumber,
+        parent_hash: H256,
+        shared: &Nibbles,
+        commit_depth: Option<usize>,
+    ) -> (H256, H256) {
+        let state_root = H256::repeat_byte(0xc0 | number as u8);
+        let block = make_block(number, parent_hash, state_root);
+        let hash = block.hash();
+        store
+            .store_block_updates(UpdateBatch {
+                account_updates: vec![(shared.clone(), vec![number as u8])],
+                storage_updates: vec![],
+                blocks: vec![block],
+                receipts: vec![],
+                code_updates: vec![],
+                commit_depth,
+                wait_for_flush: false,
+            })
+            .unwrap();
+        (hash, state_root)
+    }
+
+    /// Stores blocks `1..=count` rewriting `shared`. With `commit_depth: Some(1)`,
+    /// storing block n commits block n-1, one layer per commit.
+    fn store_chain(
+        store: &Store,
+        count: BlockNumber,
+        shared: &Nibbles,
+        commit_depth: Option<usize>,
+    ) {
+        let mut parent_hash = H256::zero();
+        for number in 1..=count {
+            (parent_hash, _) =
+                store_block_rewriting(store, number, parent_hash, shared, commit_depth);
+        }
+    }
+
+    fn journal_entry(backend: &Arc<dyn StorageBackend>, block_number: BlockNumber) -> JournalEntry {
+        let bytes = backend
+            .begin_read()
+            .unwrap()
+            .get(STATE_HISTORY, &block_number.to_be_bytes())
+            .unwrap()
+            .unwrap_or_else(|| panic!("journal entry for block {block_number}"));
+        JournalEntry::decode(&bytes).unwrap()
+    }
+
+    /// A layer committed at or below finality (and the head) SHALL get no journal entry:
+    /// no reorg can unwind it. The first layer above finality SHALL journal, with the
+    /// pre-image the skipped layer left on disk.
+    #[tokio::test]
+    async fn final_layers_are_committed_without_journal_entries() {
+        let (store, backend, _dir) = journal_store();
+        set_head_and_finalized(&backend, 100, 3);
+        let shared = Nibbles::from_raw(&[0x0a, 0x0b], false);
+
+        store_chain(&store, 6, &shared, Some(1));
+        store.wait_for_persistence_idle().await.unwrap();
+
+        for n in 1..=3 {
+            assert!(!journal_entry_exists(&backend, n), "block {n} is final");
+        }
+        for n in 4..=5 {
+            assert!(journal_entry_exists(&backend, n), "block {n} is not final");
+        }
+        let entry = journal_entry(&backend, 4);
+        assert_eq!(entry.account_trie_diff.len(), 1);
+        assert_eq!(
+            entry.account_trie_diff[0].1,
+            Some(vec![3]),
+            "block 4's pre-image is what skipped block 3 wrote"
+        );
+    }
+
+    /// A single commit spanning finality SHALL skip its final layers yet journal the
+    /// layers above them with pre-images that include the skipped layers' writes. Those
+    /// are staged in the same write batch, so disk does not have them yet.
+    #[tokio::test]
+    async fn layer_journaled_after_skipped_ones_in_one_commit_sees_their_writes() {
+        let (store, backend, _dir) = journal_store();
+        set_head_and_finalized(&backend, 100, 2);
+        let shared = Nibbles::from_raw(&[0x0a, 0x0b], false);
+
+        // No safe-commit root yet, so blocks 1..=4 stay in memory.
+        let mut parent_hash = H256::zero();
+        let mut roots = vec![H256::zero()];
+        for number in 1..=4 {
+            let (hash, root) = store_block_rewriting(&store, number, parent_hash, &shared, None);
+            parent_hash = hash;
+            roots.push(root);
+        }
+        // With block 3 as the safe-commit root, storing block 5 commits layers 1, 2 and 3
+        // in one write batch.
+        store.set_safe_commit_root(roots[3]).unwrap();
+        store_block_rewriting(&store, 5, parent_hash, &shared, None);
+        store.wait_for_persistence_idle().await.unwrap();
+
+        assert!(!journal_entry_exists(&backend, 1));
+        assert!(!journal_entry_exists(&backend, 2));
+        let entry = journal_entry(&backend, 3);
+        assert_eq!(entry.account_trie_diff.len(), 1);
+        assert_eq!(
+            entry.account_trie_diff[0].1,
+            Some(vec![2]),
+            "block 3's pre-image is what skipped block 2 staged in the same batch"
+        );
+    }
+
+    /// A head rewound below finality without a finality update SHALL NOT leave layers
+    /// above the head unjournaled, final or not: interrupted-batch recovery needs the
+    /// newest entry above the head to name the block whose state is on disk.
+    #[tokio::test]
+    async fn layers_above_the_head_are_journaled_even_when_final() {
+        let (store, backend, _dir) = journal_store();
+        set_head_and_finalized(&backend, 2, 100);
+        let shared = Nibbles::from_raw(&[0x0a, 0x0b], false);
+
+        store_chain(&store, 6, &shared, Some(1));
+        store.wait_for_persistence_idle().await.unwrap();
+
+        for n in 1..=2 {
+            assert!(
+                !journal_entry_exists(&backend, n),
+                "block {n} is final and not above the head"
+            );
+        }
+        for n in 3..=5 {
+            assert!(
+                journal_entry_exists(&backend, n),
+                "block {n} is above the head"
+            );
+        }
+    }
+
+    /// While older entries survive, every committed layer SHALL journal, final or not, so
+    /// the newest entry keeps naming the block whose state is on disk and no surviving
+    /// entry holds pre-images against a state the disk has moved past.
+    #[tokio::test]
+    async fn final_layers_are_journaled_while_older_entries_survive() {
+        let (store, backend, _dir) = journal_store();
+        seed_journal_entries(&backend, &[0]);
+        set_head_and_finalized(&backend, 100, 100);
+        let shared = Nibbles::from_raw(&[0x0a, 0x0b], false);
+
+        store_chain(&store, 4, &shared, Some(1));
+        store.wait_for_persistence_idle().await.unwrap();
+
+        for n in 1..=3 {
+            assert!(
+                journal_entry_exists(&backend, n),
+                "block {n} follows a surviving entry"
+            );
+        }
+    }
+
+    /// On an L2, which finalizes its head every block, every layer is final by the time
+    /// it commits. The journal SHALL stay empty and finality pruning SHALL write no range
+    /// delete.
+    #[tokio::test]
+    async fn chain_finalizing_its_head_writes_no_journal_and_no_range_deletes() {
+        let (store, backend, ranges, _dir) = recording_store();
+        let shared = Nibbles::from_raw(&[0x0a, 0x0b], false);
+
+        let mut parent_hash = H256::zero();
+        for number in 1..=20 {
+            let (hash, _) = store_block_rewriting(&store, number, parent_hash, &shared, Some(4));
+            store
+                .forkchoice_update_inner(vec![], number, hash, None, Some(number))
+                .await
+                .unwrap();
+            parent_hash = hash;
+        }
+        store.wait_for_persistence_idle().await.unwrap();
+
+        for n in 1..=20 {
+            assert!(
+                !journal_entry_exists(&backend, n),
+                "block {n} was final when committed"
+            );
+        }
+        assert!(ranges.lock().unwrap().is_empty());
     }
 }
 
