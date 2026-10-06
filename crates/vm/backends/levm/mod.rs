@@ -620,6 +620,12 @@ impl LEVM {
             // oversized code change must be rejected before any of them run.
             validate_bal_code_sizes(&bal, AMSTERDAM_MAX_CODE_SIZE)
                 .map_err(|e| EvmError::Custom(format!("BAL validation failed: {e}")))?;
+            // Execution relies on the list's order: storage lookups binary-search it, and two
+            // changes at one index pass the `find_exact_change_*` lookups (first entry) while
+            // synthesis uses the last. Check it before any transaction runs, so a list out of
+            // order is rejected for that and not for a symptom of it.
+            bal.validate_ordering()
+                .map_err(|e| EvmError::Custom(format!("BAL validation failed: {e}")))?;
 
             // Shadow-record the system phases: their account cache also holds internal
             // loads the recorder never sees, so it can't say what they touched.
@@ -808,11 +814,6 @@ impl LEVM {
                      and no storage reads but was never accessed during block execution"
                 )));
             }
-
-            // Only the Engine API checked ordering. Two changes at one index pass the
-            // `find_exact_change_*` lookups (first entry) while synthesis uses the last.
-            bal.validate_ordering()
-                .map_err(|e| EvmError::Custom(format!("BAL validation failed: {e}")))?;
 
             // EIP-7928 size cap: validated after execution so that transaction-level
             // errors (e.g. gas allowance exceeded) take priority.
@@ -1814,11 +1815,9 @@ impl LEVM {
                             .binary_search_by(|sc| sc.slot.cmp(slot))
                             .is_ok();
                         // storage_reads is validated strictly-ascending, so binary search
-                        // (matches storage_changes above) instead of a linear scan. The
-                        // import path doesn't call `validate_ordering`, so assert the
-                        // precondition in debug builds; `binary_search` fails closed on
-                        // an unsorted list (it can only miss a present slot -> over-reject,
-                        // never accept a missing one), so release stays sound regardless.
+                        // (matches storage_changes above) instead of a linear scan.
+                        // Ordering is validated before the block runs, so this only asserts
+                        // that precondition.
                         debug_assert!(
                             acct.storage_reads.windows(2).all(|w| w[0] < w[1]),
                             "storage_reads must be strictly ascending for binary_search"

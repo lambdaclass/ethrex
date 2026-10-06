@@ -897,8 +897,8 @@ impl PeerHandler {
     /// - The peer returned more entries than were requested
     ///
     /// Every returned BAL matches its header's `block_access_list_hash`, as EIP-8159 requires
-    /// of a receiver. A peer that sends one that does not is penalized, and that entry comes
-    /// back as `None`.
+    /// of a receiver, and is in the canonical order EIP-7928 requires. A peer that sends one
+    /// that is not is penalized, and that entry comes back as `None`.
     pub async fn request_block_access_lists(
         &mut self,
         block_headers: &[BlockHeader],
@@ -925,12 +925,12 @@ impl PeerHandler {
                             self.peer_table.record_failure(peer_id)?;
                             return Ok(None);
                         }
-                        if drop_mismatched_block_access_lists(
+                        if let Some(reason) = drop_mismatched_block_access_lists(
                             &mut block_access_lists,
                             block_headers,
                         ) {
                             debug!(
-                                "Block access list from peer {peer_id} does not match its header, discarding peer"
+                                "Block access list from peer {peer_id} dropped ({reason}), discarding peer"
                             );
                             self.peer_table.record_critical_failure(peer_id)?;
                         } else {
@@ -1155,23 +1155,31 @@ fn truncate_to_single_chain(block_headers: &mut Vec<BlockHeader>) -> usize {
 }
 
 /// Replaces with `None` every block access list that does not hash to the
-/// `block_access_list_hash` of the header at the same position, and returns whether it
-/// replaced any. A wrong list must never reach execution: full sync runs a block with the
-/// list it is given, and a wrong one can get a valid block rejected as invalid.
+/// `block_access_list_hash` of the header at the same position, or is not in canonical
+/// order, and returns why it replaced the first one, if it replaced any. The hash is taken
+/// over a sorted encoding, so a list out of order still matches it. A wrong list must never
+/// reach execution: full sync runs a block with the list it is given, and a wrong one can
+/// get a valid block rejected as invalid.
 fn drop_mismatched_block_access_lists(
     block_access_lists: &mut [Option<BlockAccessList>],
     block_headers: &[BlockHeader],
-) -> bool {
-    let mut dropped = false;
+) -> Option<String> {
+    let mut first_reason = None;
     for (bal, header) in block_access_lists.iter_mut().zip(block_headers) {
-        if bal.as_ref().is_some_and(|bal| {
-            !bal.matches_commitment(header.block_access_list_hash, &NativeCrypto)
-        }) {
-            *bal = None;
-            dropped = true;
-        }
+        let Some(list) = bal.as_ref() else {
+            continue;
+        };
+        let reason = if !list.matches_commitment(header.block_access_list_hash, &NativeCrypto) {
+            "does not match the header's commitment".to_string()
+        } else if let Err(err) = list.validate_ordering() {
+            format!("is out of order: {err}")
+        } else {
+            continue;
+        };
+        *bal = None;
+        first_reason.get_or_insert(format!("block {}: {reason}", header.number));
     }
-    dropped
+    first_reason
 }
 
 fn format_duration(duration: Duration) -> String {
@@ -1316,11 +1324,11 @@ mod tests {
     fn matching_block_access_lists_are_kept() {
         let headers = [header_committing_to(&bal(1)), header_committing_to(&bal(2))];
         let mut response = vec![Some(bal(1)), None];
-        assert!(!drop_mismatched_block_access_lists(&mut response, &headers));
+        assert!(drop_mismatched_block_access_lists(&mut response, &headers).is_none());
         assert_eq!(response, vec![Some(bal(1)), None]);
 
         let mut prefix = vec![Some(bal(1))];
-        assert!(!drop_mismatched_block_access_lists(&mut prefix, &headers));
+        assert!(drop_mismatched_block_access_lists(&mut prefix, &headers).is_none());
         assert_eq!(prefix, vec![Some(bal(1))]);
     }
 
@@ -1344,7 +1352,28 @@ mod tests {
             Some(bal(3)),
             Some(bal(5)),
         ];
-        assert!(drop_mismatched_block_access_lists(&mut response, &headers));
+        let reason = drop_mismatched_block_access_lists(&mut response, &headers);
+        assert!(
+            reason.is_some_and(|reason| reason.contains("does not match the header's commitment"))
+        );
         assert_eq!(response, vec![Some(bal(1)), None, None, None, None]);
+    }
+
+    /// A list with its accounts out of order matches the commitment, since the hash is taken
+    /// over a sorted encoding. It SHALL still be dropped.
+    #[test]
+    fn block_access_lists_out_of_order_are_dropped() {
+        use ethrex_common::types::block_access_list::AccountChanges;
+        let out_of_order = BlockAccessList::from_accounts(vec![
+            AccountChanges::new(ethrex_common::Address::repeat_byte(2)),
+            AccountChanges::new(ethrex_common::Address::repeat_byte(1)),
+        ]);
+        let headers = [header_committing_to(&out_of_order)];
+        let mut response = vec![Some(out_of_order)];
+        let reason = drop_mismatched_block_access_lists(&mut response, &headers);
+        assert!(reason.is_some_and(|reason| reason.contains(
+            "is out of order: Block access list accounts not in strictly ascending order"
+        )));
+        assert_eq!(response, vec![None]);
     }
 }

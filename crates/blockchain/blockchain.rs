@@ -5376,6 +5376,69 @@ mod tests {
         // Pre-Amsterdam: no BAL is produced.
         assert!(bals.iter().all(|b| b.is_none()));
     }
+
+    /// Builds an empty Amsterdam block on a fresh chain, with the access list its
+    /// block-start and block-end system calls recorded.
+    #[cfg(feature = "rayon")]
+    async fn amsterdam_block_with_access_list() -> (Blockchain, Block, BlockAccessList) {
+        let genesis_path = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/genesis/l1-bal.json"
+        ));
+        let genesis = Genesis::try_from(genesis_path).expect("Failed to load genesis");
+        let mut store =
+            Store::new("store.db", EngineType::InMemory).expect("Failed to build store");
+        store
+            .add_initial_state(genesis)
+            .await
+            .expect("Failed to add genesis");
+        let blockchain = Blockchain::default_with_store(store.clone());
+        let genesis_header = store.get_block_header(0).unwrap().unwrap();
+        let args = BuildPayloadArgs {
+            parent: genesis_header.hash(),
+            timestamp: genesis_header.timestamp + 12,
+            fee_recipient: H160::zero(),
+            random: H256::zero(),
+            withdrawals: Some(Vec::new()),
+            // Nonzero, so the beacon-roots call writes two slots.
+            beacon_root: Some(H256::repeat_byte(1)),
+            slot_number: Some(1),
+            version: 1,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        };
+        let block_template = create_payload(&args, &store, Bytes::new()).unwrap();
+        let result = blockchain.build_payload(block_template).unwrap();
+        let bal = result
+            .block_access_list
+            .expect("an Amsterdam block records an access list");
+        (blockchain, result.payload, bal)
+    }
+
+    /// The parallel executor must reject a supplied list out of order for its ordering,
+    /// before execution reaches a lookup that the misordering breaks.
+    #[cfg(feature = "rayon")]
+    #[tokio::test]
+    async fn parallel_execution_rejects_a_list_out_of_order_for_its_order() {
+        let (blockchain, block, bal) = amsterdam_block_with_access_list().await;
+        let mut accounts = bal.accounts().to_vec();
+        // Reversing the beacon-roots writes breaks the executor's slot lookups.
+        let account = accounts
+            .iter_mut()
+            .find(|account| account.storage_changes.len() >= 2)
+            .expect("the beacon-roots call writes two slots");
+        account.storage_changes.reverse();
+        let reordered = BlockAccessList::from_accounts(accounts);
+
+        let err = blockchain
+            .add_block_pipeline(block, Some(Arc::new(reordered)))
+            .expect_err("a list out of order must be rejected");
+        assert!(
+            err.to_string()
+                .contains("storage_changes not in strictly ascending order"),
+            "rejected for another reason: {err}"
+        );
+    }
 }
 
 #[cfg(test)]
