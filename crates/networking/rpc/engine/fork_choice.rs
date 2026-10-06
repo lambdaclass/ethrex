@@ -443,6 +443,10 @@ async fn handle_forkchoice(
         return Ok((None, PayloadStatus::syncing().into()));
     }
 
+    // The head before this update, so that if the update takes it off the
+    // canonical chain its transactions can be returned to the pool.
+    let previous_head = context.storage.get_latest_canonical_block_hash().await?;
+
     match apply_fork_choice_with_deep_reorg(
         &context.blockchain,
         fork_choice_state.head_block_hash,
@@ -454,8 +458,31 @@ async fn handle_forkchoice(
         Ok(head) => {
             // Fork Choice was succesful, the node is up to date with the current chain
             context.blockchain.set_synced();
-            // Remove included transactions from the mempool after we accept the fork choice
-            // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
+            // A reorg takes blocks off the canonical chain whose transactions were
+            // already removed from the pool when those blocks became head. Put them
+            // back before pruning for the new head. Best-effort housekeeping, like
+            // the pruning below: a failure is logged and the FCU still succeeds.
+            if let Some(previous_head) = previous_head
+                && previous_head != head.hash()
+            {
+                match context
+                    .blockchain
+                    .reinject_retracted_transactions(previous_head)
+                    .await
+                {
+                    Ok(0) => {}
+                    Ok(reinjected) => info!(
+                        reinjected,
+                        "Returned transactions of retracted blocks to the mempool"
+                    ),
+                    Err(err) => {
+                        warn!("Failed to return retracted transactions to the mempool: {err}")
+                    }
+                }
+            }
+            // Remove included transactions from the mempool after we accept the fork choice.
+            // Only the head block's are removed (#797); when the head extends by more
+            // than one block, the earlier blocks' transactions are left to fail on nonce.
             match context.storage.get_block_by_hash(head.hash()).await {
                 Ok(Some(block)) => {
                     // Remove executed transactions from mempool
