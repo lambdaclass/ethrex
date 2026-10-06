@@ -137,6 +137,13 @@ async fn transactions_of_a_retracted_block_return_to_the_pool() {
     };
     assert!(!in_pool(&first) && !in_pool(&second));
 
+    // Their first submission queued both for peers; drain that, as the p2p
+    // broadcaster would, so the check below sees only what reinjection queues.
+    blockchain
+        .mempool
+        .remove_broadcasted_txs(&[first.hash(&NativeCrypto), second.hash(&NativeCrypto)])
+        .unwrap();
+
     // The head moves to the empty sibling: both transactions are retracted.
     apply_fork_choice(&store, empty_hash, H256::zero(), H256::zero(), None)
         .await
@@ -149,6 +156,20 @@ async fn transactions_of_a_retracted_block_return_to_the_pool() {
     assert!(
         in_pool(&first) && in_pool(&second),
         "the sender has no gap left"
+    );
+    // Never queued for peers: a reorg must not publish what was private before.
+    let queued = |blockchain: &Blockchain| -> Vec<H256> {
+        blockchain
+            .mempool
+            .get_txs_for_broadcast()
+            .unwrap()
+            .iter()
+            .map(|tx| tx.hash(&NativeCrypto))
+            .collect()
+    };
+    assert!(
+        !queued(&blockchain).contains(&first.hash(&NativeCrypto)),
+        "a re-admitted transaction must not be queued for broadcast"
     );
 
     // A head that is still canonical retracted nothing.
