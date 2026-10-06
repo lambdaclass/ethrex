@@ -232,10 +232,20 @@ class Sender:
                                   ["0x" + signed.raw_transaction.hex()])
                 except RpcError as err:
                     msg = str(err).lower()
-                    if attempt == 1 and ("nonce" in msg or "already known" in msg):
+                    # "underpriced" is a replacement refusal: the pool already holds a
+                    # transaction of ours at this nonce. After a reorg drops earlier
+                    # transactions, the cached nonce runs ahead of the chain and sits on
+                    # a pooled one forever; resyncing off `latest` lands on the gap and
+                    # refills it instead.
+                    stale = "nonce" in msg or "already known" in msg or "underpriced" in msg
+                    if attempt == 1 and stale:
                         self.nonce = int(
                             rpc("eth_getTransactionCount", [ACCT.address, "latest"]), 16)
                         continue
+                    if stale:
+                        # Still taken after a resync: the next claim must resync again
+                        # rather than retry the same nonce.
+                        self.nonce = None
                     raise
                 except Exception:
                     # Unknown outcome: the node may hold this transaction. Force a

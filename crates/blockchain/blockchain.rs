@@ -3546,6 +3546,66 @@ impl Blockchain {
         Ok(())
     }
 
+    /// Return to the pool the transactions of every block a forkchoice update
+    /// took off the canonical chain.
+    ///
+    /// `remove_block_transactions_from_pool` drops a block's transactions when
+    /// that block becomes head. If a later update moves the head to a competing
+    /// block, those transactions are in neither chain nor pool; a sender then
+    /// has a permanent nonce gap and everything it sends after it waits
+    /// forever. `previous_head` is the canonical head before the update. When
+    /// it is still canonical nothing was retracted and this costs one header
+    /// read. Otherwise the retracted blocks are walked back to the shared
+    /// ancestor, at most `MAX_RETRACTED_BLOCKS` of them, and their
+    /// transactions are resubmitted oldest first through ordinary admission,
+    /// so whatever the new chain already included is refused on its nonce and
+    /// stays out. Blob-carrying transactions are skipped: their sidecars are
+    /// not kept with the block. Returns how many transactions were re-added.
+    pub async fn reinject_retracted_transactions(
+        &self,
+        previous_head: H256,
+    ) -> Result<usize, StoreError> {
+        const MAX_RETRACTED_BLOCKS: usize = 64;
+
+        let mut retracted: Vec<Vec<Transaction>> = Vec::new();
+        let mut hash = previous_head;
+        while retracted.len() < MAX_RETRACTED_BLOCKS {
+            let Some(header) = self.storage.get_block_header_by_hash(hash)? else {
+                break;
+            };
+            if self.storage.get_canonical_block_hash(header.number).await? == Some(hash) {
+                break;
+            }
+            let transactions = self
+                .storage
+                .get_block_body_by_hash(hash)
+                .await?
+                .map(|body| body.transactions)
+                .unwrap_or_default();
+            retracted.push(transactions);
+            hash = header.parent_hash;
+        }
+
+        let mut reinjected = 0;
+        for transactions in retracted.into_iter().rev() {
+            for tx in transactions {
+                if !tx.blob_versioned_hashes().is_empty() {
+                    continue;
+                }
+                let tx_hash = tx.hash(&NativeCrypto);
+                match self.add_transaction_to_pool(tx).await {
+                    Ok(_) => reinjected += 1,
+                    Err(err) => debug!(
+                        %tx_hash,
+                        %err,
+                        "Retracted transaction not returned to the pool"
+                    ),
+                }
+            }
+        }
+        Ok(reinjected)
+    }
+
     /// Drop blob txs with nonce below the sender's on-chain nonce at `head_hash`.
     /// Per-block pruning only covers the head block, so stale blob txs from
     /// non-head canonical blocks leak in and are never evicted (value/nonce
