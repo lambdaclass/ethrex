@@ -1752,17 +1752,25 @@ impl Store {
                 // Prune every STATE_HISTORY entry at or below the new finalized number
                 // in the same atomic txn. STATE_HISTORY uses big-endian keys, so
                 // lexicographic byte order matches numeric order, and `delete_range`
-                // is half-open `[start, end)`, so `end = finalized + 1`.
+                // is half-open `[start, end)`.
                 //
-                // The range starts at the lowest entry still present, not at 0, and is
-                // skipped when that entry is above finality. Each delete is therefore
-                // disjoint from the previous ones, and none is written when there is
-                // nothing to prune. That matters because RocksDB keeps unflushed range
-                // deletes in the memtable and fragments them against each other on
-                // reads and flushes: N ranges that all start at 0 overlap pairwise, so
-                // the fragmented form grows as N², and a memtable holding a few
-                // thousand of them takes seconds and GBs to flush or replay from the
-                // WAL. Disjoint ranges fragment in linear time and memory.
+                // The range covers only entries that exist: it starts at the lowest
+                // entry present and ends at the highest one at or below finality, and
+                // is skipped when the lowest entry is above finality. Entries are
+                // written ~DB_COMMIT_THRESHOLD blocks behind head, in increasing block
+                // order, while finality can be ahead of them (an L2 finalizes head on
+                // every block), so a range ending at `finalized` would cover block
+                // numbers whose entries land later. A range delete only hides keys
+                // written before it, so those entries would survive and the next
+                // prune would overlap this one. Ending at the highest existing entry
+                // keeps every range disjoint from the previous ones, and none is
+                // written when there is nothing to prune. That matters because
+                // RocksDB keeps unflushed range deletes in the memtable and fragments
+                // them against each other on reads and flushes: N ranges that all
+                // start at 0 overlap pairwise, so the fragmented form grows as N², and
+                // a memtable holding a few thousand of them takes seconds and GBs to
+                // flush or replay from the WAL. Disjoint ranges fragment in linear
+                // time and memory.
                 //
                 // Skipped while a deep-reorg apply pass is in flight
                 // (`journal_pruning_paused`): `Overlay::from_journal` reads entries
@@ -1774,15 +1782,15 @@ impl Store {
                     && !journal_pruning_paused.load(std::sync::atomic::Ordering::Acquire)
                     && let Some(lowest) = read.first_key(STATE_HISTORY)?
                 {
-                    let lowest: [u8; 8] = lowest.as_slice().try_into().map_err(|_| {
-                        StoreError::Custom(format!(
-                            "STATE_HISTORY key has unexpected length: {}",
-                            lowest.len()
-                        ))
-                    })?;
-                    if BlockNumber::from_be_bytes(lowest) <= finalized {
-                        let end = finalized.saturating_add(1).to_be_bytes();
-                        txn.delete_range(STATE_HISTORY, &lowest, &end)?;
+                    let lowest = state_history_key_number(&lowest)?;
+                    if lowest <= finalized {
+                        // `first_key` returned an entry, so `last_key` returns one too.
+                        let highest = match read.last_key(STATE_HISTORY)? {
+                            Some(key) => state_history_key_number(&key)?,
+                            None => finalized,
+                        };
+                        let end = finalized.min(highest).saturating_add(1);
+                        txn.delete_range(STATE_HISTORY, &lowest.to_be_bytes(), &end.to_be_bytes())?;
                     }
                 }
             }
@@ -4882,6 +4890,18 @@ pub fn write_flushed_upto(
 /// Returns an error for a present-but-malformed value so on-disk corruption is
 /// surfaced loudly rather than silently resetting the durable marker. Single
 /// source of truth for both `from_backend` and [`Store::read_flushed_upto`].
+/// Decodes a `STATE_HISTORY` key (`block_number.to_be_bytes()`). A length mismatch is
+/// an error rather than a silent default, which could prune the wrong range.
+fn state_history_key_number(key: &[u8]) -> Result<BlockNumber, StoreError> {
+    let arr = <[u8; 8]>::try_from(key).map_err(|_| {
+        StoreError::Custom(format!(
+            "STATE_HISTORY key has unexpected length: {}",
+            key.len()
+        ))
+    })?;
+    Ok(BlockNumber::from_be_bytes(arr))
+}
+
 fn decode_flushed_upto(bytes: &[u8]) -> Result<BlockNumber, StoreError> {
     let arr: [u8; 8] = bytes
         .try_into()
@@ -7420,6 +7440,30 @@ mod state_history_tests {
 
         assert!(ranges.lock().unwrap().is_empty());
         assert!(journal_entry_exists(&backend, 20));
+    }
+
+    /// Finality pruning SHALL write disjoint ranges when entries keep landing below
+    /// finality, as on an L2: the commit worker writes the entry for
+    /// `head - DB_COMMIT_THRESHOLD` while every FCU finalizes `head`.
+    #[tokio::test]
+    async fn finality_pruning_stays_disjoint_when_entries_land_below_finality() {
+        let (store, backend, ranges, _dir) = recording_store();
+        let lag = DB_COMMIT_THRESHOLD as u64;
+        for head in 1..=(lag + 50) {
+            if head > lag {
+                seed_journal_entries(&backend, &[head - lag]);
+            }
+            store
+                .forkchoice_update_inner(vec![], head, H256::zero(), None, Some(head))
+                .await
+                .unwrap();
+        }
+
+        let ranges = ranges.lock().unwrap();
+        assert_eq!(ranges.len(), 50);
+        for pair in ranges.windows(2) {
+            assert!(pair[0].1 <= pair[1].0, "overlapping ranges {pair:?}");
+        }
     }
 }
 
