@@ -973,9 +973,9 @@ impl Blockchain {
         let block_fork = chain_config.fork(block.header.timestamp);
         // Without a BAL, execution takes the warmer's result for each transaction that read
         // nothing an earlier transaction changed. Witness collection runs no warmer.
-        let warmed = (bal.is_none() && !collect_witness)
+        let warmed_results = (bal.is_none() && !collect_witness)
             .then(|| ethrex_vm::backends::levm::WarmedTxs::new(block.body.transactions.len()));
-        let warmed = warmed.as_ref();
+        let warmed = warmed_results.as_ref();
         if carry
             && let Ok(mut slot) = self.carried.0.lock()
             && let Some(state) = slot.take()
@@ -1147,6 +1147,7 @@ impl Blockchain {
                                             None,
                                             None,
                                             false,
+                                            None,
                                         ) {
                                             debug!("Block warming failed (non-fatal): {e}");
                                         }
@@ -1172,6 +1173,8 @@ impl Blockchain {
                                                 );
                                             });
                                         };
+                                    // The buffered storage flush waits only for the units,
+                                    // not for the check of their results that follows.
                                     if let Err(e) = LEVM::warm_block(
                                         block,
                                         caching_store,
@@ -1181,6 +1184,7 @@ impl Blockchain {
                                         Some(&warm_trie_paths),
                                         warmed,
                                         discovery,
+                                        Some(warming_done_ref),
                                     ) {
                                         debug!("Block warming failed (non-fatal): {e}");
                                     }
@@ -1450,6 +1454,11 @@ impl Blockchain {
                 Ok((execution_result, merkleization_result, warmer_duration))
             },
         )?;
+        // The warmed results hold the block's read and write maps; freeing them here would
+        // run on the block's critical path.
+        if let Some(warmed_results) = warmed_results {
+            ethrex_vm::backends::levm::spawn_warm_io(move || drop(warmed_results));
+        }
         let (account_updates_list, streaming_witness, merkle_start_instant, merkle_end_instant) =
             merkleization_result?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;

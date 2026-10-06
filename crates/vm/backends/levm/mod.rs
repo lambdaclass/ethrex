@@ -575,37 +575,8 @@ impl WarmedTx {
             return Ok(false);
         }
         for (address, before) in &self.reads.accounts {
-            let account = db.get_account(*address)?;
-            // A balance the transaction only credited, or tested against zero, may differ: its
-            // change is applied on top. The sender's and any it read exactly must match; one it
-            // only compared against transfer values must give those comparisons the same outcome.
-            let balance_holds = if *address == sender || self.reads.balances.contains(address) {
-                account.info.balance == before.info.balance
-            } else {
-                account.info.balance.is_zero() == before.info.balance.is_zero()
-                    && self
-                        .reads
-                        .balance_bounds
-                        .get(address)
-                        .is_none_or(|bounds| bounds.admit(account.info.balance))
-            };
-            // A nonce only matters exactly where the transaction used it: its own, a contract
-            // creation's or an authorization's. Elsewhere only emptiness is observable.
-            let nonce_holds = if *address == sender || self.reads.nonces.contains(address) {
-                account.info.nonce == before.info.nonce
-            } else {
-                (account.info.nonce == 0) == (before.info.nonce == 0)
-            };
-            if !nonce_holds
-                || account.info.code_hash != before.info.code_hash
-                || !balance_holds
-                || account.has_storage != before.has_storage
-                || account.exists != before.exists
-                || matches!(
-                    account.status,
-                    AccountStatus::Destroyed | AccountStatus::DestroyedModified
-                )
-            {
+            let account = AccountSnapshot::of(db.get_account(*address)?);
+            if !self.account_holds(sender, *address, before, &account) {
                 return Ok(false);
             }
         }
@@ -615,6 +586,46 @@ impl WarmedTx {
             }
         }
         Ok(true)
+    }
+
+    /// Whether an account the transaction read as `before` can be `after` without changing
+    /// what the transaction observed of it.
+    fn account_holds(
+        &self,
+        sender: Address,
+        address: Address,
+        before: &AccountSnapshot,
+        after: &AccountSnapshot,
+    ) -> bool {
+        // A balance the transaction only credited, or tested against zero, may differ: its
+        // change is applied on top. The sender's and any it read exactly must match; one it
+        // only compared against transfer values must give those comparisons the same outcome.
+        let balance_holds = if address == sender || self.reads.balances.contains(&address) {
+            after.info.balance == before.info.balance
+        } else {
+            after.info.balance.is_zero() == before.info.balance.is_zero()
+                && self
+                    .reads
+                    .balance_bounds
+                    .get(&address)
+                    .is_none_or(|bounds| bounds.admit(after.info.balance))
+        };
+        // A nonce only matters exactly where the transaction used it: its own, a contract
+        // creation's or an authorization's. Elsewhere only emptiness is observable.
+        let nonce_holds = if address == sender || self.reads.nonces.contains(&address) {
+            after.info.nonce == before.info.nonce
+        } else {
+            (after.info.nonce == 0) == (before.info.nonce == 0)
+        };
+        nonce_holds
+            && after.info.code_hash == before.info.code_hash
+            && balance_holds
+            && after.has_storage == before.has_storage
+            && after.exists == before.exists
+            && !matches!(
+                after.status,
+                AccountStatus::Destroyed | AccountStatus::DestroyedModified
+            )
     }
 
     /// Writes the transaction's changes to `db`, which [`Self::holds`] its reads, and returns
@@ -747,6 +758,16 @@ pub struct WarmedTxs {
     slots: Box<[std::sync::Mutex<Option<WarmedTx>>]>,
     /// How many of the block's transactions execution has finished.
     executed: AtomicUsize,
+    /// The changes of every result published so far, by block position.
+    #[cfg(feature = "rayon")]
+    writes: Arc<std::sync::RwLock<WarmedWrites>>,
+    /// Positions whose published result read something that a result published since, for
+    /// an earlier position, wrote: to be checked again.
+    #[cfg(feature = "rayon")]
+    stale: Box<[AtomicBool]>,
+    /// Whether published results are recorded for re-warming at all this block.
+    #[cfg(feature = "rayon")]
+    tracking: AtomicBool,
 }
 
 impl WarmedTxs {
@@ -756,16 +777,53 @@ impl WarmedTxs {
                 .map(|_| std::sync::Mutex::new(None))
                 .collect(),
             executed: AtomicUsize::new(0),
+            #[cfg(feature = "rayon")]
+            writes: Arc::default(),
+            #[cfg(feature = "rayon")]
+            stale: (0..transactions).map(|_| AtomicBool::new(false)).collect(),
+            #[cfg(feature = "rayon")]
+            tracking: AtomicBool::new(false),
         }
     }
 
+    /// Publishes the result for `position`, and marks the later positions whose result read
+    /// something it wrote, or the result it replaces wrote, for checking again.
     #[cfg(feature = "rayon")]
     fn put(&self, position: usize, warmed: WarmedTx) {
+        let affected = if self.tracking.load(Ordering::Relaxed) {
+            match self.writes.write() {
+                Ok(mut writes) => writes.record(position, &warmed),
+                Err(_) => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+        for reader in affected {
+            if let Some(flag) = self.stale.get(reader) {
+                flag.store(true, Ordering::Relaxed);
+            }
+        }
         if let Some(slot) = self.slots.get(position)
             && let Ok(mut slot) = slot.lock()
         {
             *slot = Some(warmed);
         }
+    }
+
+    /// Marks `position` for checking again.
+    #[cfg(feature = "rayon")]
+    fn mark_stale(&self, position: usize) {
+        if let Some(flag) = self.stale.get(position) {
+            flag.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Whether `position` was marked for checking again; clears the mark.
+    #[cfg(feature = "rayon")]
+    fn take_stale(&self, position: usize) -> bool {
+        self.stale
+            .get(position)
+            .is_some_and(|flag| flag.swap(false, Ordering::Relaxed))
     }
 
     fn take(&self, position: usize) -> Option<WarmedTx> {
@@ -777,6 +835,280 @@ impl WarmedTxs {
     #[cfg(feature = "rayon")]
     fn passed(&self, unit: &WarmUnit<'_>) -> bool {
         self.executed.load(Ordering::Relaxed) > unit.last_position()
+    }
+
+    /// Whether a result published before `position` changed something `warmed`, the result
+    /// for `position`, read with a different value than it would then find: the result would
+    /// not hold at execution, if those earlier results do.
+    #[cfg(feature = "rayon")]
+    fn conflicts(&self, position: usize, sender: Address, warmed: &WarmedTx) -> bool {
+        let Ok(writes) = self.writes.read() else {
+            return false;
+        };
+        for (&(address, key), value) in &warmed.reads.slots {
+            if writes
+                .slot_before(address, key, position)
+                .is_some_and(|written| written != *value)
+            {
+                return true;
+            }
+        }
+        for (address, before) in &warmed.reads.accounts {
+            if let Some(after) = writes.account_before(*address, position)
+                && !warmed.account_holds(sender, *address, before, after)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Whether the published result for `position`, if any, [`Self::conflicts`].
+    #[cfg(feature = "rayon")]
+    fn published_conflicts(&self, position: usize, sender: Address) -> bool {
+        self.slots
+            .get(position)
+            .and_then(|slot| slot.lock().ok())
+            .is_some_and(|slot| {
+                slot.as_ref()
+                    .is_some_and(|warmed| self.conflicts(position, sender, warmed))
+            })
+    }
+}
+
+/// The changes of a block's published warmed results by block position: the block's state as
+/// warmed so far, which a later transaction can be run against.
+#[cfg(feature = "rayon")]
+#[derive(Default)]
+struct WarmedWrites {
+    slots: FxHashMap<(Address, H256), Vec<(usize, U256)>>,
+    accounts: FxHashMap<Address, Vec<(usize, AccountSnapshot)>>,
+    codes: FxHashMap<H256, Code>,
+    /// The positions whose result read each key: the results a write to it may invalidate.
+    slot_readers: FxHashMap<(Address, H256), Vec<usize>>,
+    account_readers: FxHashMap<Address, Vec<usize>>,
+    /// The keys each position's result wrote and read, dropped when the result is replaced.
+    by_position: FxHashMap<usize, PositionKeys>,
+}
+
+/// The keys one position's result wrote and read.
+#[cfg(feature = "rayon")]
+#[derive(Default)]
+struct PositionKeys {
+    written_slots: Vec<(Address, H256)>,
+    written_accounts: Vec<Address>,
+    read_slots: Vec<(Address, H256)>,
+    read_accounts: Vec<Address>,
+}
+
+#[cfg(feature = "rayon")]
+impl WarmedWrites {
+    /// Records `warmed` as the result for `position` and returns the later positions whose
+    /// result read a key that this result, or the one it replaces, wrote.
+    fn record(&mut self, position: usize, warmed: &WarmedTx) -> Vec<usize> {
+        let replaced = self.forget(position);
+        let mut keys = PositionKeys::default();
+        for &((address, key), value) in &warmed.slots {
+            insert_version(
+                self.slots.entry((address, key)).or_default(),
+                position,
+                value,
+            );
+            keys.written_slots.push((address, key));
+        }
+        for (address, after) in &warmed.accounts {
+            insert_version(
+                self.accounts.entry(*address).or_default(),
+                position,
+                after.clone(),
+            );
+            keys.written_accounts.push(*address);
+        }
+        for code in &warmed.codes {
+            self.codes.entry(code.hash).or_insert_with(|| code.clone());
+        }
+        let mut affected = Vec::new();
+        {
+            let mut add_readers = |slot_keys: &[(Address, H256)], addresses: &[Address]| {
+                for key in slot_keys {
+                    if let Some(readers) = self.slot_readers.get(key) {
+                        affected
+                            .extend(readers.iter().copied().filter(|&reader| reader > position));
+                    }
+                }
+                for address in addresses {
+                    if let Some(readers) = self.account_readers.get(address) {
+                        affected
+                            .extend(readers.iter().copied().filter(|&reader| reader > position));
+                    }
+                }
+            };
+            add_readers(&keys.written_slots, &keys.written_accounts);
+            if let Some(replaced) = &replaced {
+                add_readers(&replaced.written_slots, &replaced.written_accounts);
+            }
+        }
+        affected.sort_unstable();
+        affected.dedup();
+        for &(address, key) in warmed.reads.slots.keys() {
+            self.slot_readers
+                .entry((address, key))
+                .or_default()
+                .push(position);
+            keys.read_slots.push((address, key));
+        }
+        for &address in warmed.reads.accounts.keys() {
+            self.account_readers
+                .entry(address)
+                .or_default()
+                .push(position);
+            keys.read_accounts.push(address);
+        }
+        self.by_position.insert(position, keys);
+        affected
+    }
+
+    /// Drops what the result for `position` wrote and read, returning its keys.
+    fn forget(&mut self, position: usize) -> Option<PositionKeys> {
+        let keys = self.by_position.remove(&position)?;
+        for key in &keys.written_slots {
+            if let Some(versions) = self.slots.get_mut(key) {
+                versions.retain(|(written_at, _)| *written_at != position);
+            }
+        }
+        for address in &keys.written_accounts {
+            if let Some(versions) = self.accounts.get_mut(address) {
+                versions.retain(|(written_at, _)| *written_at != position);
+            }
+        }
+        for key in &keys.read_slots {
+            if let Some(readers) = self.slot_readers.get_mut(key) {
+                readers.retain(|reader| *reader != position);
+            }
+        }
+        for address in &keys.read_accounts {
+            if let Some(readers) = self.account_readers.get_mut(address) {
+                readers.retain(|reader| *reader != position);
+            }
+        }
+        Some(keys)
+    }
+
+    /// The slot's value as left by the last result published for a position before `position`.
+    fn slot_before(&self, address: Address, key: H256, position: usize) -> Option<U256> {
+        version_before(self.slots.get(&(address, key))?, position).copied()
+    }
+
+    /// The account as left by the last result published for a position before `position`.
+    fn account_before(&self, address: Address, position: usize) -> Option<&AccountSnapshot> {
+        version_before(self.accounts.get(&address)?, position)
+    }
+}
+
+/// Inserts `value` as the version written at `position`, keeping the versions in position order.
+#[cfg(feature = "rayon")]
+fn insert_version<T>(versions: &mut Vec<(usize, T)>, position: usize, value: T) {
+    let at = versions.partition_point(|(written_at, _)| *written_at < position);
+    versions.insert(at, (position, value));
+}
+
+/// The version written at the greatest position below `position`.
+#[cfg(feature = "rayon")]
+fn version_before<T>(versions: &[(usize, T)], position: usize) -> Option<&T> {
+    let earlier = versions.partition_point(|(written_at, _)| *written_at < position);
+    versions
+        .get(earlier.checked_sub(1)?)
+        .map(|(_, value)| value)
+}
+
+/// The warming cache with the block's published writes before `position` layered on top: the
+/// state the transaction at `position` runs against when every earlier result holds.
+#[cfg(feature = "rayon")]
+struct MergedDb {
+    cache: Arc<dyn Database>,
+    writes: Arc<std::sync::RwLock<WarmedWrites>>,
+    position: usize,
+}
+
+#[cfg(feature = "rayon")]
+impl Database for MergedDb {
+    fn get_account_state(
+        &self,
+        address: Address,
+    ) -> Result<ethrex_common::types::AccountState, ethrex_levm::errors::DatabaseError> {
+        let mut state = self.cache.get_account_state(address)?;
+        if let Ok(writes) = self.writes.read()
+            && let Some(after) = writes.account_before(address, self.position)
+        {
+            state.nonce = after.info.nonce;
+            state.balance = after.info.balance;
+            state.code_hash = after.info.code_hash;
+        }
+        Ok(state)
+    }
+
+    fn get_storage_value(
+        &self,
+        address: Address,
+        key: H256,
+    ) -> Result<U256, ethrex_levm::errors::DatabaseError> {
+        if let Ok(writes) = self.writes.read()
+            && let Some(value) = writes.slot_before(address, key, self.position)
+        {
+            return Ok(value);
+        }
+        self.cache.get_storage_value(address, key)
+    }
+
+    fn get_block_hash(
+        &self,
+        block_number: u64,
+    ) -> Result<H256, ethrex_levm::errors::DatabaseError> {
+        self.cache.get_block_hash(block_number)
+    }
+
+    fn get_chain_config(
+        &self,
+    ) -> Result<ethrex_common::types::ChainConfig, ethrex_levm::errors::DatabaseError> {
+        self.cache.get_chain_config()
+    }
+
+    fn get_account_code(
+        &self,
+        code_hash: H256,
+    ) -> Result<Code, ethrex_levm::errors::DatabaseError> {
+        if let Ok(writes) = self.writes.read()
+            && let Some(code) = writes.codes.get(&code_hash)
+        {
+            return Ok(code.clone());
+        }
+        self.cache.get_account_code(code_hash)
+    }
+
+    fn get_code_metadata(
+        &self,
+        code_hash: H256,
+    ) -> Result<ethrex_common::types::CodeMetadata, ethrex_levm::errors::DatabaseError> {
+        if let Ok(writes) = self.writes.read()
+            && let Some(code) = writes.codes.get(&code_hash)
+        {
+            return Ok(ethrex_common::types::CodeMetadata {
+                length: u64::try_from(code.len()).unwrap_or(u64::MAX),
+            });
+        }
+        self.cache.get_code_metadata(code_hash)
+    }
+
+    fn precompile_cache(&self) -> Option<&ethrex_levm::precompiles::PrecompileCache> {
+        self.cache.precompile_cache()
+    }
+
+    fn cached_keccak64(&self, input: &[u8; 64]) -> Option<[u8; 32]> {
+        self.cache.cached_keccak64(input)
+    }
+
+    fn keep_keccak64(&self, input: [u8; 64], hash: [u8; 32]) {
+        self.cache.keep_keccak64(input, hash);
     }
 }
 
@@ -4081,6 +4413,8 @@ impl LEVM {
         results: Option<&WarmedTxs>,
         // Whether units may run discovery passes while the store reads from the disk.
         discovery: bool,
+        // Set once every unit has been warmed, before the results are checked again.
+        units_done: Option<&AtomicBool>,
     ) -> Result<(), EvmError> {
         let txs_with_sender = block
             .body
@@ -4120,6 +4454,7 @@ impl LEVM {
                     writes,
                     results,
                     discovery,
+                    units_done,
                 )
             },
         );
@@ -4172,13 +4507,38 @@ impl LEVM {
         writes: Option<WarmWritesSink<'_>>,
         results: Option<&WarmedTxs>,
         discovery: bool,
+        units_done: Option<&AtomicBool>,
     ) -> Result<(), EvmError> {
         let chain_config = store.get_chain_config()?;
         let evm_config = EVMConfig::new_from_chain_config(&chain_config, header);
         let chain_id = chain_config.chain_id;
         let base_blob_fee_per_gas = get_base_fee_per_blob_gas(header.excess_blob_gas, &evm_config)?;
 
+        // Units a worker has finished with (warmed, skipped or passed by execution).
+        let finished_units = std::sync::atomic::AtomicUsize::new(0);
+        let unit_finished = || {
+            if finished_units
+                .fetch_add(1, Ordering::Relaxed)
+                .saturating_add(1)
+                >= units.len()
+                && let Some(units_done) = units_done
+            {
+                units_done.store(true, Ordering::Relaxed);
+            }
+        };
+        if units.is_empty()
+            && let Some(units_done) = units_done
+        {
+            units_done.store(true, Ordering::Relaxed);
+        }
         let discover = discovery && store_reads_are_cold();
+        // Re-running a transaction takes a core from the units still warming; while the store
+        // is cold, those units are what execution waits for, so results are re-warmed only
+        // when reads come from memory.
+        let rewarm_enabled = !discover;
+        if let Some(results) = results {
+            results.tracking.store(rewarm_enabled, Ordering::Relaxed);
+        }
         // Trie paths are only worth reading ahead while reads come from the disk; from a warm
         // store the merkleizer finds them in memory and the reads only take cores.
         let writes = writes.filter(|_| discover);
@@ -4193,21 +4553,88 @@ impl LEVM {
             *first = (*first).min(unit.first_position());
         }
         let passed = |unit: &WarmUnit<'_>| results.is_some_and(|results| results.passed(unit));
+        // The block's transactions by position, for re-warming one on its own.
+        let block_txs = units
+            .iter()
+            .filter_map(|unit| unit.positions.last())
+            .max()
+            .map_or(0, |last| last.saturating_add(1));
+        let mut by_position: Vec<Option<(&Transaction, Address)>> = vec![None; block_txs];
+        for unit in &units {
+            for (tx, &position) in unit.txs.iter().zip(&unit.positions) {
+                if let Some(entry) = by_position.get_mut(position) {
+                    *entry = Some((*tx, unit.sender));
+                }
+            }
+        }
+        // Runs the transaction at `position` once more, against the block's state as warmed so
+        // far, with its reads recorded and the nonce check on: the result holds at execution
+        // if the results before it do.
+        let rewarm = |position: usize,
+                      tx: &Transaction,
+                      sender: Address,
+                      stack_pool: &mut Vec<Stack>,
+                      memory_pool: &mut Vec<Memory>|
+         -> Option<WarmedTx> {
+            let results = results?;
+            let merged: Arc<dyn Database> = Arc::new(MergedDb {
+                cache: store.clone(),
+                writes: results.writes.clone(),
+                position,
+            });
+            let mut db = GeneralizedDatabase::new(merged);
+            let coinbase_before = coinbase_balance(&mut db, header.coinbase).ok()?;
+            db.tx_reads = Some(TxReads::default());
+            let report = Self::run_tx_in_block(
+                tx,
+                sender,
+                header,
+                &mut db,
+                vm_type,
+                base_blob_fee_per_gas,
+                stack_pool,
+                memory_pool,
+                false,
+                false,
+                crypto,
+                evm_config,
+                chain_id,
+                None,
+            )
+            .ok()?
+            .ok()?;
+            WarmedTx::capture(&mut db, report, header.coinbase, coinbase_before)
+        };
+        // Publishes a result for execution to take. One that a result published for an earlier
+        // position already invalidated is left marked for the sweeper: re-running it here would
+        // hold back the units still warming.
+        let publish = |position: usize, sender: Address, warmed: WarmedTx| {
+            let Some(results) = results else {
+                return;
+            };
+            let invalidated = rewarm_enabled
+                && results.executed.load(Ordering::Relaxed) <= position
+                && results.conflicts(position, sender, &warmed);
+            results.put(position, warmed);
+            if invalidated {
+                results.mark_stale(position);
+            }
+        };
         let warm_one = |stack_pool: &mut Vec<Stack>, unit: &WarmUnit<'_>, passes: usize| {
             let mut memory_pool = Vec::with_capacity(1);
             // A whole sender group runs each transaction after the ones before it, as execution
             // will, so its results are kept for execution to take.
-            let results = results.filter(|_| {
-                !unit.split || first_split.get(&unit.sender) == Some(&unit.first_position())
-            });
-            let keep_results = results.is_some();
+            let keep_results = results.is_some()
+                && (!unit.split || first_split.get(&unit.sender) == Some(&unit.first_position()));
             // Without discovery a run reads the store itself, so each result is ready as its
             // transaction ends; a discovery pass only knows at its end whether it read the
             // parent state.
-            let mut run = |db: &mut GeneralizedDatabase,
-                           disable_nonce_check: bool,
-                           publish: bool| {
-                let mut warmed = Vec::new();
+            let run = |db: &mut GeneralizedDatabase,
+                       stack_pool: &mut Vec<Stack>,
+                       memory_pool: &mut Vec<Memory>,
+                       disable_nonce_check: bool,
+                       publish_now: bool| {
+                let mut warmed: Vec<(usize, WarmedTx)> = Vec::new();
                 for (tx, &position) in unit.txs.iter().zip(&unit.positions) {
                     if should_stop() {
                         break;
@@ -4225,7 +4652,7 @@ impl LEVM {
                             vm_type,
                             base_blob_fee_per_gas,
                             stack_pool,
-                            &mut memory_pool,
+                            memory_pool,
                             false,
                             disable_nonce_check,
                             crypto,
@@ -4243,9 +4670,10 @@ impl LEVM {
                                         coinbase_before,
                                     )
                                 {
-                                    match results {
-                                        Some(results) if publish => results.put(position, result),
-                                        _ => warmed.push((position, result)),
+                                    if publish_now {
+                                        publish(position, unit.sender, result);
+                                    } else {
+                                        warmed.push((position, result));
                                     }
                                 }
                                 db.tx_reads = None;
@@ -4269,7 +4697,7 @@ impl LEVM {
                         vm_type,
                         base_blob_fee_per_gas,
                         stack_pool,
-                        &mut memory_pool,
+                        memory_pool,
                         true,
                         disable_nonce_check,
                         crypto,
@@ -4287,14 +4715,12 @@ impl LEVM {
                 let view = Arc::new(DiscoveryDb::new(store.clone()));
                 let mut db = GeneralizedDatabase::new(view.clone());
                 // Absent answers can leave the sender's nonce wrong.
-                let warmed = run(&mut db, true, false);
+                let warmed = run(&mut db, stack_pool, &mut memory_pool, true, false);
                 let misses = view.take_misses();
                 if misses.is_empty() {
                     // Every read came from the cache, so these ran on the parent state.
-                    if let Some(results) = results {
-                        warmed
-                            .into_iter()
-                            .for_each(|(position, warmed)| results.put(position, warmed));
+                    for (position, result) in warmed {
+                        publish(position, unit.sender, result);
                     }
                     if let Some(writes) = writes {
                         let (slots, accounts) = speculative_writes(&db);
@@ -4305,7 +4731,7 @@ impl LEVM {
                 fetch_misses(&store, misses);
             }
             let mut db = GeneralizedDatabase::new(store.clone());
-            run(&mut db, unit.split, true);
+            run(&mut db, stack_pool, &mut memory_pool, unit.split, true);
             if let Some(writes) = writes
                 && !should_stop()
             {
@@ -4333,6 +4759,7 @@ impl LEVM {
                 }
                 let unit = &units[i];
                 if passed(unit) {
+                    unit_finished();
                     return;
                 }
                 // While reads come from memory, a discovery pass only reruns transactions to
@@ -4345,6 +4772,7 @@ impl LEVM {
                     0
                 };
                 warm_one(stack_pool, unit, passes);
+                unit_finished();
             };
             if lane < HEAVY_LANE_WORKERS {
                 while let Some(&i) = heavy.get(next_heavy.fetch_add(1, Ordering::Relaxed)) {
@@ -4362,11 +4790,61 @@ impl LEVM {
                 take(i, &mut stack_pool);
             }
         };
-        rayon::scope(|scope| {
-            for i in 0..rayon::current_num_threads() {
-                let worker = &worker;
-                scope.spawn(move |_| worker(i));
+        // A result published before the writes of an earlier position were, or before that
+        // position was re-warmed, may no longer hold: publishing marks the later positions that
+        // read what it wrote. A sweeper checks the marked results execution has not reached
+        // and re-warms those that no longer hold, round after round while units are still
+        // publishing, then until a round finds nothing marked.
+        let sweeper = || {
+            let Some(results) = results else {
+                return;
+            };
+            if !rewarm_enabled {
+                return;
             }
+            let mut stack_pool = Vec::with_capacity(STACK_LIMIT);
+            let mut memory_pool = Vec::with_capacity(1);
+            loop {
+                let units_left = finished_units.load(Ordering::Relaxed) < units.len();
+                let mut found = false;
+                let mut position = results.executed.load(Ordering::Relaxed);
+                while position < by_position.len() {
+                    if should_stop() {
+                        return;
+                    }
+                    if results.take_stale(position) {
+                        found = true;
+                        if results.executed.load(Ordering::Relaxed) <= position
+                            && let Some((tx, sender)) = by_position.get(position).copied().flatten()
+                            && results.published_conflicts(position, sender)
+                            && let Some(warmed) =
+                                rewarm(position, tx, sender, &mut stack_pool, &mut memory_pool)
+                        {
+                            results.put(position, warmed);
+                        }
+                    }
+                    position = position.saturating_add(1);
+                }
+                // Nothing is left to re-warm once execution has run every transaction, and the
+                // block must not wait for one more round.
+                if (!units_left && !found)
+                    || results.executed.load(Ordering::Relaxed) >= by_position.len()
+                {
+                    return;
+                }
+                if !found {
+                    std::thread::sleep(std::time::Duration::from_micros(100));
+                }
+            }
+        };
+        std::thread::scope(|threads| {
+            threads.spawn(sweeper);
+            rayon::scope(|scope| {
+                for i in 0..rayon::current_num_threads() {
+                    let worker = &worker;
+                    scope.spawn(move |_| worker(i));
+                }
+            });
         });
         Ok(())
     }
@@ -7218,6 +7696,49 @@ mod reuse_tests {
             (pool_after.info.nonce, pool_after.info.balance),
             (warmed_nonce + 7, U256::from(130))
         );
+    }
+
+    #[cfg(feature = "rayon")]
+    #[test]
+    fn published_writes_layer_over_the_cache_by_position() {
+        let results = WarmedTxs::new(3);
+        results.tracking.store(true, Ordering::Relaxed);
+        results.put(1, warmed());
+        let view = |position| MergedDb {
+            cache: Arc::new(Store),
+            writes: results.writes.clone(),
+            position,
+        };
+        // Nothing was written before position 1: the parent state.
+        assert_eq!(
+            view(1).get_storage_value(pool(), key()).unwrap(),
+            U256::from(5)
+        );
+        assert_eq!(view(1).get_account_state(sender()).unwrap().nonce, 4);
+        // From position 2 on, a transaction finds what the result at 1 wrote.
+        assert_eq!(
+            view(2).get_storage_value(pool(), key()).unwrap(),
+            U256::from(6)
+        );
+        let sender_after = view(2).get_account_state(sender()).unwrap();
+        assert_eq!(
+            (sender_after.nonce, sender_after.balance),
+            (5, U256::from(90))
+        );
+        // A result at 2 that read the parent's slot value conflicts with it; one at 1 does not.
+        assert!(results.conflicts(2, sender(), &warmed()));
+        assert!(!results.conflicts(1, sender(), &warmed()));
+        assert!(!results.published_conflicts(1, sender()));
+        // Replacing the result at 1 drops what the old one wrote.
+        let mut replaced = warmed();
+        replaced.slots = vec![((pool(), key()), U256::from(7))];
+        replaced.accounts = Vec::new();
+        results.put(1, replaced);
+        assert_eq!(
+            view(2).get_storage_value(pool(), key()).unwrap(),
+            U256::from(7)
+        );
+        assert_eq!(view(2).get_account_state(sender()).unwrap().nonce, 4);
     }
 
     #[test]
