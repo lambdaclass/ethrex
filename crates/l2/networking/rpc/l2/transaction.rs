@@ -203,6 +203,7 @@ impl RpcHandler for SponsoredTx {
             &ethrex_rpc::EstimateGasRequest {
                 transaction: generic,
                 block: None,
+                ..Default::default()
             },
             context.l1_ctx.clone(),
         )

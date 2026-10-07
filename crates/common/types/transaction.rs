@@ -1427,21 +1427,6 @@ impl Transaction {
         crypto.recover_signer(&sig, &msg)
     }
 
-    /// The signer's uncompressed secp256k1 public key (`0x04 || X || Y`).
-    ///
-    /// `Ok(None)` for privileged L2 and frame transactions, which carry an explicit
-    /// sender and no signature. Used to populate
-    /// `SszStatelessInput::public_keys`, which the stateless guest checks against
-    /// each transaction's recovered sender.
-    #[cfg(feature = "secp256k1")]
-    pub fn public_key(&self, crypto: &dyn Crypto) -> Result<Option<[u8; 65]>, CryptoError> {
-        let Some((buf, sig)) = self.signing_payload()? else {
-            return Ok(None);
-        };
-        let msg = crypto.keccak256(&buf);
-        crypto.recover_public_key(&sig, &msg).map(Some)
-    }
-
     pub fn gas_limit(&self) -> u64 {
         match self {
             Transaction::LegacyTransaction(tx) => tx.gas,

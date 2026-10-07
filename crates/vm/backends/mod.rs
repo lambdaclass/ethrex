@@ -1,4 +1,5 @@
 pub mod levm;
+use ethrex_levm::precompiles::PrecompileMoves;
 use levm::LEVM;
 
 use crate::db::{DynVmDatabase, VmDatabase};
@@ -39,6 +40,14 @@ impl core::fmt::Debug for Evm {
 }
 
 impl Evm {
+    /// Install simulation-only precompile relocations (geth `movePrecompileToAddress`).
+    ///
+    /// RPC simulation paths only. Leaving this unset — every consensus path — keeps
+    /// precompile dispatch bit-identical to the static table.
+    pub fn set_precompile_moves(&mut self, moves: PrecompileMoves) {
+        self.db.precompile_moves = (!moves.is_empty()).then(|| Arc::new(moves));
+    }
+
     /// Creates a new EVM instance, but with block hash in zero, so if we want to execute a block or transaction we have to set it.
     pub fn new_for_l1(db: impl VmDatabase + 'static, crypto: Arc<dyn Crypto>) -> Self {
         let wrapped_db: DynVmDatabase = Box::new(db);

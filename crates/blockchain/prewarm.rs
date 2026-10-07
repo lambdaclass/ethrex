@@ -227,6 +227,9 @@ impl MempoolPrewarmer {
         if !matches!(blockchain.options.r#type, BlockchainType::L1) {
             return None;
         }
+        if !blockchain.options.mempool_prewarm_enabled {
+            return None;
+        }
         #[cfg(not(feature = "rayon"))]
         {
             warn!("Mempool prewarm requires the rayon feature; disabled");
@@ -374,7 +377,20 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
 
     let cancel = req.cancel.clone();
     let deadline = req.deadline_unix;
-    let should_stop = move || cancel.load(Ordering::Relaxed) || unix_now() >= deadline;
+    // End the slot once its cache holds as much bytecode as the node's code cache is
+    // configured to keep. Nothing warmed in a slot is evicted: the cache is shared by every
+    // pass and handed to the next block, and each sender group's database keeps every code
+    // its transactions touched until the group ends. The gas budget alone (6x the gas
+    // limit, per pass) let pending transactions that each call thousands of distinct large
+    // contracts hold tens of GiB. Transactions already running finish, so the slot can pass
+    // the budget by what they load.
+    let code_budget = blockchain.storage.code_cache_budget_bytes();
+    let budget_cache = cache.clone();
+    let should_stop = move || {
+        cancel.load(Ordering::Relaxed)
+            || unix_now() >= deadline
+            || budget_cache.code_bytes() >= code_budget
+    };
 
     // Log-only tally of the slot's distinct warmed txs and their total gas,
     // keyed by tx hash to dedup across the re-warming delta passes. Not
@@ -462,18 +478,21 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
         "cancelled"
     } else if unix_now() >= deadline {
         "deadline"
+    } else if cache.code_bytes() >= code_budget {
+        "code-budget"
     } else {
         // The refresh loop only exits early on a snapshot error (warned above).
         "aborted"
     };
     let total_gas: u64 = warmed_union.values().sum();
     info!(
-        "Prewarm pass for block {}: {} txs, {} gas, passes={}, merkle_paths={}, {:?}, stop={}, err={}",
+        "Prewarm pass for block {}: {} txs, {} gas, passes={}, merkle_paths={}, code_bytes={}, {:?}, stop={}, err={}",
         header.number,
         warmed_union.len(),
         total_gas,
         passes,
         merkle_paths,
+        cache.code_bytes(),
         start.elapsed(),
         stop_reason,
         any_err,

@@ -1177,3 +1177,92 @@ mod amsterdam_chain_config_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod storage_leaf_decoding_tests {
+    use super::*;
+    use ethrex_crypto::NativeCrypto;
+
+    /// A state holding one account whose storage trie maps `slot` to `leaf`,
+    /// stored verbatim as the trie value so malformed encodings reach the reader.
+    fn state_with_storage_leaf(address: Address, slot: H256, leaf: Vec<u8>) -> GuestProgramState {
+        let crypto = &NativeCrypto;
+        let mut storage_trie = Trie::new_temp();
+        storage_trie
+            .insert(hash_key(&slot, crypto), leaf)
+            .expect("insert storage leaf");
+        let storage_root = storage_trie.hash_no_commit(crypto);
+
+        let hashed_address = hash_address(&address, crypto);
+        let account = AccountState {
+            storage_root,
+            ..Default::default()
+        };
+        let mut state_trie = Trie::new_temp();
+        state_trie
+            .insert(hashed_address.as_bytes().to_vec(), account.encode_to_vec())
+            .expect("insert account");
+
+        GuestProgramState {
+            codes_hashed: BTreeMap::new(),
+            block_headers: BTreeMap::new(),
+            state_trie,
+            parent_block_header: BlockHeader::default(),
+            first_block_number: 0,
+            chain_config: ChainConfig::default(),
+            storage_tries: BTreeMap::from([(hashed_address, storage_trie)]),
+            account_hashes_by_address: BTreeMap::new(),
+            verified_storage_roots: BTreeMap::new(),
+        }
+    }
+
+    fn read(leaf: &[u8]) -> Result<Option<U256>, GuestProgramStateError> {
+        let address = Address::from_low_u64_be(0xaa);
+        let slot = H256::from_low_u64_be(1);
+        state_with_storage_leaf(address, slot, leaf.to_vec()).get_storage_slot(
+            address,
+            slot,
+            &NativeCrypto,
+        )
+    }
+
+    /// A storage leaf must decode as a canonical RLP `U256` or the read fails.
+    ///
+    /// execution-specs #3659 (tests-zkevm@v21.0.1) replaced a lenient decode that
+    /// returned zero for a list-shaped leaf with `rlp.decode_to(U256, leaf)`, so a
+    /// malformed leaf now fails validation. No conformance fixture carries one,
+    /// which leaves this test as the only guard: a reader that fell back to zero
+    /// would let a witness forge an empty slot. The cases mirror what
+    /// `rlp.decode_to(U256, ...)` accepts and rejects.
+    #[test]
+    fn malformed_storage_leaves_fail_instead_of_reading_as_zero() {
+        for (leaf, expected) in [
+            (&[0x80][..], U256::zero()),
+            (&[0x01][..], U256::one()),
+            (&[0x82, 0x01, 0x00][..], U256::from(256)),
+        ] {
+            assert_eq!(
+                read(leaf).expect("canonical leaf must decode"),
+                Some(expected),
+                "leaf 0x{}",
+                hex::encode(leaf)
+            );
+        }
+
+        let oversized: Vec<u8> = [&[0xa1u8][..], &[0x01; 33][..]].concat();
+        for (leaf, what) in [
+            (&[0x82, 0x00, 0x01][..], "leading zero byte"),
+            (&[0x81, 0x01][..], "single byte wrapped in a length prefix"),
+            (&[0xc0][..], "empty list"),
+            (&[0xc1, 0x01][..], "list holding a value"),
+            (&oversized[..], "33-byte value"),
+            (&[0x01, 0x01][..], "trailing byte"),
+        ] {
+            assert!(
+                read(leaf).is_err(),
+                "a {what} leaf (0x{}) must fail the read, not decode",
+                hex::encode(leaf)
+            );
+        }
+    }
+}

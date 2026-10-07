@@ -290,7 +290,12 @@ pub fn open_store_with_config(datadir: &Path, config: StoreConfig) -> Result<Sto
 
 pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<Blockchain> {
     info!("Initiating blockchain with levm");
-    Blockchain::new(store, blockchain_opts).into()
+    let blockchain = Blockchain::new(store, blockchain_opts);
+    // The pool is built on first merkleization, which for a node is the first block
+    // it imports. Force it here so a node that cannot spawn the 17 workers fails at
+    // boot rather than panicking inside the merkleizer mid-`newPayload`.
+    blockchain.preinitialize_merkle_pool();
+    blockchain.into()
 }
 
 /// Cause of a fatal-subsystem shutdown, set by [`spawn_fatal`] before it cancels the node.
@@ -856,10 +861,13 @@ pub async fn init_l1(
 
     // An explicit size skips memory detection entirely; the default path runs
     // it once and logs the derivation.
-    let store_config = opts
-        .rocksdb_block_cache_size
-        .map(StoreConfig::with_rocksdb_block_cache_size)
-        .unwrap_or_default();
+    let store_config = StoreConfig {
+        code_cache_size: opts.code_cache_size,
+        ..opts
+            .rocksdb_block_cache_size
+            .map(StoreConfig::with_rocksdb_block_cache_size)
+            .unwrap_or_default()
+    };
     let store_result = if opts.skip_genesis_validation {
         init_store_skip_validation_with_config(&datadir, genesis, store_config).await
     } else {
@@ -921,6 +929,7 @@ pub async fn init_l1(
             blob_eager_provider: opts.blob_eager_provider,
             max_reorg_depth: opts.max_reorg_depth,
             gap_admit_occupancy_threshold: opts.mempool_gap_admit_occupancy_threshold,
+            mempool_prewarm_enabled: true,
         },
     );
 

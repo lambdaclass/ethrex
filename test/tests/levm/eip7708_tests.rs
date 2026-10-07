@@ -204,6 +204,7 @@ impl TestBuilder {
             disable_balance_check: false,
             disable_nonce_check: false,
             disable_gas_allowance_check: false,
+            disable_sender_eoa_check: false,
             is_system_call: false,
         };
 

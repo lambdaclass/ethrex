@@ -48,6 +48,26 @@ impl RLPEncode for OptionalBal {
     }
 }
 
+/// Borrowing counterpart of [`OptionalBal`], so a response is encoded straight from the
+/// entries it holds instead of from a deep copy of every block access list.
+struct OptionalBalRef<'a>(&'a Option<BlockAccessList>);
+
+impl RLPEncode for OptionalBalRef<'_> {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        match self.0 {
+            None => buf.put_u8(0x80),
+            Some(bal) => bal.encode(buf),
+        }
+    }
+
+    fn length(&self) -> usize {
+        match self.0 {
+            None => 1,
+            Some(bal) => bal.length(),
+        }
+    }
+}
+
 impl RLPDecode for OptionalBal {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
         if rlp.first() == Some(&0x80) {
@@ -121,12 +141,8 @@ impl RLPxMessage for BlockAccessLists {
 
     fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
-        let bals: Vec<OptionalBal> = self
-            .block_access_lists
-            .iter()
-            .cloned()
-            .map(OptionalBal)
-            .collect();
+        let bals: Vec<OptionalBalRef<'_>> =
+            self.block_access_lists.iter().map(OptionalBalRef).collect();
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
             .encode_field(&bals)
