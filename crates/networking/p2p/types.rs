@@ -545,7 +545,8 @@ impl NodeRecord {
         let mut result: String = "enr:".into();
         let base64_encoded = String::from_utf8(base64_encoded)
             .map_err(|_| NodeError::ParseError("Could not base 64 encode enr record".into()))?;
-        result.push_str(&base64_encoded);
+        // ENR text uses unpadded URL-safe base64 (EIP-778).
+        result.push_str(base64_encoded.trim_end_matches('='));
         Ok(result)
     }
 
