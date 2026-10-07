@@ -1,4 +1,4 @@
-.PHONY: download-test-vectors clean-vectors test test-levm test-stateless amsterdam-vectors zkevm-vectors zkevm-benchmark-vectors
+.PHONY: download-test-vectors clean-vectors test test-levm test-stateless zkevm-vectors zkevm-benchmark-vectors
 
 VECTORS_ROOT := vectors
 FIXTURES_FILE := ../.fixtures_url
@@ -17,27 +17,29 @@ LEGACYTEST_COMMIT := 1f581b8ccdc4c63acf5f2c5c1b155c690c32a8eb
 LEGACYTEST_URL := https://github.com/ethereum/legacytests/archive/$(LEGACYTEST_COMMIT).tar.gz
 LEGACYTEST_ARCHIVE_ROOT := legacytests-$(LEGACYTEST_COMMIT)/Cancun/BlockchainTests
 
-AMSTERDAM_FIXTURES_FILE := ../.fixtures_url_amsterdam
-AMSTERDAM_ARTIFACT := amsterdam-tests.tar.gz
-AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
-
-# Subtrees the Amsterdam bundle contributes. `for_bpo2toamsterdamattime15k` holds the
-# fork-activation fixtures (a header field appearing mid-chain, the gas schedule
-# switching between blocks); it exists only in this bundle, so omitting it leaves the
-# whole fork boundary untested.
-AMSTERDAM_SUBTREES := for_amsterdam for_bpo2toamsterdamattime15k
-AMSTERDAM_STAMP := $(SPECTEST_VECTORS_DIR)/.amsterdam_overlay
-
 # The zkevm bundle is the Amsterdam fixtures plus the EIP-8025 stateless witness
-# fields (executionWitness / statelessInputBytes / statelessOutputBytes). Bump it
-# to a release filled against the same tests-glamsterdam-devnet content the
-# Amsterdam pin above names: when the two drift, the bundles describe slightly
-# different chains.
+# fields (executionWitness / statelessInputBytes / statelessOutputBytes). Each
+# release is filled from a base `tests@` release, named in its release notes,
+# and that base must match `.fixtures_url` above: when the two drift, the bundles
+# describe slightly different chains. The zkevm line shares the base's major and
+# minor numbers but ships patch releases of its own, so a zkevm-only bump such as
+# v21.0.1, on the unchanged tests@v21.0.0 base, leaves `.fixtures_url` alone.
 # Both bundles extract a `for_amsterdam/` subtree, so we keep the zkevm bundle in
 # a separate root that only the stateless harness reads, to avoid overlaying the
 # regular Amsterdam fixtures.
 ZKEVM_VECTORS_ROOT := vectors_zkevm
 ZKEVM_VECTORS_DIR := $(ZKEVM_VECTORS_ROOT)/eest
+# The same bundle's Engine API fixtures. Since tests-zkevm@v21.0.1 their payloads
+# carry stateless bytes too, including the payload mutations (block access list,
+# slot number) that have no RLP-block form, so they cover strictly more invalid
+# inputs than the blockchain fixtures do. A separate root keeps the blockchain
+# runner from parsing them.
+ZKEVM_ENGINE_VECTORS_ROOT := vectors_zkevm_engine
+ZKEVM_ENGINE_VECTORS_DIR := $(ZKEVM_ENGINE_VECTORS_ROOT)/eest
+# Subtrees extracted from both fixture kinds. `for_bpo2toamsterdamattime15k` holds
+# the fork-activation fixtures, whose witnesses carry pre-Amsterdam headers, so
+# omitting it leaves the guest untested across the fork boundary.
+ZKEVM_SUBTREES := for_amsterdam for_bpo2toamsterdamattime15k
 ZKEVM_FIXTURES_FILE := ../.fixtures_url_zkevm
 ZKEVM_ARTIFACT := zkevm-tests.tar.gz
 ZKEVM_URL := $(shell cat $(ZKEVM_FIXTURES_FILE))
@@ -77,36 +79,16 @@ $(LEGACYTEST_VECTORS_DIR): $(LEGACYTEST_ARTIFACT)
 		$(LEGACYTEST_ARCHIVE_ROOT)/GeneralStateTests \
 		$(LEGACYTEST_ARCHIVE_ROOT)/ValidBlocks
 
-# The overlay is keyed on the release URL it was built from, recorded in
-# $(AMSTERDAM_STAMP). Timestamps cannot express this: a bundle left on disk by
-# another branch says nothing in its mtime about which release it came from, so one
-# that merely looks newer than the URL file would be re-extracted as if it were the
-# requested release. Clearing the subtrees before extracting also drops fixtures that
-# upstream renamed or removed, which would otherwise survive and run against the
-# current client. $(DOWNLOAD) fetches through a temporary file, so a failed download
-# leaves the previous bundle and stamp untouched instead of truncating them.
-amsterdam-vectors: | $(SPECTEST_VECTORS_DIR) ## 📥 Overlay Amsterdam fixtures, re-fetching when the pinned release changed
-	@have=$$(cat $(AMSTERDAM_STAMP) 2>/dev/null); \
-	for subtree in $(AMSTERDAM_SUBTREES); do \
-		[ -d $(SPECTEST_VECTORS_DIR)/$$subtree ] || have=; \
-	done; \
-	if [ "$$have" = "$(AMSTERDAM_URL)" ]; then \
-		echo "Amsterdam fixtures already overlaid from $(AMSTERDAM_URL)"; \
-	else \
-		$(DOWNLOAD) $(AMSTERDAM_URL) $(AMSTERDAM_ARTIFACT) && \
-		rm -rf $(addprefix $(SPECTEST_VECTORS_DIR)/,$(AMSTERDAM_SUBTREES)) && \
-		tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) \
-			$(addprefix fixtures/blockchain_tests/,$(AMSTERDAM_SUBTREES)) && \
-		echo "$(AMSTERDAM_URL)" > $(AMSTERDAM_STAMP); \
-	fi
-
 $(ZKEVM_ARTIFACT): $(ZKEVM_FIXTURES_FILE)
 	$(DOWNLOAD) $(ZKEVM_URL) $(ZKEVM_ARTIFACT)
 
 $(ZKEVM_VECTORS_DIR): $(ZKEVM_ARTIFACT)
-	rm -rf $(ZKEVM_VECTORS_DIR)
-	mkdir -p $(ZKEVM_VECTORS_DIR)
-	tar -xzf $(ZKEVM_ARTIFACT) --strip-components=2 -C $(ZKEVM_VECTORS_DIR) fixtures/blockchain_tests/for_amsterdam
+	rm -rf $(ZKEVM_VECTORS_DIR) $(ZKEVM_ENGINE_VECTORS_DIR)
+	mkdir -p $(ZKEVM_VECTORS_DIR) $(ZKEVM_ENGINE_VECTORS_DIR)
+	tar -xzf $(ZKEVM_ARTIFACT) --strip-components=2 -C $(ZKEVM_VECTORS_DIR) \
+		$(addprefix fixtures/blockchain_tests/,$(ZKEVM_SUBTREES))
+	tar -xzf $(ZKEVM_ARTIFACT) --strip-components=2 -C $(ZKEVM_ENGINE_VECTORS_DIR) \
+		$(addprefix fixtures/blockchain_tests_engine/,$(ZKEVM_SUBTREES))
 
 $(ZKEVM_BENCH_ARTIFACT): $(ZKEVM_BENCH_FIXTURES_FILE)
 	$(DOWNLOAD) $(ZKEVM_BENCH_URL) $(ZKEVM_BENCH_ARTIFACT)
@@ -121,7 +103,7 @@ ZKEVM_BENCH_SUBTREES := \
   compute/scenario/mix_operations
 ZKEVM_BENCH_TIERS := for_amsterdam_at_0010M for_amsterdam_at_0030M for_amsterdam_at_0060M
 
-# Keyed on the release URL, like `amsterdam-vectors`, and written only after a
+# Keyed on the release URL, and written only after a
 # successful untar. Two things this buys: `clean-vectors` runs from the
 # `$(SPECTEST_ARTIFACT)` rule on any `.fixtures_url` bump, which would otherwise
 # silently discard this opt-in multi-GB download; and an interrupted extraction
@@ -152,13 +134,13 @@ zkevm-vectors: $(ZKEVM_VECTORS_DIR)
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-download-test-vectors: $(VECTORS_TARGETS) amsterdam-vectors zkevm-vectors ## 📥 Download test vectors
+download-test-vectors: $(VECTORS_TARGETS) zkevm-vectors ## 📥 Download test vectors
 
 clean-vectors: ## 🗑️  Clean test vectors
-	rm -rf $(VECTORS_ROOT) $(ZKEVM_VECTORS_ROOT) $(ZKEVM_BENCH_VECTORS_ROOT)
-	rm -f $(SPECTEST_ARTIFACT) $(LEGACYTEST_ARTIFACT) $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_ARTIFACT).part $(ZKEVM_ARTIFACT) $(ZKEVM_BENCH_ARTIFACT)
+	rm -rf $(VECTORS_ROOT) $(ZKEVM_VECTORS_ROOT) $(ZKEVM_ENGINE_VECTORS_ROOT) $(ZKEVM_BENCH_VECTORS_ROOT)
+	rm -f $(SPECTEST_ARTIFACT) $(LEGACYTEST_ARTIFACT) $(ZKEVM_ARTIFACT) $(ZKEVM_BENCH_ARTIFACT)
 
-test-levm: $(VECTORS_TARGETS) amsterdam-vectors ## 🧪 Run blockchain tests with LEVM
+test-levm: $(VECTORS_TARGETS) ## 🧪 Run blockchain tests with LEVM
 	cargo test --profile release-fast
 
 test-stateless: zkevm-vectors

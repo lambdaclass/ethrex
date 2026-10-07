@@ -862,10 +862,13 @@ pub async fn init_l1(
 
     // An explicit size skips memory detection entirely; the default path runs
     // it once and logs the derivation.
-    let store_config = opts
-        .rocksdb_block_cache_size
-        .map(StoreConfig::with_rocksdb_block_cache_size)
-        .unwrap_or_default();
+    let store_config = StoreConfig {
+        code_cache_size: opts.code_cache_size,
+        ..opts
+            .rocksdb_block_cache_size
+            .map(StoreConfig::with_rocksdb_block_cache_size)
+            .unwrap_or_default()
+    };
     let store_result = if opts.skip_genesis_validation {
         init_store_skip_validation_with_config(&datadir, genesis, store_config).await
     } else {

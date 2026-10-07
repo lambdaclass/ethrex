@@ -45,6 +45,13 @@ pub struct PeerData {
     pub node: Node,
     pub record: Option<NodeRecord>,
     pub supported_capabilities: Vec<Capability>,
+    /// The one version per protocol that this connection actually speaks, as settled by
+    /// the `Hello` exchange. Peer selection must filter on this rather than on
+    /// `supported_capabilities`: a peer advertising both snap/1 and snap/2 negotiates
+    /// snap/2, and snap/2 rejects the snap/1-only `GetTrieNodes`/`TrieNodes` codes
+    /// (EIP-8189). `supported_capabilities` stays the full advertised list because
+    /// `admin_peers` reports it.
+    pub negotiated_capabilities: Vec<Capability>,
     /// The eth version in force for this session: the highest version both sides
     /// advertised. Message shapes on the wire must be chosen from this and never
     /// from `supported_capabilities`, which is only what the peer offered and may
@@ -75,6 +82,7 @@ impl PeerData {
             node,
             record,
             supported_capabilities: capabilities,
+            negotiated_capabilities: Vec::new(),
             negotiated_eth,
             is_connection_inbound: false,
             connection,
@@ -171,6 +179,7 @@ pub trait PeerTableServerProtocol: Send + Sync {
         node: Node,
         connection: PeerConnection,
         capabilities: Vec<Capability>,
+        negotiated_capabilities: Vec<Capability>,
         negotiated_eth: Option<Capability>,
         is_inbound: bool,
     ) -> Response<bool>;
@@ -255,6 +264,7 @@ impl PeerTableServer {
             msg.node,
             Some(msg.connection),
             msg.capabilities,
+            msg.negotiated_capabilities,
             msg.negotiated_eth,
             msg.is_inbound,
         )
@@ -436,7 +446,7 @@ impl PeerTableServer {
                 && msg
                     .capabilities
                     .iter()
-                    .any(|cap| peer_data.supported_capabilities.contains(cap))
+                    .any(|cap| peer_data.negotiated_capabilities.contains(cap))
         })
     }
 
@@ -567,6 +577,7 @@ impl PeerTableServer {
         node: Node,
         connection: Option<PeerConnection>,
         capabilities: Vec<Capability>,
+        negotiated_capabilities: Vec<Capability>,
         negotiated_eth: Option<Capability>,
         is_inbound: bool,
     ) -> bool {
@@ -575,6 +586,7 @@ impl PeerTableServer {
             return false;
         }
         let mut new_peer = PeerData::new(node, None, connection, capabilities, negotiated_eth);
+        new_peer.negotiated_capabilities = negotiated_capabilities;
         new_peer.is_connection_inbound = is_inbound;
         self.peers.insert(new_peer_id, new_peer);
         true
@@ -608,7 +620,7 @@ impl PeerTableServer {
                     || !self.can_try_more_requests(&peer_data.score, &peer_data.requests)
                     || !capabilities
                         .iter()
-                        .any(|cap| peer_data.supported_capabilities.contains(cap))
+                        .any(|cap| peer_data.negotiated_capabilities.contains(cap))
                 {
                     None
                 } else {
@@ -637,7 +649,7 @@ impl PeerTableServer {
                 if !self.can_try_more_requests(&peer_data.score, &peer_data.requests)
                     || !capabilities
                         .iter()
-                        .any(|cap| peer_data.supported_capabilities.contains(cap))
+                        .any(|cap| peer_data.negotiated_capabilities.contains(cap))
                 {
                     None
                 } else {
@@ -661,7 +673,7 @@ impl PeerTableServer {
             .filter(|peer_data| {
                 capabilities
                     .iter()
-                    .any(|cap| peer_data.supported_capabilities.contains(cap))
+                    .any(|cap| peer_data.negotiated_capabilities.contains(cap))
             })
             .count()
     }
@@ -680,7 +692,7 @@ impl PeerTableServer {
             .filter_map(|(node_id, peer_data)| {
                 if !capabilities
                     .iter()
-                    .any(|cap| peer_data.supported_capabilities.contains(cap))
+                    .any(|cap| peer_data.negotiated_capabilities.contains(cap))
                 {
                     return None;
                 }
@@ -730,7 +742,7 @@ mod tests {
     /// Registration with no live connection behind it, and no negotiated `eth`
     /// version: enough to exercise the claim, which only ever looks at the node id.
     fn claim(table: &mut PeerTableServer, node: Node) -> bool {
-        table.do_new_connected_peer(node, None, vec![], None, false)
+        table.do_new_connected_peer(node, None, vec![], vec![], None, false)
     }
 
     #[test]
@@ -770,6 +782,64 @@ mod tests {
         assert!(
             claim(&mut table, node(3)),
             "a reconnect is granted the slot"
+        );
+    }
+
+    /// Helper: register a peer that advertises `advertised` and settled on
+    /// `negotiated` during the `Hello` exchange.
+    fn server_with_peer(
+        advertised: Vec<Capability>,
+        negotiated: Vec<Capability>,
+    ) -> PeerTableServer {
+        let mut server = PeerTableServer::new(1);
+        let node = node(1);
+        let node_id = node.node_id();
+        let mut peer = PeerData::new(node, None, None, advertised, None);
+        peer.negotiated_capabilities = negotiated;
+        server.peers.insert(node_id, peer);
+        server
+    }
+
+    /// snap/2 removes `GetTrieNodes` (EIP-8189), so a peer that advertises both
+    /// versions but negotiated snap/2 must not be handed to the trie-node healing
+    /// paths, which select on `SNAP1_ONLY_CAPABILITIES`.
+    #[test]
+    fn peer_count_matches_negotiated_snap_version_not_advertised() {
+        let server = server_with_peer(
+            vec![
+                Capability::eth(71),
+                Capability::snap(1),
+                Capability::snap(2),
+            ],
+            vec![Capability::eth(71), Capability::snap(2)],
+        );
+        assert_eq!(
+            server.do_peer_count_by_capabilities(vec![Capability::snap(2)]),
+            1
+        );
+        assert_eq!(
+            server.do_peer_count_by_capabilities(vec![Capability::snap(1)]),
+            0
+        );
+        assert_eq!(
+            server.do_peer_count_by_capabilities(vec![Capability::eth(71)]),
+            1
+        );
+    }
+
+    #[test]
+    fn peer_count_matches_snap1_when_that_is_what_was_negotiated() {
+        let server = server_with_peer(
+            vec![Capability::eth(71), Capability::snap(1)],
+            vec![Capability::eth(71), Capability::snap(1)],
+        );
+        assert_eq!(
+            server.do_peer_count_by_capabilities(vec![Capability::snap(1)]),
+            1
+        );
+        assert_eq!(
+            server.do_peer_count_by_capabilities(vec![Capability::snap(2)]),
+            0
         );
     }
 }
