@@ -41,6 +41,7 @@ use ethrex_rlp::{
 };
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
 use ethrex_trie::{Node, NodeRLP};
+use indexmap::IndexMap;
 use lru::LruCache;
 use rayon::prelude::*;
 use rustc_hash::FxBuildHasher;
@@ -48,6 +49,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, HashSet, hash_map::Entry},
     fmt::Debug,
+    hash::BuildHasher,
     io::Write,
     num::NonZeroUsize,
     path::{Path, PathBuf},
@@ -253,6 +255,8 @@ pub struct StoreConfig {
     /// the effective ceiling on RocksDB's resident memory. Ignored for
     /// in-memory backends.
     pub rocksdb_block_cache_size: usize,
+    /// Byte budget of the bytecode cache. `None` keeps [`CODE_CACHE_MAX_SIZE`].
+    pub code_cache_size: Option<u64>,
     /// Bound on the persist worker's channel: number of staged (acked) live
     /// messages whose flush may still be in flight. Once full, the next send
     /// blocks — that is the backpressure that throttles `newPayload`.
@@ -268,6 +272,7 @@ impl StoreConfig {
     pub fn with_rocksdb_block_cache_size(rocksdb_block_cache_size: usize) -> Self {
         Self {
             rocksdb_block_cache_size,
+            code_cache_size: None,
             persist_channel_capacity: DEFAULT_PERSIST_CHANNEL_CAPACITY,
         }
     }
@@ -290,15 +295,23 @@ enum FKVGeneratorControlMessage {
 ///
 /// Bytecode is a small fraction of the working set next to trie nodes and flat
 /// key-values (which the RocksDB block cache serves), but a cold code read costs a
-/// blob-file fetch, so caching contracts pays for itself: 256 MiB holds ~10k max-size
-/// (24 KiB) contracts, or ~100k of typical size.
-const CODE_CACHE_MAX_SIZE: u64 = 256 * 1024 * 1024;
+/// blob-file fetch plus decompression, so caching contracts pays for itself.
+///
+/// 2 GiB holds ~29k max-size contracts: a 64 KiB contract (EIP-7954) is accounted
+/// at ~72 KiB, its padded bytecode plus the 8 KiB jumpdest bitmap. Entries never
+/// expire and every read that misses inserts (block execution, snap `GetByteCodes`
+/// serving, `eth_getCode`, `eth_call`), so a long-running node fills the budget.
+/// Each entry is also charged [`CODE_CACHE_ENTRY_OVERHEAD`] for its map slot and
+/// buffer headers, so small contracts cannot hold the cache far over its budget.
+const CODE_CACHE_MAX_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 
 /// Entry bound for [`Store::code_metadata_cache`], derived from a 16 MiB ceiling at the
-/// ~64 B an `LruCache` entry costs (32 B key + 8 B value + list/table overhead). Sized
-/// against the code cache it shadows: at 256 MiB that holds ~10k max-size or ~100k
-/// typical contracts, so this keeps a length for every code that could be resident and
-/// then some, while bounding what an `EXTCODESIZE` sweep over unique contracts can pin.
+/// ~64 B an `LruCache` entry costs (32 B key + 8 B value + list/table overhead). The
+/// ~262k lengths it keeps cover every code the 2 GiB code cache can hold while cached
+/// contracts average at least 8 KiB (~10.5 KiB on mainnet). A cache of smaller ones,
+/// such as EIP-7702 delegations, holds more codes than that, and `EXTCODESIZE` on
+/// those falls through to `ACCOUNT_CODE_METADATA`. The bound caps what an
+/// `EXTCODESIZE` sweep over unique contracts can pin.
 const CODE_METADATA_CACHE_MAX_ENTRIES: usize = (16 * 1024 * 1024) / 64;
 
 /// Key used to persist the `flushed_upto` block number in `MISC_VALUES`.
@@ -310,53 +323,103 @@ const BAD_BLOCKS_KEY: &[u8] = b"bad_blocks";
 /// Maximum number of bad blocks retained for `debug_getBadBlocks`.
 const MAX_BAD_BLOCKS: usize = 16;
 
-#[derive(Debug)]
+/// Heap bytes a [`CodeCache`] entry costs beyond [`Code::size`]: its slot in the map's
+/// entry vector and index, and the headers of the two shared buffers. Measured at 126 to
+/// 133 bytes requested per entry, before the allocator rounds them up to its size classes.
+/// Without it, a cache full of small contracts held nearly twice its budget (1.87x at 32
+/// bytes).
+const CODE_CACHE_ENTRY_OVERHEAD: u64 = 160;
+
+/// Bytecode cache that evicts a uniformly random entry when over budget.
+///
+/// Not LRU on purpose: blocks can walk the same set of contracts over and over, and
+/// once that set outgrows the budget an LRU evicts every entry just before its next
+/// use, so the hit rate collapses to zero. A random victim has no such pathology: with
+/// a set 1.25x the budget about 62% of the reads still hit, and the hit rate shrinks
+/// gradually as the set grows instead of falling off a cliff.
 struct CodeCache {
-    inner_cache: LruCache<H256, Code, FxBuildHasher>,
+    entries: IndexMap<H256, Code, FxBuildHasher>,
     cache_size: u64,
     max_size: u64,
+    /// xorshift64* state; seeded per process so the victims cannot be predicted.
+    rng: u64,
+}
+
+// Not derived: `Store` derives `Debug`, and a derived impl here would format every cached
+// bytecode (up to the whole budget) and the RNG state.
+impl std::fmt::Debug for CodeCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CodeCache")
+            .field("len", &self.entries.len())
+            .field("cache_size", &self.cache_size)
+            .field("max_size", &self.max_size)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for CodeCache {
     fn default() -> Self {
         Self {
-            inner_cache: LruCache::unbounded_with_hasher(FxBuildHasher),
+            entries: IndexMap::default(),
             cache_size: 0,
             max_size: CODE_CACHE_MAX_SIZE,
+            // xorshift must not start at zero.
+            rng: std::collections::hash_map::RandomState::new().hash_one(0u64) | 1,
         }
     }
 }
 
 impl CodeCache {
-    fn get(&mut self, code_hash: &H256) -> Result<Option<Code>, StoreError> {
-        Ok(self.inner_cache.get(code_hash).cloned())
+    /// What one cached `code` costs against `max_size`.
+    fn entry_size(code: &Code) -> u64 {
+        (code.size() as u64).saturating_add(CODE_CACHE_ENTRY_OVERHEAD)
+    }
+
+    fn get(&self, code_hash: &H256) -> Result<Option<Code>, StoreError> {
+        Ok(self.entries.get(code_hash).cloned())
+    }
+
+    fn contains(&self, code_hash: &H256) -> bool {
+        self.entries.contains_key(code_hash)
     }
 
     fn insert(&mut self, code: &Code) -> Result<(), StoreError> {
         // A hash already cached must not be added to `cache_size` again, or the counter
-        // drifts up permanently and evicts entries that fit. `get` also refreshes
-        // recency, which is what a repeated read should do.
-        if self.inner_cache.get(&code.hash).is_some() {
+        // drifts up permanently and evicts entries that fit.
+        if self.entries.contains_key(&code.hash) {
+            return Ok(());
+        }
+        // An entry larger than the whole budget would hold the cache over it, so it is
+        // not cached; the caller already has its copy.
+        let size = Self::entry_size(code);
+        if size > self.max_size {
             return Ok(());
         }
 
-        self.cache_size += code.size() as u64;
-        self.inner_cache.put(code.hash, code.clone());
-
-        while self.cache_size > self.max_size {
-            if let Some((_, code)) = self.inner_cache.pop_lru() {
-                self.cache_size -= code.size() as u64;
-            } else {
-                break;
+        // Evicting before the insert keeps the new entry out of the draw, so it stays
+        // cached for the caller about to read it and every victim is equally likely.
+        while self.cache_size + size > self.max_size && !self.entries.is_empty() {
+            let victim = (self.next_random() % self.entries.len() as u64) as usize;
+            if let Some((_, evicted)) = self.entries.swap_remove_index(victim) {
+                self.cache_size -= Self::entry_size(&evicted);
             }
         }
+        self.cache_size += size;
+        self.entries.insert(code.hash, code.clone());
 
-        let cache_len = self.inner_cache.len();
+        let cache_len = self.entries.len();
         let current_size = self.cache_size;
         debug!(
             "[ACCOUNT CODE CACHE] cache elements (): {cache_len}, total size: {current_size} bytes"
         );
         Ok(())
+    }
+
+    fn next_random(&mut self) -> u64 {
+        self.rng ^= self.rng >> 12;
+        self.rng ^= self.rng << 25;
+        self.rng ^= self.rng >> 27;
+        self.rng.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
 }
 
@@ -1166,7 +1229,7 @@ impl Store {
 
     /// Get account code by its hash.
     ///
-    /// Checks the in-memory block-data buffer first, then the LRU cache
+    /// Checks the in-memory block-data buffer first, then the bytecode cache
     /// (`account_code_cache`), and finally the database.  Code that has been
     /// inserted via `engine_newPayload` but not yet flushed to disk is therefore
     /// visible to callers without an explicit flush.
@@ -1229,14 +1292,18 @@ impl Store {
 
     /// Batched [`Self::get_account_code`].
     ///
-    /// Resolves the buffer and the LRU first, then reads whatever is left by whichever
+    /// Resolves the buffer and the bytecode cache first, then reads whatever is left by whichever
     /// of two strategies gets more of those reads in flight for a batch this size: a
     /// parallel fan-out of point gets, or sorted keys split into contiguous shards read
     /// concurrently. See the comment on the read below for how the choice is made. The
-    /// LRU is locked once for the whole batch rather than twice per code.
+    /// cache is locked once for the whole batch rather than twice per code.
     ///
     /// Results are returned in the order of `code_hashes`. Duplicate hashes are read
     /// once. `None` means the hash is absent from the database.
+    ///
+    /// Every requested code is held at once until the result is dropped, and nothing here
+    /// bounds that by the code cache budget: a caller reading many contracts it does not
+    /// control must chunk `code_hashes` and charge each chunk against its own budget.
     pub fn get_account_codes_batch(
         &self,
         code_hashes: &[H256],
@@ -1247,7 +1314,7 @@ impl Store {
 
         {
             let buffer = self.buffer()?;
-            let mut cache = self
+            let cache = self
                 .account_code_cache
                 .lock()
                 .map_err(|_| StoreError::LockError)?;
@@ -1394,8 +1461,7 @@ impl Store {
             .account_code_cache
             .lock()
             .map_err(|_| StoreError::LockError)?
-            .get(&code_hash)?
-            .is_some()
+            .contains(&code_hash)
         {
             return Ok(true);
         }
@@ -2263,6 +2329,20 @@ impl Store {
     pub fn new_with_config(
         path: impl AsRef<Path>,
         engine_type: EngineType,
+        config: StoreConfig,
+    ) -> Result<Self, StoreError> {
+        let code_cache_size = config.code_cache_size.unwrap_or(CODE_CACHE_MAX_SIZE);
+        let store = Self::open_with_config(path, engine_type, config)?;
+        if let Ok(mut cache) = store.account_code_cache.lock() {
+            cache.max_size = code_cache_size;
+        }
+        info!(cache_bytes = code_cache_size, "sized bytecode cache");
+        Ok(store)
+    }
+
+    fn open_with_config(
+        path: impl AsRef<Path>,
+        engine_type: EngineType,
         // `config` only feeds the RocksDB backend; without that feature it is unused.
         #[cfg_attr(not(feature = "rocksdb"), allow(unused_variables))] config: StoreConfig,
     ) -> Result<Self, StoreError> {
@@ -2284,20 +2364,22 @@ impl Store {
                     // of erroring out.
                     init_metadata_file(&db_path)?;
                 }
+                // Neither arm below runs a migration, so neither is a
+                // `MigrationFailed`: that variant tells the operator the data may be
+                // half-converted, which is false here — the database is untouched.
                 Some(v) if v < 1 => {
-                    return Err(StoreError::MigrationFailed {
-                        from: v,
-                        to: STORE_SCHEMA_VERSION,
-                        reason: format!("DB version v{v} is invalid (predates migrations)"),
+                    // No ethrex ever wrote a v0 marker; the file is corrupt or hand-edited.
+                    return Err(StoreError::IncompatibleDBVersion {
+                        found: v,
+                        expected: STORE_SCHEMA_VERSION,
                     });
                 }
                 Some(v) if v > STORE_SCHEMA_VERSION => {
-                    return Err(StoreError::MigrationFailed {
-                        from: v,
-                        to: STORE_SCHEMA_VERSION,
-                        reason: format!(
-                            "DB version v{v} is more recent than the client expects (v{STORE_SCHEMA_VERSION}). Rolling back is not supported"
-                        ),
+                    // Written by a newer ethrex. Downgrading is unsupported, but the
+                    // database is intact: a binary that speaks v{v} opens it as is.
+                    return Err(StoreError::IncompatibleDBVersion {
+                        found: v,
+                        expected: STORE_SCHEMA_VERSION,
                     });
                 }
                 #[cfg(feature = "rocksdb")]
@@ -3062,10 +3144,19 @@ impl Store {
         block_hash: BlockHash,
         bal: &BlockAccessList,
     ) -> Result<(), StoreError> {
-        let key = block_hash.as_bytes().to_vec();
         let mut value = vec![];
         bal.encode(&mut value);
-        self.write(BLOCK_ACCESS_LISTS, key, value)
+        self.store_block_access_list_encoded(block_hash, value)
+    }
+
+    /// Store a block access list the caller has already RLP-encoded, so a caller
+    /// that also needs the encoded size does not encode it twice.
+    pub fn store_block_access_list_encoded(
+        &self,
+        block_hash: BlockHash,
+        encoded: Vec<u8>,
+    ) -> Result<(), StoreError> {
+        self.write(BLOCK_ACCESS_LISTS, block_hash.as_bytes().to_vec(), encoded)
     }
 
     /// Returns the block access list for a given block hash, if stored.
@@ -3082,6 +3173,21 @@ impl Store {
             }
             None => Ok(None),
         }
+    }
+
+    /// Fetches block access lists for a slice of block hashes, preserving order.
+    ///
+    /// Returns `None` at any position where the BAL is unavailable (unknown block,
+    /// pre-Amsterdam block, or pruned data). Never errors for individual missing entries.
+    pub fn iter_block_access_lists_by_hashes(
+        &self,
+        hashes: &[BlockHash],
+    ) -> Result<Vec<Option<BlockAccessList>>, StoreError> {
+        let mut out = Vec::with_capacity(hashes.len());
+        for hash in hashes {
+            out.push(self.get_block_access_list(*hash)?);
+        }
+        Ok(out)
     }
 
     pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
@@ -4335,6 +4441,25 @@ impl Store {
         Ok(Some(BlockNumber::from_be_bytes(arr)))
     }
 
+    /// Returns the hash of the block whose trie-layer commit the `STATE_HISTORY`
+    /// entry at `block_number` journals, or `None` when there is no entry.
+    ///
+    /// The persist worker stages one entry per committed layer, so the entry at
+    /// [`Self::highest_state_history_block_number`] identifies the block whose
+    /// post-state is the one on disk.
+    pub fn get_state_history_block_hash(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        let read = self.backend.begin_read()?;
+        let Some(bytes) = read.get(STATE_HISTORY, &block_number.to_be_bytes())? else {
+            return Ok(None);
+        };
+        JournalEntry::decode_block_hash(&bytes)
+            .map(Some)
+            .map_err(|e| StoreError::Custom(format!("STATE_HISTORY entry {block_number}: {e}")))
+    }
+
     /// Returns the lowest block number with a `STATE_HISTORY` entry. Returns `None`
     /// if the journal is empty (no commits since boot, or fully pruned by finality).
     ///
@@ -4626,6 +4751,33 @@ impl Store {
         &last_written[0..64] > account_nibbles.as_ref()
     }
 
+    /// Raises the `flushed_upto` marker to `block_number`, on disk and in the
+    /// buffer's mirror, so the next start anchors at that height. The marker is a
+    /// durability floor and only moves forward: a value at or below the current
+    /// one is a no-op.
+    ///
+    /// Used when startup adopts a head above the recorded one (interrupted
+    /// full-sync batch): the blocks were flushed by the persist worker before the
+    /// interruption, but the failed starts in between walked the marker down.
+    ///
+    /// Must run while the persist worker is idle (at startup, before p2p and RPC
+    /// exist): the buffer update is a read-clone-swap with no compare-and-swap,
+    /// so a concurrent persist message could lose either mutation.
+    pub fn advance_flushed_upto(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+        if self
+            .read_flushed_upto_opt()?
+            .is_some_and(|current| current >= block_number)
+        {
+            return Ok(());
+        }
+        let mut tx = self.backend.begin_write()?;
+        write_flushed_upto(tx.as_mut(), block_number)?;
+        tx.commit()?;
+        mutate_block_buffer(&self.block_data_buffer, |b| {
+            b.set_flushed_upto(block_number)
+        })
+    }
+
     /// Returns the highest block number durably flushed to disk, or `0` when
     /// the marker is absent. Use [`Self::read_flushed_upto_opt`] when you need
     /// to distinguish "absent marker" (legacy DB, everything is durable) from
@@ -4794,8 +4946,11 @@ fn decode_flushed_upto(bytes: &[u8]) -> Result<BlockNumber, StoreError> {
     Ok(BlockNumber::from_le_bytes(arr))
 }
 
-/// RCU-swap the block-data buffer. The persist worker is the sole caller in
-/// production (no lost-update race); test helpers also call this on one thread.
+/// RCU-swap the block-data buffer: read-clone-mutate-swap with no compare-and-swap,
+/// so two concurrent callers lose one mutation. In production the persist worker
+/// is the only caller while the node runs; [`Store::advance_flushed_upto`] also
+/// calls it, but only at startup before the worker has any message in flight.
+/// Test helpers call it on one thread.
 fn mutate_block_buffer(
     buffer: &Arc<RwLock<Arc<BlockDataBuffer>>>,
     f: impl FnOnce(&mut BlockDataBuffer),
@@ -5152,7 +5307,8 @@ fn commit_to_disk(
     // into this write batch. After a deep reorg, the first
     // new-chain commit advances disk from the OLD chain's edge `D` directly to the new
     // chain's tip `T` in a single atomic write; the overlay supplies the bridge for keys
-    // layer_T does not touch. Only meaningful when `!is_batch` (full sync does not journal).
+    // layer_T does not touch. Only meaningful when `!is_batch`: the legacy batch-store path
+    // (`wait_for_flush == true`) is the one path that does not journal.
     let overlay_for_reconciliation = if !is_batch {
         trie.overlay().cloned()
     } else {
@@ -5242,8 +5398,10 @@ fn commit_to_disk(
         // Reverse-diff accumulators for this block's journal entry, one per CF. Each entry
         // stores the on-disk key as-is (storage CFs carry their nibble-encoded account-hash
         // prefix), so a future rollback applies diffs directly without interpretation. For
-        // full sync (`is_batch == true`), no journal entry is written: reorgs aren't
-        // supported during full sync, and journaling would slow it down by a read per write.
+        // the legacy batch-store path (`is_batch == true`) no journal entry is written.
+        // Every per-block path journals — including full sync through the unified
+        // pipeline, whose interrupted-batch recovery at startup relies on the newest
+        // entry naming the block whose state is on disk.
         let mut journal_account_trie: FlatDiff = Vec::new();
         let mut journal_storage_trie: FlatDiff = Vec::new();
         let mut journal_account_flat: FlatDiff = Vec::new();
@@ -5671,7 +5829,7 @@ pub fn receipt_key(block_hash: &BlockHash, index: u64) -> Vec<u8> {
     key
 }
 
-fn encode_code(code: &Code) -> Vec<u8> {
+pub fn encode_code(code: &Code) -> Vec<u8> {
     let jumpdests = code.jumpdests();
     let mut buf = Vec::with_capacity(6 + code.len() + jumpdests.len());
     code.code().encode(&mut buf);
@@ -6008,7 +6166,7 @@ mod account_code_tests {
         }
 
         assert_eq!(cache.cache_size, after_first);
-        assert_eq!(cache.inner_cache.len(), 1);
+        assert_eq!(cache.entries.len(), 1);
     }
 
     /// The accounted size SHALL include the bytecode itself, so the cache honors its
@@ -6022,10 +6180,14 @@ mod account_code_tests {
         assert!(cache.cache_size >= (code.len() + code.jumpdests().len()) as u64);
     }
 
+    /// Fixed xorshift seed, so a failure of an eviction test reproduces.
+    const TEST_RNG_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
+
     #[test]
     fn cache_evicts_down_to_its_budget() {
         let mut cache = CodeCache {
             max_size: 128 * 1024,
+            rng: TEST_RNG_SEED,
             ..Default::default()
         };
 
@@ -6041,7 +6203,118 @@ mod account_code_tests {
         }
 
         assert!(cache.cache_size <= cache.max_size);
-        assert!(cache.inner_cache.len() < 16);
+        assert!(cache.entries.len() < 16);
+    }
+
+    fn numbered_code(i: u64, len: usize) -> Code {
+        let mut bytecode = vec![JUMPDEST; len];
+        bytecode[..8].copy_from_slice(&i.to_be_bytes());
+        Code::from_bytecode_unchecked(bytecode.into(), H256::from_low_u64_be(i))
+    }
+
+    /// Blocks can read the same set of contracts in the same order again and again.
+    /// Once that set outgrows the budget, the cache SHALL still serve most reads: an
+    /// LRU serves none of them, because it evicts every entry just before its reuse.
+    #[test]
+    fn a_cyclic_scan_larger_than_the_budget_still_hits() {
+        let entry_size = CodeCache::entry_size(&numbered_code(0, 4096));
+        let mut cache = CodeCache {
+            max_size: 400 * entry_size,
+            rng: TEST_RNG_SEED,
+            ..Default::default()
+        };
+        // 500 contracts against room for 400: the set is 1.25x the budget.
+        let codes: Vec<Code> = (0..500).map(|i| numbered_code(i, 4096)).collect();
+
+        let (mut hits, mut reads) = (0u64, 0u64);
+        for round in 0..20 {
+            for code in &codes {
+                let cached = cache.get(&code.hash).unwrap();
+                if round >= 5 {
+                    reads += 1;
+                    hits += u64::from(cached.is_some());
+                }
+                if cached.is_none() {
+                    cache.insert(code).unwrap();
+                }
+            }
+        }
+
+        assert!(cache.cache_size <= cache.max_size);
+        assert!(
+            hits * 2 > reads,
+            "only {hits} of {reads} reads hit once the scan outgrew the budget"
+        );
+    }
+
+    /// The entry being inserted SHALL stay cached, since its caller reads it next.
+    #[test]
+    fn eviction_keeps_the_entry_being_inserted() {
+        let entry_size = CodeCache::entry_size(&numbered_code(0, 4096));
+        let mut cache = CodeCache {
+            max_size: 2 * entry_size,
+            rng: TEST_RNG_SEED,
+            ..Default::default()
+        };
+        for i in 0..64 {
+            let code = numbered_code(i, 4096);
+            cache.insert(&code).unwrap();
+            assert!(cache.get(&code.hash).unwrap().is_some());
+            assert!(cache.cache_size <= cache.max_size);
+        }
+    }
+
+    /// An entry larger than the whole budget SHALL NOT be cached, so the cache never
+    /// holds more than its budget, and the entries already cached SHALL stay.
+    #[test]
+    fn an_entry_larger_than_the_budget_is_not_cached() {
+        let small = numbered_code(0, 1024);
+        let mut cache = CodeCache {
+            max_size: 4 * CodeCache::entry_size(&small),
+            rng: TEST_RNG_SEED,
+            ..Default::default()
+        };
+        cache.insert(&small).unwrap();
+
+        let large = numbered_code(1, 8192);
+        assert!(CodeCache::entry_size(&large) > cache.max_size);
+        cache.insert(&large).unwrap();
+
+        assert!(!cache.contains(&large.hash));
+        assert!(cache.contains(&small.hash));
+        assert_eq!(cache.cache_size, CodeCache::entry_size(&small));
+    }
+
+    /// Formatting the cache SHALL NOT print the cached code: `Store` derives `Debug`, and
+    /// the cache can hold its whole budget of bytecode.
+    #[test]
+    fn debug_output_leaves_out_the_cached_code() {
+        let mut cache = CodeCache::default();
+        cache.insert(&numbered_code(7, 4096)).unwrap();
+        let printed = format!("{cache:?}");
+        assert!(printed.len() < 200, "{printed}");
+    }
+
+    /// Small contracts SHALL be charged what an entry costs besides their bytes, so a cache
+    /// full of them stays within its budget instead of holding nearly twice it.
+    #[test]
+    fn small_contracts_are_charged_their_entry_overhead() {
+        let mut cache = CodeCache {
+            max_size: 160 * 1024,
+            rng: TEST_RNG_SEED,
+            ..Default::default()
+        };
+        let mut charged = 0;
+        for i in 0..4096u64 {
+            let mut bytecode = vec![JUMPDEST; 32];
+            bytecode[..8].copy_from_slice(&i.to_be_bytes());
+            let code = Code::from_bytecode_unchecked(bytecode.into(), H256::from_low_u64_be(i));
+            charged = code.size() as u64 + CODE_CACHE_ENTRY_OVERHEAD;
+            cache.insert(&code).unwrap();
+        }
+
+        assert!(cache.cache_size <= cache.max_size);
+        assert_eq!(cache.entries.len() as u64, cache.max_size / charged);
     }
 
     /// The default budget SHALL be the one the cache actually enforces, so a change to
@@ -6049,6 +6322,22 @@ mod account_code_tests {
     #[test]
     fn default_cache_uses_the_configured_budget() {
         assert_eq!(CodeCache::default().max_size, CODE_CACHE_MAX_SIZE);
+    }
+
+    /// A store opened with an explicit code cache size SHALL enforce it, and one opened
+    /// without SHALL keep the default budget.
+    #[test]
+    fn store_uses_the_configured_code_cache_budget() {
+        let config = StoreConfig {
+            code_cache_size: Some(300 * 1024 * 1024),
+            ..StoreConfig::with_rocksdb_block_cache_size(MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES)
+        };
+        let store = Store::new_with_config("", EngineType::InMemory, config).unwrap();
+        assert_eq!(store.code_cache_budget_bytes(), 300 * 1024 * 1024);
+
+        let config = StoreConfig::with_rocksdb_block_cache_size(MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES);
+        let store = Store::new_with_config("", EngineType::InMemory, config).unwrap();
+        assert_eq!(store.code_cache_budget_bytes(), CODE_CACHE_MAX_SIZE);
     }
 }
 
@@ -6575,6 +6864,51 @@ mod state_history_tests {
             Some(11),
             "max over present entries"
         );
+    }
+
+    /// The interrupted-batch recovery at startup identifies the block whose state is
+    /// on disk from the newest `STATE_HISTORY` entry, so the entry's block hash must
+    /// read back exactly as journaled and an absent entry must read as `None`.
+    #[tokio::test]
+    async fn journaled_block_hash_reads_back() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        seed_journal_entries(&backend, &[3, 11]);
+        assert_eq!(
+            store.get_state_history_block_hash(11).unwrap(),
+            Some(H256::repeat_byte(11))
+        );
+        assert_eq!(store.get_state_history_block_hash(4).unwrap(), None);
+    }
+
+    /// `flushed_upto` is a durability floor: `advance_flushed_upto` raises it and
+    /// ignores a value at or below the current marker.
+    #[tokio::test]
+    async fn advance_flushed_upto_only_moves_forward() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend,
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+
+        store.advance_flushed_upto(10).unwrap();
+        assert_eq!(store.read_flushed_upto().unwrap(), 10);
+        store.advance_flushed_upto(5).unwrap();
+        assert_eq!(store.read_flushed_upto().unwrap(), 10);
+        store.advance_flushed_upto(12).unwrap();
+        assert_eq!(store.read_flushed_upto().unwrap(), 12);
     }
 
     /// `lowest_state_history_block_number` SHALL return the min key present in
@@ -7523,6 +7857,74 @@ mod backfill_write_tests {
                 "block {n} must have a body (no gap left by resume)"
             );
         }
+    }
+}
+
+/// The schema-version guard runs before any backend is opened, so these tests need
+/// a persistent `EngineType` but never touch RocksDB itself.
+#[cfg(test)]
+#[cfg(feature = "rocksdb")]
+mod schema_version_guard_tests {
+    use super::*;
+
+    fn write_marker(dir: &Path, schema_version: u64) {
+        let metadata = StoreMetadata::new(schema_version);
+        std::fs::write(
+            dir.join(STORE_METADATA_FILENAME),
+            serde_json::to_string_pretty(&metadata).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn read_marker(dir: &Path) -> u64 {
+        read_store_schema_version(dir).unwrap().unwrap()
+    }
+
+    #[test]
+    fn a_database_ahead_of_the_binary_is_refused_and_left_untouched() {
+        // The scenario behind this test: a datadir opened once by a newer build
+        // (which stamps its own schema version) and then handed back to an older
+        // one. The older build must refuse with a version error — not a
+        // "migration failed" — and must not rewrite the marker, so the newer
+        // build can still open the database.
+        let dir = tempfile::tempdir().unwrap();
+        let newer = STORE_SCHEMA_VERSION + 1;
+        write_marker(dir.path(), newer);
+
+        let result =
+            Store::new_with_config(dir.path(), EngineType::RocksDB, StoreConfig::default());
+
+        assert!(
+            matches!(
+                result,
+                Err(StoreError::IncompatibleDBVersion { found, expected })
+                    if found == newer && expected == STORE_SCHEMA_VERSION
+            ),
+            "expected IncompatibleDBVersion, got {:?}",
+            result.err()
+        );
+        assert_eq!(read_marker(dir.path()), newer);
+    }
+
+    #[test]
+    fn a_zero_schema_version_is_incompatible_not_a_failed_migration() {
+        // No ethrex ever writes v0; the marker is corrupt. Nothing was migrated,
+        // so the error must not claim a migration failed.
+        let dir = tempfile::tempdir().unwrap();
+        write_marker(dir.path(), 0);
+
+        let result =
+            Store::new_with_config(dir.path(), EngineType::RocksDB, StoreConfig::default());
+
+        assert!(
+            matches!(
+                result,
+                Err(StoreError::IncompatibleDBVersion { found: 0, expected })
+                    if expected == STORE_SCHEMA_VERSION
+            ),
+            "expected IncompatibleDBVersion, got {:?}",
+            result.err()
+        );
     }
 }
 

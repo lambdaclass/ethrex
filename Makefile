@@ -1,5 +1,5 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
-		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
+		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs run-hive-snap2 \
 		load-test-fibonacci load-test-io run-hive-eels-blobs run-hive-eels-amsterdam \
 		run-hive-eels-bal-quick run-hive-build-block bench-rlp zkevm-bench-setup
 
@@ -61,6 +61,17 @@ build-image: ## 🐳 Build the Docker image (override tag with TAG=foo)
 		--build-arg GIT_BRANCH=$(GIT_BRANCH) \
 		--build-arg VERSION=$(VERSION) \
 		-t $(IMAGE) .
+
+# Enables the `sync-test` feature, which lets MIN_FULL_BLOCKS, SNAP_LIMIT and
+# SECONDS_PER_BLOCK be set from the environment. A devnet cannot reach snap
+# sync at their production values. Never deploy this image.
+build-image-sync-test: ## 🐳 Build a Docker image whose sync thresholds can be overridden
+	docker build \
+		--build-arg GIT_SHA=$(GIT_SHA) \
+		--build-arg GIT_BRANCH=$(GIT_BRANCH) \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg BUILD_FLAGS="--features sync-test" \
+		-t ethrex:sync-test .
 
 run-image: build-image ## 🏃 Run the Docker image
 	docker run --rm -p 127.0.0.1:8545:8545 $(IMAGE) --http.addr 0.0.0.0
@@ -152,6 +163,9 @@ TEST_PATTERN_EELS ?= .*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Pra
 run-hive-eels: build-image setup-hive ## 🧪 Generic command for running Hive EELS tests. Specify EELS_SIM
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(EELS_SIM) --sim.limit "$(TEST_PATTERN_EELS)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(shell cat tooling/ef_tests/.fixtures_url)
 
+run-hive-snap2: build-image ## 🧪 Run the hive devp2p snap/2 (EIP-8189) conformance suite
+	cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim devp2p --sim.limit "snap2" --sim.loglevel $(SIM_LOG_LEVEL)
+
 run-hive-eels-engine: ## Run hive EELS Engine tests
 	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/consume-engine
 
@@ -161,8 +175,12 @@ run-hive-eels-rlp: ## Run hive EELS RLP tests
 run-hive-eels-blobs: ## Run hive EELS Blobs tests
 	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/execute-blobs
 
-AMSTERDAM_FIXTURES_URL ?= $(shell cat tooling/ef_tests/.fixtures_url_amsterdam)
-AMSTERDAM_FIXTURES_BRANCH ?= devnets/glamsterdam/8
+# Local hive runs read the same Amsterdam pin CI does, so a bundle bump lands in one
+# place and the two can't drift. Both keys are plain scalars, so `sed` extracts them
+# without making the Makefile depend on `yq`.
+AMSTERDAM_HIVE_CONFIG := .github/config/hive/amsterdam.yaml
+AMSTERDAM_FIXTURES_URL ?= $(shell sed -n 's/^fixtures: *//p' $(AMSTERDAM_HIVE_CONFIG))
+AMSTERDAM_FIXTURES_BRANCH ?= $(shell sed -n 's/^eels_commit: *//p' $(AMSTERDAM_HIVE_CONFIG))
 # `fork_.*Amsterdam` rather than `fork_Amsterdam` so the BPO2->Amsterdam activation
 # fixtures (`fork_BPO2ToAmsterdamAtTime15k`) are swept alongside the Amsterdam ones.
 AMSTERDAM_FORK_PATTERN ?= .*fork_.*Amsterdam.*
@@ -275,6 +293,12 @@ update-cargo-lock: ## 📦 Update Cargo.lock files
 	cargo tree --manifest-path tooling/zkevm_bench/Cargo.toml
 	cargo tree --manifest-path tooling/Cargo.toml
 	cargo tree --manifest-path tooling/ef_tests/state/Cargo.toml
+
+check-ere-pins: ## 🔍 Check the stateless-validator guests agree on one ere release
+	# Prints the tag on success. Fails if any manifest has moved off it, including
+	# to a bare rev -- a rev cannot be matched against the ere compiler/server
+	# image tags the release workflow pulls.
+	@tag=$$(.github/scripts/zkvm-version.sh --ere-tag) && echo "ere pins agree: $$tag"
 
 check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
 	cargo metadata --locked > /dev/null

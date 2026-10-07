@@ -272,7 +272,7 @@ mod tests {
         let params = build_params(H256::from_low_u64_be(1234), timestamp + 12, json!([]));
         let err = BuildBlockV1Request::parse(&params)
             .unwrap()
-            .handle(context)
+            .handle(context.clone())
             .await
             .unwrap_err();
         assert!(matches!(err, RpcErr::BadParams(_)));
@@ -287,7 +287,7 @@ mod tests {
         let params = build_params(head, timestamp + 12, json!([]));
         let response = BuildBlockV1Request::parse(&params)
             .unwrap()
-            .handle(context)
+            .handle(context.clone())
             .await
             .unwrap();
 

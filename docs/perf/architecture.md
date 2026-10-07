@@ -573,7 +573,7 @@ See [Trie Library Deep Dive](#trie-library-deep-dive) below for detailed allocat
 |------|----------|---------------|-----------|--------|
 | `trie_cache.lock()` | store.rs:2328 | Brief (Arc clone) | Every trie open | HIGH |
 | `trie_cache.lock()` | store.rs:2603 | Longer (RCU swap) | Per block | LOW |
-| `code_cache.lock()` | store.rs:92-114 | LRU lookup | Per code read | MEDIUM |
+| `code_cache.lock()` | store.rs:92-114 | Hash lookup | Per code read | MEDIUM |
 | `last_computed_fkv.lock()` | store.rs:2548 | Brief (Vec clone) | Every trie open | MEDIUM |
 
 **The trie_cache lock is the primary contention point** because:

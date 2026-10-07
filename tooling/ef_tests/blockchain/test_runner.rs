@@ -29,7 +29,7 @@ use regex::Regex;
 thread_local! {
     /// Per-OS-thread merkleization pool, lazily built on first use. Mirrors the
     /// pattern used by `tooling/ef_tests/engine` so the ~10k+ blockchain tests
-    /// don't each spawn a fresh 17-thread rayon pool inside `Blockchain::new`.
+    /// don't each spawn a fresh 17-thread rayon pool of their own.
     /// The merkle protocol's 16 worker jobs cross-communicate via channels, so
     /// each pool may have only one concurrent `in_place_scope` caller; keying by
     /// `thread_local!` makes the calling test-runner thread the natural
@@ -121,7 +121,7 @@ pub async fn run_ef_test(
     check_prestate_against_db(test_key, test, &store);
 
     // Blockchain EF tests are meant for L1.
-    let blockchain = Blockchain::default_with_store_and_pool(store.clone(), merkle_pool());
+    let blockchain = Blockchain::for_test_harness_with_pool(store.clone(), merkle_pool());
 
     // Early return if the exception is in the rlp decoding of the block
     for bf in &test.blocks {
@@ -241,7 +241,7 @@ async fn run(
 async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), String> {
     // ---- Pass 1: sequential, collect BALs ----
     let store1 = build_store_for_test(test).await;
-    let blockchain1 = Blockchain::default_with_store_and_pool(store1.clone(), merkle_pool());
+    let blockchain1 = Blockchain::for_test_harness_with_pool(store1.clone(), merkle_pool());
 
     let mut bals: Vec<Arc<BlockAccessList>> = Vec::with_capacity(test.blocks.len());
 
@@ -273,7 +273,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
 
     // ---- Pass 2: parallel (BAL-driven), verify post-state ----
     let store2 = build_store_for_test(test).await;
-    let blockchain2 = Blockchain::default_with_store_and_pool(store2.clone(), merkle_pool());
+    let blockchain2 = Blockchain::for_test_harness_with_pool(store2.clone(), merkle_pool());
 
     for (block_fixture, bal) in test.blocks.iter().zip(bals.iter()) {
         let block: CoreBlock = block_fixture.block().unwrap().clone().into();
@@ -501,7 +501,7 @@ pub async fn blocks_and_witness_for_test(
     test: &TestUnit,
 ) -> Result<(Vec<CoreBlock>, ExecutionWitness), String> {
     let store = build_store_for_test(test).await;
-    let blockchain = Blockchain::default_with_store_and_pool(store.clone(), merkle_pool());
+    let blockchain = Blockchain::for_test_harness_with_pool(store.clone(), merkle_pool());
 
     let mut blocks: Vec<CoreBlock> = Vec::with_capacity(test.blocks.len());
     for block_fixture in test.blocks.iter() {
@@ -946,6 +946,66 @@ fn describe_witness_item(section: &str, bytes: &[u8]) -> String {
     }
     let prefix = hex::encode(&bytes[..bytes.len().min(8)]);
     format!("0x{prefix}… ({} bytes)", bytes.len())
+}
+
+/// Check every `engineNewPayloads` entry of a `blockchain_test_engine` fixture
+/// file that carries stateless bytes: its `statelessInputBytes` must produce its
+/// `statelessOutputBytes`.
+///
+/// Engine fixtures are a superset of the `blockchain_test` ones for stateless
+/// purposes. They carry every stateless input the RLP-block fixtures do, plus the
+/// payload mutations that only exist at the Engine API layer, such as a tampered
+/// block access list or slot number, which cannot be expressed as an RLP block.
+/// Only the bytes contract is checked here: the node-side execution of the same
+/// payloads is the engine runner's job.
+#[cfg(feature = "stateless")]
+pub fn check_engine_stateless_bytes(path: &Path) -> datatest_stable::Result<()> {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct EngineFixture {
+        #[serde(default)]
+        engine_new_payloads: Vec<EnginePayload>,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct EnginePayload {
+        #[serde(default)]
+        params: Vec<serde_json::Value>,
+        stateless_input_bytes: Option<String>,
+        stateless_output_bytes: Option<String>,
+    }
+
+    let raw = std::fs::read_to_string(path)?;
+    let fixtures: HashMap<String, EngineFixture> = serde_json::from_str(&raw)?;
+
+    let mut failures = Vec::new();
+    for (test_key, fixture) in &fixtures {
+        for payload in &fixture.engine_new_payloads {
+            let (Some(input), Some(output)) = (
+                payload.stateless_input_bytes.as_deref(),
+                payload.stateless_output_bytes.as_deref(),
+            ) else {
+                continue;
+            };
+            // `params[0]` is the execution payload; its block number only labels
+            // a failure, so an unreadable one falls back to 0 rather than failing.
+            let block_number = payload
+                .params
+                .first()
+                .and_then(|execution_payload| execution_payload.get("blockNumber"))
+                .and_then(|number| number.as_str())
+                .and_then(|hex| u64::from_str_radix(hex.trim_start_matches("0x"), 16).ok())
+                .unwrap_or_default();
+            if let Err(e) = run_stateless_from_input_bytes(test_key, block_number, input, output) {
+                failures.push(e);
+            }
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n").into())
+    }
 }
 
 /// Run a fixture's `statelessInputBytes` (2-byte BE schema-id followed by

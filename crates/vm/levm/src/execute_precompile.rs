@@ -145,10 +145,9 @@ fn validate_l2_constraints(
     for tx_bytes in payload.transactions.iter() {
         // Rejected by leading EIP-2718 envelope byte: `0x03` (EIP-4844) because
         // L2 blocks carry no blobs, and `0x06` (frame) / `0x7e` (privileged)
-        // because they carry an explicit sender and no signature — the stateless
-        // input commits one public key per transaction, so admitting them would
-        // make a well-formed block unrepresentable. Native rollups relay L1→L2
-        // messages as signed EIP-1559 transactions, so this costs no function.
+        // because they carry an explicit sender and no signature. Native rollups
+        // relay L1→L2 messages as signed EIP-1559 transactions, so this costs no
+        // function.
         if let Some(&(0x03 | 0x06 | 0x7e)) = tx_bytes.iter().next() {
             return Err(PrecompileError::ExecuteInvalidInput.into());
         }
@@ -264,7 +263,6 @@ mod tests {
                 headers: vec![].try_into().expect("headers"),
             },
             chain_id: 1,
-            public_keys: vec![].try_into().expect("public_keys"),
         }
     }
 
@@ -467,12 +465,9 @@ mod tests {
     /// Constraint 5: no transaction may carry a rejected EIP-2718 type byte.
     ///
     /// `0x03` is a blob transaction. `0x06` (frame) and `0x7e` (privileged) carry
-    /// an explicit sender and no signature, so no public key can be recovered for
-    /// them — and the stateless input commits one key per transaction. Rejecting
-    /// them here is what makes "every transaction in the payload is
-    /// signature-bearing" an enforced invariant rather than a property of the
-    /// current producer, which `build_ssz_stateless_input` relies on to populate
-    /// `public_keys` without gaps.
+    /// an explicit sender and no signature. Rejecting them here makes "every
+    /// transaction in the payload is signature-bearing" an enforced invariant
+    /// rather than a property of the current producer.
     #[test]
     fn execute_rejects_unsupported_transaction_types() {
         for (type_byte, what) in [

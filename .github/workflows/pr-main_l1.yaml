@@ -466,6 +466,13 @@ jobs:
         run: |
           make check-cargo-lock
 
+      # The compiler and server images are pulled at the tag the manifests pin, so
+      # a disagreement between them is only visible at release time and produces an
+      # ELF built against a different ere than it executes under. Catch it here.
+      - name: Check the ere pins agree
+        run: |
+          make check-ere-pins
+
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
     # "Integration Test" is a required check, don't change the name

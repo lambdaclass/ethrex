@@ -240,6 +240,7 @@ fn fee_token_storage_rolled_back_on_validation_failure() {
         disable_balance_check: false,
         disable_nonce_check: false,
         disable_gas_allowance_check: false,
+        disable_sender_eoa_check: false,
         is_system_call: false,
     };
 
@@ -451,6 +452,7 @@ fn fee_token_revert_during_finalize_triggers_rollback() {
         disable_balance_check: false,
         disable_nonce_check: false,
         disable_gas_allowance_check: false,
+        disable_sender_eoa_check: false,
         is_system_call: false,
     };
 
@@ -562,6 +564,7 @@ fn privileged_tx_intrinsic_gas_failure_preserves_sender_balance() {
         disable_balance_check: false,
         disable_nonce_check: false,
         disable_gas_allowance_check: false,
+        disable_sender_eoa_check: false,
         is_system_call: false,
     };
 
