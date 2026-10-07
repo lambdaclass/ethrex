@@ -45,6 +45,7 @@
 pub mod constants;
 pub mod error;
 pub mod fork_choice;
+mod glamsterdam;
 pub mod mempool;
 pub mod payload;
 pub mod prewarm;
@@ -2789,6 +2790,16 @@ impl Blockchain {
             },
         };
 
+        // Decided before execution because `parent_header` is moved below; the banner
+        // itself is only logged once the block is stored.
+        let is_first_amsterdam_block = matches!(self.options.r#type, BlockchainType::L1)
+            && !glamsterdam::shown()
+            && glamsterdam::is_first_amsterdam_block(
+                &self.storage.get_chain_config(),
+                parent_header.timestamp,
+                block.header.timestamp,
+            );
+
         let should_store_witness = self.options.precompute_witnesses && self.is_synced();
         let collect_witness = should_store_witness || force_witness;
 
@@ -2923,6 +2934,11 @@ impl Blockchain {
                 warmer_duration,
                 instants,
             );
+        }
+
+        // After the block's own performance log, so the banner follows the block it marks.
+        if is_first_amsterdam_block && result.is_ok() {
+            glamsterdam::log_once(block_number, block_hash);
         }
 
         metrics!(
