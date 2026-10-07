@@ -53,9 +53,9 @@ impl RLPEncode for OptionalBal {
 struct OptionalBalRef<'a>(&'a Option<BlockAccessList>);
 
 impl RLPEncode for OptionalBalRef<'_> {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         match self.0 {
-            None => buf.put_u8(0x80),
+            None => buf.push(0x80),
             Some(bal) => bal.encode(buf),
         }
     }

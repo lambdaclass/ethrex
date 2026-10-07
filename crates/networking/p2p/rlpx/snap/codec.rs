@@ -320,7 +320,7 @@ impl RLPxMessage for TrieNodes {
 impl RLPxMessage for Snap2GetBlockAccessLists {
     const CODE: u8 = codes::SNAP2_GET_BLOCK_ACCESS_LISTS;
 
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
@@ -328,7 +328,7 @@ impl RLPxMessage for Snap2GetBlockAccessLists {
             .encode_field(&self.response_bytes)
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -356,9 +356,9 @@ impl RLPxMessage for Snap2GetBlockAccessLists {
 struct Snap2OptionalBal(Option<BlockAccessList>);
 
 impl RLPEncode for Snap2OptionalBal {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         match &self.0 {
-            None => buf.put_u8(0x80), // RLP empty string per EIP-8189 §50,§58
+            None => buf.push(0x80), // RLP empty string per EIP-8189 §50,§58
             Some(bal) => bal.encode(buf),
         }
     }
@@ -391,9 +391,9 @@ impl RLPDecode for Snap2OptionalBal {
 struct Snap2OptionalBalRef<'a>(Option<&'a BlockAccessList>);
 
 impl RLPEncode for Snap2OptionalBalRef<'_> {
-    fn encode(&self, buf: &mut dyn BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         match self.0 {
-            None => buf.put_u8(0x80), // RLP empty string per EIP-8189 §50,§58
+            None => buf.push(0x80), // RLP empty string per EIP-8189 §50,§58
             Some(bal) => bal.encode(buf),
         }
     }
@@ -409,7 +409,7 @@ impl RLPEncode for Snap2OptionalBalRef<'_> {
 impl RLPxMessage for Snap2BlockAccessLists {
     const CODE: u8 = codes::SNAP2_BLOCK_ACCESS_LISTS;
 
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         let bals: Vec<Snap2OptionalBalRef<'_>> = self
             .bals
@@ -421,7 +421,7 @@ impl RLPxMessage for Snap2BlockAccessLists {
             .encode_field(&bals)
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
