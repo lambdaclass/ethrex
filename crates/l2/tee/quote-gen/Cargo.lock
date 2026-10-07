@@ -1021,7 +1021,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "crossbeam",
@@ -1045,7 +1045,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -1078,7 +1078,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1099,7 +1099,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1121,7 +1121,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1138,13 +1138,14 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "derive_more",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
+ "foldhash 0.2.0",
  "libssz",
  "malachite",
  "rayon",
@@ -1156,7 +1157,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "axum",
  "ethrex-common",
@@ -1171,7 +1172,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-p2p"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1212,7 +1213,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1221,7 +1222,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rpc"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "axum",
  "axum-extra",
@@ -1260,7 +1261,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1269,6 +1270,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "fastbloom",
+ "indexmap 2.13.0",
  "lru",
  "rayon",
  "rustc-hash",
@@ -1281,7 +1283,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1300,7 +1302,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "derive_more",
@@ -2875,7 +2877,7 @@ dependencies = [
 
 [[package]]
 name = "quote-gen"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "configfs-tsm",
  "ethrex-blockchain",
