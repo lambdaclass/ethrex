@@ -1,15 +1,7 @@
 //! The leanVM-backed aggregator.
 //!
-//! Pinned to leanVM `b7b3b742af`, the head of its `nicetry` branch. Everything
-//! leanVM-shaped lives in this file, so a rename upstream costs one file rather than
-//! a sweep.
-//!
-//! The SPHINCS scheme at that revision is the NiceTry "SPHINCS- v2" profile: Keccak-256
-//! tweakable hashes, standard FORS under a five-layer standard WOTS+ hypertree, a
-//! 32-byte public key and a 6,176-byte signature. That is the profile the Daisugi
-//! testnet's wallet signs with. leanVM's `main` aggregates a different SPHINCS (BLAKE2s,
-//! with WOTS+C and FORS+C, 4,924-byte signatures) that no wallet produces, which is
-//! why the pin follows `nicetry` rather than `main`.
+//! Pinned to leanVM `7f9777da6a`. Everything leanVM-shaped lives in this file, so a
+//! rename upstream costs one file rather than a sweep.
 //!
 //! # This is a prototype, and the distinction matters
 //!
@@ -56,7 +48,7 @@ use crate::{AggregateError, DependencyAggregator, DependencyWitness, check_proof
 /// The leanVM revision this backend is built against. Part of `aggregated_vk`
 /// because leanVM does not expose a digest of its own circuit; see
 /// [`LeanVmAggregator::aggregated_vk`].
-pub const LEANVM_REVISION: &str = "b7b3b742af8dda100a0263b22c36e33963cc165c";
+pub const LEANVM_REVISION: &str = "7f9777da6ab3d7bb8d10c3f5c7edce2554fcfc03";
 
 /// EIP-8288's `verification_key_hash` for a leanSPHINCS public key.
 ///
@@ -329,11 +321,10 @@ fn decode_sphincs_witness(
 
     let message: sphincs::Message = witness.triple.data_hash.0;
 
-    // A signature in this profile is a fixed 6,176 bytes (`sphincs::SIG_SIZE`). Worth
-    // recording because EIP-8288's Motivation puts hash-based signatures at "~2-3 kB",
-    // which is off by a factor of two to three against the schemes its own tooling
-    // implements (4,924 bytes on leanVM `main`, 6,176 here), so the EIP's bandwidth
-    // estimates should not be taken as a bound.
+    // A leanSPHINCS signature is a fixed 4,924 bytes. Worth recording because
+    // EIP-8288's Motivation puts hash-based signatures at "~2-3 kB", which is off by
+    // roughly a factor of two against the scheme its own tooling implements -- so the
+    // EIP's bandwidth estimates should not be taken as a bound here.
     let sig_bytes: &[u8; sphincs::SIG_SIZE] = sig_bytes
         .try_into()
         .map_err(|_| AggregateError::ProofMalformed)?;
