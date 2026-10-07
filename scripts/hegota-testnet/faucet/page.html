@@ -93,7 +93,7 @@
     <a href="https://github.com/lambdaclass/ethrex">ethrex</a>. Test ETH has no value.
   </p>
   <p style="margin:-1.1rem 0 1.75rem;font-size:14px;color:var(--muted)">
-    Latest change: 2026-09-28 · <a href="#changelog">changelog</a>
+    Latest change: 2026-10-07 · <a href="#changelog">changelog</a>
   </p>
 
   <div class="panel">
@@ -387,6 +387,21 @@ lighthouse beacon_node \
   <h2 id="changelog">Changelog</h2>
   <div class="panel">
     <table>
+      <tr>
+        <td>2026-10-07<br><span style="font-weight:400">13:10 UTC</span></td>
+        <td class="desc"><strong>Faucet restored, node fix, no re-genesis.</strong> From
+          2026-09-29 15:42 UTC to 2026-10-06 the faucet refused every claim. A short reorg took a
+          block carrying two of its transfers off the chain, and the nodes never returned those
+          transfers to the mempool, so the faucet's later transfers waited behind a nonce gap that
+          could not close. The gap was filled on 2026-10-06 and claims have worked since. All
+          three nodes now run <code>hegota-testnet-hotfix</code> at <code>64b8fc09d</code>,
+          swapped in place: after a reorg, a node returns the transactions of the abandoned blocks
+          to its mempool, without broadcasting them, and drops whatever the new chain already
+          includes. The faucet also recovers on its own if its nonce falls out of step. Nothing on
+          chain changed, and nothing has to be resynced or re-signed. If you sent a transaction
+          around a reorg and it never mined, resend it. Reported by an external user; thank
+          you.</td>
+      </tr>
       <tr>
         <td>2026-09-28<br><span style="font-weight:400">19:26 UTC</span></td>
         <td class="desc"><strong>RPC fix, no re-genesis.</strong> <code>eth_getLogs</code>,
