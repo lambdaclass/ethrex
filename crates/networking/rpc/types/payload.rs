@@ -199,9 +199,37 @@ impl ExecutionPayload {
             burned_fees: block.header.burned_fees,
         }
     }
+
+    /// A copy without the block access list, for rebuilding the block: `into_block`
+    /// takes the list's hash, not the list. Transactions are reference counted, so this
+    /// is cheap where a block access list can be large.
+    pub(crate) fn clone_without_block_access_list(&self) -> Self {
+        Self {
+            parent_hash: self.parent_hash,
+            fee_recipient: self.fee_recipient,
+            state_root: self.state_root,
+            receipts_root: self.receipts_root,
+            logs_bloom: self.logs_bloom,
+            prev_randao: self.prev_randao,
+            block_number: self.block_number,
+            gas_limit: self.gas_limit,
+            gas_used: self.gas_used,
+            timestamp: self.timestamp,
+            extra_data: self.extra_data.clone(),
+            base_fee_per_gas: self.base_fee_per_gas,
+            block_hash: self.block_hash,
+            transactions: self.transactions.clone(),
+            withdrawals: self.withdrawals.clone(),
+            blob_gas_used: self.blob_gas_used,
+            excess_blob_gas: self.excess_blob_gas,
+            slot_number: self.slot_number,
+            block_access_list: None,
+            burned_fees: self.burned_fees,
+        }
+    }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PayloadStatus {
     pub status: PayloadValidationStatus,
@@ -215,7 +243,7 @@ pub struct PayloadStatus {
     pub witness: Option<Bytes>,
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum PayloadValidationStatus {
     Valid,

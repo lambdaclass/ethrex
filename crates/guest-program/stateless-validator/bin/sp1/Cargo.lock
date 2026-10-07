@@ -832,13 +832,13 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "ere-platform-core"
-version = "0.17.0"
-source = "git+https://github.com/eth-act/ere?tag=v0.17.0#5023513851c69ab9c4871e3899608e450e6960b6"
+version = "0.18.1"
+source = "git+https://github.com/eth-act/ere?tag=v0.18.1#20e87aa7bcc09a8eac3bee2c941d8bfcf447e5ba"
 
 [[package]]
 name = "ere-platform-sp1"
-version = "0.17.0"
-source = "git+https://github.com/eth-act/ere?tag=v0.17.0#5023513851c69ab9c4871e3899608e450e6960b6"
+version = "0.18.1"
+source = "git+https://github.com/eth-act/ere?tag=v0.18.1#20e87aa7bcc09a8eac3bee2c941d8bfcf447e5ba"
 dependencies = [
  "ere-platform-core",
  "libzkevm",
@@ -874,7 +874,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -905,7 +905,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -924,7 +924,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -946,7 +946,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -963,13 +963,14 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "derive_more",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
+ "foldhash 0.2.0",
  "libssz",
  "malachite",
  "rustc-hash",
@@ -980,7 +981,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1004,7 +1005,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1023,7 +1024,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "27.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "derive_more",
@@ -1109,69 +1110,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 
 [[package]]
-name = "futures"
-version = "0.3.34"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a31d2a3fbaaeb2af2368bbdd904aa8e812d3c04a1ee10d3171f52d556e5d0a3"
-dependencies = [
- "futures-channel",
- "futures-core",
- "futures-executor",
- "futures-io",
- "futures-sink",
- "futures-task",
- "futures-util",
-]
-
-[[package]]
-name = "futures-channel"
-version = "0.3.34"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f9e3d69d39e4862ffed03ed071a76f9a13ba1d9109d355b0f0aa6b15e393c4"
-dependencies = [
- "futures-core",
- "futures-sink",
-]
-
-[[package]]
 name = "futures-core"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92d699e522242e69e3003b94ecc1f960f3a5e015aa7c5d7486e65ad01dd94f5e"
-
-[[package]]
-name = "futures-executor"
-version = "0.3.34"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "031b47cf1a3c6cc8bc2fc76cd437f521619387907d469316e7c0bc278f1f5432"
-dependencies = [
- "futures-core",
- "futures-task",
- "futures-util",
-]
-
-[[package]]
-name = "futures-io"
-version = "0.3.34"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53c0fa8157de1303bfffdaa1cc2a673bfffb60102f76b0ef4441659124373fed"
-
-[[package]]
-name = "futures-macro"
-version = "0.3.34"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fb9654ba8355388abeb8dcb4fc62f511300867002afc858860463bdd9fe0c44"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.4",
-]
-
-[[package]]
-name = "futures-sink"
-version = "0.3.34"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1944426bf7d03f1d14f708785e4b33efd750b36d48a157b836b3efc15ede8e1d"
 
 [[package]]
 name = "futures-task"
@@ -1185,13 +1127,8 @@ version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d50a92467f8ba5dd6e3ee5d4bd04d73ab2e4e1c44474a0674821dfce14b79bc"
 dependencies = [
- "futures-channel",
  "futures-core",
- "futures-io",
- "futures-macro",
- "futures-sink",
  "futures-task",
- "memchr",
  "pin-project-lite",
  "slab",
 ]
@@ -1688,8 +1625,8 @@ dependencies = [
 
 [[package]]
 name = "libzkevm"
-version = "6.4.0"
-source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
+version = "6.6.0"
+source = "git+https://github.com/han0110/sp1?rev=b4f72fe1de5d6d26b3d3f531fcabd137b03e3338#b4f72fe1de5d6d26b3d3f531fcabd137b03e3338"
 dependencies = [
  "bls12_381",
  "k256 0.13.4 (git+https://github.com/sp1-patches/elliptic-curves?tag=patch-k256-13.4-sp1-6.2.0)",
@@ -2684,8 +2621,8 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "slop-algebra"
-version = "6.4.0"
-source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
+version = "6.6.0"
+source = "git+https://github.com/han0110/sp1?rev=b4f72fe1de5d6d26b3d3f531fcabd137b03e3338#b4f72fe1de5d6d26b3d3f531fcabd137b03e3338"
 dependencies = [
  "itertools 0.14.0",
  "p3-field",
@@ -2694,8 +2631,8 @@ dependencies = [
 
 [[package]]
 name = "slop-bn254"
-version = "6.4.0"
-source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
+version = "6.6.0"
+source = "git+https://github.com/han0110/sp1?rev=b4f72fe1de5d6d26b3d3f531fcabd137b03e3338#b4f72fe1de5d6d26b3d3f531fcabd137b03e3338"
 dependencies = [
  "ff",
  "p3-bn254-fr",
@@ -2708,10 +2645,9 @@ dependencies = [
 
 [[package]]
 name = "slop-challenger"
-version = "6.4.0"
-source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
+version = "6.6.0"
+source = "git+https://github.com/han0110/sp1?rev=b4f72fe1de5d6d26b3d3f531fcabd137b03e3338#b4f72fe1de5d6d26b3d3f531fcabd137b03e3338"
 dependencies = [
- "futures",
  "p3-challenger",
  "serde",
  "slop-algebra",
@@ -2720,8 +2656,8 @@ dependencies = [
 
 [[package]]
 name = "slop-koala-bear"
-version = "6.4.0"
-source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
+version = "6.6.0"
+source = "git+https://github.com/han0110/sp1?rev=b4f72fe1de5d6d26b3d3f531fcabd137b03e3338#b4f72fe1de5d6d26b3d3f531fcabd137b03e3338"
 dependencies = [
  "lazy_static",
  "p3-koala-bear",
@@ -2734,24 +2670,21 @@ dependencies = [
 
 [[package]]
 name = "slop-poseidon2"
-version = "6.4.0"
-source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
+version = "6.6.0"
+source = "git+https://github.com/han0110/sp1?rev=b4f72fe1de5d6d26b3d3f531fcabd137b03e3338#b4f72fe1de5d6d26b3d3f531fcabd137b03e3338"
 dependencies = [
  "p3-poseidon2",
 ]
 
 [[package]]
 name = "slop-primitives"
-version = "6.4.0"
-source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
-dependencies = [
- "slop-algebra",
-]
+version = "6.6.0"
+source = "git+https://github.com/han0110/sp1?rev=b4f72fe1de5d6d26b3d3f531fcabd137b03e3338#b4f72fe1de5d6d26b3d3f531fcabd137b03e3338"
 
 [[package]]
 name = "slop-symmetric"
-version = "6.4.0"
-source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
+version = "6.6.0"
+source = "git+https://github.com/han0110/sp1?rev=b4f72fe1de5d6d26b3d3f531fcabd137b03e3338#b4f72fe1de5d6d26b3d3f531fcabd137b03e3338"
 dependencies = [
  "p3-symmetric",
 ]
@@ -2764,8 +2697,8 @@ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
 name = "sp1-lib"
-version = "6.4.0"
-source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
+version = "6.6.0"
+source = "git+https://github.com/han0110/sp1?rev=b4f72fe1de5d6d26b3d3f531fcabd137b03e3338#b4f72fe1de5d6d26b3d3f531fcabd137b03e3338"
 dependencies = [
  "bincode",
  "elliptic-curve",
@@ -2775,8 +2708,8 @@ dependencies = [
 
 [[package]]
 name = "sp1-primitives"
-version = "6.4.0"
-source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
+version = "6.6.0"
+source = "git+https://github.com/han0110/sp1?rev=b4f72fe1de5d6d26b3d3f531fcabd137b03e3338#b4f72fe1de5d6d26b3d3f531fcabd137b03e3338"
 dependencies = [
  "bincode",
  "blake3",
@@ -2798,15 +2731,14 @@ dependencies = [
 
 [[package]]
 name = "sp1-zkvm"
-version = "6.4.0"
-source = "git+https://github.com/han0110/sp1?rev=7929b001303feb6803ce1214557d5ab1f17eee84#7929b001303feb6803ce1214557d5ab1f17eee84"
+version = "6.6.0"
+source = "git+https://github.com/han0110/sp1?rev=b4f72fe1de5d6d26b3d3f531fcabd137b03e3338#b4f72fe1de5d6d26b3d3f531fcabd137b03e3338"
 dependencies = [
  "cfg-if",
  "critical-section",
  "embedded-alloc",
  "getrandom 0.2.17",
  "getrandom 0.3.4",
- "lazy_static",
  "libm",
  "rand",
  "sha2 0.10.9 (registry+https://github.com/rust-lang/crates.io-index)",

@@ -8,7 +8,7 @@ use jsonwebtoken::{Algorithm, DecodingKey, TokenData, Validation, decode};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub enum AuthenticationError {
     InvalidIssuedAtClaim,
     TokenDecodingError,
