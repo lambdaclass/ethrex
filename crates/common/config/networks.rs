@@ -211,6 +211,18 @@ mod tests {
     }
 
     #[test]
+    fn test_sepolia_amsterdam_activation() {
+        // Epoch 353024, 2026-10-06 13:53:36 UTC. Decided in ethereum/pm#2205 and
+        // recorded in EIP-7773 by ethereum/EIPs#12355; the client configuration is
+        // eth-clients/sepolia#126 (`metadata/genesis.json`, `amsterdamTime`).
+        // 1655733600 + 353024 * 32 * 12 = 1791294816.
+        let genesis = Network::PublicNetwork(PublicNetwork::Sepolia)
+            .get_genesis()
+            .unwrap();
+        assert_eq!(genesis.config.amsterdam_time, Some(1_791_294_816));
+    }
+
+    #[test]
     fn test_plataberget_genesis_block_hash() {
         // Value published on the network's config page (https://plataberget.dev/,
         // "Genesis Hash (EL)"), served by

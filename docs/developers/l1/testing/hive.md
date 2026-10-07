@@ -287,7 +287,7 @@ HIVE_BRANCH ?= master
 Fixtures come from [ethereum/execution-specs](https://github.com/ethereum/execution-specs) (the archived `ethereum/execution-spec-tests` repo is no longer used). The workflow uses fork-specific fixtures to ensure comprehensive test coverage, pinned via config files under `.github/config/hive/`:
 
 ```yaml
-# Amsterdam tests use the glamsterdam-devnet bundle (.github/config/hive/amsterdam.yaml)
+# Amsterdam tests read their pin from .github/config/hive/amsterdam.yaml
 if [[ "$SIM_LIMIT" == *"fork_Amsterdam"* ]]; then
   FLAGS+=" --sim.buildarg fixtures=$AMSTERDAM_FIXTURES"
   FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
@@ -303,18 +303,16 @@ fi
 
 Local ef_tests runners (blockchain, state, engine) share one set of fixture URL files under `tooling/ef_tests/`:
 
-- `tooling/ef_tests/.fixtures_url` — mainnet bundle
-- `tooling/ef_tests/.fixtures_url_amsterdam` — Amsterdam (glamsterdam-devnet) fixtures with BAL support
+- `tooling/ef_tests/.fixtures_url` — mainnet bundle, which from `tests@v21.0.0` on also carries the Amsterdam and BAL fixtures
 - `tooling/ef_tests/.fixtures_url_zkevm` — zkEVM (EIP-8025 stateless) fixtures
+
+There is no separate Amsterdam file any more. The mainnet bundle absorbed the `tests-glamsterdam-devnet` series and ships more Amsterdam fixtures than it did, so overlaying the devnet bundle on top would replace the richer subtrees with poorer ones.
 
 Contents:
 
 ```
 # .fixtures_url
-https://github.com/ethereum/execution-specs/releases/download/tests%40v20.0.1/fixtures.tar.gz
-
-# .fixtures_url_amsterdam
-https://github.com/ethereum/execution-specs/releases/download/tests-glamsterdam-devnet%40v8.0.0/fixtures_glamsterdam-devnet.tar.gz
+https://github.com/ethereum/execution-specs/releases/download/tests%40v21.0.0/fixtures.tar.gz
 ```
 
 The CI hive config lives in `.github/config/hive/{mainnet,amsterdam}.yaml`, each pinning a `fixtures` URL and an `eels_commit` (the execution-specs commit used to build the hive consumer).
@@ -338,15 +336,15 @@ To update to a different fork or newer versions:
    eels_commit: <execution-specs-commit>
    ```
 
-   For Amsterdam, edit `.github/config/hive/amsterdam.yaml` the same way with the glamsterdam-devnet bundle.
+   Edit `.github/config/hive/amsterdam.yaml` the same way. It takes the same `tests@` bundle as mainnet, kept on its own file because the Amsterdam sims may need to run against a different release while a fork is in flight. The local `run-hive-eels-amsterdam` and `run-hive-build-block` targets read this file too, so a bump here reaches both CI and local runs.
 
 3. **Update fixtures URL files** shared by the local runners (blockchain / state / engine):
 
    ```bash
-   # Mainnet fixtures
+   # Mainnet fixtures (Amsterdam included)
    echo "https://github.com/ethereum/execution-specs/releases/download/tests%40<version>/fixtures.tar.gz" > tooling/ef_tests/.fixtures_url
-   # Amsterdam fixtures
-   echo "https://github.com/ethereum/execution-specs/releases/download/tests-glamsterdam-devnet%40<version>/fixtures_glamsterdam-devnet.tar.gz" > tooling/ef_tests/.fixtures_url_amsterdam
+   # zkEVM (EIP-8025 stateless) fixtures, which share the mainnet release numbering
+   echo "https://github.com/ethereum/execution-specs/releases/download/tests-zkevm%40<version>/fixtures_zkevm.tar.gz" > tooling/ef_tests/.fixtures_url_zkevm
    ```
 
 4. **Update fork references** in code if switching to a different fork:
