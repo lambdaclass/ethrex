@@ -1805,9 +1805,9 @@ pub struct FeeTokenTransaction {
 
 /// EIP-8141 Frame Transaction mode, with EIP-8288's `DEP_VERIFY_FRAME_MODE`.
 ///
-/// Mode 4 is `DepVerify`, as EIP-8288 assigns it; 3 is EIP-7906's POST_TX, which
-/// this client does not implement, so it and every value above 4 are reserved and
-/// make the transaction invalid.
+/// Mode 3 is EIP-7906's `PostTx` and mode 4 is EIP-8288's `DepVerify`; every
+/// value above 4 is reserved and makes the transaction invalid. Each extension mode
+/// is valid only once its EIP is active (`validate_fork_constraints`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 #[repr(u8)]
 pub enum FrameMode {
@@ -1815,6 +1815,11 @@ pub enum FrameMode {
     Default = 0,
     Verify = 1,
     Sender = 2,
+    /// EIP-7906: an assertion run after the body. Static, entered from
+    /// `ENTRY_POINT`, and only in a trailing run of frames; when one fails the body
+    /// is rolled back to the end of the validation prefix, and the transaction
+    /// stays valid.
+    PostTx = 3,
     /// EIP-8288: declares dependencies for the block's recursive STARK. Never
     /// executed as EVM code.
     DepVerify = 4,
@@ -1822,12 +1827,14 @@ pub enum FrameMode {
 
 impl FrameMode {
     /// Convert from the lower 8 bits of the mode field.
-    /// Returns None for reserved values (3, and 5-255).
+    /// Returns None for reserved values (5-255).
     pub fn from_u8(val: u8) -> Option<Self> {
         match val {
             0 => Some(FrameMode::Default),
             1 => Some(FrameMode::Verify),
             2 => Some(FrameMode::Sender),
+            // EIP-7906 POST_TX.
+            3 => Some(FrameMode::PostTx),
             // EIP-8288 DEP_VERIFY_FRAME_MODE.
             4 => Some(FrameMode::DepVerify),
             _ => None,
@@ -1841,6 +1848,7 @@ impl From<FrameMode> for u8 {
             FrameMode::Default => 0,
             FrameMode::Verify => 1,
             FrameMode::Sender => 2,
+            FrameMode::PostTx => 3,
             FrameMode::DepVerify => 4,
         }
     }
@@ -2659,6 +2667,16 @@ impl FrameTransaction {
                 );
             }
         }
+        if !features.post_tx_frames
+            && let Some(i) = self
+                .frames
+                .iter()
+                .position(|frame| frame.mode == FrameMode::PostTx as u8)
+        {
+            return Err(format!(
+                "Frame {i}: POST_TX frames (EIP-7906) are not active"
+            ));
+        }
         if features.dependency_frames {
             return Ok(());
         }
@@ -2921,6 +2939,9 @@ impl FrameTransaction {
                 if frame.mode == FrameMode::Verify as u8 {
                     return Err(format!("Frame {i}: atomic batch flag on a VERIFY frame"));
                 }
+                if frame.mode == FrameMode::PostTx as u8 {
+                    return Err(format!("Frame {i}: atomic batch flag on a POST_TX frame"));
+                }
                 match self.frames.get(i.saturating_add(1)) {
                     None => return Err(format!("Frame {i}: atomic batch flag on last frame")),
                     Some(next) if next.mode == FrameMode::Verify as u8 => {
@@ -2928,8 +2949,24 @@ impl FrameTransaction {
                             "Frame {i}: atomic batch flag followed by a VERIFY frame"
                         ));
                     }
+                    Some(next) if next.mode == FrameMode::PostTx as u8 => {
+                        return Err(format!(
+                            "Frame {i}: atomic batch flag followed by a POST_TX frame"
+                        ));
+                    }
                     Some(_) => {}
                 }
+            }
+            // EIP-7906: POST_TX frames run after the body, so they form a trailing
+            // run; any other frame after one is out of place.
+            let follows_post_tx = i
+                .checked_sub(1)
+                .and_then(|prev| self.frames.get(prev))
+                .is_some_and(|prev| prev.mode == FrameMode::PostTx as u8);
+            if follows_post_tx && frame.mode != FrameMode::PostTx as u8 {
+                return Err(format!(
+                    "Frame {i}: POST_TX frames must be the transaction's last frames"
+                ));
             }
 
             // Per EIP-8141, approval scope is disallowed on every frame of an

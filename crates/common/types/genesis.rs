@@ -233,6 +233,8 @@ pub struct ChainFeatures {
     pub keyed_nonces: bool,
     /// EIP-8272 recent-root references on frame transactions.
     pub recent_roots: bool,
+    /// EIP-7906 POST_TX frames.
+    pub post_tx_frames: bool,
     /// Scalar-nonce frame transactions remain valid alongside keyed nonces.
     pub legacy_frames: bool,
 }
@@ -486,8 +488,8 @@ impl ChainConfig {
     }
 
     /// Whether the prototype EIP-8288 schedule is active. It also turns on EIP-8250
-    /// keyed nonces and EIP-8272 recent-root references, which the named fork
-    /// schedule does not carry.
+    /// keyed nonces, EIP-8272 recent-root references and EIP-7906 POST_TX frames,
+    /// which the named fork schedule does not carry.
     pub fn is_eip8288_prototype_active(&self, block_timestamp: u64) -> bool {
         self.is_eip8141_active(block_timestamp)
             && self
@@ -503,6 +505,7 @@ impl ChainConfig {
             dependency_frames: self.is_eip8288_active(block_timestamp),
             keyed_nonces: prototype,
             recent_roots: prototype,
+            post_tx_frames: prototype,
             legacy_frames: self.is_legacy_frames_active(block_timestamp),
         }
     }

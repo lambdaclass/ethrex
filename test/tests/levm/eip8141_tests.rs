@@ -5035,3 +5035,210 @@ fn unaffordable_access_wins_over_unfunded_value() {
         "frame must be billed its limit, not the access cost"
     );
 }
+
+// ==================== EIP-7906 POST_TX frames ====================
+
+/// Run `tx` like `run_frame_tx`, with POST_TX frames switched on.
+fn run_frame_tx_with_post_tx(
+    accounts: &[SeededAccount],
+    tx: FrameTransaction,
+) -> (Result<ExecutionReport, VMError>, GeneralizedDatabase) {
+    let mut seeded: Vec<SeededAccount> = accounts.to_vec();
+    if !seeded.iter().any(|(addr, ..)| *addr == tx.sender) {
+        seeded.push((tx.sender, AUTO_SEED_SENDER_BALANCE, tx.nonce, Bytes::new()));
+    }
+    let mut db = seeded_db(&seeded);
+    let mut env = frame_tx_env(&tx);
+    env.config.features.post_tx_frames = true;
+    let transaction = Transaction::FrameTransaction(tx);
+    let result = {
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &transaction,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &NativeCrypto,
+            None,
+        )
+        .expect("VM::new should succeed for a frame tx");
+        vm.execute()
+    };
+    (result, db)
+}
+
+fn post_tx_frame(target: Address) -> Frame {
+    Frame {
+        mode: u8::from(FrameMode::PostTx),
+        flags: 0,
+        target: Some(target),
+        gas_limit: 100_000,
+        state_gas_limit: 0,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }
+}
+
+/// VERIFY approves both scopes, a SENDER frame writes a slot and logs, then the
+/// given POST_TX frames run.
+fn body_then_assertions(worker: Address, assertions: Vec<Frame>) -> FrameTransaction {
+    let mut frames = vec![
+        verify_frame(FUNDED_SENDER),
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0,
+            target: Some(worker),
+            gas_limit: 300_000,
+            state_gas_limit: 1_000_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ];
+    frames.extend(assertions);
+    frame_tx_with_frames(frames)
+}
+
+#[test]
+fn failed_post_tx_rolls_the_body_back_and_keeps_the_tx_valid() {
+    let worker = Address::from_low_u64_be(0xC0FFEE);
+    let asserter = Address::from_low_u64_be(0xA55E);
+    let tx = body_then_assertions(
+        worker,
+        vec![post_tx_frame(asserter), post_tx_frame(asserter)],
+    );
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (
+            worker,
+            U256::zero(),
+            0,
+            Bytes::from(SSTORE_AND_LOG_CODE.to_vec()),
+        ),
+        (
+            asserter,
+            U256::zero(),
+            0,
+            Bytes::from(PURE_REVERT_CODE.to_vec()),
+        ),
+    ];
+
+    let (result, db) = run_frame_tx_with_post_tx(&accounts, tx);
+    let report = result.expect("a failed assertion leaves the transaction valid");
+
+    // The body's write and log are gone; the prefix (the nonce APPROVE consumed)
+    // stands.
+    assert_eq!(storage_slot(&db, worker, H256::zero()), U256::zero());
+    assert!(report.logs.is_empty(), "body logs must be scrubbed");
+    assert_eq!(nonce_of(&db, FUNDED_SENDER), 1);
+
+    let frames = report.frame_results.expect("per-frame results");
+    // The body frame keeps its status and execution gas, loses logs and state gas.
+    assert_eq!(frames[1].0, FRAME_RECEIPT_STATUS_SUCCESS);
+    assert!(frames[1].1 > 0);
+    assert_eq!(frames[1].2, 0);
+    assert!(frames[1].3.is_empty());
+    // The failing assertion fails, and the one after it is skipped.
+    assert_eq!(
+        frames[2].0,
+        ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE
+    );
+    assert_eq!(frames[3].0, FRAME_RECEIPT_STATUS_SKIPPED);
+    assert_eq!(report.state_gas_used, 0);
+}
+
+#[test]
+fn passing_post_tx_keeps_the_body() {
+    let worker = Address::from_low_u64_be(0xC0FFEE);
+    let asserter = Address::from_low_u64_be(0xA55E);
+    let tx = body_then_assertions(worker, vec![post_tx_frame(asserter)]);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (
+            worker,
+            U256::zero(),
+            0,
+            Bytes::from(SSTORE_AND_LOG_CODE.to_vec()),
+        ),
+        // STOP: the assertion holds.
+        (asserter, U256::zero(), 0, Bytes::from(vec![0x00])),
+    ];
+    let (result, db) = run_frame_tx_with_post_tx(&accounts, tx);
+    let report = result.expect("valid");
+    assert_eq!(storage_slot(&db, worker, H256::zero()), U256::from(0x2au64));
+    assert!(report.logs.iter().any(|log| log.address == worker));
+}
+
+#[test]
+fn post_tx_frames_are_reserved_until_active() {
+    let worker = Address::from_low_u64_be(0xC0FFEE);
+    let tx = body_then_assertions(worker, vec![post_tx_frame(worker)]);
+    let (result, _) = run_frame_tx(&[], tx);
+    assert!(
+        matches!(
+            result,
+            Err(VMError::TxValidation(
+                ethrex_levm::errors::TxValidationError::InvalidFrameTransactionFormat(ref reason)
+            )) if reason.contains("POST_TX")
+        ),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn post_tx_frames_must_trail_the_transaction() {
+    let worker = Address::from_low_u64_be(0xC0FFEE);
+    let mut tx = body_then_assertions(worker, vec![]);
+    tx.frames.insert(1, post_tx_frame(worker));
+    let err = tx
+        .validate_static_constraints()
+        .expect_err("a SENDER frame after a POST_TX frame is out of place");
+    assert!(err.contains("POST_TX"), "{err}");
+}
+
+#[test]
+fn approve_halts_inside_a_post_tx_frame() {
+    let worker = Address::from_low_u64_be(0xC0FFEE);
+    let approver = Address::from_low_u64_be(0xA990);
+    let tx = body_then_assertions(worker, vec![post_tx_frame(approver)]);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (
+            worker,
+            U256::zero(),
+            0,
+            Bytes::from(SSTORE_AND_LOG_CODE.to_vec()),
+        ),
+        (
+            approver,
+            U256::zero(),
+            0,
+            Bytes::from(APPROVE_PAYMENT_CODE.to_vec()),
+        ),
+    ];
+    let (result, _) = run_frame_tx_with_post_tx(&accounts, tx);
+    let frames = result
+        .expect("valid")
+        .frame_results
+        .expect("per-frame results");
+    // An exceptional halt consumes the whole frame budget.
+    assert_eq!(
+        frames[2].0,
+        ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE
+    );
+    assert_eq!(frames[2].1, 100_000);
+}

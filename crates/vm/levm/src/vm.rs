@@ -901,6 +901,18 @@ pub fn validate_frame_signatures(
     true
 }
 
+/// EIP-7906: the point a failing POST_TX frame rolls the body back to, taken when
+/// the frame that sets the payer completes.
+struct PrefixEnd {
+    /// Index of that frame.
+    index: usize,
+    /// How many logs the transaction had emitted by then.
+    logs_len: usize,
+    refunded_gas: u64,
+    state_gas_used: i64,
+    bal_checkpoint: Option<BlockAccessListCheckpoint>,
+}
+
 /// Find the end of the atomic batch containing `failed_idx`, per EIP-8141:
 /// a batch is a maximal contiguous run of frames whose ATOMIC_BATCH_FLAG is
 /// set, terminated by the first frame without the flag. Static validation
@@ -1879,6 +1891,11 @@ impl<'a> VM<'a> {
         // gas those frames accumulated.
         let mut state_gas_used_at_batch_entry: i64 = 0;
         let mut skip_until_batch_end: Option<usize> = None; // skip remaining frames in a failed batch
+        // EIP-7906: where the validation prefix ended, and the originals of every
+        // state change made after it, so a failing POST_TX frame can put the body
+        // back. Both start when the frame that sets the payer completes.
+        let mut prefix_end: Option<PrefixEnd> = None;
+        let mut body_backup: Option<crate::call_frame::CallFrameBackup> = None;
 
         // Execute frames sequentially
         for (frame_idx, frame) in frame_tx.frames.iter().enumerate() {
@@ -1934,6 +1951,9 @@ impl<'a> VM<'a> {
                 // before clearing, so an invalid-tx exit can still roll back
                 // every committed frame's state (see `tx_level_backup`).
                 tx_level_backup.absorb(&self.current_call_frame.call_frame_backup);
+                if let Some(body) = body_backup.as_mut() {
+                    body.absorb(&self.current_call_frame.call_frame_backup);
+                }
                 self.current_call_frame.call_frame_backup.clear();
             }
 
@@ -1982,6 +2002,7 @@ impl<'a> VM<'a> {
                     )))?;
             ctx.current_frame_index = frame_idx;
             ctx.approve_called_in_current_frame = false;
+            let payer_was_set = ctx.payer_address.is_some();
 
             // EIP-8288: a dependency verification frame declares triples for the
             // block's recursive STARK and is never executed as EVM code. It still
@@ -2027,7 +2048,7 @@ impl<'a> VM<'a> {
             // Determine caller and static mode per frame mode
             let (caller, is_static) = match frame.execution_mode() {
                 FrameMode::Default => (entry_point, false),
-                FrameMode::Verify => (entry_point, true),
+                FrameMode::Verify | FrameMode::PostTx => (entry_point, true),
                 FrameMode::Sender => {
                     // SENDER mode requires sender_approved
                     let ctx = self.frame_tx_context.as_ref().ok_or(VMError::Internal(
@@ -2451,6 +2472,9 @@ impl<'a> VM<'a> {
                         )?;
                     } else {
                         tx_level_backup.absorb(&finished_frame.call_frame_backup);
+                        if let Some(body) = body_backup.as_mut() {
+                            body.absorb(&finished_frame.call_frame_backup);
+                        }
                     }
                 }
 
@@ -2545,6 +2569,73 @@ impl<'a> VM<'a> {
                 frame_state_gas_used,
                 frame_logs,
             ));
+
+            // EIP-7906: a failed assertion puts the body back to where the validation
+            // prefix ended -- state, logs, refunds and state gas -- and skips the
+            // frames after it. Unlike a failed VERIFY frame it leaves the transaction
+            // valid: the prefix stands, and the gas the body executed is still owed.
+            // Without a prefix end there is no payer, and the transaction is invalid
+            // below anyway.
+            if frame.execution_mode() == FrameMode::PostTx && !frame_success {
+                if let Some(prefix) = prefix_end.take() {
+                    let mut body = body_backup.take().unwrap_or_default();
+                    body.absorb(&self.current_call_frame.call_frame_backup);
+                    tx_level_backup.absorb(&self.current_call_frame.call_frame_backup);
+                    self.current_call_frame.call_frame_backup.clear();
+                    crate::utils::restore_cache_state(self.db, body)?;
+                    if let Some(checkpoint) = prefix.bal_checkpoint
+                        && let Some(recorder) = self.db.bal_recorder.as_mut()
+                    {
+                        recorder.restore(checkpoint);
+                    }
+                    all_logs.truncate(prefix.logs_len);
+                    self.substate.refunded_gas = prefix.refunded_gas;
+                    self.state_gas_used = prefix.state_gas_used;
+                    let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
+                        InternalError::Custom("missing frame tx context".to_string()),
+                    ))?;
+                    for result in ctx
+                        .frame_results
+                        .get_mut(prefix.index.saturating_add(1)..)
+                        .into_iter()
+                        .flatten()
+                    {
+                        result.2 = 0;
+                        result.3 = Vec::new();
+                    }
+                    for _ in frame_idx.saturating_add(1)..frame_tx.frames.len() {
+                        ctx.frame_results.push((
+                            ethrex_common::types::FRAME_RECEIPT_STATUS_SKIPPED,
+                            0,
+                            0,
+                            Vec::new(),
+                        ));
+                    }
+                }
+                self.substate.clear_transient_storage();
+                break;
+            }
+
+            // EIP-7906: the validation prefix ends with the frame that sets the
+            // payer. Approval is barred inside an atomic batch, so this frame is never
+            // a batch member, and its own changes are folded into the transaction
+            // accumulator here so the body's accumulator starts after them.
+            let payer_now_set = self
+                .frame_tx_context
+                .as_ref()
+                .is_some_and(|ctx| ctx.payer_address.is_some());
+            if frame_success && !payer_was_set && payer_now_set && !in_atomic_batch {
+                tx_level_backup.absorb(&self.current_call_frame.call_frame_backup);
+                self.current_call_frame.call_frame_backup.clear();
+                prefix_end = Some(PrefixEnd {
+                    index: frame_idx,
+                    logs_len: all_logs.len(),
+                    refunded_gas: self.substate.refunded_gas,
+                    state_gas_used: self.state_gas_used,
+                    bal_checkpoint: self.db.bal_recorder.as_ref().map(|r| r.checkpoint()),
+                });
+                body_backup = Some(crate::call_frame::CallFrameBackup::default());
+            }
 
             // Atomic batch: if a frame in the batch reverted, revert the
             // batch-level snapshot and skip remaining frames in the batch.
@@ -3153,10 +3244,11 @@ impl<'a> VM<'a> {
             let (caller, is_static) = match frame.execution_mode() {
                 FrameMode::Default => (entry_point, false),
                 FrameMode::Verify => (entry_point, true),
-                FrameMode::Sender => {
-                    // Structural rules exclude SENDER frames from the prefix.
+                FrameMode::Sender | FrameMode::PostTx => {
+                    // Structural rules exclude SENDER and POST_TX frames from the
+                    // prefix: both run after payment is approved.
                     return Err(VMError::Internal(InternalError::Custom(
-                        "SENDER frame in validation prefix".to_string(),
+                        "SENDER or POST_TX frame in validation prefix".to_string(),
                     )));
                 }
                 FrameMode::DepVerify => {

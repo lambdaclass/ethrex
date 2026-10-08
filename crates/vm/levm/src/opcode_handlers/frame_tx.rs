@@ -232,6 +232,10 @@ impl OpcodeHandler for OpApproveHandler {
             .frames
             .get(ctx.current_frame_index)
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
+        // EIP-7906: an assertion frame cannot grant anything; APPROVE there halts.
+        if current_frame.execution_mode() == FrameMode::PostTx {
+            return Err(ExceptionalHalt::InvalidOpcode.into());
+        }
         let frame_target = current_frame.target.unwrap_or(ctx.tx.sender);
         if vm.current_call_frame.to != frame_target {
             return Err(VMError::RevertOpcode);
@@ -731,6 +735,9 @@ pub fn execute_default_code(
         // Consumes no execution gas (the frame's value transfer is handled by
         // the caller's deferred transfer).
         FrameMode::Sender | FrameMode::Default => Ok((true, 0, Vec::new())),
+        // EIP-7906: a POST_TX frame runs its target's code like any call, so a
+        // codeless target is empty code; it never takes the default-code path.
+        FrameMode::PostTx => Ok((true, 0, Vec::new())),
         // EIP-8288: a dependency verification frame never executes, so it never
         // reaches default code either. `execute_frame_tx` completes it before the
         // target is resolved.

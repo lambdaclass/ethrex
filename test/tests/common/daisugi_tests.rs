@@ -170,6 +170,7 @@ fn feature_schedule_follows_the_prototype_timestamps() {
             dependency_frames: true,
             keyed_nonces: true,
             recent_roots: true,
+            post_tx_frames: true,
             legacy_frames: true,
         }
     );
