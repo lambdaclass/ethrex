@@ -241,6 +241,69 @@ fn intrinsic_gas_matches_the_receipts() {
     );
 }
 
+/// Block 1,000,889, the first block after `eip8288PrototypeTime`. It declares no
+/// dependencies, so its `recursive_stark` is the 12-byte empty envelope and the
+/// digest of the empty set, and the header is otherwise fully known from JSON-RPC.
+/// Matching the chain's hash pins the layout: the Prague fields, then the empty
+/// block-access-list placeholder and slot number zero, then the proof entry.
+fn first_dependency_era_header() -> ethrex_common::types::BlockHeader {
+    ethrex_common::types::BlockHeader {
+        parent_hash: h256("0xf42f2896f95a25a6fa7acc33566e1e037d2d9f220cf4d9f821c2c85e7e33a0d6"),
+        ommers_hash: h256("0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347"),
+        coinbase: address("0x8943545177806ed17b9f23f0a21ee5948ecaa776"),
+        state_root: h256("0x30b2863b5be476ae933c108697f209458a0566020d041df02597b09d3333baea"),
+        transactions_root: h256(
+            "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+        ),
+        receipts_root: h256("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421"),
+        number: 1_000_889,
+        gas_limit: 60_000_000,
+        gas_used: 0,
+        timestamp: DEPENDENCIES_TIME,
+        extra_data: bytes("0x4e65746865726d696e642076322e322e3061"),
+        prev_randao: h256("0x50de00f6fd3ffdadd946d5ed23a623447ae26c8d83d724b101a6f0fca6cccb26"),
+        nonce: 0,
+        base_fee_per_gas: Some(7),
+        withdrawals_root: Some(h256(
+            "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+        )),
+        blob_gas_used: Some(0),
+        excess_blob_gas: Some(0),
+        parent_beacon_block_root: Some(h256(
+            "0xcfddeb071b139b68c8de3f05c125368cf04b05052c42f806d824f3960645881f",
+        )),
+        requests_hash: Some(h256(
+            "0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        )),
+        recursive_stark: Some(ethrex_common::types::RecursiveStark {
+            proof: Bytes::copy_from_slice(&ethrex_dep_aggregation::envelope::EMPTY_ENVELOPE),
+            block_deps_hash: ethrex_common::types::prototype_dependencies_hash(&[]),
+        }),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn dependency_era_header_hash_matches_the_chain() {
+    let header = first_dependency_era_header();
+    assert_eq!(
+        header.compute_block_hash(&NativeCrypto),
+        h256("0x74ab09512f98aae72c1bfc5dedbca910f9759751a9f07ed97362835c821a1180")
+    );
+}
+
+#[test]
+fn dependency_era_header_round_trips_with_its_placeholders() {
+    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+    let header = first_dependency_era_header();
+    let encoded = header.encode_to_vec();
+    let decoded = ethrex_common::types::BlockHeader::decode(&encoded).expect("decodes");
+    assert_eq!(decoded.block_access_list_hash, None);
+    assert_eq!(decoded.slot_number, Some(0));
+    assert_eq!(decoded.recursive_stark, header.recursive_stark);
+    assert_eq!(decoded.encode_to_vec(), encoded);
+}
+
 /// The keyed form is valid only once keyed nonces are active, and the scalar
 /// form survives them only through the network's compatibility rule.
 #[test]

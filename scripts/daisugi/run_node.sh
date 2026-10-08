@@ -4,6 +4,10 @@
 #
 # usage: scripts/daisugi/run_node.sh DATA_DIR [extra ethrex flags...]
 #
+# Build the binary with `cargo build --release --bin ethrex --features leanvm`:
+# from eip8288PrototypeTime on, blocks carry dependency proofs that only the
+# leanVM backend can verify, and a node without it stops at the first one.
+#
 # Ports default away from the usual ones so the node can share a machine with
 # other clients: p2p/discovery 30313, JSON-RPC 18545, engine API 18551.
 set -euo pipefail

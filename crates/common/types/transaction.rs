@@ -2290,6 +2290,17 @@ pub fn dependencies_hash(deps: &[DependencyTriple]) -> H256 {
     H256::from_slice(hasher.finalize().as_bytes())
 }
 
+/// The deployed EIP-8288 prototype's `block_deps_hash`: keccak256 over the
+/// concatenated 96-byte triples of an already deduplicated and sorted list, scheme
+/// padding included. The empty set hashes to `keccak256("")`.
+pub fn prototype_dependencies_hash(deps: &[DependencyTriple]) -> H256 {
+    let mut encoded = Vec::with_capacity(deps.len() * FRAME_TX_DEPENDENCY_TRIPLE_BYTES);
+    for dep in deps {
+        encoded.extend_from_slice(&dep.encode());
+    }
+    keccak(encoded)
+}
+
 /// EIP-7623 `STANDARD_TOKEN_COST`.
 const FRAME_TX_STANDARD_TOKEN_COST: u64 = 4;
 /// EIP-7623 `TOTAL_COST_FLOOR_PER_TOKEN`, and the floor EIP-7976 raises it to at

@@ -760,8 +760,11 @@ fn recursive_stark_survives_the_execution_payload_round_trip() {
 
     let payload = ethrex_rpc::types::payload::ExecutionPayload::from_block(block, None);
     assert_eq!(
-        payload.recursive_stark,
-        Some(entry),
+        (
+            payload.recursive_stark_proof.clone(),
+            payload.recursive_stark_block_deps_hash
+        ),
+        (Some(entry.proof), Some(entry.block_deps_hash)),
         "getPayload must carry the entry to the consensus client"
     );
 

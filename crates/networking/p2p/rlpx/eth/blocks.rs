@@ -68,6 +68,11 @@ impl RLPDecode for HashOrNumber {
     }
 }
 
+/// The most header bytes one `BlockHeaders` response carries. Peers on the
+/// EIP-8288 prototype network refuse a response above 9 MiB; this leaves room for
+/// the message envelope under that.
+pub const MAX_BLOCK_HEADERS_RESPONSE_BYTES: usize = 9 * 1024 * 1024 - 64;
+
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#getblockheaders-0x03
 #[derive(Debug, Clone)]
 pub struct GetBlockHeaders {
@@ -127,6 +132,7 @@ impl GetBlockHeaders {
         };
 
         let mut headers = vec![];
+        let mut response_bytes = 0usize;
 
         let mut current_block = start_block;
 
@@ -174,6 +180,13 @@ impl GetBlockHeaders {
                     .map(HashOrNumber::Number),
             };
 
+            // A header carrying an EIP-8288 proof can be hundreds of kilobytes, so a
+            // full-count response could exceed what a peer accepts. Stop before the
+            // budget would be crossed, always serving at least one header.
+            response_bytes = response_bytes.saturating_add(block_header.length());
+            if !headers.is_empty() && response_bytes > MAX_BLOCK_HEADERS_RESPONSE_BYTES {
+                break;
+            }
             headers.push(block_header);
 
             match next_block {

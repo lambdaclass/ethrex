@@ -54,6 +54,13 @@ pub fn validate_recursive_stark(
     // cannot make rule 2 vacuous.
     let expected = block.body.dependencies();
 
+    // The prototype schedule frames its proof as an envelope that names the
+    // dependency set, and requires one even when the set is empty.
+    if chain_config.is_eip8288_prototype_active(block.header.timestamp) {
+        return ethrex_dep_aggregation::envelope::verify_envelope(&entry.proof, &expected)
+            .map_err(classify_aggregate_error);
+    }
+
     // Nothing to discharge and nothing offered to discharge it with: the rule holds
     // by arithmetic rather than by cryptography, and a node needs no backend to know
     // it.
@@ -73,22 +80,26 @@ pub fn validate_recursive_stark(
         return Ok(());
     }
 
-    aggregator.verify(&entry.proof, &expected).map_err(|e| {
-        // Two of these say nothing about the block, only about this node: it has no
-        // backend at all, or the backend it has cannot express one of the schemes
-        // the block uses. Reporting either as INVALID would have the node tell its
-        // consensus client that a chain everyone else follows is bad. It still
-        // refuses the block -- it cannot verify it -- but as a local incapacity.
-        //
-        // An unsupported scheme belongs on this side even though leanSTARK looks
-        // permanently unprovable here: whether some other backend can discharge it
-        // is not a fact this node has. Every other variant is a judgement about the
-        // proof itself, and those are real invalidity.
-        match e {
-            AggregateError::NoBackend | AggregateError::SchemeUnsupported { .. } => {
-                ChainError::RecursiveStarkUnverifiable(e.to_string())
-            }
-            _ => ChainError::RecursiveStarkInvalid(e.to_string()),
+    aggregator
+        .verify(&entry.proof, &expected)
+        .map_err(classify_aggregate_error)
+}
+
+fn classify_aggregate_error(e: AggregateError) -> ChainError {
+    // Two of these say nothing about the block, only about this node: it has no
+    // backend at all, or the backend it has cannot express one of the schemes
+    // the block uses. Reporting either as INVALID would have the node tell its
+    // consensus client that a chain everyone else follows is bad. It still
+    // refuses the block -- it cannot verify it -- but as a local incapacity.
+    //
+    // An unsupported scheme belongs on this side even though leanSTARK looks
+    // permanently unprovable here: whether some other backend can discharge it
+    // is not a fact this node has. Every other variant is a judgement about the
+    // proof itself, and those are real invalidity.
+    match e {
+        AggregateError::NoBackend | AggregateError::SchemeUnsupported { .. } => {
+            ChainError::RecursiveStarkUnverifiable(e.to_string())
         }
-    })
+        _ => ChainError::RecursiveStarkInvalid(e.to_string()),
+    }
 }

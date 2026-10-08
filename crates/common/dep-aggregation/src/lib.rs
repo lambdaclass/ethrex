@@ -32,6 +32,7 @@ use std::fmt::Debug;
 use ethereum_types::H256;
 use ethrex_common::types::DependencyTriple;
 
+pub mod envelope;
 pub mod unavailable;
 pub mod wrapper;
 pub use unavailable::UnavailableAggregator;
@@ -52,14 +53,12 @@ pub const LEANVM_AGGREGATOR: bool = cfg!(feature = "leanvm");
 
 /// The largest `recursive_stark` proof a header may carry.
 ///
-/// EIP-8288 sets no bound. It needs one: the proof rides in the block header, the
-/// header is inside `Block::encode`, and EIP-7934 caps the encoded block at
-/// `MAX_RLP_BLOCK_SIZE` (8 MiB). An unbounded field lets a proof crowd out the
-/// transactions it exists to serve, and a malformed length is cheaper to reject
-/// here than after allocation. leanVM's aggregates measure about 300 KiB, so this
-/// leaves generous room for recursion depth while staying an eighth of the block
-/// budget.
-pub const MAX_RECURSIVE_STARK_PROOF_BYTES: usize = 1 << 20;
+/// EIP-8288 sets no bound. It needs one: the proof rides in the block header, and
+/// a malformed length is cheaper to reject here than after allocation. 8 MiB is
+/// the bound the deployed EIP-8288 network enforces, so a smaller one here would
+/// reject blocks every other node accepts. leanVM's aggregates measure about
+/// 300 KiB, which leaves the bound generous room for recursion depth.
+pub const MAX_RECURSIVE_STARK_PROOF_BYTES: usize = 1 << 23;
 
 // The header's RLP decode applies the same bound, so an oversized proof is refused
 // before it is allocated rather than only when a backend looks at it. The two

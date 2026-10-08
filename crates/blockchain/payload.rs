@@ -1165,7 +1165,10 @@ impl Blockchain {
             let proof = self.aggregate_block_dependencies(&dependencies)?;
             context.payload.header.recursive_stark = Some(RecursiveStark {
                 proof,
-                block_deps_hash: context.payload.body.block_deps_hash(),
+                block_deps_hash: context
+                    .payload
+                    .body
+                    .block_deps_hash_for(&context.chain_config(), context.payload.header.timestamp),
             });
         }
 

@@ -236,7 +236,18 @@ impl PartialEq for BlockHeader {
 
 impl RLPEncode for BlockHeader {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
+        // A header field is positional, so a field present after an absent one needs
+        // the absent one written as a placeholder: an empty string for the
+        // block-access-list hash and zero for the slot number. That is the layout a
+        // pre-Amsterdam chain running EIP-8288 uses, where `recursive_stark` follows
+        // two fields Amsterdam would have filled.
+        let later_fields = self.recursive_stark.is_some() || self.burned_fees.is_some();
+        let slot_number = if later_fields {
+            Some(self.slot_number.unwrap_or_default())
+        } else {
+            self.slot_number
+        };
+        let encoder = Encoder::new(buf)
             .encode_field(&self.parent_hash)
             .encode_field(&self.ommers_hash)
             .encode_field(&self.coinbase)
@@ -257,9 +268,13 @@ impl RLPEncode for BlockHeader {
             .encode_optional_field(&self.blob_gas_used)
             .encode_optional_field(&self.excess_blob_gas)
             .encode_optional_field(&self.parent_beacon_block_root)
-            .encode_optional_field(&self.requests_hash)
-            .encode_optional_field(&self.block_access_list_hash)
-            .encode_optional_field(&self.slot_number)
+            .encode_optional_field(&self.requests_hash);
+        let encoder = match self.block_access_list_hash {
+            None if later_fields || slot_number.is_some() => encoder.encode_bytes(&[]),
+            hash => encoder.encode_optional_field(&hash),
+        };
+        encoder
+            .encode_optional_field(&slot_number)
             .encode_optional_field(&self.recursive_stark)
             .encode_optional_field(&self.burned_fees)
             .finish();
@@ -292,6 +307,18 @@ impl RLPDecode for BlockHeader {
         let (parent_beacon_block_root, decoder) = decoder.decode_optional_field();
         let (requests_hash, decoder) = decoder.decode_optional_field();
         let (block_access_list_hash, decoder) = decoder.decode_optional_field();
+        // An empty string in the block-access-list slot is the placeholder a
+        // pre-Amsterdam header writes when later fields follow (see the encoder).
+        // Anything else that is not a 32-byte hash is malformed.
+        let decoder = if block_access_list_hash.is_none() {
+            match decoder.decode_optional_field::<bytes::Bytes>() {
+                (Some(placeholder), rest) if placeholder.is_empty() => rest,
+                (Some(_), _) => return Err(RLPDecodeError::MalformedData),
+                (None, rest) => rest,
+            }
+        } else {
+            decoder
+        };
         let (slot_number, decoder) = decoder.decode_optional_field();
         // Before `burned_fees`: J* precedes LStar. Safe as a pair because a list and
         // a u64 do not decode as each other; see the field's comment.
@@ -368,6 +395,40 @@ impl BlockBody {
     /// aggregation backend and this crate has none.
     pub fn block_deps_hash(&self) -> H256 {
         crate::types::dependencies_hash(&self.dependencies())
+    }
+
+    /// The `block_deps_hash` the prototype EIP-8288 schedule
+    /// (`eip8288PrototypeTime`) commits to: keccak256 rather than BLAKE3, over the
+    /// same sorted, deduplicated triples.
+    pub fn prototype_block_deps_hash(&self) -> H256 {
+        crate::types::prototype_dependencies_hash(&self.dependencies())
+    }
+
+    /// The `block_deps_hash` the schedule active for `header` commits to.
+    pub fn block_deps_hash_for(&self, chain_config: &ChainConfig, timestamp: u64) -> H256 {
+        if chain_config.is_eip8288_prototype_active(timestamp) {
+            self.prototype_block_deps_hash()
+        } else {
+            self.block_deps_hash()
+        }
+    }
+
+    /// The gas the prototype EIP-8288 schedule (`eip8288PrototypeTime`) adds to the
+    /// header's `gas_used` for the block's `recursive_stark` field: one
+    /// `LEANSTARK_VERIFICATION_GAS` per declared dependency, duplicates included.
+    /// It is charged to no transaction and appears in no receipt.
+    pub fn prototype_recursive_stark_gas(&self) -> u64 {
+        self.transactions
+            .iter()
+            .filter_map(|tx| match tx {
+                Transaction::FrameTransaction(frame_tx) => {
+                    Some(frame_tx.declared_dependency_count() as u64)
+                }
+                _ => None,
+            })
+            .fold(0u64, |acc, count| {
+                acc.saturating_add(count.saturating_mul(crate::types::LEANSTARK_VERIFICATION_GAS))
+            })
     }
 
     pub const fn empty() -> Self {
@@ -522,7 +583,7 @@ pub struct Withdrawal {
 /// Mirrors `ethrex_dep_aggregation::MAX_RECURSIVE_STARK_PROOF_BYTES`, which cannot
 /// be imported here: that crate depends on this one. Asserted equal in
 /// `crates/common/dep-aggregation/src/tests.rs` so the two cannot drift.
-pub const MAX_RECURSIVE_STARK_PROOF_BYTES: usize = 1 << 20;
+pub const MAX_RECURSIVE_STARK_PROOF_BYTES: usize = 1 << 23;
 
 /// EIP-8288 `recursive_stark`: the aggregate proof discharging every dependency
 /// declared by every transaction in the block, plus the digest of that dependency
@@ -569,8 +630,7 @@ impl RLPDecode for RecursiveStark {
         // Bounded here, not only where it is verified. An unbounded field in a
         // header is allocated and hashed by every node that sees the block, long
         // before any aggregation backend looks at it -- and a node built without one
-        // never looks at all. EIP-7934's block cap is the only other bound, and it
-        // is eight times larger than any real proof.
+        // never looks at all.
         if proof.len() > MAX_RECURSIVE_STARK_PROOF_BYTES {
             return Err(RLPDecodeError::Custom(format!(
                 "recursive stark proof is {} bytes, over the {MAX_RECURSIVE_STARK_PROOF_BYTES}-byte limit",
@@ -952,7 +1012,13 @@ pub fn validate_prague_header_fields(
         if header.block_access_list_hash.is_some() {
             return Err(InvalidBlockHeaderError::BlockAccessListHashPresent);
         }
-        if header.slot_number.is_some() {
+        // Before Amsterdam the only slot number a header may carry is the zero
+        // placeholder that positions a following `recursive_stark` entry (see the
+        // header encoder), and only where EIP-8288 is active.
+        let stark_placeholder = header.slot_number == Some(0)
+            && header.recursive_stark.is_some()
+            && chain_config.is_eip8288_active(header.timestamp);
+        if header.slot_number.is_some() && !stark_placeholder {
             return Err(InvalidBlockHeaderError::SlotNumberPresent);
         }
     }

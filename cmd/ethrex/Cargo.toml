@@ -104,6 +104,9 @@ jemalloc_profiling = [
   "ethrex-rpc/jemalloc_profiling",
 ]
 sync-test = ["ethrex-p2p/sync-test"]
+# Verify EIP-8288 dependency proofs with the leanVM backend. Without it a node
+# rejects any block whose proof covers dependencies as unverifiable.
+leanvm = ["ethrex-blockchain/leanvm"]
 
 l2 = [
   "ethrex-l2",

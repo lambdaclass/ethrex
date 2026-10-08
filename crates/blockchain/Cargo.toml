@@ -53,6 +53,8 @@ secp256k1 = ["ethrex-common/secp256k1", "ethrex-vm/secp256k1", "rayon"]
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 metrics = ["ethrex-metrics/transactions", "ethrex-metrics/metrics"]
 eip-8025 = ["ethrex-common/eip-8025", "ethrex-vm/eip-8025"]
+# The leanVM EIP-8288 backend, needed to verify blocks that carry dependency proofs.
+leanvm = ["ethrex-dep-aggregation/leanvm"]
 testing = []
 
 [lints.clippy]

@@ -424,6 +424,20 @@ impl LEVM {
         // EIP-7778 (Amsterdam+): block-level gas overflow check.
         // Per-tx checks are skipped for Amsterdam because block gas is computed
         // from pre-refund values; overflow can only be detected after execution.
+        // The prototype EIP-8288 schedule prices the header's `recursive_stark` field
+        // in the block's gas alone, after every transaction has run.
+        if chain_config.is_eip8288_prototype_active(block.header.timestamp) {
+            block_gas_used =
+                block_gas_used.saturating_add(block.body.prototype_recursive_stark_gas());
+            if block_gas_used > block.header.gas_limit {
+                return Err(EvmError::Transaction(format!(
+                    "Gas allowance exceeded: Block gas used overflow: \
+                     block_gas_used {block_gas_used} > block_gas_limit {}",
+                    block.header.gas_limit
+                )));
+            }
+        }
+
         if is_amsterdam && block_gas_used > block.header.gas_limit {
             return Err(EvmError::Transaction(format!(
                 "Gas allowance exceeded: Block gas used overflow: \
@@ -878,6 +892,20 @@ impl LEVM {
         // EIP-7778 (Amsterdam+): block-level gas overflow check.
         // Per-tx checks are skipped for Amsterdam because block gas is computed
         // from pre-refund values; overflow can only be detected after execution.
+        // The prototype EIP-8288 schedule prices the header's `recursive_stark` field
+        // in the block's gas alone, after every transaction has run.
+        if chain_config.is_eip8288_prototype_active(block.header.timestamp) {
+            block_gas_used =
+                block_gas_used.saturating_add(block.body.prototype_recursive_stark_gas());
+            if block_gas_used > block.header.gas_limit {
+                return Err(EvmError::Transaction(format!(
+                    "Gas allowance exceeded: Block gas used overflow: \
+                     block_gas_used {block_gas_used} > block_gas_limit {}",
+                    block.header.gas_limit
+                )));
+            }
+        }
+
         if is_amsterdam && block_gas_used > block.header.gas_limit {
             return Err(EvmError::Transaction(format!(
                 "Gas allowance exceeded: Block gas used overflow: \

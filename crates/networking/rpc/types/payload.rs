@@ -80,13 +80,20 @@ pub struct ExecutionPayload {
         default
     )]
     pub burned_fees: Option<u64>,
-    // recursive_stark (EIP-8288, J*+): the aggregate proof and the digest of the
-    // block's dependency set. Part of the header hash at J*, so it must survive the
-    // getPayload -> newPayload round-trip for the same reason `burned_fees` must:
-    // without it a producer's own block fails its block-hash check on import.
-    // `None` for pre-J* payloads (skipped in serialization).
+    // recursive_stark (EIP-8288): the aggregate proof and the digest of the block's
+    // dependency set, as the flat `recursiveStarkProof` and
+    // `recursiveStarkBlockDepsHash` fields consensus clients send. Part of the
+    // header hash, so they must survive the getPayload -> newPayload round-trip for
+    // the same reason `burned_fees` must. `None` before EIP-8288 (skipped in
+    // serialization); one without the other is malformed.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "optional_hex_bytes",
+        default
+    )]
+    pub recursive_stark_proof: Option<Bytes>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub recursive_stark: Option<RecursiveStark>,
+    pub recursive_stark_block_deps_hash: Option<H256>,
 }
 
 #[derive(Clone, Debug)]
@@ -144,6 +151,22 @@ impl ExecutionPayload {
             ommers: vec![],
             withdrawals: self.withdrawals,
         };
+        let recursive_stark = match (
+            self.recursive_stark_proof,
+            self.recursive_stark_block_deps_hash,
+        ) {
+            (Some(proof), Some(block_deps_hash)) => Some(RecursiveStark {
+                proof,
+                block_deps_hash,
+            }),
+            (None, None) => None,
+            _ => {
+                return Err(RLPDecodeError::Custom(
+                    "recursiveStarkProof and recursiveStarkBlockDepsHash must be sent together"
+                        .to_string(),
+                ));
+            }
+        };
         let header = BlockHeader {
             parent_hash: self.parent_hash,
             ommers_hash: *DEFAULT_OMMERS_HASH,
@@ -176,7 +199,7 @@ impl ExecutionPayload {
             slot_number: self.slot_number,
             block_access_list_hash,
             burned_fees: self.burned_fees,
-            recursive_stark: self.recursive_stark,
+            recursive_stark,
             ..Default::default()
         };
 
@@ -215,7 +238,15 @@ impl ExecutionPayload {
             slot_number: block.header.slot_number,
             block_access_list,
             burned_fees: block.header.burned_fees,
-            recursive_stark: block.header.recursive_stark,
+            recursive_stark_proof: block
+                .header
+                .recursive_stark
+                .as_ref()
+                .map(|entry| entry.proof.clone()),
+            recursive_stark_block_deps_hash: block
+                .header
+                .recursive_stark
+                .map(|entry| entry.block_deps_hash),
         }
     }
 }

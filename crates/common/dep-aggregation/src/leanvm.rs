@@ -1,8 +1,9 @@
 //! The leanVM-backed aggregator.
 //!
-//! Pinned to leanVM `b7b3b742af`, the head of its `nicetry` branch. Everything
-//! leanVM-shaped lives in this file, so a rename upstream costs one file rather than
-//! a sweep.
+//! Pinned to leanVM `854997bd15`, five commits on top of the `nicetry` branch that
+//! add the EIP-8288 mixed recursive proof profile the deployed prototype network
+//! verifies block proofs with (see [`verify_mixed_proof`]). Everything leanVM-shaped
+//! lives in this file, so a rename upstream costs one file rather than a sweep.
 //!
 //! The SPHINCS scheme at that revision is the NiceTry "SPHINCS- v2" profile: Keccak-256
 //! tweakable hashes, standard FORS under a five-layer standard WOTS+ hypertree, a
@@ -29,7 +30,7 @@
 //! # Mapping EIP-8288's triples onto leanVM's claims
 //!
 //! EIP-8288 describes a dependency as `(scheme, data_hash, verification_key_hash)`.
-//! leanVM describes one as `SphincsClaim = (SphincsPublicKey, sphincs::Message)`.
+//! leanVM describes one as `SphincsClaim = (sphincs::Message, SphincsPublicKey)`.
 //! Lining those up turned up two things the EIP does not say:
 //!
 //! - **`data_hash` maps cleanly.** `sphincs::Message` is `[u8; 32]`, the same width
@@ -56,7 +57,47 @@ use crate::{AggregateError, DependencyAggregator, DependencyWitness, check_proof
 /// The leanVM revision this backend is built against. Part of `aggregated_vk`
 /// because leanVM does not expose a digest of its own circuit; see
 /// [`LeanVmAggregator::aggregated_vk`].
-pub const LEANVM_REVISION: &str = "b7b3b742af8dda100a0263b22c36e33963cc165c";
+pub const LEANVM_REVISION: &str = "854997bd156f47f1b1ce2192c4499741f29bd0df";
+
+/// The key of the mixed recursive guest the deployed EIP-8288 prototype verifies
+/// block proofs against: the guest's Fiat-Shamir seed, so any change to the guest
+/// or to the compiler that builds it changes this value.
+pub const MIXED_GUEST_KEY: [u8; 32] = [
+    0x93, 0x70, 0xd7, 0x60, 0xab, 0xb5, 0x5f, 0xdf, 0x02, 0xac, 0xc7, 0xe8, 0xd4, 0x06, 0x88, 0xc4,
+    0x25, 0x81, 0x5c, 0x3d, 0x25, 0xa2, 0xae, 0xa3, 0xc0, 0x30, 0xb2, 0xae, 0x1a, 0xb5, 0x1a, 0xce,
+];
+
+/// Verify the payload of a prototype envelope: a leanVM mixed recursive proof over
+/// exactly `dependencies`, which the caller has already checked are the block's.
+///
+/// The guest is compiled from embedded source on first use, so its key is checked
+/// against [`MIXED_GUEST_KEY`] here: a build whose guest differs would verify a
+/// different statement, and must refuse rather than disagree with the network.
+pub fn verify_mixed_proof(
+    dependencies: &[DependencyTriple],
+    payload: &[u8],
+) -> Result<(), AggregateError> {
+    use rec_aggregation::eip8288_mixed::{MixedProof, mixed_guest_key};
+    if mixed_guest_key() != MIXED_GUEST_KEY {
+        return Err(AggregateError::ProofInvalid(
+            "this build's mixed recursive guest key differs from the network's".into(),
+        ));
+    }
+    let encoded: Vec<[u8; 96]> = dependencies.iter().map(DependencyTriple::encode).collect();
+    // leanVM can panic on adversarial input; that is a rejection, not a crash.
+    std::panic::catch_unwind(|| {
+        let proof = MixedProof::from_bytes_without_deps(&encoded, payload)
+            .map_err(|_| AggregateError::ProofMalformed)?;
+        proof
+            .verify()
+            .map_err(|e| AggregateError::ProofInvalid(format!("{e:?}")))
+    })
+    .unwrap_or_else(|_| {
+        Err(AggregateError::ProofInvalid(
+            "the mixed proof verifier panicked".into(),
+        ))
+    })
+}
 
 /// EIP-8288's `verification_key_hash` for a leanSPHINCS public key.
 ///
@@ -93,7 +134,7 @@ fn select_claims(
 
     let mut candidates: Vec<SphincsClaim> = raw
         .iter()
-        .map(|(key, message, _)| (*key, *message))
+        .map(|(key, message, _)| (*message, *key))
         .chain(
             children
                 .iter()
@@ -125,7 +166,7 @@ fn select_claims(
 
 /// Turn one leanVM claim into the EIP-8288 triple that names it.
 fn triple_of(claim: &SphincsClaim) -> DependencyTriple {
-    let (key, message) = claim;
+    let (message, key) = claim;
     DependencyTriple {
         scheme: DEPENDENCY_SCHEME_LEANSPHINCS,
         data_hash: H256::from_slice(message),

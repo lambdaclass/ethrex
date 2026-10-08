@@ -73,16 +73,12 @@ fn an_oversized_proof_is_rejected_before_decoding() {
     );
 }
 
-/// The bound must leave a block usable. leanVM's aggregates are around 300 KiB, so
-/// the cap has headroom for recursion while staying a small share of the 8 MiB
-/// block budget.
+/// The bound is the one the deployed EIP-8288 network enforces: a smaller one
+/// would reject blocks every other node accepts. leanVM's aggregates are around
+/// 300 KiB, so it also leaves room for recursion.
 #[test]
-fn the_proof_bound_is_a_small_share_of_the_block() {
-    use ethrex_common::constants::MAX_RLP_BLOCK_SIZE;
-    assert!(
-        (MAX_RECURSIVE_STARK_PROOF_BYTES as u64) < MAX_RLP_BLOCK_SIZE / 4,
-        "a proof must not be able to crowd out the transactions it exists to serve"
-    );
+fn the_proof_bound_matches_the_network() {
+    assert_eq!(MAX_RECURSIVE_STARK_PROOF_BYTES, 8 * 1024 * 1024);
     const {
         assert!(
             MAX_RECURSIVE_STARK_PROOF_BYTES >= 512 * 1024,

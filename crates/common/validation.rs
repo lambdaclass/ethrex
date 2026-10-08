@@ -72,7 +72,9 @@ pub fn validate_block_pre_execution(
             .as_ref()
             .map(|entry| entry.block_deps_hash)
             .ok_or(InvalidBlockError::RecursiveStarkMissing)?;
-        let computed = block.body.block_deps_hash();
+        let computed = block
+            .body
+            .block_deps_hash_for(chain_config, block.header.timestamp);
         if declared != computed {
             return Err(InvalidBlockError::RecursiveStarkDepsHashMismatch { declared, computed });
         }
