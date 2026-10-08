@@ -201,6 +201,7 @@ fn project_next_block_base_fee_values(
         header.gas_used,
         header.base_fee_per_gas.unwrap_or_default(),
         ELASTICITY_MULTIPLIER,
+        fork,
     )
     .unwrap_or_default();
     let next_excess_blob_gas = calc_excess_blob_gas(header, schedule, fork);

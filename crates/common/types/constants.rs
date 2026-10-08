@@ -1,6 +1,12 @@
 // Fee related
 pub const ELASTICITY_MULTIPLIER: u64 = 2;
 pub const BASE_FEE_MAX_CHANGE_DENOMINATOR: u128 = 8;
+/// EIP-8198 (Hegota): the largest per-block base fee change drops from 1/8 to
+/// 5/48. Blocks arrive more often under shorter slots, so this keeps the base
+/// fee's reaction per unit of wall-clock time close to what it was. The fraction
+/// is a fixed constant: the execution layer never consumes the slot duration.
+pub const BASE_FEE_MAX_CHANGE_NUMERATOR_HEGOTA: u128 = 5;
+pub const BASE_FEE_MAX_CHANGE_DENOMINATOR_HEGOTA: u128 = 48;
 pub const GAS_LIMIT_ADJUSTMENT_FACTOR: u64 = 1024;
 pub const GAS_LIMIT_MINIMUM: u64 = 5000;
 pub const DEFAULT_BUILDER_GAS_CEIL: u64 = 60_000_000;

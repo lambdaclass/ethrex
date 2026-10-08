@@ -154,6 +154,16 @@ pub struct BlobSchedule {
     pub bpo5: Option<ForkBlobSchedule>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub amsterdam: Option<ForkBlobSchedule>,
+    /// EIP-8198 appends a blob schedule entry at Hegotá. When the genesis gives
+    /// none, the EIP's values apply (see `default_hegota_schedule`). Accepts the
+    /// same alternative fork names as `hegota_time`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "heze",
+        alias = "bogota"
+    )]
+    pub hegota: Option<ForkBlobSchedule>,
 }
 
 impl Default for BlobSchedule {
@@ -168,6 +178,7 @@ impl Default for BlobSchedule {
             bpo4: None,
             bpo5: None,
             amsterdam: None,
+            hegota: None,
         }
     }
 }
@@ -209,6 +220,19 @@ fn default_bpo2_schedule() -> ForkBlobSchedule {
         target: 14,
         max: 21,
         base_fee_update_fraction: 11684671,
+    }
+}
+
+/// EIP-8198 (Quick Slots) blob schedule for Hegotá, as execution-specs fixes it
+/// for the fork (execution-specs #3703). It keeps the fastest rise and fall of the
+/// blob base fee per unit of wall-clock time, and the 1.5 max/target ratio, under
+/// shorter slots. The values are provisional pending a joint decision with the
+/// consensus layer, whose `BLOB_SCHEDULE` needs a matching entry.
+pub fn default_hegota_schedule() -> ForkBlobSchedule {
+    ForkBlobSchedule {
+        target: 12,
+        max: 18,
+        base_fee_update_fraction: 12018519,
     }
 }
 /// Blockchain settings defined per block
@@ -505,13 +529,22 @@ impl ChainConfig {
     }
 
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
+        // EIP-8198 appends a blob schedule entry at Hegotá, so from Hegotá on (LStar
+        // included, being later) the Hegotá entry applies: the genesis's when it pins
+        // one, the EIP's values otherwise. Resolved through the fork ordinal, like the
+        // base fee rule the same EIP changes.
+        if self.get_fork(block_timestamp) >= Fork::Hegota {
+            return Some(
+                self.blob_schedule
+                    .hegota
+                    .unwrap_or_else(default_hegota_schedule),
+            );
+        }
         // EIP-7892: from Prague onward the blob schedule only changes at BPO forks.
-        // Named forks (Osaka, Amsterdam, Hegotá, LStar) carry no blob params of their own
-        // and inherit the highest activated BPO entry, so resolution falls through the BPO
-        // chain. A genesis that pins an entry for the named fork anyway takes precedence.
-        if (self.is_lstar_activated(block_timestamp)
-            || self.is_hegota_activated(block_timestamp)
-            || self.is_amsterdam_activated(block_timestamp))
+        // The other named forks (Osaka, Amsterdam) carry no blob params of their own
+        // and inherit the highest activated BPO entry, so resolution falls through the
+        // BPO chain. A genesis that pins an entry for Amsterdam anyway takes precedence.
+        if self.is_amsterdam_activated(block_timestamp)
             && let Some(schedule) = self.blob_schedule.amsterdam
         {
             return Some(schedule);
@@ -1341,14 +1374,17 @@ mod tests {
             Some(1000)
         );
 
-        // Blob schedule at LStar inherits Amsterdam's (which inherits bpo2, max=9 default).
-        let sched_lstar = cfg
-            .get_fork_blob_schedule(1000)
-            .expect("lstar blob schedule");
-        let sched_amsterdam = cfg
-            .get_fork_blob_schedule(999)
-            .expect("amsterdam blob schedule");
-        assert_eq!(sched_lstar.max, sched_amsterdam.max);
+        // LStar is later than Hegotá, so it carries Hegotá's EIP-8198 blob schedule
+        // entry, while Amsterdam keeps the schedule in force before it (Prague's here,
+        // as no Osaka or BPO fork is scheduled).
+        assert_eq!(
+            cfg.get_fork_blob_schedule(1000),
+            Some(default_hegota_schedule())
+        );
+        assert_eq!(
+            cfg.get_fork_blob_schedule(999),
+            Some(cfg.blob_schedule.prague)
+        );
     }
 
     #[test]
@@ -1544,5 +1580,70 @@ mod tests {
         };
         config.blob_schedule.amsterdam = Some(pinned);
         assert_eq!(config.get_fork_blob_schedule(100), Some(pinned));
+    }
+
+    #[test]
+    fn hegota_applies_the_eip_8198_blob_schedule() {
+        // EIP-8198 appends a blob schedule entry at Hegotá: target 12, max 18,
+        // update fraction 12018519 (execution-specs #3703). It replaces whatever was
+        // in force before, a pinned Amsterdam entry included.
+        let mut config = ChainConfig {
+            osaka_time: Some(0),
+            bpo1_time: Some(0),
+            bpo2_time: Some(0),
+            amsterdam_time: Some(0),
+            hegota_time: Some(100),
+            ..Default::default()
+        };
+        config.blob_schedule.amsterdam = Some(ForkBlobSchedule {
+            target: 16,
+            max: 24,
+            base_fee_update_fraction: 13353910,
+        });
+        let eip_8198 = ForkBlobSchedule {
+            target: 12,
+            max: 18,
+            base_fee_update_fraction: 12018519,
+        };
+        assert_eq!(default_hegota_schedule(), eip_8198);
+        assert_eq!(
+            config.get_fork_blob_schedule(99),
+            config.blob_schedule.amsterdam
+        );
+        assert_eq!(config.get_fork_blob_schedule(100), Some(eip_8198));
+        assert_eq!(
+            config.get_blob_schedule_for_fork(Fork::Hegota),
+            Some(eip_8198)
+        );
+    }
+
+    #[test]
+    fn hegota_prefers_a_genesis_pinned_blob_schedule() {
+        // The EIP's values are provisional, so a genesis can override them, under any
+        // of the names the Hegotá fork time accepts.
+        for key in ["hegota", "heze", "bogota"] {
+            let config: ChainConfig = serde_json::from_str(&format!(
+                r#"{{
+                    "chainId": 1,
+                    "depositContractAddress": "0x00000000219ab540356cbb839cbe05303d7705fa",
+                    "osakaTime": 0,
+                    "amsterdamTime": 0,
+                    "hegotaTime": 0,
+                    "blobSchedule": {{
+                        "{key}": {{"target": 10, "max": 15, "baseFeeUpdateFraction": 8346193}}
+                    }}
+                }}"#
+            ))
+            .expect("genesis should parse");
+            assert_eq!(
+                config.get_fork_blob_schedule(0),
+                Some(ForkBlobSchedule {
+                    target: 10,
+                    max: 15,
+                    base_fee_update_fraction: 8346193,
+                }),
+                "blobSchedule.{key} must set Hegotá's blob params",
+            );
+        }
     }
 }

@@ -1,5 +1,6 @@
 use super::{
-    BASE_FEE_MAX_CHANGE_DENOMINATOR, ChainConfig, Fork, ForkBlobSchedule,
+    BASE_FEE_MAX_CHANGE_DENOMINATOR, BASE_FEE_MAX_CHANGE_DENOMINATOR_HEGOTA,
+    BASE_FEE_MAX_CHANGE_NUMERATOR_HEGOTA, ChainConfig, Fork, ForkBlobSchedule,
     GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
 };
 use crate::{
@@ -595,14 +596,29 @@ pub enum FakeExponentialError {
     CheckedAdd,
 }
 
+/// Largest fraction `(numerator, denominator)` by which the base fee of a block of
+/// `fork` can change from its parent's: 1/8 (EIP-1559), 5/48 from Hegota (EIP-8198).
+pub fn base_fee_max_change(fork: Fork) -> (u128, u128) {
+    if fork >= Fork::Hegota {
+        (
+            BASE_FEE_MAX_CHANGE_NUMERATOR_HEGOTA,
+            BASE_FEE_MAX_CHANGE_DENOMINATOR_HEGOTA,
+        )
+    } else {
+        (1, BASE_FEE_MAX_CHANGE_DENOMINATOR)
+    }
+}
+
 // Calculates the base fee for the current block based on its gas_limit and parent's gas and fee
 // Returns None if the block gas limit is not valid in relation to its parent's gas limit
+// `fork` is the fork of the block whose base fee is computed, which picks the max change.
 pub fn calculate_base_fee_per_gas(
     block_gas_limit: u64,
     parent_gas_limit: u64,
     parent_gas_used: u64,
     parent_base_fee_per_gas: u64,
     elasticity_multiplier: u64,
+    fork: Fork,
 ) -> Option<u64> {
     // Check gas limit, if the check passes we can also rest assured that none of the
     // following divisions will have zero as a divider
@@ -611,6 +627,7 @@ pub fn calculate_base_fee_per_gas(
     }
 
     let parent_gas_target = parent_gas_limit / elasticity_multiplier;
+    let (max_change_numerator, max_change_denominator) = base_fee_max_change(fork);
 
     match parent_gas_used.cmp(&parent_gas_target) {
         Ordering::Equal => Some(parent_base_fee_per_gas),
@@ -621,8 +638,11 @@ pub fn calculate_base_fee_per_gas(
                 u128::from(parent_base_fee_per_gas) * u128::from(gas_used_delta);
             let target_fee_gas_delta = parent_fee_gas_delta / u128::from(parent_gas_target);
 
-            let base_fee_per_gas_delta =
-                max(target_fee_gas_delta / BASE_FEE_MAX_CHANGE_DENOMINATOR, 1);
+            // Multiply before dividing, as the spec does.
+            let base_fee_per_gas_delta = max(
+                target_fee_gas_delta.saturating_mul(max_change_numerator) / max_change_denominator,
+                1,
+            );
 
             (u128::from(parent_base_fee_per_gas) + base_fee_per_gas_delta)
                 .try_into()
@@ -635,7 +655,8 @@ pub fn calculate_base_fee_per_gas(
                 u128::from(parent_base_fee_per_gas) * u128::from(gas_used_delta);
             let target_fee_gas_delta = parent_fee_gas_delta / u128::from(parent_gas_target);
 
-            let base_fee_per_gas_delta = target_fee_gas_delta / BASE_FEE_MAX_CHANGE_DENOMINATOR;
+            let base_fee_per_gas_delta =
+                target_fee_gas_delta.saturating_mul(max_change_numerator) / max_change_denominator;
 
             (u128::from(parent_base_fee_per_gas) - base_fee_per_gas_delta)
                 .try_into()
@@ -711,6 +732,7 @@ pub fn validate_block_header(
     header: &BlockHeader,
     parent_header: &BlockHeader,
     elasticity_multiplier: u64,
+    fork: Fork,
 ) -> Result<(), InvalidBlockHeaderError> {
     if header.gas_used > header.gas_limit {
         return Err(InvalidBlockHeaderError::GasUsedGreaterThanGasLimit);
@@ -722,6 +744,7 @@ pub fn validate_block_header(
         parent_header.gas_used,
         parent_header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
         elasticity_multiplier,
+        fork,
     ) {
         base_fee
     } else {
@@ -1089,7 +1112,10 @@ mod test {
             requests_hash: Some(*EMPTY_KECCAK_HASH),
             ..Default::default()
         };
-        assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok());
+        assert!(
+            validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER, Fork::Shanghai)
+                .is_ok()
+        );
         assert_eq!(parent_block.encode_to_vec().len(), parent_block.length());
         assert_eq!(block.encode_to_vec().len(), block.length());
     }
@@ -1133,8 +1159,53 @@ mod test {
             parent_gas_used,
             parent_base_fee_per_gas,
             ELASTICITY_MULTIPLIER,
+            Fork::Cancun,
         );
         assert_eq!(calc_base_fee, expected_base_fee)
+    }
+
+    #[test]
+    fn hegota_lowers_the_max_base_fee_change_to_5_over_48() {
+        // EIP-8198: from Hegotá the base fee moves by at most 5/48 per block instead of
+        // 1/8, computed as target_fee_gas_delta * 5 // 48 (multiply first).
+        let gas_limit = 30_000_000;
+        let target = gas_limit / ELASTICITY_MULTIPLIER;
+        let base_fee = |parent_gas_used, parent_base_fee, fork| {
+            calculate_base_fee_per_gas(
+                gas_limit,
+                gas_limit,
+                parent_gas_used,
+                parent_base_fee,
+                ELASTICITY_MULTIPLIER,
+                fork,
+            )
+        };
+        // Full parent: +1/8 before, +5/48 from Hegotá (5e9 / 48 truncates to 104166666).
+        assert_eq!(
+            base_fee(gas_limit, 1_000_000_000, Fork::Amsterdam),
+            Some(1_125_000_000)
+        );
+        assert_eq!(
+            base_fee(gas_limit, 1_000_000_000, Fork::Hegota),
+            Some(1_104_166_666)
+        );
+        // Empty parent: -1/8 before, -5/48 from Hegotá.
+        assert_eq!(
+            base_fee(0, 1_000_000_000, Fork::Amsterdam),
+            Some(875_000_000)
+        );
+        assert_eq!(base_fee(0, 1_000_000_000, Fork::Hegota), Some(895_833_334));
+        // Multiplying first matters at small values: 48 * 5 // 48 = 5, not 48 // 48 * 5.
+        assert_eq!(base_fee(gas_limit, 48, Fork::Amsterdam), Some(54));
+        assert_eq!(base_fee(gas_limit, 48, Fork::Hegota), Some(53));
+        // An increase is still at least 1 wei, and a parent at target keeps its fee.
+        assert_eq!(base_fee(target + 1, 7, Fork::Hegota), Some(8));
+        assert_eq!(base_fee(target, 7, Fork::Hegota), Some(7));
+        // Later forks keep the Hegotá rule.
+        assert_eq!(
+            base_fee(gas_limit, 1_000_000_000, Fork::LStar),
+            Some(1_104_166_666)
+        );
     }
 
     #[test]

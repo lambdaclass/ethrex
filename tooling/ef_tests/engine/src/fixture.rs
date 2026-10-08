@@ -355,8 +355,9 @@ fn build_chain_config_json(
         (Fork::BPO4, "bpo4Time"),
         (Fork::BPO5, "bpo5Time"),
         (Fork::Amsterdam, "amsterdamTime"),
-        // EEST's "Bogota" (EIP-7805 FOCIL) — Hegotá in ethrex. Hegotá adds no
-        // genesis-header fields, so activating it never changes a genesis hash.
+        // EEST's "Bogota" (EIP-7805 FOCIL, EIP-8198 quick slots) — Hegotá in ethrex.
+        // Hegotá adds no genesis-header fields, so activating it never changes a
+        // genesis hash.
         (Fork::Hegota, "hegotaTime"),
     ];
 

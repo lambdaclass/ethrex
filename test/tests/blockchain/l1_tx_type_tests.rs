@@ -124,6 +124,7 @@ async fn l1_rejects_privileged_l2_transaction_block() {
         parent.gas_used,
         parent.base_fee_per_gas.unwrap_or_default(),
         ELASTICITY_MULTIPLIER,
+        store.get_chain_config().fork(parent.timestamp + 1),
     )
     .expect("calculate child base fee");
     let receipts = [Receipt::new(TxType::Privileged, true, 21_000, Vec::new())];

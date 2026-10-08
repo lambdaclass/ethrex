@@ -301,6 +301,8 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
 
     let start = Instant::now();
     let parent = &req.parent_header;
+    let config = blockchain.storage.get_chain_config();
+    let child_timestamp = parent.timestamp.saturating_add(SLOT_DURATION_SECS);
 
     // Predicted child base fee (same formula as the payload builder).
     let base_fee = calculate_base_fee_per_gas(
@@ -309,6 +311,7 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
         parent.gas_used,
         parent.base_fee_per_gas.unwrap_or_default(),
         ELASTICITY_MULTIPLIER,
+        config.fork(child_timestamp),
     );
 
     // Mempool snapshot filter. blob_fee: None on purpose — blob txs are
@@ -324,14 +327,13 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
     // Synthetic child header: clone the parent and override what the warm
     // path reads (fork selection by timestamp, base fee, blob fee inputs).
     // Approximation is fine — warming only needs plausible execution context.
-    let config = blockchain.storage.get_chain_config();
     let mut header = parent.clone();
     // The clone carries the parent's cached hash; reset so any future
     // consumer recomputes it for the (different) synthetic child header.
     header.hash = Default::default();
     header.parent_hash = parent.hash();
     header.number = parent.number.saturating_add(1);
-    header.timestamp = parent.timestamp.saturating_add(SLOT_DURATION_SECS);
+    header.timestamp = child_timestamp;
     header.base_fee_per_gas = base_fee;
     header.gas_used = 0;
     if let Some(schedule) = config.get_fork_blob_schedule(header.timestamp) {

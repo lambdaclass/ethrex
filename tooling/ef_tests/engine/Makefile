@@ -42,6 +42,13 @@ AMSTERDAM_STAMP := $(SPECTEST_VECTORS_DIR)/.amsterdam_overlay
 # Fixtures whose expected verdict contradicts the EELS spec at the same tag
 # are enumerated, with the exact failure signature the harness enforces, in
 # tests/upstream_broken_fixtures.txt (empty at v0.3.0).
+#
+# focil-devnet-2 adds EIP-8198 (quick slots) to Bogota: a 5/48 maximum base fee
+# change and a new blob schedule. v0.3.0 predates it, so 306 of its Bogota
+# fixtures expect a header base fee computed with the old 1/8 rule and fail here
+# with "Base fee per gas is incorrect". They are superseded, not broken, so they
+# are not listed above. Re-pin to the next focil-devnet release, which carries
+# EIP-8198 (execution-specs#3703); until then v0.3.0 is the FOCIL-only baseline.
 FOCIL_FIXTURES_FILE := .fixtures_url_focil
 FOCIL_ARTIFACT := focil-tests.tar.gz
 FOCIL_URL := $(shell cat $(FOCIL_FIXTURES_FILE))

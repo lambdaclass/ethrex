@@ -109,6 +109,7 @@ pub fn run(args: T8nArgs) -> Result<(), T8nError> {
             bpo4: Some(schedule),
             bpo5: Some(schedule),
             amsterdam: Some(schedule),
+            hegota: Some(schedule),
         };
     }
     let env = &inputs.env;
@@ -187,6 +188,7 @@ pub fn run(args: T8nArgs) -> Result<(), T8nError> {
             env.parent_gas_used.unwrap_or_default(),
             env.parent_base_fee.unwrap_or_default(),
             ELASTICITY_MULTIPLIER,
+            config.fork(timestamp),
         )
     });
     let excess_blob_gas = env.current_excess_blob_gas.or_else(|| {

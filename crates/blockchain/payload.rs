@@ -195,6 +195,7 @@ pub fn create_payload(
             parent_block.gas_used,
             parent_block.base_fee_per_gas.unwrap_or_default(),
             args.elasticity_multiplier,
+            fork,
         ),
         withdrawals_root: chain_config
             .is_shanghai_activated(args.timestamp)
