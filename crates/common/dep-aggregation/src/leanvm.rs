@@ -79,8 +79,8 @@ pub fn verify_mixed_proof(
 ) -> Result<(), AggregateError> {
     use rec_aggregation::eip8288_mixed::{MixedProof, mixed_guest_key};
     if mixed_guest_key() != MIXED_GUEST_KEY {
-        return Err(AggregateError::ProofInvalid(
-            "this build's mixed recursive guest key differs from the network's".into(),
+        return Err(AggregateError::BackendMismatch(
+            "the mixed recursive guest key differs from the network's".into(),
         ));
     }
     let encoded: Vec<[u8; 96]> = dependencies.iter().map(DependencyTriple::encode).collect();

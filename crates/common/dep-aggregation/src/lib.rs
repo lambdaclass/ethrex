@@ -102,6 +102,10 @@ pub enum AggregateError {
     ClaimsMismatch(String),
     #[error("{0} is not implemented by this backend")]
     NotImplemented(&'static str),
+    /// The backend compiled into this node does not match the one the network
+    /// verifies with, so it cannot judge the proof either way.
+    #[error("this node's aggregation backend does not match the network's: {0}")]
+    BackendMismatch(String),
 }
 
 /// Verifies, and optionally produces, the recursive proof that discharges a

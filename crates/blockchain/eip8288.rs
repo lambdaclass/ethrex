@@ -86,20 +86,40 @@ pub fn validate_recursive_stark(
 }
 
 fn classify_aggregate_error(e: AggregateError) -> ChainError {
-    // Two of these say nothing about the block, only about this node: it has no
-    // backend at all, or the backend it has cannot express one of the schemes
-    // the block uses. Reporting either as INVALID would have the node tell its
-    // consensus client that a chain everyone else follows is bad. It still
-    // refuses the block -- it cannot verify it -- but as a local incapacity.
+    // Three of these say nothing about the block, only about this node: it has no
+    // backend at all, the backend it has cannot express one of the schemes the
+    // block uses, or the backend it has is not the one the network verifies with.
+    // Reporting any of them as INVALID would have the node tell its consensus
+    // client that a chain everyone else follows is bad. It still refuses the block
+    // -- it cannot verify it -- but as a local incapacity.
     //
     // An unsupported scheme belongs on this side even though leanSTARK looks
     // permanently unprovable here: whether some other backend can discharge it
     // is not a fact this node has. Every other variant is a judgement about the
     // proof itself, and those are real invalidity.
     match e {
-        AggregateError::NoBackend | AggregateError::SchemeUnsupported { .. } => {
+        AggregateError::NoBackend
+        | AggregateError::SchemeUnsupported { .. }
+        | AggregateError::BackendMismatch(_) => {
             ChainError::RecursiveStarkUnverifiable(e.to_string())
         }
         _ => ChainError::RecursiveStarkInvalid(e.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_mismatched_backend_is_unverifiable_not_invalid() {
+        assert!(matches!(
+            classify_aggregate_error(AggregateError::BackendMismatch("guest key".into())),
+            ChainError::RecursiveStarkUnverifiable(_)
+        ));
+        assert!(matches!(
+            classify_aggregate_error(AggregateError::ProofMalformed),
+            ChainError::RecursiveStarkInvalid(_)
+        ));
     }
 }
