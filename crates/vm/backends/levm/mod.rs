@@ -175,12 +175,14 @@ pub fn check_2d_gas_allowance(
     // and the state side is the frames' total state budget. Reserving the combined
     // figure in both dimensions would double-count every frame transaction.
     let (regular_gas, state_gas) = match tx {
+        // EIP-8037's two-dimensional check only exists from Amsterdam on, so the
+        // reservation is priced on Amsterdam's schedule.
         Transaction::FrameTransaction(frame_tx) => (
             frame_tx
-                .mandatory_gas()
+                .mandatory_gas(Fork::Amsterdam)
                 .saturating_add(frame_tx.data_cost())
                 .saturating_add(frame_tx.total_frame_execution_gas())
-                .max(frame_tx.calldata_floor_total()),
+                .max(frame_tx.calldata_floor_total(Fork::Amsterdam)),
             frame_tx
                 .total_frame_gas()
                 .saturating_sub(frame_tx.total_frame_execution_gas()),
@@ -296,13 +298,16 @@ impl LEVM {
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             // Pre-tx gas limit guard:
-            // Pre-Amsterdam: reject tx if cumulative post-refund gas + tx.gas > block limit.
+            // Pre-Amsterdam: reject tx if block gas so far + tx.gas > block limit.
             // Amsterdam+: skip — EIP-8037's 2D gas model means cumulative gas (regular +
             // state) can legally exceed the block gas limit as long as
             // max(sum_regular, sum_state) stays within it. Block-level overflow is
             // detected post-execution.
-            if !is_amsterdam {
-                check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
+            // A frame transaction activated before Amsterdam reserves nothing up
+            // front either: its two budgets have no single limit to check, so the
+            // block's total is checked after it runs instead.
+            if !is_amsterdam && !matches!(tx, Transaction::FrameTransaction(_)) {
+                check_gas_limit(block_gas_used, tx.gas_limit(), block.header.gas_limit)?;
             }
 
             // EIP-8037 (Amsterdam+, PR #2703): per-tx 2D inclusion check.
@@ -385,7 +390,18 @@ impl LEVM {
                     )));
                 }
             } else {
-                block_gas_used = block_gas_used.saturating_add(report.gas_used);
+                // Before Amsterdam only a frame transaction reports state gas (its nonce
+                // charge), and that counts in its own dimension as it does from
+                // Amsterdam on. Every other transaction reports none, which makes this
+                // the plain running sum.
+                block_gas_used = block_regular_gas_used.max(block_state_gas_used);
+                if block_gas_used > block.header.gas_limit {
+                    return Err(EvmError::Transaction(format!(
+                        "Gas allowance exceeded: Block gas used overflow: \
+                         block_gas_used {block_gas_used} > block_gas_limit {}",
+                        block.header.gas_limit
+                    )));
+                }
             }
 
             let mut receipt = Receipt::new(
@@ -734,13 +750,16 @@ impl LEVM {
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             // Pre-tx gas limit guard:
-            // Pre-Amsterdam: reject tx if cumulative post-refund gas + tx.gas > block limit.
+            // Pre-Amsterdam: reject tx if block gas so far + tx.gas > block limit.
             // Amsterdam+: skip — EIP-8037's 2D gas model means cumulative gas (regular +
             // state) can legally exceed the block gas limit as long as
             // max(sum_regular, sum_state) stays within it. Block-level overflow is
             // detected post-execution.
-            if !is_amsterdam {
-                check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
+            // A frame transaction activated before Amsterdam reserves nothing up
+            // front either: its two budgets have no single limit to check, so the
+            // block's total is checked after it runs instead.
+            if !is_amsterdam && !matches!(tx, Transaction::FrameTransaction(_)) {
+                check_gas_limit(block_gas_used, tx.gas_limit(), block.header.gas_limit)?;
             }
 
             // EIP-8037 (Amsterdam+, PR #2703): per-tx 2D inclusion check.
@@ -825,7 +844,18 @@ impl LEVM {
                     )));
                 }
             } else {
-                block_gas_used = block_gas_used.saturating_add(report.gas_used);
+                // Before Amsterdam only a frame transaction reports state gas (its nonce
+                // charge), and that counts in its own dimension as it does from
+                // Amsterdam on. Every other transaction reports none, which makes this
+                // the plain running sum.
+                block_gas_used = block_regular_gas_used.max(block_state_gas_used);
+                if block_gas_used > block.header.gas_limit {
+                    return Err(EvmError::Transaction(format!(
+                        "Gas allowance exceeded: Block gas used overflow: \
+                         block_gas_used {block_gas_used} > block_gas_limit {}",
+                        block.header.gas_limit
+                    )));
+                }
             }
 
             let mut receipt = Receipt::new(
@@ -3306,9 +3336,11 @@ impl LEVM {
     /// uses checked_mul/checked_add and halts on overflow. Saturating to
     /// `U256::MAX` here only makes the reservation larger, never smaller.
     fn frame_tx_reservation_ceiling(frame_tx: &ethrex_common::types::FrameTransaction) -> U256 {
+        // Amsterdam's schedule never prices a frame transaction below an earlier
+        // fork's, so it keeps this a ceiling whichever fork the chain runs.
         let gas_cost = frame_tx
             .max_fee_per_gas
-            .saturating_mul(U256::from(frame_tx.max_gas()));
+            .saturating_mul(U256::from(frame_tx.max_gas(Fork::Amsterdam)));
         let blob_cost = U256::from(frame_tx.blob_versioned_hashes.len())
             .saturating_mul(U256::from(131072u64))
             .saturating_mul(frame_tx.max_fee_per_blob_gas);

@@ -2119,7 +2119,7 @@ pub fn transaction_intrinsic_gas(
     // exactly the non-frame-gas overhead the VM charges as intrinsic.
     if let Transaction::FrameTransaction(frame_tx) = tx {
         return Ok(frame_tx
-            .mandatory_gas()
+            .mandatory_gas(config.fork(header.timestamp))
             .saturating_add(frame_tx.data_cost()));
     }
 

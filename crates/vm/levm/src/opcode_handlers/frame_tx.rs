@@ -100,7 +100,7 @@ pub fn apply_approve(
             // NEW_ACCOUNT state charge out of the executing frame's state pool. A
             // pool that cannot cover it halts the frame exceptionally.
             if vm.db.get_account(sender)?.is_empty() {
-                vm.increase_state_gas(vm.state_gas_new_account)?;
+                vm.increase_state_gas(vm.frame_new_sender_state_gas())?;
             }
             vm.increment_account_nonce(sender)?;
             // Payer balance underflow is a frame-level revert, not a consensus
@@ -163,7 +163,7 @@ pub fn apply_approve(
             // NEW_ACCOUNT state charge out of the executing frame's state pool. A
             // pool that cannot cover it halts the frame exceptionally.
             if vm.db.get_account(sender)?.is_empty() {
-                vm.increase_state_gas(vm.state_gas_new_account)?;
+                vm.increase_state_gas(vm.frame_new_sender_state_gas())?;
             }
             vm.increment_account_nonce(sender)?;
             // See scope 0x1 above for the Underflow → RevertOpcode rationale.

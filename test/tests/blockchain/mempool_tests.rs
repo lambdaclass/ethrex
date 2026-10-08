@@ -570,7 +570,7 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
 /// calldata floor. The minimal fixture carries no data, so tests that add frame
 /// data or signatures need the extra headroom to stay otherwise-valid.
 fn reserve_calldata_floor(tx: &mut FrameTransaction) {
-    let floor = tx.calldata_floor_gas();
+    let floor = tx.calldata_floor_gas(ethrex_common::types::Fork::Hegota);
     if let Some(frame) = tx.frames.first_mut() {
         frame.gas_limit = frame.gas_limit.max(floor);
     }
@@ -733,7 +733,7 @@ async fn mempool_rejects_oversized_frame_data() {
         value: U256::zero(),
         data: payload,
     });
-    let floor = frame_tx.calldata_floor_gas();
+    let floor = frame_tx.calldata_floor_gas(ethrex_common::types::Fork::Hegota);
     frame_tx.frames[1].gas_limit = floor;
 
     let tx = Transaction::FrameTransaction(frame_tx);
@@ -1780,7 +1780,7 @@ async fn mempool_rejects_underfunded_paymaster() {
     let max_fee_per_gas = 2_000_000_000u64;
     let max_priority_fee_per_gas = 1_000_000_000u64;
     let frame_tx = funded_frame_tx(max_fee_per_gas, max_priority_fee_per_gas);
-    let total_gas = frame_tx.max_gas();
+    let total_gas = frame_tx.max_gas(ethrex_common::types::Fork::Hegota);
     let max_cost = U256::from(max_fee_per_gas) * U256::from(total_gas);
 
     let paymaster = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
@@ -2165,7 +2165,7 @@ async fn mempool_fee_bump_not_blocked_by_own_stale_reservation() {
     // old reservation before re-validating availability.
     let low_fee = 100_000_000u64;
     let high_fee = 200_000_000u64;
-    let gas = funded_frame_tx(high_fee, high_fee).max_gas();
+    let gas = funded_frame_tx(high_fee, high_fee).max_gas(ethrex_common::types::Fork::Hegota);
     // Exactly covers the bumped tx (high_fee * gas), but not old + new together.
     let balance = U256::from(high_fee) * U256::from(gas);
     let store = setup_hegota_store_with_balance(balance).await;
@@ -2201,7 +2201,7 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
     // non-canonical slot, isolating the AVAILABILITY rejection from the limit.
     let low_fee = 100_000_000u64;
     let high_fee = 200_000_000u64;
-    let gas = funded_frame_tx(high_fee, high_fee).max_gas();
+    let gas = funded_frame_tx(high_fee, high_fee).max_gas(ethrex_common::types::Fork::Hegota);
     // Exactly covers one high-fee tx (high_fee * gas).
     let balance = U256::from(high_fee) * U256::from(gas);
     let store = setup_hegota_store_with_balance(balance).await;

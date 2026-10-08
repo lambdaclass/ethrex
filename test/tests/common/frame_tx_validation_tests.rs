@@ -645,8 +645,14 @@ fn data_cost_covers_only_frame_and_signature_data() {
     }];
     assert_eq!(tx.data_cost(), 12 + 32 + 16 + 4);
     // Floor tokens are unweighted: 7 bytes * 4 tokens * 16 gas = 448.
-    assert_eq!(tx.calldata_tokens(), 7 * 4);
-    assert_eq!(tx.calldata_floor_gas(), 7 * 64);
+    assert_eq!(
+        tx.calldata_tokens(ethrex_common::types::Fork::Hegota),
+        7 * 4
+    );
+    assert_eq!(
+        tx.calldata_floor_gas(ethrex_common::types::Fork::Hegota),
+        7 * 64
+    );
 }
 
 #[test]
@@ -664,14 +670,26 @@ fn max_gas_takes_the_calldata_floor_when_it_exceeds_the_standard_limit() {
     // small too for the data floor to be the binding quantity.
     tx.frames[0].state_gas_limit = 0;
     tx.frames[1].state_gas_limit = 0;
-    assert!(tx.calldata_floor_total() > tx.standard_gas_limit());
-    assert_eq!(tx.max_gas(), tx.calldata_floor_total());
+    assert!(
+        tx.calldata_floor_total(ethrex_common::types::Fork::Hegota)
+            > tx.standard_gas_limit(ethrex_common::types::Fork::Hegota)
+    );
+    assert_eq!(
+        tx.max_gas(ethrex_common::types::Fork::Hegota),
+        tx.calldata_floor_total(ethrex_common::types::Fork::Hegota)
+    );
     assert!(tx.validate_static_constraints().is_ok());
 
     // With enough frame gas to outweigh the floor, `max_gas` is the standard limit.
     tx.frames[1].gas_limit = 100_000;
-    assert!(tx.standard_gas_limit() > tx.calldata_floor_total());
-    assert_eq!(tx.max_gas(), tx.standard_gas_limit());
+    assert!(
+        tx.standard_gas_limit(ethrex_common::types::Fork::Hegota)
+            > tx.calldata_floor_total(ethrex_common::types::Fork::Hegota)
+    );
+    assert_eq!(
+        tx.max_gas(ethrex_common::types::Fork::Hegota),
+        tx.standard_gas_limit(ethrex_common::types::Fork::Hegota)
+    );
     assert!(tx.validate_static_constraints().is_ok());
 }
 

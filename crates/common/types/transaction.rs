@@ -1409,7 +1409,10 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => tx.gas,
             Transaction::PrivilegedL2Transaction(tx) => tx.gas_limit,
             Transaction::FeeTokenTransaction(tx) => tx.gas_limit,
-            Transaction::FrameTransaction(tx) => tx.max_gas(),
+            // No fork is known here. Amsterdam's pricing is never below an earlier
+            // fork's for the same transaction (a higher calldata floor, plus the
+            // EIP-2780 value charge), so this is an upper bound on every schedule.
+            Transaction::FrameTransaction(tx) => tx.max_gas(crate::types::Fork::Amsterdam),
         }
     }
 
@@ -1794,9 +1797,9 @@ pub struct FeeTokenTransaction {
 
 /// EIP-8141 Frame Transaction mode, with EIP-8288's `DEP_VERIFY_FRAME_MODE`.
 ///
-/// Mode 3 is `DepVerify`; every value above it is reserved and makes the
-/// transaction invalid. An earlier note here put DEP_VERIFY at 4 while the EIP was
-/// still being drafted -- EIP-8288 @ `ef1abf4b6d` assigns it 3.
+/// Mode 4 is `DepVerify`, as EIP-8288 assigns it; 3 is EIP-7906's POST_TX, which
+/// this client does not implement, so it and every value above 4 are reserved and
+/// make the transaction invalid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 #[repr(u8)]
 pub enum FrameMode {
@@ -1806,19 +1809,19 @@ pub enum FrameMode {
     Sender = 2,
     /// EIP-8288: declares dependencies for the block's recursive STARK. Never
     /// executed as EVM code.
-    DepVerify = 3,
+    DepVerify = 4,
 }
 
 impl FrameMode {
     /// Convert from the lower 8 bits of the mode field.
-    /// Returns None for reserved values (3-255).
+    /// Returns None for reserved values (3, and 5-255).
     pub fn from_u8(val: u8) -> Option<Self> {
         match val {
             0 => Some(FrameMode::Default),
             1 => Some(FrameMode::Verify),
             2 => Some(FrameMode::Sender),
             // EIP-8288 DEP_VERIFY_FRAME_MODE.
-            3 => Some(FrameMode::DepVerify),
+            4 => Some(FrameMode::DepVerify),
             _ => None,
         }
     }
@@ -1830,14 +1833,14 @@ impl From<FrameMode> for u8 {
             FrameMode::Default => 0,
             FrameMode::Verify => 1,
             FrameMode::Sender => 2,
-            FrameMode::DepVerify => 3,
+            FrameMode::DepVerify => 4,
         }
     }
 }
 
 /// EIP-8141 Frame: a single execution step within a frame transaction.
 ///
-/// `mode` is the execution mode (0=DEFAULT, 1=VERIFY, 2=SENDER, 3=DEP_VERIFY per
+/// `mode` is the execution mode (0=DEFAULT, 1=VERIFY, 2=SENDER, 4=DEP_VERIFY per
 /// EIP-8288; 4-255 reserved).
 /// `flags` bits: 0-1 = APPROVE scope restriction, 2 = atomic batch flag (valid
 /// on DEFAULT and SENDER frames only), 3-7 reserved (must be zero).
@@ -2226,10 +2229,12 @@ pub fn dependencies_hash(deps: &[DependencyTriple]) -> H256 {
     H256::from_slice(hasher.finalize().as_bytes())
 }
 
-/// EIP-7623 `STANDARD_TOKEN_COST`, and the EIP-7976 floor per token. Frame
-/// transactions exist only from Hegota onward, which is after Amsterdam, so the
-/// raised EIP-7976 floor always applies and neither needs a fork parameter.
+/// EIP-7623 `STANDARD_TOKEN_COST`.
 const FRAME_TX_STANDARD_TOKEN_COST: u64 = 4;
+/// EIP-7623 `TOTAL_COST_FLOOR_PER_TOKEN`, and the floor EIP-7976 raises it to at
+/// Amsterdam. Frame transactions are specified on top of Amsterdam, but a chain can
+/// activate them on an earlier fork, where calldata keeps that fork's pricing.
+const FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN_PRAGUE: u64 = 10;
 const FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN: u64 = 16;
 /// EIP-8141 signature schemes: ARBITRARY=0, SECP256K1=1, P256=2.
 pub const FRAME_SIG_SCHEME_ARBITRARY: u8 = 0;
@@ -2350,37 +2355,54 @@ impl FrameTransaction {
     }
 
     /// EIP-7623 token count over the frame and signature data, used for the
-    /// calldata floor. Frame transactions exist only from Hegota onward, which is
-    /// after Amsterdam, so EIP-7976's unweighted count (every byte costs
-    /// `STANDARD_TOKEN_COST`) always applies.
-    pub fn calldata_tokens(&self) -> u64 {
-        self.data_fields()
-            .fold(0u64, |acc, field| acc.saturating_add(field.len() as u64))
-            .saturating_mul(FRAME_TX_STANDARD_TOKEN_COST)
+    /// calldata floor. From Amsterdam, EIP-7976's unweighted count applies (every
+    /// byte costs `STANDARD_TOKEN_COST`); before it, a zero byte is one token and
+    /// any other byte four.
+    pub fn calldata_tokens(&self, fork: crate::types::Fork) -> u64 {
+        if fork >= crate::types::Fork::Amsterdam {
+            return self
+                .data_fields()
+                .fold(0u64, |acc, field| acc.saturating_add(field.len() as u64))
+                .saturating_mul(FRAME_TX_STANDARD_TOKEN_COST);
+        }
+        self.data_fields().flatten().fold(0u64, |acc, byte| {
+            acc.saturating_add(if *byte == 0 {
+                1
+            } else {
+                FRAME_TX_STANDARD_TOKEN_COST
+            })
+        })
     }
 
     /// The EIP-7623 calldata floor: the least the frame and signature data may
     /// cost, whatever execution actually consumes.
-    pub fn calldata_floor_gas(&self) -> u64 {
-        self.calldata_tokens()
-            .saturating_mul(FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN)
+    pub fn calldata_floor_gas(&self, fork: crate::types::Fork) -> u64 {
+        let floor_per_token = if fork >= crate::types::Fork::Amsterdam {
+            FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN
+        } else {
+            FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN_PRAGUE
+        };
+        self.calldata_tokens(fork).saturating_mul(floor_per_token)
     }
 
     /// The mandatory costs, always charged in full: the intrinsic cost, the
     /// per-frame cost, and signature verification.
-    pub fn mandatory_gas(&self) -> u64 {
+    pub fn mandatory_gas(&self, fork: crate::types::Fork) -> u64 {
         FRAME_TX_INTRINSIC_COST
             .saturating_add((self.frames.len() as u64).saturating_mul(FRAME_TX_PER_FRAME_COST))
             .saturating_add(self.signature_verification_cost())
-            .saturating_add(self.value_transfer_gas())
+            .saturating_add(self.value_transfer_gas(fork))
     }
 
     /// EIP-2780's `TX_VALUE_COST` per frame that moves value to an explicit target
-    /// other than `tx.sender`.
+    /// other than `tx.sender`. Zero before Amsterdam, which EIP-2780 belongs to.
     ///
     /// A frame with no explicit target resolves to the sender, and a frame paying the
     /// sender moves nothing between accounts, so neither is a transfer to charge for.
-    pub fn value_transfer_gas(&self) -> u64 {
+    pub fn value_transfer_gas(&self, fork: crate::types::Fork) -> u64 {
+        if fork < crate::types::Fork::Amsterdam {
+            return 0;
+        }
         self.frames.iter().fold(0u64, |acc, frame| {
             let moves_value =
                 !frame.value.is_zero() && frame.target.is_some_and(|target| target != self.sender);
@@ -2399,8 +2421,8 @@ impl FrameTransaction {
     /// dimensions are separate budgets during execution, but the transaction
     /// reserves and is charged over their sum -- so a frame's state budget counts
     /// here even though its execution budget can never be spent on it.
-    pub fn standard_gas_limit(&self) -> u64 {
-        self.mandatory_gas()
+    pub fn standard_gas_limit(&self, fork: crate::types::Fork) -> u64 {
+        self.mandatory_gas(fork)
             .saturating_add(self.data_cost())
             .saturating_add(self.total_frame_gas())
     }
@@ -2424,25 +2446,25 @@ impl FrameTransaction {
     /// EIP-8141 `calldata_floor_gas`: the mandatory costs plus the EIP-7623
     /// floor over every byte this transaction carries. The mandatory costs are
     /// always charged, so they sit on both sides of the `max_gas` comparison.
-    pub fn calldata_floor_total(&self) -> u64 {
-        self.mandatory_gas()
-            .saturating_add(self.calldata_floor_gas())
+    pub fn calldata_floor_total(&self, fork: crate::types::Fork) -> u64 {
+        self.mandatory_gas(fork)
+            .saturating_add(self.calldata_floor_gas(fork))
     }
 
     /// EIP-8141 `max_gas = max(standard_gas_limit, calldata_floor_gas)`: the gas
     /// reserved from the block pool before execution and the quantity `max_cost`
     /// is charged over. A transaction whose data floor exceeds what it declared
     /// for execution reserves the floor rather than being rejected.
-    pub fn max_gas(&self) -> u64 {
+    pub fn max_gas(&self, fork: crate::types::Fork) -> u64 {
         // Both sides of the comparison span both dimensions: the floor prices
         // calldata in the execution dimension only, so the frames' state budget is
         // added to it. Comparing a floor without the state budget against a standard
         // limit that includes it would escrow less than a floor-bound transaction
         // goes on to spend.
         let floor_side = self
-            .calldata_floor_total()
+            .calldata_floor_total(fork)
             .saturating_add(self.total_frame_state_gas());
-        self.standard_gas_limit().max(floor_side)
+        self.standard_gas_limit(fork).max(floor_side)
     }
 
     /// Σ(`limits.state`) over every frame.
@@ -2499,11 +2521,11 @@ impl FrameTransaction {
     /// `validate_static_constraints` is deliberately fork-free: it checks the shape
     /// of a frame transaction, and every rule in it has held since EIP-8141
     /// activated. Mode assignment is not like that. `DEP_VERIFY` is EIP-8288's, and
-    /// EIP-8288 activates at J*, so before J* the byte 3 is a reserved mode and a
+    /// EIP-8288 activates at J*, so before J* the byte 4 is a reserved mode and a
     /// frame carrying it makes the transaction invalid -- which is exactly what the
     /// EIP's own Backwards Compatibility section says a node without it must do.
     ///
-    /// Without this, mode 3 would be valid from Hegotá. On a Hegotá chain a
+    /// Without this, mode 4 would be valid from Hegotá. On a Hegotá chain a
     /// transaction could then declare dependencies that nothing in the protocol
     /// obligates anyone to prove, and pay gas for a verification that never happens,
     /// while every conformant Hegotá client rejected the same transaction as a
@@ -2587,8 +2609,8 @@ impl FrameTransaction {
         let mut total_frame_gas: u128 = 0;
         let mut expiry_frame_count: usize = 0;
         for (i, frame) in self.frames.iter().enumerate() {
-            // Reject reserved execution modes: 0 to 2 are EIP-8141's, 3 is
-            // EIP-8288's DEP_VERIFY, everything above is reserved.
+            // Reject reserved execution modes: 0 to 2 are EIP-8141's, 4 is
+            // EIP-8288's DEP_VERIFY, everything else is reserved.
             if FrameMode::from_u8(frame.mode).is_none() {
                 return Err(format!("Frame {i}: reserved execution mode {}", frame.mode));
             }
@@ -4742,7 +4764,7 @@ mod serde_impl {
                 nonce: Some(value.nonce),
                 to: TxKind::Call(value.sender),
                 from: value.sender,
-                gas: Some(value.max_gas()),
+                gas: Some(value.max_gas(crate::types::Fork::Amsterdam)),
                 value: U256::zero(),
                 gas_price: value.max_fee_per_gas,
                 // `GenericTransaction` keeps these as `u64`, and `U256::as_u64`
@@ -6389,7 +6411,7 @@ mod tests {
     #[test]
     fn max_gas_includes_signature_costs() {
         let mut tx = make_test_frame_tx();
-        let base = tx.max_gas();
+        let base = tx.max_gas(crate::types::Fork::Hegota);
         // Add a P256 signature; cost must rise by at least 6700 + its calldata.
         tx.signatures.push(FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
@@ -6397,7 +6419,7 @@ mod tests {
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; 128]),
         });
-        assert!(tx.max_gas() >= base + 6700);
+        assert!(tx.max_gas(crate::types::Fork::Hegota) >= base + 6700);
         assert_eq!(tx.signature_verification_cost(), 2800 + 6700);
     }
 

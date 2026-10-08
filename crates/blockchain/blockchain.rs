@@ -3626,7 +3626,7 @@ impl Blockchain {
             frame_tx
                 .validate_static_constraints()
                 .map_err(MempoolError::InvalidFrameTransaction)?;
-            // EIP-8288: mode 3 is a reserved byte before EIP-8288, so admitting one
+            // EIP-8288: mode 4 is a reserved byte before EIP-8288, so admitting one
             // would fill a pool slot with a transaction no block can carry.
             frame_tx
                 .validate_fork_constraints(config.features(header.timestamp))

@@ -99,7 +99,7 @@ fn tx_with(frames: Vec<Frame>) -> FrameTransaction {
 /// each other. A repricing upstream should fail here, not silently re-tune gas.
 #[test]
 fn eip8288_constants_match_the_published_table() {
-    assert_eq!(FrameMode::DepVerify as u8, 3, "DEP_VERIFY_FRAME_MODE");
+    assert_eq!(FrameMode::DepVerify as u8, 4, "DEP_VERIFY_FRAME_MODE");
     assert_eq!(FRAME_TX_MAX_DEPENDENCIES_PER_FRAME, 256);
     assert_eq!(DEPENDENCY_SCHEME_LEANSPHINCS, 0x10);
     assert_eq!(DEPENDENCY_SCHEME_LEANSTARK, 0x11);
@@ -843,7 +843,7 @@ fn a_dependency_frame_is_not_valid_before_jstar() {
     for fork in [Fork::Amsterdam, Fork::Hegota] {
         let err = tx
             .validate_fork_constraints(ChainFeatures::for_fork(fork))
-            .expect_err("mode 3 is reserved before J*");
+            .expect_err("mode 4 is reserved before J*");
         assert!(err.contains("before J*"), "{err}");
     }
     for fork in [Fork::JStar, Fork::LStar] {

@@ -839,7 +839,10 @@ pub fn validate_frame_signatures(
                 }
             }
             FRAME_SIG_SCHEME_P256 => {
-                if sig.signature.len() != 128 {
+                // Verification goes through the EIP-7951 precompile, which does not
+                // exist before Osaka, so a chain running frames on an earlier fork
+                // cannot verify a P256 entry at all.
+                if fork < Fork::Osaka || sig.signature.len() != 128 {
                     return false;
                 }
                 let r = &sig.signature[0..32];
@@ -1161,8 +1164,10 @@ impl<'a> VM<'a> {
         reason = "arithmetic proven safe by min()"
     )]
     pub fn increase_state_gas(&mut self, gas: u64) -> Result<(), VMError> {
+        // A frame transaction charges its nonce write as state gas on any fork it
+        // runs on (see `frame_new_sender_state_gas`).
         debug_assert!(
-            self.env.config.fork >= Fork::Amsterdam,
+            self.env.config.fork >= Fork::Amsterdam || self.frame_tx_context.is_some(),
             "increase_state_gas called pre-Amsterdam"
         );
         // Inside a frame the state budget is its own dimension: exhausting it is an
@@ -1685,7 +1690,7 @@ impl<'a> VM<'a> {
         // The reason is carried through: a client that rejects the transaction for the
         // right reason but reports the wrong one is indistinguishable from a client that
         // rejected it by accident (see the mapper note above `TxValidationError`).
-        // EIP-8288 gating, separate from the shape checks below: mode 3 is a
+        // EIP-8288 gating, separate from the shape checks below: mode 4 is a
         // reserved byte before EIP-8288, so a block carrying one is invalid there.
         if let Err(e) = frame_tx.validate_fork_constraints(self.env.config.features) {
             return Err(VMError::TxValidation(
@@ -1707,10 +1712,10 @@ impl<'a> VM<'a> {
         // reject a transaction whose execution half is exactly at the cap simply
         // because it also declared state gas.
         let capped_gas = frame_tx
-            .mandatory_gas()
+            .mandatory_gas(self.env.config.fork)
             .saturating_add(frame_tx.data_cost())
             .saturating_add(frame_tx.total_frame_execution_gas())
-            .max(frame_tx.calldata_floor_total());
+            .max(frame_tx.calldata_floor_total(self.env.config.fork));
         if capped_gas > crate::constants::TX_MAX_GAS_LIMIT_AMSTERDAM {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::TxMaxGasLimitExceeded {
@@ -1732,7 +1737,7 @@ impl<'a> VM<'a> {
         // EIP-7825 cap above, which is execution-only.
         let max_cost_representable = frame_tx
             .max_fee_per_gas
-            .checked_mul(U256::from(frame_tx.max_gas()))
+            .checked_mul(U256::from(frame_tx.max_gas(self.env.config.fork)))
             .and_then(|gas_cost| {
                 U256::from(frame_tx.blob_versioned_hashes.len())
                     .checked_mul(U256::from(131072u64))
@@ -1802,7 +1807,7 @@ impl<'a> VM<'a> {
 
         // Initialize FrameTxContext
         let sig_hash = frame_tx.compute_sig_hash();
-        let max_gas = frame_tx.max_gas();
+        let max_gas = frame_tx.max_gas(self.env.config.fork);
         self.frame_tx_context = Some(FrameTxContext {
             sender_approved: false,
             payer_address: None,
@@ -1856,7 +1861,7 @@ impl<'a> VM<'a> {
         // calldata floor dominates, the extra reservation is not intrinsic gas and
         // is applied once at settlement instead.
         let intrinsic_gas = frame_tx
-            .mandatory_gas()
+            .mandatory_gas(self.env.config.fork)
             .saturating_add(frame_tx.data_cost());
         let mut total_gas_used: u64 = intrinsic_gas;
         let mut tx_invalid = false;
@@ -1984,7 +1989,7 @@ impl<'a> VM<'a> {
             // leaves unstated:
             //
             //   - EIP-8288 tells contracts to walk the frame list with FRAMEPARAM and
-            //     pick out mode-3 frames, so those frames are addressable by index.
+            //     pick out mode-4 frames, so those frames are addressable by index.
             //     FRAMEPARAM 0x05/0x0A/0x0B read `frame_results` by the same index and
             //     halt on a missing entry, so skipping the entry would make a frame
             //     the EIP invites contracts to inspect unreadable.
@@ -2008,6 +2013,12 @@ impl<'a> VM<'a> {
                     0,
                     Vec::new(),
                 ));
+                // A dependency frame carries no flags, so it can only close a batch:
+                // reaching it means every frame before it succeeded.
+                if in_atomic_batch {
+                    self.substate.commit_backup();
+                    in_atomic_batch = false;
+                }
                 continue;
             }
 
@@ -2595,8 +2606,18 @@ impl<'a> VM<'a> {
                 }
 
                 // Find the end of this batch (the first frame at or after the
-                // failing one without the flag)
-                let batch_end = find_batch_end(&frame_tx.frames, frame_idx);
+                // failing one without the flag). A dependency frame there is not
+                // skipped: its declarations stand whatever the batch did, so it
+                // still runs, and is charged, as the next frame.
+                let mut batch_end = find_batch_end(&frame_tx.frames, frame_idx);
+                if batch_end > frame_idx
+                    && frame_tx
+                        .frames
+                        .get(batch_end)
+                        .is_some_and(|f| f.execution_mode() == FrameMode::DepVerify)
+                {
+                    batch_end = batch_end.saturating_sub(1);
+                }
 
                 if batch_end > frame_idx {
                     skip_until_batch_end = Some(batch_end);
@@ -2699,10 +2720,10 @@ impl<'a> VM<'a> {
         let gas_used_after_refund = gas_used_before_refund.saturating_sub(applied_refund);
         let payer_execution_gas = gas_used_after_refund
             .saturating_sub(tx_state_gas)
-            .max(frame_tx.calldata_floor_total());
+            .max(frame_tx.calldata_floor_total(self.env.config.fork));
         let block_execution_gas = gas_used_before_refund
             .saturating_sub(tx_state_gas)
-            .max(frame_tx.calldata_floor_total());
+            .max(frame_tx.calldata_floor_total(self.env.config.fork));
         let total_gas_used = payer_execution_gas;
 
         // Gas refunds: the payer was debited the transaction's `max_cost` at
@@ -2968,7 +2989,7 @@ impl<'a> VM<'a> {
 
         let sender = frame_tx.sender;
 
-        // EIP-8288 gating, separate from the shape checks below: mode 3 is a
+        // EIP-8288 gating, separate from the shape checks below: mode 4 is a
         // reserved byte before EIP-8288, so a block carrying one is invalid there.
         if let Err(e) = frame_tx.validate_fork_constraints(self.env.config.features) {
             return Err(VMError::TxValidation(
@@ -3007,7 +3028,7 @@ impl<'a> VM<'a> {
         }
 
         let sig_hash = frame_tx.compute_sig_hash();
-        let max_gas = frame_tx.max_gas();
+        let max_gas = frame_tx.max_gas(self.env.config.fork);
         self.frame_tx_context = Some(FrameTxContext {
             sender_approved: false,
             payer_address: None,
@@ -4137,6 +4158,20 @@ impl<'a> VM<'a> {
     pub fn state_gas_spill(&self) -> u64 {
         self.state_gas_spill
     }
+    /// The state gas a frame transaction's payment approval charges when it
+    /// creates the sender's account. From Amsterdam this is EIP-8037's NEW_ACCOUNT
+    /// charge. A chain that runs frame transactions on an earlier fork has no
+    /// EIP-8037, but the frame's state budget still pays for the account, at the
+    /// same 120 state bytes and the pinned cost per state byte.
+    pub(crate) fn frame_new_sender_state_gas(&self) -> u64 {
+        if self.env.config.fork >= Fork::Amsterdam {
+            return self.state_gas_new_account;
+        }
+        crate::gas_cost::STATE_BYTES_PER_NEW_ACCOUNT.saturating_mul(
+            crate::gas_cost::cost_per_state_byte(self.env.block_gas_limit),
+        )
+    }
+
     pub fn state_gas_new_account(&self) -> u64 {
         self.state_gas_new_account
     }
