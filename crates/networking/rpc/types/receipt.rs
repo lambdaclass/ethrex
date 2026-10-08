@@ -40,24 +40,19 @@ pub struct RpcFrameReceipt {
     /// `gas_used.execution` of the consensus frame receipt.
     #[serde(with = "serde_utils::u64::hex_str")]
     pub gas_used: u64,
+    /// The same figure under its explicit name, which frame-aware clients read
+    /// next to `stateGasUsed`.
+    #[serde(with = "serde_utils::u64::hex_str")]
+    pub execution_gas_used: u64,
     /// `gas_used.state` of the consensus frame receipt: the frame's final
     /// state-gas attribution. Omitting it made the receipt look as if state gas
     /// were charged at transaction level, when the consensus encoding attributes
     /// it per frame.
     #[serde(with = "serde_utils::u64::hex_str")]
     pub state_gas_used: u64,
-    pub logs: Vec<RpcLogInfo>,
-}
-
-impl From<FrameReceipt> for RpcFrameReceipt {
-    fn from(fr: FrameReceipt) -> Self {
-        Self {
-            status: fr.status,
-            gas_used: fr.gas_used,
-            state_gas_used: fr.state_gas_used,
-            logs: fr.logs.into_iter().map(RpcLogInfo::from).collect(),
-        }
-    }
+    /// The frame's logs with the same block, transaction and index context as the
+    /// receipt's top-level logs, which are these frames' logs in frame order.
+    pub logs: Vec<RpcLog>,
 }
 
 impl RpcReceipt {
@@ -74,10 +69,26 @@ impl RpcReceipt {
             log_index += 1;
         }
         let payer = receipt.payer;
-        let frame_receipts = receipt
-            .frame_receipts
-            .clone()
-            .map(|frs| frs.into_iter().map(RpcFrameReceipt::from).collect());
+        let mut frame_log_index = init_log_index;
+        let frame_receipts = receipt.frame_receipts.clone().map(|frs| {
+            frs.into_iter()
+                .map(|fr: FrameReceipt| RpcFrameReceipt {
+                    status: fr.status,
+                    gas_used: fr.gas_used,
+                    execution_gas_used: fr.gas_used,
+                    state_gas_used: fr.state_gas_used,
+                    logs: fr
+                        .logs
+                        .into_iter()
+                        .map(|log| {
+                            let rpc_log = RpcLog::new(log, frame_log_index, &tx_info, &block_info);
+                            frame_log_index += 1;
+                            rpc_log
+                        })
+                        .collect(),
+                })
+                .collect()
+        });
         Self {
             receipt: receipt.into(),
             logs,

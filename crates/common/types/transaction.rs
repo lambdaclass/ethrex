@@ -3754,6 +3754,9 @@ mod serde_impl {
         }
     }
 
+    /// JSON shape of an EIP-8141 frame: `target` (absent when the frame targets the
+    /// sender), and the two budgets as `executionGas` and `stateGas`. The earlier
+    /// names are still accepted on input.
     #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
     #[serde(rename_all = "camelCase")]
     pub struct FrameEntry {
@@ -3761,11 +3764,16 @@ mod serde_impl {
         pub mode: u64,
         #[serde(with = "crate::serde_utils::u64::hex_str")]
         pub flags: u64,
-        pub to: Option<Address>,
-        #[serde(with = "crate::serde_utils::u64::hex_str")]
-        pub gas_limit: u64,
-        #[serde(default, with = "crate::serde_utils::u64::hex_str")]
-        pub state_gas_limit: u64,
+        #[serde(default, alias = "to", skip_serializing_if = "Option::is_none")]
+        pub target: Option<Address>,
+        #[serde(alias = "gasLimit", with = "crate::serde_utils::u64::hex_str")]
+        pub execution_gas: u64,
+        #[serde(
+            default,
+            alias = "stateGasLimit",
+            with = "crate::serde_utils::u64::hex_str"
+        )]
+        pub state_gas: u64,
         #[serde(
             default,
             serialize_with = "serialize_u256_hex",
@@ -3782,6 +3790,8 @@ mod serde_impl {
     pub struct SignatureEntry {
         #[serde(with = "crate::serde_utils::u64::hex_str")]
         pub scheme: u64,
+        /// Absent when the entry names no signer (always so for ARBITRARY).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         pub signer: Option<Address>,
         #[serde(with = "crate::serde_utils::bytes")]
         pub msg: Bytes,
@@ -3809,9 +3819,9 @@ mod serde_impl {
             FrameEntry {
                 mode: value.mode as u64,
                 flags: value.flags as u64,
-                to: value.target,
-                gas_limit: value.gas_limit,
-                state_gas_limit: value.state_gas_limit,
+                target: value.target,
+                execution_gas: value.gas_limit,
+                state_gas: value.state_gas_limit,
                 value: value.value,
                 data: value.data.clone(),
             }
@@ -3823,9 +3833,9 @@ mod serde_impl {
             Frame {
                 mode: entry.mode as u8,
                 flags: entry.flags as u8,
-                target: entry.to,
-                gas_limit: entry.gas_limit,
-                state_gas_limit: entry.state_gas_limit,
+                target: entry.target,
+                gas_limit: entry.execution_gas,
+                state_gas_limit: entry.state_gas,
                 value: entry.value,
                 data: entry.data,
             }
@@ -4098,11 +4108,33 @@ mod serde_impl {
         where
             S: serde::Serializer,
         {
-            let mut s = serializer.serialize_struct("FrameTransaction", 10)?;
+            // The sender is reported as `from` by the RPC wrapper. The ordinary
+            // transaction fields a frame transaction has no use for are written as
+            // their empty values, and `gas` is the frames' total budget, so clients
+            // that read a transaction generically still find every field.
+            let mut s = serializer.serialize_struct("FrameTransaction", 22)?;
             s.serialize_field("type", &TxType::Frame)?;
             s.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
             s.serialize_field("nonce", &format!("{:#x}", self.nonce))?;
-            s.serialize_field("sender", &format!("{:#x}", self.sender))?;
+            if let Some(nonce_keys) = &self.nonce_keys {
+                s.serialize_field(
+                    "nonceKeys",
+                    &nonce_keys
+                        .iter()
+                        .map(|key| format!("{key:#x}"))
+                        .collect::<Vec<_>>(),
+                )?;
+            }
+            s.serialize_field("gas", &format!("{:#x}", self.total_frame_gas()))?;
+            s.serialize_field("gasPrice", &format!("{:#x}", self.max_fee_per_gas))?;
+            s.serialize_field("to", &Option::<Address>::None)?;
+            s.serialize_field("value", "0x0")?;
+            s.serialize_field("input", "0x")?;
+            s.serialize_field("accessList", &Vec::<AccessListEntry>::new())?;
+            s.serialize_field("v", "0x0")?;
+            s.serialize_field("r", "0x0")?;
+            s.serialize_field("s", "0x0")?;
+            s.serialize_field("yParity", "0x0")?;
             s.serialize_field(
                 "frames",
                 &self.frames.iter().map(FrameEntry::from).collect::<Vec<_>>(),

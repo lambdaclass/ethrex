@@ -342,3 +342,44 @@ fn nonce_forms_follow_the_feature_schedule() {
             .is_err()
     );
 }
+
+/// The JSON-RPC shape of a frame transaction, as the network's node serves it for
+/// the same transaction: the key set, `executionGas`/`stateGas`/`target` per frame
+/// with no `target` for a frame that has none, and `gas` as the frames' total
+/// budget. Wallets and explorers built against the network read these names.
+#[test]
+fn frame_transaction_json_matches_the_network_shape() {
+    let json = serde_json::to_value(keyed_dependency_tx()).expect("serializes");
+    assert_eq!(json["nonceKeys"], serde_json::json!(["0x0"]));
+    assert_eq!(json["gas"], "0x1197e8");
+    assert!(
+        json.get("sender").is_none(),
+        "the sender is reported as `from`"
+    );
+    assert_eq!(
+        json["frames"][1],
+        serde_json::json!({
+            "mode": "0x4",
+            "flags": "0x0",
+            "executionGas": "0xbb8",
+            "stateGas": "0x0",
+            "value": "0x0",
+            "data": "0x0000000000000000000000000000000000000000000000000000000000000010ded6bbc9cddb29414b82b91a248d43c20c2efa231c86601a4ec4060c51d4a0d25e65faeafe52ac56b609bb52e6d9b502d8bfae068668135635b70229ba44e15c",
+        })
+    );
+    assert_eq!(
+        json["frames"][3]["target"],
+        "0x061970b82d71ed71c4a0954d528685bc79fee231"
+    );
+
+    // An ARBITRARY signature names no signer, and the key is left out.
+    let mut tx = scalar_secp256k1_tx();
+    tx.signatures[0].scheme = 0;
+    tx.signatures[0].signer = None;
+    let json = serde_json::to_value(tx).expect("serializes");
+    assert!(json["signatures"][0].get("signer").is_none());
+    assert!(
+        json.get("nonceKeys").is_none(),
+        "the scalar form has no key set"
+    );
+}
