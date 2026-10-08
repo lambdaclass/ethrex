@@ -5242,3 +5242,78 @@ fn approve_halts_inside_a_post_tx_frame() {
     );
     assert_eq!(frames[2].1, 100_000);
 }
+
+/// A failed assertion must also drop what the body queued for the end of the
+/// transaction. Here a body frame CREATEs a contract that self-destructs while
+/// being constructed, at an address that held a balance before the transaction.
+/// The rollback restores that balance, and the self-destruct the body queued must
+/// not then delete the account when the transaction finalizes.
+#[test]
+fn failed_post_tx_drops_selfdestructs_queued_by_the_body() {
+    let creator = Address::from_low_u64_be(0xC4EA7E);
+    let asserter = Address::from_low_u64_be(0xA55E);
+    // Store the init code `ADDRESS SELFDESTRUCT` (0x30 0xff) in memory, CREATE it
+    // with no value, and stop.
+    let create_self_destructing: &[u8] = &[
+        0x61, 0x30, 0xff, // PUSH2 0x30ff
+        0x60, 0x00, // PUSH1 0
+        0x52, // MSTORE: memory[30..32] = 0x30ff
+        0x60, 0x02, // PUSH1 2 (size)
+        0x60, 0x1e, // PUSH1 30 (offset)
+        0x60, 0x00, // PUSH1 0 (value)
+        0xf0, // CREATE
+        0x00, // STOP
+    ];
+    let created = ethrex_common::evm::calculate_create_address(creator, 0);
+    let prefunded = U256::from(1_000u64);
+    let tx = body_then_assertions(creator, vec![post_tx_frame(asserter)]);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (
+            creator,
+            U256::zero(),
+            0,
+            Bytes::from(create_self_destructing.to_vec()),
+        ),
+        (created, prefunded, 0, Bytes::new()),
+        (
+            asserter,
+            U256::zero(),
+            0,
+            Bytes::from(PURE_REVERT_CODE.to_vec()),
+        ),
+    ];
+
+    let (result, db) = run_frame_tx_with_post_tx(&accounts, tx);
+    let frames = result
+        .expect("a failed assertion leaves the transaction valid")
+        .frame_results
+        .expect("per-frame results");
+    // The body ran (and created the contract) before the assertion failed.
+    assert_eq!(frames[1].0, FRAME_RECEIPT_STATUS_SUCCESS);
+    assert_eq!(
+        frames[2].0,
+        ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE
+    );
+    // The account is back as it was, and nothing marks it for deletion.
+    let account = db
+        .current_accounts_state
+        .get(&created)
+        .expect("the pre-funded account is cached");
+    assert_eq!(account.info.balance, prefunded);
+    assert!(
+        !matches!(
+            account.status,
+            ethrex_levm::account::AccountStatus::Destroyed
+                | ethrex_levm::account::AccountStatus::DestroyedModified
+        ),
+        "the body's self-destruct survived the rollback: {:?}",
+        account.status
+    );
+    assert_eq!(nonce_of(&db, creator), 0);
+}

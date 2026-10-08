@@ -908,8 +908,9 @@ struct PrefixEnd {
     index: usize,
     /// How many logs the transaction had emitted by then.
     logs_len: usize,
-    refunded_gas: u64,
     state_gas_used: i64,
+    /// Each frame's `gas_used.state` at that point.
+    state_attribution: Vec<u64>,
     bal_checkpoint: Option<BlockAccessListCheckpoint>,
 }
 
@@ -1894,8 +1895,13 @@ impl<'a> VM<'a> {
         // EIP-7906: where the validation prefix ended, and the originals of every
         // state change made after it, so a failing POST_TX frame can put the body
         // back. Both start when the frame that sets the payer completes.
+        // Tracked only when the transaction has an assertion to fail.
         let mut prefix_end: Option<PrefixEnd> = None;
         let mut body_backup: Option<crate::call_frame::CallFrameBackup> = None;
+        let has_post_tx_frames = frame_tx
+            .frames
+            .iter()
+            .any(|frame| frame.execution_mode() == FrameMode::PostTx);
 
         // Execute frames sequentially
         for (frame_idx, frame) in frame_tx.frames.iter().enumerate() {
@@ -2589,11 +2595,19 @@ impl<'a> VM<'a> {
                         recorder.restore(checkpoint);
                     }
                     all_logs.truncate(prefix.logs_len);
-                    self.substate.refunded_gas = prefix.refunded_gas;
+                    self.substate.revert_backup();
                     self.state_gas_used = prefix.state_gas_used;
                     let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
                         InternalError::Custom("missing frame tx context".to_string()),
                     ))?;
+                    // A body frame refilling a charge a prefix frame paid lowered that
+                    // frame's state figure; the refill is gone with the body, so the
+                    // figure goes back to what it was.
+                    for (result, before) in
+                        ctx.frame_results.iter_mut().zip(&prefix.state_attribution)
+                    {
+                        result.2 = *before;
+                    }
                     for result in ctx
                         .frame_results
                         .get_mut(prefix.index.saturating_add(1)..)
@@ -2624,17 +2638,32 @@ impl<'a> VM<'a> {
                 .frame_tx_context
                 .as_ref()
                 .is_some_and(|ctx| ctx.payer_address.is_some());
-            if frame_success && !payer_was_set && payer_now_set && !in_atomic_batch {
+            if has_post_tx_frames
+                && frame_success
+                && !payer_was_set
+                && payer_now_set
+                && !in_atomic_batch
+            {
                 tx_level_backup.absorb(&self.current_call_frame.call_frame_backup);
                 self.current_call_frame.call_frame_backup.clear();
                 prefix_end = Some(PrefixEnd {
                     index: frame_idx,
                     logs_len: all_logs.len(),
-                    refunded_gas: self.substate.refunded_gas,
                     state_gas_used: self.state_gas_used,
+                    state_attribution: self
+                        .frame_tx_context
+                        .as_ref()
+                        .map(|c| c.frame_results.iter().map(|r| r.2).collect())
+                        .unwrap_or_default(),
                     bal_checkpoint: self.db.bal_recorder.as_ref().map(|r| r.checkpoint()),
                 });
                 body_backup = Some(crate::call_frame::CallFrameBackup::default());
+                // A substate checkpoint for the body, so a rollback also drops the
+                // selfdestructs, created accounts and refunds it accumulated. Transient
+                // storage is cleared first: reads walk the parent scopes, and this
+                // frame's values must not reach the next one.
+                self.substate.clear_transient_storage();
+                self.substate.push_backup();
             }
 
             // Atomic batch: if a frame in the batch reverted, revert the
@@ -2738,6 +2767,12 @@ impl<'a> VM<'a> {
 
             // Clear transient storage between frames
             self.substate.clear_transient_storage();
+        }
+
+        // EIP-7906: no assertion failed, so the body stands and its checkpoint is
+        // folded into the transaction's substate.
+        if prefix_end.is_some() {
+            self.substate.commit_backup();
         }
 
         // The frames are done; fee settlement and refunds below are transaction
