@@ -422,6 +422,9 @@ pub struct Transaction {
     /// signature list in place of a single ECDSA signature.
     pub frames: Option<FrameList>,
     pub signatures: Option<FrameSignatureList>,
+    /// EIP-8250: the nonce keys of a frame transaction, whose `nonce` then carries
+    /// the shared sequence. Absent means the legacy key set `[0]`.
+    pub nonce_keys: Option<Vec<U256>>,
 }
 
 // Conversions between EFtests & ethrex types
@@ -624,7 +627,8 @@ impl From<Transaction> for FrameTransaction {
                 .chain_id
                 .map(|id| id.try_into().unwrap_or(u64::MAX))
                 .unwrap_or(1),
-            nonce: val.nonce.try_into().unwrap_or(u64::MAX),
+            nonce_keys: val.nonce_keys.unwrap_or_else(|| vec![U256::zero()]),
+            nonce_seq: val.nonce.try_into().unwrap_or(u64::MAX),
             sender: val.sender.unwrap_or_default(),
             frames: val
                 .frames

@@ -76,6 +76,10 @@ pub enum ExceptionalHalt {
     OutOfBounds,
     #[error("Out Of Gas")]
     OutOfGas,
+    /// EIP-8250: a payment approval for `nonce_keys == [0]` would increment the
+    /// sender's account nonce past `MAX_NONCE_SEQ`.
+    #[error("Nonce Overflow")]
+    NonceOverflow,
     #[error("Precompile execution error: {0}")]
     Precompile(#[from] PrecompileError),
 }

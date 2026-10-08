@@ -1544,7 +1544,9 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => tx.nonce,
             Transaction::PrivilegedL2Transaction(tx) => tx.nonce,
             Transaction::FeeTokenTransaction(tx) => tx.nonce,
-            Transaction::FrameTransaction(tx) => tx.nonce,
+            // EIP-8250: the sequence shared by the selected nonce keys. It equals the
+            // sender's account nonce only for `nonce_keys == [0]`.
+            Transaction::FrameTransaction(tx) => tx.nonce_seq,
         }
     }
 
@@ -2012,10 +2014,17 @@ impl RLPDecode for FrameSignature {
 /// EIP-8141 Frame Transaction
 /// A transaction whose validity and gas payment are defined abstractly via frames.
 /// No ECDSA signature — sender is explicit. Authentication happens via APPROVE opcode.
-#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
+#[derive(Clone, Debug, PartialEq, Eq, RSerialize, RDeserialize, Archive)]
 pub struct FrameTransaction {
     pub chain_id: u64,
-    pub nonce: u64,
+    /// EIP-8250 keyed nonces, replacing EIP-8141's single `nonce`: one to sixteen
+    /// strictly increasing keys sharing [`Self::nonce_seq`]. `[0]` selects the
+    /// sender's account nonce; any other set selects independent sequences held in
+    /// the `NONCE_MANAGER` system contract.
+    #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::U256Wrapper>)]
+    pub nonce_keys: Vec<U256>,
+    /// EIP-8250: the sequence every selected nonce key must currently hold.
+    pub nonce_seq: u64,
     #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub sender: Address,
     pub frames: Vec<Frame>,
@@ -2039,6 +2048,27 @@ pub struct FrameTransaction {
     pub cached_canonical: OnceCell<Vec<u8>>,
 }
 
+impl Default for FrameTransaction {
+    /// Selects the legacy nonce key set `[0]` (EIP-8250), the only key set that is
+    /// valid without naming keys: an empty `nonce_keys` list is statically invalid.
+    fn default() -> Self {
+        Self {
+            chain_id: 0,
+            nonce_keys: vec![U256::zero()],
+            nonce_seq: 0,
+            sender: Address::zero(),
+            frames: Vec::new(),
+            signatures: Vec::new(),
+            max_priority_fee_per_gas: U256::zero(),
+            max_fee_per_gas: U256::zero(),
+            max_fee_per_blob_gas: U256::zero(),
+            blob_versioned_hashes: Vec::new(),
+            inner_hash: OnceCell::new(),
+            cached_canonical: OnceCell::new(),
+        }
+    }
+}
+
 /// Intrinsic gas cost for frame transactions (EIP-8141)
 pub const FRAME_TX_INTRINSIC_COST: u64 = 12000;
 /// EIP-2780 `TX_VALUE_COST`: the intrinsic charge for a value-moving frame.
@@ -2049,6 +2079,8 @@ pub const FRAME_TX_PER_FRAME_COST: u64 = 475;
 pub const FRAME_TX_ENTRY_POINT_U64: u64 = 0xaa;
 /// Maximum number of frames allowed per EIP-8141 frame transaction.
 pub const FRAME_TX_MAX_FRAMES: usize = 64;
+/// EIP-8250 `MAX_NONCE_KEYS`: the most nonce keys a frame transaction may select.
+pub const FRAME_TX_MAX_NONCE_KEYS: usize = 16;
 /// EIP-7623 `STANDARD_TOKEN_COST`, and the EIP-7976 floor per token. Frame
 /// transactions exist only from Hegota onward, which is after Amsterdam, so the
 /// raised EIP-7976 floor always applies and neither needs a fork parameter.
@@ -2067,8 +2099,9 @@ pub const FRAME_TX_MAX_VERIFY_GAS: u64 = 100_000;
 /// EIP-8141 `MAX_VERIFY_STATE_GAS`: the most state gas the frames of a validation
 /// prefix may declare between them (structural rule 6). It bounds the state growth
 /// a public-mempool transaction can buy while establishing its payer -- a deploy
-/// frame and the sender-account creation an `APPROVE` may charge -- and measures no
-/// node validation work, which `MAX_VERIFY_GAS` alone bounds.
+/// frame, the sender-account creation an `APPROVE` may charge, and under EIP-8250
+/// the keyed nonce slots it creates -- and measures no node validation work, which
+/// `MAX_VERIFY_GAS` alone bounds.
 pub const FRAME_TX_MAX_VERIFY_STATE_GAS: u64 = 500_000;
 /// EIP-8141 APPROVE scope-restriction values (bits 0-1 of `Frame.flags`).
 /// Used by VERIFY and PAY frames to declare which capabilities they grant.
@@ -2095,6 +2128,24 @@ pub const FRAME_TX_EXPIRY_DATA_LENGTH: usize = 8;
 /// Returns the EXPIRY_VERIFIER `Address` (0x…8141) per EIP-8141.
 pub fn frame_tx_expiry_verifier() -> Address {
     Address::from_low_u64_be(FRAME_TX_EXPIRY_VERIFIER_U64)
+}
+
+/// EIP-8250 `NONCE_MANAGER` system contract (0x…8250), whose storage holds every
+/// sender's keyed nonce sequences.
+pub const FRAME_TX_NONCE_MANAGER_U64: u64 = 0x8250;
+
+/// Returns the `NONCE_MANAGER` `Address` (0x…8250) per EIP-8250.
+pub fn frame_tx_nonce_manager() -> Address {
+    Address::from_low_u64_be(FRAME_TX_NONCE_MANAGER_U64)
+}
+
+/// EIP-8250 `nonce_slot`: the `NONCE_MANAGER` storage slot holding `sender`'s
+/// sequence for `nonce_key`, `keccak256(left_pad_32(sender) || uint256_be(nonce_key))`.
+pub fn keyed_nonce_slot(sender: Address, nonce_key: U256) -> H256 {
+    let mut buf = [0u8; 64];
+    buf[12..32].copy_from_slice(sender.as_bytes());
+    buf[32..].copy_from_slice(&nonce_key.to_big_endian());
+    keccak(buf)
 }
 
 impl FrameTransaction {
@@ -2124,7 +2175,8 @@ impl FrameTransaction {
         // RLP-encode the tx with elided signature bytes, frames verbatim.
         Encoder::new(&mut buf)
             .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
+            .encode_field(&self.nonce_keys)
+            .encode_field(&self.nonce_seq)
             .encode_field(&self.sender)
             .encode_field(&self.frames)
             .encode_field(&elided_signatures)
@@ -2170,22 +2222,56 @@ impl FrameTransaction {
             }))
     }
 
-    /// EIP-7623 calldata cost over the frame and signature data: 4 gas per zero
-    /// byte, 16 per non-zero byte.
+    /// EIP-7623 calldata cost over the frame and signature data and EIP-8250's
+    /// nonce calldata: 4 gas per zero byte, 16 per non-zero byte.
     pub fn data_cost(&self) -> u64 {
-        self.data_fields().flatten().fold(0u64, |acc, byte| {
-            acc.saturating_add(if *byte == 0 { 4 } else { 16 })
-        })
+        let nonce_calldata = self.nonce_calldata();
+        self.data_fields()
+            .chain(std::iter::once(nonce_calldata.as_slice()))
+            .flatten()
+            .fold(0u64, |acc, byte| {
+                acc.saturating_add(if *byte == 0 { 4 } else { 16 })
+            })
     }
 
-    /// EIP-7623 token count over the frame and signature data, used for the
-    /// calldata floor. Frame transactions exist only from Hegota onward, which is
-    /// after Amsterdam, so EIP-7976's unweighted count (every byte costs
-    /// `STANDARD_TOKEN_COST`) always applies.
+    /// EIP-7623 token count over the frame and signature data and EIP-8250's nonce
+    /// calldata, used for the calldata floor. Frame transactions exist only from
+    /// Hegota onward, which is after Amsterdam, so EIP-7976's unweighted count
+    /// (every byte costs `STANDARD_TOKEN_COST`) always applies.
     pub fn calldata_tokens(&self) -> u64 {
         self.data_fields()
             .fold(0u64, |acc, field| acc.saturating_add(field.len() as u64))
+            .saturating_add(self.nonce_calldata().len() as u64)
             .saturating_mul(FRAME_TX_STANDARD_TOKEN_COST)
+    }
+
+    /// EIP-8250 `nonce_calldata`: `rlp(nonce_keys) || rlp(nonce_seq)`, the bytes the
+    /// keyed nonce fields add to the payload. They are priced exactly as frame and
+    /// signature data, so they enter both [`Self::data_cost`] and
+    /// [`Self::calldata_tokens`].
+    pub fn nonce_calldata(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        self.nonce_keys.encode(&mut buf);
+        self.nonce_seq.encode(&mut buf);
+        buf
+    }
+
+    /// EIP-8250 `nonce_keys_hash`: `keccak256(uint256_be(len) || uint256_be(k) for k)`.
+    /// Valid keys are strictly increasing, so each key set has one digest.
+    pub fn nonce_keys_hash(&self) -> H256 {
+        let mut buf = Vec::with_capacity(32 * (self.nonce_keys.len() + 1));
+        buf.extend_from_slice(&U256::from(self.nonce_keys.len()).to_big_endian());
+        for key in &self.nonce_keys {
+            buf.extend_from_slice(&key.to_big_endian());
+        }
+        keccak(&buf)
+    }
+
+    /// Whether the transaction selects keyed nonces (EIP-8250) rather than the
+    /// sender's account nonce. Static validation allows key `0` only as the whole
+    /// set, so a transaction is either `[0]` or all non-zero keys.
+    pub fn is_keyed(&self) -> bool {
+        self.nonce_keys.as_slice() != [U256::zero()]
     }
 
     /// The EIP-7623 calldata floor: the least the frame and signature data may
@@ -2299,6 +2385,19 @@ impl FrameTransaction {
         // tx.sender != zero address
         if self.sender == Address::zero() {
             return Err("tx.sender must not be zero address".to_string());
+        }
+        // EIP-8250: one to sixteen strictly increasing keys, key 0 only as `[0]`.
+        if self.nonce_keys.is_empty() || self.nonce_keys.len() > FRAME_TX_MAX_NONCE_KEYS {
+            return Err(format!(
+                "nonce_keys count must be between 1 and {FRAME_TX_MAX_NONCE_KEYS}"
+            ));
+        }
+        if self.nonce_keys.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err("nonce_keys must be strictly increasing".to_string());
+        }
+        // Keys are strictly increasing, so a zero key, if present, is the first.
+        if self.nonce_keys.len() > 1 && self.nonce_keys[0].is_zero() {
+            return Err("nonce key 0 is only valid as the sole nonce key".to_string());
         }
         if self.frames.is_empty() || self.frames.len() > FRAME_TX_MAX_FRAMES {
             return Err(format!(
@@ -2826,7 +2925,8 @@ impl RLPEncode for FrameTransaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         Encoder::new(buf)
             .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
+            .encode_field(&self.nonce_keys)
+            .encode_field(&self.nonce_seq)
             .encode_field(&self.sender)
             .encode_field(&self.frames)
             .encode_field(&self.signatures)
@@ -2844,7 +2944,12 @@ impl RLPDecode for FrameTransaction {
     fn decode_unfinished(rlp: &[u8]) -> Result<(FrameTransaction, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
         let (chain_id, decoder) = decoder.decode_field("chain_id")?;
-        let (nonce, decoder) = decode_nonce_field(decoder)?;
+        // EIP-8250: `nonce_keys` must be an RLP list of canonical integers below
+        // 2**256; the U256 decoder rejects non-canonical and over-wide items.
+        let (nonce_keys, decoder) = decoder.decode_field("nonce_keys")?;
+        // `nonce_seq < 2**64`: a wider value is a malformed payload, rejected while
+        // decoding like any other frame-transaction field too wide for its type.
+        let (nonce_seq, decoder) = decoder.decode_field("nonce_seq")?;
         let (sender, decoder) = decoder.decode_field("sender")?;
         let (frames, decoder) = decoder.decode_field("frames")?;
         let (signatures, decoder) = decoder.decode_field("signatures")?;
@@ -2865,7 +2970,8 @@ impl RLPDecode for FrameTransaction {
         let (blob_versioned_hashes, decoder) = decoder.decode_field("blob_versioned_hashes")?;
         let tx = FrameTransaction {
             chain_id,
-            nonce,
+            nonce_keys,
+            nonce_seq,
             sender,
             frames,
             signatures,
@@ -3554,7 +3660,17 @@ mod serde_impl {
             let mut s = serializer.serialize_struct("FrameTransaction", 10)?;
             s.serialize_field("type", &TxType::Frame)?;
             s.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
-            s.serialize_field("nonce", &format!("{:#x}", self.nonce))?;
+            // EIP-8250, named as in the execution-apis frame transaction schema:
+            // `nonce` carries the shared sequence and `nonceKeys` the selected keys.
+            s.serialize_field("nonce", &format!("{:#x}", self.nonce_seq))?;
+            s.serialize_field(
+                "nonceKeys",
+                &self
+                    .nonce_keys
+                    .iter()
+                    .map(|key| format!("{key:#x}"))
+                    .collect::<Vec<_>>(),
+            )?;
             s.serialize_field("sender", &format!("{:#x}", self.sender))?;
             s.serialize_field(
                 "frames",
@@ -4451,7 +4567,7 @@ mod serde_impl {
         fn from(value: FrameTransaction) -> Self {
             Self {
                 r#type: TxType::Frame,
-                nonce: Some(value.nonce),
+                nonce: Some(value.nonce_seq),
                 to: TxKind::Call(value.sender),
                 from: value.sender,
                 gas: Some(value.max_gas()),
@@ -5274,7 +5390,8 @@ mod tests {
     fn make_test_frame_tx() -> FrameTransaction {
         FrameTransaction {
             chain_id: 1,
-            nonce: 42,
+            nonce_keys: vec![U256::zero()],
+            nonce_seq: 42,
             sender: Address::from_low_u64_be(0xABCD),
             frames: vec![
                 Frame {
@@ -5533,7 +5650,8 @@ mod tests {
         let (decoded, rest) = FrameTransaction::decode_unfinished(&buf).unwrap();
         assert!(rest.is_empty());
         assert_eq!(decoded.chain_id, tx.chain_id);
-        assert_eq!(decoded.nonce, tx.nonce);
+        assert_eq!(decoded.nonce_keys, tx.nonce_keys);
+        assert_eq!(decoded.nonce_seq, tx.nonce_seq);
         assert_eq!(decoded.sender, tx.sender);
     }
 
@@ -5575,7 +5693,8 @@ mod tests {
             .collect();
         FrameTransaction {
             chain_id: 1,
-            nonce: 0,
+            nonce_keys: vec![U256::zero()],
+            nonce_seq: 0,
             sender: Address::from_low_u64_be(0xABCD),
             frames,
             signatures: vec![],
@@ -5659,7 +5778,8 @@ mod tests {
     fn frame_tx_with(frames: Vec<Frame>) -> FrameTransaction {
         FrameTransaction {
             chain_id: 1,
-            nonce: 0,
+            nonce_keys: vec![U256::zero()],
+            nonce_seq: 0,
             sender: Address::from_low_u64_be(0xABCD),
             frames,
             signatures: vec![],
@@ -5761,7 +5881,8 @@ mod tests {
         // VERIFY frame with non-zero value must be rejected.
         let verify_tx = FrameTransaction {
             chain_id: 1,
-            nonce: 0,
+            nonce_keys: vec![U256::zero()],
+            nonce_seq: 0,
             sender: Address::from_low_u64_be(0xABCD),
             frames: vec![Frame {
                 mode: FrameMode::Verify as u8,
@@ -5871,7 +5992,8 @@ mod tests {
         let (decoded, rest) = FrameTransaction::decode_unfinished(&buf).unwrap();
         assert!(rest.is_empty());
         assert_eq!(decoded.chain_id, tx.chain_id);
-        assert_eq!(decoded.nonce, tx.nonce);
+        assert_eq!(decoded.nonce_keys, tx.nonce_keys);
+        assert_eq!(decoded.nonce_seq, tx.nonce_seq);
         assert_eq!(decoded.sender, tx.sender);
     }
 
@@ -5986,7 +6108,8 @@ mod tests {
         assert!(rest.is_empty());
         assert_eq!(decoded.signatures, tx.signatures);
         assert_eq!(decoded.frames, tx.frames);
-        assert_eq!(decoded.nonce, tx.nonce);
+        assert_eq!(decoded.nonce_keys, tx.nonce_keys);
+        assert_eq!(decoded.nonce_seq, tx.nonce_seq);
     }
 
     #[test]
@@ -6124,7 +6247,8 @@ mod tests {
         // reviewed format change.
         let tx = FrameTransaction {
             chain_id: 1,
-            nonce: 7,
+            nonce_keys: vec![U256::zero()],
+            nonce_seq: 7,
             sender: Address::from_low_u64_be(0xABCD),
             frames: vec![
                 Frame {
@@ -6163,10 +6287,12 @@ mod tests {
         let mut buf = Vec::new();
         tx.encode(&mut buf);
         let rlp_hex = hex::encode(&buf);
-        // GOLDEN_RLP: obtained from first run
+        // GOLDEN_RLP: EIP-8250 layout, `nonce_keys = [0]` (`c180`) then `nonce_seq`.
+        // The layout is cross-checked against reference bytes in
+        // `reference_frame_tx_reencodes_byte_identically`.
         assert_eq!(
             rlp_hex,
-            "f8b3010794000000000000000000000000000000000000abcdefcf010380c7825208831e848080821122de0280940000000000000000000000000000000000001234c4829c40808080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101cc843b9aca008506fc23ac0080c0"
+            "f8b501c1800794000000000000000000000000000000000000abcdefcf010380c7825208831e848080821122de0280940000000000000000000000000000000000001234c4829c40808080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101cc843b9aca008506fc23ac0080c0"
         );
 
         // Round-trips losslessly.
@@ -6175,10 +6301,12 @@ mod tests {
         assert_eq!(decoded, tx);
 
         let sig_hash = tx.compute_sig_hash();
-        // GOLDEN_SIG_HASH: obtained from first run
+        // GOLDEN_SIG_HASH: over the EIP-8250 layout. The hash construction is
+        // cross-checked against a reference signature in
+        // `reference_frame_tx_signature_binds_the_nonce_fields`.
         assert_eq!(
             format!("{:#x}", sig_hash),
-            "0x2518df13bab80fe6bcc7a7e462dea6d617ad6992d53411ddbaff26a8cbc22341",
+            "0xab79d82e38567c944b076afa917f6df24ba84ea4d67aebf786382955ab27e05d",
         );
 
         // Elision invariant: changing empty-msg signature bytes must NOT change sig_hash.

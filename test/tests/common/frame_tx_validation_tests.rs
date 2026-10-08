@@ -37,7 +37,8 @@ fn cancun_config() -> ChainConfig {
 fn frame_tx_with_blobs(n_blobs: usize) -> FrameTransaction {
     FrameTransaction {
         chain_id: 0,
-        nonce: 0,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 0,
         sender: Default::default(),
         frames: vec![Frame {
             mode: FrameMode::Default as u8,
@@ -187,7 +188,8 @@ fn base_frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
         sender: sender_addr(),
         frames,
         chain_id: 1,
-        nonce: 42,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 42,
         max_priority_fee_per_gas: U256::from(1_000_000_000u64),
         max_fee_per_gas: U256::from(30_000_000_000u64),
         ..Default::default()
@@ -489,7 +491,8 @@ fn prefix_rejection_gas_budget_exceeded() {
 fn make_test_frame_tx() -> FrameTransaction {
     FrameTransaction {
         chain_id: 1,
-        nonce: 42,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 42,
         sender: Address::from_low_u64_be(0xABCD),
         frames: vec![
             Frame {
@@ -631,10 +634,13 @@ fn static_validation_rejects_blob_fee_without_blobs() {
 }
 
 #[test]
-fn data_cost_covers_only_frame_and_signature_data() {
-    // 4 gas per zero byte, 16 per non-zero, over frame.data and each
-    // signature's signer/msg/signature — no RLP framing, no scalar fields.
+fn data_cost_covers_frame_signature_and_nonce_data() {
+    // 4 gas per zero byte, 16 per non-zero, over frame.data, each signature's
+    // signer/msg/signature, and EIP-8250's `rlp(nonce_keys) || rlp(nonce_seq)` --
+    // no other RLP framing, no other scalar fields.
     let mut tx = make_test_frame_tx();
+    // nonce_keys [0], nonce_seq 42: `c1 80` || `2a`, three non-zero bytes -> 48.
+    assert_eq!(tx.nonce_calldata(), vec![0xc1, 0x80, 0x2a]);
     tx.frames[0].data = Bytes::from(vec![0u8; 3]); // 3 zero bytes -> 12
     tx.frames[1].data = Bytes::from(vec![0xAAu8; 2]); // 2 non-zero -> 32
     tx.signatures = vec![FrameSignature {
@@ -643,10 +649,10 @@ fn data_cost_covers_only_frame_and_signature_data() {
         msg: Bytes::new(),
         signature: Bytes::from(vec![0xAAu8, 0x00]), // 16 + 4
     }];
-    assert_eq!(tx.data_cost(), 12 + 32 + 16 + 4);
-    // Floor tokens are unweighted: 7 bytes * 4 tokens * 16 gas = 448.
-    assert_eq!(tx.calldata_tokens(), 7 * 4);
-    assert_eq!(tx.calldata_floor_gas(), 7 * 64);
+    assert_eq!(tx.data_cost(), 12 + 32 + 16 + 4 + 48);
+    // Floor tokens are unweighted: 10 bytes * 4 tokens * 16 gas = 640.
+    assert_eq!(tx.calldata_tokens(), 10 * 4);
+    assert_eq!(tx.calldata_floor_gas(), 10 * 64);
 }
 
 #[test]
@@ -759,53 +765,76 @@ fn prefix_accepts_expiry_frame_as_first_frame() {
         .expect("a leading expiry verifier frame is valid");
 }
 
+/// A frame transaction filled by the reference implementation for EIP-8250
+/// (execution-specs `eips/bogota/eip-8250`, `test_block_access_list[used_key]`):
+/// nonce key `0xbeef` at sequence 1, one VERIFY frame, one SECP256K1 signature by
+/// the sender over the canonical signature hash.
+const REFERENCE_KEYED_TX: &str = "06f88e01c382beef0194f6c3a9edc1afa0ad5b720e4d42e1437c43d3b3ffcfce010380c8830186a083061a808080f85cf85a0194f6c3a9edc1afa0ad5b720e4d42e1437c43d3b3ff80b84101826476e494fe82f10a2404cf66ab899917793bc48b6989302c951cc84e885c2b322ee8bdde8137d28cacfa37ce8edc4c18aa84bdf4dcf5eb3b26fb19de7b085cc3800780c0";
+
 /// Cross-check ethrex's frame-transaction encoder against bytes produced by the
-/// reference implementation, taken verbatim from a filled spec fixture.
+/// reference implementation.
 ///
 /// A self round-trip (encode then decode) cannot catch a layout disagreement,
 /// since both halves would share the same mistake. Decoding foreign bytes and
-/// requiring the re-encode to reproduce them exactly does catch it: this is what
-/// pins EIP-8141's `limits = [execution, state]` frame tuple and the nested
-/// `fees` list, which together took the payload from nine top-level fields to
-/// seven.
+/// requiring the re-encode to reproduce them exactly does catch it: this pins
+/// EIP-8250's `nonce_keys` list and `nonce_seq` in place of EIP-8141's single
+/// `nonce`, EIP-8141's `limits = [execution, state]` frame tuple, and the nested
+/// `fees` list.
 #[test]
 fn reference_frame_tx_reencodes_byte_identically() {
-    // From `transfer_with_default_code.json`, filled at Bogota against the spec
-    // at EIP commit 060351456.
-    const REFERENCE_TX: &str = "06f8b6018094f6c3a9edc1afa0ad5b720e4d42e1437c43d3b3fff83ace010380c8830186a083061a808080ea028094f36afef4dcb45e52f80cb039335952f77cec8960c8830186a083061a8088016345785d8a000080f85cf85a0194f6c3a9edc1afa0ad5b720e4d42e1437c43d3b3ff80b8410134b0f36de64a70296d3a9e8ecbb8d3dc279986d4e5110df618949f9cf229338a6165431b1a501e0c78f29f35691f0528ccccafb4a65d92a2475d13bdea26bf62c3800780c0";
-
-    let raw = hex::decode(REFERENCE_TX).expect("valid hex");
+    let raw = hex::decode(REFERENCE_KEYED_TX).expect("valid hex");
     let tx = Transaction::decode_canonical(&raw).expect("the reference bytes must decode");
-    assert!(matches!(tx, Transaction::FrameTransaction(_)));
+    let Transaction::FrameTransaction(frame_tx) = &tx else {
+        panic!("the reference bytes are a frame transaction");
+    };
+    assert_eq!(frame_tx.nonce_keys, vec![U256::from(0xbeef)]);
+    assert_eq!(frame_tx.nonce_seq, 1);
 
     let reencoded = tx.encode_canonical_to_vec();
     assert_eq!(
         hex::encode(&reencoded),
-        REFERENCE_TX,
+        REFERENCE_KEYED_TX,
         "re-encoding must reproduce the reference bytes exactly"
     );
 }
 
+/// The reference transaction's SECP256K1 signature was made over the reference
+/// implementation's canonical signature hash, so it validates against ethrex's only
+/// if the two hashes agree -- including the EIP-8250 nonce fields, which the hash
+/// must commit to. Changing either field must invalidate the signature.
 #[test]
-fn diagnostic_reference_tx_signer_recovery() {
-    const REFERENCE_TX: &str = "06f8b6018094f6c3a9edc1afa0ad5b720e4d42e1437c43d3b3fff83ace010380c8830186a083061a808080ea028094f36afef4dcb45e52f80cb039335952f77cec8960c8830186a083061a8088016345785d8a000080f85cf85a0194f6c3a9edc1afa0ad5b720e4d42e1437c43d3b3ff80b8410134b0f36de64a70296d3a9e8ecbb8d3dc279986d4e5110df618949f9cf229338a6165431b1a501e0c78f29f35691f0528ccccafb4a65d92a2475d13bdea26bf62c3800780c0";
-    let raw = hex::decode(REFERENCE_TX).unwrap();
-    let tx = Transaction::decode_canonical(&raw).unwrap();
-    let Transaction::FrameTransaction(ft) = &tx else {
-        panic!("not a frame tx")
+fn reference_frame_tx_signature_binds_the_nonce_fields() {
+    let raw = hex::decode(REFERENCE_KEYED_TX).expect("valid hex");
+    let Transaction::FrameTransaction(frame_tx) =
+        Transaction::decode_canonical(&raw).expect("the reference bytes must decode")
+    else {
+        panic!("the reference bytes are a frame transaction");
     };
-    println!("DIAG sender          = {:#x}", ft.sender);
-    println!("DIAG sig_hash        = {:#x}", ft.compute_sig_hash());
-    println!("DIAG declared signer = {:?}", ft.signatures[0].signer);
-    println!("DIAG frames          = {}", ft.frames.len());
-    for (i, f) in ft.frames.iter().enumerate() {
-        println!(
-            "DIAG   frame[{i}] mode={} flags={:#x} gas={} state_gas={}",
-            f.mode, f.flags, f.gas_limit, f.state_gas_limit
-        );
-    }
-    println!(
-        "DIAG fees priority={} max={}",
-        ft.max_priority_fee_per_gas, ft.max_fee_per_gas
+    let validates = |tx: &FrameTransaction| {
+        ethrex_levm::vm::validate_frame_signatures(
+            &tx.signatures,
+            tx.compute_sig_hash(),
+            tx.sender,
+            ethrex_common::types::Fork::Hegota,
+            &ethrex_crypto::NativeCrypto,
+        )
+    };
+    assert!(
+        validates(&frame_tx),
+        "ethrex's signature hash must match the one the reference signed"
+    );
+
+    let mut other_seq = frame_tx.clone();
+    other_seq.nonce_seq += 1;
+    assert!(
+        !validates(&other_seq),
+        "the signature hash must commit to nonce_seq"
+    );
+
+    let mut other_keys = frame_tx;
+    other_keys.nonce_keys = vec![U256::from(0xbeef), U256::from(0xbef0)];
+    assert!(
+        !validates(&other_keys),
+        "the signature hash must commit to nonce_keys"
     );
 }

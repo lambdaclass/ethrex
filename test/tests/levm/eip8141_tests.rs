@@ -120,7 +120,7 @@ fn frame_tx_env(tx: &FrameTransaction) -> Environment {
         // payer balances MUST use `run_frame_tx_with_fees`, which derives the
         // effective price min(base+priority, max_fee) like production.
         gas_price: tx.max_fee_per_gas,
-        tx_nonce: tx.nonce,
+        tx_nonce: tx.nonce_seq,
         ..Default::default()
     }
 }
@@ -131,7 +131,8 @@ fn frame_tx_env(tx: &FrameTransaction) -> Environment {
 fn frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
     FrameTransaction {
         chain_id: HARNESS_CHAIN_ID,
-        nonce: 0,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 0,
         sender: FUNDED_SENDER,
         frames,
         signatures: Vec::new(),
@@ -157,7 +158,12 @@ fn run_frame_tx(
 ) -> (Result<ExecutionReport, VMError>, GeneralizedDatabase) {
     let mut seeded: Vec<SeededAccount> = accounts.to_vec();
     if !seeded.iter().any(|(addr, ..)| *addr == tx.sender) {
-        seeded.push((tx.sender, AUTO_SEED_SENDER_BALANCE, tx.nonce, Bytes::new()));
+        seeded.push((
+            tx.sender,
+            AUTO_SEED_SENDER_BALANCE,
+            tx.nonce_seq,
+            Bytes::new(),
+        ));
     }
 
     let mut db = seeded_db(&seeded);
@@ -193,7 +199,12 @@ fn run_frame_tx_with_fees(
 ) -> (Result<ExecutionReport, VMError>, GeneralizedDatabase) {
     let mut seeded: Vec<SeededAccount> = accounts.to_vec();
     if !seeded.iter().any(|(addr, ..)| *addr == tx.sender) {
-        seeded.push((tx.sender, AUTO_SEED_SENDER_BALANCE, tx.nonce, Bytes::new()));
+        seeded.push((
+            tx.sender,
+            AUTO_SEED_SENDER_BALANCE,
+            tx.nonce_seq,
+            Bytes::new(),
+        ));
     }
 
     let mut db = seeded_db(&seeded);
@@ -1632,6 +1643,7 @@ mod frame_tx_opcode_handler_tests {
             tx,
             approve_called_in_current_frame: false,
             max_gas: 0,
+            legacy_sender_nonce: 0,
             blob_base_fee: U256::zero(),
         }
     }
@@ -1720,6 +1732,7 @@ mod frame_tx_opcode_handler_tests {
             tx: FrameTransaction::default(),
             approve_called_in_current_frame: false,
             max_gas: 0,
+            legacy_sender_nonce: 0,
             blob_base_fee: U256::zero(),
         };
         let result = load_tx_param(&ctx, 0x0B).unwrap();
@@ -2337,7 +2350,8 @@ mod validation_observer_tests {
     fn frame_tx_for_obs(sender: Address, frames: Vec<Frame>) -> Transaction {
         Transaction::FrameTransaction(FrameTransaction {
             chain_id: 0,
-            nonce: 0,
+            nonce_keys: vec![U256::zero()],
+            nonce_seq: 0,
             sender,
             frames,
             signatures: Vec::new(),
@@ -2883,7 +2897,8 @@ mod frame_validation_prefix_tests {
     fn frame_tx_prefix(sender: Address, frames: Vec<Frame>) -> Transaction {
         Transaction::FrameTransaction(FrameTransaction {
             chain_id: 0,
-            nonce: 0,
+            nonce_keys: vec![U256::zero()],
+            nonce_seq: 0,
             sender,
             frames,
             signatures: Vec::new(),
@@ -3157,6 +3172,7 @@ mod atomic_batch_approval_rollback_tests {
             tx: ethrex_common::types::FrameTransaction::default(),
             approve_called_in_current_frame: false,
             max_gas: 0,
+            legacy_sender_nonce: 0,
             blob_base_fee: U256::zero(),
         }
     }
@@ -4642,7 +4658,7 @@ fn static_constraint_failure_reports_the_format_reason() {
         value: U256::zero(),
         data: Bytes::new(),
     }]);
-    tx.nonce = 0;
+    tx.nonce_seq = 0;
 
     let (result, _db) = run_frame_tx(&[], tx);
     match result {
@@ -4719,9 +4735,10 @@ fn frame_gas_exactly_at_the_transaction_cap_is_not_rejected_for_gas() {
         value: U256::zero(),
         data: Bytes::new(),
     }]);
-    // `max_gas()` with a zero-gas frame is the intrinsic anchor; give the frame
-    // exactly the remainder so the total lands on the cap.
-    let headroom = cap - probe.max_gas();
+    // `standard_gas_limit()` with a zero-gas frame is the intrinsic anchor; give the
+    // frame exactly the remainder so the total lands on the cap. (`max_gas()` would
+    // anchor on the calldata floor, which the probe's tiny payload can exceed.)
+    let headroom = cap - probe.standard_gas_limit();
     let tx = frame_tx_with_frames(vec![Frame {
         mode: u8::from(FrameMode::Default),
         flags: 0,
@@ -4758,9 +4775,9 @@ fn nonce_at_the_u64_ceiling_reports_nonce_is_max() {
         value: U256::zero(),
         data: Bytes::new(),
     }]);
-    tx.nonce = u64::MAX;
+    tx.nonce_seq = u64::MAX;
 
-    // `run_frame_tx` seeds the sender at `tx.nonce`, so the mismatch check
+    // `run_frame_tx` seeds the sender at `tx.nonce_seq`, so the mismatch check
     // cannot fire and the ceiling rule is the only one left to report.
     let (result, _db) = run_frame_tx(&[], tx);
     assert!(

@@ -4010,8 +4010,12 @@ impl Blockchain {
         // cumulative-balance sum.
         let sender_account_nonce = maybe_sender_acc_info.as_ref().map(|info| info.nonce);
 
+        // EIP-8250: a keyed frame tx's `nonce_seq` is checked against its keys'
+        // sequences in `NONCE_MANAGER` (by the validation-prefix simulation below),
+        // never against the account nonce, so the account-nonce gates skip it.
+        let keyed_frame_tx = matches!(tx, Transaction::FrameTransaction(ft) if ft.is_keyed());
         let sender_balance = if let Some(sender_acc_info) = maybe_sender_acc_info {
-            if nonce < sender_acc_info.nonce || nonce == u64::MAX {
+            if (!keyed_frame_tx && nonce < sender_acc_info.nonce) || nonce == u64::MAX {
                 return Err(MempoolError::NonceTooLow);
             }
 
@@ -4150,7 +4154,11 @@ impl Blockchain {
         // re-read for the message) would allow TOCTOU drift where the reported
         // occupancy differs from the value the gate fired on.
         let threshold = self.options.gap_admit_occupancy_threshold;
-        if tx_to_replace_hash.is_none() && nonce != sender_acc_nonce && threshold < 100 {
+        if tx_to_replace_hash.is_none()
+            && !keyed_frame_tx
+            && nonce != sender_acc_nonce
+            && threshold < 100
+        {
             let occupancy_pct = self.mempool.occupancy_pct()?;
             if occupancy_pct >= threshold {
                 let nonce_gap = nonce.saturating_sub(sender_acc_nonce);
@@ -4294,16 +4302,21 @@ impl Blockchain {
         // above are an unlocked pre-filter (issue #6938). `None` when the sender
         // has no account (only frame txs reach here in that case, and they are
         // not per-sender rate-limited on nonce/balance).
-        let sender_admission = sender_account_nonce.map(|account_nonce| SenderAdmission {
-            account_nonce,
-            queued_max: self.options.max_queued_txs_per_account,
-            gap_threshold: self.options.gap_admit_occupancy_threshold,
-            // Frame txs are not balance-gated (payer unknown until execution).
-            balance_check: (!is_frame_tx).then_some(BalanceCheck {
-                tx_cost,
-                sender_balance,
-            }),
-        });
+        // The per-sender gates (queued cap, gapped nonce, cumulative balance) are
+        // keyed on the account nonce, which a keyed frame tx does not use.
+        let sender_admission =
+            sender_account_nonce
+                .filter(|_| !keyed_frame_tx)
+                .map(|account_nonce| SenderAdmission {
+                    account_nonce,
+                    queued_max: self.options.max_queued_txs_per_account,
+                    gap_threshold: self.options.gap_admit_occupancy_threshold,
+                    // Frame txs are not balance-gated (payer unknown until execution).
+                    balance_check: (!is_frame_tx).then_some(BalanceCheck {
+                        tx_cost,
+                        sender_balance,
+                    }),
+                });
 
         Ok((frame_reservation, sender_admission))
     }

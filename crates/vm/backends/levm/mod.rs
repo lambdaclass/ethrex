@@ -6,7 +6,8 @@ use crate::system_contracts::{
     AMSTERDAM_REQUEST_PREDEPLOYS, BEACON_ROOTS_ADDRESS, BUILDER_DEPOSIT_CONTRACT_ADDRESS,
     BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
     EXPIRY_VERIFIER_PREDEPLOY, EXPIRY_VERIFIER_RUNTIME_BYTECODE, HISTORY_STORAGE_ADDRESS,
-    PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+    NONCE_MANAGER_PREDEPLOY, NONCE_MANAGER_RUNTIME_BYTECODE, PRAGUE_SYSTEM_CONTRACTS,
+    SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
@@ -3888,9 +3889,10 @@ impl LEVM {
     }
 
     /// Whether executing `block` installs Hegota's system contracts: Hegota is
-    /// active at its timestamp and a contract the fork installs (EIP-8141's expiry
-    /// verifier) is not yet in place in the parent state. Reads the parent state
-    /// from the store, so the execution caches are left untouched.
+    /// active at its timestamp and one of the contracts the fork installs (EIP-8141's
+    /// expiry verifier, EIP-8250's nonce manager) is not yet in place in the parent
+    /// state. Reads the parent state from the
+    /// store, so the execution caches are left untouched.
     ///
     /// Such a block cannot run on the access-list-driven parallel path: the
     /// installs are part of the fork transition, not block-level operations, so
@@ -3905,16 +3907,61 @@ impl LEVM {
         if !chain_config.is_hegota_activated(block.header.timestamp) {
             return Ok(false);
         }
-        for (address, runtime_code) in [(
-            EXPIRY_VERIFIER_PREDEPLOY.address,
-            EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice(),
-        )] {
+        for (address, runtime_code) in [
+            (
+                EXPIRY_VERIFIER_PREDEPLOY.address,
+                EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice(),
+            ),
+            (
+                NONCE_MANAGER_PREDEPLOY.address,
+                NONCE_MANAGER_RUNTIME_BYTECODE.as_slice(),
+            ),
+        ] {
             let installed_hash = db.store.get_account_state(address)?.code_hash;
             if installed_hash != crypto.keccak256(runtime_code).into() {
                 return Ok(true);
             }
         }
         Ok(false)
+    }
+
+    /// Install the EIP-8250 `NONCE_MANAGER` at Hegota activation: code
+    /// `NONCE_MANAGER_CODE`, nonce `max(existing, 1)`, balance preserved, storage
+    /// left as is (the address is chosen to hold none). Idempotent, like the expiry
+    /// verifier install: it writes only while the code differs, so it changes state
+    /// at the first Hegota block and never afterwards.
+    pub fn install_nonce_manager_code(
+        db: &mut GeneralizedDatabase,
+        crypto: &dyn Crypto,
+    ) -> Result<(), EvmError> {
+        Self::install_system_contract_code(
+            db,
+            crypto,
+            NONCE_MANAGER_PREDEPLOY.address,
+            &NONCE_MANAGER_RUNTIME_BYTECODE,
+        )
+    }
+
+    /// Shared activation install for Hegota's nonce-carrying system contracts:
+    /// create the account, or adopt an empty one keeping its balance, with the given
+    /// runtime code and a nonce of at least one. A no-op once the code is in place.
+    /// Like the expiry verifier, the install is not recorded in the block access list.
+    fn install_system_contract_code(
+        db: &mut GeneralizedDatabase,
+        crypto: &dyn Crypto,
+        address: Address,
+        runtime_code: &'static [u8],
+    ) -> Result<(), EvmError> {
+        if db.get_account_code(address)?.code() == runtime_code {
+            return Ok(());
+        }
+        let code = Code::from_bytecode(Bytes::from_static(runtime_code), crypto);
+        let code_hash = code.hash;
+        let acc = db.get_account_mut(address).map_err(EvmError::from)?;
+        acc.info.code_hash = code_hash;
+        acc.info.nonce = acc.info.nonce.max(1);
+        db.codes.entry(code_hash).or_insert(code);
+        Ok(())
     }
 
     pub(crate) fn read_withdrawal_requests(
@@ -4093,6 +4140,8 @@ impl LEVM {
         // hooked in apply_system_calls for the payload-build path.
         if fork >= Fork::Hegota {
             Self::install_expiry_verifier_code(db, crypto)?;
+            // EIP-8250 activates with EIP-8141.
+            Self::install_nonce_manager_code(db, crypto)?;
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {

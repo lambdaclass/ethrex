@@ -12,7 +12,7 @@
 //!     (EIP-8141 §"Default code").
 
 use crate::{
-    errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
+    errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
     memory::calculate_memory_size,
     opcode_handlers::OpcodeHandler,
@@ -65,6 +65,58 @@ pub(crate) fn compute_tx_max_cost(ctx: &crate::vm::FrameTxContext) -> Result<U25
         .ok_or(ExceptionalHalt::InvalidOpcode.into())
 }
 
+/// The payment half of a payment-scoped `APPROVE` (scope `0x1` or `0x3`), after
+/// the scope and ordering checks: the payer must cover `max_cost`, then EIP-8250's
+/// approval transition charges the nonce state gas, consumes the nonce set and
+/// collects `max_cost`.
+///
+/// The order follows EIP-8250 §Nonce consumption: every check that can refuse the
+/// approval (a revert) runs before any check that halts it (an exceptional halt),
+/// and nothing is applied until both pass. A halt or revert of the enclosing frame
+/// rolls back everything applied here.
+fn approve_payment(vm: &mut VM<'_>, frame_target: ethrex_common::Address) -> Result<(), VMError> {
+    let ctx = vm
+        .frame_tx_context
+        .as_ref()
+        .ok_or(ExceptionalHalt::InvalidOpcode)?;
+    let tx_cost = compute_tx_max_cost(ctx)?;
+    let frame_tx = ctx.tx.clone();
+
+    // EIP-8141: the payer must cover the transaction's maximum cost, or the
+    // approval is refused.
+    if vm.db.get_account(frame_target)?.info.balance < tx_cost {
+        return Err(VMError::RevertOpcode);
+    }
+
+    // EIP-8250: incrementing a legacy account nonce past `MAX_NONCE_SEQ` halts.
+    if !frame_tx.is_keyed() && vm.db.get_account(frame_tx.sender)?.info.nonce == u64::MAX {
+        return Err(ExceptionalHalt::NonceOverflow.into());
+    }
+
+    // EIP-8250 steps 1-3: the state gas consuming the nonce set owes, charged from
+    // the executing frame's state pool. A pool that cannot cover it halts.
+    let nonce_state_gas = vm.nonce_state_gas(&frame_tx)?;
+    if nonce_state_gas > 0 {
+        vm.increase_state_gas(nonce_state_gas)?;
+    }
+
+    // Step 4: consume the nonce set.
+    vm.consume_nonce_set(&frame_tx)?;
+
+    // Step 5: collect `max_cost`. The balance was checked above, so an underflow
+    // here would be an internal inconsistency rather than a refusal.
+    vm.decrease_account_balance(frame_target, tx_cost)
+        .map_err(VMError::Internal)?;
+
+    // EIP-8141 pins the initial `accessed_addresses` set and adds the payer to it
+    // when a payment-scoped APPROVE binds it and collects `max_cost`, as for any
+    // protocol-touched account. Warm it explicitly rather than relying on the
+    // frame-entry access charge: a payer bound from the protocol default code never
+    // went through a frame's EVM entry.
+    vm.substate.add_accessed_address(frame_target);
+    Ok(())
+}
+
 /// Apply APPROVE side effects for the given scope.
 /// This is shared between OpApproveHandler and (future) default code.
 pub fn apply_approve(
@@ -92,33 +144,7 @@ pub fn apply_approve(
             if !ctx.sender_approved {
                 return Err(VMError::RevertOpcode);
             }
-            let tx_cost = compute_tx_max_cost(ctx)?;
-            let sender = ctx.tx.sender;
-
-            // EIP-8141: incrementing the nonce of a sender that does not exist yet
-            // creates the account, so the payment approval pays the EIP-8037
-            // NEW_ACCOUNT state charge out of the executing frame's state pool. A
-            // pool that cannot cover it halts the frame exceptionally.
-            if vm.db.get_account(sender)?.is_empty() {
-                vm.increase_state_gas(vm.state_gas_new_account)?;
-            }
-            vm.increment_account_nonce(sender)?;
-            // Payer balance underflow is a frame-level revert, not a consensus
-            // fault: the outer restore_cache_state() path rolls back the nonce
-            // increment above when RevertOpcode propagates.
-            match vm.decrease_account_balance(frame_target, tx_cost) {
-                Ok(()) => {}
-                Err(InternalError::Underflow) => return Err(VMError::RevertOpcode),
-                Err(e) => return Err(VMError::Internal(e)),
-            }
-
-            // EIP-8141 pins the initial `accessed_addresses` set and adds the payer
-            // to it when an APPROVE with payment scope binds it and collects
-            // `max_cost`, as for any protocol-touched account. Warm it explicitly
-            // rather than relying on the frame-entry access charge to have done it:
-            // the protocol touch is the reason it is warm, and a payer bound from
-            // the protocol default code never went through a frame's EVM entry.
-            vm.substate.add_accessed_address(frame_target);
+            approve_payment(vm, frame_target)?;
             let ctx = vm
                 .frame_tx_context
                 .as_mut()
@@ -155,31 +181,7 @@ pub fn apply_approve(
             if frame_target != ctx.tx.sender {
                 return Err(VMError::RevertOpcode);
             }
-            let tx_cost = compute_tx_max_cost(ctx)?;
-            let sender = ctx.tx.sender;
-
-            // EIP-8141: incrementing the nonce of a sender that does not exist yet
-            // creates the account, so the payment approval pays the EIP-8037
-            // NEW_ACCOUNT state charge out of the executing frame's state pool. A
-            // pool that cannot cover it halts the frame exceptionally.
-            if vm.db.get_account(sender)?.is_empty() {
-                vm.increase_state_gas(vm.state_gas_new_account)?;
-            }
-            vm.increment_account_nonce(sender)?;
-            // See scope 0x1 above for the Underflow → RevertOpcode rationale.
-            match vm.decrease_account_balance(frame_target, tx_cost) {
-                Ok(()) => {}
-                Err(InternalError::Underflow) => return Err(VMError::RevertOpcode),
-                Err(e) => return Err(VMError::Internal(e)),
-            }
-
-            // EIP-8141 pins the initial `accessed_addresses` set and adds the payer
-            // to it when an APPROVE with payment scope binds it and collects
-            // `max_cost`, as for any protocol-touched account. Warm it explicitly
-            // rather than relying on the frame-entry access charge to have done it:
-            // the protocol touch is the reason it is warm, and a payer bound from
-            // the protocol default code never went through a frame's EVM entry.
-            vm.substate.add_accessed_address(frame_target);
+            approve_payment(vm, frame_target)?;
             let ctx = vm
                 .frame_tx_context
                 .as_mut()
@@ -655,7 +657,8 @@ impl OpcodeHandler for OpSigDataCopyHandler {
 pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U256, VMError> {
     match param_id {
         0x00 => Ok(U256::from(0x06u8)), // tx_type (EIP-8141 = type 6)
-        0x01 => Ok(U256::from(ctx.tx.nonce)),
+        // EIP-8250: the sequence shared by the selected nonce keys.
+        0x01 => Ok(U256::from(ctx.tx.nonce_seq)),
         0x02 => Ok(address_to_u256(ctx.tx.sender)),
         0x03 => Ok(ctx.tx.max_priority_fee_per_gas),
         0x04 => Ok(ctx.tx.max_fee_per_gas),
@@ -670,6 +673,19 @@ pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U
         0x09 => Ok(U256::from(ctx.tx.frames.len())),
         0x0A => Ok(U256::from(ctx.current_frame_index)),
         0x0B => Ok(U256::from(ctx.tx.signatures.len())),
+        // EIP-8250 `TXPARAM_LEGACY_NONCE`: the sender's pre-state account nonce.
+        0x0D => Ok(U256::from(ctx.legacy_sender_nonce)),
+        // EIP-8250 `TXPARAM_NONCE_KEY_COUNT`.
+        0x0E => Ok(U256::from(ctx.tx.nonce_keys.len())),
+        // EIP-8250 `TXPARAM_NONCE_KEYS_HASH`.
+        0x0F => Ok(U256::from_big_endian(ctx.tx.nonce_keys_hash().as_bytes())),
+        // EIP-8250 `TXPARAM_NONCE_KEY_0`. Static validation guarantees one key.
+        0x10 => ctx
+            .tx
+            .nonce_keys
+            .first()
+            .copied()
+            .ok_or_else(|| ExceptionalHalt::InvalidOpcode.into()),
         // 0x0C is state gas remaining in the executing frame's pool, which lives on
         // the VM rather than the context; `load_tx_param` has no access to it, so the
         // handler answers it before delegating here.
@@ -783,6 +799,7 @@ mod max_cost_tests {
             tx,
             approve_called_in_current_frame: false,
             max_gas,
+            legacy_sender_nonce: 0,
             blob_base_fee: U256::from(blob_base_fee),
         }
     }

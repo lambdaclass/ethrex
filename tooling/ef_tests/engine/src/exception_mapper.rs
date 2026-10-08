@@ -117,10 +117,11 @@ const PATTERNS: &[Entry] = &[
         text: r"blob gas price is greater than max fee per blob gas|Insufficient max fee per blob gas.*" },
     Entry { canonical: "TransactionException.INITCODE_SIZE_EXCEEDED", kind: Kind::Re,
         text: r"create initcode size limit|Initcode size exceeded.*" },
-    // EIP-8141 static validity names the rule it failed after the prefix; a frame or
-    // signature field too wide for its type is rejected while decoding.
+    // EIP-8141 static validity names the rule it failed after the prefix; a frame,
+    // signature or EIP-8250 nonce field too wide for its type is rejected while
+    // decoding. Upstream's mapper does not list the two nonce fields yet.
     Entry { canonical: "TransactionException.TYPE_6_INVALID_FRAME_FORMAT", kind: Kind::Re,
-        text: r"Invalid frame transaction format: .*|Invalid frame transaction: signature validation failed|Error decoding field '(frames|signatures)' of type .*" },
+        text: r"Invalid frame transaction format: .*|Invalid frame transaction: signature validation failed|Error decoding field '(frames|signatures|nonce_keys|nonce_seq)' of type .*" },
     Entry { canonical: "TransactionException.NONCE_IS_MAX", kind: Kind::Re,
         text: r"Nonce is max" },
     Entry { canonical: "TransactionException.GAS_ALLOWANCE_EXCEEDED", kind: Kind::Re,

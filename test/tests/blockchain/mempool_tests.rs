@@ -663,7 +663,8 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
     let sender = Address::from_low_u64_be(0xABCD);
     FrameTransaction {
         chain_id: 0, // matches ChainConfig::default().chain_id
-        nonce: 0,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 0,
         sender,
         // A single `self_verify` frame: VERIFY mode, targets the sender, and
         // approves both execution and payment. This is the smallest frame
@@ -982,7 +983,7 @@ async fn mempool_rejects_frame_tx_from_unknown_sender_with_sentinel_nonce() {
     // separate payer), but its implied nonce is 0, so the u64::MAX sentinel can
     // never match and must be rejected — not skipped as it was before.
     let mut frame_tx = minimal_valid_frame_tx();
-    frame_tx.nonce = u64::MAX;
+    frame_tx.nonce_seq = u64::MAX;
 
     let tx = Transaction::FrameTransaction(frame_tx);
     let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
@@ -1096,7 +1097,8 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
     data.copy_from_slice(&deadline.to_be_bytes());
     FrameTransaction {
         chain_id: 0,
-        nonce: 0,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 0,
         sender,
         frames: vec![
             Frame {
@@ -1846,7 +1848,8 @@ fn funded_frame_tx(max_fee_per_gas: u64, max_priority_fee_per_gas: u64) -> Frame
     let sender = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
     FrameTransaction {
         chain_id: 0,
-        nonce: 0,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 0,
         sender,
         frames: vec![Frame {
             mode: FrameMode::Verify as u8,
@@ -1947,7 +1950,8 @@ async fn mempool_rejects_underfunded_paymaster() {
     let phantom_sender = Address::from_low_u64_be(0xDEAD_BEEF);
     let phantom_frame_tx = FrameTransaction {
         chain_id: 0,
-        nonce: 99,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 99,
         sender: phantom_sender,
         frames: vec![Frame {
             mode: FrameMode::Verify as u8,
@@ -2026,7 +2030,8 @@ async fn mempool_enforces_noncanonical_paymaster_limit() {
     let phantom_sender = Address::from_low_u64_be(0xDEAD_BEEF);
     let phantom_frame_tx = FrameTransaction {
         chain_id: 0,
-        nonce: 99,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 99,
         sender: phantom_sender,
         frames: vec![Frame {
             mode: FrameMode::Verify as u8,
@@ -2103,7 +2108,8 @@ async fn mempool_rejects_second_frame_tx_same_sender_new_nonce() {
     // Directly insert a frame tx at nonce=1 (bypasses simulation nonce check).
     let nonce1_frame_tx = FrameTransaction {
         chain_id: 0,
-        nonce: 1,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 1,
         sender,
         frames: vec![Frame {
             mode: FrameMode::Verify as u8,
@@ -2348,7 +2354,8 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
     let phantom_sender = Address::from_low_u64_be(0xCAFE_F00D);
     let phantom_frame_tx = FrameTransaction {
         chain_id: 0,
-        nonce: 7,
+        nonce_keys: vec![U256::zero()],
+        nonce_seq: 7,
         sender: phantom_sender,
         frames: vec![Frame {
             mode: FrameMode::Verify as u8,
@@ -3362,7 +3369,8 @@ mod p2p_serve_tests {
     fn make_frame_tx() -> FrameTransaction {
         FrameTransaction {
             chain_id: 1,
-            nonce: 7,
+            nonce_keys: vec![U256::zero()],
+            nonce_seq: 7,
             sender: Address::from_low_u64_be(0xABCD),
             frames: vec![Frame {
                 mode: FrameMode::Sender as u8,
@@ -3566,7 +3574,7 @@ fn priced_frame_tx(
             tx
         }
     };
-    frame_tx.nonce = nonce;
+    frame_tx.nonce_seq = nonce;
     frame_tx.max_fee_per_gas = U256::from(max_fee);
     frame_tx.max_priority_fee_per_gas = U256::from(priority_fee);
     Transaction::FrameTransaction(frame_tx)
@@ -3854,4 +3862,163 @@ async fn mempool_rejects_a_prefix_state_budget_over_the_cap() {
         matches!(&result, Err(MempoolError::FrameTxInvalidPrefixStructure(msg)) if msg.contains("MAX_VERIFY_STATE_GAS")),
         "got {result:?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// EIP-8250 keyed nonces in the public mempool
+// ---------------------------------------------------------------------------
+
+mod keyed_nonces {
+    use super::*;
+
+    /// `minimal_valid_frame_tx` on the given nonce set and sequence.
+    fn keyed_frame_tx(nonce_keys: Vec<U256>, nonce_seq: u64) -> FrameTransaction {
+        FrameTransaction {
+            nonce_keys,
+            nonce_seq,
+            ..minimal_valid_frame_tx()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_keyed_frame_tx_is_admitted_on_a_fresh_key() {
+        let store = setup_hegota_store().await;
+        let result =
+            admit_frame_tx(&store, keyed_frame_tx(vec![U256::one(), U256::from(7)], 0)).await;
+        assert!(result.is_ok(), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn a_keyed_frame_tx_at_the_wrong_sequence_is_rejected() {
+        // A fresh key reads as sequence 0; the account nonce plays no part.
+        let store = setup_hegota_store().await;
+        let result = admit_frame_tx(&store, keyed_frame_tx(vec![U256::one()], 1)).await;
+        assert!(
+            matches!(&result, Err(MempoolError::FrameTxValidationFailed(msg)) if msg.contains("Nonce mismatch")),
+            "a keyed sequence that does not match the key must be rejected; got {result:?}"
+        );
+    }
+
+    #[test]
+    fn a_keyed_frame_tx_does_not_take_the_account_nonce_slot() {
+        // A keyed frame tx's `nonce_seq` is not an account nonce, so it neither
+        // replaces nor shadows the sender's ordinary transaction at that nonce.
+        let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+        let sender = Address::from_low_u64_be(0xF00D);
+        let ordinary = Transaction::EIP1559Transaction(EIP1559Transaction {
+            nonce: 0,
+            max_fee_per_gas: 100,
+            max_priority_fee_per_gas: 10,
+            gas_limit: 21_000,
+            ..Default::default()
+        });
+        let ordinary_hash = ordinary.hash(&NativeCrypto);
+        insert_frame_tx(&mempool, sender, ordinary);
+
+        let mut keyed = keyed_frame_tx(vec![U256::one()], 0);
+        keyed.sender = sender;
+        keyed.frames[0].target = Some(sender);
+        let keyed_hash = insert_frame_tx(&mempool, sender, Transaction::FrameTransaction(keyed));
+
+        let at_nonce_zero = |mempool: &Mempool| {
+            mempool
+                .contains_sender_nonce(sender, 0, H256::zero())
+                .unwrap()
+                .map(|tx| tx.hash(&NativeCrypto))
+        };
+        assert_eq!(at_nonce_zero(&mempool), Some(ordinary_hash));
+        assert!(
+            mempool
+                .get_mempool_transaction_by_hash(keyed_hash)
+                .unwrap()
+                .is_some()
+        );
+
+        mempool.remove_transaction(&keyed_hash).unwrap();
+        assert_eq!(
+            at_nonce_zero(&mempool),
+            Some(ordinary_hash),
+            "removing the keyed tx must leave the ordinary tx indexed at its nonce"
+        );
+    }
+
+    #[test]
+    fn a_keyed_replacement_needs_the_same_nonce_keys_and_sequence() {
+        let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+        let sender = Address::from_low_u64_be(0xF00D);
+        let priced = |nonce_keys: Vec<U256>, nonce_seq: u64, max_fee: u64, priority: u64| {
+            let mut tx = keyed_frame_tx(nonce_keys, nonce_seq);
+            tx.sender = sender;
+            tx.frames[0].target = Some(sender);
+            tx.max_fee_per_gas = U256::from(max_fee);
+            tx.max_priority_fee_per_gas = U256::from(priority);
+            Transaction::FrameTransaction(tx)
+        };
+        let pooled = insert_frame_tx(&mempool, sender, priced(vec![U256::one()], 0, 100, 10));
+
+        // The same identity with both fees bumped replaces the pooled tx.
+        let bump = priced(vec![U256::one()], 0, 200, 20);
+        let found = mempool.find_tx_to_replace(
+            sender,
+            0,
+            &bump,
+            DEFAULT_PRICE_BUMP_PERCENT,
+            DEFAULT_BLOB_PRICE_BUMP_PERCENT,
+        );
+        assert!(
+            matches!(found, Ok(Some(hash)) if hash == pooled),
+            "got {found:?}"
+        );
+
+        // A different key set or sequence is a different identity: there is nothing
+        // to replace, and the one-pending-frame-tx-per-sender rule refuses it.
+        for other in [
+            priced(vec![U256::from(2)], 0, 200, 20),
+            priced(vec![U256::one(), U256::from(2)], 0, 200, 20),
+            priced(vec![U256::one()], 1, 200, 20),
+            priced(vec![U256::zero()], 0, 200, 20),
+        ] {
+            let found = mempool.find_tx_to_replace(
+                sender,
+                0,
+                &other,
+                DEFAULT_PRICE_BUMP_PERCENT,
+                DEFAULT_BLOB_PRICE_BUMP_PERCENT,
+            );
+            assert!(matches!(found, Ok(None)), "got {found:?}");
+            let hash = other.hash(&NativeCrypto);
+            let inserted = mempool.add_transaction(
+                hash,
+                sender,
+                MempoolTransaction::new(other, sender),
+                None,
+                None,
+            );
+            assert!(
+                matches!(inserted, Err(MempoolError::FrameTxSenderAlreadyPending)),
+                "got {inserted:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_first_use_key_needs_its_state_budget_at_admission() {
+        // EIP-8250: the first use of a key costs one storage set of state gas, drawn
+        // from the approving frame's `limits.state`, at admission as in a block.
+        const KEYED_NONCE_FIRST_USE_STATE_GAS: u64 = 64 * 1530;
+        let store = setup_hegota_store().await;
+        for (state, admitted) in [
+            (KEYED_NONCE_FIRST_USE_STATE_GAS, true),
+            (KEYED_NONCE_FIRST_USE_STATE_GAS - 1, false),
+        ] {
+            let mut frame_tx = keyed_frame_tx(vec![U256::from(3)], 0);
+            frame_tx.frames[0].state_gas_limit = state;
+            let result = admit_frame_tx(&store, frame_tx).await;
+            assert_eq!(
+                result.is_ok(),
+                admitted,
+                "state budget {state}: got {result:?}"
+            );
+        }
+    }
 }
