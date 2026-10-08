@@ -488,7 +488,7 @@ pub struct Store {
     /// finality advance could otherwise prune entries out from under overlay
     /// construction (spurious `MissingEntry`) or between a case-1 attempt and its
     /// retry. Pruning catches up on the first finality advance after the pass
-    /// ends (`delete_range` is cumulative).
+    /// ends (the pruned range starts at the lowest entry still present).
     journal_pruning_paused: Arc<std::sync::atomic::AtomicBool>,
 
     background_threads: Arc<ThreadList>,
@@ -1795,7 +1795,8 @@ impl Store {
                 // fallback to 0: if a future schema change stores this field with a
                 // different width, the silent default would make `finalized > 0` true
                 // for every FCU and prune the entire journal. Bail out instead.
-                let prev_finalized = match db.begin_read()?.get(CHAIN_DATA, &finalized_key)? {
+                let read = db.begin_read()?;
+                let prev_finalized = match read.get(CHAIN_DATA, &finalized_key)? {
                     Some(bytes) => {
                         let arr: [u8; 8] = bytes.as_slice().try_into().map_err(|_| {
                             StoreError::Custom(format!(
@@ -1811,22 +1812,48 @@ impl Store {
                 txn.put(CHAIN_DATA, &finalized_key, &finalized.to_le_bytes())?;
 
                 // Prune every STATE_HISTORY entry at or below the new finalized number
-                // in the same atomic txn. `delete_range` is half-open `[start, end)`,
-                // so `end = finalized + 1`. STATE_HISTORY uses big-endian keys, so
-                // lexicographic byte order matches numeric order.
+                // in the same atomic txn. STATE_HISTORY uses big-endian keys, so
+                // lexicographic byte order matches numeric order, and `delete_range`
+                // is half-open `[start, end)`.
+                //
+                // The range covers only entries that exist: it starts at the lowest
+                // entry present and ends at the highest one at or below finality, and
+                // is skipped when the lowest entry is above finality. Entries are
+                // written ~DB_COMMIT_THRESHOLD blocks behind head, in increasing block
+                // order, while finality can be ahead of them (an L2 finalizes head on
+                // every block), so a range ending at `finalized` would cover block
+                // numbers whose entries land later. A range delete only hides keys
+                // written before it, so those entries would survive and the next
+                // prune would overlap this one. Ending at the highest existing entry
+                // keeps every range disjoint from the previous ones, and none is
+                // written when there is nothing to prune. That matters because
+                // RocksDB keeps unflushed range deletes in the memtable and fragments
+                // them against each other on reads and flushes: N ranges that all
+                // start at 0 overlap pairwise, so the fragmented form grows as N², and
+                // a memtable holding a few thousand of them takes seconds and GBs to
+                // flush or replay from the WAL. Disjoint ranges fragment in linear
+                // time and memory.
                 //
                 // Skipped while a deep-reorg apply pass is in flight
                 // (`journal_pruning_paused`): `Overlay::from_journal` reads entries
                 // with no snapshot isolation, so pruning mid-construction fails it
                 // with a spurious `MissingEntry`. The finalized-number update above
                 // still lands; pruning catches up on the next advance after the
-                // pass ends because `delete_range` is cumulative from zero.
+                // pass ends, because the range starts at whatever entry is lowest.
                 if finalized > prev_finalized
                     && !journal_pruning_paused.load(std::sync::atomic::Ordering::Acquire)
+                    && let Some(lowest) = read.first_key(STATE_HISTORY)?
                 {
-                    let start = 0u64.to_be_bytes();
-                    let end = finalized.saturating_add(1).to_be_bytes();
-                    txn.delete_range(STATE_HISTORY, &start, &end)?;
+                    let lowest = state_history_key_number(&lowest)?;
+                    if lowest <= finalized {
+                        // `first_key` returned an entry, so `last_key` returns one too.
+                        let highest = match read.last_key(STATE_HISTORY)? {
+                            Some(key) => state_history_key_number(&key)?,
+                            None => finalized,
+                        };
+                        let end = finalized.min(highest).saturating_add(1);
+                        txn.delete_range(STATE_HISTORY, &lowest.to_be_bytes(), &end.to_be_bytes())?;
+                    }
                 }
             }
 
@@ -4939,6 +4966,18 @@ pub fn write_flushed_upto(
 /// Returns an error for a present-but-malformed value so on-disk corruption is
 /// surfaced loudly rather than silently resetting the durable marker. Single
 /// source of truth for both `from_backend` and [`Store::read_flushed_upto`].
+/// Decodes a `STATE_HISTORY` key (`block_number.to_be_bytes()`). A length mismatch is
+/// an error rather than a silent default, which could prune the wrong range.
+fn state_history_key_number(key: &[u8]) -> Result<BlockNumber, StoreError> {
+    let arr = <[u8; 8]>::try_from(key).map_err(|_| {
+        StoreError::Custom(format!(
+            "STATE_HISTORY key has unexpected length: {}",
+            key.len()
+        ))
+    })?;
+    Ok(BlockNumber::from_be_bytes(arr))
+}
+
 fn decode_flushed_upto(bytes: &[u8]) -> Result<BlockNumber, StoreError> {
     let arr: [u8; 8] = bytes
         .try_into()
@@ -7448,7 +7487,7 @@ mod state_history_tests {
             );
         }
 
-        // Released: the next advance prunes cumulatively from zero.
+        // Released: the next advance prunes from the lowest surviving entry.
         store.set_journal_pruning_paused(false);
         store
             .forkchoice_update_inner(vec![], 100, H256::zero(), None, Some(4))
@@ -7461,6 +7500,177 @@ mod state_history_tests {
             );
         }
         assert!(journal_entry_exists(&backend, 5));
+    }
+
+    /// `(start, end)` block numbers of each STATE_HISTORY `delete_range`, in order.
+    type RecordedRanges = Arc<Mutex<Vec<(BlockNumber, BlockNumber)>>>;
+
+    /// Wraps a backend and records every `delete_range` issued on STATE_HISTORY, so
+    /// tests can check which ranges finality pruning writes, not just its effect.
+    #[derive(Debug)]
+    struct RangeDeleteRecorder {
+        inner: Arc<dyn StorageBackend>,
+        ranges: RecordedRanges,
+    }
+
+    struct RecordingWriteBatch {
+        inner: Box<dyn StorageWriteBatch + 'static>,
+        ranges: RecordedRanges,
+    }
+
+    fn block_number_key(key: &[u8]) -> BlockNumber {
+        BlockNumber::from_be_bytes(key.try_into().expect("8-byte STATE_HISTORY key"))
+    }
+
+    impl StorageBackend for RangeDeleteRecorder {
+        fn clear_table(&self, table: &'static str) -> Result<(), StoreError> {
+            self.inner.clear_table(table)
+        }
+        fn begin_read(&self) -> Result<Arc<dyn StorageReadView>, StoreError> {
+            self.inner.begin_read()
+        }
+        fn begin_write(&self) -> Result<Box<dyn StorageWriteBatch + 'static>, StoreError> {
+            Ok(Box::new(RecordingWriteBatch {
+                inner: self.inner.begin_write()?,
+                ranges: self.ranges.clone(),
+            }))
+        }
+        fn begin_locked(
+            &self,
+            table_name: &'static str,
+        ) -> Result<Box<dyn crate::api::StorageLockedView + 'static>, StoreError> {
+            self.inner.begin_locked(table_name)
+        }
+        fn create_checkpoint(&self, path: &std::path::Path) -> Result<(), StoreError> {
+            self.inner.create_checkpoint(path)
+        }
+    }
+
+    impl StorageWriteBatch for RecordingWriteBatch {
+        fn put_batch(
+            &mut self,
+            table: &'static str,
+            batch: Vec<(Vec<u8>, Vec<u8>)>,
+        ) -> Result<(), StoreError> {
+            self.inner.put_batch(table, batch)
+        }
+        fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError> {
+            self.inner.delete(table, key)
+        }
+        fn delete_range(
+            &mut self,
+            table: &'static str,
+            start: &[u8],
+            end: &[u8],
+        ) -> Result<(), StoreError> {
+            if table == STATE_HISTORY {
+                self.ranges
+                    .lock()
+                    .unwrap()
+                    .push((block_number_key(start), block_number_key(end)));
+            }
+            self.inner.delete_range(table, start, end)
+        }
+        fn merge(
+            &mut self,
+            table: &'static str,
+            key: &[u8],
+            operand: &[u8],
+        ) -> Result<(), StoreError> {
+            self.inner.merge(table, key, operand)
+        }
+        fn commit(&mut self) -> Result<(), StoreError> {
+            self.inner.commit()
+        }
+    }
+
+    fn recording_store() -> (
+        Store,
+        Arc<dyn StorageBackend>,
+        RecordedRanges,
+        tempfile::TempDir,
+    ) {
+        let ranges = Arc::new(Mutex::new(Vec::new()));
+        let backend: Arc<dyn StorageBackend> = Arc::new(RangeDeleteRecorder {
+            inner: Arc::new(InMemoryBackend::open().unwrap()),
+            ranges: ranges.clone(),
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(
+            backend.clone(),
+            dir.path().to_path_buf(),
+            1,
+            DEFAULT_PERSIST_CHANNEL_CAPACITY,
+        )
+        .unwrap();
+        (store, backend, ranges, dir)
+    }
+
+    /// Finality pruning SHALL start each range at the lowest surviving entry, so the
+    /// ranges it writes never overlap. Ranges anchored at 0 overlap pairwise, and
+    /// RocksDB fragments unflushed range tombstones in time and memory quadratic in
+    /// how many overlap.
+    #[tokio::test]
+    async fn finality_pruning_writes_disjoint_ranges() {
+        let (store, backend, ranges, _dir) = recording_store();
+        seed_journal_entries(&backend, &[3, 7, 9, 12]);
+
+        for finalized in [5, 8, 10] {
+            store
+                .forkchoice_update_inner(vec![], 100, H256::zero(), None, Some(finalized))
+                .await
+                .unwrap();
+        }
+
+        assert_eq!(*ranges.lock().unwrap(), vec![(3, 6), (7, 9), (9, 11)]);
+        assert!(journal_entry_exists(&backend, 12));
+    }
+
+    /// A finality advance that expires no entry SHALL write no range delete at all,
+    /// so a chain whose entries are sparse does not accumulate one tombstone per block.
+    #[tokio::test]
+    async fn finality_advance_without_expired_entries_writes_no_range() {
+        let (store, backend, ranges, _dir) = recording_store();
+
+        // Empty STATE_HISTORY: nothing to prune.
+        store
+            .forkchoice_update_inner(vec![], 100, H256::zero(), None, Some(5))
+            .await
+            .unwrap();
+
+        // Every surviving entry is above the new finality boundary.
+        seed_journal_entries(&backend, &[20]);
+        store
+            .forkchoice_update_inner(vec![], 100, H256::zero(), None, Some(10))
+            .await
+            .unwrap();
+
+        assert!(ranges.lock().unwrap().is_empty());
+        assert!(journal_entry_exists(&backend, 20));
+    }
+
+    /// Finality pruning SHALL write disjoint ranges when entries keep landing below
+    /// finality, as on an L2: the commit worker writes the entry for
+    /// `head - DB_COMMIT_THRESHOLD` while every FCU finalizes `head`.
+    #[tokio::test]
+    async fn finality_pruning_stays_disjoint_when_entries_land_below_finality() {
+        let (store, backend, ranges, _dir) = recording_store();
+        let lag = DB_COMMIT_THRESHOLD as u64;
+        for head in 1..=(lag + 50) {
+            if head > lag {
+                seed_journal_entries(&backend, &[head - lag]);
+            }
+            store
+                .forkchoice_update_inner(vec![], head, H256::zero(), None, Some(head))
+                .await
+                .unwrap();
+        }
+
+        let ranges = ranges.lock().unwrap();
+        assert_eq!(ranges.len(), 50);
+        for pair in ranges.windows(2) {
+            assert!(pair[0].1 <= pair[1].0, "overlapping ranges {pair:?}");
+        }
     }
 }
 
