@@ -2155,23 +2155,31 @@ pub fn frame_tx_entry_point() -> Address {
     Address::from_low_u64_be(FRAME_TX_ENTRY_POINT_U64)
 }
 
-/// EXPIRY_VERIFIER predeploy address (EIP-8141).
-pub const FRAME_TX_EXPIRY_VERIFIER_U64: u64 = 0x8141;
+/// EIP-8141 `EXPIRY_VERIFIER`: an ordinary contract that its keyless deployment
+/// transaction creates at this address. The protocol installs nothing at activation;
+/// until the contract is deployed an expiry verifier frame runs the default code.
+pub const FRAME_TX_EXPIRY_VERIFIER: Address = ethereum_types::H160(hex_literal::hex!(
+    "81413f0cF12e9b6a49B1D0439E081c577D57FfFf"
+));
 /// Required `data` length for an expiry verifier frame (8-byte BE deadline).
 pub const FRAME_TX_EXPIRY_DATA_LENGTH: usize = 8;
 
-/// Returns the EXPIRY_VERIFIER `Address` (0x…8141) per EIP-8141.
+/// Returns the EXPIRY_VERIFIER `Address` per EIP-8141.
 pub fn frame_tx_expiry_verifier() -> Address {
-    Address::from_low_u64_be(FRAME_TX_EXPIRY_VERIFIER_U64)
+    FRAME_TX_EXPIRY_VERIFIER
 }
 
-/// EIP-8250 `NONCE_MANAGER` system contract (0x…8250), whose storage holds every
-/// sender's keyed nonce sequences.
-pub const FRAME_TX_NONCE_MANAGER_U64: u64 = 0x8250;
+/// EIP-8250 `NONCE_MANAGER`, whose storage holds every sender's keyed nonce
+/// sequences. An ordinary contract that its keyless deployment transaction creates at
+/// this address; EIP-8250 requires it in state, deployed or in genesis, when the fork
+/// activates.
+pub const FRAME_TX_NONCE_MANAGER: Address = ethereum_types::H160(hex_literal::hex!(
+    "8250968C12e01A19d6F667b9B2F3b3A4d0e51cB7"
+));
 
-/// Returns the `NONCE_MANAGER` `Address` (0x…8250) per EIP-8250.
+/// Returns the `NONCE_MANAGER` `Address` per EIP-8250.
 pub fn frame_tx_nonce_manager() -> Address {
-    Address::from_low_u64_be(FRAME_TX_NONCE_MANAGER_U64)
+    FRAME_TX_NONCE_MANAGER
 }
 
 /// EIP-8250 `nonce_slot`: the `NONCE_MANAGER` storage slot holding `sender`'s
@@ -2183,12 +2191,16 @@ pub fn keyed_nonce_slot(sender: Address, nonce_key: U256) -> H256 {
     keccak(buf)
 }
 
-/// EIP-8272 `RECENT_ROOT_ADDRESS` system contract (0x…8272).
-pub const FRAME_TX_RECENT_ROOT_U64: u64 = 0x8272;
+/// EIP-8272 `RECENT_ROOT_ADDRESS`: an ordinary contract that its keyless deployment
+/// transaction creates at this address. Until it is deployed, a recent root verifier
+/// frame runs the default code, which reverts.
+pub const FRAME_TX_RECENT_ROOT: Address = ethereum_types::H160(hex_literal::hex!(
+    "8272D9679689Ea2f307140CdF9002D27dC00Ffff"
+));
 
-/// Returns the `RECENT_ROOT_ADDRESS` `Address` (0x…8272) per EIP-8272.
+/// Returns the `RECENT_ROOT_ADDRESS` `Address` per EIP-8272.
 pub fn frame_tx_recent_root() -> Address {
-    Address::from_low_u64_be(FRAME_TX_RECENT_ROOT_U64)
+    FRAME_TX_RECENT_ROOT
 }
 
 /// EIP-8272 `RECENT_ROOT_LENGTH`: each root source keeps one entry per slot for the

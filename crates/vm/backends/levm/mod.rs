@@ -5,9 +5,7 @@ use super::{BlockExecutionResult, FrameValidationOutcome, TxGasBreakdown, comput
 use crate::system_contracts::{
     AMSTERDAM_REQUEST_PREDEPLOYS, BEACON_ROOTS_ADDRESS, BUILDER_DEPOSIT_CONTRACT_ADDRESS,
     BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
-    EXPIRY_VERIFIER_PREDEPLOY, EXPIRY_VERIFIER_RUNTIME_BYTECODE, HISTORY_STORAGE_ADDRESS,
-    NONCE_MANAGER_PREDEPLOY, NONCE_MANAGER_RUNTIME_BYTECODE, PRAGUE_SYSTEM_CONTRACTS,
-    RECENT_ROOT_PREDEPLOY, RECENT_ROOT_RUNTIME_BYTECODE, SYSTEM_ADDRESS,
+    HISTORY_STORAGE_ADDRESS, PRAGUE_SYSTEM_CONTRACTS, RECENT_ROOT_RUNTIME_BYTECODE, SYSTEM_ADDRESS,
     WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
@@ -15,6 +13,7 @@ use bytes::Bytes;
 use ethrex_common::H256;
 #[cfg(feature = "rayon")]
 use ethrex_common::constants::EMPTY_KECCAK_HASH;
+#[cfg(feature = "rayon")]
 use ethrex_common::types::Code;
 #[cfg(feature = "rayon")]
 use ethrex_common::types::TxType;
@@ -3618,7 +3617,9 @@ impl LEVM {
         // frame get its two simulation permissions.
         let recent_root_frame = match prefix.recent_root_index {
             Some(index) => {
-                if db.get_account_code(RECENT_ROOT_PREDEPLOY.address)?.code()
+                if db
+                    .get_account_code(ethrex_common::types::frame_tx_recent_root())?
+                    .code()
                     != RECENT_ROOT_RUNTIME_BYTECODE.as_slice()
                 {
                     return Ok(FrameValidationOutcome {
@@ -3878,152 +3879,6 @@ impl LEVM {
         Ok(())
     }
 
-    /// Install the canonical EIP-8141 expiry verifier runtime code at
-    /// EXPIRY_VERIFIER on Hegota activation (EIP-8141: "At
-    /// activation, clients must install..."). Idempotent: writes only when
-    /// the existing code differs, so exactly one account update is produced
-    /// (at the first Hegota block) and none afterwards.
-    ///
-    /// Only the code is installed. The account's nonce and balance are left
-    /// exactly as they were, so a previously nonexistent account keeps nonce
-    /// zero and any balance it held before the fork survives. That is what the
-    /// EIP specifies ("install the following ... runtime code") and what the
-    /// execution specs do; it differs from the genesis predeploys
-    /// (4788/2935/7002/7251), whose nonce 1 comes from the deployment
-    /// transaction that created them, not from a client-side install. Setting
-    /// nonce 1 here produced a different state root at the fork block from
-    /// every client that follows the spec.
-    pub fn install_expiry_verifier_code(
-        db: &mut GeneralizedDatabase,
-        crypto: &dyn Crypto,
-    ) -> Result<(), EvmError> {
-        let current = db.get_account_code(EXPIRY_VERIFIER_PREDEPLOY.address)?;
-        if current.code() == EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice() {
-            return Ok(());
-        }
-        let code = Code::from_bytecode(
-            Bytes::from_static(&EXPIRY_VERIFIER_RUNTIME_BYTECODE),
-            crypto,
-        );
-        let code_hash = code.hash;
-        // Not recorded in the block access list: an activation install is part of
-        // the fork transition, not a block-level operation, so it never appears
-        // there, not even in the block that performs it (execution-specs
-        // `test_fork_transition` for EIP-8141).
-        let acc = db
-            .get_account_mut(EXPIRY_VERIFIER_PREDEPLOY.address)
-            .map_err(EvmError::from)?;
-        acc.info.code_hash = code_hash;
-        db.codes.entry(code_hash).or_insert(code);
-        Ok(())
-    }
-
-    /// Whether executing `block` installs Hegota's system contracts: Hegota is
-    /// active at its timestamp and one of the contracts the fork installs (EIP-8141's
-    /// expiry verifier, EIP-8250's nonce manager, EIP-8272's recent root contract)
-    /// is not yet in place in the parent state. Reads the parent state from the
-    /// store, so the execution caches are left untouched.
-    ///
-    /// Such a block cannot run on the access-list-driven parallel path: the
-    /// installs are part of the fork transition, not block-level operations, so
-    /// they never appear in the block access list that path derives every
-    /// transaction's view and the post-state from.
-    pub fn installs_hegota_system_contracts(
-        block: &Block,
-        db: &GeneralizedDatabase,
-        chain_config: &ethrex_common::types::ChainConfig,
-        crypto: &dyn Crypto,
-    ) -> Result<bool, EvmError> {
-        if !chain_config.is_hegota_activated(block.header.timestamp) {
-            return Ok(false);
-        }
-        for (address, runtime_code) in [
-            (
-                EXPIRY_VERIFIER_PREDEPLOY.address,
-                EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice(),
-            ),
-            (
-                NONCE_MANAGER_PREDEPLOY.address,
-                NONCE_MANAGER_RUNTIME_BYTECODE.as_slice(),
-            ),
-            (
-                RECENT_ROOT_PREDEPLOY.address,
-                RECENT_ROOT_RUNTIME_BYTECODE.as_slice(),
-            ),
-        ] {
-            let installed_hash = db.store.get_account_state(address)?.code_hash;
-            if installed_hash != crypto.keccak256(runtime_code).into() {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
-    /// Install the EIP-8250 `NONCE_MANAGER` at Hegota activation: code
-    /// `NONCE_MANAGER_CODE`, nonce `max(existing, 1)`, balance preserved, storage
-    /// left as is (the address is chosen to hold none). Idempotent, like the expiry
-    /// verifier install: it writes only while the code differs, so it changes state
-    /// at the first Hegota block and never afterwards.
-    pub fn install_nonce_manager_code(
-        db: &mut GeneralizedDatabase,
-        crypto: &dyn Crypto,
-    ) -> Result<(), EvmError> {
-        Self::install_system_contract_code(
-            db,
-            crypto,
-            NONCE_MANAGER_PREDEPLOY.address,
-            &NONCE_MANAGER_RUNTIME_BYTECODE,
-            false,
-        )
-    }
-
-    /// Install the EIP-8272 `RECENT_ROOT_ADDRESS` at Hegota activation: code
-    /// `RECENT_ROOT_CODE`, nonce `max(existing, 1)`, balance preserved, empty
-    /// storage. EIP-8272 makes the first active block invalid when the address
-    /// already holds code or storage, so an occupied account is an error rather
-    /// than an overwrite.
-    pub fn install_recent_root_code(
-        db: &mut GeneralizedDatabase,
-        crypto: &dyn Crypto,
-    ) -> Result<(), EvmError> {
-        Self::install_system_contract_code(
-            db,
-            crypto,
-            RECENT_ROOT_PREDEPLOY.address,
-            &RECENT_ROOT_RUNTIME_BYTECODE,
-            true,
-        )
-    }
-
-    /// Shared activation install for Hegota's nonce-carrying system contracts:
-    /// create the account, or adopt an empty one keeping its balance, with the given
-    /// runtime code and a nonce of at least one. A no-op once the code is in place.
-    /// Like the expiry verifier, the install is not recorded in the block access list.
-    fn install_system_contract_code(
-        db: &mut GeneralizedDatabase,
-        crypto: &dyn Crypto,
-        address: Address,
-        runtime_code: &'static [u8],
-        reject_occupied: bool,
-    ) -> Result<(), EvmError> {
-        if db.get_account_code(address)?.code() == runtime_code {
-            return Ok(());
-        }
-        let account = db.get_account(address)?;
-        if reject_occupied && (account.has_code() || account.has_storage) {
-            return Err(EvmError::Custom(format!(
-                "system contract address {address:#x} already holds code or storage at activation"
-            )));
-        }
-        let code = Code::from_bytecode(Bytes::from_static(runtime_code), crypto);
-        let code_hash = code.hash;
-        let acc = db.get_account_mut(address).map_err(EvmError::from)?;
-        acc.info.code_hash = code_hash;
-        acc.info.nonce = acc.info.nonce.max(1);
-        db.codes.entry(code_hash).or_insert(code);
-        Ok(())
-    }
-
     pub(crate) fn read_withdrawal_requests(
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
@@ -4193,16 +4048,6 @@ impl LEVM {
         // TODO: I don't like deciding the behavior based on the VMType here.
         if let VMType::L2(_) = vm_type {
             return Ok(());
-        }
-
-        // EIP-8141: the expiry verifier predeploy must exist from Hegota
-        // activation onward. Idempotent install; also
-        // hooked in apply_system_calls for the payload-build path.
-        if fork >= Fork::Hegota {
-            Self::install_expiry_verifier_code(db, crypto)?;
-            // EIP-8250 and EIP-8272 activate with EIP-8141.
-            Self::install_nonce_manager_code(db, crypto)?;
-            Self::install_recent_root_code(db, crypto)?;
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
@@ -4757,80 +4602,6 @@ mod bal_tests {
         ) -> Result<ethrex_common::types::CodeMetadata, DatabaseError> {
             Ok(ethrex_common::types::CodeMetadata { length: 0 })
         }
-    }
-
-    /// EIP-8141 installs the expiry verifier's *runtime code* at activation and
-    /// nothing else: an account that did not exist keeps nonce zero. The genesis
-    /// predeploys carry nonce 1 because a deployment transaction created them;
-    /// this one is written by the client, and the spec says code only. Getting
-    /// this wrong changes the fork block's state root against every other client.
-    #[test]
-    fn expiry_verifier_install_leaves_a_fresh_account_at_nonce_zero() {
-        let store = MockStore::new();
-        let mut db = GeneralizedDatabase::new(Arc::new(store));
-
-        LEVM::install_expiry_verifier_code(&mut db, &ethrex_crypto::NativeCrypto).unwrap();
-
-        let acc = db.get_account(EXPIRY_VERIFIER_PREDEPLOY.address).unwrap();
-        assert_eq!(acc.info.nonce, 0, "install must not touch the nonce");
-        assert_eq!(acc.info.balance, U256::zero());
-        assert_eq!(
-            db.get_account_code(EXPIRY_VERIFIER_PREDEPLOY.address)
-                .unwrap()
-                .code(),
-            EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice()
-        );
-    }
-
-    /// An account that already existed at the address keeps its nonce and
-    /// balance: the install replaces code and nothing more.
-    #[test]
-    fn expiry_verifier_install_preserves_existing_nonce_and_balance() {
-        let store = MockStore::new().with_account(
-            EXPIRY_VERIFIER_PREDEPLOY.address,
-            AccountState {
-                nonce: 7,
-                balance: U256::from(5_000u64),
-                code_hash: *EMPTY_KECCAK_HASH,
-                storage_root: H256::zero(),
-            },
-        );
-        let mut db = GeneralizedDatabase::new(Arc::new(store));
-
-        LEVM::install_expiry_verifier_code(&mut db, &ethrex_crypto::NativeCrypto).unwrap();
-
-        let acc = db.get_account(EXPIRY_VERIFIER_PREDEPLOY.address).unwrap();
-        assert_eq!(acc.info.nonce, 7);
-        assert_eq!(acc.info.balance, U256::from(5_000u64));
-        assert_eq!(
-            db.get_account_code(EXPIRY_VERIFIER_PREDEPLOY.address)
-                .unwrap()
-                .code(),
-            EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice()
-        );
-    }
-
-    /// Idempotent: a second call finds the code already in place and changes
-    /// nothing, so exactly one account update is ever produced for the install.
-    #[test]
-    fn expiry_verifier_install_is_idempotent() {
-        let store = MockStore::new();
-        let mut db = GeneralizedDatabase::new(Arc::new(store));
-
-        LEVM::install_expiry_verifier_code(&mut db, &ethrex_crypto::NativeCrypto).unwrap();
-        let first = db
-            .get_account(EXPIRY_VERIFIER_PREDEPLOY.address)
-            .unwrap()
-            .clone();
-        LEVM::install_expiry_verifier_code(&mut db, &ethrex_crypto::NativeCrypto).unwrap();
-        let second = db
-            .get_account(EXPIRY_VERIFIER_PREDEPLOY.address)
-            .unwrap()
-            .clone();
-
-        assert_eq!(first.info.nonce, second.info.nonce);
-        assert_eq!(first.info.code_hash, second.info.code_hash);
-        assert_eq!(second.info.nonce, 0);
     }
 
     #[test]

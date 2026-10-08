@@ -3732,9 +3732,7 @@ mod frame_sig_validation_tests {
 // ==================== Relocated from crates/vm/system_contracts.rs ====================
 mod expiry_verifier_tests {
     use ethrex_common::H160;
-    use ethrex_vm::system_contracts::{
-        EXPIRY_VERIFIER_PREDEPLOY, EXPIRY_VERIFIER_RUNTIME_BYTECODE,
-    };
+    use ethrex_vm::system_contracts::EXPIRY_VERIFIER_RUNTIME_BYTECODE;
 
     #[test]
     fn expiry_verifier_constants_match_spec() {
@@ -3748,8 +3746,10 @@ mod expiry_verifier_tests {
         );
         assert_eq!(EXPIRY_VERIFIER_RUNTIME_BYTECODE.len(), 26);
         assert_eq!(
-            EXPIRY_VERIFIER_PREDEPLOY.address,
-            H160::from_low_u64_be(0x8141)
+            ethrex_common::types::frame_tx_expiry_verifier(),
+            H160(hex_literal::hex!(
+                "81413f0cF12e9b6a49B1D0439E081c577D57FfFf"
+            ))
         );
     }
 }

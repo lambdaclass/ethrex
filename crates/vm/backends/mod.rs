@@ -127,12 +127,6 @@ impl Evm {
         skip_all,
         fields(namespace = "block_execution")
     )]
-    /// See [`LEVM::installs_hegota_system_contracts`].
-    pub fn installs_hegota_system_contracts(&self, block: &Block) -> Result<bool, EvmError> {
-        let chain_config = self.db.store.get_chain_config()?;
-        LEVM::installs_hegota_system_contracts(block, &self.db, &chain_config, self.crypto.as_ref())
-    }
-
     pub fn execute_block_pipeline(
         &mut self,
         block: &Block,
@@ -219,15 +213,6 @@ impl Evm {
     pub fn apply_system_calls(&mut self, block_header: &BlockHeader) -> Result<(), EvmError> {
         let chain_config = self.db.store.get_chain_config()?;
         let fork = chain_config.fork(block_header.timestamp);
-
-        // EIP-8141: the expiry verifier predeploy must exist from Hegota
-        // activation onward. Idempotent install for the
-        // payload-build path; the block-import path is hooked in prepare_block.
-        if fork >= Fork::Hegota && matches!(self.vm_type, VMType::L1) {
-            LEVM::install_expiry_verifier_code(&mut self.db, self.crypto.as_ref())?;
-            LEVM::install_nonce_manager_code(&mut self.db, self.crypto.as_ref())?;
-            LEVM::install_recent_root_code(&mut self.db, self.crypto.as_ref())?;
-        }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
             LEVM::beacon_root_contract_call(

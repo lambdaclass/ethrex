@@ -4047,7 +4047,7 @@ mod recent_roots {
 
     /// A Hegota (and Amsterdam, for the EIP-7843 slot number) chain whose genesis
     /// head is at `HEAD_SLOT`. The sender approves for itself, the expiry verifier
-    /// is installed, and when `recent_root_code` is set the recent root predeploy
+    /// is deployed, and when `recent_root_code` is set the recent root contract
     /// holds `RECENT_ROOT_CODE` with every tuple in `committed` stored.
     async fn store_at_head_slot(
         committed: &[RecentRootReference],

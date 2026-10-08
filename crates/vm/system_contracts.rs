@@ -101,14 +101,11 @@ pub const AMSTERDAM_REQUEST_PREDEPLOYS: [SystemContract; 2] = [
     BUILDER_EXIT_CONTRACT_ADDRESS,
 ];
 
-pub const EXPIRY_VERIFIER_PREDEPLOY: SystemContract = SystemContract {
-    address: H160([
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x81, 0x41,
-    ]),
-    name: "EXPIRY_VERIFIER_PREDEPLOY",
-    active_since_fork: Hegota,
-};
+// The EIP-8141 expiry verifier, the EIP-8250 nonce manager and the EIP-8272 recent
+// root contract are ordinary contracts, each created by a keyless deployment
+// transaction at the address in `ethrex_common::types`. The protocol installs none of
+// them at activation, so they are not system contracts; only their runtime code is
+// kept here, for the mempool's code checks and for tests and genesis files.
 
 /// Canonical runtime bytecode of the EIP-8141 expiry verifier: reverts unless
 /// calldata is exactly 8 bytes and the 8-byte BE deadline is >= block.timestamp.
@@ -117,38 +114,15 @@ pub const EXPIRY_VERIFIER_RUNTIME_BYTECODE: [u8; 26] = [
     0x42, 0x11, 0x60, 0x16, 0x57, 0x00, 0x5b, 0x5f, 0x5f, 0xfd,
 ];
 
-/// EIP-8250 `NONCE_MANAGER`: its storage holds every sender's keyed nonce sequences.
-/// Installed at Hegota activation.
-pub const NONCE_MANAGER_PREDEPLOY: SystemContract = SystemContract {
-    address: H160([
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x82, 0x50,
-    ]),
-    name: "NONCE_MANAGER_PREDEPLOY",
-    active_since_fork: Hegota,
-};
-
 /// EIP-8250 `NONCE_MANAGER_CODE`: `revert(0, 0)`. Only the protocol writes keyed
 /// nonces; any ordinary call to the contract reverts with empty return data.
 pub const NONCE_MANAGER_RUNTIME_BYTECODE: [u8; 5] = [0x60, 0x00, 0x60, 0x00, 0xfd];
 
-/// EIP-8272 `RECENT_ROOT_ADDRESS`. Installed at Hegota activation.
-pub const RECENT_ROOT_PREDEPLOY: SystemContract = SystemContract {
-    address: H160([
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x82, 0x72,
-    ]),
-    name: "RECENT_ROOT_PREDEPLOY",
-    active_since_fork: Hegota,
-};
-
-/// EIP-8272 `RECENT_ROOT_CODE`. The EIP still lists it as `TBD`; these are the
-/// runtime bytes of ethereum/sys-asm#53 (`bytecode/recent_root/main.hex` at
-/// `0ea4d71517`), the reference implementation proposed for the EIP. Calldata of
-/// exactly 64 bytes (`salt || root`) writes the caller's root for the current slot;
-/// `n * 72` bytes (`1 <= n <= 16`) validates `(source_id, slot, root)` tuples and
-/// reverts unless every one is stored and recent; anything else, or a call with
-/// value, reverts.
+/// EIP-8272 `RECENT_ROOT_CODE`, as the EIP's Bytecode section pins it (the runtime of
+/// ethereum/sys-asm#53). Calldata of exactly 64 bytes (`salt || root`) writes the
+/// caller's root for the current slot; `n * 72` bytes (`1 <= n <= 16`) validates
+/// `(source_id, slot, root)` tuples and reverts unless every one is stored and recent;
+/// anything else, or a call with value, reverts.
 pub const RECENT_ROOT_RUNTIME_BYTECODE: [u8; 320] = [
     0x34, 0x61, 0x00, 0xba, 0x57, 0x36, 0x60, 0x40, 0x14, 0x61, 0x00, 0xc0, 0x57, 0x36, 0x60, 0x48,
     0x36, 0x06, 0x61, 0x00, 0xba, 0x57, 0x80, 0x15, 0x61, 0x00, 0xba, 0x57, 0x61, 0x04, 0x80, 0x81,

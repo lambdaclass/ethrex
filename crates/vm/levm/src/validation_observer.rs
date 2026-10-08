@@ -83,11 +83,13 @@ pub struct ValidationObserver {
     /// 0 = DEFAULT, 1 = VERIFY, 2 = SENDER). Set by the harness before each
     /// frame runs.
     pub current_frame_mode: u8,
-    /// Address of the canonical EXPIRY_VERIFIER predeploy (0x…8141). `TIMESTAMP`
-    /// is permitted only when `current_call_frame.code_address` equals this value,
-    /// which allows TIMESTAMP inside a nested call *into* the predeploy while
-    /// correctly banning it in any callee of an expiry frame that routes execution
-    /// elsewhere (an under-reject the per-top-frame boolean could not prevent).
+    /// `EXPIRY_VERIFIER`. `TIMESTAMP` is permitted only when
+    /// `current_call_frame.code_address` equals this value, which allows TIMESTAMP
+    /// inside a nested call *into* the verifier while correctly banning it in any
+    /// callee of an expiry frame that routes execution elsewhere (an under-reject the
+    /// per-top-frame boolean could not prevent). Matching the address is matching the
+    /// canonical code: the address belongs to a keyless deployment transaction, so
+    /// that code is the only code it can ever hold.
     pub expiry_verifier: Address,
     /// Index of the canonical paymaster's pay frame, if any. Always `None`
     /// (OQ1, see module docs); the access-restriction skip is wired for the
@@ -98,7 +100,7 @@ pub struct ValidationObserver {
     /// contract at the top level it may execute `SLOTNUM` and read the contract's
     /// own storage; no other frame and no nested call gets either permission.
     pub recent_root_frame: Option<usize>,
-    /// `RECENT_ROOT_ADDRESS` (0x…8272).
+    /// `RECENT_ROOT_ADDRESS`.
     pub recent_root_address: Address,
     /// The opcode byte executed on the previous dispatch-loop iteration. Used to
     /// enforce the `GAS` sequential rule (`GAS` is allowed only immediately

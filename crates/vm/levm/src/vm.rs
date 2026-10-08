@@ -3666,11 +3666,11 @@ impl<'a> VM<'a> {
                 self.current_call_frame.depth,
             ),
             // TIMESTAMP is permitted only when the currently executing contract
-            // IS the EXPIRY_VERIFIER predeploy (checked by code_address so the
+            // IS the EXPIRY_VERIFIER contract (checked by code_address so the
             // rule tracks the executing contract at every call depth, not just the
             // top-level frame target). A nested call FROM an expiry frame INTO
             // another contract is correctly banned; a nested call INTO the
-            // predeploy from any frame is correctly allowed.
+            // verifier from any frame is correctly allowed.
             TIMESTAMP => {
                 self.current_call_frame.code_address != self.validation_observer.expiry_verifier
             }

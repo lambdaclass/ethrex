@@ -40,6 +40,11 @@ ERROR Failed to produce block: System contract: 0x0000…8282 has no code after 
 ERROR block producer failed: EngineClient System Failed after: 3; shutting down the node
 ```
 
-The Hegotá predeploys (`0x…8141`, `0x…8250`) need no genesis entry: the client
-installs them at the fork boundary.
+It also allocates the three contracts frame transactions use: the EIP-8141 expiry
+verifier, the EIP-8250 nonce manager and the EIP-8272 recent root contract. The
+client installs nothing at the fork boundary. Each EIP deploys its contract with a
+keyless transaction, and a chain that starts with Hegotá active needs them in
+genesis instead. Without the nonce manager the chain misses EIP-8250's requirement
+that it exist at activation. Without the other two, every frame aimed at them fails. [EIP-8141](../../eip-8141.md#contract-deployment) lists
+their addresses.
 

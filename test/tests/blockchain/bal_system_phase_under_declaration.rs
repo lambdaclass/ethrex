@@ -18,10 +18,7 @@ use ethrex_common::{
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_storage::{EngineType, Store};
-use ethrex_vm::system_contracts::{
-    BEACON_ROOTS_ADDRESS, EXPIRY_VERIFIER_PREDEPLOY, EXPIRY_VERIFIER_RUNTIME_BYTECODE,
-    HISTORY_STORAGE_ADDRESS, SYSTEM_ADDRESS,
-};
+use ethrex_vm::system_contracts::{BEACON_ROOTS_ADDRESS, HISTORY_STORAGE_ADDRESS, SYSTEM_ADDRESS};
 
 use super::bal_content_validation_tests::forge_state_root;
 
@@ -560,97 +557,6 @@ async fn parallel_path_rejects_bal_with_duplicate_pre_block_changes() {
         "parallel path accepted a BAL carrying two index-0 changes for one slot, \
          validating the first and merkleizing the second",
     );
-    let msg = err.to_string();
-    assert!(
-        msg.contains("BAL validation failed"),
-        "rejected for the wrong reason: {msg}"
-    );
-}
-
-/// As `setup_store`, with Hegota active from genesis.
-async fn setup_hegota_store() -> Store {
-    let file = File::open(workspace_root().join("fixtures/genesis/l1-bal.json"))
-        .expect("open l1-bal genesis");
-    let mut raw: serde_json::Value =
-        serde_json::from_reader(BufReader::new(file)).expect("parse l1-bal genesis");
-    raw.get_mut("config")
-        .and_then(|c| c.as_object_mut())
-        .expect("genesis must have a config")
-        .insert("hegotaTime".to_string(), serde_json::json!(0));
-    let genesis: Genesis = serde_json::from_value(raw).expect("re-parse patched genesis");
-    let mut store = Store::new("store.db", EngineType::InMemory).expect("build in-memory store");
-    store
-        .add_initial_state(genesis)
-        .await
-        .expect("add genesis state");
-    store
-}
-
-/// After the install, the EIP-8141 probe loads its predeploy without recording it, so a
-/// bare entry for it must stay on the unaccessed checklist.
-#[tokio::test]
-async fn parallel_path_rejects_a_bare_bal_entry_for_an_unrecorded_probe() {
-    let address = EXPIRY_VERIFIER_PREDEPLOY.address;
-    let build_store = setup_hegota_store().await;
-
-    // Block 1 performs the install, which is not a block-level operation and so never
-    // appears in its BAL; only block 2 reaches the already-installed predeploy.
-    let (block1, bal1) = build_valid_amsterdam_block(&build_store).await;
-    assert!(
-        !bal1.accounts().iter().any(|a| a.address == address),
-        "the install must leave no trace in block 1's BAL"
-    );
-    let bc = Blockchain::new(
-        build_store.clone(),
-        BlockchainOptions {
-            bal_parallel_exec_enabled: true,
-            ..Default::default()
-        },
-    );
-    bc.add_block_pipeline_bal(block1.clone(), Some(Arc::new(bal1)))
-        .expect("block 1 must import");
-    let installed = build_store
-        .get_account_info_by_hash(block1.hash(), address)
-        .expect("read block 1 state")
-        .map(|info| info.code_hash);
-    assert_eq!(
-        installed,
-        Some(ethrex_common::utils::keccak(
-            EXPIRY_VERIFIER_RUNTIME_BYTECODE
-        )),
-        "block 1 must install the expiry verifier, else this test is not exercising \
-         the already-installed path"
-    );
-
-    let (mut block, bal) = build_block_on(&build_store, &block1.header, Vec::new(), 2).await;
-    assert!(
-        !bal.accounts().iter().any(|a| a.address == address),
-        "the canonical BAL of block 2 must NOT mention the predeploy, else the probe \
-         is being recorded and there is nothing to over-declare"
-    );
-
-    let mut kept = bal.accounts().to_vec();
-    kept.push(ethrex_common::types::block_access_list::AccountChanges::new(address));
-    // Canonical ordering is by address.
-    kept.sort_by_key(|a| a.address);
-    let forged = Arc::new(BlockAccessList::from_accounts(kept));
-    block.header.block_access_list_hash = Some(forged.compute_hash(&NativeCrypto));
-
-    let par_bc = Blockchain::new(
-        setup_hegota_store().await,
-        BlockchainOptions {
-            bal_parallel_exec_enabled: true,
-            ..Default::default()
-        },
-    );
-    par_bc
-        .add_block_pipeline_bal(block1, None)
-        .expect("block 1 must import into the victim store");
-    let par = par_bc.add_block_pipeline_bal(block, Some(forged));
-    let err = par.expect_err(&format!(
-        "parallel path accepted a bare BAL entry for {address:?}, which the phase \
-         never recorded"
-    ));
     let msg = err.to_string();
     assert!(
         msg.contains("BAL validation failed"),

@@ -39,7 +39,7 @@ const NEW_ACCOUNT_STATE_GAS: u64 = 120 * 1530;
 /// EIP-8250 `KEYED_NONCE_FIRST_USE_STATE_GAS` = EIP-8037 STATE_BYTES_PER_STORAGE_SET * CPSB:
 /// the state gas a payment approval pays for each keyed-nonce slot it creates.
 const KEYED_NONCE_FIRST_USE_STATE_GAS: u64 = 64 * 1530;
-/// NONCE_MANAGER predeploy runtime code: PUSH1 0; PUSH1 0; REVERT.
+/// NONCE_MANAGER runtime code: PUSH1 0; PUSH1 0; REVERT.
 const NONCE_MANAGER_STUB_CODE: &[u8] = &[0x60, 0x00, 0x60, 0x00, 0xFD];
 
 type SeededAccount = (Address, U256, u64, Bytes);

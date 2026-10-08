@@ -1,8 +1,8 @@
 //! EIP-8272: `RECENT_ROOT_CODE` and the recent root verifier frame, run by the VM
 //! the way a block runs them.
 //!
-//! A root written in slot `S` through the predeploy's write operation validates
-//! from slot `S + 1` through a `VERIFY` frame that calls the predeploy with the
+//! A root written in slot `S` through the contract's write operation validates
+//! from slot `S + 1` through a `VERIFY` frame that calls the contract with the
 //! packed tuples. A tuple naming the wrong root, source, the current slot, or a
 //! slot outside the usable window reverts the frame, and a reverting `VERIFY`
 //! frame invalidates the transaction.
@@ -39,7 +39,7 @@ const WRITE_SLOT: u64 = 1_000;
 /// EIP-8037 state gas for one zero-to-nonzero storage write.
 const STORAGE_SET_STATE_GAS: u64 = 64 * 1530;
 
-/// The sender, funded, and the predeploy holding `RECENT_ROOT_CODE` with the
+/// The sender, funded, and the contract holding `RECENT_ROOT_CODE` with the
 /// given storage.
 fn chain_with_storage(recent_root_storage: FxHashMap<H256, U256>) -> GeneralizedDatabase {
     // Execution takes its fork from the environment, but the admission simulation
@@ -150,7 +150,7 @@ fn frame_tx(frames: Vec<Frame>, nonce_seq: u64) -> FrameTransaction {
     }
 }
 
-/// A `SENDER` frame calling the predeploy's write operation with `salt || root`.
+/// A `SENDER` frame calling the contract's write operation with `salt || root`.
 /// It commits the entry for `source_id = keccak256(SENDER || salt)` at the slot
 /// the transaction executes in, and needs state gas for the slot it creates.
 fn write_frame(salt: H256, root: H256) -> Frame {
@@ -256,7 +256,7 @@ fn chain_with_written_roots(count: u8) -> (GeneralizedDatabase, Vec<RecentRootRe
     let report = run_at_slot(&mut db, frame_tx(frames, 0), WRITE_SLOT)
         .expect("the write transaction is valid");
     assert_all_frames_succeeded(&report);
-    // The predeploy stored exactly the entry the read side derives.
+    // The contract stored exactly the entry the read side derives.
     for tuple in &tuples {
         assert_eq!(
             recent_root_storage_at(&db, tuple.storage_key()),
@@ -504,7 +504,7 @@ fn admit(db: &mut GeneralizedDatabase, mut tx: FrameTransaction) -> FrameValidat
 fn admission_and_execution_agree_on_the_verifier_frame_gas() {
     // EIP-8272: the mempool must reject a recent root verifier frame whose
     // `limits.execution` is one gas short of what EVM execution needs, the cold
-    // access to the predeploy at frame entry included.
+    // access to the contract at frame entry included.
     let (mut db, tuple) = chain_with_a_written_root();
     let mut probe = db.clone();
     let report = run_at_slot(&mut probe, verify_tx(packed(&[tuple]), 1), WRITE_SLOT + 1)
