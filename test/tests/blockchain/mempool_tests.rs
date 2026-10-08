@@ -4022,3 +4022,294 @@ mod keyed_nonces {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// EIP-8272 recent roots in the public mempool
+// ---------------------------------------------------------------------------
+
+mod recent_roots {
+    use super::*;
+    use ethrex_common::types::{
+        FRAME_TX_RECENT_ROOT_LENGTH, FRAME_TX_RECENT_ROOT_USABLE_WINDOW, RecentRootReference,
+        frame_tx_recent_root,
+    };
+    use ethrex_vm::system_contracts::{
+        EXPIRY_VERIFIER_RUNTIME_BYTECODE, RECENT_ROOT_RUNTIME_BYTECODE,
+    };
+
+    /// Head slot of the recent-root stores, far enough from zero that an expired
+    /// tuple's slot does not underflow.
+    const HEAD_SLOT: u64 = 10_000;
+
+    fn sender() -> Address {
+        Address::from_low_u64_be(FRAME_TX_SELF_SENDER)
+    }
+
+    /// A Hegota (and Amsterdam, for the EIP-7843 slot number) chain whose genesis
+    /// head is at `HEAD_SLOT`. The sender approves for itself, the expiry verifier
+    /// is installed, and when `recent_root_code` is set the recent root predeploy
+    /// holds `RECENT_ROOT_CODE` with every tuple in `committed` stored.
+    async fn store_at_head_slot(
+        committed: &[RecentRootReference],
+        recent_root_code: bool,
+    ) -> Store {
+        let mut alloc: BTreeMap<Address, GenesisAccount> = [
+            (
+                sender(),
+                GenesisAccount {
+                    code: approve_code(APPROVE_EXECUTION_AND_PAYMENT),
+                    storage: BTreeMap::new(),
+                    balance: U256::zero(),
+                    nonce: 0,
+                },
+            ),
+            (
+                frame_tx_expiry_verifier(),
+                GenesisAccount {
+                    code: Bytes::from_static(&EXPIRY_VERIFIER_RUNTIME_BYTECODE),
+                    storage: BTreeMap::new(),
+                    balance: U256::zero(),
+                    nonce: 0,
+                },
+            ),
+        ]
+        .into_iter()
+        .collect();
+        if recent_root_code {
+            alloc.insert(
+                frame_tx_recent_root(),
+                GenesisAccount {
+                    code: Bytes::from_static(&RECENT_ROOT_RUNTIME_BYTECODE),
+                    storage: committed
+                        .iter()
+                        .map(|tuple| {
+                            (
+                                U256::from_big_endian(tuple.storage_key().as_bytes()),
+                                U256::from_big_endian(tuple.entry_hash().as_bytes()),
+                            )
+                        })
+                        .collect(),
+                    balance: U256::zero(),
+                    nonce: 1,
+                },
+            );
+        }
+        let genesis = Genesis {
+            config: ChainConfig {
+                chain_id: 0,
+                shanghai_time: Some(0),
+                amsterdam_time: Some(0),
+                hegota_time: Some(0),
+                ..Default::default()
+            },
+            gas_limit: 100_000_000,
+            slot_number: Some(HEAD_SLOT),
+            alloc,
+            ..Default::default()
+        };
+        let mut store =
+            Store::new("recent-root-test", EngineType::InMemory).expect("Storage setup");
+        store
+            .add_initial_state(genesis)
+            .await
+            .expect("add genesis state");
+        store
+    }
+
+    fn tuple_at(slot: u64) -> RecentRootReference {
+        RecentRootReference {
+            source_id: H256::from_low_u64_be(0x1234),
+            slot,
+            root: H256::from_low_u64_be(0x5678),
+        }
+    }
+
+    /// The recent root verifier frame over `tuples`.
+    fn recent_root_frame(tuples: &[RecentRootReference]) -> Frame {
+        let mut data = Vec::with_capacity(tuples.len() * 72);
+        for tuple in tuples {
+            data.extend_from_slice(tuple.source_id.as_bytes());
+            data.extend_from_slice(&tuple.slot.to_be_bytes());
+            data.extend_from_slice(tuple.root.as_bytes());
+        }
+        Frame {
+            mode: FrameMode::Verify as u8,
+            flags: 0,
+            target: Some(frame_tx_recent_root()),
+            gas_limit: 60_000,
+            state_gas_limit: 0,
+            value: U256::zero(),
+            data: Bytes::from(data),
+        }
+    }
+
+    fn expiry_frame(deadline: u64) -> Frame {
+        Frame {
+            mode: FrameMode::Verify as u8,
+            flags: 0,
+            target: Some(frame_tx_expiry_verifier()),
+            gas_limit: 5_000,
+            state_gas_limit: 0,
+            value: U256::zero(),
+            data: Bytes::from(deadline.to_be_bytes().to_vec()),
+        }
+    }
+
+    /// `minimal_valid_frame_tx` led by a recent root verifier frame over `tuples`.
+    fn recent_root_tx(tuples: &[RecentRootReference]) -> FrameTransaction {
+        let mut frame_tx = minimal_valid_frame_tx();
+        frame_tx.frames.insert(0, recent_root_frame(tuples));
+        frame_tx
+    }
+
+    #[tokio::test]
+    async fn a_recent_root_frame_over_a_committed_tuple_is_admitted() {
+        // Written in the head slot, referenceable from the next: admission judges
+        // the tuple at head slot + 1.
+        let tuple = tuple_at(HEAD_SLOT);
+        let store = store_at_head_slot(&[tuple], true).await;
+        let result = admit_frame_tx(&store, recent_root_tx(&[tuple])).await;
+        assert!(result.is_ok(), "got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn a_recent_root_frame_over_an_uncommitted_root_is_rejected() {
+        let committed = tuple_at(HEAD_SLOT);
+        let store = store_at_head_slot(&[committed], true).await;
+        let mut wrong_root = committed;
+        wrong_root.root = H256::from_low_u64_be(0x9999);
+        let result = admit_frame_tx(&store, recent_root_tx(&[wrong_root])).await;
+        assert!(
+            matches!(result, Err(MempoolError::FrameTxValidationFailed(_))),
+            "got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_admission_window_is_measured_from_the_next_slot() {
+        let current_slot = HEAD_SLOT + 1;
+        let too_new = tuple_at(current_slot);
+        let oldest = tuple_at(current_slot - FRAME_TX_RECENT_ROOT_USABLE_WINDOW);
+        let expired = tuple_at(current_slot - FRAME_TX_RECENT_ROOT_LENGTH);
+        let store = store_at_head_slot(&[too_new, oldest, expired], true).await;
+
+        for (label, tuple) in [("current slot", too_new), ("age 8192", expired)] {
+            let result = admit_frame_tx(&store, recent_root_tx(&[tuple])).await;
+            assert!(
+                matches!(result, Err(MempoolError::FrameTxValidationFailed(_))),
+                "{label}: got {result:?}"
+            );
+        }
+        let result = admit_frame_tx(&store, recent_root_tx(&[oldest])).await;
+        assert!(result.is_ok(), "age 8191: got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn a_recent_root_frame_needs_recent_root_code() {
+        let tuple = tuple_at(HEAD_SLOT);
+        let store = store_at_head_slot(&[tuple], false).await;
+        let result = admit_frame_tx(&store, recent_root_tx(&[tuple])).await;
+        assert!(
+            matches!(&result, Err(MempoolError::FrameTxValidationFailed(msg)) if msg.contains("RECENT_ROOT_CODE")),
+            "got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_recent_root_frame_leads_or_follows_only_an_expiry_frame() {
+        let tuple = tuple_at(HEAD_SLOT);
+        let store = store_at_head_slot(&[tuple], true).await;
+
+        let mut after_expiry = recent_root_tx(&[tuple]);
+        after_expiry.frames.insert(0, expiry_frame(u64::MAX));
+        let result = admit_frame_tx(&store, after_expiry).await;
+        assert!(
+            result.is_ok(),
+            "[expiry, recent root, self_verify]: got {result:?}"
+        );
+
+        let mut reversed = recent_root_tx(&[tuple]);
+        reversed.frames.insert(1, expiry_frame(u64::MAX));
+        let mut duplicated = recent_root_tx(&[tuple]);
+        duplicated.frames.insert(0, recent_root_frame(&[tuple]));
+        let mut after_validation = minimal_valid_frame_tx();
+        after_validation.frames.push(recent_root_frame(&[tuple]));
+        for (label, frame_tx) in [
+            ("recent root before expiry", reversed),
+            ("two recent root frames", duplicated),
+            ("recent root after account validation", after_validation),
+        ] {
+            let result = admit_frame_tx(&store, frame_tx).await;
+            assert!(
+                matches!(
+                    result,
+                    Err(MempoolError::FrameTxInvalidPrefixStructure(_)
+                        | MempoolError::FrameTxUnrecognizedPrefix
+                        | MempoolError::InvalidFrameTransaction(_))
+                ),
+                "{label}: got {result:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_recent_root_frame_counts_toward_max_verify_gas() {
+        let tuple = tuple_at(HEAD_SLOT);
+        let store = store_at_head_slot(&[tuple], true).await;
+        let mut frame_tx = recent_root_tx(&[tuple]);
+        frame_tx.frames[0].gas_limit = FRAME_TX_MAX_VERIFY_GAS;
+        let result = admit_frame_tx(&store, frame_tx).await;
+        assert!(
+            matches!(result, Err(MempoolError::FrameTxVerifyGasBudgetExceeded)),
+            "got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn revalidation_evicts_a_recent_root_tx_once_its_tuple_expires() {
+        // At head slot H the oldest admissible tuple is H + 1 - 8191. One slot
+        // later it is 8192 slots old and must be evicted, while a fresh tuple
+        // in another sender's transaction would stay.
+        let oldest = tuple_at(HEAD_SLOT + 1 - FRAME_TX_RECENT_ROOT_USABLE_WINDOW);
+        let store = store_at_head_slot(&[oldest], true).await;
+        let blockchain = Blockchain::default_with_store(store.clone());
+        let hash = blockchain
+            .add_transaction_to_pool(Transaction::FrameTransaction(recent_root_tx(&[oldest])))
+            .await
+            .expect("an age-8191 tuple is admissible");
+
+        let genesis_header = store.get_block_header(0).unwrap().expect("genesis header");
+        let same_slot = Block::new(genesis_header.clone(), BlockBody::empty());
+        blockchain
+            .revalidate_frame_txs_after_block(&same_slot)
+            .expect("revalidation");
+        assert!(
+            blockchain
+                .mempool
+                .get_mempool_transaction_by_hash(hash)
+                .unwrap()
+                .is_some(),
+            "nothing changed, so the tx stays"
+        );
+
+        let next_slot = Block::new(
+            BlockHeader {
+                number: 1,
+                slot_number: genesis_header.slot_number.map(|slot| slot + 1),
+                ..genesis_header
+            },
+            BlockBody::empty(),
+        );
+        blockchain
+            .revalidate_frame_txs_after_block(&next_slot)
+            .expect("revalidation");
+        assert!(
+            blockchain
+                .mempool
+                .get_mempool_transaction_by_hash(hash)
+                .unwrap()
+                .is_none(),
+            "an expired tuple must evict the tx"
+        );
+    }
+}

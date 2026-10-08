@@ -1902,6 +1902,36 @@ impl Frame {
         self.execution_mode() == FrameMode::Verify
             && self.target == Some(frame_tx_expiry_verifier())
     }
+
+    /// EIP-8272 §Recent root verifier frame: a VERIFY frame to `RECENT_ROOT_ADDRESS`
+    /// with no flags, no value, no state budget, and data that is one to sixteen
+    /// packed 72-byte tuples. A frame to that address with any other shape is an
+    /// ordinary frame, which the contract handles as such and the public mempool
+    /// judges by the ordinary rules.
+    pub fn is_recent_root_verifier(&self) -> bool {
+        let len = self.data.len();
+        self.execution_mode() == FrameMode::Verify
+            && self.target == Some(frame_tx_recent_root())
+            && self.flags == 0
+            && self.value.is_zero()
+            && self.state_gas_limit == 0
+            && (FRAME_TX_RECENT_ROOT_TUPLE_BYTES
+                ..=FRAME_TX_MAX_RECENT_ROOT_REFERENCES * FRAME_TX_RECENT_ROOT_TUPLE_BYTES)
+                .contains(&len)
+            && len.is_multiple_of(FRAME_TX_RECENT_ROOT_TUPLE_BYTES)
+    }
+
+    /// The tuples a recent root verifier frame carries, in order. Empty for any frame
+    /// [`Frame::is_recent_root_verifier`] rejects.
+    pub fn recent_root_tuples(&self) -> Vec<RecentRootReference> {
+        if !self.is_recent_root_verifier() {
+            return Vec::new();
+        }
+        self.data
+            .chunks_exact(FRAME_TX_RECENT_ROOT_TUPLE_BYTES)
+            .filter_map(RecentRootReference::from_tuple_bytes)
+            .collect()
+    }
 }
 
 impl RLPEncode for Frame {
@@ -2081,6 +2111,11 @@ pub const FRAME_TX_ENTRY_POINT_U64: u64 = 0xaa;
 pub const FRAME_TX_MAX_FRAMES: usize = 64;
 /// EIP-8250 `MAX_NONCE_KEYS`: the most nonce keys a frame transaction may select.
 pub const FRAME_TX_MAX_NONCE_KEYS: usize = 16;
+/// EIP-8272 `MAX_RECENT_ROOT_REFERENCES`: the most `(source_id, slot, root)` tuples a
+/// recent root verifier frame may carry.
+pub const FRAME_TX_MAX_RECENT_ROOT_REFERENCES: usize = 16;
+/// EIP-8272 `RECENT_ROOT_TUPLE_BYTES`: one packed tuple, `source_id(32) || slot(8) || root(32)`.
+pub const FRAME_TX_RECENT_ROOT_TUPLE_BYTES: usize = 72;
 /// EIP-7623 `STANDARD_TOKEN_COST`, and the EIP-7976 floor per token. Frame
 /// transactions exist only from Hegota onward, which is after Amsterdam, so the
 /// raised EIP-7976 floor always applies and neither needs a fork parameter.
@@ -2146,6 +2181,81 @@ pub fn keyed_nonce_slot(sender: Address, nonce_key: U256) -> H256 {
     buf[12..32].copy_from_slice(sender.as_bytes());
     buf[32..].copy_from_slice(&nonce_key.to_big_endian());
     keccak(buf)
+}
+
+/// EIP-8272 `RECENT_ROOT_ADDRESS` system contract (0x…8272).
+pub const FRAME_TX_RECENT_ROOT_U64: u64 = 0x8272;
+
+/// Returns the `RECENT_ROOT_ADDRESS` `Address` (0x…8272) per EIP-8272.
+pub fn frame_tx_recent_root() -> Address {
+    Address::from_low_u64_be(FRAME_TX_RECENT_ROOT_U64)
+}
+
+/// EIP-8272 `RECENT_ROOT_LENGTH`: each root source keeps one entry per slot for the
+/// last `RECENT_ROOT_LENGTH` slots, at `slot mod RECENT_ROOT_LENGTH`.
+pub const FRAME_TX_RECENT_ROOT_LENGTH: u64 = 8192;
+/// EIP-8272 `RECENT_ROOT_USABLE_WINDOW`: a reference is usable while
+/// `current_slot - slot <= RECENT_ROOT_USABLE_WINDOW`. One less than the ring length
+/// because the current slot itself is never referenceable.
+pub const FRAME_TX_RECENT_ROOT_USABLE_WINDOW: u64 = 8191;
+
+/// EIP-8272 `RECENT_ROOT_ENTRY_DOMAIN`: `keccak256("RECENT_ROOT_ENTRY")`.
+pub fn recent_root_entry_domain() -> H256 {
+    keccak(b"RECENT_ROOT_ENTRY")
+}
+
+/// EIP-8272 `RECENT_ROOT_STORAGE_DOMAIN`: `keccak256("RECENT_ROOT_STORAGE")`.
+pub fn recent_root_storage_domain() -> H256 {
+    keccak(b"RECENT_ROOT_STORAGE")
+}
+
+/// One `(source_id, slot, root)` tuple of an EIP-8272 recent root verifier frame,
+/// packed in the frame's data as `source_id(32) || uint64_be(slot) || root(32)`.
+/// `root` is opaque to consensus; applications bind its meaning.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct RecentRootReference {
+    pub source_id: H256,
+    pub slot: u64,
+    pub root: H256,
+}
+
+impl RecentRootReference {
+    /// Parse one packed tuple. `None` unless `bytes` is exactly
+    /// `RECENT_ROOT_TUPLE_BYTES` long.
+    pub fn from_tuple_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != FRAME_TX_RECENT_ROOT_TUPLE_BYTES {
+            return None;
+        }
+        let slot = u64::from_be_bytes(bytes.get(32..40)?.try_into().ok()?);
+        Some(Self {
+            source_id: H256::from_slice(bytes.get(..32)?),
+            slot,
+            root: H256::from_slice(bytes.get(40..)?),
+        })
+    }
+
+    /// EIP-8272 `entry_hash`:
+    /// `keccak256(RECENT_ROOT_ENTRY_DOMAIN || source_id || uint64_be(slot) || root)`.
+    /// It commits to the full slot, not its ring index, so an entry overwritten by a
+    /// newer slot sharing the index can never satisfy a reference to the older one.
+    pub fn entry_hash(&self) -> H256 {
+        let mut buf = Vec::with_capacity(32 + 32 + 8 + 32);
+        buf.extend_from_slice(recent_root_entry_domain().as_bytes());
+        buf.extend_from_slice(self.source_id.as_bytes());
+        buf.extend_from_slice(&self.slot.to_be_bytes());
+        buf.extend_from_slice(self.root.as_bytes());
+        keccak(&buf)
+    }
+
+    /// EIP-8272 `storage_key`:
+    /// `keccak256(RECENT_ROOT_STORAGE_DOMAIN || source_id || uint64_be(slot mod RECENT_ROOT_LENGTH))`.
+    pub fn storage_key(&self) -> H256 {
+        let mut buf = Vec::with_capacity(32 + 32 + 8);
+        buf.extend_from_slice(recent_root_storage_domain().as_bytes());
+        buf.extend_from_slice(self.source_id.as_bytes());
+        buf.extend_from_slice(&(self.slot % FRAME_TX_RECENT_ROOT_LENGTH).to_be_bytes());
+        keccak(&buf)
+    }
 }
 
 impl FrameTransaction {
@@ -2272,6 +2382,31 @@ impl FrameTransaction {
     /// set, so a transaction is either `[0]` or all non-zero keys.
     pub fn is_keyed(&self) -> bool {
         self.nonce_keys.as_slice() != [U256::zero()]
+    }
+
+    /// EIP-8272: the index of the recent root verifier frame when it sits where the
+    /// public mempool requires it -- first, or second behind an expiry verifier
+    /// frame. A matching frame anywhere else is not the protocol verifier and fails
+    /// the structural rules ([`FrameValidationError::RecentRootFrameMisplaced`]).
+    pub fn recent_root_verifier_index(&self) -> Option<usize> {
+        match self.frames.as_slice() {
+            [first, ..] if first.is_recent_root_verifier() => Some(0),
+            [first, second, ..]
+                if first.is_expiry_verifier() && second.is_recent_root_verifier() =>
+            {
+                Some(1)
+            }
+            _ => None,
+        }
+    }
+
+    /// The `(source_id, slot, root)` tuples the recent root verifier frame declares,
+    /// empty when the transaction carries none in the mempool position.
+    pub fn recent_root_tuples(&self) -> Vec<RecentRootReference> {
+        self.recent_root_verifier_index()
+            .and_then(|index| self.frames.get(index))
+            .map(Frame::recent_root_tuples)
+            .unwrap_or_default()
     }
 
     /// The EIP-7623 calldata floor: the least the frame and signature data may
@@ -2604,12 +2739,17 @@ impl FrameTransaction {
     /// are skipped during shape matching but their indices are NOT included in
     /// `frame_indices` (which holds only the semantically meaningful prefix frames).
     pub fn validation_prefix(&self) -> Result<ValidationPrefix, FrameValidationError> {
-        // Collect non-expiry frame indices in order.
+        // EIP-8272: a leading recent root verifier frame is a protocol frame like the
+        // expiry verifier and is skipped by shape matching. Only the leading position
+        // is skipped; a matching frame elsewhere stays in the sequence and fails the
+        // shape or the structural rules.
+        let recent_root_index = self.recent_root_verifier_index();
+        // Collect the frame indices left after the protocol verifier frames, in order.
         let non_expiry: Vec<usize> = self
             .frames
             .iter()
             .enumerate()
-            .filter(|(_, f)| !f.is_expiry_verifier())
+            .filter(|(idx, f)| !f.is_expiry_verifier() && Some(*idx) != recent_root_index)
             .map(|(i, _)| i)
             .collect();
 
@@ -2644,6 +2784,7 @@ impl FrameTransaction {
                 frame_indices: vec![non_expiry[0], non_expiry[1], non_expiry[2]],
                 deploy_index: Some(non_expiry[0]),
                 pay_index: Some(non_expiry[2]),
+                recent_root_index,
             });
         }
 
@@ -2654,6 +2795,7 @@ impl FrameTransaction {
                 frame_indices: vec![non_expiry[0], non_expiry[1]],
                 deploy_index: Some(non_expiry[0]),
                 pay_index: Some(non_expiry[1]),
+                recent_root_index,
             });
         }
 
@@ -2668,6 +2810,7 @@ impl FrameTransaction {
                 frame_indices: vec![non_expiry[0], non_expiry[1]],
                 deploy_index: None,
                 pay_index: Some(non_expiry[1]),
+                recent_root_index,
             });
         }
 
@@ -2678,6 +2821,7 @@ impl FrameTransaction {
                 frame_indices: vec![non_expiry[0]],
                 deploy_index: None,
                 pay_index: Some(non_expiry[0]),
+                recent_root_index,
             });
         }
 
@@ -2811,6 +2955,16 @@ impl FrameTransaction {
             return Err(FrameValidationError::ExpiryFrameNotFirst { frame_index });
         }
 
+        // EIP-8272 §Public mempool handling: at most one recent root verifier frame,
+        // immediately after the optional expiry frame and before every other frame.
+        // A frame matching its shape anywhere else is rejected rather than run as an
+        // ordinary frame.
+        if let Some((frame_index, _)) = self.frames.iter().enumerate().find(|(idx, frame)| {
+            frame.is_recent_root_verifier() && Some(*idx) != prefix.recent_root_index
+        }) {
+            return Err(FrameValidationError::RecentRootFrameMisplaced { frame_index });
+        }
+
         // EIP-8141 §Structural Rules rule 8: no VERIFY frame may follow the
         // validation prefix. A reverting VERIFY frame invalidates the whole
         // transaction wherever it sits, so one placed after the prefix would make
@@ -2828,9 +2982,11 @@ impl FrameTransaction {
         }
 
         // Gas budget: prefix frame gas limits + signature cost ≤ MAX_VERIFY_GAS.
+        // EIP-8272 counts the recent root verifier frame's `limits.execution` too.
         let prefix_gas: u64 = prefix
             .frame_indices
             .iter()
+            .chain(prefix.recent_root_index.iter())
             .map(|&i| self.frames[i].gas_limit)
             .fold(0u64, |acc, g| acc.saturating_add(g));
         let total_verify_gas = prefix_gas.saturating_add(self.signature_verification_cost());
@@ -2843,7 +2999,8 @@ impl FrameTransaction {
 
         // State budget (rule 6): Σ(prefix frame `limits.state`) ≤ MAX_VERIFY_STATE_GAS.
         // The whole prefix counts, deploy frame included: the cap bounds the state a
-        // public-mempool transaction may create while establishing its payer.
+        // public-mempool transaction may create while establishing its payer. The
+        // recent root verifier frame declares no state budget by definition.
         let prefix_state_gas: u64 = prefix
             .frame_indices
             .iter()
@@ -2885,6 +3042,11 @@ pub struct ValidationPrefix {
     pub deploy_index: Option<usize>,
     /// Index of the pay (or self_verify) frame within `frames`.
     pub pay_index: Option<usize>,
+    /// Index of the EIP-8272 recent root verifier frame, when one leads the
+    /// transaction (first, or second behind an expiry verifier). Skipped by shape
+    /// matching like the expiry frame; its `limits.execution` counts toward
+    /// `MAX_VERIFY_GAS`.
+    pub recent_root_index: Option<usize>,
 }
 
 /// Errors produced by `FrameTransaction::validation_prefix` and
@@ -2919,6 +3081,10 @@ pub enum FrameValidationError {
     VerifyGasBudgetExceeded { actual: u64, limit: u64 },
     #[error("prefix state gas budget exceeded: {actual} > {limit} (MAX_VERIFY_STATE_GAS)")]
     VerifyStateBudgetExceeded { actual: u64, limit: u64 },
+    #[error(
+        "frame {frame_index}: a recent root verifier frame must be the first frame, or the second behind an expiry verifier frame"
+    )]
+    RecentRootFrameMisplaced { frame_index: usize },
 }
 
 impl RLPEncode for FrameTransaction {

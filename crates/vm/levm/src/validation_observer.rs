@@ -93,6 +93,13 @@ pub struct ValidationObserver {
     /// (OQ1, see module docs); the access-restriction skip is wired for the
     /// future canonical-paymaster case.
     pub canonical_paymaster_pay_frame: Option<usize>,
+    /// Index of the EIP-8272 recent root verifier frame, set only when the code at
+    /// `RECENT_ROOT_ADDRESS` is exactly `RECENT_ROOT_CODE`. While that frame runs the
+    /// contract at the top level it may execute `SLOTNUM` and read the contract's
+    /// own storage; no other frame and no nested call gets either permission.
+    pub recent_root_frame: Option<usize>,
+    /// `RECENT_ROOT_ADDRESS` (0x…8272).
+    pub recent_root_address: Address,
     /// The opcode byte executed on the previous dispatch-loop iteration. Used to
     /// enforce the `GAS` sequential rule (`GAS` is allowed only immediately
     /// before a `*CALL`). Reset each iteration.
@@ -116,6 +123,8 @@ impl ValidationObserver {
             current_frame_mode: 0,
             expiry_verifier: Address::zero(),
             canonical_paymaster_pay_frame: None,
+            recent_root_frame: None,
+            recent_root_address: Address::zero(),
             last_opcode: 0,
             touched_sender_slots: Vec::new(),
             violation: None,
@@ -138,10 +147,20 @@ impl ValidationObserver {
             current_frame_mode: 0,
             expiry_verifier,
             canonical_paymaster_pay_frame: None,
+            recent_root_frame: None,
+            recent_root_address: ethrex_common::types::frame_tx_recent_root(),
             last_opcode: 0,
             touched_sender_slots: Vec::new(),
             violation: None,
         }
+    }
+
+    /// Whether the executing code is `RECENT_ROOT_CODE` run at the top level of the
+    /// recent root verifier frame: the only place EIP-8272's two permissions apply.
+    pub fn in_recent_root_frame(&self, code_address: Address, depth: usize) -> bool {
+        self.recent_root_frame == Some(self.current_frame_index)
+            && depth == 0
+            && code_address == self.recent_root_address
     }
 
     /// Records the first violation observed; later violations are ignored (the

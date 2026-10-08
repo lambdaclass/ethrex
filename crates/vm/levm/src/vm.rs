@@ -3006,6 +3006,7 @@ impl<'a> VM<'a> {
         frame_indices: &[usize],
         deploy_index: Option<usize>,
         canonical_paymaster_pay_frame: Option<usize>,
+        recent_root_frame: Option<usize>,
     ) -> Result<PrefixSimResult, VMError> {
         use crate::validation_observer::ValidationObserver;
 
@@ -3081,6 +3082,7 @@ impl<'a> VM<'a> {
         let expiry_verifier = ethrex_common::types::frame_tx_expiry_verifier();
         let mut observer = ValidationObserver::new(sender, deploy_index, expiry_verifier);
         observer.canonical_paymaster_pay_frame = canonical_paymaster_pay_frame;
+        observer.recent_root_frame = recent_root_frame;
         self.validation_observer = observer;
 
         self.simulate_validation_prefix(frame_indices)
@@ -3315,7 +3317,8 @@ impl<'a> VM<'a> {
 
             // Record the completed frame as block execution does: `FRAMEPARAM` reads an
             // earlier frame's status and gas out of `frame_results`, so a prefix frame
-            // that inspects an earlier one must find it here too.
+            // that inspects an earlier one (for example the frame behind an EIP-8272
+            // recent root verifier confirming it succeeded) must find it here too.
             let ctx =
                 self.frame_tx_context
                     .as_mut()
@@ -3653,7 +3656,15 @@ impl<'a> VM<'a> {
 
         let banned = match opcode {
             GASPRICE | BLOCKHASH | COINBASE | NUMBER | PREVRANDAO | GASLIMIT | BASEFEE
-            | BLOBBASEFEE | SLOTNUM | INVALID | SELFDESTRUCT | BALANCE | SELFBALANCE => true,
+            | BLOBBASEFEE | INVALID | SELFDESTRUCT | BALANCE | SELFBALANCE => true,
+            // EIP-8272 permission 1: `SLOTNUM` may run inside `RECENT_ROOT_CODE` at the
+            // top level of the recent root verifier frame. Everywhere else it stays
+            // banned: a prefix that branches on the slot passes at admission and can
+            // fail at inclusion.
+            SLOTNUM => !self.validation_observer.in_recent_root_frame(
+                self.current_call_frame.code_address,
+                self.current_call_frame.depth,
+            ),
             // TIMESTAMP is permitted only when the currently executing contract
             // IS the EXPIRY_VERIFIER predeploy (checked by code_address so the
             // rule tracks the executing contract at every call depth, not just the
@@ -3681,6 +3692,18 @@ impl<'a> VM<'a> {
     /// admission-time revalidation affected-set.
     pub fn validation_check_sload(&mut self, address: Address, slot: H256) {
         use crate::validation_observer::FrameSimViolation;
+        // EIP-8272 permission 2: the recent root verifier frame may read the
+        // contract's own storage. With the code pinned to `RECENT_ROOT_CODE`, those
+        // reads are exactly the keys derived from the frame's tuples, which the
+        // mempool tracks from the frame data and rechecks after every block.
+        if address == self.validation_observer.recent_root_address
+            && self.validation_observer.in_recent_root_frame(
+                self.current_call_frame.code_address,
+                self.current_call_frame.depth,
+            )
+        {
+            return;
+        }
         if self.validation_observer.in_canonical_pay_frame() {
             return;
         }

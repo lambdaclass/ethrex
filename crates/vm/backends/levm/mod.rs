@@ -7,7 +7,8 @@ use crate::system_contracts::{
     BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
     EXPIRY_VERIFIER_PREDEPLOY, EXPIRY_VERIFIER_RUNTIME_BYTECODE, HISTORY_STORAGE_ADDRESS,
     NONCE_MANAGER_PREDEPLOY, NONCE_MANAGER_RUNTIME_BYTECODE, PRAGUE_SYSTEM_CONTRACTS,
-    SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+    RECENT_ROOT_PREDEPLOY, RECENT_ROOT_RUNTIME_BYTECODE, SYSTEM_ADDRESS,
+    WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
@@ -3612,7 +3613,35 @@ impl LEVM {
         };
         let sender = frame_tx.sender;
 
-        let env = Self::setup_env(tx, sender, block_header, db, vm_type)?;
+        // EIP-8272: a recent root verifier frame is admitted only while the code at
+        // `RECENT_ROOT_ADDRESS` is exactly `RECENT_ROOT_CODE`; only then does the
+        // frame get its two simulation permissions.
+        let recent_root_frame = match prefix.recent_root_index {
+            Some(index) => {
+                if db.get_account_code(RECENT_ROOT_PREDEPLOY.address)?.code()
+                    != RECENT_ROOT_RUNTIME_BYTECODE.as_slice()
+                {
+                    return Ok(FrameValidationOutcome {
+                        passed: false,
+                        violation: Some(
+                            "the code at RECENT_ROOT_ADDRESS is not RECENT_ROOT_CODE".to_string(),
+                        ),
+                        reservation_ceiling: Self::frame_tx_reservation_ceiling(frame_tx),
+                        accessed_paymaster: None,
+                        touched_sender_slots: Vec::new(),
+                    });
+                }
+                Some(index)
+            }
+            None => None,
+        };
+
+        let mut env = Self::setup_env(tx, sender, block_header, db, vm_type)?;
+        // EIP-8272 §Current slot: during public mempool validation `current_slot` is
+        // one greater than the `slotNumber` of the latest canonical header, and the
+        // simulated `SLOTNUM` must equal it. Every other prefix frame is barred from
+        // `SLOTNUM`, so only the recent root verifier frame observes the change.
+        env.slot_number = env.slot_number.saturating_add(U256::one());
         let mut vm = VM::new(
             env,
             db,
@@ -3631,6 +3660,7 @@ impl LEVM {
             &prefix.frame_indices,
             prefix.deploy_index,
             canonical_pay_frame,
+            recent_root_frame,
         ) {
             Ok(sim) => sim,
             Err(err) => {
@@ -3890,8 +3920,8 @@ impl LEVM {
 
     /// Whether executing `block` installs Hegota's system contracts: Hegota is
     /// active at its timestamp and one of the contracts the fork installs (EIP-8141's
-    /// expiry verifier, EIP-8250's nonce manager) is not yet in place in the parent
-    /// state. Reads the parent state from the
+    /// expiry verifier, EIP-8250's nonce manager, EIP-8272's recent root contract)
+    /// is not yet in place in the parent state. Reads the parent state from the
     /// store, so the execution caches are left untouched.
     ///
     /// Such a block cannot run on the access-list-driven parallel path: the
@@ -3916,6 +3946,10 @@ impl LEVM {
                 NONCE_MANAGER_PREDEPLOY.address,
                 NONCE_MANAGER_RUNTIME_BYTECODE.as_slice(),
             ),
+            (
+                RECENT_ROOT_PREDEPLOY.address,
+                RECENT_ROOT_RUNTIME_BYTECODE.as_slice(),
+            ),
         ] {
             let installed_hash = db.store.get_account_state(address)?.code_hash;
             if installed_hash != crypto.keccak256(runtime_code).into() {
@@ -3939,6 +3973,25 @@ impl LEVM {
             crypto,
             NONCE_MANAGER_PREDEPLOY.address,
             &NONCE_MANAGER_RUNTIME_BYTECODE,
+            false,
+        )
+    }
+
+    /// Install the EIP-8272 `RECENT_ROOT_ADDRESS` at Hegota activation: code
+    /// `RECENT_ROOT_CODE`, nonce `max(existing, 1)`, balance preserved, empty
+    /// storage. EIP-8272 makes the first active block invalid when the address
+    /// already holds code or storage, so an occupied account is an error rather
+    /// than an overwrite.
+    pub fn install_recent_root_code(
+        db: &mut GeneralizedDatabase,
+        crypto: &dyn Crypto,
+    ) -> Result<(), EvmError> {
+        Self::install_system_contract_code(
+            db,
+            crypto,
+            RECENT_ROOT_PREDEPLOY.address,
+            &RECENT_ROOT_RUNTIME_BYTECODE,
+            true,
         )
     }
 
@@ -3951,9 +4004,16 @@ impl LEVM {
         crypto: &dyn Crypto,
         address: Address,
         runtime_code: &'static [u8],
+        reject_occupied: bool,
     ) -> Result<(), EvmError> {
         if db.get_account_code(address)?.code() == runtime_code {
             return Ok(());
+        }
+        let account = db.get_account(address)?;
+        if reject_occupied && (account.has_code() || account.has_storage) {
+            return Err(EvmError::Custom(format!(
+                "system contract address {address:#x} already holds code or storage at activation"
+            )));
         }
         let code = Code::from_bytecode(Bytes::from_static(runtime_code), crypto);
         let code_hash = code.hash;
@@ -4140,8 +4200,9 @@ impl LEVM {
         // hooked in apply_system_calls for the payload-build path.
         if fork >= Fork::Hegota {
             Self::install_expiry_verifier_code(db, crypto)?;
-            // EIP-8250 activates with EIP-8141.
+            // EIP-8250 and EIP-8272 activate with EIP-8141.
             Self::install_nonce_manager_code(db, crypto)?;
+            Self::install_recent_root_code(db, crypto)?;
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
