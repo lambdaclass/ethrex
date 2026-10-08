@@ -128,7 +128,7 @@ fn expiry_verifier_frame() -> Frame {
         flags: 0x00,
         target: Some(frame_tx_expiry_verifier()),
         gas_limit: 1_000,
-        state_gas_limit: 1_000_000,
+        state_gas_limit: 0,
         value: U256::zero(),
         data: Bytes::from(vec![0u8; 8]),
     }
@@ -140,7 +140,7 @@ fn self_verify_frame() -> Frame {
         flags: APPROVE_EXECUTION_AND_PAYMENT,
         target: Some(sender_addr()),
         gas_limit: 10_000,
-        state_gas_limit: 1_000_000,
+        state_gas_limit: 100_000,
         value: U256::zero(),
         data: Bytes::new(),
     }
@@ -152,7 +152,7 @@ fn only_verify_frame() -> Frame {
         flags: APPROVE_EXECUTION,
         target: Some(sender_addr()),
         gas_limit: 10_000,
-        state_gas_limit: 1_000_000,
+        state_gas_limit: 100_000,
         value: U256::zero(),
         data: Bytes::new(),
     }
@@ -164,7 +164,7 @@ fn pay_frame() -> Frame {
         flags: APPROVE_PAYMENT,
         target: Some(sender_addr()),
         gas_limit: 10_000,
-        state_gas_limit: 1_000_000,
+        state_gas_limit: 100_000,
         value: U256::zero(),
         data: Bytes::new(),
     }
@@ -176,7 +176,7 @@ fn deploy_frame() -> Frame {
         flags: 0x00,
         target: None,
         gas_limit: 50_000,
-        state_gas_limit: 1_000_000,
+        state_gas_limit: 200_000,
         value: U256::zero(),
         data: Bytes::from_static(b"deploy_bytecode"),
     }
@@ -341,7 +341,7 @@ fn prefix_rejection_deploy_not_first() {
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(sender_addr()),
             gas_limit: 5_000,
-            state_gas_limit: 1_000_000,
+            state_gas_limit: 100_000,
             value: U256::zero(),
             data: Bytes::new(),
         },

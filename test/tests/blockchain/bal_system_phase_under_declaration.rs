@@ -19,7 +19,8 @@ use ethrex_common::{
 use ethrex_crypto::NativeCrypto;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::system_contracts::{
-    BEACON_ROOTS_ADDRESS, EXPIRY_VERIFIER_PREDEPLOY, HISTORY_STORAGE_ADDRESS, SYSTEM_ADDRESS,
+    BEACON_ROOTS_ADDRESS, EXPIRY_VERIFIER_PREDEPLOY, EXPIRY_VERIFIER_RUNTIME_BYTECODE,
+    HISTORY_STORAGE_ADDRESS, SYSTEM_ADDRESS,
 };
 
 use super::bal_content_validation_tests::forge_state_root;
@@ -592,13 +593,12 @@ async fn parallel_path_rejects_a_bare_bal_entry_for_an_unrecorded_probe() {
     let address = EXPIRY_VERIFIER_PREDEPLOY.address;
     let build_store = setup_hegota_store().await;
 
-    // Block 1 records the install; only block 2 reaches the unrecorded probe.
+    // Block 1 performs the install, which is not a block-level operation and so never
+    // appears in its BAL; only block 2 reaches the already-installed predeploy.
     let (block1, bal1) = build_valid_amsterdam_block(&build_store).await;
-    let installer = bal1.accounts().iter().find(|a| a.address == address);
     assert!(
-        installer.is_some_and(|a| !a.code_changes.is_empty()),
-        "block 1 must record the expiry-verifier install, else this test is not \
-         exercising the already-installed path"
+        !bal1.accounts().iter().any(|a| a.address == address),
+        "the install must leave no trace in block 1's BAL"
     );
     let bc = Blockchain::new(
         build_store.clone(),
@@ -609,6 +609,18 @@ async fn parallel_path_rejects_a_bare_bal_entry_for_an_unrecorded_probe() {
     );
     bc.add_block_pipeline_bal(block1.clone(), Some(Arc::new(bal1)))
         .expect("block 1 must import");
+    let installed = build_store
+        .get_account_info_by_hash(block1.hash(), address)
+        .expect("read block 1 state")
+        .map(|info| info.code_hash);
+    assert_eq!(
+        installed,
+        Some(ethrex_common::utils::keccak(
+            EXPIRY_VERIFIER_RUNTIME_BYTECODE
+        )),
+        "block 1 must install the expiry verifier, else this test is not exercising \
+         the already-installed path"
+    );
 
     let (mut block, bal) = build_block_on(&build_store, &block1.header, Vec::new(), 2).await;
     assert!(

@@ -21,10 +21,10 @@ use ethrex_common::types::{
     APPROVE_EXECUTION_AND_PAYMENT, AuthorizationTuple, BYTES_PER_BLOB, BlobsBundle, Block,
     BlockBody, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
     EIP7702Transaction, FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1,
-    FRAME_TX_EXPIRY_DATA_LENGTH, FRAME_TX_MAX_VERIFY_GAS, FeeTokenTransaction, Frame, FrameMode,
-    FrameSignature, FrameTransaction, Genesis, GenesisAccount, MAX_TX_SIZE, MempoolTransaction,
-    PrivilegedL2Transaction, Transaction, TxKind, frame_tx_expiry_verifier,
-    kzg_commitment_to_versioned_hash,
+    FRAME_TX_EXPIRY_DATA_LENGTH, FRAME_TX_MAX_VERIFY_GAS, FRAME_TX_MAX_VERIFY_STATE_GAS,
+    FeeTokenTransaction, Frame, FrameMode, FrameSignature, FrameTransaction, Genesis,
+    GenesisAccount, MAX_TX_SIZE, MempoolTransaction, PrivilegedL2Transaction, Transaction, TxKind,
+    frame_tx_expiry_verifier, kzg_commitment_to_versioned_hash,
 };
 use ethrex_common::{Address, Bytes, H160, H256, U256};
 use ethrex_storage::error::StoreError;
@@ -673,11 +673,11 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
             mode: FrameMode::Verify as u8,
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(sender),
-            // Small per-frame gas so max_gas() stays below the legacy
-            // 21000 intrinsic floor: this tx is only admitted once the frame-tx
-            // intrinsic-gas fix prices it correctly.
-            gas_limit: 100,
-            state_gas_limit: 1_000_000,
+            // Covers the warm entry charge for the sender plus its APPROVE, and
+            // keeps max_gas() below the legacy 21000 intrinsic floor: this tx is
+            // only admitted once the frame-tx intrinsic gas prices it correctly.
+            gas_limit: 1_000,
+            state_gas_limit: FRAME_TX_MAX_VERIFY_STATE_GAS,
             value: U256::zero(),
             data: Bytes::new(),
         }],
@@ -1103,9 +1103,9 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
                 mode: FrameMode::Verify as u8,
                 flags: 0x00,
                 target: Some(frame_tx_expiry_verifier()),
-                // Enough to reserve the EIP-7623 floor of the 8-byte deadline.
-                gas_limit: 1_000,
-                state_gas_limit: 1_000_000,
+                // Covers the cold entry charge for the verifier and the EIP-7623 floor of the 8-byte deadline.
+                gas_limit: 5_000,
+                state_gas_limit: 0,
                 value: U256::zero(),
                 data: Bytes::from(data.to_vec()),
             },
@@ -1113,8 +1113,8 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
                 mode: FrameMode::Verify as u8,
                 flags: APPROVE_EXECUTION_AND_PAYMENT,
                 target: Some(sender),
-                gas_limit: 100,
-                state_gas_limit: 1_000_000,
+                gas_limit: 1_000,
+                state_gas_limit: FRAME_TX_MAX_VERIFY_STATE_GAS,
                 value: U256::zero(),
                 data: Bytes::new(),
             },
@@ -1852,8 +1852,8 @@ fn funded_frame_tx(max_fee_per_gas: u64, max_priority_fee_per_gas: u64) -> Frame
             mode: FrameMode::Verify as u8,
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(sender),
-            gas_limit: 100,
-            state_gas_limit: 1_000_000,
+            gas_limit: 1_000,
+            state_gas_limit: FRAME_TX_MAX_VERIFY_STATE_GAS,
             value: U256::zero(),
             data: Bytes::new(),
         }],
@@ -1953,8 +1953,8 @@ async fn mempool_rejects_underfunded_paymaster() {
             mode: FrameMode::Verify as u8,
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(phantom_sender),
-            gas_limit: 100,
-            state_gas_limit: 1_000_000,
+            gas_limit: 1_000,
+            state_gas_limit: FRAME_TX_MAX_VERIFY_STATE_GAS,
             value: U256::zero(),
             data: Bytes::new(),
         }],
@@ -2032,8 +2032,8 @@ async fn mempool_enforces_noncanonical_paymaster_limit() {
             mode: FrameMode::Verify as u8,
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(phantom_sender),
-            gas_limit: 100,
-            state_gas_limit: 1_000_000,
+            gas_limit: 1_000,
+            state_gas_limit: FRAME_TX_MAX_VERIFY_STATE_GAS,
             value: U256::zero(),
             data: Bytes::new(),
         }],
@@ -2109,8 +2109,8 @@ async fn mempool_rejects_second_frame_tx_same_sender_new_nonce() {
             mode: FrameMode::Verify as u8,
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(sender),
-            gas_limit: 100,
-            state_gas_limit: 1_000_000,
+            gas_limit: 1_000,
+            state_gas_limit: FRAME_TX_MAX_VERIFY_STATE_GAS,
             value: U256::zero(),
             data: Bytes::new(),
         }],
@@ -2354,8 +2354,8 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
             mode: FrameMode::Verify as u8,
             flags: APPROVE_EXECUTION_AND_PAYMENT,
             target: Some(phantom_sender),
-            gas_limit: 100,
-            state_gas_limit: 1_000_000,
+            gas_limit: 1_000,
+            state_gas_limit: FRAME_TX_MAX_VERIFY_STATE_GAS,
             value: U256::zero(),
             data: Bytes::new(),
         }],
@@ -3830,4 +3830,28 @@ fn add_transaction_no_broadcast_marks_tx_as_private_for_p2p_filters() {
 
     // Hashes that were never in the pool are also not private.
     assert!(!mempool.is_private(H256::random()).unwrap());
+}
+
+// ---------------------------------------------------------------------------
+// Validation-prefix state budget (EIP-8141 rule 6)
+// ---------------------------------------------------------------------------
+
+/// Run `frame_tx` through full admission against `store`.
+async fn admit_frame_tx(store: &Store, frame_tx: FrameTransaction) -> Result<H256, MempoolError> {
+    let blockchain = Blockchain::default_with_store(store.clone());
+    blockchain
+        .add_transaction_to_pool(Transaction::FrameTransaction(frame_tx))
+        .await
+}
+
+#[tokio::test]
+async fn mempool_rejects_a_prefix_state_budget_over_the_cap() {
+    let store = setup_hegota_store().await;
+    let mut frame_tx = minimal_valid_frame_tx();
+    frame_tx.frames[0].state_gas_limit = FRAME_TX_MAX_VERIFY_STATE_GAS + 1;
+    let result = admit_frame_tx(&store, frame_tx).await;
+    assert!(
+        matches!(&result, Err(MempoolError::FrameTxInvalidPrefixStructure(msg)) if msg.contains("MAX_VERIFY_STATE_GAS")),
+        "got {result:?}"
+    );
 }

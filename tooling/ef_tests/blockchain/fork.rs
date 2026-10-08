@@ -117,6 +117,12 @@ lazy_static! {
         ..*AMSTERDAM_CONFIG
     };
 
+    /// Amsterdam at genesis, Bogota (ethrex's Hegota) at timestamp 15000.
+    pub static ref AMSTERDAM_TO_BOGOTA_AT_15K_CONFIG: ChainConfig = ChainConfig {
+        hegota_time: Some(0x3a98),
+        ..*AMSTERDAM_CONFIG
+    };
+
 }
 
 /// Most of the fork variants are just for parsing the tests
@@ -164,6 +170,8 @@ pub enum Fork {
     /// Named `Hegota` inside ethrex.
     #[serde(alias = "Hegota")]
     Bogota,
+    #[serde(alias = "AmsterdamToHegotaAtTime15k")]
+    AmsterdamToBogotaAtTime15k,
 }
 
 impl Fork {
@@ -186,6 +194,7 @@ impl Fork {
             Fork::BPO2ToAmsterdamAtTime15k => &BPO2_TO_AMSTERDAM_AT_15K_CONFIG,
             Fork::Amsterdam => &AMSTERDAM_CONFIG,
             Fork::Bogota => &BOGOTA_CONFIG,
+            Fork::AmsterdamToBogotaAtTime15k => &AMSTERDAM_TO_BOGOTA_AT_15K_CONFIG,
             _ => {
                 panic!("Ethrex doesn't support pre-Merge forks: {self:?}")
             }

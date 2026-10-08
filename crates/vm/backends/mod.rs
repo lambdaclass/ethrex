@@ -127,6 +127,12 @@ impl Evm {
         skip_all,
         fields(namespace = "block_execution")
     )]
+    /// See [`LEVM::installs_hegota_system_contracts`].
+    pub fn installs_hegota_system_contracts(&self, block: &Block) -> Result<bool, EvmError> {
+        let chain_config = self.db.store.get_chain_config()?;
+        LEVM::installs_hegota_system_contracts(block, &self.db, &chain_config, self.crypto.as_ref())
+    }
+
     pub fn execute_block_pipeline(
         &mut self,
         block: &Block,

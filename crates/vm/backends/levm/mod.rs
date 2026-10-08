@@ -3875,19 +3875,46 @@ impl LEVM {
             crypto,
         );
         let code_hash = code.hash;
-        // Record the BAL code change if recording is active, so a BAL
-        // reconstructor reproduces the same post-state. There is no nonce change
-        // to record: the nonce is untouched, and the reconstructor carries the
-        // pre-state nonce forward for an account whose only change is its code.
-        if let Some(recorder) = db.bal_recorder_mut() {
-            recorder.record_code_change(EXPIRY_VERIFIER_PREDEPLOY.address, code.code_bytes());
-        }
+        // Not recorded in the block access list: an activation install is part of
+        // the fork transition, not a block-level operation, so it never appears
+        // there, not even in the block that performs it (execution-specs
+        // `test_fork_transition` for EIP-8141).
         let acc = db
             .get_account_mut(EXPIRY_VERIFIER_PREDEPLOY.address)
             .map_err(EvmError::from)?;
         acc.info.code_hash = code_hash;
         db.codes.entry(code_hash).or_insert(code);
         Ok(())
+    }
+
+    /// Whether executing `block` installs Hegota's system contracts: Hegota is
+    /// active at its timestamp and a contract the fork installs (EIP-8141's expiry
+    /// verifier) is not yet in place in the parent state. Reads the parent state
+    /// from the store, so the execution caches are left untouched.
+    ///
+    /// Such a block cannot run on the access-list-driven parallel path: the
+    /// installs are part of the fork transition, not block-level operations, so
+    /// they never appear in the block access list that path derives every
+    /// transaction's view and the post-state from.
+    pub fn installs_hegota_system_contracts(
+        block: &Block,
+        db: &GeneralizedDatabase,
+        chain_config: &ethrex_common::types::ChainConfig,
+        crypto: &dyn Crypto,
+    ) -> Result<bool, EvmError> {
+        if !chain_config.is_hegota_activated(block.header.timestamp) {
+            return Ok(false);
+        }
+        for (address, runtime_code) in [(
+            EXPIRY_VERIFIER_PREDEPLOY.address,
+            EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice(),
+        )] {
+            let installed_hash = db.store.get_account_state(address)?.code_hash;
+            if installed_hash != crypto.keccak256(runtime_code).into() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub(crate) fn read_withdrawal_requests(

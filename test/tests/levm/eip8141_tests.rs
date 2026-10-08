@@ -2454,7 +2454,12 @@ mod validation_observer_tests {
         let code = Bytes::from(vec![0x42, 0x50, 0x00]);
         // 8-byte deadline data, far in the future.
         let data = Bytes::from(vec![0xff; 8]);
-        let tx = frame_tx_for_obs(sender, vec![verify_frame_obs(expiry, 50_000, 0x00, data)]);
+        // EIP-8141: an expiry verifier frame declares no state budget.
+        let expiry_frame = Frame {
+            state_gas_limit: 0,
+            ..verify_frame_obs(expiry, 50_000, 0x00, data)
+        };
+        let tx = frame_tx_for_obs(sender, vec![expiry_frame]);
         let mut db = build_db(vec![
             (sender, account_with_code(0, Bytes::new())),
             (expiry, account_with_code(0, code)),
@@ -2869,7 +2874,7 @@ mod frame_validation_prefix_tests {
             flags,
             target: Some(target),
             gas_limit,
-            state_gas_limit: 1_000_000,
+            state_gas_limit: 100_000,
             value: U256::zero(),
             data: Bytes::new(),
         }
@@ -4096,15 +4101,23 @@ fn storage_refund_from_a_later_frame_reduces_reported_gas() {
     // the mandatory costs plus the data cost plus each frame's gas.
     let frames_gas: u64 = frame_results.iter().map(|(_, gas, ..)| *gas).sum();
     let pre_refund = tx.mandatory_gas() + tx.data_cost() + frames_gas;
-    assert!(
-        report.gas_used < pre_refund,
-        "the clearing frame's refund must be applied to the transaction total \
-         (pre-refund {pre_refund}, reported {})",
-        report.gas_used
+    // EIP-7778: the refund lowers what the payer pays (`gas_spent`) without freeing
+    // the block capacity the transaction occupied (`gas_used`). Both carry the state
+    // dimension on top of execution.
+    assert_eq!(
+        report.gas_used - report.state_gas_used,
+        pre_refund,
+        "the block figure must not apply the refund"
     );
-    let applied = pre_refund - report.gas_used;
+    let payer_execution = report.gas_spent - report.state_gas_used;
     assert!(
-        applied <= pre_refund / 5,
+        payer_execution < pre_refund,
+        "the clearing frame's refund must be applied to what the payer pays \
+         (pre-refund {pre_refund}, payer {payer_execution})"
+    );
+    let applied = pre_refund - payer_execution;
+    assert!(
+        applied <= (pre_refund + report.state_gas_used) / 5,
         "the applied refund {applied} must respect the EIP-3529 one-fifth cap"
     );
 }

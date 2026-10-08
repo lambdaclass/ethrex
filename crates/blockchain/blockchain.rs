@@ -937,7 +937,16 @@ impl Blockchain {
         // re-read in-block-created state (e.g. a code deployed by an earlier
         // tx) from the logged store, while sequential execution serves it from
         // VM caches — recording accesses the canonical execution never makes.
-        let bal_parallel_exec_enabled = self.options.bal_parallel_exec_enabled && !collect_witness;
+        // So does the block that installs Hegota's system contracts: the installs
+        // are part of the fork transition and never appear in the block access list,
+        // which the parallel executor and the optimistic merkleizer both derive the
+        // post-state from.
+        let installs_system_contracts = vm
+            .installs_hegota_system_contracts(block)
+            .map_err(ChainError::EvmError)?;
+        let bal_parallel_exec_enabled = self.options.bal_parallel_exec_enabled
+            && !collect_witness
+            && !installs_system_contracts;
 
         // Synthesize BAL updates pre-scope so the merkleizer thread can start
         // trie work immediately, in parallel with execution.
@@ -949,7 +958,10 @@ impl Blockchain {
         // updates over the channel, which only the streaming merkleizer
         // consumes — the synthesized path would leave the receiver dropped.
         let optimistic_updates: Option<FxHashMap<Address, BalSynthesisItem>> =
-            if self.options.bal_parallel_trie_enabled && !collect_witness {
+            if self.options.bal_parallel_trie_enabled
+                && !collect_witness
+                && !installs_system_contracts
+            {
                 bal.as_deref().map(synthesize_bal_updates)
             } else {
                 None

@@ -66,6 +66,16 @@ const PATTERNS: &[Entry] = &[
     Entry { canonical: "BlockException.INVALID_BASEFEE_PER_GAS", kind: Kind::Sub,
         text: "Base fee per gas is incorrect" },
 
+    // EIP-8141 frame transactions (upstream `EthrexExceptionMapper`, devnets/frames).
+    Entry { canonical: "TransactionException.TYPE_6_INVALID_SIGNATURE", kind: Kind::Sub,
+        text: "Invalid frame transaction: signature validation failed" },
+    Entry { canonical: "TransactionException.TYPE_6_INVALID_FRAME_EXECUTION", kind: Kind::Sub,
+        text: "Invalid frame transaction: VERIFY frame did not call APPROVE or payer not approved" },
+    Entry { canonical: "TransactionException.GASPRICE_OVERFLOW", kind: Kind::Sub,
+        text: "Error decoding field 'max_fee_per_gas'" },
+    Entry { canonical: "TransactionException.PRIORITY_OVERFLOW", kind: Kind::Sub,
+        text: "Error decoding field 'max_priority_fee_per_gas'" },
+
     // ─── mapping_regex ────────────────────────────────────────────────────────────
     Entry { canonical: "TransactionException.INVALID_SIGNATURE_VRS", kind: Kind::Re,
         text: r"Couldn't recover addresses with error: invalid signature|Error decoding field 'signature_y_parity' of type bool: MalformedBoolean" },
@@ -107,6 +117,10 @@ const PATTERNS: &[Entry] = &[
         text: r"blob gas price is greater than max fee per blob gas|Insufficient max fee per blob gas.*" },
     Entry { canonical: "TransactionException.INITCODE_SIZE_EXCEEDED", kind: Kind::Re,
         text: r"create initcode size limit|Initcode size exceeded.*" },
+    // EIP-8141 static validity names the rule it failed after the prefix; a frame or
+    // signature field too wide for its type is rejected while decoding.
+    Entry { canonical: "TransactionException.TYPE_6_INVALID_FRAME_FORMAT", kind: Kind::Re,
+        text: r"Invalid frame transaction format: .*|Invalid frame transaction: signature validation failed|Error decoding field '(frames|signatures)' of type .*" },
     Entry { canonical: "TransactionException.NONCE_IS_MAX", kind: Kind::Re,
         text: r"Nonce is max" },
     Entry { canonical: "TransactionException.GAS_ALLOWANCE_EXCEEDED", kind: Kind::Re,

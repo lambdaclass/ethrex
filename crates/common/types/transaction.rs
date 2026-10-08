@@ -2064,6 +2064,12 @@ pub const FRAME_SIG_SCHEME_P256: u8 = 2;
 /// so a frame tx whose `signature_verification_cost()` alone exceeds it can never
 /// satisfy the prefix budget and must be rejected at admission.
 pub const FRAME_TX_MAX_VERIFY_GAS: u64 = 100_000;
+/// EIP-8141 `MAX_VERIFY_STATE_GAS`: the most state gas the frames of a validation
+/// prefix may declare between them (structural rule 6). It bounds the state growth
+/// a public-mempool transaction can buy while establishing its payer -- a deploy
+/// frame and the sender-account creation an `APPROVE` may charge -- and measures no
+/// node validation work, which `MAX_VERIFY_GAS` alone bounds.
+pub const FRAME_TX_MAX_VERIFY_STATE_GAS: u64 = 500_000;
 /// EIP-8141 APPROVE scope-restriction values (bits 0-1 of `Frame.flags`).
 /// Used by VERIFY and PAY frames to declare which capabilities they grant.
 pub const APPROVE_PAYMENT: u8 = 0x1;
@@ -2736,6 +2742,21 @@ impl FrameTransaction {
             });
         }
 
+        // State budget (rule 6): Σ(prefix frame `limits.state`) ≤ MAX_VERIFY_STATE_GAS.
+        // The whole prefix counts, deploy frame included: the cap bounds the state a
+        // public-mempool transaction may create while establishing its payer.
+        let prefix_state_gas: u64 = prefix
+            .frame_indices
+            .iter()
+            .map(|&i| self.frames[i].state_gas_limit)
+            .fold(0u64, |acc, g| acc.saturating_add(g));
+        if prefix_state_gas > FRAME_TX_MAX_VERIFY_STATE_GAS {
+            return Err(FrameValidationError::VerifyStateBudgetExceeded {
+                actual: prefix_state_gas,
+                limit: FRAME_TX_MAX_VERIFY_STATE_GAS,
+            });
+        }
+
         Ok(())
     }
 }
@@ -2797,6 +2818,8 @@ pub enum FrameValidationError {
     VerifyFrameAfterPrefix { frame_index: usize },
     #[error("prefix gas budget exceeded: {actual} > {limit} (MAX_VERIFY_GAS)")]
     VerifyGasBudgetExceeded { actual: u64, limit: u64 },
+    #[error("prefix state gas budget exceeded: {actual} > {limit} (MAX_VERIFY_STATE_GAS)")]
+    VerifyStateBudgetExceeded { actual: u64, limit: u64 },
 }
 
 impl RLPEncode for FrameTransaction {

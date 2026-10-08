@@ -3074,13 +3074,29 @@ impl<'a> VM<'a> {
 
             self.env.origin = caller;
 
-            let (is_delegation_7702, _access_cost, code_address, bytecode) =
+            let (is_delegation_7702, delegation_access_cost, code_address, bytecode) =
                 crate::utils::eip7702_get_code(
                     self.db,
                     &mut self.substate,
                     target,
                     self.env.config.fork,
                 )?;
+
+            // EIP-8141: the same frame-entry charge and per-frame state pool as block
+            // execution (`execute_frame_tx`), so the mempool agrees with the chain on
+            // whether a prefix frame fits its declared budgets. The target's warm/cold
+            // access and any delegation access come out of `limits.execution`; state
+            // charges (such as sender creation by a payment APPROVE) draw only from
+            // the frame's own `limits.state`.
+            let target_access = if self.substate.add_accessed_address(target) {
+                crate::gas_cost::cold_account_access_cost(self.env.config.fork)
+            } else {
+                crate::gas_cost::WARM_ADDRESS_ACCESS_COST
+            };
+            let frame_entry_gas = target_access.saturating_add(delegation_access_cost);
+            let state_gas_reservoir_at_frame_entry = self.state_gas_reservoir;
+            self.state_gas_reservoir = frame.state_gas_limit;
+            self.state_gas_isolated = true;
 
             self.substate.push_backup();
 
@@ -3091,7 +3107,12 @@ impl<'a> VM<'a> {
                 false
             };
 
-            let (frame_success, frame_gas_used) = if value_transfer_reverted {
+            let (frame_success, frame_gas_used) = if frame_entry_gas > frame.gas_limit {
+                // A frame that cannot pay its entry charge halts with its whole limit.
+                self.substate.revert_backup();
+                self.restore_cache_state()?;
+                (false, frame.gas_limit)
+            } else if value_transfer_reverted {
                 self.substate.revert_backup();
                 self.restore_cache_state()?;
                 (false, frame.gas_limit)
@@ -3103,6 +3124,7 @@ impl<'a> VM<'a> {
                 use crate::opcode_handlers::frame_tx::execute_default_code;
                 match execute_default_code(self, frame, target) {
                     Ok((success, gas_used, _logs)) => {
+                        let gas_used = frame_entry_gas.saturating_add(gas_used);
                         if success {
                             self.substate.commit_backup();
                             (true, gas_used)
@@ -3128,13 +3150,19 @@ impl<'a> VM<'a> {
                     frame.value,
                     frame.data.clone(),
                     is_static,
-                    frame.gas_limit,
+                    // Entry charges already taken; the branch above proved they fit.
+                    frame.gas_limit.saturating_sub(frame_entry_gas),
                     0,
                     false,
                     false,
                     0,
                     0,
-                    self.stack_pool.pop().unwrap_or_default(),
+                    {
+                        // A pooled stack keeps the previous frame's items; each frame starts empty.
+                        let mut stack = self.stack_pool.pop().unwrap_or_default();
+                        stack.clear();
+                        stack
+                    },
                     Memory::default(),
                 );
 
@@ -3149,7 +3177,7 @@ impl<'a> VM<'a> {
 
                 let result = match frame_result {
                     Ok(ctx_result) => {
-                        let gas_used = ctx_result.gas_used;
+                        let gas_used = ctx_result.gas_used.saturating_add(frame_entry_gas);
                         // The inner frame is the initial call frame, so `run_execution`
                         // already committed (success) or reverted + restored the cache
                         // (revert) this frame's backup via `handle_state_backup`. Only a
@@ -3170,9 +3198,41 @@ impl<'a> VM<'a> {
                 result
             };
 
+            // EIP-8141 `gas_used.state`, read before the pool is reset, exactly as
+            // block execution computes it.
+            let frame_state_gas_used = if frame_success {
+                frame
+                    .state_gas_limit
+                    .saturating_sub(self.state_gas_reservoir)
+            } else {
+                0
+            };
+            self.state_gas_reservoir = state_gas_reservoir_at_frame_entry;
+            self.state_gas_isolated = false;
+
             total_gas_used = total_gas_used
                 .checked_add(frame_gas_used)
                 .ok_or(VMError::Internal(InternalError::Overflow))?;
+
+            // Record the completed frame as block execution does: `FRAMEPARAM` reads an
+            // earlier frame's status and gas out of `frame_results`, so a prefix frame
+            // that inspects an earlier one must find it here too.
+            let ctx =
+                self.frame_tx_context
+                    .as_mut()
+                    .ok_or(VMError::Internal(InternalError::Custom(
+                        "missing frame tx context".to_string(),
+                    )))?;
+            ctx.frame_results.push((
+                if frame_success {
+                    ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS
+                } else {
+                    ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE
+                },
+                frame_gas_used,
+                frame_state_gas_used,
+                Vec::new(),
+            ));
 
             if !frame_success {
                 any_revert = true;
