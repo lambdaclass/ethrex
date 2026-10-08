@@ -3596,10 +3596,10 @@ impl Blockchain {
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config();
 
-        // EIP-8141 fork gating: reject frame transactions before Hegota activates.
+        // EIP-8141 fork gating: reject frame transactions before they activate.
         // Prevents FrameTransaction (type 0x06) from entering the mempool or being
         // forwarded over P2P on chains where EIP-8141 has not yet activated.
-        if is_frame_tx && !config.is_hegota_activated(header.timestamp) {
+        if is_frame_tx && !config.is_eip8141_active(header.timestamp) {
             return Err(MempoolError::FrameTxPreFork);
         }
 
@@ -3626,11 +3626,10 @@ impl Blockchain {
             frame_tx
                 .validate_static_constraints()
                 .map_err(MempoolError::InvalidFrameTransaction)?;
-            // EIP-8288: mode 3 is a reserved byte before J*, so admitting one would
-            // fill a pool slot with a transaction no block can carry.
-            let fork = config.fork(header.timestamp);
+            // EIP-8288: mode 3 is a reserved byte before EIP-8288, so admitting one
+            // would fill a pool slot with a transaction no block can carry.
             frame_tx
-                .validate_fork_constraints(fork)
+                .validate_fork_constraints(config.features(header.timestamp))
                 .map_err(MempoolError::InvalidFrameTransaction)?;
 
             // Interim policy: no sidecar transport exists for frame-tx blobs

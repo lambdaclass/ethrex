@@ -2508,8 +2508,11 @@ impl FrameTransaction {
     /// obligates anyone to prove, and pay gas for a verification that never happens,
     /// while every conformant Hegotá client rejected the same transaction as a
     /// reserved mode. That is a consensus split, not a missing feature.
-    pub fn validate_fork_constraints(&self, fork: crate::types::Fork) -> Result<(), String> {
-        if fork >= crate::types::Fork::JStar {
+    pub fn validate_fork_constraints(
+        &self,
+        features: crate::types::ChainFeatures,
+    ) -> Result<(), String> {
+        if features.dependency_frames {
             return Ok(());
         }
         for (i, frame) in self.frames.iter().enumerate() {

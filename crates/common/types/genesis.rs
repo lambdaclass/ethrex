@@ -211,6 +211,43 @@ fn default_bpo2_schedule() -> ForkBlobSchedule {
         base_fee_update_fraction: 11684671,
     }
 }
+
+/// The Daisugi testnet's chain id, the only chain its `daisugiLegacyFrames` rule
+/// applies on.
+pub const DAISUGI_CHAIN_ID: u64 = 1337;
+
+/// Transaction features a chain can activate apart from the named fork schedule.
+///
+/// On that schedule they follow the fork, so [`ChainFeatures::for_fork`] is all a
+/// caller without a chain config needs. A chain that runs frame transactions on an
+/// earlier fork (genesis keys `eip8141PrototypeTime` and `eip8288PrototypeTime`)
+/// takes them from [`ChainConfig::features`] instead, and every other rule stays
+/// that of the fork it actually runs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ChainFeatures {
+    /// EIP-8141 frame transactions and their opcodes.
+    pub frame_transactions: bool,
+    /// EIP-8288 dependency verification frames.
+    pub dependency_frames: bool,
+    /// EIP-8250 keyed nonces.
+    pub keyed_nonces: bool,
+    /// EIP-8272 recent-root references on frame transactions.
+    pub recent_roots: bool,
+    /// Scalar-nonce frame transactions remain valid alongside keyed nonces.
+    pub legacy_frames: bool,
+}
+
+impl ChainFeatures {
+    /// The features the named fork schedule activates at `fork`.
+    pub fn for_fork(fork: Fork) -> Self {
+        ChainFeatures {
+            frame_transactions: fork >= Fork::Hegota,
+            dependency_frames: fork >= Fork::JStar,
+            ..Default::default()
+        }
+    }
+}
+
 /// Blockchain settings defined per block
 #[allow(unused)]
 #[derive(
@@ -286,6 +323,22 @@ pub struct ChainConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub jstar_time: Option<u64>,
     pub lstar_time: Option<u64>,
+
+    /// Activates EIP-8141 frame transactions on their own, on top of whatever fork
+    /// is active, without the Osaka or Amsterdam rules a named fork would bring.
+    /// Genesis key `eip8141PrototypeTime`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eip8141_prototype_time: Option<u64>,
+    /// Activates EIP-8288 together with the frame-family EIPs that ship with it
+    /// (EIP-8250 keyed nonces, EIP-8272 recent roots, EIP-7906 POST_TX frames), again
+    /// on top of the active fork. Genesis key `eip8288PrototypeTime`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eip8288_prototype_time: Option<u64>,
+    /// Keeps scalar-nonce frame transactions valid after EIP-8250 activates, and
+    /// raises the public-mempool verification budget to 500,000 gas. A per-network
+    /// compatibility rule of the Daisugi testnet. Genesis key `daisugiLegacyFrames`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub daisugi_legacy_frames: bool,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
@@ -412,6 +465,55 @@ impl ChainConfig {
     /// schedule it *is* the same question.
     pub fn is_jstar_or_later(&self, block_timestamp: u64) -> bool {
         self.get_fork(block_timestamp) >= Fork::JStar
+    }
+
+    /// Whether EIP-8141 frame transactions are valid: from Hegotá on the named
+    /// fork schedule, or from `eip8141PrototypeTime` on a chain that runs them on
+    /// an earlier fork.
+    pub fn is_eip8141_active(&self, block_timestamp: u64) -> bool {
+        self.get_fork(block_timestamp) >= Fork::Hegota
+            || self
+                .eip8141_prototype_time
+                .is_some_and(|time| time <= block_timestamp)
+    }
+
+    /// Whether EIP-8288's rules apply: from J* on the named fork schedule (by
+    /// ordinal, see [`ChainConfig::is_jstar_or_later`]), or from
+    /// `eip8288PrototypeTime` once frame transactions are active. Use this for every
+    /// EIP-8288 gate.
+    pub fn is_eip8288_active(&self, block_timestamp: u64) -> bool {
+        self.is_jstar_or_later(block_timestamp) || self.is_eip8288_prototype_active(block_timestamp)
+    }
+
+    /// Whether the prototype EIP-8288 schedule is active. It also turns on EIP-8250
+    /// keyed nonces and EIP-8272 recent-root references, which the named fork
+    /// schedule does not carry.
+    pub fn is_eip8288_prototype_active(&self, block_timestamp: u64) -> bool {
+        self.is_eip8141_active(block_timestamp)
+            && self
+                .eip8288_prototype_time
+                .is_some_and(|time| time <= block_timestamp)
+    }
+
+    /// The transaction features active at `block_timestamp`.
+    pub fn features(&self, block_timestamp: u64) -> ChainFeatures {
+        let prototype = self.is_eip8288_prototype_active(block_timestamp);
+        ChainFeatures {
+            frame_transactions: self.is_eip8141_active(block_timestamp),
+            dependency_frames: self.is_eip8288_active(block_timestamp),
+            keyed_nonces: prototype,
+            recent_roots: prototype,
+            legacy_frames: self.is_legacy_frames_active(block_timestamp),
+        }
+    }
+
+    /// Whether scalar-nonce frame transactions stay valid once keyed nonces
+    /// activate. A compatibility rule of the Daisugi testnet, so it only applies on
+    /// its chain id.
+    pub fn is_legacy_frames_active(&self, block_timestamp: u64) -> bool {
+        self.chain_id == DAISUGI_CHAIN_ID
+            && self.daisugi_legacy_frames
+            && self.is_eip8141_active(block_timestamp)
     }
 
     pub fn is_lstar_activated(&self, block_timestamp: u64) -> bool {
@@ -788,6 +890,10 @@ impl ChainConfig {
             self.amsterdam_time,
             self.hegota_time,
             self.verkle_time,
+            // Each changes the rules on its own, so peers count it as a fork in
+            // their EIP-2124 fork ID; leaving it out gets the handshake rejected.
+            self.eip8141_prototype_time,
+            self.eip8288_prototype_time,
         ]
         .into_iter()
         .flatten()

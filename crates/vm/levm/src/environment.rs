@@ -1,6 +1,6 @@
 use ethrex_common::{
     Address, H256, U256,
-    types::{BlockHeader, ChainConfig, Fork, ForkBlobSchedule},
+    types::{BlockHeader, ChainConfig, ChainFeatures, Fork, ForkBlobSchedule},
 };
 
 use crate::constants::{
@@ -67,6 +67,7 @@ pub struct Environment {
 pub struct EVMConfig {
     pub fork: Fork,
     pub blob_schedule: ForkBlobSchedule,
+    pub features: ChainFeatures,
 }
 
 impl EVMConfig {
@@ -74,6 +75,7 @@ impl EVMConfig {
         EVMConfig {
             fork,
             blob_schedule,
+            features: ChainFeatures::for_fork(fork),
         }
     }
 
@@ -84,7 +86,11 @@ impl EVMConfig {
             .get_fork_blob_schedule(block_header.timestamp)
             .unwrap_or_else(|| EVMConfig::canonical_values(fork));
 
-        EVMConfig::new(fork, blob_schedule)
+        EVMConfig {
+            fork,
+            blob_schedule,
+            features: chain_config.features(block_header.timestamp),
+        }
     }
 
     /// This function is used for running the EF tests. If you don't
@@ -137,6 +143,7 @@ impl Default for EVMConfig {
         EVMConfig {
             fork,
             blob_schedule: Self::canonical_values(fork),
+            features: ChainFeatures::for_fork(fork),
         }
     }
 }

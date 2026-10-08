@@ -834,7 +834,7 @@ fn recursive_stark_participates_in_the_block_hash() {
 /// transaction as a reserved mode. That is a consensus split, not a missing feature.
 #[test]
 fn a_dependency_frame_is_not_valid_before_jstar() {
-    use ethrex_common::types::Fork;
+    use ethrex_common::types::{ChainFeatures, Fork};
 
     let tx = tx_with(vec![dep_frame(&[sphincs(1, 2)]), self_verify_frame()]);
     // The shape is fine at every fork; only the mode assignment is gated.
@@ -842,22 +842,28 @@ fn a_dependency_frame_is_not_valid_before_jstar() {
 
     for fork in [Fork::Amsterdam, Fork::Hegota] {
         let err = tx
-            .validate_fork_constraints(fork)
+            .validate_fork_constraints(ChainFeatures::for_fork(fork))
             .expect_err("mode 3 is reserved before J*");
         assert!(err.contains("before J*"), "{err}");
     }
     for fork in [Fork::JStar, Fork::LStar] {
-        assert!(tx.validate_fork_constraints(fork).is_ok());
+        assert!(
+            tx.validate_fork_constraints(ChainFeatures::for_fork(fork))
+                .is_ok()
+        );
     }
 }
 
 #[test]
 fn the_fork_gate_only_touches_dependency_frames() {
-    use ethrex_common::types::Fork;
+    use ethrex_common::types::{ChainFeatures, Fork};
 
     let tx = tx_with(vec![self_verify_frame()]);
     for fork in [Fork::Amsterdam, Fork::Hegota, Fork::JStar] {
-        assert!(tx.validate_fork_constraints(fork).is_ok());
+        assert!(
+            tx.validate_fork_constraints(ChainFeatures::for_fork(fork))
+                .is_ok()
+        );
     }
 }
 

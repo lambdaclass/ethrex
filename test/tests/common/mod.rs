@@ -4,6 +4,7 @@ mod base64_tests;
 #[cfg(feature = "c-kzg")]
 mod blobs_bundle_tests;
 mod code_serde_tests;
+mod daisugi_tests;
 mod dep_aggregation_tests;
 mod eip7702_authorization_tests;
 mod eip8288_spec_questions;

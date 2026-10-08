@@ -1037,6 +1037,7 @@ impl<'a> VM<'a> {
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
 
         let fork = env.config.fork;
+        let frame_transactions = env.config.features.frame_transactions;
 
         #[expect(
             clippy::arithmetic_side_effects,
@@ -1116,7 +1117,7 @@ impl<'a> VM<'a> {
             ),
             env,
             frame_tx_context: None,
-            opcode_table: VM::build_opcode_table(fork),
+            opcode_table: VM::build_opcode_table(fork, frame_transactions),
             crypto,
             stateless_validator,
         };
@@ -1653,8 +1654,8 @@ impl<'a> VM<'a> {
         use crate::errors::TxResult;
 
         // EIP-8141 fork gating: reject frame transactions observed in a block or
-        // submitted to any non-mempool entry point before Hegota activates.
-        if self.env.config.fork < Fork::Hegota {
+        // submitted to any non-mempool entry point before frame transactions activate.
+        if !self.env.config.features.frame_transactions {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::FrameTxPreFork,
             ));
@@ -1685,8 +1686,8 @@ impl<'a> VM<'a> {
         // right reason but reports the wrong one is indistinguishable from a client that
         // rejected it by accident (see the mapper note above `TxValidationError`).
         // EIP-8288 gating, separate from the shape checks below: mode 3 is a
-        // reserved byte before J*, so a block carrying one is invalid there.
-        if let Err(e) = frame_tx.validate_fork_constraints(self.env.config.fork) {
+        // reserved byte before EIP-8288, so a block carrying one is invalid there.
+        if let Err(e) = frame_tx.validate_fork_constraints(self.env.config.features) {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InvalidFrameTransactionFormat(e),
             ));
@@ -2950,7 +2951,7 @@ impl<'a> VM<'a> {
     ) -> Result<PrefixSimResult, VMError> {
         use crate::validation_observer::ValidationObserver;
 
-        if self.env.config.fork < Fork::Hegota {
+        if !self.env.config.features.frame_transactions {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::FrameTxPreFork,
             ));
@@ -2968,8 +2969,8 @@ impl<'a> VM<'a> {
         let sender = frame_tx.sender;
 
         // EIP-8288 gating, separate from the shape checks below: mode 3 is a
-        // reserved byte before J*, so a block carrying one is invalid there.
-        if let Err(e) = frame_tx.validate_fork_constraints(self.env.config.fork) {
+        // reserved byte before EIP-8288, so a block carrying one is invalid there.
+        if let Err(e) = frame_tx.validate_fork_constraints(self.env.config.features) {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InvalidFrameTransactionFormat(e),
             ));
@@ -4116,7 +4117,10 @@ impl<'a> VM<'a> {
             prep_baseline_state_gas_spill: 0,
             prep_region_backup_marker: PrepareRegionBackupMarker::default(),
             pending_prep_oog: false,
-            opcode_table: VM::build_opcode_table(fork),
+            opcode_table: VM::build_opcode_table(
+                fork,
+                ethrex_common::types::ChainFeatures::for_fork(fork).frame_transactions,
+            ),
             crypto,
             stateless_validator: None,
             validation_observer: ValidationObserver::disabled(),

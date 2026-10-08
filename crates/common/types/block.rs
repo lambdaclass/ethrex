@@ -963,7 +963,7 @@ pub fn validate_prague_header_fields(
     //
     // Gated separately from the Amsterdam pair above because J* is its own fork
     // (Amsterdam 25 < Hegota 26 < J* 27), so a block can be Amsterdam without it.
-    if chain_config.is_jstar_or_later(header.timestamp) {
+    if chain_config.is_eip8288_active(header.timestamp) {
         if header.recursive_stark.is_none() {
             return Err(InvalidBlockHeaderError::RecursiveStarkNotPresent);
         }

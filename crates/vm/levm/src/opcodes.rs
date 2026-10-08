@@ -423,22 +423,36 @@ impl<'a> VM<'a> {
     /// per-tx rebuild or 2 KB copy into the VM. `fork` is constant within a block, so every tx
     /// in a block resolves to the same table. This is faster than a conventional match.
     #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    pub(crate) fn build_opcode_table(fork: Fork) -> &'static [OpCodeFn; 256] {
+    pub(crate) fn build_opcode_table(
+        fork: Fork,
+        frame_transactions: bool,
+    ) -> &'static [OpCodeFn; 256] {
         // Built once at compile time; immutable, so sharing across all VMs is trivially safe.
         // Instantiated with `'static` so the initializers don't reference the impl's `'a`.
         static HEGOTA: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_hegota();
         static AMSTERDAM: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_amsterdam();
+        static OSAKA_FRAMES: [OpCodeFn; 256] =
+            VM::<'static>::with_frame_opcodes(VM::<'static>::build_opcode_table_osaka());
         static OSAKA: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_osaka();
+        static PRE_OSAKA_FRAMES: [OpCodeFn; 256] =
+            VM::<'static>::with_frame_opcodes(VM::<'static>::build_opcode_table_pre_osaka());
         static PRE_OSAKA: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_pre_osaka();
         static PRE_CANCUN: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_pre_cancun();
         static PRE_SHANGHAI: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_pre_shanghai();
 
-        if fork >= Fork::Hegota {
+        // Frame transactions activated ahead of Hegotá (`eip8141PrototypeTime`) bring
+        // their opcodes onto the fork the chain runs, and nothing else from Hegotá.
+        // On an Amsterdam base that is exactly the Hegotá table.
+        if fork >= Fork::Hegota || (frame_transactions && fork >= Fork::Amsterdam) {
             &HEGOTA
         } else if fork >= Fork::Amsterdam {
             &AMSTERDAM
+        } else if frame_transactions && fork >= Fork::Osaka {
+            &OSAKA_FRAMES
         } else if fork >= Fork::Osaka {
             &OSAKA
+        } else if frame_transactions && fork >= Fork::Cancun {
+            &PRE_OSAKA_FRAMES
         } else if fork >= Fork::Cancun {
             &PRE_OSAKA
         } else if fork >= Fork::Shanghai {
@@ -655,11 +669,13 @@ impl<'a> VM<'a> {
         opcode_table
     }
 
-    #[expect(clippy::as_conversions, clippy::indexing_slicing)]
     const fn build_opcode_table_hegota() -> [OpCodeFn; 256] {
-        let mut opcode_table: [OpCodeFn; 256] = Self::build_opcode_table_amsterdam();
+        Self::with_frame_opcodes(Self::build_opcode_table_amsterdam())
+    }
 
-        // EIP-8141 Frame Transaction opcodes (Hegota)
+    /// Adds the EIP-8141 frame transaction opcodes to a fork's table.
+    #[expect(clippy::as_conversions, clippy::indexing_slicing)]
+    const fn with_frame_opcodes(mut opcode_table: [OpCodeFn; 256]) -> [OpCodeFn; 256] {
         opcode_table[Opcode::APPROVE as usize] = OpCodeFn::new::<OpApproveHandler>();
         opcode_table[Opcode::TXPARAM as usize] = OpCodeFn::new::<OpTxParamHandler>();
         opcode_table[Opcode::FRAMEDATALOAD as usize] = OpCodeFn::new::<OpFrameDataLoadHandler>();
@@ -689,7 +705,7 @@ mod tests {
         }
         // 0xEF is never assigned in any table -> it holds the invalid handler.
         for fork in [Fork::Osaka, Fork::Amsterdam] {
-            let table = VM::build_opcode_table(fork);
+            let table = VM::build_opcode_table(fork, false);
             for byte in [0xAAusize, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4] {
                 assert!(
                     same_handler(table[byte], table[0xEF]),
@@ -697,7 +713,14 @@ mod tests {
                 );
             }
         }
-        let hegota = VM::build_opcode_table(Fork::Hegota);
+        let hegota = VM::build_opcode_table(Fork::Hegota, true);
         assert!(!same_handler(hegota[0xAA], hegota[0xEF]));
+        // Activated ahead of Hegotá, the frame opcodes join the base fork's table
+        // without that fork's successors: Prague gets them but not CLZ.
+        let prague_frames = VM::build_opcode_table(Fork::Prague, true);
+        for byte in [0xAAusize, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5] {
+            assert!(!same_handler(prague_frames[byte], prague_frames[0xEF]));
+        }
+        assert!(same_handler(prague_frames[0x1E], prague_frames[0xEF]));
     }
 }

@@ -26,8 +26,8 @@ use crate::error::ChainError;
 
 /// Check the block's recursive proof against the dependencies it declares.
 ///
-/// A no-op before J*, resolved by ordinal so that this and the VM's frame-mode
-/// gate cannot disagree (see [`ChainConfig::is_jstar_or_later`]). From J* the
+/// A no-op before EIP-8288 activates, resolved so that this and the VM's frame-mode
+/// gate cannot disagree (see [`ChainConfig::is_eip8288_active`]). From then the
 /// header entry is mandatory, so its absence is already an invalid header by the
 /// time this runs; the `None` arm is defensive.
 ///
@@ -38,7 +38,7 @@ pub fn validate_recursive_stark(
     chain_config: &ChainConfig,
     aggregator: &dyn DependencyAggregator,
 ) -> Result<(), ChainError> {
-    if !chain_config.is_jstar_or_later(block.header.timestamp) {
+    if !chain_config.is_eip8288_active(block.header.timestamp) {
         return Ok(());
     }
 
