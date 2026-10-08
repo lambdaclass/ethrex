@@ -902,12 +902,20 @@ impl PayloadRLPEncode for FeeTokenTransaction {
 /// case and surface a "Nonce is max" message so it maps to `NONCE_IS_MAX` in
 /// both the upstream Python `ethrex.py` mapper and the local Rust mapper.
 fn decode_nonce_field(decoder: Decoder) -> Result<(u64, Decoder), RLPDecodeError> {
-    // Wrap every decode failure exactly as `Decoder::decode_field` would, so
-    // non-overflow errors keep their original wording (and mapper classification);
-    // only the intentional over-u64 case below diverges.
-    let wrap =
-        |err| RLPDecodeError::Custom(format!("Error decoding field 'nonce' of type u64: {err}"));
-    let (item, rest) = decoder.get_encoded_item_ref().map_err(wrap)?;
+    let (item, rest) = decoder.get_encoded_item_ref().map_err(nonce_decode_error)?;
+    Ok((decode_nonce_item(item)?, rest))
+}
+
+/// Wrap a nonce decode failure exactly as `Decoder::decode_field` would, so
+/// non-overflow errors keep their original wording (and mapper classification).
+fn nonce_decode_error(err: RLPDecodeError) -> RLPDecodeError {
+    RLPDecodeError::Custom(format!("Error decoding field 'nonce' of type u64: {err}"))
+}
+
+/// Decode one already-delimited nonce item. Only the intentional over-u64 case
+/// below diverges from an ordinary u64 field decode.
+fn decode_nonce_item(item: &[u8]) -> Result<u64, RLPDecodeError> {
+    let wrap = nonce_decode_error;
     // A *canonical* over-u64 nonce (>= 2**64) has more than 8 significant bytes and,
     // being canonical, no leading zero byte. EEST uses it for
     // TransactionException.NONCE_IS_MAX; surface a nonce-domain rejection rather than
@@ -926,7 +934,7 @@ fn decode_nonce_field(decoder: Decoder) -> Result<(u64, Decoder), RLPDecodeError
         return Err(RLPDecodeError::Custom("Nonce is max".into()));
     }
     let (nonce, _) = u64::decode_unfinished(item).map_err(wrap)?;
-    Ok((nonce, rest))
+    Ok(nonce)
 }
 
 impl RLPDecode for LegacyTransaction {
@@ -2068,13 +2076,63 @@ impl RLPDecode for FrameSignature {
     }
 }
 
+/// EIP-8272 recent-root reference: `[source_id, slot, root]`.
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
+pub struct RecentRootReference {
+    #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
+    pub source_id: H256,
+    pub slot: u64,
+    #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
+    pub root: H256,
+}
+
+impl RLPEncode for RecentRootReference {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.source_id)
+            .encode_field(&self.slot)
+            .encode_field(&self.root)
+            .finish();
+    }
+}
+
+impl RLPDecode for RecentRootReference {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(RecentRootReference, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (source_id, decoder) = decoder.decode_field("source_id")?;
+        let (slot, decoder) = decoder.decode_field("slot")?;
+        let (root, decoder) = decoder.decode_field("root")?;
+        Ok((
+            RecentRootReference {
+                source_id,
+                slot,
+                root,
+            },
+            decoder.finish()?,
+        ))
+    }
+}
+
+/// EIP-8250 `MAX_NONCE_KEYS`: the most keys one transaction may consume.
+pub const FRAME_TX_MAX_NONCE_KEYS: usize = 16;
+/// EIP-8272: the most recent-root references one transaction may carry.
+pub const FRAME_TX_MAX_RECENT_ROOT_REFS: usize = 16;
+
 /// EIP-8141 Frame Transaction
 /// A transaction whose validity and gas payment are defined abstractly via frames.
 /// No ECDSA signature — sender is explicit. Authentication happens via APPROVE opcode.
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct FrameTransaction {
     pub chain_id: u64,
+    /// The account nonce in the scalar form; with `nonce_keys`, the shared
+    /// `nonce_seq` every key must currently sit at.
     pub nonce: u64,
+    /// EIP-8250 nonce keys. `Some` selects the keyed form
+    /// `[chain_id, nonce_keys, nonce_seq, sender, ...]`; `None` is the scalar form
+    /// `[chain_id, nonce, sender, ...]`. The two encode, hash and price differently
+    /// even for the key set `[0]`, which shares the account nonce with the scalar form.
+    #[rkyv(with=rkyv::with::Map<rkyv::with::Map<crate::rkyv_utils::U256Wrapper>>)]
+    pub nonce_keys: Option<Vec<U256>>,
     #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub sender: Address,
     pub frames: Vec<Frame>,
@@ -2092,6 +2150,9 @@ pub struct FrameTransaction {
     pub max_fee_per_blob_gas: U256,
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H256Wrapper>)]
     pub blob_versioned_hashes: Vec<H256>,
+    /// EIP-8272 recent-root references, an optional trailing list. Absent and
+    /// present-but-empty are distinct encodings with distinct hashes.
+    pub recent_root_refs: Option<Vec<RecentRootReference>>,
     #[rkyv(with=rkyv::with::Skip)]
     pub inner_hash: OnceCell<H256>,
     #[rkyv(with=rkyv::with::Skip)]
@@ -2273,6 +2334,36 @@ pub fn frame_tx_expiry_verifier() -> Address {
     Address::from_low_u64_be(FRAME_TX_EXPIRY_VERIFIER_U64)
 }
 
+/// EIP-8250 `NONCE_MANAGER` predeploy address (0x…8250), whose storage holds the
+/// next sequence of every non-zero nonce key.
+pub fn frame_tx_nonce_manager() -> Address {
+    Address::from_low_u64_be(0x8250)
+}
+
+/// EIP-8272 recent-root predeploy address (0x…8272).
+pub fn frame_tx_recent_root_store() -> Address {
+    Address::from_low_u64_be(0x8272)
+}
+
+/// EIP-8250: the `NONCE_MANAGER` storage slot of `(sender, key)`,
+/// `keccak256(leftpad32(sender) || be32(key))`.
+pub fn keyed_nonce_slot(sender: Address, key: U256) -> H256 {
+    let mut preimage = [0u8; 64];
+    preimage[12..32].copy_from_slice(sender.as_bytes());
+    preimage[32..].copy_from_slice(&key.to_big_endian());
+    keccak(preimage)
+}
+
+/// EIP-8250 TXPARAM `0x0F`: `keccak256(be32(len(keys)) || be32(k) for k in keys)`.
+pub fn nonce_keys_hash(keys: &[U256]) -> H256 {
+    let mut preimage = Vec::with_capacity(32 * (keys.len() + 1));
+    preimage.extend_from_slice(&U256::from(keys.len()).to_big_endian());
+    for key in keys {
+        preimage.extend_from_slice(&key.to_big_endian());
+    }
+    keccak(preimage)
+}
+
 impl FrameTransaction {
     /// Canonical signature hash (EIP-8141): the raw
     /// `signature` bytes of every signature with empty `msg` are elided (a
@@ -2297,20 +2388,9 @@ impl FrameTransaction {
                 }
             })
             .collect();
-        // RLP-encode the tx with elided signature bytes, frames verbatim.
-        Encoder::new(&mut buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce)
-            .encode_field(&self.sender)
-            .encode_field(&self.frames)
-            .encode_field(&elided_signatures)
-            .encode_field(&(
-                self.max_priority_fee_per_gas,
-                self.max_fee_per_gas,
-                self.max_fee_per_blob_gas,
-            ))
-            .encode_field(&self.blob_versioned_hashes)
-            .finish();
+        // RLP-encode the tx with elided signature bytes, frames verbatim, in the
+        // nonce form the transaction itself uses.
+        self.encode_with_signatures(&mut buf, &elided_signatures);
         keccak(&buf)
     }
 
@@ -2349,9 +2429,13 @@ impl FrameTransaction {
     /// EIP-7623 calldata cost over the frame and signature data: 4 gas per zero
     /// byte, 16 per non-zero byte.
     pub fn data_cost(&self) -> u64 {
-        self.data_fields().flatten().fold(0u64, |acc, byte| {
-            acc.saturating_add(if *byte == 0 { 4 } else { 16 })
-        })
+        let envelope = self.priced_envelope_bytes();
+        self.data_fields()
+            .chain(std::iter::once(envelope.as_slice()))
+            .flatten()
+            .fold(0u64, |acc, byte| {
+                acc.saturating_add(if *byte == 0 { 4 } else { 16 })
+            })
     }
 
     /// EIP-7623 token count over the frame and signature data, used for the
@@ -2359,13 +2443,17 @@ impl FrameTransaction {
     /// byte costs `STANDARD_TOKEN_COST`); before it, a zero byte is one token and
     /// any other byte four.
     pub fn calldata_tokens(&self, fork: crate::types::Fork) -> u64 {
+        let envelope = self.priced_envelope_bytes();
+        let fields = || {
+            self.data_fields()
+                .chain(std::iter::once(envelope.as_slice()))
+        };
         if fork >= crate::types::Fork::Amsterdam {
-            return self
-                .data_fields()
+            return fields()
                 .fold(0u64, |acc, field| acc.saturating_add(field.len() as u64))
                 .saturating_mul(FRAME_TX_STANDARD_TOKEN_COST);
         }
-        self.data_fields().flatten().fold(0u64, |acc, byte| {
+        fields().flatten().fold(0u64, |acc, byte| {
             acc.saturating_add(if *byte == 0 {
                 1
             } else {
@@ -2534,6 +2622,32 @@ impl FrameTransaction {
         &self,
         features: crate::types::ChainFeatures,
     ) -> Result<(), String> {
+        // EIP-8250: the keyed form needs keyed nonces, and once they are active the
+        // scalar form is retired unless the chain keeps it for compatibility.
+        match (&self.nonce_keys, features.keyed_nonces) {
+            (Some(_), false) => {
+                return Err("keyed nonces (EIP-8250) are not active".to_string());
+            }
+            (None, true) if !features.legacy_frames => {
+                return Err(
+                    "the scalar nonce form is not valid once EIP-8250 is active".to_string()
+                );
+            }
+            _ => {}
+        }
+        // EIP-8272: the trailing list, even empty, needs recent roots. Validating a
+        // reference needs the header's slot number, which a chain without EIP-7843
+        // does not carry, so no non-empty list can be valid here.
+        if let Some(refs) = &self.recent_root_refs {
+            if !features.recent_roots {
+                return Err("recent-root references (EIP-8272) are not active".to_string());
+            }
+            if !refs.is_empty() {
+                return Err(
+                    "recent-root references cannot be validated without a slot number".to_string(),
+                );
+            }
+        }
         if features.dependency_frames {
             return Ok(());
         }
@@ -2548,6 +2662,30 @@ impl FrameTransaction {
     }
 
     pub fn validate_static_constraints(&self) -> Result<(), String> {
+        // EIP-8250: a well-formed key set has 1 to MAX_NONCE_KEYS keys, uses key 0
+        // only as the singleton [0], and is otherwise strictly increasing.
+        if let Some(keys) = &self.nonce_keys {
+            if keys.is_empty() || keys.len() > FRAME_TX_MAX_NONCE_KEYS {
+                return Err(format!(
+                    "nonce_keys must hold between 1 and {FRAME_TX_MAX_NONCE_KEYS} keys"
+                ));
+            }
+            if keys.first().is_some_and(|k| k.is_zero()) && keys.len() != 1 {
+                return Err("nonce key 0 is only valid as the singleton set [0]".to_string());
+            }
+            if keys.windows(2).any(|pair| pair[1] <= pair[0]) {
+                return Err("nonce_keys must be strictly increasing".to_string());
+            }
+        }
+        if self
+            .recent_root_refs
+            .as_ref()
+            .is_some_and(|refs| refs.len() > FRAME_TX_MAX_RECENT_ROOT_REFS)
+        {
+            return Err(format!(
+                "at most {FRAME_TX_MAX_RECENT_ROOT_REFS} recent-root references are allowed"
+            ));
+        }
         // tx.sender != zero address
         if self.sender == Address::zero() {
             return Err("tx.sender must not be zero address".to_string());
@@ -3134,19 +3272,48 @@ pub enum FrameValidationError {
 
 impl RLPEncode for FrameTransaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
+        self.encode_with_signatures(buf, &self.signatures);
+    }
+}
+
+impl FrameTransaction {
+    /// The payload list in whichever nonce form the transaction uses, with the
+    /// given signature list in place of its own. The signature hash encodes the
+    /// same list with signature bytes elided, so both go through here.
+    fn encode_with_signatures<S: RLPEncode>(&self, buf: &mut dyn bytes::BufMut, signatures: &S) {
+        let mut encoder = Encoder::new(buf).encode_field(&self.chain_id);
+        if let Some(nonce_keys) = &self.nonce_keys {
+            encoder = encoder.encode_field(nonce_keys);
+        }
+        encoder
             .encode_field(&self.nonce)
             .encode_field(&self.sender)
             .encode_field(&self.frames)
-            .encode_field(&self.signatures)
+            .encode_field(signatures)
             .encode_field(&(
                 self.max_priority_fee_per_gas,
                 self.max_fee_per_gas,
                 self.max_fee_per_blob_gas,
             ))
             .encode_field(&self.blob_versioned_hashes)
+            .encode_optional_field(&self.recent_root_refs)
             .finish();
+    }
+
+    /// The envelope bytes EIP-8250 and EIP-8272 add to the calldata the
+    /// transaction pays for: `rlp(recent_root_refs)` when the list is present, and
+    /// `rlp(nonce_keys) || rlp(nonce_seq)` in the keyed form. The scalar nonce is
+    /// not priced.
+    fn priced_envelope_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        if let Some(refs) = &self.recent_root_refs {
+            refs.encode(&mut out);
+        }
+        if let Some(nonce_keys) = &self.nonce_keys {
+            nonce_keys.encode(&mut out);
+            self.nonce.encode(&mut out);
+        }
+        out
     }
 }
 
@@ -3154,7 +3321,19 @@ impl RLPDecode for FrameTransaction {
     fn decode_unfinished(rlp: &[u8]) -> Result<(FrameTransaction, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
         let (chain_id, decoder) = decoder.decode_field("chain_id")?;
-        let (nonce, decoder) = decode_nonce_field(decoder)?;
+        // EIP-8250: a list after `chain_id` is `nonce_keys`, followed by the shared
+        // `nonce_seq`; a scalar there is the plain account nonce.
+        let (item, decoder) = decoder.get_encoded_item_ref().map_err(nonce_decode_error)?;
+        let (is_list, _, _) = decode_rlp_item(item)?;
+        let (nonce_keys, nonce, decoder) = if !is_list {
+            (None, decode_nonce_item(item)?, decoder)
+        } else {
+            let nonce_keys = Vec::<U256>::decode(item).map_err(|err| {
+                RLPDecodeError::Custom(format!("Error decoding field 'nonce_keys': {err}"))
+            })?;
+            let (nonce, decoder) = decode_nonce_field(decoder)?;
+            (Some(nonce_keys), nonce, decoder)
+        };
         let (sender, decoder) = decoder.decode_field("sender")?;
         let (frames, decoder) = decoder.decode_field("frames")?;
         let (signatures, decoder) = decoder.decode_field("signatures")?;
@@ -3173,9 +3352,18 @@ impl RLPDecode for FrameTransaction {
             fees_decoder.decode_field("max_fee_per_blob_gas")?;
         fees_decoder.finish()?;
         let (blob_versioned_hashes, decoder) = decoder.decode_field("blob_versioned_hashes")?;
+        // EIP-8272: an optional trailing list. Anything after it, or a trailing item
+        // that is not a list, fails the decode.
+        let (recent_root_refs, decoder) = if decoder.is_done() {
+            (None, decoder)
+        } else {
+            let (refs, decoder) = decoder.decode_field("recent_root_refs")?;
+            (Some(refs), decoder)
+        };
         let tx = FrameTransaction {
             chain_id,
             nonce,
+            nonce_keys,
             sender,
             frames,
             signatures,
@@ -3183,6 +3371,7 @@ impl RLPDecode for FrameTransaction {
             max_fee_per_gas,
             max_fee_per_blob_gas,
             blob_versioned_hashes,
+            recent_root_refs,
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         };
@@ -5616,6 +5805,8 @@ mod tests {
             max_fee_per_gas: U256::from(30_000_000_000u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
+            nonce_keys: None,
+            recent_root_refs: None,
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         }
@@ -5893,6 +6084,8 @@ mod tests {
             max_fee_per_gas: U256::from(30_000_000_000u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
+            nonce_keys: None,
+            recent_root_refs: None,
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         }
@@ -5977,6 +6170,8 @@ mod tests {
             max_fee_per_gas: U256::from(30_000_000_000u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
+            nonce_keys: None,
+            recent_root_refs: None,
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         }
@@ -6087,6 +6282,8 @@ mod tests {
             max_fee_per_gas: U256::from(30_000_000_000u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
+            nonce_keys: None,
+            recent_root_refs: None,
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         };
@@ -6466,6 +6663,8 @@ mod tests {
             max_fee_per_gas: U256::from(0x6fc23ac00u64),
             max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
+            nonce_keys: None,
+            recent_root_refs: None,
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         };

@@ -93,16 +93,18 @@ pub fn apply_approve(
                 return Err(VMError::RevertOpcode);
             }
             let tx_cost = compute_tx_max_cost(ctx)?;
-            let sender = ctx.tx.sender;
 
-            // EIP-8141: incrementing the nonce of a sender that does not exist yet
-            // creates the account, so the payment approval pays the EIP-8037
-            // NEW_ACCOUNT state charge out of the executing frame's state pool. A
-            // pool that cannot cover it halts the frame exceptionally.
-            if vm.db.get_account(sender)?.is_empty() {
-                vm.increase_state_gas(vm.frame_new_sender_state_gas())?;
+            // The payer must hold `max_cost` before anything else happens: a
+            // payer that cannot pay reverts the frame, whatever state gas the
+            // nonce would have cost.
+            if vm.db.get_account(frame_target)?.info.balance < tx_cost {
+                return Err(VMError::RevertOpcode);
             }
-            vm.increment_account_nonce(sender)?;
+            // EIP-8141: consuming the nonce of a sender that does not exist yet
+            // creates the account, and a fresh EIP-8250 key creates a slot, so the
+            // payment approval pays that state charge out of the executing frame's
+            // state pool. A pool that cannot cover it halts the frame exceptionally.
+            vm.consume_frame_tx_nonce()?;
             // Payer balance underflow is a frame-level revert, not a consensus
             // fault: the outer restore_cache_state() path rolls back the nonce
             // increment above when RevertOpcode propagates.
@@ -156,16 +158,18 @@ pub fn apply_approve(
                 return Err(VMError::RevertOpcode);
             }
             let tx_cost = compute_tx_max_cost(ctx)?;
-            let sender = ctx.tx.sender;
 
-            // EIP-8141: incrementing the nonce of a sender that does not exist yet
-            // creates the account, so the payment approval pays the EIP-8037
-            // NEW_ACCOUNT state charge out of the executing frame's state pool. A
-            // pool that cannot cover it halts the frame exceptionally.
-            if vm.db.get_account(sender)?.is_empty() {
-                vm.increase_state_gas(vm.frame_new_sender_state_gas())?;
+            // The payer must hold `max_cost` before anything else happens: a
+            // payer that cannot pay reverts the frame, whatever state gas the
+            // nonce would have cost.
+            if vm.db.get_account(frame_target)?.info.balance < tx_cost {
+                return Err(VMError::RevertOpcode);
             }
-            vm.increment_account_nonce(sender)?;
+            // EIP-8141: consuming the nonce of a sender that does not exist yet
+            // creates the account, and a fresh EIP-8250 key creates a slot, so the
+            // payment approval pays that state charge out of the executing frame's
+            // state pool. A pool that cannot cover it halts the frame exceptionally.
+            vm.consume_frame_tx_nonce()?;
             // See scope 0x1 above for the Underflow → RevertOpcode rationale.
             match vm.decrease_account_balance(frame_target, tx_cost) {
                 Ok(()) => {}
@@ -670,6 +674,27 @@ pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U
         0x09 => Ok(U256::from(ctx.tx.frames.len())),
         0x0A => Ok(U256::from(ctx.current_frame_index)),
         0x0B => Ok(U256::from(ctx.tx.signatures.len())),
+        // EIP-8250. The scalar form reads as the key set [0], the domain its
+        // account nonce occupies.
+        0x0D if ctx.keyed_nonces => Ok(U256::from(ctx.account_nonce_at_start)),
+        0x0E if ctx.keyed_nonces => Ok(U256::from(
+            ctx.tx.nonce_keys.as_ref().map_or(1, |keys| keys.len()),
+        )),
+        0x0F if ctx.keyed_nonces => {
+            let keys = ctx
+                .tx
+                .nonce_keys
+                .clone()
+                .unwrap_or_else(|| vec![U256::zero()]);
+            let hash = ethrex_common::types::nonce_keys_hash(&keys);
+            Ok(U256::from_big_endian(hash.as_bytes()))
+        }
+        0x10 if ctx.keyed_nonces => Ok(ctx
+            .tx
+            .nonce_keys
+            .as_ref()
+            .and_then(|keys| keys.first().copied())
+            .unwrap_or_default()),
         // 0x0C is state gas remaining in the executing frame's pool, which lives on
         // the VM rather than the context; `load_tx_param` has no access to it, so the
         // handler answers it before delegating here.
@@ -788,6 +813,8 @@ mod max_cost_tests {
             approve_called_in_current_frame: false,
             max_gas,
             blob_base_fee: U256::from(blob_base_fee),
+            account_nonce_at_start: 0,
+            keyed_nonces: false,
         }
     }
 

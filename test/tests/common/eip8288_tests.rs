@@ -86,6 +86,8 @@ fn tx_with(frames: Vec<Frame>) -> FrameTransaction {
         max_fee_per_gas: U256::from(30_000_000_000u64),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
+        nonce_keys: None,
+        recent_root_refs: None,
         inner_hash: OnceCell::new(),
         cached_canonical: OnceCell::new(),
     }

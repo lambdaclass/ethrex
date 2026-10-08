@@ -208,10 +208,12 @@ impl Evm {
         // EIP-8141: the expiry verifier predeploy must exist from frame
         // transaction activation onward. Idempotent install for the
         // payload-build path; the block-import path is hooked in prepare_block.
-        if chain_config.is_eip8141_active(block_header.timestamp)
-            && matches!(self.vm_type, VMType::L1)
-        {
-            LEVM::install_expiry_verifier_code(&mut self.db, self.crypto.as_ref())?;
+        if matches!(self.vm_type, VMType::L1) {
+            LEVM::install_frame_predeploys(
+                &mut self.db,
+                chain_config.features(block_header.timestamp),
+                self.crypto.as_ref(),
+            )?;
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {

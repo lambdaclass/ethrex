@@ -536,6 +536,11 @@ pub struct FrameTxContext {
     /// (EIP-8141 §Gas accounting), and `load_tx_param` has no `Environment`
     /// handle to read it from.
     pub blob_base_fee: U256,
+    /// The sender's account nonce before any frame ran (EIP-8250 TXPARAM `0x0D`).
+    /// Approval, deployment and `CREATE` all move the live nonce afterwards.
+    pub account_nonce_at_start: u64,
+    /// Whether EIP-8250 is active, which defines TXPARAM `0x0D` to `0x10`.
+    pub keyed_nonces: bool,
 }
 
 impl FrameTxContext {
@@ -1760,15 +1765,8 @@ impl<'a> VM<'a> {
         }
 
         // Check nonce matches
-        let sender_info = self.db.get_account(sender)?.info.clone();
-        if sender_info.nonce != frame_tx.nonce {
-            return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::NonceMismatch {
-                    expected: sender_info.nonce,
-                    actual: frame_tx.nonce,
-                },
-            ));
-        }
+        let account_nonce_at_start = self.db.get_account(sender)?.info.nonce;
+        self.validate_frame_tx_nonce(&frame_tx)?;
 
         // Check priority fee <= max fee
         if frame_tx.max_priority_fee_per_gas > frame_tx.max_fee_per_gas {
@@ -1819,6 +1817,8 @@ impl<'a> VM<'a> {
             approve_called_in_current_frame: false,
             max_gas,
             blob_base_fee: self.env.base_blob_fee_per_gas,
+            account_nonce_at_start,
+            keyed_nonces: self.env.config.features.keyed_nonces,
         });
 
         // EIP-8141: every outer signature must validate
@@ -3002,15 +3002,8 @@ impl<'a> VM<'a> {
             ));
         }
 
-        let sender_info = self.db.get_account(sender)?.info.clone();
-        if sender_info.nonce != frame_tx.nonce {
-            return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::NonceMismatch {
-                    expected: sender_info.nonce,
-                    actual: frame_tx.nonce,
-                },
-            ));
-        }
+        let account_nonce_at_start = self.db.get_account(sender)?.info.nonce;
+        self.validate_frame_tx_nonce(&frame_tx)?;
 
         if frame_tx.max_priority_fee_per_gas > frame_tx.max_fee_per_gas {
             return Err(VMError::TxValidation(
@@ -3040,6 +3033,8 @@ impl<'a> VM<'a> {
             approve_called_in_current_frame: false,
             max_gas,
             blob_base_fee: self.env.base_blob_fee_per_gas,
+            account_nonce_at_start,
+            keyed_nonces: self.env.config.features.keyed_nonces,
         });
 
         if !validate_frame_signatures(
@@ -4158,6 +4153,102 @@ impl<'a> VM<'a> {
     pub fn state_gas_spill(&self) -> u64 {
         self.state_gas_spill
     }
+    /// The state gas EIP-8250 charges for each nonce key used for the first time,
+    /// one storage set, priced like [`VM::frame_new_sender_state_gas`].
+    pub(crate) fn frame_storage_set_state_gas(&self) -> u64 {
+        if self.env.config.fork >= Fork::Amsterdam {
+            return self.state_gas_storage_set;
+        }
+        crate::gas_cost::STATE_BYTES_PER_STORAGE_SET.saturating_mul(
+            crate::gas_cost::cost_per_state_byte(self.env.block_gas_limit),
+        )
+    }
+
+    /// The sequence a nonce key currently sits at: the account nonce for key 0,
+    /// otherwise the key's `NONCE_MANAGER` slot. A stored value above `u64::MAX`
+    /// reads as `u64::MAX`, so a crafted slot cannot match a valid sequence.
+    fn current_nonce_seq(&mut self, sender: Address, key: U256) -> Result<u64, VMError> {
+        if key.is_zero() {
+            return Ok(self.db.get_account(sender)?.info.nonce);
+        }
+        let manager = ethrex_common::types::frame_tx_nonce_manager();
+        // Storage reads need the account cached first.
+        self.db.get_account(manager)?;
+        let stored =
+            self.get_storage_value(manager, ethrex_common::types::keyed_nonce_slot(sender, key))?;
+        Ok(u64::try_from(stored).unwrap_or(u64::MAX))
+    }
+
+    /// EIP-8141/EIP-8250 nonce check: every key of the set, or the account nonce
+    /// in the scalar form, must currently sit at the transaction's nonce.
+    fn validate_frame_tx_nonce(
+        &mut self,
+        frame_tx: &ethrex_common::types::FrameTransaction,
+    ) -> Result<(), VMError> {
+        let account_nonce_key = [U256::zero()];
+        let keys = frame_tx.nonce_keys.as_deref().unwrap_or(&account_nonce_key);
+        for key in keys {
+            let current = self.current_nonce_seq(frame_tx.sender, *key)?;
+            if current != frame_tx.nonce {
+                return Err(VMError::TxValidation(
+                    crate::errors::TxValidationError::NonceMismatch {
+                        expected: current,
+                        actual: frame_tx.nonce,
+                    },
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Consume the transaction's nonce at payment approval and charge the state
+    /// the consumption creates. The scalar form and the key set `[0]` advance the
+    /// account nonce, creating the sender if it does not exist; any other key set
+    /// writes `nonce_seq + 1` to each key's `NONCE_MANAGER` slot and pays one
+    /// storage-set charge per key used for the first time (EIP-8250).
+    pub(crate) fn consume_frame_tx_nonce(&mut self) -> Result<(), VMError> {
+        let ctx = self
+            .frame_tx_context
+            .as_ref()
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+        let sender = ctx.tx.sender;
+        let nonce_seq = ctx.tx.nonce;
+        let keys = match &ctx.tx.nonce_keys {
+            Some(keys) if !matches!(keys.as_slice(), [key] if key.is_zero()) => keys.clone(),
+            _ => {
+                if self.db.get_account(sender)?.is_empty() {
+                    self.increase_state_gas(self.frame_new_sender_state_gas())?;
+                }
+                self.increment_account_nonce(sender)?;
+                return Ok(());
+            }
+        };
+        let manager = ethrex_common::types::frame_tx_nonce_manager();
+        self.db.get_account(manager)?;
+        let mut slots = Vec::with_capacity(keys.len());
+        let mut first_uses: u64 = 0;
+        for key in keys {
+            let slot = ethrex_common::types::keyed_nonce_slot(sender, key);
+            let current = self.get_storage_value(manager, slot)?;
+            if current.is_zero() {
+                first_uses = first_uses.saturating_add(1);
+            }
+            slots.push((slot, current));
+        }
+        self.increase_state_gas(first_uses.saturating_mul(self.frame_storage_set_state_gas()))?;
+        let next_seq = U256::from(nonce_seq).saturating_add(U256::one());
+        for (slot, current) in slots {
+            self.update_account_storage(
+                manager,
+                slot,
+                U256::from_big_endian(slot.as_bytes()),
+                next_seq,
+                current,
+            )?;
+        }
+        Ok(())
+    }
+
     /// The state gas a frame transaction's payment approval charges when it
     /// creates the sender's account. From Amsterdam this is EIP-8037's NEW_ACCOUNT
     /// charge. A chain that runs frame transactions on an earlier fork has no

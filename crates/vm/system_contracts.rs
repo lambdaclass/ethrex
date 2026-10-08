@@ -113,6 +113,10 @@ pub const EXPIRY_VERIFIER_PREDEPLOY: SystemContract = SystemContract {
     active_since_fork: Hegota,
 };
 
+/// Runtime bytecode of the EIP-8250 `NONCE_MANAGER` predeploy: it holds the
+/// keyed nonce slots and reverts on any call.
+pub const NONCE_MANAGER_RUNTIME_BYTECODE: [u8; 5] = [0x60, 0x00, 0x60, 0x00, 0xfd];
+
 /// Canonical runtime bytecode of the EIP-8141 expiry verifier: reverts unless
 /// calldata is exactly 8 bytes and the 8-byte BE deadline is >= block.timestamp.
 pub const EXPIRY_VERIFIER_RUNTIME_BYTECODE: [u8; 26] = [

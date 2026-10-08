@@ -139,6 +139,8 @@ fn frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
         max_fee_per_gas: U256::from(HARNESS_BASE_FEE + 1_000),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: Vec::new(),
+        nonce_keys: None,
+        recent_root_refs: None,
         inner_hash: Default::default(),
         cached_canonical: Default::default(),
     }
@@ -1633,6 +1635,8 @@ mod frame_tx_opcode_handler_tests {
             approve_called_in_current_frame: false,
             max_gas: 0,
             blob_base_fee: U256::zero(),
+            account_nonce_at_start: 0,
+            keyed_nonces: false,
         }
     }
 
@@ -1721,6 +1725,8 @@ mod frame_tx_opcode_handler_tests {
             approve_called_in_current_frame: false,
             max_gas: 0,
             blob_base_fee: U256::zero(),
+            account_nonce_at_start: 0,
+            keyed_nonces: false,
         };
         let result = load_tx_param(&ctx, 0x0B).unwrap();
         assert_eq!(result, U256::zero());
@@ -3257,6 +3263,8 @@ mod atomic_batch_approval_rollback_tests {
             approve_called_in_current_frame: false,
             max_gas: 0,
             blob_base_fee: U256::zero(),
+            account_nonce_at_start: 0,
+            keyed_nonces: false,
         }
     }
 

@@ -6,14 +6,14 @@ use crate::system_contracts::{
     AMSTERDAM_REQUEST_PREDEPLOYS, BEACON_ROOTS_ADDRESS, BUILDER_DEPOSIT_CONTRACT_ADDRESS,
     BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
     EXPIRY_VERIFIER_PREDEPLOY, EXPIRY_VERIFIER_RUNTIME_BYTECODE, HISTORY_STORAGE_ADDRESS,
-    PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+    NONCE_MANAGER_RUNTIME_BYTECODE, PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS,
+    WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
 use ethrex_common::H256;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::constants::EMPTY_KECCAK_HASH;
-use ethrex_common::types::Code;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::types::TxType;
 use ethrex_common::types::block_access_list::BlockAccessList;
@@ -25,6 +25,7 @@ use ethrex_common::types::block_access_list::{
 };
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
+use ethrex_common::types::{ChainFeatures, Code};
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
@@ -3439,6 +3440,71 @@ impl LEVM {
         Ok(())
     }
 
+    /// Install the frame-transaction predeploys the active features call for,
+    /// before the block's transactions run: the EIP-8141 expiry verifier, and with
+    /// keyed nonces and recent roots the EIP-8250 `NONCE_MANAGER` and the EIP-8272
+    /// root store. The last two carry a nonce of at least 1, as the other system
+    /// contracts do, which is also what keeps the codeless root store from being an
+    /// empty account. Idempotent.
+    pub fn install_frame_predeploys(
+        db: &mut GeneralizedDatabase,
+        features: ChainFeatures,
+        crypto: &dyn Crypto,
+    ) -> Result<(), EvmError> {
+        if features.frame_transactions {
+            Self::install_expiry_verifier_code(db, crypto)?;
+        }
+        if features.keyed_nonces {
+            Self::install_nonce_holding_predeploy(
+                db,
+                ethrex_common::types::frame_tx_nonce_manager(),
+                &NONCE_MANAGER_RUNTIME_BYTECODE,
+                crypto,
+            )?;
+        }
+        if features.recent_roots {
+            Self::install_nonce_holding_predeploy(
+                db,
+                ethrex_common::types::frame_tx_recent_root_store(),
+                &[],
+                crypto,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Give `address` the runtime `code` (when non-empty) and a nonce of at least 1,
+    /// keeping a higher nonce it already has.
+    fn install_nonce_holding_predeploy(
+        db: &mut GeneralizedDatabase,
+        address: Address,
+        code: &'static [u8],
+        crypto: &dyn Crypto,
+    ) -> Result<(), EvmError> {
+        let nonce = db.get_account(address).map_err(EvmError::from)?.info.nonce;
+        let code_satisfied = code.is_empty() || db.get_account_code(address)?.code() == code;
+        if code_satisfied && nonce >= 1 {
+            return Ok(());
+        }
+        let code_change =
+            (!code.is_empty()).then(|| Code::from_bytecode(Bytes::from_static(code), crypto));
+        if let Some(recorder) = db.bal_recorder_mut() {
+            if let Some(code) = &code_change {
+                recorder.record_code_change(address, code.code_bytes());
+            }
+            if nonce < 1 {
+                recorder.record_nonce_change(address, 1);
+            }
+        }
+        let acc = db.get_account_mut(address).map_err(EvmError::from)?;
+        acc.info.nonce = nonce.max(1);
+        if let Some(code) = code_change {
+            acc.info.code_hash = code.hash;
+            db.codes.entry(code.hash).or_insert(code);
+        }
+        Ok(())
+    }
+
     /// Install the canonical EIP-8141 expiry verifier runtime code at
     /// EXPIRY_VERIFIER when frame transactions activate (EIP-8141: "At
     /// activation, clients must install..."). Idempotent: writes only when
@@ -3653,12 +3719,10 @@ impl LEVM {
             return Ok(());
         }
 
-        // EIP-8141: the expiry verifier predeploy must exist from frame
-        // transaction activation onward. Idempotent install; also
-        // hooked in apply_system_calls for the payload-build path.
-        if chain_config.is_eip8141_active(block_header.timestamp) {
-            Self::install_expiry_verifier_code(db, crypto)?;
-        }
+        // EIP-8141 (and EIP-8250/EIP-8272 with them): the frame predeploys must
+        // exist from activation onward. Idempotent install; also hooked in
+        // apply_system_calls for the payload-build path.
+        Self::install_frame_predeploys(db, chain_config.features(block_header.timestamp), crypto)?;
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
             Self::beacon_root_contract_call(block_header, db, vm_type, crypto)?;

@@ -69,6 +69,7 @@ fn scalar_secp256k1_tx() -> FrameTransaction {
     FrameTransaction {
         chain_id: 1337,
         nonce: 0,
+        nonce_keys: None,
         sender: address(sender),
         frames: vec![
             frame(1, 3, Some(sender), 150_000, 0, 0, "0x"),
@@ -94,6 +95,48 @@ fn scalar_secp256k1_tx() -> FrameTransaction {
         max_fee_per_gas: U256::from(0x3b9aca0eu64),
         max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
+        recent_root_refs: None,
+        ..Default::default()
+    }
+}
+
+/// Block 1,022,048: keyed nonce set `[0]`, a DEFAULT frame deploying the sender's
+/// account, a DEP_VERIFY frame with one LEANSPHINCS triple, then VERIFY and SENDER.
+fn keyed_dependency_tx() -> FrameTransaction {
+    let sender = "0x061970b82d71ed71c4a0954d528685bc79fee231";
+    FrameTransaction {
+        chain_id: 1337,
+        nonce: 0,
+        nonce_keys: Some(vec![U256::zero()]),
+        sender: address(sender),
+        frames: vec![
+            frame(
+                0,
+                0,
+                Some("0x4940e0d0883fa40985fec192fdd9e11c7a34d9d0"),
+                100_000,
+                450_000,
+                0,
+                "0x8ca6da3c0366f919ce66b78acb23f67d5e0f6c64000000000000000000000000000000002de6160d80933c1951574f96915fb2b9000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            ),
+            frame(
+                4,
+                0,
+                None,
+                3_000,
+                0,
+                0,
+                "0x0000000000000000000000000000000000000000000000000000000000000010ded6bbc9cddb29414b82b91a248d43c20c2efa231c86601a4ec4060c51d4a0d25e65faeafe52ac56b609bb52e6d9b502d8bfae068668135635b70229ba44e15c",
+            ),
+            frame(1, 3, None, 100_000, 0, 0, "0x"),
+            frame(2, 0, Some(sender), 250_000, 250_000, 0, "0x"),
+        ],
+        signatures: vec![],
+        max_priority_fee_per_gas: U256::from(0x3b9aca00u64),
+        max_fee_per_gas: U256::from(0x3b9aca0eu64),
+        max_fee_per_blob_gas: U256::zero(),
+        blob_versioned_hashes: vec![],
+        recent_root_refs: None,
         ..Default::default()
     }
 }
@@ -142,6 +185,28 @@ fn scalar_frame_tx_hash_matches_the_chain() {
 }
 
 #[test]
+fn keyed_frame_tx_hash_matches_the_chain() {
+    let tx = Transaction::FrameTransaction(keyed_dependency_tx());
+    assert_eq!(
+        tx.hash(&NativeCrypto),
+        h256("0xf6babf5118b7c5b4ba6befa0f8c0ce6eb725d42b52b7a4dccb19fb6f8e239b67")
+    );
+}
+
+#[test]
+fn keyed_frame_tx_round_trips_through_rlp() {
+    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+    let tx = keyed_dependency_tx();
+    let decoded = FrameTransaction::decode(&tx.encode_to_vec()).expect("decodes");
+    assert_eq!(decoded.nonce_keys, Some(vec![U256::zero()]));
+    assert_eq!(decoded, tx);
+    let scalar = scalar_secp256k1_tx();
+    let decoded = FrameTransaction::decode(&scalar.encode_to_vec()).expect("decodes");
+    assert_eq!(decoded.nonce_keys, None);
+    assert_eq!(decoded, scalar);
+}
+
+#[test]
 fn signature_hash_matches_what_the_live_signer_signed() {
     let tx = scalar_secp256k1_tx();
     assert!(ethrex_levm::vm::validate_frame_signatures(
@@ -154,7 +219,8 @@ fn signature_hash_matches_what_the_live_signer_signed() {
 }
 
 /// Intrinsic gas is the receipt's total minus what the frames used. On a Prague
-/// base that is EIP-7623's weighted token count with no EIP-2780 value charge.
+/// base that is EIP-7623's weighted token count with no EIP-2780 value charge,
+/// and in the keyed form the nonce key set and sequence are priced too.
 #[test]
 fn intrinsic_gas_matches_the_receipts() {
     // 19,798 total; frames used 100 + 2,600.
@@ -164,5 +230,51 @@ fn intrinsic_gas_matches_the_receipts() {
             .mandatory_gas(Fork::Prague)
             .saturating_add(scalar.data_cost()),
         19_798 - 100 - 2_600
+    );
+    // 81,791 total; frames used 54,808 + 3,000 + 7,730 + 309.
+    let keyed = keyed_dependency_tx();
+    assert_eq!(
+        keyed
+            .mandatory_gas(Fork::Prague)
+            .saturating_add(keyed.data_cost()),
+        81_791 - 54_808 - 3_000 - 7_730 - 309
+    );
+}
+
+/// The keyed form is valid only once keyed nonces are active, and the scalar
+/// form survives them only through the network's compatibility rule.
+#[test]
+fn nonce_forms_follow_the_feature_schedule() {
+    let config = daisugi_config();
+    let era_a = config.features(FRAMES_TIME);
+    let era_b = config.features(DEPENDENCIES_TIME);
+    assert!(
+        scalar_secp256k1_tx()
+            .validate_fork_constraints(era_a)
+            .is_ok()
+    );
+    assert!(
+        scalar_secp256k1_tx()
+            .validate_fork_constraints(era_b)
+            .is_ok()
+    );
+    assert!(
+        keyed_dependency_tx()
+            .validate_fork_constraints(era_a)
+            .is_err()
+    );
+    assert!(
+        keyed_dependency_tx()
+            .validate_fork_constraints(era_b)
+            .is_ok()
+    );
+    let without_legacy = ChainFeatures {
+        legacy_frames: false,
+        ..era_b
+    };
+    assert!(
+        scalar_secp256k1_tx()
+            .validate_fork_constraints(without_legacy)
+            .is_err()
     );
 }
