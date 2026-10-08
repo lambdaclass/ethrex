@@ -1784,6 +1784,16 @@ impl<'a> VM<'a> {
         // accounts).
         let sender = frame_tx.sender;
 
+        // EIP-8250: `nonce_seq < MAX_NONCE_SEQ` is a rule of the transaction itself.
+        // `validate_static_constraints` enforces it too, but it is checked here first so
+        // the transaction reports `NONCE_IS_MAX`, the exception execution-specs raises
+        // ahead of every other static rule, instead of a generic frame-format error.
+        if frame_tx.nonce_seq == u64::MAX {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::NonceIsMax,
+            ));
+        }
+
         // EIP-8141 blob rules that carry their own EIP-4844 exception: a wrong
         // version byte is `TYPE_3_TX_INVALID_BLOB_VERSIONED_HASH` and too many
         // blobs is `TYPE_3_TX_BLOB_COUNT_EXCEEDED`, not a generic frame-format
@@ -1845,15 +1855,6 @@ impl<'a> VM<'a> {
         if max_cost_representable.is_none() {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::GasLimitPriceProductOverflow,
-            ));
-        }
-
-        // EIP-8250: a `nonce_seq` at the u64 ceiling (`MAX_NONCE_SEQ`) can never
-        // advance, so the transaction is invalid on its own terms rather than merely
-        // mismatched against its keys. Checked first so the specific rule is reported.
-        if frame_tx.nonce_seq == u64::MAX {
-            return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::NonceIsMax,
             ));
         }
 

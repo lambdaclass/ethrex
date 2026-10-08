@@ -622,6 +622,46 @@ fn static_validation_rejects_wrong_blob_hash_version() {
 }
 
 #[test]
+fn static_validation_enforces_the_eip_8250_nonce_rules() {
+    let with = |nonce_keys: Vec<u64>, nonce_seq: u64| {
+        let mut tx = make_test_frame_tx();
+        tx.nonce_keys = nonce_keys.into_iter().map(U256::from).collect();
+        tx.nonce_seq = nonce_seq;
+        tx.validate_static_constraints()
+    };
+    for (label, keys, seq) in [
+        ("the legacy key", vec![0], 0),
+        ("one keyed nonce", vec![7], 0),
+        ("sixteen increasing keys", (1..=16).collect(), 3),
+        ("the last usable sequence", vec![1, 2], u64::MAX - 1),
+    ] {
+        assert!(with(keys, seq).is_ok(), "{label} must be statically valid");
+    }
+    for (label, keys, seq, reason) in [
+        ("no keys", vec![], 0, "nonce_keys count"),
+        ("seventeen keys", (1..=17).collect(), 0, "nonce_keys count"),
+        ("a repeated key", vec![3, 3], 0, "strictly increasing"),
+        ("decreasing keys", vec![5, 4], 0, "strictly increasing"),
+        ("key 0 beside another key", vec![0, 1], 0, "sole nonce key"),
+        (
+            "the maximum sequence on [0]",
+            vec![0],
+            u64::MAX,
+            "MAX_NONCE_SEQ",
+        ),
+        (
+            "the maximum sequence on a key",
+            vec![9],
+            u64::MAX,
+            "MAX_NONCE_SEQ",
+        ),
+    ] {
+        let err = with(keys, seq).expect_err(label);
+        assert!(err.contains(reason), "{label}: unexpected reason {err:?}");
+    }
+}
+
+#[test]
 fn static_validation_rejects_blob_fee_without_blobs() {
     let mut tx = make_test_frame_tx();
     assert!(tx.blob_versioned_hashes.is_empty());

@@ -978,16 +978,21 @@ async fn mempool_rejects_frame_tx_from_unknown_sender_with_sentinel_nonce() {
     let store = setup_hegota_store().await;
     let blockchain = Blockchain::default_with_store(store);
 
-    // Sender 0xABCD does not exist in the genesis state. A frame tx from a
-    // not-yet-existent sender is legitimate (sponsored txs fund gas via a
-    // separate payer), but its implied nonce is 0, so the u64::MAX sentinel can
-    // never match and must be rejected — not skipped as it was before.
+    // A frame tx from a not-yet-existent sender is legitimate (sponsored txs fund
+    // gas via a separate payer), but the u64::MAX sentinel must still be rejected,
+    // not skipped as it was before. EIP-8250 makes `nonce_seq < 2**64 - 1` a rule of
+    // the transaction itself, so static validity rejects it before any state is read.
     let mut frame_tx = minimal_valid_frame_tx();
     frame_tx.nonce_seq = u64::MAX;
 
     let tx = Transaction::FrameTransaction(frame_tx);
-    let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
-    assert!(matches!(validation.await, Err(MempoolError::NonceTooLow)));
+    let validation = blockchain
+        .validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap())
+        .await;
+    assert!(
+        matches!(&validation, Err(MempoolError::InvalidFrameTransaction(msg)) if msg.contains("MAX_NONCE_SEQ")),
+        "got {validation:?}"
+    );
 }
 
 #[tokio::test]

@@ -2546,6 +2546,11 @@ impl FrameTransaction {
         if self.nonce_keys.len() > 1 && self.nonce_keys[0].is_zero() {
             return Err("nonce key 0 is only valid as the sole nonce key".to_string());
         }
+        // EIP-8250: `nonce_seq < MAX_NONCE_SEQ` reads no state, so it is a rule of the
+        // transaction itself, checkable before stateful validity.
+        if self.nonce_seq == u64::MAX {
+            return Err("nonce_seq must be below MAX_NONCE_SEQ (2**64 - 1)".to_string());
+        }
         if self.frames.is_empty() || self.frames.len() > FRAME_TX_MAX_FRAMES {
             return Err(format!(
                 "Frame count must be between 1 and {FRAME_TX_MAX_FRAMES}"
