@@ -203,11 +203,22 @@ impl Node {
     }
 
     pub fn from_enode_url(enode: &str) -> Result<Self, NodeError> {
-        let public_key = H512::from_str(&enode[8..136])
+        // Split on the separators instead of slicing at fixed offsets: the input comes from
+        // the CLI and from `admin_addPeer`, and short or non-ASCII strings must be rejected
+        // rather than panic on an out-of-range or mid-character index.
+        let (public_key, address_part) = enode
+            .strip_prefix("enode://")
+            .and_then(|rest| rest.split_once('@'))
+            .ok_or_else(|| {
+                NodeError::ParseError("Expected enode://<public_key>@<ip>:<port>".into())
+            })?;
+        // `H512::from_str` also accepts a `0x` prefix; an enode carries exactly the 128 hex
+        // digits of the public key.
+        if public_key.len() != 128 {
+            return Err(NodeError::ParseError("Could not parse public_key".into()));
+        }
+        let public_key = H512::from_str(public_key)
             .map_err(|_| NodeError::ParseError("Could not parse public_key".into()))?;
-
-        let address_start = 137;
-        let address_part = &enode[address_start..];
 
         // Remove `?discport=` if present
         let address_part = match address_part.find('?') {
@@ -801,5 +812,54 @@ mod tests {
             record.verify_signature(),
             "ENR with public IP must have valid signature"
         );
+    }
+
+    const ENODE_PUBLIC_KEY: &str = "4aeb4ab6c14b23e2c4cfdce879c04b0748a20d8e9b59e25ded2a08143e265c6c25936e74cbc8e641e3312ca288673d91f2f93f8e277de3cfa444ecdaaf982052";
+
+    #[test]
+    fn from_enode_url_parses_valid_urls() {
+        let node = Node::from_enode_url(&format!("enode://{ENODE_PUBLIC_KEY}@157.90.35.166:30303"))
+            .expect("valid enode");
+        assert_eq!(hex::encode(node.public_key), ENODE_PUBLIC_KEY);
+        assert_eq!(node.ip, "157.90.35.166".parse::<IpAddr>().unwrap());
+        assert_eq!((node.tcp_port, node.udp_port), (30303, 30303));
+
+        let node = Node::from_enode_url(&format!(
+            "enode://{ENODE_PUBLIC_KEY}@157.90.35.166:30303?discport=30301"
+        ))
+        .expect("valid enode with discport");
+        assert_eq!((node.tcp_port, node.udp_port), (30303, 30301));
+    }
+
+    /// Malformed input must come back as `ParseError`, never as a panic from slicing the
+    /// string at fixed offsets.
+    #[test]
+    fn from_enode_url_rejects_malformed_urls() {
+        let short_key = &ENODE_PUBLIC_KEY[..127];
+        // A two-byte character straddling the old fixed slice boundary at byte 136.
+        let non_ascii_key = format!("{short_key}é");
+        let cases = [
+            String::new(),
+            "enode://".to_string(),
+            "enode://abc".to_string(),
+            format!("enode://{ENODE_PUBLIC_KEY}"),
+            format!("enode://{ENODE_PUBLIC_KEY}@"),
+            format!("enr://{ENODE_PUBLIC_KEY}@157.90.35.166:30303"),
+            format!("enode://{short_key}@157.90.35.166:30303"),
+            format!("enode://{non_ascii_key}@157.90.35.166:30303"),
+            format!("enode://0x{ENODE_PUBLIC_KEY}@157.90.35.166:30303"),
+            format!("enode://{}@157.90.35.166:30303", "z".repeat(128)),
+            format!("enode://{ENODE_PUBLIC_KEY}@157.90.35.166"),
+            format!("enode://{ENODE_PUBLIC_KEY}@not-an-ip:30303"),
+            format!("enode://{ENODE_PUBLIC_KEY}@157.90.35.166:30303?discport="),
+            format!("enode://{ENODE_PUBLIC_KEY}@157.90.35.166:30303?discport=99999"),
+        ];
+        for enode in cases {
+            let result = Node::from_enode_url(&enode);
+            assert!(
+                matches!(result, Err(NodeError::ParseError(_))),
+                "expected ParseError for {enode:?}, got {result:?}"
+            );
+        }
     }
 }
