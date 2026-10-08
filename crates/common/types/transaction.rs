@@ -2111,6 +2111,10 @@ pub const FRAME_TX_ENTRY_POINT_U64: u64 = 0xaa;
 pub const FRAME_TX_MAX_FRAMES: usize = 64;
 /// EIP-8250 `MAX_NONCE_KEYS`: the most nonce keys a frame transaction may select.
 pub const FRAME_TX_MAX_NONCE_KEYS: usize = 16;
+/// EIP-8250 `KEYED_NONCE_ACCESS_COST`: EIP-8038's `COLD_STORAGE_ACCESS` (2,100) plus
+/// `STORAGE_WRITE` (10,000), the cold read and the write of one keyed-nonce slot. It
+/// tracks the Amsterdam storage schedule in `ethrex_levm::gas_cost`, which a test pins.
+pub const FRAME_TX_KEYED_NONCE_ACCESS_COST: u64 = 2_100 + 10_000;
 /// EIP-8272 `MAX_RECENT_ROOT_REFERENCES`: the most `(source_id, slot, root)` tuples a
 /// recent root verifier frame may carry.
 pub const FRAME_TX_MAX_RECENT_ROOT_REFERENCES: usize = 16;
@@ -2429,12 +2433,26 @@ impl FrameTransaction {
     }
 
     /// The mandatory costs, always charged in full: the intrinsic cost, the
-    /// per-frame cost, and signature verification.
+    /// per-frame cost, signature verification, value transfers, and EIP-8250's
+    /// keyed-nonce access. They are the terms EIP-8141's `frame_tx_intrinsic_gas` and
+    /// `calldata_floor_gas` share, so each is charged once on either side.
     pub fn mandatory_gas(&self) -> u64 {
         FRAME_TX_INTRINSIC_COST
             .saturating_add((self.frames.len() as u64).saturating_mul(FRAME_TX_PER_FRAME_COST))
             .saturating_add(self.signature_verification_cost())
             .saturating_add(self.value_transfer_gas())
+            .saturating_add(self.keyed_nonce_access_cost())
+    }
+
+    /// EIP-8250 `keyed_nonce_access_cost`: `KEYED_NONCE_ACCESS_COST` for every
+    /// non-zero key, and nothing for `[0]`. EIP-8250 adds it to both
+    /// `frame_tx_intrinsic_gas` and `calldata_floor_gas`, so the cold read and write
+    /// of each slot is paid even when the calldata floor binds.
+    pub fn keyed_nonce_access_cost(&self) -> u64 {
+        if !self.is_keyed() {
+            return 0;
+        }
+        (self.nonce_keys.len() as u64).saturating_mul(FRAME_TX_KEYED_NONCE_ACCESS_COST)
     }
 
     /// EIP-2780's `TX_VALUE_COST` per frame that moves value to an explicit target
