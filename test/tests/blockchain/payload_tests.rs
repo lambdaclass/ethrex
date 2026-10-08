@@ -320,3 +320,62 @@ fn gas_limit_clamps_to_target_when_step_overshoots() {
     let target = parent + 100;
     assert_eq!(calc_gas_limit(parent, target), target);
 }
+
+/// A block built on the prototype EIP-8288 schedule (`eip8288PrototypeTime`) must
+/// be one this node imports: its proof is the 12-byte empty envelope rather than
+/// an empty byte string, its header gas includes the schedule's per-dependency
+/// charge, and the full validation pipeline accepts it.
+#[tokio::test]
+async fn a_block_built_on_the_prototype_eip8288_schedule_imports() {
+    let file = File::open(workspace_root().join("fixtures/genesis/daisugi.json"))
+        .expect("Failed to open genesis fixture");
+    let mut genesis: ethrex_common::types::Genesis =
+        serde_json::from_reader(BufReader::new(file)).expect("Failed to deserialize genesis");
+    // Activate both prototype schedules from the first block after genesis.
+    genesis.config.eip8141_prototype_time = Some(genesis.timestamp + 1);
+    genesis.config.eip8288_prototype_time = Some(genesis.timestamp + 1);
+
+    let mut store = Store::new("test", EngineType::InMemory).expect("Failed to create store");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("Failed to add genesis state");
+    let blockchain = Blockchain::default_with_store(store.clone());
+    let parent = store.get_block_header(0).unwrap().unwrap();
+
+    let args = BuildPayloadArgs {
+        parent: parent.hash(),
+        timestamp: parent.timestamp + 2,
+        fee_recipient: Address::zero(),
+        random: H256::zero(),
+        withdrawals: Some(vec![]),
+        beacon_root: Some(H256::zero()),
+        slot_number: None,
+        version: 3,
+        elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+    };
+    let payload_block = create_payload(&args, &store, Bytes::new()).expect("create_payload");
+    let built = blockchain
+        .build_payload(payload_block)
+        .expect("build_payload")
+        .payload;
+
+    let entry = built
+        .header
+        .recursive_stark
+        .clone()
+        .expect("the prototype schedule seals every block with a recursive_stark entry");
+    assert_eq!(
+        entry.proof.as_ref(),
+        &ethrex_dep_aggregation::envelope::EMPTY_ENVELOPE[..]
+    );
+    assert_eq!(
+        entry.block_deps_hash,
+        ethrex_common::types::prototype_dependencies_hash(&[])
+    );
+
+    blockchain
+        .add_block(built)
+        .expect("the node imports the block it built");
+}

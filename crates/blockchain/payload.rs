@@ -796,6 +796,23 @@ impl Blockchain {
                 continue;
             }
 
+            // The prototype EIP-8288 schedule seals a block whose transactions
+            // declare dependencies only with a mixed recursive proof over them, and
+            // this node has no prover for one. Leave such a transaction in the pool
+            // for a builder that can prove it, rather than build a block that cannot
+            // be sealed.
+            if let Transaction::FrameTransaction(frame_tx) = &*head_tx.tx
+                && frame_tx.declared_dependency_count() > 0
+                && chain_config.is_eip8288_prototype_active(context.payload.header.timestamp)
+            {
+                debug!(
+                    "Skipping frame transaction with dependencies this node cannot prove: {}",
+                    tx_hash
+                );
+                txs.pop();
+                continue;
+            }
+
             let is_frame = head_tx.tx_type() == TxType::Frame;
 
             match self.apply_tx_to_payload(head_tx, context) {
@@ -1162,7 +1179,31 @@ impl Blockchain {
             .is_eip8288_active(context.payload.header.timestamp)
         {
             let dependencies = context.payload.body.dependencies();
-            let proof = self.aggregate_block_dependencies(&dependencies)?;
+            let prototype = context
+                .chain_config()
+                .is_eip8288_prototype_active(context.payload.header.timestamp);
+            let proof = if prototype {
+                // The prototype schedule frames even the empty set as an envelope,
+                // and `fill_transactions` keeps out what this node cannot prove.
+                if !dependencies.is_empty() {
+                    return Err(ChainError::RecursiveStarkInvalid(
+                        "this node has no prover for the prototype's mixed recursive proof"
+                            .to_string(),
+                    ));
+                }
+                Bytes::copy_from_slice(&ethrex_dep_aggregation::envelope::EMPTY_ENVELOPE)
+            } else {
+                self.aggregate_block_dependencies(&dependencies)?
+            };
+            // The prototype also prices the field in the header's gas alone, as block
+            // execution does when it checks this header.
+            if prototype {
+                context.payload.header.gas_used = context
+                    .payload
+                    .header
+                    .gas_used
+                    .saturating_add(context.payload.body.prototype_recursive_stark_gas());
+            }
             context.payload.header.recursive_stark = Some(RecursiveStark {
                 proof,
                 block_deps_hash: context
