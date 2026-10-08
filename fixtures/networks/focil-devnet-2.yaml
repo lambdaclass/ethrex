@@ -1,0 +1,41 @@
+# focil-devnet-2 — the official devnet config.
+#
+# Mirrors https://notes.ethereum.org/@ethpandaops/focil-devnet-2 (launch date TBD).
+# Scope is the Heze fork: EIP-7805 FOCIL as on focil-devnet-1, plus EIP-8015 and
+# EIP-8365 (consensus layer only) and EIP-8198 quick slots. On the execution layer
+# EIP-8198 lowers the maximum per-block base fee change to 5/48 and moves Hegotá's
+# blob schedule to target 12, max 18, update fraction 12018519 (provisional; the
+# consensus layer needs a matching BLOB_SCHEDULE entry). The slot duration itself
+# never reaches the execution layer.
+#
+# Run with:
+#   KURTOSIS_CONFIG_FILE=./fixtures/networks/focil-devnet-2.yaml make localnet
+
+participants_matrix:
+  el:
+    - el_type: ethrex
+      el_image: ethpandaops/ethrex:focil-devnet-2
+    - el_type: besu
+      el_image: ethpandaops/besu:focil-devnet-2
+    - el_type: nethermind
+      el_image: ethpandaops/nethermind:focil-devnet-2
+    - el_type: reth
+      el_image: ethpandaops/reth:focil-devnet-2
+  cl:
+    - cl_type: lighthouse
+      cl_image: ethpandaops/lighthouse:focil-devnet-2
+    - cl_type: lodestar
+      cl_image: ethpandaops/lodestar:focil-devnet-2
+    - cl_type: teku
+      cl_image: ethpandaops/teku:focil-devnet-2
+
+network_params:
+  preset: minimal
+  gloas_fork_epoch: 0
+  heze_fork_epoch: 1
+
+additional_services:
+  - spamoor
+  - dora
+
+global_log_level: debug
