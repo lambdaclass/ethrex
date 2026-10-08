@@ -697,6 +697,65 @@ fn keyed_nonce_access_is_charged_in_intrinsic_gas_and_in_the_floor() {
 }
 
 #[test]
+fn static_validation_enforces_the_eip_7906_post_tx_rules() {
+    const POST_TX: u8 = FrameMode::PostTx as u8;
+    const ATOMIC_BATCH: u8 = 0x04;
+    let with = |modes_and_flags: &[(u8, u8)]| {
+        let mut tx = make_test_frame_tx();
+        let template = tx.frames[0].clone();
+        tx.frames = modes_and_flags
+            .iter()
+            .map(|&(mode, flags)| Frame {
+                mode,
+                flags,
+                target: Some(tx.sender),
+                value: U256::zero(),
+                ..template.clone()
+            })
+            .collect();
+        tx.validate_static_constraints()
+    };
+    let verify = (FrameMode::Verify as u8, APPROVE_EXECUTION_AND_PAYMENT);
+    let sender = (FrameMode::Sender as u8, 0);
+    let post_tx = (POST_TX, 0);
+
+    for (label, frames) in [
+        ("one trailing POST_TX frame", vec![verify, sender, post_tx]),
+        (
+            "two trailing POST_TX frames",
+            vec![verify, sender, post_tx, post_tx],
+        ),
+        (
+            "approval scope on a POST_TX frame",
+            vec![verify, sender, (POST_TX, 0x03)],
+        ),
+    ] {
+        assert!(with(&frames).is_ok(), "{label} must be statically valid");
+    }
+    for (label, frames, reason) in [
+        (
+            "a SENDER frame after a POST_TX frame",
+            vec![verify, post_tx, sender],
+            "only POST_TX frames may follow",
+        ),
+        (
+            "the batch flag on a POST_TX frame",
+            vec![verify, (POST_TX, ATOMIC_BATCH), post_tx],
+            "atomic batch flag on a POST_TX frame",
+        ),
+        (
+            "a batch reaching into a POST_TX frame",
+            vec![verify, (FrameMode::Sender as u8, ATOMIC_BATCH), post_tx],
+            "followed by a POST_TX frame",
+        ),
+        ("mode 4", vec![verify, (4, 0)], "reserved execution mode"),
+    ] {
+        let err = with(&frames).expect_err(label);
+        assert!(err.contains(reason), "{label}: unexpected reason {err:?}");
+    }
+}
+
+#[test]
 fn static_validation_rejects_blob_fee_without_blobs() {
     let mut tx = make_test_frame_tx();
     assert!(tx.blob_versioned_hashes.is_empty());

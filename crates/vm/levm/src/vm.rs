@@ -907,6 +907,44 @@ pub fn validate_frame_signatures(
 /// Exposed (hidden) for the `ethrex-test` crate's frame-batch unit tests; not
 /// part of the stable public API.
 #[doc(hidden)]
+/// EIP-7906: the rollback point a failing POST_TX frame returns to, captured when
+/// the validation prefix ends, that is when the frame that sets the payer completes.
+/// The frames after it are the execution body. A failing POST_TX frame restores
+/// everything captured here, so the transaction keeps the prefix's effects, the
+/// payment included, and loses the body's.
+struct ExecutionBody {
+    /// Index of the first frame of the execution body.
+    first_frame_idx: usize,
+    /// Length of the transaction's log list when the prefix ended.
+    logs_start: usize,
+    /// `state_gas_used` when the prefix ended.
+    state_gas_used: i64,
+    /// The approval context when the prefix ended.
+    approvals: (bool, Option<Address>),
+    /// The state gas attributed to each prefix frame's receipt when the prefix
+    /// ended. Body frames can lower it through cross-frame refills, and the revert
+    /// undoes those edits with the state they paid for.
+    state_attribution: Vec<u64>,
+    /// First-seen original values of every account and slot the body changes, and
+    /// the block access list checkpoint at the body's start.
+    backup: crate::call_frame::CallFrameBackup,
+}
+
+/// EIP-7906: fold a frame's original values into the execution body's backup.
+/// `absorb` keeps the first value seen, which is the value when the body began; the
+/// code hashes the frame inserted are carried too, so a revert evicts them.
+fn absorb_into_body(
+    body: &mut Option<ExecutionBody>,
+    frame_backup: &crate::call_frame::CallFrameBackup,
+) {
+    if let Some(body) = body {
+        body.backup.absorb(frame_backup);
+        body.backup
+            .inserted_code_hashes
+            .extend(frame_backup.inserted_code_hashes.iter().copied());
+    }
+}
+
 pub fn find_batch_end(frames: &[Frame], failed_idx: usize) -> usize {
     frames
         .get(failed_idx..)
@@ -1035,6 +1073,18 @@ impl<'a> VM<'a> {
         root_memory: Memory,
     ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
+        // EIP-7906: install the transaction prestate for a transaction that can run
+        // TXTRACE / TXDIFF / EVENTDATACOPY, and drop the previous transaction's map
+        // for every other one. It must precede `get_tx_callee` and every other
+        // account resolution, so that the transaction's first touch is the one
+        // recorded.
+        db.tx_prestate = (env.config.fork >= Fork::Hegota
+            && matches!(tx, Transaction::FrameTransaction(frame_tx)
+                if frame_tx
+                    .frames
+                    .iter()
+                    .any(|frame| frame.execution_mode() == FrameMode::PostTx)))
+        .then(crate::db::gen_db::CacheDB::default);
 
         let mut substate = Substate::initialize(&env, tx)?;
 
@@ -1972,9 +2022,35 @@ impl<'a> VM<'a> {
         // gas those frames accumulated.
         let mut state_gas_used_at_batch_entry: i64 = 0;
         let mut skip_until_batch_end: Option<usize> = None; // skip remaining frames in a failed batch
+        // EIP-7906: a failing POST_TX frame reverts the execution body and skips the
+        // frames after it. Only a transaction carrying POST_TX frames captures the
+        // body's rollback point.
+        let has_post_tx_frames = frame_tx
+            .frames
+            .iter()
+            .any(|frame| frame.execution_mode() == FrameMode::PostTx);
+        let mut execution_body: Option<ExecutionBody> = None;
+        let mut skip_remaining_frames = false;
 
         // Execute frames sequentially
         for (frame_idx, frame) in frame_tx.frames.iter().enumerate() {
+            // EIP-7906: a frame after a failed POST_TX frame never runs. Like a
+            // skipped batch frame it reports status SKIPPED and no gas, so its
+            // allotted gas is refunded.
+            if skip_remaining_frames {
+                let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
+                    InternalError::Custom("missing frame tx context".to_string()),
+                ))?;
+                ctx.current_frame_index = frame_idx;
+                ctx.frame_results.push((
+                    ethrex_common::types::FRAME_RECEIPT_STATUS_SKIPPED,
+                    0,
+                    0,
+                    Vec::new(),
+                ));
+                continue;
+            }
+
             // If we're skipping frames due to an atomic batch revert, record
             // the frame with status SKIPPED. Per EIP-8141, the
             // gas allotted to skipped frames is refunded at the end of the
@@ -2027,6 +2103,10 @@ impl<'a> VM<'a> {
                 // before clearing, so an invalid-tx exit can still roll back
                 // every committed frame's state (see `tx_level_backup`).
                 tx_level_backup.absorb(&self.current_call_frame.call_frame_backup);
+                absorb_into_body(
+                    &mut execution_body,
+                    &self.current_call_frame.call_frame_backup,
+                );
                 self.current_call_frame.call_frame_backup.clear();
             }
 
@@ -2082,6 +2162,9 @@ impl<'a> VM<'a> {
             let (caller, is_static) = match frame.execution_mode() {
                 FrameMode::Default => (entry_point, false),
                 FrameMode::Verify => (entry_point, true),
+                // EIP-7906: a POST_TX frame is called from ENTRY_POINT with
+                // STATICCALL semantics.
+                FrameMode::PostTx => (entry_point, true),
                 FrameMode::Sender => {
                     // SENDER mode requires sender_approved
                     let ctx = self.frame_tx_context.as_ref().ok_or(VMError::Internal(
@@ -2499,6 +2582,7 @@ impl<'a> VM<'a> {
                         )?;
                     } else {
                         tx_level_backup.absorb(&finished_frame.call_frame_backup);
+                        absorb_into_body(&mut execution_body, &finished_frame.call_frame_backup);
                     }
                 }
 
@@ -2594,6 +2678,45 @@ impl<'a> VM<'a> {
                 frame_logs,
             ));
 
+            // EIP-7906: a failing POST_TX frame reverts the whole execution body,
+            // overriding any batch, and ends frame execution. The transaction stays
+            // valid and pays for the gas used up to here. Body frames keep their
+            // status and execution gas, with empty logs and no state gas, as for an
+            // unrolled batch. No batch can be open: neither a POST_TX frame nor the
+            // frame before one may carry the batch flag. Without a body there is
+            // no payer, and the transaction is invalid at the end of the loop.
+            if frame.execution_mode() == FrameMode::PostTx && !frame_success {
+                if let Some(body) = execution_body.take() {
+                    self.substate.revert_backup(); // body-level snapshot
+                    crate::utils::restore_cache_state(self.db, body.backup)?;
+                    self.state_gas_used = body.state_gas_used;
+                    let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
+                        InternalError::Custom("missing frame tx context".to_string()),
+                    ))?;
+                    for result in ctx
+                        .frame_results
+                        .get_mut(body.first_frame_idx..=frame_idx)
+                        .into_iter()
+                        .flatten()
+                    {
+                        result.2 = 0;
+                        result.3 = Vec::new();
+                    }
+                    ctx.restore_approvals(body.approvals);
+                    for (result, before) in ctx
+                        .frame_results
+                        .iter_mut()
+                        .zip(body.state_attribution.iter())
+                    {
+                        result.2 = *before;
+                    }
+                    all_logs.truncate(body.logs_start);
+                }
+                skip_remaining_frames = true;
+                self.substate.clear_transient_storage();
+                continue;
+            }
+
             // Atomic batch: if a frame in the batch reverted, revert the
             // batch-level snapshot and skip remaining frames in the batch.
             if in_atomic_batch && !frame_success {
@@ -2683,8 +2806,45 @@ impl<'a> VM<'a> {
                 break;
             }
 
+            // EIP-7906: the validation prefix ends with the frame that sets the
+            // payer. Capture the rollback point a failing POST_TX frame returns to.
+            // Approval scope is banned on batch frames, so no batch is open here.
+            if has_post_tx_frames
+                && execution_body.is_none()
+                && !in_atomic_batch
+                && self
+                    .frame_tx_context
+                    .as_ref()
+                    .is_some_and(|ctx| ctx.payer_address.is_some())
+            {
+                // Hand the prefix's last originals to the tx-level backup now, so
+                // the body's backup starts empty and never undoes the prefix.
+                tx_level_backup.absorb(&self.current_call_frame.call_frame_backup);
+                self.current_call_frame.call_frame_backup.clear();
+                self.substate.push_backup(); // body-level snapshot
+                let ctx = self.frame_tx_context.as_ref().ok_or(VMError::Internal(
+                    InternalError::Custom("missing frame tx context".to_string()),
+                ))?;
+                execution_body = Some(ExecutionBody {
+                    first_frame_idx: frame_idx.saturating_add(1),
+                    logs_start: all_logs.len(),
+                    state_gas_used: self.state_gas_used,
+                    approvals: ctx.approval_snapshot(),
+                    state_attribution: ctx.frame_results.iter().map(|r| r.2).collect(),
+                    backup: crate::call_frame::CallFrameBackup {
+                        bal_checkpoint: self.db.bal_recorder.as_ref().map(|r| r.checkpoint()),
+                        ..Default::default()
+                    },
+                });
+            }
+
             // Clear transient storage between frames
             self.substate.clear_transient_storage();
+        }
+
+        // EIP-7906: no POST_TX frame failed, so the execution body stands.
+        if execution_body.is_some() {
+            self.substate.commit_backup(); // body-level snapshot
         }
 
         // The frames are done; fee settlement and refunds below are transaction
@@ -3166,10 +3326,11 @@ impl<'a> VM<'a> {
             let (caller, is_static) = match frame.execution_mode() {
                 FrameMode::Default => (entry_point, false),
                 FrameMode::Verify => (entry_point, true),
-                FrameMode::Sender => {
-                    // Structural rules exclude SENDER frames from the prefix.
+                FrameMode::Sender | FrameMode::PostTx => {
+                    // Structural rules exclude SENDER and POST_TX frames from the
+                    // prefix.
                     return Err(VMError::Internal(InternalError::Custom(
-                        "SENDER frame in validation prefix".to_string(),
+                        "SENDER or POST_TX frame in validation prefix".to_string(),
                     )));
                 }
             };

@@ -230,6 +230,12 @@ impl OpcodeHandler for OpApproveHandler {
             .frames
             .get(ctx.current_frame_index)
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
+        // EIP-7906: a POST_TX frame runs under STATICCALL rules without the VERIFY
+        // exception, so APPROVE anywhere in its call subtree is an ordinary static
+        // violation and halts that call frame.
+        if current_frame.execution_mode() == FrameMode::PostTx {
+            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
+        }
         let frame_target = current_frame.target.unwrap_or(ctx.tx.sender);
         if vm.current_call_frame.to != frame_target {
             return Err(VMError::RevertOpcode);
@@ -721,7 +727,8 @@ pub fn execute_default_code(
         // ETH transfer to an EOA work (spec §EOA support / Example 1).
         // Consumes no execution gas (the frame's value transfer is handled by
         // the caller's deferred transfer).
-        FrameMode::Sender | FrameMode::Default => Ok((true, 0, Vec::new())),
+        // EIP-7906: a POST_TX frame is handled like SENDER or DEFAULT.
+        FrameMode::Sender | FrameMode::Default | FrameMode::PostTx => Ok((true, 0, Vec::new())),
     }
 }
 

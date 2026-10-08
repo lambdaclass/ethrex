@@ -73,6 +73,27 @@ pub const FRAMEDATACOPY_DYNAMIC_BASE: u64 = 3;
 pub const FRAMEPARAM: u64 = 2;
 pub const SIGPARAM: u64 = 2;
 
+/// EIP-7906 `TXTRACE`, and the `TXDIFF` params answered from the diff alone:
+/// `WARM_STORAGE_READ_COST`.
+pub const TXTRACE: u64 = 100;
+pub const EVENTDATACOPY_STATIC: u64 = 3;
+pub const EVENTDATACOPY_DYNAMIC_BASE: u64 = 3;
+
+/// EIP-7906 `EVENTDATACOPY`, priced like `CALLDATACOPY`.
+pub fn eventdatacopy(
+    new_memory_size: usize,
+    current_memory_size: usize,
+    size: usize,
+) -> Result<u64, VMError> {
+    copy_behavior(
+        new_memory_size,
+        current_memory_size,
+        size,
+        EVENTDATACOPY_DYNAMIC_BASE,
+        EVENTDATACOPY_STATIC,
+    )
+}
+
 pub fn framedatacopy(
     new_memory_size: usize,
     current_memory_size: usize,

@@ -4318,3 +4318,27 @@ mod recent_roots {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// EIP-7906 transaction assertions in the public mempool
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_frame_tx_with_a_trailing_post_tx_frame_is_admitted() {
+    // POST_TX frames sit after the validation prefix, which is all admission
+    // simulates, so an assertion suffix does not change whether a transaction is
+    // admitted.
+    let store = setup_hegota_store().await;
+    let mut frame_tx = minimal_valid_frame_tx();
+    frame_tx.frames.push(Frame {
+        mode: FrameMode::PostTx as u8,
+        flags: 0,
+        target: Some(Address::from_low_u64_be(0x7906)),
+        gas_limit: 1_000,
+        state_gas_limit: 0,
+        value: U256::zero(),
+        data: Bytes::new(),
+    });
+    let result = admit_frame_tx(&store, frame_tx).await;
+    assert!(result.is_ok(), "got {result:?}");
+}

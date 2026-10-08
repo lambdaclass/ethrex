@@ -232,6 +232,54 @@ pub struct GeneralizedDatabase {
     /// Simulation-only precompile relocations (`movePrecompileToAddress`).
     /// `None` on every consensus path, where dispatch is unchanged.
     pub precompile_moves: Option<Arc<PrecompileMoves>>,
+    /// EIP-7906 transaction prestate: each account and slot as it was when the
+    /// current transaction first touched it. Set only for a transaction that can run
+    /// the EIP-7906 opcodes (a frame transaction with a POST_TX frame) and reset by
+    /// every `VM::new`, so it never spans two transactions.
+    ///
+    /// It is kept apart from `initial_accounts_state`, whose scope is the block or
+    /// the flush window depending on the execution path, so the diff the opcodes
+    /// report is the same on every path: building, sequential import and parallel
+    /// import.
+    pub tx_prestate: Option<CacheDB>,
+}
+
+/// EIP-7906: record `account` as `address`'s transaction-prestate entry. The first
+/// touch wins, since a later touch may see a value this transaction wrote. Storage
+/// is captured slot by slot, as the live map can hold slots the transaction never
+/// touches.
+fn capture_prestate_account(
+    tx_prestate: &mut Option<CacheDB>,
+    address: Address,
+    account: &LevmAccount,
+) {
+    if let Some(prestate) = tx_prestate {
+        prestate
+            .entry(address)
+            .or_insert_with(|| account.clone_without_storage());
+    }
+}
+
+/// EIP-7906: record `value` as the transaction-prestate value of `address`'s `key`
+/// slot, first touch winning. `live` seeds the account entry when a slot is the
+/// first thing the transaction reads on that account. An account the transaction
+/// already changed was loaded, and so captured, before the change, so the seed only
+/// ever runs on an account whose live info still equals its prestate info.
+fn capture_prestate_slot(
+    tx_prestate: &mut Option<CacheDB>,
+    address: Address,
+    key: H256,
+    value: U256,
+    live: &LevmAccount,
+) {
+    if let Some(prestate) = tx_prestate {
+        prestate
+            .entry(address)
+            .or_insert_with(|| live.clone_without_storage())
+            .storage
+            .entry(key)
+            .or_insert(value);
+    }
 }
 
 impl GeneralizedDatabase {
@@ -249,6 +297,7 @@ impl GeneralizedDatabase {
             accessed_accounts: None,
             lazy_bal: None,
             precompile_moves: None,
+            tx_prestate: None,
         }
     }
 
@@ -283,6 +332,7 @@ impl GeneralizedDatabase {
             accessed_accounts: None,
             lazy_bal: None,
             precompile_moves: None,
+            tx_prestate: None,
         }
     }
 
@@ -343,6 +393,7 @@ impl GeneralizedDatabase {
             accessed_accounts: None,
             lazy_bal: None,
             precompile_moves: None,
+            tx_prestate: None,
         }
     }
 
@@ -350,6 +401,26 @@ impl GeneralizedDatabase {
     /// Loads account
     /// If it's the first time it's loaded store it in `initial_accounts_state` and also cache it in `current_accounts_state` for making changes to it
     fn load_account(&mut self, address: Address) -> Result<&mut LevmAccount, InternalError> {
+        if self.tx_prestate.is_none() {
+            return self.load_account_uncaptured(address);
+        }
+        // EIP-7906: whatever path resolves the account, its live value on this
+        // transaction's first touch is the transaction prestate. A cache hit counts
+        // too: the cache outlives one transaction, so the entry may be one an earlier
+        // transaction left.
+        let snapshot = self
+            .load_account_uncaptured(address)?
+            .clone_without_storage();
+        capture_prestate_account(&mut self.tx_prestate, address, &snapshot);
+        self.current_accounts_state
+            .get_mut(&address)
+            .ok_or(InternalError::AccountNotFound)
+    }
+
+    fn load_account_uncaptured(
+        &mut self,
+        address: Address,
+    ) -> Result<&mut LevmAccount, InternalError> {
         if let Some(tracker) = &mut self.accessed_accounts {
             tracker.insert(address);
         }
@@ -406,6 +477,11 @@ impl GeneralizedDatabase {
         #[cfg(feature = "rayon")]
         {
             let cursor_opt = self.lazy_bal.take();
+            // EIP-7906: seeding a partially covered account loads its pre-block base
+            // through `get_account` before overlaying the access-list prefix. That
+            // nested load must not record the base as the transaction prestate; the
+            // outer `load_account` records the seeded value once it is in place.
+            let prestate_opt = self.tx_prestate.take();
             let helper_result = if let Some(cursor) = cursor_opt.as_ref() {
                 debug_assert!(
                     cursor.bal_index >= 1,
@@ -425,6 +501,7 @@ impl GeneralizedDatabase {
             };
             // Restore the cursor before propagating any error or returning.
             self.lazy_bal = cursor_opt;
+            self.tx_prestate = prestate_opt;
             if let Some(result) = helper_result {
                 result.map_err(|e| InternalError::Custom(format!("lazy_bal seed: {e}")))?;
                 if self.current_accounts_state.contains_key(&address) {
@@ -1017,6 +1094,25 @@ impl<'a> VM<'a> {
     /// Gets storage value of an account, caching it if not already cached.
     #[inline(always)]
     pub fn get_storage_value(
+        &mut self,
+        address: Address,
+        key: H256,
+    ) -> Result<U256, InternalError> {
+        let value = self.get_storage_value_uncaptured(address, key)?;
+        // EIP-7906: the value on this transaction's first read of the slot is its
+        // transaction prestate, whichever path resolved it. Every write reads the
+        // slot first, so a write can never precede the capture.
+        if self.db.tx_prestate.is_some()
+            && let Some(live) = self.db.current_accounts_state.get(&address)
+        {
+            let live = live.clone_without_storage();
+            capture_prestate_slot(&mut self.db.tx_prestate, address, key, value, &live);
+        }
+        Ok(value)
+    }
+
+    #[inline(always)]
+    fn get_storage_value_uncaptured(
         &mut self,
         address: Address,
         key: H256,
