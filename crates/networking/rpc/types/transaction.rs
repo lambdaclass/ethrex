@@ -20,6 +20,14 @@ pub struct RpcTransaction {
     #[serde(with = "serde_utils::u64::hex_str_opt")]
     block_number: Option<BlockNumber>,
     block_hash: Option<BlockHash>,
+    /// Timestamp of the including block, which the execution API requires on a
+    /// mined transaction. Absent for a pending one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "serde_utils::u64::hex_str_opt"
+    )]
+    block_timestamp: Option<u64>,
     from: Address,
     pub hash: H256,
     #[serde(with = "serde_utils::u64::hex_str_opt")]
@@ -31,6 +39,7 @@ impl RpcTransaction {
         tx: Transaction,
         block_number: Option<BlockNumber>,
         block_hash: Option<BlockHash>,
+        block_timestamp: Option<u64>,
         transaction_index: Option<usize>,
     ) -> Result<Self, RpcErr> {
         let from = tx.sender(&NativeCrypto)?;
@@ -40,6 +49,7 @@ impl RpcTransaction {
             tx,
             block_number,
             block_hash,
+            block_timestamp,
             from,
             hash,
             transaction_index,

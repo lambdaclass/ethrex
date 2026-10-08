@@ -49,7 +49,10 @@ pub fn content(context: RpcApiContext) -> Result<Value, RpcErr> {
         let sender_entry = mempool_content
             .entry(tx.sender(&NativeCrypto)?)
             .or_default();
-        sender_entry.insert(tx.nonce(), RpcTransaction::build(tx, None, None, None)?);
+        sender_entry.insert(
+            tx.nonce(),
+            RpcTransaction::build(tx, None, None, None, None)?,
+        );
     }
     let response = MempoolContent {
         pending: mempool_content,
@@ -88,7 +91,10 @@ pub fn content_from(params: &Option<Vec<Value>>, context: RpcApiContext) -> Resu
     let mut by_nonce: MempoolContentByNonce = HashMap::new();
     for tx in transactions {
         if tx.sender(&NativeCrypto)? == address {
-            by_nonce.insert(tx.nonce(), RpcTransaction::build(tx, None, None, None)?);
+            by_nonce.insert(
+                tx.nonce(),
+                RpcTransaction::build(tx, None, None, None, None)?,
+            );
         }
     }
     let response = MempoolContentFrom {

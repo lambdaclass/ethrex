@@ -167,6 +167,7 @@ impl RpcHandler for GetTransactionByBlockNumberAndIndexRequest {
             tx.clone(),
             Some(block_number),
             Some(block_header.hash()),
+            Some(block_header.timestamp),
             Some(self.transaction_index),
         )?;
         serde_json::to_value(tx).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -206,6 +207,10 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
             Some(block_body) => block_body,
             _ => return Ok(Value::Null),
         };
+        let block_header = match context.storage.get_block_header_by_hash(self.block)? {
+            Some(block_header) => block_header,
+            _ => return Ok(Value::Null),
+        };
         let tx = match block_body.transactions.get(self.transaction_index) {
             Some(tx) => tx,
             None => return Ok(Value::Null),
@@ -214,6 +219,7 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
             tx.clone(),
             Some(block_number),
             Some(self.block),
+            Some(block_header.timestamp),
             Some(self.transaction_index),
         )?;
         serde_json::to_value(tx).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -251,10 +257,14 @@ impl RpcHandler for GetTransactionByHashRequest {
             else {
                 return Ok(Value::Null);
             };
+            let Some(block_header) = storage.get_block_header_by_hash(block_hash)? else {
+                return Ok(Value::Null);
+            };
             RpcTransaction::build(
                 tx,
                 Some(block_number),
                 Some(block_hash),
+                Some(block_header.timestamp),
                 Some(index as usize),
             )?
         } else {
@@ -265,7 +275,7 @@ impl RpcHandler for GetTransactionByHashRequest {
             else {
                 return Ok(Value::Null);
             };
-            RpcTransaction::build(tx, None, None, None)?
+            RpcTransaction::build(tx, None, None, None, None)?
         };
         serde_json::to_value(transaction).map_err(|error| RpcErr::Internal(error.to_string()))
     }
