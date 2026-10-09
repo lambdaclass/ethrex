@@ -730,6 +730,7 @@ pub async fn bind_api(
         service_context.clone(),
         timer_sender,
         authrpc_max_inflight_body_size,
+        AUTHRPC_BUDGET_WAIT_TIMEOUT,
         AUTHRPC_BODY_READ_TIMEOUT,
     );
 
@@ -781,10 +782,16 @@ pub const DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE: usize = 4 * AUTHRPC_MAX_BODY_S
 /// budget reservation indefinitely.
 pub(crate) const AUTHRPC_BODY_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Time an Auth-RPC request may wait for room in the body budget before it is refused
+/// with a 503. It matches the engine API's longest per-call timeout, 8 s for
+/// `engine_newPayload` and `engine_forkchoiceUpdated`: past it, the consensus client has
+/// stopped waiting for the answer.
+pub(crate) const AUTHRPC_BUDGET_WAIT_TIMEOUT: Duration = Duration::from_secs(8);
+
 /// Builds the Auth-RPC router. Its layers run outermost first: the JWT check, then the
 /// in-flight body budget, then the handler. A request without a valid token, or one the
-/// budget cannot fit, is answered from its headers alone, before its body is read. The
-/// handler then gives the body `body_read_timeout` to arrive.
+/// budget cannot fit within `budget_wait_timeout`, is answered from its headers alone,
+/// before its body is read. The handler then gives the body `body_read_timeout` to arrive.
 ///
 /// Every authenticated request pings `consensus_liveness`, which feeds the
 /// "consensus client offline" warning.
@@ -792,10 +799,11 @@ pub(crate) fn authrpc_router(
     service_context: RpcApiContext,
     consensus_liveness: tokio::sync::watch::Sender<()>,
     max_inflight_body_size: usize,
+    budget_wait_timeout: Duration,
     body_read_timeout: Duration,
 ) -> Router {
     let jwt_secret = service_context.node_data.jwt_secret.clone();
-    let budget = BodyBudget::new(max_inflight_body_size);
+    let budget = BodyBudget::new(max_inflight_body_size, budget_wait_timeout);
     let max_body_size = budget.max_body_size;
     let handler = move |ctx, request: Request| async move {
         let body = match timeout(body_read_timeout, String::from_request(request, &())).await {
@@ -829,15 +837,18 @@ struct BodyBudget {
     /// Per-request cap: [`AUTHRPC_MAX_BODY_SIZE`], or the whole budget when that is
     /// smaller, so a body that could never fit gets a 413 rather than a retryable 503.
     max_body_size: usize,
+    /// How long a request may wait for others to release enough of the budget.
+    wait_timeout: Duration,
 }
 
 impl BodyBudget {
-    fn new(max_inflight_body_size: usize) -> Self {
+    fn new(max_inflight_body_size: usize, wait_timeout: Duration) -> Self {
         Self {
             available: Arc::new(Semaphore::new(
                 max_inflight_body_size.min(Semaphore::MAX_PERMITS),
             )),
             max_body_size: AUTHRPC_MAX_BODY_SIZE.min(max_inflight_body_size),
+            wait_timeout,
         }
     }
 }
@@ -845,8 +856,8 @@ impl BodyBudget {
 /// Reserves the request's body size from the budget before the body is read, and holds
 /// the reservation until the response is ready: the buffered body and the request parsed
 /// from it live that long. A body of unknown length (chunked) reserves the per-request
-/// cap. Rejects with 413 when the size exceeds the cap and with 503 when the budget is
-/// spent, both carrying a JSON-RPC error.
+/// cap. Rejects with 413 when the size exceeds the cap, and with 503 when the budget has
+/// no room for it within the wait timeout, both carrying a JSON-RPC error.
 async fn reserve_body_budget(
     State(budget): State<BodyBudget>,
     request: Request,
@@ -870,7 +881,15 @@ async fn reserve_body_budget(
             return (StatusCode::PAYLOAD_TOO_LARGE, Json(null_id_error(error))).into_response();
         }
     };
-    let Ok(_reservation) = budget.available.try_acquire_many_owned(permits) else {
+    // A request that does not fit yet waits for others to finish instead of failing at
+    // once. Waiting holds no body bytes, since the body is read only after the reservation.
+    // The semaphore is never closed, so an acquire error is handled like a timeout.
+    let reservation = timeout(
+        budget.wait_timeout,
+        budget.available.clone().acquire_many_owned(permits),
+    )
+    .await;
+    let Ok(Ok(_reservation)) = reservation else {
         let error =
             RpcErr::Internal("too many request body bytes in flight, retry later".to_string());
         return (StatusCode::SERVICE_UNAVAILABLE, Json(null_id_error(error))).into_response();

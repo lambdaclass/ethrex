@@ -307,7 +307,7 @@ RPC options:
           [default: jwt.hex]
 
       --authrpc.max-inflight-body-size <BYTES>
-          Maximum request body bytes the authenticated rpc server holds at once, across all connections. A request that does not fit while other requests are in flight is rejected with HTTP 503 before its body is read. Each request body is also capped at 128 MiB, or at this value when it is lower, and a larger one is rejected with HTTP 413.
+          Maximum request body bytes the authenticated rpc server holds at once, across all connections. A request that does not fit waits up to 8 seconds for other requests to finish, and is then rejected with HTTP 503 before its body is read. Each request body is also capped at 128 MiB, or at this value when it is lower, and a larger one is rejected with HTTP 413.
           
           [env: ETHREX_AUTHRPC_MAX_INFLIGHT_BODY_SIZE=]
           [default: 536870912]
@@ -527,7 +527,7 @@ RPC options:
           [default: jwt.hex]
 
       --authrpc.max-inflight-body-size <BYTES>
-          Maximum request body bytes the authenticated rpc server holds at once, across all connections. A request that does not fit while other requests are in flight is rejected with HTTP 503 before its body is read. Each request body is also capped at 128 MiB, or at this value when it is lower, and a larger one is rejected with HTTP 413.
+          Maximum request body bytes the authenticated rpc server holds at once, across all connections. A request that does not fit waits up to 8 seconds for other requests to finish, and is then rejected with HTTP 503 before its body is read. Each request body is also capped at 128 MiB, or at this value when it is lower, and a larger one is rejected with HTTP 413.
 
           [env: ETHREX_AUTHRPC_MAX_INFLIGHT_BODY_SIZE=]
           [default: 536870912]

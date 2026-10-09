@@ -5,8 +5,7 @@
 use bytes::Bytes;
 use ethrex_rpc::test_utils::{
     call_authrpc, default_context_with_storage, jwt_auth_header_for, post_authrpc, read_response,
-    send_request_head, setup_store, spawn_authrpc_server,
-    spawn_authrpc_server_with_body_read_timeout,
+    send_request_head, setup_store, spawn_authrpc_server, spawn_authrpc_server_with_timeouts,
 };
 use ethrex_rpc::{AUTHRPC_MAX_BODY_SIZE, DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE};
 use serde_json::Value;
@@ -15,6 +14,12 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
 const CHAIN_ID_REQUEST: &str = r#"{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}"#;
+
+/// Budget wait for tests that expect a 503: short, so the refusal comes quickly.
+const SHORT_WAIT: Duration = Duration::from_secs(1);
+
+/// Longer than any of these tests runs, so it never fires.
+const NO_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// `eth_chainId` padded with trailing whitespace to exactly `len` bytes.
 fn padded_chain_id_request(len: usize) -> String {
@@ -29,8 +34,8 @@ fn assert_null_id_error(body: &str, code: i64) {
 }
 
 /// Of two requests that fit the budget one at a time but not together, waits for the one
-/// refused with a 503 and returns the other, which holds its reservation while it waits
-/// for its body.
+/// refused with a 503 when its budget wait runs out, and returns the other, which holds
+/// its reservation while it waits for its body.
 async fn request_still_in_flight(mut first: TcpStream, mut second: TcpStream) -> TcpStream {
     let first_was_refused = tokio::select! {
         (status, response) = read_response(&mut first) => {
@@ -134,12 +139,12 @@ async fn authrpc_body_larger_than_the_budget_is_too_large() {
 }
 
 /// Two requests whose bodies fit the budget one at a time but not together: the one that
-/// reaches the budget second gets a 503 while the first is still in flight, and the
-/// budget is released once the first completes.
+/// reaches the budget second waits, and gets a 503 when the first is still in flight
+/// after the wait timeout. The budget is released once the first completes.
 #[tokio::test]
 async fn authrpc_rejects_requests_over_the_inflight_budget() {
     let context = default_context_with_storage(setup_store().await).await;
-    let server = spawn_authrpc_server(&context, 4096).await;
+    let server = spawn_authrpc_server_with_timeouts(&context, 4096, SHORT_WAIT, NO_TIMEOUT).await;
     let addr = server.addr;
     let auth = jwt_auth_header_for(&context);
     let body = padded_chain_id_request(3000);
@@ -163,11 +168,40 @@ async fn authrpc_rejects_requests_over_the_inflight_budget() {
     server.shutdown().await;
 }
 
+/// A request that does not fit the budget yet waits for room instead of failing: once the
+/// request ahead of it completes, it is served too.
+#[tokio::test]
+async fn authrpc_requests_wait_for_room_in_the_budget() {
+    let context = default_context_with_storage(setup_store().await).await;
+    let server = spawn_authrpc_server(&context, 4096).await;
+    let addr = server.addr;
+    let auth = jwt_auth_header_for(&context);
+    let body = padded_chain_id_request(3000);
+
+    let mut first = send_request_head(addr, auth.as_ref(), Some(body.len())).await;
+    let mut second = send_request_head(addr, auth.as_ref(), Some(body.len())).await;
+    // Give both heads time to reach the budget, so one of them is waiting for the other.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    first.write_all(body.as_bytes()).await.unwrap();
+    second.write_all(body.as_bytes()).await.unwrap();
+
+    let ((first_status, first_response), (second_status, second_response)) =
+        tokio::join!(read_response(&mut first), read_response(&mut second));
+    assert_eq!(first_status, 200, "first request failed: {first_response}");
+    assert_eq!(
+        second_status, 200,
+        "second request failed: {second_response}"
+    );
+
+    drop((first, second));
+    server.shutdown().await;
+}
+
 /// A client that disconnects partway through its body releases its reservation.
 #[tokio::test]
 async fn authrpc_disconnect_mid_body_releases_the_budget() {
     let context = default_context_with_storage(setup_store().await).await;
-    let server = spawn_authrpc_server(&context, 4096).await;
+    let server = spawn_authrpc_server_with_timeouts(&context, 4096, SHORT_WAIT, NO_TIMEOUT).await;
     let addr = server.addr;
     let auth = jwt_auth_header_for(&context);
     let body = padded_chain_id_request(3000);
@@ -207,7 +241,8 @@ async fn authrpc_disconnect_mid_body_releases_the_budget() {
 async fn authrpc_body_not_received_in_time_is_refused() {
     let context = default_context_with_storage(setup_store().await).await;
     let server =
-        spawn_authrpc_server_with_body_read_timeout(&context, 4096, Duration::from_secs(1)).await;
+        spawn_authrpc_server_with_timeouts(&context, 4096, SHORT_WAIT, Duration::from_secs(1))
+            .await;
     let addr = server.addr;
     let auth = jwt_auth_header_for(&context);
     let body = padded_chain_id_request(3000);
@@ -233,7 +268,7 @@ async fn authrpc_body_not_received_in_time_is_refused() {
 #[tokio::test]
 async fn authrpc_chunked_body_reserves_the_per_request_cap() {
     let context = default_context_with_storage(setup_store().await).await;
-    let server = spawn_authrpc_server(&context, 4096).await;
+    let server = spawn_authrpc_server_with_timeouts(&context, 4096, SHORT_WAIT, NO_TIMEOUT).await;
     let addr = server.addr;
     let auth = jwt_auth_header_for(&context);
 

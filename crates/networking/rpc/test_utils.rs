@@ -8,8 +8,9 @@
 use crate::{
     eth::gas_tip_estimator::GasTipEstimator,
     rpc::{
-        AUTHRPC_BODY_READ_TIMEOUT, ClientVersion, DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE, NodeData,
-        RpcApiContext, authrpc_router, handle_http_request, start_api, start_block_executor,
+        AUTHRPC_BODY_READ_TIMEOUT, AUTHRPC_BUDGET_WAIT_TIMEOUT, ClientVersion,
+        DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE, NodeData, RpcApiContext, authrpc_router,
+        handle_http_request, start_api, start_block_executor,
     },
     utils::RpcNamespace,
 };
@@ -539,19 +540,21 @@ pub async fn spawn_authrpc_server(
     context: &RpcApiContext,
     max_inflight_body_size: usize,
 ) -> AuthRpcTestServer {
-    spawn_authrpc_server_with_body_read_timeout(
+    spawn_authrpc_server_with_timeouts(
         context,
         max_inflight_body_size,
+        AUTHRPC_BUDGET_WAIT_TIMEOUT,
         AUTHRPC_BODY_READ_TIMEOUT,
     )
     .await
 }
 
-/// Like [`spawn_authrpc_server`], with `body_read_timeout` in place of the production
-/// deadline for receiving a request body.
-pub async fn spawn_authrpc_server_with_body_read_timeout(
+/// Like [`spawn_authrpc_server`], with `budget_wait_timeout` and `body_read_timeout` in
+/// place of the production limits on waiting for room in the budget and for the body.
+pub async fn spawn_authrpc_server_with_timeouts(
     context: &RpcApiContext,
     max_inflight_body_size: usize,
+    budget_wait_timeout: Duration,
     body_read_timeout: Duration,
 ) -> AuthRpcTestServer {
     let (consensus_liveness, _) = tokio::sync::watch::channel(());
@@ -559,6 +562,7 @@ pub async fn spawn_authrpc_server_with_body_read_timeout(
         context.clone(),
         consensus_liveness,
         max_inflight_body_size,
+        budget_wait_timeout,
         body_read_timeout,
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
