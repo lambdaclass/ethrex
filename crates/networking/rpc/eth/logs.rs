@@ -834,4 +834,202 @@ mod tests {
             &[TopicFilter::Topic(Some(topic(2)))]
         ));
     }
+
+    /// A transaction in a test block: whether its receipt succeeded, and its logs as
+    /// `(address, topics)` built from `addr` and `topic`.
+    type TestTx = (bool, Vec<(u64, Vec<u64>)>);
+
+    /// An in-memory chain whose block `n` holds `blocks[n]`, with header blooms built from
+    /// the successful receipts' logs, all canonical.
+    async fn store_with_blocks(blocks: &[Vec<TestTx>]) -> Store {
+        use ethrex_common::types::{
+            Block, BlockBody, LegacyTransaction, Log, Receipt, Transaction, TxType, bloom_from_logs,
+        };
+        use ethrex_storage::EngineType;
+
+        let storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        let mut canonical = Vec::new();
+        for (number, txs) in blocks.iter().enumerate() {
+            let number = number as u64;
+            let mut transactions = Vec::new();
+            let mut receipts = Vec::new();
+            let mut logged = Vec::new();
+            for (nonce, (succeeded, logs)) in txs.iter().enumerate() {
+                transactions.push(Transaction::LegacyTransaction(LegacyTransaction {
+                    nonce: number * 100 + nonce as u64,
+                    ..Default::default()
+                }));
+                let logs: Vec<Log> = logs
+                    .iter()
+                    .map(|(address, topics)| Log {
+                        address: addr(*address),
+                        topics: topics.iter().map(|t| topic(*t)).collect(),
+                        data: Default::default(),
+                    })
+                    .collect();
+                if *succeeded {
+                    logged.extend(logs.iter().cloned());
+                }
+                receipts.push(Receipt::new(TxType::Legacy, *succeeded, 21000, logs));
+            }
+            let header = BlockHeader {
+                number,
+                timestamp: number * 12,
+                logs_bloom: bloom_from_logs(&logged, &NativeCrypto),
+                ..Default::default()
+            };
+            let block = Block::new(
+                header,
+                BlockBody {
+                    transactions,
+                    ommers: Default::default(),
+                    withdrawals: Default::default(),
+                },
+            );
+            let hash = block.hash();
+            storage.add_block(block).await.unwrap();
+            storage.add_receipts(hash, receipts).await.unwrap();
+            canonical.push((number, hash));
+        }
+        let (head_number, head_hash) = *canonical.last().unwrap();
+        storage
+            .forkchoice_update(canonical, head_number, head_hash, None, None)
+            .await
+            .unwrap();
+        storage
+    }
+
+    /// Where a returned log sits: `(block number, transaction index, log index, address)`.
+    type LogPosition = (u64, u64, u64, u64);
+
+    /// The positions of the logs answering `filter` (a JSON filter object).
+    async fn query(storage: &Store, filter: Value) -> Vec<LogPosition> {
+        let filter = LogsFilter::parse(&Some(vec![filter])).unwrap();
+        let logs = fetch_logs_with_filter(&filter, storage.clone())
+            .await
+            .unwrap();
+        for log in &logs {
+            let header = storage.get_block_header(log.block_number).unwrap().unwrap();
+            assert_eq!(log.block_hash, header.hash());
+            assert_eq!(log.block_timestamp, header.timestamp);
+            assert!(!log.removed);
+        }
+        logs.iter()
+            .map(|log| {
+                (
+                    log.block_number,
+                    log.transaction_index,
+                    log.log_index,
+                    log.log.address.to_low_u64_be(),
+                )
+            })
+            .collect()
+    }
+
+    /// Pins which logs each kind of filter returns, and in what order, over a small chain
+    /// with several addresses, topics, a failed receipt and empty blocks. Each block has at
+    /// most one transaction: the in-memory backend's receipt iterator only returns a
+    /// block's first receipt.
+    #[tokio::test]
+    async fn get_logs_returns_the_matching_logs_in_order() {
+        let storage = store_with_blocks(&[
+            vec![],
+            vec![(true, vec![(1, vec![1]), (2, vec![1, 2])])],
+            vec![(false, vec![(1, vec![1])])],
+            vec![(true, vec![(3, vec![3])])],
+            vec![(true, vec![(2, vec![2, 1])])],
+            vec![],
+            vec![(true, vec![(1, vec![1, 2, 3]), (1, vec![])])],
+        ])
+        .await;
+        let t = |n: u64| format!("{:#x}", topic(n));
+        let a = |n: u64| format!("{:#x}", addr(n));
+        let block_1_hash = format!(
+            "{:#x}",
+            storage.get_block_header(1).unwrap().unwrap().hash()
+        );
+        let range = |filter: Value| {
+            let mut filter = filter;
+            filter["fromBlock"] = json!("0x0");
+            filter["toBlock"] = json!("0x6");
+            filter
+        };
+        let with_a_topic = vec![
+            (1, 0, 0, 1),
+            (1, 0, 1, 2),
+            (3, 0, 0, 3),
+            (4, 0, 0, 2),
+            (6, 0, 0, 1),
+        ];
+
+        let cases: Vec<(&str, Value, Vec<LogPosition>)> = vec![
+            (
+                "no filter",
+                range(json!({})),
+                vec![
+                    (1, 0, 0, 1),
+                    (1, 0, 1, 2),
+                    (3, 0, 0, 3),
+                    (4, 0, 0, 2),
+                    (6, 0, 0, 1),
+                    (6, 0, 1, 1),
+                ],
+            ),
+            (
+                "one address",
+                range(json!({"address": a(1)})),
+                vec![(1, 0, 0, 1), (6, 0, 0, 1), (6, 0, 1, 1)],
+            ),
+            (
+                "address list",
+                range(json!({"address": [a(2), a(3)]})),
+                vec![(1, 0, 1, 2), (3, 0, 0, 3), (4, 0, 0, 2)],
+            ),
+            (
+                "topic0",
+                range(json!({"topics": [t(1)]})),
+                vec![(1, 0, 0, 1), (1, 0, 1, 2), (6, 0, 0, 1)],
+            ),
+            (
+                "topic1 after a wildcard",
+                range(json!({"topics": [null, t(1)]})),
+                vec![(4, 0, 0, 2)],
+            ),
+            (
+                "OR-set",
+                range(json!({"topics": [[t(2), t(3)]]})),
+                vec![(3, 0, 0, 3), (4, 0, 0, 2)],
+            ),
+            (
+                "empty OR-set needs a topic at that position",
+                range(json!({"topics": [[]]})),
+                with_a_topic.clone(),
+            ),
+            (
+                "OR-set with null is a wildcard",
+                range(json!({"topics": [[null, t(9)]]})),
+                with_a_topic,
+            ),
+            (
+                "address and two topics",
+                range(json!({"address": a(1), "topics": [t(1), t(2)]})),
+                vec![(6, 0, 0, 1)],
+            ),
+            ("no match", range(json!({"topics": [t(9)]})), vec![]),
+            (
+                "sub-range",
+                json!({"fromBlock": "0x3", "toBlock": "0x5"}),
+                vec![(3, 0, 0, 3), (4, 0, 0, 2)],
+            ),
+            (
+                "block hash",
+                json!({"blockHash": block_1_hash, "address": a(2)}),
+                vec![(1, 0, 1, 2)],
+            ),
+        ];
+        for (name, filter, expected) in cases {
+            assert_eq!(query(&storage, filter).await, expected, "{name}");
+        }
+    }
 }
