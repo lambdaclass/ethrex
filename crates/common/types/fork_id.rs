@@ -343,6 +343,24 @@ mod tests {
                 time: 1762955544,
                 fork_id: ForkId {
                     fork_hash: H32::from_str("0x23aa1351").unwrap(),
+                    fork_next: 1793036568,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 1793036567,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x23aa1351").unwrap(),
+                    fork_next: 1793036568,
+                },
+                is_valid: true,
+            },
+            TestCase {
+                head: 123,
+                time: 1793036568,
+                fork_id: ForkId {
+                    fork_hash: H32::from_str("0x3d068b59").unwrap(),
                     fork_next: 0,
                 },
                 is_valid: true,
@@ -351,7 +369,7 @@ mod tests {
                 head: 123,
                 time: 2740434112,
                 fork_id: ForkId {
-                    fork_hash: H32::from_str("0x23aa1351").unwrap(),
+                    fork_hash: H32::from_str("0x3d068b59").unwrap(),
                     fork_next: 0,
                 },
                 is_valid: true,

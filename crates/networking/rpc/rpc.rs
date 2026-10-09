@@ -2224,14 +2224,14 @@ mod tests {
                     }
                 },
                 "last": {
-                    "activationTime": 1762955544,
+                    "activationTime": 1793036568,
                     "blobSchedule": {
                         "baseFeeUpdateFraction": 11684671,
                         "max": 21,
                         "target": 14,
                     },
                     "chainId": "0x88bb0",
-                    "forkId": "0x23aa1351",
+                    "forkId": "0x3d068b59",
                     "precompiles": {
                         "BLAKE2F": "0x0000000000000000000000000000000000000009",
                         "BLS12_G1ADD": "0x000000000000000000000000000000000000000b",
@@ -2254,6 +2254,8 @@ mod tests {
                     },
                     "systemContracts": {
                         "BEACON_ROOTS_ADDRESS": "0x000f3df6d732807ef1319fb7b8bb8522d0beac02",
+                        "BUILDER_DEPOSIT_CONTRACT_ADDRESS": "0x0000bff46984e3725691fa540a8c7589300d8282",
+                        "BUILDER_EXIT_CONTRACT_ADDRESS": "0x000064d678505ad48f8ccb093bc65613800e8282",
                         "CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS": "0x0000bbddc7ce488642fb579f8b00f3a590007251",
                         "DEPOSIT_CONTRACT_ADDRESS": "0x00000000219ab540356cbb839cbe05303d7705fa",
                         "HISTORY_STORAGE_ADDRESS": "0x0000f90827f1c53a10cb7a02335b175320002935",
