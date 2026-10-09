@@ -3,6 +3,7 @@
 //! tests drive a real server and often send a request head without its body.
 
 use bytes::Bytes;
+use ethrex_rpc::clients::{EngineClient, EngineClientError};
 use ethrex_rpc::test_utils::{
     call_authrpc, default_context_with_storage, jwt_auth_header_for, post_authrpc, read_response,
     send_request_head, setup_store, spawn_authrpc_server, spawn_authrpc_server_with_timeouts,
@@ -85,6 +86,27 @@ async fn authrpc_rejects_invalid_token_before_reading_body() {
     assert_eq!(body, "invalid token");
 
     drop(stream);
+    server.shutdown().await;
+}
+
+/// ethrex's own engine client reports the 401's reason instead of failing to decode the
+/// plain-text body as JSON.
+#[tokio::test]
+async fn engine_client_reports_auth_failures() {
+    let context = default_context_with_storage(setup_store().await).await;
+    let server = spawn_authrpc_server(&context, DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE).await;
+    let client = EngineClient::new(
+        &format!("http://{}", server.addr),
+        Bytes::from_static(b"not the node's secret"),
+    );
+
+    let result = client.engine_exchange_capabilities().await;
+    assert!(
+        matches!(&result, Err(EngineClientError::Unauthorized(reason)) if reason == "invalid token"),
+        "expected an auth failure, got {result:?}"
+    );
+
+    drop(client);
     server.shutdown().await;
 }
 
