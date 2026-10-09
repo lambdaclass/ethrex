@@ -6,9 +6,8 @@
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::{
-    Account, BlockHeader, Code, FRAME_RECEIPT_STATUS_SUCCESS, FRAME_TX_KEYED_NONCE_ACCESS_COST,
-    Fork, Frame, FrameMode, FrameTransaction, Transaction, frame_tx_nonce_manager,
-    keyed_nonce_slot,
+    Account, BlockHeader, Code, FRAME_RECEIPT_STATUS_SUCCESS, Fork, Frame, FrameMode,
+    FrameTransaction, Transaction, frame_tx_nonce_manager, keyed_nonce_slot,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH, utils::keccak};
 use ethrex_crypto::NativeCrypto;
@@ -340,10 +339,10 @@ fn consuming_a_keyed_nonce_does_not_warm_the_nonce_manager() {
 
 #[test]
 fn a_keyed_nonce_first_use_is_priced_as_state_gas() {
-    // EIP-8250: a fresh key pays one storage set of state gas, drawn from the
-    // approving frame's `limits.state`, and every non-zero key pays
-    // KEYED_NONCE_ACCESS_COST of intrinsic execution gas for the cold read and write
-    // of its slot. Nothing else: no EIP-2200 SSTORE charge, no EIP-2929 access.
+    // EIP-8250 §Nonce consumption: the only keyed-nonce charge is one storage set of
+    // state gas per newly-occupied key, drawn from the approving frame's
+    // `limits.state`. It is not execution gas, not an EIP-2200 SSTORE charge, and
+    // not a cold-slot access on top.
     let legacy_only = keyed_nonce_probe(COLD_CONTROL, vec![U256::zero()]);
     let one_key = keyed_nonce_probe(COLD_CONTROL, vec![U256::one()]);
     let two_keys = keyed_nonce_probe(COLD_CONTROL, vec![U256::one(), U256::from(2u64)]);
@@ -361,28 +360,24 @@ fn a_keyed_nonce_first_use_is_priced_as_state_gas() {
         "a second fresh key must cost exactly one more KEYED_NONCE_FIRST_USE_STATE_GAS"
     );
 
-    // The execution dimension: each non-zero key adds exactly KEYED_NONCE_ACCESS_COST
-    // plus the few gas of envelope data its encoding takes. A second cold-slot access
-    // or an EIP-2200 charge on top would add thousands, so bounding the excess below
+    // The execution dimension: an extra key only lengthens the signed envelope, so
+    // the delta is a few gas of ordinary transaction data cost. A cold slot access
+    // or an EIP-2200 charge would add thousands, so bounding the excess below
     // `ENVELOPE_SLACK` is what makes this an assertion about pricing.
     const ENVELOPE_SLACK: u64 = 100;
     let execution = |report: &ExecutionReport| report.gas_used - report.state_gas_used;
-    for (label, delta) in [
-        (
-            "a fresh key over [0]",
-            execution(&one_key) - execution(&legacy_only),
-        ),
-        (
-            "a second fresh key",
-            execution(&two_keys) - execution(&one_key),
-        ),
-    ] {
-        let excess = delta.checked_sub(FRAME_TX_KEYED_NONCE_ACCESS_COST);
-        assert!(
-            excess.is_some_and(|excess| excess < ENVELOPE_SLACK),
-            "{label} must cost KEYED_NONCE_ACCESS_COST plus envelope data, but cost {delta}"
-        );
-    }
+    let keyed_delta = execution(&one_key) - execution(&legacy_only);
+    assert!(
+        keyed_delta < ENVELOPE_SLACK,
+        "consuming a fresh keyed nonce must cost no execution gas beyond envelope data, \
+         but cost {keyed_delta} more"
+    );
+    let second_key_delta = execution(&two_keys) - execution(&one_key);
+    assert!(
+        second_key_delta < ENVELOPE_SLACK,
+        "a second fresh key must cost no execution gas beyond envelope data, but cost \
+         {second_key_delta} more -- a storage charge is layered on top"
+    );
 }
 
 // ==================== Contract sender on a keyed nonce ====================
@@ -891,17 +886,7 @@ fn txparam_legacy_nonce_is_not_updated_by_payment_approval() {
     assert_eq!(key_0, U256::zero());
 }
 
-// ==================== Keyed-nonce access cost and block access list ====================
-
-#[test]
-fn the_keyed_nonce_access_cost_tracks_the_eip_8038_storage_schedule() {
-    // EIP-8250 `KEYED_NONCE_ACCESS_COST = COLD_STORAGE_ACCESS + STORAGE_WRITE`.
-    assert_eq!(
-        FRAME_TX_KEYED_NONCE_ACCESS_COST,
-        ethrex_levm::gas_cost::COLD_STORAGE_ACCESS_AMSTERDAM
-            + ethrex_levm::gas_cost::STORAGE_WRITE_AMSTERDAM
-    );
-}
+// ==================== Block access list ====================
 
 /// Runs `tx` with block access list recording at index 1 and returns the list.
 fn block_access_list_of(

@@ -10,9 +10,8 @@ use ethrex_common::constants::GAS_PER_BLOB;
 use ethrex_common::types::{
     APPROVE_EXECUTION, APPROVE_EXECUTION_AND_PAYMENT, APPROVE_PAYMENT, Block, BlockBody,
     BlockHeader, ChainConfig, EIP4844Transaction, FRAME_SIG_SCHEME_ARBITRARY,
-    FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_KEYED_NONCE_ACCESS_COST, FRAME_TX_MAX_VERIFY_GAS, Frame,
-    FrameMode, FrameSignature, FrameTransaction, FrameValidationError, PrefixShape, Transaction,
-    frame_tx_expiry_verifier,
+    FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_MAX_VERIFY_GAS, Frame, FrameMode, FrameSignature,
+    FrameTransaction, FrameValidationError, PrefixShape, Transaction, frame_tx_expiry_verifier,
 };
 
 /// EIP-4844 `VERSIONED_HASH_VERSION_KZG`. The constant itself lives in a private
@@ -660,40 +659,6 @@ fn static_validation_enforces_the_eip_8250_nonce_rules() {
         let err = with(keys, seq).expect_err(label);
         assert!(err.contains(reason), "{label}: unexpected reason {err:?}");
     }
-}
-
-#[test]
-fn keyed_nonce_access_is_charged_in_intrinsic_gas_and_in_the_floor() {
-    // EIP-8250: every non-zero key adds KEYED_NONCE_ACCESS_COST to both
-    // `frame_tx_intrinsic_gas` and `calldata_floor_gas`; `[0]` adds nothing.
-    let legacy = make_test_frame_tx();
-    assert_eq!(legacy.nonce_keys, vec![U256::zero()]);
-    assert_eq!(legacy.keyed_nonce_access_cost(), 0);
-
-    // `[5]` encodes to as many bytes as `[0]`, all non-zero, so the access cost is
-    // the only difference on either side.
-    let mut one_key = legacy.clone();
-    one_key.nonce_keys = vec![U256::from(5)];
-    assert_eq!(
-        one_key.keyed_nonce_access_cost(),
-        FRAME_TX_KEYED_NONCE_ACCESS_COST
-    );
-    assert_eq!(one_key.data_cost(), legacy.data_cost());
-    assert_eq!(
-        one_key.standard_gas_limit() - legacy.standard_gas_limit(),
-        FRAME_TX_KEYED_NONCE_ACCESS_COST
-    );
-    assert_eq!(
-        one_key.calldata_floor_total() - legacy.calldata_floor_total(),
-        FRAME_TX_KEYED_NONCE_ACCESS_COST
-    );
-
-    let mut three_keys = legacy;
-    three_keys.nonce_keys = vec![U256::from(1), U256::from(2), U256::from(3)];
-    assert_eq!(
-        three_keys.keyed_nonce_access_cost(),
-        3 * FRAME_TX_KEYED_NONCE_ACCESS_COST
-    );
 }
 
 #[test]
