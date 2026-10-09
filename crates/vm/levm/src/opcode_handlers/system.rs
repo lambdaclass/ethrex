@@ -1177,6 +1177,7 @@ impl<'a> VM<'a> {
         if should_transfer_value && !value.is_zero() {
             let sender_balance = self.db.get_account(msg_sender)?.info.balance;
             if sender_balance < value {
+                self.recycle_calldata(calldata);
                 // EIP-8037: no account is created, refund the new-account state gas.
                 self.refund_new_account_state_gas(new_account_charged)?;
                 self.early_revert_message_call(gas_limit, "OutOfFund".to_string())?;
@@ -1191,6 +1192,7 @@ impl<'a> VM<'a> {
             .checked_add(1)
             .ok_or(InternalError::Overflow)?;
         if new_depth > 1024 {
+            self.recycle_calldata(calldata);
             self.refund_new_account_state_gas(new_account_charged)?;
             self.early_revert_message_call(gas_limit, "MaxDepth".to_string())?;
             return Ok(OpcodeResult::Continue);
@@ -1214,6 +1216,7 @@ impl<'a> VM<'a> {
                 self.crypto,
                 self.stateless_validator,
             )?;
+            self.recycle_calldata(calldata);
 
             let call_frame = &mut self.current_call_frame;
 
@@ -1384,6 +1387,7 @@ impl<'a> VM<'a> {
             call_frame_backup,
             stack,
             new_account_state_gas_charged,
+            calldata,
             ..
         } = executed_call_frame;
 
@@ -1457,6 +1461,7 @@ impl<'a> VM<'a> {
         let mut stack = stack;
         stack.clear();
         self.stack_pool.push(stack);
+        self.recycle_calldata(calldata);
 
         Ok(())
     }
@@ -1553,8 +1558,25 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
+    /// Copies a child frame's arguments out of the caller's memory into a pooled buffer.
     fn get_calldata(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {
-        self.current_call_frame.memory.load_range(offset, size)
+        if size == 0 {
+            return Ok(Bytes::new());
+        }
+        let mut buffer = self.calldata_pool.pop().unwrap_or_default();
+        buffer.clear();
+        self.current_call_frame
+            .memory
+            .with_range(offset, size, |range| buffer.extend_from_slice(range))?;
+        Ok(Bytes::from(buffer))
+    }
+
+    /// Returns a finished child frame's calldata buffer to the pool. A buffer that is still
+    /// shared (a tracer or a precompile output kept a clone) is left alone and freed normally.
+    fn recycle_calldata(&mut self, calldata: Bytes) {
+        if let Ok(buffer) = calldata.try_into_mut() {
+            self.calldata_pool.push(buffer.into());
+        }
     }
 
     #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
