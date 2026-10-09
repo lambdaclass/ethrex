@@ -493,6 +493,27 @@ pub fn frame_value_exceeds_balance(sender_balance: U256, frame_value: U256) -> b
     sender_balance < frame_value
 }
 
+/// One change to a [`FrameTxContext`] field that EIP-8141 journals alongside the
+/// state changes that produced it, holding what it takes to undo the change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FrameContextChange {
+    /// An `APPROVE` changed the approval context. Holds `sender_approved` and
+    /// `payer` as they were before it.
+    Approvals(bool, Option<Address>),
+    /// A slot's creation charge was recorded against a frame. Holds the slot and
+    /// the owner the record replaced.
+    ChargeOwnerRecorded((Address, H256), Option<usize>),
+    /// A refill consumed a slot's charge record. Holds the slot and its owner.
+    ChargeOwnerTaken((Address, H256), usize),
+    /// A refill lowered an earlier frame's receipt `gas_used.state` from
+    /// `previous`, and `state_gas_used` by `amount`.
+    ReceiptRefilled {
+        frame: usize,
+        previous: u64,
+        amount: u64,
+    },
+}
+
 /// Context for frame transaction (EIP-8141) execution.
 /// This is set when executing a frame transaction and is used by
 /// APPROVE, TXPARAM, FRAMEDATALOAD, and FRAMEDATACOPY opcodes.
@@ -521,6 +542,13 @@ pub struct FrameTxContext {
     /// refill lowers the *owner's* figure, not the executing frame's -- otherwise
     /// the executing frame would be handed budget it never declared.
     pub outstanding_charge_owners: FxHashMap<(Address, H256), usize>,
+    /// EIP-8141 journals the approval context, the state-gas ownership records and
+    /// the changes refills make to earlier frames' receipts alongside the state
+    /// changes that produced them: reverting a call, a frame or an atomic batch
+    /// restores all of them to the corresponding checkpoint. They live here, outside
+    /// the substate and the cache, so every change is logged and
+    /// `VM::rollback_frame_context` undoes it.
+    pub journal: Vec<FrameContextChange>,
     /// The sig_hash of the frame transaction
     pub sig_hash: H256,
     /// The full frame transaction (for TXPARAM access)
@@ -543,22 +571,49 @@ pub struct FrameTxContext {
 }
 
 impl FrameTxContext {
-    /// Capture the approval state at atomic-batch entry. A batch revert rolls
-    /// back the payer's balance deduction and the sender nonce increment, so
-    /// approvals granted inside the batch must be rolled back with it —
-    /// otherwise a reverted APPROVE would leave the transaction authorized
-    /// by a frame whose effects no longer exist.
+    /// Capture the approval state, for a rollback that restores it wholesale
+    /// instead of through the journal. Rolling back state undoes the payer's
+    /// balance deduction and the sender nonce increment, so approvals granted
+    /// since must be rolled back with it -- otherwise a reverted APPROVE would
+    /// leave the transaction authorized by a frame whose effects no longer exist.
     pub fn approval_snapshot(&self) -> (bool, Option<Address>) {
         (self.sender_approved, self.payer_address)
     }
 
-    /// Restore the approval state captured by `approval_snapshot` when the
-    /// enclosing atomic batch reverts. Approvals granted before the batch
-    /// are unaffected (the snapshot includes them).
+    /// Restore the approval state captured by `approval_snapshot`. Approvals
+    /// granted before the snapshot are unaffected (the snapshot includes them).
     pub fn restore_approvals(&mut self, snapshot: (bool, Option<Address>)) {
         let (sender_approved, payer_address) = snapshot;
         self.sender_approved = sender_approved;
         self.payer_address = payer_address;
+    }
+
+    /// The journal position a later `VM::rollback_frame_context` restores to.
+    pub fn checkpoint(&self) -> usize {
+        self.journal.len()
+    }
+
+    /// Logs the approval context ahead of an `APPROVE` that changes it.
+    pub fn journal_approvals(&mut self) {
+        self.journal.push(FrameContextChange::Approvals(
+            self.sender_approved,
+            self.payer_address,
+        ));
+    }
+
+    /// Records `owner` as the frame that paid `slot`'s creation charge.
+    pub fn record_charge_owner(&mut self, slot: (Address, H256), owner: usize) {
+        let replaced = self.outstanding_charge_owners.insert(slot, owner);
+        self.journal
+            .push(FrameContextChange::ChargeOwnerRecorded(slot, replaced));
+    }
+
+    /// Consumes `slot`'s charge record, returning the frame that paid it.
+    pub fn take_charge_owner(&mut self, slot: (Address, H256)) -> Option<usize> {
+        let owner = self.outstanding_charge_owners.remove(&slot)?;
+        self.journal
+            .push(FrameContextChange::ChargeOwnerTaken(slot, owner));
+        Some(owner)
     }
 }
 
@@ -1285,11 +1340,74 @@ impl<'a> VM<'a> {
             self.state_gas_reservoir = self.state_gas_reservoir.saturating_add(amount);
             return Ok(());
         }
-        if let Some(ctx) = self.frame_tx_context.as_mut()
-            && let Some(result) = ctx.frame_results.get_mut(owner)
-        {
-            result.2 = result.2.saturating_sub(amount);
+        if let Some(ctx) = self.frame_tx_context.as_mut() {
+            // The owner is an earlier frame, so its receipt is already recorded.
+            let result = ctx.frame_results.get_mut(owner).ok_or_else(|| {
+                InternalError::msg("state-gas refill owned by a frame without a receipt")
+            })?;
+            let previous = result.2;
+            result.2 = previous.saturating_sub(amount);
+            ctx.journal.push(FrameContextChange::ReceiptRefilled {
+                frame: owner,
+                previous,
+                amount,
+            });
         }
+        Ok(())
+    }
+
+    /// EIP-8141: undo, newest first, every journaled change to the frame
+    /// transaction context made since `checkpoint` (see [`FrameTxContext::journal`]).
+    ///
+    /// Undoing a refill credited to an earlier frame's receipt also raises
+    /// `state_gas_used` by the refilled amount, which the refill had taken off it.
+    /// A failing call's state-gas rollback then measures only the call's own
+    /// charges against its entry baseline, as it does when no frame owns them.
+    pub fn rollback_frame_context(&mut self, checkpoint: usize) -> Result<(), VMError> {
+        let Some(ctx) = self.frame_tx_context.as_mut() else {
+            return Ok(());
+        };
+        if checkpoint >= ctx.journal.len() {
+            return Ok(());
+        }
+        let undone = ctx.journal.split_off(checkpoint);
+        let mut refilled: u64 = 0;
+        for change in undone.into_iter().rev() {
+            match change {
+                FrameContextChange::Approvals(sender_approved, payer_address) => {
+                    ctx.sender_approved = sender_approved;
+                    ctx.payer_address = payer_address;
+                }
+                FrameContextChange::ChargeOwnerRecorded(slot, replaced) => match replaced {
+                    Some(owner) => {
+                        ctx.outstanding_charge_owners.insert(slot, owner);
+                    }
+                    None => {
+                        ctx.outstanding_charge_owners.remove(&slot);
+                    }
+                },
+                FrameContextChange::ChargeOwnerTaken(slot, owner) => {
+                    ctx.outstanding_charge_owners.insert(slot, owner);
+                }
+                FrameContextChange::ReceiptRefilled {
+                    frame,
+                    previous,
+                    amount,
+                } => {
+                    let result = ctx.frame_results.get_mut(frame).ok_or_else(|| {
+                        InternalError::msg("journaled refill of a frame without a receipt")
+                    })?;
+                    result.2 = previous;
+                    refilled = refilled
+                        .checked_add(amount)
+                        .ok_or(InternalError::Overflow)?;
+                }
+            }
+        }
+        self.state_gas_used = self
+            .state_gas_used
+            .checked_add(i64::try_from(refilled).map_err(|_| InternalError::Overflow)?)
+            .ok_or(InternalError::Overflow)?;
         Ok(())
     }
 
@@ -1956,6 +2074,7 @@ impl<'a> VM<'a> {
             frame_results: Vec::new(),
             current_frame_index: 0,
             outstanding_charge_owners: FxHashMap::default(),
+            journal: Vec::new(),
             sig_hash,
             tx: frame_tx.clone(),
             approve_called_in_current_frame: false,
@@ -2014,8 +2133,7 @@ impl<'a> VM<'a> {
         let mut in_atomic_batch = false;
         let mut batch_start_idx: usize = 0;
         let mut batch_logs_start: usize = 0;
-        let mut batch_approval_snapshot: (bool, Option<Address>) = (false, None);
-        let mut batch_state_attribution: Vec<u64> = Vec::new();
+        let mut batch_frame_context_checkpoint: usize = 0;
         let mut batch_bal_checkpoint: Option<BlockAccessListCheckpoint> = None;
         // EIP-8037: snapshot the shared `state_gas_used` at batch entry so a batch
         // revert (which unrolls every in-batch frame's state) also drops the state
@@ -2128,23 +2246,15 @@ impl<'a> VM<'a> {
                 batch_start_idx = frame_idx;
                 batch_logs_start = all_logs.len();
                 state_gas_used_at_batch_entry = self.state_gas_used;
-                // Snapshot approvals at batch entry: a batch revert must also
-                // roll back approvals granted inside the batch (their balance
-                // and nonce effects are reverted with the substate).
-                batch_approval_snapshot = self
+                // A batch revert also rolls back the frame context the batch
+                // changed: approvals granted inside it (their balance and nonce
+                // effects are reverted with the substate), the state-gas ownership
+                // records, and the edits refills made to receipts recorded before
+                // it began.
+                batch_frame_context_checkpoint = self
                     .frame_tx_context
                     .as_ref()
-                    .map(|c| c.approval_snapshot())
-                    .unwrap_or((false, None));
-                // The unroll undoes every state-attribution edit the batch made to
-                // receipts recorded before it began, for the same reason a single
-                // failing frame does: the refills those edits recorded are reverted
-                // with the batch's state.
-                batch_state_attribution = self
-                    .frame_tx_context
-                    .as_ref()
-                    .map(|c| c.frame_results.iter().map(|r| r.2).collect())
-                    .unwrap_or_default();
+                    .map_or(0, FrameTxContext::checkpoint);
             }
 
             let ctx =
@@ -2394,26 +2504,19 @@ impl<'a> VM<'a> {
             let mut frame_bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
 
             // EIP-8141: "if a frame's execution reverts, its state changes and
-            // approval context (`payer`, `sender_approved`) are discarded". The
-            // approval context lives in `frame_tx_context`, outside the substate and
-            // the cache, so the revert paths below do not roll it back on their own.
-            // APPROVE exits its own call context, but a nested call back into the
-            // frame's target can approve and return, leaving the outer frame free to
-            // revert afterwards -- which would keep `payer` set while the nonce
-            // increment and the `max_cost` collection it performed are rolled back.
-            let frame_approval_snapshot = self
+            // approval context (`payer`, `sender_approved`) are discarded", and so
+            // are the state-gas ownership records it changed and the edits its
+            // refills made to earlier frames' `gas_used.state`. All of them live in
+            // `frame_tx_context`, outside the substate and the cache, so the revert
+            // paths below do not roll them back on their own. APPROVE exits its own
+            // call context, but a nested call back into the frame's target can
+            // approve and return, leaving the outer frame free to revert afterwards
+            // -- which would keep `payer` set while the nonce increment and the
+            // `max_cost` collection it performed are rolled back.
+            let frame_context_checkpoint = self
                 .frame_tx_context
                 .as_ref()
-                .map(|c| c.approval_snapshot());
-            // EIP-8141: a frame can lower an earlier frame's `gas_used.state` by
-            // refilling a charge that frame owns. Those edits belong to the frame
-            // that made them, so a frame which fails undoes them along with its own
-            // state changes -- the earlier receipt goes back to what it was.
-            let earlier_state_attribution: Vec<u64> = self
-                .frame_tx_context
-                .as_ref()
-                .map(|c| c.frame_results.iter().map(|r| r.2).collect())
-                .unwrap_or_default();
+                .map_or(0, FrameTxContext::checkpoint);
 
             // The access charge precedes the balance check: a frame that cannot pay it halts
             // with its whole limit, even when the sender also cannot fund `value`.
@@ -2597,24 +2700,11 @@ impl<'a> VM<'a> {
             // were already restored in the failure arms). Successful frames keep
             // their accumulated state gas.
             if !frame_success {
+                // Discard the frame context the frame changed (see the checkpoint at
+                // frame entry) before resetting `state_gas_used`, which the rollback
+                // adjusts for the refills it undoes.
+                self.rollback_frame_context(frame_context_checkpoint)?;
                 self.state_gas_used = state_gas_used_at_frame_entry;
-                // Discard the approval context the frame granted (see the snapshot
-                // at frame entry). Restoring unconditionally is safe: a frame that
-                // granted nothing restores the values it started with.
-                if let Some(snapshot) = frame_approval_snapshot
-                    && let Some(ctx) = self.frame_tx_context.as_mut()
-                {
-                    ctx.restore_approvals(snapshot);
-                }
-                if let Some(ctx) = self.frame_tx_context.as_mut() {
-                    for (result, before) in ctx
-                        .frame_results
-                        .iter_mut()
-                        .zip(earlier_state_attribution.iter())
-                    {
-                        result.2 = *before;
-                    }
-                }
                 // EIP-7928: drop the reverted frame's recorded changes. `restore`
                 // re-files a freshly-written slot as a read and leaves
                 // `touched_addresses` alone, so every access the frame made is
@@ -2731,6 +2821,10 @@ impl<'a> VM<'a> {
                 {
                     recorder.restore(checkpoint);
                 }
+                // Roll back the frame context the batch changed, including approvals
+                // granted inside it and the edits its refills made to receipts
+                // recorded before it began.
+                self.rollback_frame_context(batch_frame_context_checkpoint)?;
                 // EIP-8037: the whole batch unrolled, so none of its frames created
                 // state — drop the state gas accumulated since batch entry.
                 self.state_gas_used = state_gas_used_at_batch_entry;
@@ -2754,15 +2848,6 @@ impl<'a> VM<'a> {
                 {
                     result.2 = 0;
                     result.3 = Vec::new();
-                }
-                // Roll back approvals granted inside the reverted batch.
-                ctx.restore_approvals(batch_approval_snapshot);
-                for (result, before) in ctx
-                    .frame_results
-                    .iter_mut()
-                    .zip(batch_state_attribution.iter())
-                {
-                    result.2 = *before;
                 }
                 // Remove only logs from the batch, preserving pre-batch logs
                 all_logs.truncate(batch_logs_start);
@@ -3220,6 +3305,7 @@ impl<'a> VM<'a> {
             frame_results: Vec::new(),
             current_frame_index: 0,
             outstanding_charge_owners: FxHashMap::default(),
+            journal: Vec::new(),
             sig_hash,
             tx: frame_tx.clone(),
             approve_called_in_current_frame: false,

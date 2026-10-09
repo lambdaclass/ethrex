@@ -149,6 +149,7 @@ pub fn apply_approve(
                 .frame_tx_context
                 .as_mut()
                 .ok_or(ExceptionalHalt::InvalidOpcode)?;
+            ctx.journal_approvals();
             ctx.payer_address = Some(frame_target);
         }
         0x2 => {
@@ -167,6 +168,7 @@ pub fn apply_approve(
                 .frame_tx_context
                 .as_mut()
                 .ok_or(ExceptionalHalt::InvalidOpcode)?;
+            ctx.journal_approvals();
             ctx.sender_approved = true;
         }
         0x3 => {
@@ -186,6 +188,7 @@ pub fn apply_approve(
                 .frame_tx_context
                 .as_mut()
                 .ok_or(ExceptionalHalt::InvalidOpcode)?;
+            ctx.journal_approvals();
             ctx.sender_approved = true;
             ctx.payer_address = Some(frame_target);
         }
@@ -802,6 +805,7 @@ mod max_cost_tests {
             frame_results: Vec::new(),
             current_frame_index: 0,
             outstanding_charge_owners: Default::default(),
+            journal: Vec::new(),
             sig_hash: H256::zero(),
             tx,
             approve_called_in_current_frame: false,

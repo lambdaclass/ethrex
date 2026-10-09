@@ -337,6 +337,10 @@ pub struct CallFrame {
     /// (value transfer to an empty account). Refunded on child revert/error,
     /// mirroring EELS `generic_call` `credit_state_gas_refund(NEW_ACCOUNT)`.
     pub new_account_state_gas_charged: bool,
+    /// EIP-8141: the frame transaction context's journal position when this call
+    /// began, set for a call nested inside a frame. A failing call rolls the context
+    /// back to it (see `VM::rollback_frame_context`).
+    pub frame_context_checkpoint: Option<usize>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -478,6 +482,7 @@ impl CallFrame {
             frame_state_gas_spilled: 0,
             target_alive: false,
             new_account_state_gas_charged: false,
+            frame_context_checkpoint: None,
         }
     }
 

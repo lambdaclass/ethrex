@@ -358,7 +358,7 @@ impl OpcodeHandler for OpSStoreHandler {
             // slot refills the payer rather than itself.
             if let Some(ctx) = vm.frame_tx_context.as_mut() {
                 let owner = ctx.current_frame_index;
-                ctx.outstanding_charge_owners.insert((to, key), owner);
+                ctx.record_charge_owner((to, key), owner);
             }
         }
         // EIP-8037 (Amsterdam+) 0→N→0: the slot was created in this tx (original == 0),
@@ -429,7 +429,7 @@ impl OpcodeHandler for OpSStoreHandler {
             let owner = vm
                 .frame_tx_context
                 .as_mut()
-                .and_then(|ctx| ctx.outstanding_charge_owners.remove(&(to, key)));
+                .and_then(|ctx| ctx.take_charge_owner((to, key)));
             match owner {
                 Some(owner) => vm.credit_frame_state_gas_refill(owner, vm.state_gas_storage_set)?,
                 None => vm.credit_state_gas_refund(vm.state_gas_storage_set)?,

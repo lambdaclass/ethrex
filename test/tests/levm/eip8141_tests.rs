@@ -13,8 +13,8 @@
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::{
-    Account, BlockHeader, Code, FRAME_RECEIPT_STATUS_SKIPPED, FRAME_RECEIPT_STATUS_SUCCESS, Fork,
-    Frame, FrameMode, FrameTransaction, Transaction,
+    Account, BlockHeader, Code, FRAME_RECEIPT_STATUS_FAILURE, FRAME_RECEIPT_STATUS_SKIPPED,
+    FRAME_RECEIPT_STATUS_SUCCESS, Fork, Frame, FrameMode, FrameTransaction, Transaction,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
@@ -1639,6 +1639,7 @@ mod frame_tx_opcode_handler_tests {
             frame_results: Vec::new(),
             current_frame_index: 0,
             outstanding_charge_owners: Default::default(),
+            journal: Vec::new(),
             sig_hash: ethrex_common::H256::zero(),
             tx,
             approve_called_in_current_frame: false,
@@ -1728,6 +1729,7 @@ mod frame_tx_opcode_handler_tests {
             frame_results: Vec::new(),
             current_frame_index: 0,
             outstanding_charge_owners: Default::default(),
+            journal: Vec::new(),
             sig_hash: ethrex_common::H256::zero(),
             tx: FrameTransaction::default(),
             approve_called_in_current_frame: false,
@@ -3175,6 +3177,7 @@ mod atomic_batch_approval_rollback_tests {
             frame_results: Vec::new(),
             current_frame_index: 0,
             outstanding_charge_owners: Default::default(),
+            journal: Vec::new(),
             sig_hash: ethrex_common::H256::zero(),
             tx: ethrex_common::types::FrameTransaction::default(),
             approve_called_in_current_frame: false,
@@ -4531,6 +4534,247 @@ fn a_reverting_frame_discards_the_approval_it_granted() {
         matches!(err, VMError::TxValidation(_)),
         "expected a transaction-validation failure for the missing payer, got {err:?}"
     );
+}
+
+/// The account code the call-level approval tests run as `tx.sender`. Its branch
+/// is picked by the calldata: empty calldata approves (scope 3); `[1]` calls itself
+/// with empty calldata and then reverts; `[2]` calls itself with `[1]` and stops;
+/// `[3]` calls itself with `[1]` and then approves (scope 3) itself.
+///
+/// With `[2]` the frame succeeds while the `[1]` call, which sits above the inner
+/// `APPROVE`, reverts.
+const NESTED_APPROVER_CODE: &[u8] = &[
+    // 0x00: CALLDATASIZE; ISZERO; PUSH1 0x5c; JUMPI      -> approve
+    0x36, 0x15, 0x60, 0x5c, 0x57, // 0x05: first calldata byte
+    0x60, 0x00, 0x35, 0x60, 0xf8, 0x1c,
+    // 0x0b: DUP1; PUSH1 2; EQ; PUSH1 0x2c; JUMPI          -> outer
+    0x80, 0x60, 0x02, 0x14, 0x60, 0x2c, 0x57,
+    // 0x12: DUP1; PUSH1 3; EQ; PUSH1 0x41; JUMPI          -> outer_again
+    0x80, 0x60, 0x03, 0x14, 0x60, 0x41, 0x57,
+    // 0x19: [1]: CALL(GAS, ADDRESS, 0, 0, 0, 0, 0); POP; REVERT(0, 0)
+    0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x30, 0x5a, 0xf1, 0x50, 0x60, 0x00,
+    0x60, 0x00, 0xfd,
+    // 0x2c: outer: MSTORE8(0, 1); CALL(GAS, ADDRESS, 0, 0, 1, 0, 0); POP; STOP
+    0x5b, 0x60, 0x01, 0x60, 0x00, 0x53, 0x60, 0x00, 0x60, 0x00, 0x60, 0x01, 0x60, 0x00, 0x60, 0x00,
+    0x30, 0x5a, 0xf1, 0x50, 0x00,
+    // 0x41: outer_again: MSTORE8(0, 1); CALL(GAS, ADDRESS, 0, 0, 1, 0, 0); POP;
+    //       APPROVE(0, 0, 3)
+    0x5b, 0x60, 0x01, 0x60, 0x00, 0x53, 0x60, 0x00, 0x60, 0x00, 0x60, 0x01, 0x60, 0x00, 0x60, 0x00,
+    0x30, 0x5a, 0xf1, 0x50, 0x60, 0x03, 0x60, 0x00, 0x60, 0x00, 0xaa,
+    // 0x5c: approve: APPROVE(0, 0, 3)
+    0x5b, 0x60, 0x03, 0x60, 0x00, 0x60, 0x00, 0xaa,
+];
+
+/// A DEFAULT frame running `NESTED_APPROVER_CODE` as `tx.sender` with `data`.
+/// DEFAULT is the mode that reaches the EVM with no precondition of its own (see
+/// `a_reverting_frame_discards_the_approval_it_granted`).
+fn nested_approver_frame(data: u8) -> Frame {
+    Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0x03,
+        target: Some(FUNDED_SENDER),
+        gas_limit: 400_000,
+        state_gas_limit: 1_000_000,
+        value: U256::zero(),
+        data: Bytes::from(vec![data]),
+    }
+}
+
+/// EIP-8141 journals the approval context with the state changes that produced it,
+/// and "reverting a call, frame, or atomic batch restores" it. Here the frame
+/// succeeds, but the call above the `APPROVE` reverts, which rolls back the nonce
+/// increment and the `max_cost` collection the approval performed. Keeping the
+/// approval would bind a payer whose escrow no longer exists: a free transaction.
+#[test]
+fn a_call_reverting_above_approve_discards_the_approval() {
+    let tx = frame_tx_with_frames(vec![nested_approver_frame(2)]);
+    let (result, db) = run_frame_tx(
+        &[(
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(NESTED_APPROVER_CODE.to_vec()),
+        )],
+        tx,
+    );
+
+    let err = result.expect_err(
+        "the approval was rolled back with the call above it, so no frame approved \
+         payment and the transaction is invalid",
+    );
+    assert!(
+        matches!(err, VMError::TxValidation(_)),
+        "expected a transaction-validation failure for the missing payer, got {err:?}"
+    );
+    assert_eq!(nonce_of(&db, FUNDED_SENDER), 0);
+    assert_eq!(balance_of(&db, FUNDED_SENDER), AUTO_SEED_SENDER_BALANCE);
+}
+
+/// The rollback restores the approval context to what it was when the reverted call
+/// began, so the frame can approve again afterwards, and pays once.
+#[test]
+fn the_approval_can_be_granted_again_after_the_call_holding_it_reverts() {
+    let tx = frame_tx_with_frames(vec![nested_approver_frame(3)]);
+    let (result, db) = run_frame_tx(
+        &[(
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(NESTED_APPROVER_CODE.to_vec()),
+        )],
+        tx,
+    );
+
+    let report = result.expect(
+        "the outer APPROVE must succeed: the inner approval was rolled back with the \
+         call that held it",
+    );
+    let frame_results = report.frame_results.expect("per-frame results");
+    assert_eq!(frame_results[0].0, FRAME_RECEIPT_STATUS_SUCCESS);
+    assert_eq!(
+        nonce_of(&db, FUNDED_SENDER),
+        1,
+        "only the approval that stood may increment the nonce"
+    );
+}
+
+/// The account code the call-level state-gas tests run. Its branch is picked by
+/// the first calldata byte, and each one stops unless it says otherwise:
+///
+/// - `1`: create slot 0 (SSTORE 1).
+/// - `2`: call itself with `3`, then create slot 1.
+/// - `3`: clear slot 0, then revert.
+/// - `4`: call itself with `3`.
+/// - `5`: clear slot 0, then create slot 2.
+const SLOT_OWNER_CODE: &[u8] = &[
+    // 0x00: first calldata byte, then one DUP1; PUSH1 n; EQ; PUSH1 label; JUMPI per branch
+    0x60, 0x00, 0x35, 0x60, 0xf8, 0x1c, 0x80, 0x60, 0x01, 0x14, 0x60, 0x2a, 0x57, 0x80, 0x60, 0x02,
+    0x14, 0x60, 0x31, 0x57, 0x80, 0x60, 0x03, 0x14, 0x60, 0x4b, 0x57, 0x80, 0x60, 0x04, 0x14, 0x60,
+    0x56, 0x57, 0x80, 0x60, 0x05, 0x14, 0x60, 0x6b, 0x57, 0x00,
+    // 0x2a: 1: SSTORE(0, 1); STOP
+    0x5b, 0x60, 0x01, 0x60, 0x00, 0x55, 0x00,
+    // 0x31: 2: MSTORE8(0, 3); CALL(GAS, ADDRESS, 0, 0, 1, 0, 0); POP; SSTORE(1, 1); STOP
+    0x5b, 0x60, 0x03, 0x60, 0x00, 0x53, 0x60, 0x00, 0x60, 0x00, 0x60, 0x01, 0x60, 0x00, 0x60, 0x00,
+    0x30, 0x5a, 0xf1, 0x50, 0x60, 0x01, 0x60, 0x01, 0x55, 0x00,
+    // 0x4b: 3: SSTORE(0, 0); REVERT(0, 0)
+    0x5b, 0x60, 0x00, 0x60, 0x00, 0x55, 0x60, 0x00, 0x60, 0x00, 0xfd,
+    // 0x56: 4: MSTORE8(0, 3); CALL(GAS, ADDRESS, 0, 0, 1, 0, 0); POP; STOP
+    0x5b, 0x60, 0x03, 0x60, 0x00, 0x53, 0x60, 0x00, 0x60, 0x00, 0x60, 0x01, 0x60, 0x00, 0x60, 0x00,
+    0x30, 0x5a, 0xf1, 0x50, 0x00, // 0x6b: 5: SSTORE(0, 0); SSTORE(2, 1); STOP
+    0x5b, 0x60, 0x00, 0x60, 0x00, 0x55, 0x60, 0x01, 0x60, 0x02, 0x55, 0x00,
+];
+
+/// Runs `[VERIFY, DEFAULT(SLOT_OWNER_CODE, data, state budget)...]` and returns the
+/// report and the database.
+fn run_slot_owner_frames(frames: &[(u8, u64)]) -> (ExecutionReport, GeneralizedDatabase, Address) {
+    let owner_contract = Address::from_low_u64_be(0x8141_0e3e);
+    let mut all = vec![verify_frame(FUNDED_SENDER)];
+    all.extend(frames.iter().map(|&(data, state_gas_limit)| Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0,
+        target: Some(owner_contract),
+        gas_limit: 400_000,
+        state_gas_limit,
+        value: U256::zero(),
+        data: Bytes::from(vec![data]),
+    }));
+    let (result, db) = run_frame_tx(
+        &[
+            (
+                FUNDED_SENDER,
+                AUTO_SEED_SENDER_BALANCE,
+                0,
+                Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+            ),
+            (
+                owner_contract,
+                U256::zero(),
+                0,
+                Bytes::from(SLOT_OWNER_CODE.to_vec()),
+            ),
+        ],
+        frame_tx_with_frames(all),
+    );
+    (
+        result.expect("the transaction is valid"),
+        db,
+        owner_contract,
+    )
+}
+
+/// A nested call clears a slot an earlier frame created, which refills that frame's
+/// receipt, and then reverts. EIP-8141 journals the receipt change with the state
+/// change that caused it, so the revert restores both: the earlier frame stays
+/// billed for the slot that still exists, and the executing frame's state pool
+/// keeps its full budget for its own creation afterwards.
+#[test]
+fn a_reverted_call_restores_the_refill_it_credited_to_an_earlier_frame() {
+    let (report, db, owner_contract) =
+        run_slot_owner_frames(&[(1, SSTORE_SET_STATE_GAS), (2, SSTORE_SET_STATE_GAS)]);
+    let frame_results = report.frame_results.expect("per-frame results");
+    let statuses: Vec<u8> = frame_results.iter().map(|result| result.0).collect();
+    assert_eq!(statuses, vec![FRAME_RECEIPT_STATUS_SUCCESS; 3]);
+    let state_gas: Vec<u64> = frame_results.iter().map(|result| result.2).collect();
+    assert_eq!(
+        state_gas,
+        vec![0, SSTORE_SET_STATE_GAS, SSTORE_SET_STATE_GAS],
+        "frame 1 still owns slot 0, and frame 2 paid for slot 1 from its own budget"
+    );
+    assert_eq!(report.state_gas_used, 2 * SSTORE_SET_STATE_GAS);
+    assert_eq!(
+        storage_slot(&db, owner_contract, H256::from_low_u64_be(0)),
+        U256::one()
+    );
+    assert_eq!(
+        storage_slot(&db, owner_contract, H256::from_low_u64_be(1)),
+        U256::one()
+    );
+}
+
+/// The same reverted call also consumed the slot's ownership record, and so does a
+/// reverted frame. Restoring the record sends the refill of a later, successful
+/// clear to the frame that paid for the slot, rather than into the clearing frame's
+/// own pool.
+#[test]
+fn a_reversion_restores_the_ownership_record_it_consumed() {
+    for (label, clearing_frame, clearing_status) in [
+        ("a reverted call", 4, FRAME_RECEIPT_STATUS_SUCCESS),
+        ("a reverted frame", 3, FRAME_RECEIPT_STATUS_FAILURE),
+    ] {
+        let (report, db, owner_contract) = run_slot_owner_frames(&[
+            (1, SSTORE_SET_STATE_GAS),
+            (clearing_frame, 0),
+            (5, SSTORE_SET_STATE_GAS),
+        ]);
+        let frame_results = report.frame_results.expect("per-frame results");
+        let statuses: Vec<u8> = frame_results.iter().map(|result| result.0).collect();
+        assert_eq!(
+            statuses,
+            vec![
+                FRAME_RECEIPT_STATUS_SUCCESS,
+                FRAME_RECEIPT_STATUS_SUCCESS,
+                clearing_status,
+                FRAME_RECEIPT_STATUS_SUCCESS
+            ],
+            "{label}"
+        );
+        let state_gas: Vec<u64> = frame_results.iter().map(|result| result.2).collect();
+        assert_eq!(
+            state_gas,
+            vec![0, 0, 0, SSTORE_SET_STATE_GAS],
+            "{label}: frame 3's clear refills frame 1, which paid for slot 0, and frame 3 \
+             pays for slot 2 from its own budget"
+        );
+        assert_eq!(report.state_gas_used, SSTORE_SET_STATE_GAS, "{label}");
+        assert_eq!(
+            storage_slot(&db, owner_contract, H256::from_low_u64_be(0)),
+            U256::zero()
+        );
+        assert_eq!(
+            storage_slot(&db, owner_contract, H256::from_low_u64_be(2)),
+            U256::one()
+        );
+    }
 }
 
 /// EIP-8141: when an atomic batch unrolls, "logs emitted by frames that executed

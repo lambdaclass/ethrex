@@ -19,7 +19,7 @@ use crate::{
     memory::{self, calculate_memory_size},
     opcode_handlers::OpcodeHandler,
     utils::{address_to_word, create_eth_transfer_log, word_to_address, *},
-    vm::VM,
+    vm::{FrameTxContext, VM},
 };
 use bytes::Bytes;
 use ethrex_common::{Address, H256, U256, evm::calculate_create_address, types::Fork};
@@ -1037,6 +1037,10 @@ impl<'a> VM<'a> {
         // `vm.state_gas_used`, so the revert restore in `handle_return_create`
         // keeps the parent's pre-CREATE intrinsic without re-refunding it.
         new_call_frame.state_gas_used_at_entry = self.state_gas_used;
+        new_call_frame.frame_context_checkpoint = self
+            .frame_tx_context
+            .as_ref()
+            .map(FrameTxContext::checkpoint);
         // EIP-8037 (#3002): thread the pre-mutation target-alive flag to the
         // success arm of `handle_return_create`.
         new_call_frame.target_alive = target_alive;
@@ -1298,6 +1302,10 @@ impl<'a> VM<'a> {
             new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
             new_call_frame.state_gas_used_at_entry = self.state_gas_used;
             new_call_frame.new_account_state_gas_charged = new_account_charged;
+            new_call_frame.frame_context_checkpoint = self
+                .frame_tx_context
+                .as_ref()
+                .map(FrameTxContext::checkpoint);
 
             self.add_callframe(new_call_frame);
 

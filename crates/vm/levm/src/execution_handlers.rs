@@ -53,6 +53,14 @@ impl<'a> VM<'a> {
                     return Err(error);
                 }
 
+                // EIP-8141: a failed call takes with it the approvals, state-gas ownership
+                // records and receipt refills it journaled in the frame transaction context.
+                // Undoing a receipt refill raises `state_gas_used` back, so this runs before
+                // the state-gas refill below, which then measures only the call's own charges.
+                if let Some(checkpoint) = self.current_call_frame.frame_context_checkpoint {
+                    self.rollback_frame_context(checkpoint)?;
+                }
+
                 // EIP-8037 (Amsterdam+): roll back this frame's state gas in LIFO order
                 // BEFORE zeroing gas. Mirrors EELS `process_create_message`'s
                 // `refill_frame_state_gas` on the code-deposit ExceptionalHalt path.
@@ -105,6 +113,14 @@ impl<'a> VM<'a> {
     pub fn handle_opcode_error(&mut self, error: VMError) -> Result<ContextResult, VMError> {
         if error.should_propagate() {
             return Err(error);
+        }
+
+        // EIP-8141: a failed call takes with it the approvals, state-gas ownership
+        // records and receipt refills it journaled in the frame transaction context.
+        // Undoing a receipt refill raises `state_gas_used` back, so this runs before
+        // the state-gas refill below, which then measures only the call's own charges.
+        if let Some(checkpoint) = self.current_call_frame.frame_context_checkpoint {
+            self.rollback_frame_context(checkpoint)?;
         }
 
         // EIP-8037 (Amsterdam+): roll back this frame's state gas in LIFO order BEFORE
