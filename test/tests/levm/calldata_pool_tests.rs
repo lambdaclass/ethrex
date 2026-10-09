@@ -9,12 +9,17 @@
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
-    types::{Account, Code, EIP1559Transaction, Fork, Transaction, TxKind},
+    types::{
+        Account, AccountState, ChainConfig, Code, CodeMetadata, EIP1559Transaction, Fork,
+        Transaction, TxKind,
+    },
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
-    db::gen_db::GeneralizedDatabase,
+    db::{Database, gen_db::GeneralizedDatabase},
     environment::{EVMConfig, Environment},
+    errors::DatabaseError,
+    precompiles::PrecompileCache,
     tracing::LevmCallTracer,
     vm::{VM, VMType},
 };
@@ -26,15 +31,46 @@ use super::test_db::TestDatabase;
 const ORIGIN: u64 = 0x1000;
 const CALLER: u64 = 0xCA11;
 const CALLEE: u64 = 0xCA1E;
+const SHA256_PRECOMPILE: u64 = 0x02;
 const IDENTITY_PRECOMPILE: u64 = 0x04;
 const CALLS: u8 = 64;
 const ARGS_SIZE: u16 = 1024;
 const GAS_LIMIT: u64 = 10_000_000;
 
-/// Calls `target` `CALLS` times in a loop, each time passing `ARGS_SIZE` bytes of memory
+/// [`TestDatabase`] plus the precompile result cache that block execution has.
+struct WithPrecompileCache {
+    inner: TestDatabase,
+    cache: Option<PrecompileCache>,
+}
+
+impl Database for WithPrecompileCache {
+    fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
+        self.inner.get_account_state(address)
+    }
+    fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
+        self.inner.get_storage_value(address, key)
+    }
+    fn get_block_hash(&self, block_number: u64) -> Result<H256, DatabaseError> {
+        self.inner.get_block_hash(block_number)
+    }
+    fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+        self.inner.get_chain_config()
+    }
+    fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
+        self.inner.get_account_code(code_hash)
+    }
+    fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
+        self.inner.get_code_metadata(code_hash)
+    }
+    fn precompile_cache(&self) -> Option<&PrecompileCache> {
+        self.cache.as_ref()
+    }
+}
+
+/// Calls `target` `calls` times in a loop, each time passing `ARGS_SIZE` bytes of memory
 /// as arguments and asking for no return data.
-fn call_loop(target: Address) -> Bytes {
-    let mut code = vec![0x60, CALLS, 0x5b]; // PUSH1 CALLS, JUMPDEST (pc 2)
+fn call_loop(target: Address, calls: u8) -> Bytes {
+    let mut code = vec![0x60, calls, 0x5b]; // PUSH1 calls, JUMPDEST (pc 2)
     code.extend_from_slice(&[0x60, 0x00, 0x60, 0x00]); // retSize, retOffset
     code.push(0x61); // PUSH2 argsSize
     code.extend_from_slice(&ARGS_SIZE.to_be_bytes());
@@ -51,6 +87,14 @@ fn call_loop(target: Address) -> Bytes {
 /// Runs a transaction into the caller contract and returns the capacities of the buffers
 /// left in the calldata pool.
 fn pooled_buffer_capacities(target: Address) -> Vec<usize> {
+    pooled_buffer_capacities_with(target, CALLS, None)
+}
+
+fn pooled_buffer_capacities_with(
+    target: Address,
+    calls: u8,
+    precompile_cache: Option<PrecompileCache>,
+) -> Vec<usize> {
     let mut accounts: FxHashMap<Address, Account> = FxHashMap::default();
     accounts.insert(
         Address::from_low_u64_be(ORIGIN),
@@ -65,7 +109,7 @@ fn pooled_buffer_capacities(target: Address) -> Vec<usize> {
         Address::from_low_u64_be(CALLER),
         Account::new(
             U256::zero(),
-            Code::from_bytecode(call_loop(target), &NativeCrypto),
+            Code::from_bytecode(call_loop(target, calls), &NativeCrypto),
             1,
             FxHashMap::default(),
         ),
@@ -81,6 +125,10 @@ fn pooled_buffer_capacities(target: Address) -> Vec<usize> {
     );
     let mut store = TestDatabase::new();
     store.accounts = accounts.clone();
+    let store = WithPrecompileCache {
+        inner: store,
+        cache: precompile_cache,
+    };
     let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(store), accounts);
 
     let fork = Fork::Amsterdam;
@@ -153,4 +201,19 @@ fn calldata_still_shared_by_an_output_is_not_recycled() {
     let capacities = pooled_buffer_capacities(Address::from_low_u64_be(IDENTITY_PRECOMPILE));
 
     assert!(capacities.is_empty());
+}
+
+#[test]
+fn a_cached_precompile_call_does_not_pin_the_calldata_buffer() {
+    // Block execution caches precompile results. The cache keeps its own copy of the
+    // input, so the call buffer still goes back to the pool instead of being held, with
+    // all its capacity, by an entry whose budget only counts the input's length. One call,
+    // so the result is a miss that gets inserted rather than a hit on an earlier entry.
+    let capacities = pooled_buffer_capacities_with(
+        Address::from_low_u64_be(SHA256_PRECOMPILE),
+        1,
+        Some(PrecompileCache::new()),
+    );
+
+    assert_eq!(capacities.len(), 1);
 }
