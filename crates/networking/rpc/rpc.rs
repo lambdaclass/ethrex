@@ -808,12 +808,16 @@ pub(crate) fn authrpc_router(
     let handler = move |ctx, request: Request| async move {
         let body = match timeout(body_read_timeout, String::from_request(request, &())).await {
             Ok(Ok(body)) => body,
-            Ok(Err(rejection)) => return rejection.into_response(),
+            Ok(Err(rejection)) => {
+                warn!("Rejected Auth-RPC request: {rejection}");
+                return rejection.into_response();
+            }
             Err(_) => {
                 let error = RpcErr::InvalidRequest(format!(
                     "request body not received within {} seconds",
                     body_read_timeout.as_secs_f64()
                 ));
+                warn!("Rejected Auth-RPC request: {error}");
                 return (StatusCode::REQUEST_TIMEOUT, Json(null_id_error(error))).into_response();
             }
         };
@@ -878,6 +882,7 @@ async fn reserve_body_budget(
                 "request body exceeds the {} byte limit",
                 budget.max_body_size
             ));
+            warn!("Rejected Auth-RPC request of {reserved} body bytes: {error}");
             return (StatusCode::PAYLOAD_TOO_LARGE, Json(null_id_error(error))).into_response();
         }
     };
@@ -890,6 +895,10 @@ async fn reserve_body_budget(
     )
     .await;
     let Ok(Ok(_reservation)) = reservation else {
+        warn!(
+            "Rejected Auth-RPC request: no room for {permits} body bytes in the in-flight budget after waiting {} seconds. Raise --authrpc.max-inflight-body-size if this repeats",
+            budget.wait_timeout.as_secs_f64()
+        );
         let error =
             RpcErr::Internal("too many request body bytes in flight, retry later".to_string());
         return (StatusCode::SERVICE_UNAVAILABLE, Json(null_id_error(error))).into_response();

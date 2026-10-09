@@ -13,6 +13,7 @@ use bytes::Bytes;
 use jsonwebtoken::{Algorithm, DecodingKey, TokenData, Validation, decode};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::warn;
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub enum AuthenticationError {
@@ -48,7 +49,15 @@ pub(crate) async fn require_jwt(
     };
     match result {
         Ok(()) => next.run(request).await,
-        Err(error) => (StatusCode::UNAUTHORIZED, error.reason()).into_response(),
+        Err(error) => {
+            // Without this, a wrong secret only shows up on this side as the consensus
+            // layer having gone silent.
+            warn!(
+                "Rejected Auth-RPC request: {}. Check that the consensus client uses this node's JWT secret and that both clocks are in sync",
+                error.reason()
+            );
+            (StatusCode::UNAUTHORIZED, error.reason()).into_response()
+        }
     }
 }
 
