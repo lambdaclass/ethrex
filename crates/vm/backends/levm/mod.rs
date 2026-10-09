@@ -4261,20 +4261,6 @@ pub(crate) fn adjust_disabled_base_fee(env: &mut Environment) {
     if env.gas_price == U256::zero() {
         env.base_fee_per_gas = U256::zero();
     }
-    // Same for the blob fee: a call object that opts out by passing `maxFeePerBlobGas: 0`
-    // must not be rejected for undercutting the block's blob base fee.
-    // `base_blob_fee_per_gas` is the field the validation and the up-front cost both read
-    // (`validate_max_fee_per_blob_gas`, `deduct_caller`), and it is computed in
-    // `env_from_generic` before this runs, so it is what has to be lowered. Clearing
-    // `block_excess_blob_gas` instead had no effect: nothing reads that field, and the
-    // blob base fee derived from a zero excess still has a floor of 1, which a zero fee
-    // cap undercuts just the same.
-    if env
-        .tx_max_fee_per_blob_gas
-        .is_some_and(|v| v == U256::zero())
-    {
-        env.base_blob_fee_per_gas = U256::zero();
-    }
 }
 
 /// When l2 fees are disabled (ie. env.gas_price = 0), set fee configs to None to avoid breaking failing fee deductions
@@ -4303,6 +4289,12 @@ pub(crate) fn env_from_generic(
         calculate_gas_price_for_generic(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
     let block_excess_blob_gas = header.excess_blob_gas;
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
+    // A zero caller cap zeroes the blob base fee, with or without blob hashes, as geth does.
+    let base_blob_fee_per_gas = if tx.max_fee_per_blob_gas.is_some_and(|cap| cap.is_zero()) {
+        U256::zero()
+    } else {
+        get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?
+    };
 
     // slot_number: default a missing value to zero exactly like
     // `setup_env_with_config` (the block-execution env builder) does, rather
@@ -4336,14 +4328,19 @@ pub(crate) fn env_from_generic(
         slot_number,
         chain_id: chain_config.chain_id.into(),
         base_fee_per_gas: header.base_fee_per_gas.unwrap_or_default().into(),
-        base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
+        base_blob_fee_per_gas,
         gas_price,
         block_excess_blob_gas,
         block_blob_gas_used: header.blob_gas_used,
         tx_blob_hashes: tx.blob_versioned_hashes.clone(),
         tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas.map(U256::from),
         tx_max_fee_per_gas: tx.max_fee_per_gas.map(U256::from),
-        tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,
+        // The fields decide the type: from Cancun, a blob fee cap without blob hashes does
+        // not make the call a blob transaction. Before Cancun the cap is kept, so the type-3
+        // fork check rejects it.
+        tx_max_fee_per_blob_gas: tx
+            .max_fee_per_blob_gas
+            .filter(|_| !tx.blob_versioned_hashes.is_empty() || config.fork < Fork::Cancun),
         tx_nonce: tx.nonce.unwrap_or_default(),
         block_gas_limit: header.gas_limit,
         difficulty: header.difficulty,
