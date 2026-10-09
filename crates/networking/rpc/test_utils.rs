@@ -8,8 +8,8 @@
 use crate::{
     eth::gas_tip_estimator::GasTipEstimator,
     rpc::{
-        ClientVersion, DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE, NodeData, RpcApiContext,
-        authrpc_router, handle_http_request, start_api, start_block_executor,
+        AUTHRPC_BODY_READ_TIMEOUT, ClientVersion, DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE, NodeData,
+        RpcApiContext, authrpc_router, handle_http_request, start_api, start_block_executor,
     },
     utils::RpcNamespace,
 };
@@ -539,8 +539,28 @@ pub async fn spawn_authrpc_server(
     context: &RpcApiContext,
     max_inflight_body_size: usize,
 ) -> AuthRpcTestServer {
+    spawn_authrpc_server_with_body_read_timeout(
+        context,
+        max_inflight_body_size,
+        AUTHRPC_BODY_READ_TIMEOUT,
+    )
+    .await
+}
+
+/// Like [`spawn_authrpc_server`], with `body_read_timeout` in place of the production
+/// deadline for receiving a request body.
+pub async fn spawn_authrpc_server_with_body_read_timeout(
+    context: &RpcApiContext,
+    max_inflight_body_size: usize,
+    body_read_timeout: Duration,
+) -> AuthRpcTestServer {
     let (consensus_liveness, _) = tokio::sync::watch::channel(());
-    let router = authrpc_router(context.clone(), consensus_liveness, max_inflight_body_size);
+    let router = authrpc_router(
+        context.clone(),
+        consensus_liveness,
+        max_inflight_body_size,
+        body_read_timeout,
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let stop = CancellationToken::new();

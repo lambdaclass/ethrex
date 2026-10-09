@@ -421,7 +421,7 @@ pub struct Options {
         // Zero would reject every request with a body, silently disabling the engine API.
         value_parser = clap::value_parser!(u64).range(1..),
         help = "Maximum request body bytes the authenticated rpc server holds at once.",
-        long_help = "Maximum request body bytes the authenticated rpc server holds at once, across all connections. A request that would exceed it is rejected with HTTP 503 before its body is read. Each request body is also capped at 128 MiB, or at this value when it is lower.",
+        long_help = "Maximum request body bytes the authenticated rpc server holds at once, across all connections. A request that does not fit while other requests are in flight is rejected with HTTP 503 before its body is read. Each request body is also capped at 128 MiB, or at this value when it is lower, and a larger one is rejected with HTTP 413.",
         help_heading = "RPC options",
         env = "ETHREX_AUTHRPC_MAX_INFLIGHT_BODY_SIZE"
     )]

@@ -6,10 +6,13 @@ use bytes::Bytes;
 use ethrex_rpc::test_utils::{
     call_authrpc, default_context_with_storage, jwt_auth_header_for, post_authrpc, read_response,
     send_request_head, setup_store, spawn_authrpc_server,
+    spawn_authrpc_server_with_body_read_timeout,
 };
 use ethrex_rpc::{AUTHRPC_MAX_BODY_SIZE, DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE};
 use serde_json::Value;
+use std::time::Duration;
 use tokio::io::AsyncWriteExt;
+use tokio::net::TcpStream;
 
 const CHAIN_ID_REQUEST: &str = r#"{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}"#;
 
@@ -23,6 +26,25 @@ fn assert_null_id_error(body: &str, code: i64) {
     let value: Value = serde_json::from_str(body).expect("JSON-RPC error body");
     assert_eq!(value["error"]["code"], code, "unexpected error: {value}");
     assert!(value["id"].is_null(), "id must be null: {value}");
+}
+
+/// Of two requests that fit the budget one at a time but not together, waits for the one
+/// refused with a 503 and returns the other, which holds its reservation while it waits
+/// for its body.
+async fn request_still_in_flight(mut first: TcpStream, mut second: TcpStream) -> TcpStream {
+    let first_was_refused = tokio::select! {
+        (status, response) = read_response(&mut first) => {
+            assert_eq!(status, 503);
+            assert_null_id_error(&response, -32603);
+            true
+        }
+        (status, response) = read_response(&mut second) => {
+            assert_eq!(status, 503);
+            assert_null_id_error(&response, -32603);
+            false
+        }
+    };
+    if first_was_refused { second } else { first }
 }
 
 /// Like geth and reth, a request without a token gets a plain-text 401, and it gets it
@@ -56,6 +78,22 @@ async fn authrpc_rejects_invalid_token_before_reading_body() {
     let (status, body) = read_response(&mut stream).await;
     assert_eq!(status, 401);
     assert_eq!(body, "invalid token");
+
+    drop(stream);
+    server.shutdown().await;
+}
+
+/// The JWT check runs before the budget, so a request without a token never reserves any
+/// of it: with a budget smaller than the declared body, it gets the 401, not the 413.
+#[tokio::test]
+async fn authrpc_checks_the_token_before_the_budget() {
+    let context = default_context_with_storage(setup_store().await).await;
+    let server = spawn_authrpc_server(&context, 1024).await;
+
+    let mut stream = send_request_head(server.addr, None, Some(2048)).await;
+    let (status, body) = read_response(&mut stream).await;
+    assert_eq!(status, 401);
+    assert_eq!(body, "missing token");
 
     drop(stream);
     server.shutdown().await;
@@ -108,28 +146,12 @@ async fn authrpc_rejects_requests_over_the_inflight_budget() {
 
     // Neither body is sent yet, so the request that reserved its size first is held in
     // flight waiting for it, and only the other one can be answered.
-    let mut first = send_request_head(addr, auth.as_ref(), Some(body.len())).await;
-    let mut second = send_request_head(addr, auth.as_ref(), Some(body.len())).await;
-    let first_was_rejected = tokio::select! {
-        (status, response) = read_response(&mut first) => {
-            assert_eq!(status, 503);
-            assert_null_id_error(&response, -32603);
-            true
-        }
-        (status, response) = read_response(&mut second) => {
-            assert_eq!(status, 503);
-            assert_null_id_error(&response, -32603);
-            false
-        }
-    };
-    let in_flight = if first_was_rejected {
-        &mut second
-    } else {
-        &mut first
-    };
+    let first = send_request_head(addr, auth.as_ref(), Some(body.len())).await;
+    let second = send_request_head(addr, auth.as_ref(), Some(body.len())).await;
+    let mut in_flight = request_still_in_flight(first, second).await;
 
     in_flight.write_all(body.as_bytes()).await.unwrap();
-    let (status, response) = read_response(in_flight).await;
+    let (status, response) = read_response(&mut in_flight).await;
     assert_eq!(status, 200, "in-flight request must complete: {response}");
     let value: Value = serde_json::from_str(&response).unwrap();
     assert!(value["result"].is_string(), "expected a chain id: {value}");
@@ -137,7 +159,71 @@ async fn authrpc_rejects_requests_over_the_inflight_budget() {
     let (status, response) = post_authrpc(addr, auth, body).await;
     assert_eq!(status, 200, "budget must be released: {response}");
 
-    drop((first, second));
+    drop(in_flight);
+    server.shutdown().await;
+}
+
+/// A client that disconnects partway through its body releases its reservation.
+#[tokio::test]
+async fn authrpc_disconnect_mid_body_releases_the_budget() {
+    let context = default_context_with_storage(setup_store().await).await;
+    let server = spawn_authrpc_server(&context, 4096).await;
+    let addr = server.addr;
+    let auth = jwt_auth_header_for(&context);
+    let body = padded_chain_id_request(3000);
+
+    let first = send_request_head(addr, auth.as_ref(), Some(body.len())).await;
+    let second = send_request_head(addr, auth.as_ref(), Some(body.len())).await;
+    let mut in_flight = request_still_in_flight(first, second).await;
+    in_flight
+        .write_all(&body.as_bytes()[..body.len() / 2])
+        .await
+        .unwrap();
+    drop(in_flight);
+
+    // The server notices the disconnect asynchronously, so retry until the budget is back.
+    let released = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let (status, response) = post_authrpc(addr, auth.clone(), body.clone()).await;
+            if status == 200 {
+                break;
+            }
+            assert_eq!(status, 503, "unexpected response: {response}");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await;
+    assert!(
+        released.is_ok(),
+        "the budget was not released after the client disconnected"
+    );
+
+    server.shutdown().await;
+}
+
+/// A body that does not arrive within the read timeout gets a 408 and its reservation is
+/// released, so a client that sends slowly cannot hold the budget.
+#[tokio::test]
+async fn authrpc_body_not_received_in_time_is_refused() {
+    let context = default_context_with_storage(setup_store().await).await;
+    let server =
+        spawn_authrpc_server_with_body_read_timeout(&context, 4096, Duration::from_secs(1)).await;
+    let addr = server.addr;
+    let auth = jwt_auth_header_for(&context);
+    let body = padded_chain_id_request(3000);
+
+    let mut slow = send_request_head(addr, auth.as_ref(), Some(body.len())).await;
+    slow.write_all(&body.as_bytes()[..body.len() / 2])
+        .await
+        .unwrap();
+    let (status, response) = read_response(&mut slow).await;
+    assert_eq!(status, 408);
+    assert_null_id_error(&response, -32600);
+
+    let (status, response) = post_authrpc(addr, auth, body).await;
+    assert_eq!(status, 200, "budget must be released: {response}");
+
+    drop(slow);
     server.shutdown().await;
 }
 

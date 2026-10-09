@@ -67,7 +67,7 @@ use crate::{admin, net};
 use crate::{eth, mempool};
 use axum::body::HttpBody;
 use axum::extract::ws::{Message, WebSocket};
-use axum::extract::{DefaultBodyLimit, Request, State, WebSocketUpgrade};
+use axum::extract::{DefaultBodyLimit, FromRequest, Request, State, WebSocketUpgrade};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router, http::StatusCode, routing::post};
@@ -730,6 +730,7 @@ pub async fn bind_api(
         service_context.clone(),
         timer_sender,
         authrpc_max_inflight_body_size,
+        AUTHRPC_BODY_READ_TIMEOUT,
     );
 
     // Bind everything up front. The first failure aborts with an actionable error naming
@@ -775,9 +776,15 @@ pub const AUTHRPC_MAX_BODY_SIZE: usize = 128 * 1024 * 1024;
 /// once, far beyond what a consensus client has in flight.
 pub const DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE: usize = 4 * AUTHRPC_MAX_BODY_SIZE;
 
+/// Time an Auth-RPC request has to deliver its whole body once its headers are in, the
+/// same as geth's `ReadTimeout`. Without it, a body that trickles in would hold its
+/// budget reservation indefinitely.
+pub(crate) const AUTHRPC_BODY_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Builds the Auth-RPC router. Its layers run outermost first: the JWT check, then the
 /// in-flight body budget, then the handler. A request without a valid token, or one the
-/// budget cannot fit, is answered from its headers alone, before its body is read.
+/// budget cannot fit, is answered from its headers alone, before its body is read. The
+/// handler then gives the body `body_read_timeout` to arrive.
 ///
 /// Every authenticated request pings `consensus_liveness`, which feeds the
 /// "consensus client offline" warning.
@@ -785,13 +792,25 @@ pub(crate) fn authrpc_router(
     service_context: RpcApiContext,
     consensus_liveness: tokio::sync::watch::Sender<()>,
     max_inflight_body_size: usize,
+    body_read_timeout: Duration,
 ) -> Router {
     let jwt_secret = service_context.node_data.jwt_secret.clone();
     let budget = BodyBudget::new(max_inflight_body_size);
     let max_body_size = budget.max_body_size;
-    let handler = move |ctx, body| async move {
+    let handler = move |ctx, request: Request| async move {
+        let body = match timeout(body_read_timeout, String::from_request(request, &())).await {
+            Ok(Ok(body)) => body,
+            Ok(Err(rejection)) => return rejection.into_response(),
+            Err(_) => {
+                let error = RpcErr::InvalidRequest(format!(
+                    "request body not received within {} seconds",
+                    body_read_timeout.as_secs_f64()
+                ));
+                return (StatusCode::REQUEST_TIMEOUT, Json(null_id_error(error))).into_response();
+            }
+        };
         let _ = consensus_liveness.send(());
-        handle_authrpc_request(ctx, body).await
+        handle_authrpc_request(ctx, body).await.into_response()
     };
     Router::new()
         .route("/", post(handler))
