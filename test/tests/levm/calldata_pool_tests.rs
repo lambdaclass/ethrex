@@ -6,7 +6,7 @@
 //! of a 512 MiB heap. These tests pin the reuse, and that a buffer something still
 //! references is never handed out again.
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -181,7 +181,7 @@ fn pooled_buffer_capacities_with(
     .expect("VM::new");
     let report = vm.execute().expect("execute");
     assert!(report.is_success(), "caller tx failed: {:?}", report.result);
-    vm.calldata_pool.iter().map(Vec::capacity).collect()
+    vm.calldata_pool.iter().map(BytesMut::capacity).collect()
 }
 
 #[test]

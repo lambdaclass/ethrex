@@ -1568,14 +1568,15 @@ impl<'a> VM<'a> {
         self.current_call_frame
             .memory
             .with_range(offset, size, |range| buffer.extend_from_slice(range))?;
-        Ok(Bytes::from(buffer))
+        Ok(buffer.freeze())
     }
 
     /// Returns a finished child frame's calldata buffer to the pool. A buffer that is still
     /// shared (a tracer or a precompile output kept a clone) is left alone and freed normally.
+    /// It stays a `BytesMut`: turning it back into a `Vec` would move every byte in place.
     fn recycle_calldata(&mut self, calldata: Bytes) {
         if let Ok(buffer) = calldata.try_into_mut() {
-            self.calldata_pool.push(buffer.into());
+            self.calldata_pool.push(buffer);
         }
     }
 
