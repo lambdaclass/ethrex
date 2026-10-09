@@ -4289,8 +4289,30 @@ pub(crate) fn env_from_generic(
         calculate_gas_price_for_generic(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
     let block_excess_blob_gas = header.excess_blob_gas;
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
+    // A field whose EIP is not active at the target block makes the call invalid. Blocks
+    // never carry these transaction types before their fork, so only simulation needs the
+    // check. Pre-merge forks are scheduled by block number, and `config.fork` never goes
+    // below Paris, so the block number decides.
+    // A missing `berlin_block` or `london_block` means LEVM runs that fork's rules, so the field is accepted.
+    let before_block =
+        |fork_block: Option<u64>| fork_block.is_some_and(|block| header.number < block);
+    if !tx.access_list.is_empty() && before_block(chain_config.berlin_block) {
+        return Err(TxValidationError::Type1TxPreFork.into());
+    }
+    if (tx.max_fee_per_gas.is_some() || tx.max_priority_fee_per_gas.is_some())
+        && before_block(chain_config.london_block)
+    {
+        return Err(TxValidationError::Type2TxPreFork.into());
+    }
+    // The fields decide the type: blob hashes make the call a blob transaction, with a
+    // zero cap when the caller sets none, as geth does.
+    let max_fee_per_blob_gas = if tx.blob_versioned_hashes.is_empty() {
+        tx.max_fee_per_blob_gas
+    } else {
+        Some(tx.max_fee_per_blob_gas.unwrap_or_default())
+    };
     // A zero caller cap zeroes the blob base fee, with or without blob hashes, as geth does.
-    let base_blob_fee_per_gas = if tx.max_fee_per_blob_gas.is_some_and(|cap| cap.is_zero()) {
+    let base_blob_fee_per_gas = if max_fee_per_blob_gas.is_some_and(|cap| cap.is_zero()) {
         U256::zero()
     } else {
         get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?
@@ -4338,8 +4360,7 @@ pub(crate) fn env_from_generic(
         // The fields decide the type: from Cancun, a blob fee cap without blob hashes does
         // not make the call a blob transaction. Before Cancun the cap is kept, so the type-3
         // fork check rejects it.
-        tx_max_fee_per_blob_gas: tx
-            .max_fee_per_blob_gas
+        tx_max_fee_per_blob_gas: max_fee_per_blob_gas
             .filter(|_| !tx.blob_versioned_hashes.is_empty() || config.fork < Fork::Cancun),
         tx_nonce: tx.nonce.unwrap_or_default(),
         block_gas_limit: header.gas_limit,

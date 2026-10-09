@@ -16,7 +16,9 @@
 
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
-use ethrex_common::types::{Account, BlockHeader, ChainConfig, Code, GenericTransaction, TxKind};
+use ethrex_common::types::{
+    AccessListEntry, Account, BlockHeader, ChainConfig, Code, GenericTransaction, TxKind,
+};
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
@@ -429,5 +431,126 @@ fn simulation_runs_a_blob_call_with_hashes_and_a_cap() {
     assert_eq!(
         simulated_blob_base_fee(Some(U256::one()), vec![H256(versioned_hash)]),
         U256::one()
+    );
+}
+
+/// Asserts that simulating `tx` on a block built from `chain_config` fails with `want`.
+fn assert_simulation_rejects(
+    chain_config: ChainConfig,
+    tx: GenericTransaction,
+    want: TxValidationError,
+) {
+    let (mut db, header) = db_and_header(chain_config, None);
+    let err =
+        LEVM::simulate_tx_from_generic(&tx, &header, &mut db, VMType::L1, &NativeCrypto, None)
+            .expect_err("the call must be rejected");
+    assert!(
+        matches!(&err, EvmError::Transaction(msg) if msg.contains(&want.to_string())),
+        "expected {want:?}, got {err:?}"
+    );
+}
+
+#[test]
+fn simulation_rejects_fields_before_their_block_scheduled_fork() {
+    // The test header is block 1, so a fork scheduled at block 2 is not active yet.
+    let pre_fork = ChainConfig {
+        berlin_block: Some(2),
+        london_block: Some(2),
+        ..Default::default()
+    };
+    let with_access_list = GenericTransaction {
+        from: SENDER,
+        to: TxKind::Call(GASLIMIT_READER),
+        access_list: vec![AccessListEntry {
+            address: GASLIMIT_READER,
+            storage_keys: vec![],
+        }],
+        ..Default::default()
+    };
+    assert_simulation_rejects(
+        pre_fork.clone(),
+        with_access_list.clone(),
+        TxValidationError::Type1TxPreFork,
+    );
+    let with_priority_fee = GenericTransaction {
+        from: SENDER,
+        to: TxKind::Call(GASLIMIT_READER),
+        max_priority_fee_per_gas: Some(0),
+        ..Default::default()
+    };
+    assert_simulation_rejects(
+        pre_fork.clone(),
+        with_priority_fee.clone(),
+        TxValidationError::Type2TxPreFork,
+    );
+    let with_max_fee = GenericTransaction {
+        from: SENDER,
+        to: TxKind::Call(GASLIMIT_READER),
+        max_fee_per_gas: Some(0),
+        ..Default::default()
+    };
+    assert_simulation_rejects(pre_fork, with_max_fee, TxValidationError::Type2TxPreFork);
+
+    // At the fork block both fields are valid.
+    let at_fork = ChainConfig {
+        berlin_block: Some(1),
+        london_block: Some(1),
+        ..Default::default()
+    };
+    for tx in [with_access_list, with_priority_fee] {
+        let (mut db, header) = db_and_header(at_fork.clone(), None);
+        let result =
+            LEVM::simulate_tx_from_generic(&tx, &header, &mut db, VMType::L1, &NativeCrypto, None)
+                .expect("the field is valid once its fork is active");
+        assert!(
+            matches!(result, ExecutionResult::Success { .. }),
+            "expected the call to run, got {result:?}"
+        );
+    }
+}
+
+#[test]
+fn simulation_treats_blob_hashes_without_a_cap_as_a_blob_call() {
+    let call_with_hashes = |hash: H256| GenericTransaction {
+        from: SENDER,
+        to: TxKind::Call(BLOBBASEFEE_READER),
+        blob_versioned_hashes: vec![hash],
+        ..Default::default()
+    };
+    let mut valid_hash = [0u8; 32];
+    valid_hash[0] = 0x01;
+
+    // Before Cancun the hashes alone make the call invalid.
+    let pre_cancun = ChainConfig {
+        shanghai_time: Some(0),
+        ..Default::default()
+    };
+    assert_simulation_rejects(
+        pre_cancun,
+        call_with_hashes(H256(valid_hash)),
+        TxValidationError::Type3TxPreFork,
+    );
+
+    // From Cancun they get the normal blob validation.
+    let (mut db, header) = amsterdam_db_and_header(Some(0));
+    let err = LEVM::simulate_tx_from_generic(
+        &call_with_hashes(H256::zero()),
+        &header,
+        &mut db,
+        VMType::L1,
+        &NativeCrypto,
+        None,
+    )
+    .expect_err("a hash without the KZG version byte must be rejected");
+    assert!(
+        matches!(&err, EvmError::Transaction(msg) if msg.contains(&TxValidationError::Type3TxInvalidBlobVersionedHash.to_string())),
+        "expected an invalid versioned hash error, got {err:?}"
+    );
+
+    // A valid call runs with a zero cap, so the blob base fee is zeroed as for an
+    // explicit zero cap.
+    assert_eq!(
+        simulated_blob_base_fee(None, vec![H256(valid_hash)]),
+        U256::zero()
     );
 }
