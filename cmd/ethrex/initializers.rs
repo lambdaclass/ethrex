@@ -439,6 +439,7 @@ pub async fn init_rpc_api(
         opts.gas_limit,
         opts.extra_data.clone(),
         opts.http_api.iter().copied().collect(),
+        get_log_query_limits(opts),
     )
     .await?;
 
@@ -742,6 +743,15 @@ pub fn get_authrpc_socket_addr(opts: &Options) -> SocketAddr {
 pub fn get_http_socket_addr(opts: &Options) -> SocketAddr {
     parse_socket_addr(&opts.http_addr, &opts.http_port)
         .expect("Failed to parse http address and port")
+}
+
+pub fn get_log_query_limits(opts: &Options) -> ethrex_rpc::LogQueryLimits {
+    ethrex_rpc::LogQueryLimits::new(
+        opts.rpc_max_blocks_per_filter,
+        opts.rpc_max_logs_per_response,
+        opts.rpc_max_log_query_work,
+        opts.rpc_log_query_work_budget,
+    )
 }
 
 /// Two configured listener addresses conflict when they are equal, or when they share a

@@ -428,6 +428,7 @@ pub async fn default_context_with_storage(storage: Store) -> TestContext {
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
         block_worker_channel,
         ws: None,
+        log_query_limits: Default::default(),
         allowed_namespaces: Arc::new(all_namespaces_for_tests()),
     };
     TestContext {

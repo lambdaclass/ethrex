@@ -388,6 +388,47 @@ pub struct Options {
     )]
     pub ws_port: Option<String>,
     #[arg(
+        long = "rpc.max-blocks-per-filter",
+        default_value_t = ethrex_rpc::DEFAULT_MAX_BLOCKS_PER_FILTER,
+        value_name = "BLOCKS",
+        help = "Maximum block range of a log query. 0 means no limit.",
+        long_help = "Maximum block range (toBlock - fromBlock) of an eth_getLogs query or log filter poll. A wider query fails with error -32602 before any block is read. 0 means no limit.",
+        help_heading = "RPC options",
+        env = "ETHREX_RPC_MAX_BLOCKS_PER_FILTER"
+    )]
+    pub rpc_max_blocks_per_filter: u64,
+    #[arg(
+        long = "rpc.max-logs-per-response",
+        default_value_t = ethrex_rpc::DEFAULT_MAX_LOGS_PER_RESPONSE,
+        value_name = "LOGS",
+        help = "Maximum logs returned by a log query. 0 means no limit.",
+        long_help = "Maximum logs returned by an eth_getLogs query or log filter poll. A query that matches more fails with error -32602 naming the range to retry with. Queries for a single block are exempt. 0 means no limit.",
+        help_heading = "RPC options",
+        env = "ETHREX_RPC_MAX_LOGS_PER_RESPONSE"
+    )]
+    pub rpc_max_logs_per_response: u64,
+    #[arg(
+        long = "rpc.max-log-query-work",
+        default_value_t = ethrex_rpc::DEFAULT_MAX_LOG_QUERY_WORK,
+        value_name = "UNITS",
+        help = "Maximum scan work of a log query. 0 means no limit.",
+        long_help = "Maximum scan work of an eth_getLogs query or log filter poll, estimated as the blocks in its range x the addresses in its filter x the alternatives in its largest topic OR-set, each at least 1. A query over it fails with error -32005 before any block is read. 0 means no limit.",
+        help_heading = "RPC options",
+        env = "ETHREX_RPC_MAX_LOG_QUERY_WORK"
+    )]
+    pub rpc_max_log_query_work: u64,
+    #[arg(
+        long = "rpc.log-query-work-budget",
+        default_value_t = ethrex_rpc::DEFAULT_LOG_QUERY_WORK_BUDGET,
+        value_name = "UNITS",
+        value_parser = clap::value_parser!(u64).range(1..),
+        help = "Total scan work of the log queries running at once.",
+        long_help = "Total scan work (see --rpc.max-log-query-work) of the eth_getLogs queries and log filter polls running at once. A query that does not fit fails at once with error -32005. Queries of at most 10000 units do not count against it.",
+        help_heading = "RPC options",
+        env = "ETHREX_RPC_LOG_QUERY_WORK_BUDGET"
+    )]
+    pub rpc_log_query_work_budget: u64,
+    #[arg(
         long = "authrpc.addr",
         default_value = "127.0.0.1",
         value_name = "ADDRESS",
@@ -612,6 +653,10 @@ impl Default for Options {
             ws_enabled: false,
             ws_addr: Default::default(),
             ws_port: Default::default(),
+            rpc_max_blocks_per_filter: ethrex_rpc::DEFAULT_MAX_BLOCKS_PER_FILTER,
+            rpc_max_logs_per_response: ethrex_rpc::DEFAULT_MAX_LOGS_PER_RESPONSE,
+            rpc_max_log_query_work: ethrex_rpc::DEFAULT_MAX_LOG_QUERY_WORK,
+            rpc_log_query_work_budget: ethrex_rpc::DEFAULT_LOG_QUERY_WORK_BUDGET,
             log_level: Level::INFO,
             log_color: Default::default(),
             log_dir: None,
@@ -1500,6 +1545,53 @@ mod tests {
     fn http_api_rejects_unknown_namespace() {
         let result = CLI::try_parse_from(["ethrex", "--http.api", "eth,bogus"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn log_query_limit_flags_default_parse_and_reject_an_empty_budget() {
+        let opts = CLI::parse_from(["ethrex"]).opts;
+        assert_eq!(
+            (
+                opts.rpc_max_blocks_per_filter,
+                opts.rpc_max_logs_per_response,
+                opts.rpc_max_log_query_work,
+                opts.rpc_log_query_work_budget,
+            ),
+            (
+                ethrex_rpc::DEFAULT_MAX_BLOCKS_PER_FILTER,
+                ethrex_rpc::DEFAULT_MAX_LOGS_PER_RESPONSE,
+                ethrex_rpc::DEFAULT_MAX_LOG_QUERY_WORK,
+                ethrex_rpc::DEFAULT_LOG_QUERY_WORK_BUDGET,
+            )
+        );
+
+        // Zero lifts each of the three limits.
+        let opts = CLI::parse_from([
+            "ethrex",
+            "--rpc.max-blocks-per-filter",
+            "0",
+            "--rpc.max-logs-per-response",
+            "0",
+            "--rpc.max-log-query-work",
+            "0",
+            "--rpc.log-query-work-budget",
+            "5",
+        ])
+        .opts;
+        assert_eq!(
+            (
+                opts.rpc_max_blocks_per_filter,
+                opts.rpc_max_logs_per_response,
+                opts.rpc_max_log_query_work,
+                opts.rpc_log_query_work_budget,
+            ),
+            (0, 0, 0, 5)
+        );
+
+        for arg in ["0", "-1", "bogus"] {
+            let result = CLI::try_parse_from(["ethrex", "--rpc.log-query-work-budget", arg]);
+            assert!(result.is_err(), "{arg:?} must be rejected");
+        }
     }
 
     #[test]
