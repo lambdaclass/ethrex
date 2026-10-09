@@ -39,7 +39,7 @@ use ethrex_storage::{EngineType, Store};
 use hex_literal::hex;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use secp256k1::SecretKey;
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use spawned_concurrency::tasks::ActorRef;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -542,7 +542,14 @@ pub async fn call_http(context: &RpcApiContext, body: String) -> Value {
 // these shims do not exist in a normal build.
 use crate::engine::blobs::BlobsV4Request;
 use crate::types::fork_choice::{ForkChoiceState, PayloadAttributesV4};
-use crate::utils::RpcErr;
+use crate::utils::{RpcErr, value_to_raw};
+
+/// Convert `Value` params into the raw form [`crate::RpcHandler::parse`] takes.
+pub fn raw_params(params: &Option<Vec<Value>>) -> Option<Vec<Box<RawValue>>> {
+    params
+        .as_ref()
+        .map(|params| params.iter().map(value_to_raw).collect())
+}
 
 /// Max blob hashes per `engine_getBlobs*` request (mirror of the crate-private const).
 pub const GET_BLOBS_V1_REQUEST_MAX_SIZE: usize =
@@ -552,12 +559,12 @@ pub const GET_BLOBS_V1_REQUEST_MAX_SIZE: usize =
 pub fn parse_v4(
     params: &Option<Vec<Value>>,
 ) -> Result<(ForkChoiceState, Option<PayloadAttributesV4>, Option<u128>), RpcErr> {
-    crate::engine::fork_choice::parse_v4(params)
+    crate::engine::fork_choice::parse_v4(&raw_params(params))
 }
 
 /// Shim over the crate-private `engine::fork_choice::parse_custody_columns`.
 pub fn parse_custody_columns(value: &Value) -> Result<Option<u128>, RpcErr> {
-    crate::engine::fork_choice::parse_custody_columns(value)
+    crate::engine::fork_choice::parse_custody_columns(&value_to_raw(value))
 }
 
 /// Shim over the crate-private `engine::fork_choice::apply_custody_update`.
@@ -567,7 +574,7 @@ pub fn apply_custody_update(context: &RpcApiContext, custody_columns: Option<u12
 
 /// Shim over the crate-private `engine::blobs::parse_indices_bitarray`.
 pub fn parse_indices_bitarray(value: &Value) -> Result<u128, RpcErr> {
-    crate::engine::blobs::parse_indices_bitarray(value)
+    crate::engine::blobs::parse_indices_bitarray(&value_to_raw(value))
 }
 
 /// Construct a `BlobsV4Request` from its parts (the struct fields are crate-private).

@@ -60,8 +60,8 @@ use crate::tracing::{
 };
 use crate::types::transaction::SendRawTransactionRequest;
 use crate::utils::{
-    RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
-    RpcSuccessResponse,
+    CappedSeqVisitor, RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest,
+    RpcRequestId, RpcSuccessResponse,
 };
 use crate::{admin, net};
 use crate::{eth, mempool};
@@ -83,12 +83,17 @@ use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::SharedLocalNode;
 use ethrex_storage::Store;
-use serde::Deserialize;
-use serde_json::Value;
+use serde::{
+    Deserialize, Deserializer,
+    de::{IgnoredAny, MapAccess, SeqAccess, Visitor, value::MapAccessDeserializer},
+};
+use serde_json::{Value, value::RawValue};
 use spawned_concurrency::tasks::ActorRef;
 use std::{
     collections::{HashMap, HashSet},
+    fmt,
     future::IntoFuture,
+    marker::PhantomData,
     net::SocketAddr,
     sync::{Arc, Mutex},
     time::Duration,
@@ -183,13 +188,46 @@ pub async fn handle_get_heap_flamegraph() -> Result<(), (StatusCode, String)> {
 ///
 /// According to the JSON-RPC 2.0 specification, clients may send either a single
 /// request object or an array of request objects (batch request).
-#[derive(Deserialize)]
-#[serde(untagged)]
 pub enum RpcRequestWrapper {
     /// A single JSON-RPC request.
     Single(RpcRequest),
     /// A batch of JSON-RPC requests to be processed together.
     Multiple(Vec<RpcRequest>),
+}
+
+// Hand-written instead of `#[serde(untagged)]`: the derived impl buffers the whole body
+// into an intermediate tree before trying each variant, which costs several times the
+// body size and would undo the raw `params`. This streams either one request object or
+// an array of them, materializing at most `MAX_BATCH_SIZE + 1` requests; callers reject
+// a batch over `MAX_BATCH_SIZE` with `validate_batch`.
+impl<'de> Deserialize<'de> for RpcRequestWrapper {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct WrapperVisitor;
+
+        impl<'de> Visitor<'de> for WrapperVisitor {
+            type Value = RpcRequestWrapper;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a JSON-RPC request object or an array of them")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+                RpcRequest::deserialize(MapAccessDeserializer::new(map))
+                    .map(RpcRequestWrapper::Single)
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<Self::Value, A::Error> {
+                CappedSeqVisitor {
+                    max: MAX_BATCH_SIZE,
+                    marker: PhantomData,
+                }
+                .visit_seq(seq)
+                .map(RpcRequestWrapper::Multiple)
+            }
+        }
+
+        deserializer.deserialize_any(WrapperVisitor)
+    }
 }
 
 /// Channel message type for the block executor worker thread.
@@ -368,11 +406,11 @@ pub struct NodeData {
 /// }
 ///
 /// impl RpcHandler for GetBalanceRequest {
-///     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+///     fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
 ///         let params = params.as_ref().ok_or(RpcErr::MissingParam("params"))?;
 ///         Ok(Self {
-///             address: serde_json::from_value(params[0].clone())?,
-///             block: serde_json::from_value(params[1].clone())?,
+///             address: serde_json::from_str(params[0].get())?,
+///             block: serde_json::from_str(params[1].get())?,
 ///         })
 ///     }
 ///
@@ -386,8 +424,11 @@ pub struct NodeData {
 pub trait RpcHandler: Sized {
     /// Parse JSON-RPC parameters into the handler struct.
     ///
+    /// Each param is raw JSON text; deserialize it straight into its target type
+    /// (`serde_json::from_str(param.get())`) rather than through a `Value`.
+    ///
     /// Returns an error if required parameters are missing or have invalid types.
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr>;
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr>;
 
     /// Entry point for handling an RPC request.
     ///
@@ -972,8 +1013,9 @@ fn null_id_error(err: RpcErr) -> Value {
 
 /// Validate a batch envelope. Returns `Some(error_value)` for empty or
 /// oversize batches (short-circuits dispatch), `None` if the request is
-/// ok to process.
-fn validate_batch(wrapper: &RpcRequestWrapper) -> Option<Value> {
+/// ok to process. Every consumer of a parsed [`RpcRequestWrapper`] must call
+/// this: an oversize batch is parsed only up to `MAX_BATCH_SIZE + 1` requests.
+pub fn validate_batch(wrapper: &RpcRequestWrapper) -> Option<Value> {
     let RpcRequestWrapper::Multiple(requests) = wrapper else {
         return None;
     };
@@ -984,8 +1026,7 @@ fn validate_batch(wrapper: &RpcRequestWrapper) -> Option<Value> {
     }
     if requests.len() > MAX_BATCH_SIZE {
         return Some(null_id_error(RpcErr::InvalidRequest(format!(
-            "batch too large: {} > {MAX_BATCH_SIZE}",
-            requests.len()
+            "batch too large: more than {MAX_BATCH_SIZE} requests"
         ))));
     }
     None
@@ -1165,16 +1206,15 @@ where
     Fut: std::future::Future<Output = Result<Value, E>>,
     E: Into<RpcErrorMetadata>,
 {
-    // Parse as raw JSON first so we can distinguish between:
+    // Check the syntax first, without allocating, so we can distinguish between:
     //   -32700 Parse error (malformed JSON)
     //   -32600 Invalid Request (valid JSON, but not a valid JSON-RPC request object)
-    let parsed: Value = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Some(ws_error_response(None, -32700, "Parse error")),
-    };
+    if serde_json::from_str::<IgnoredAny>(body).is_err() {
+        return Some(ws_error_response(None, -32700, "Parse error"));
+    }
 
     // Accept both a single request and a batch (array), matching HTTP behavior.
-    let wrapper: RpcRequestWrapper = match serde_json::from_value(parsed) {
+    let wrapper: RpcRequestWrapper = match serde_json::from_str(body) {
         Ok(w) => w,
         Err(_) => return Some(ws_error_response(None, -32600, "Invalid Request")),
     };
@@ -1186,8 +1226,10 @@ where
             Some(resp.to_string())
         }
         RpcRequestWrapper::Multiple(reqs) => {
-            // Per JSON-RPC 2.0 spec, an empty batch is an invalid request.
-            if reqs.is_empty() {
+            // Per JSON-RPC 2.0 spec, an empty batch is an invalid request. An oversize
+            // one was only parsed up to `MAX_BATCH_SIZE + 1` requests, so it must be
+            // rejected rather than served partially.
+            if reqs.is_empty() || reqs.len() > MAX_BATCH_SIZE {
                 return Some(ws_error_response(None, -32600, "Invalid Request"));
             }
             let mut responses = Vec::with_capacity(reqs.len());
@@ -1273,9 +1315,12 @@ pub async fn handle_eth_subscribe(
     use crate::subscription_manager::MAX_SUBSCRIPTIONS_PER_CONNECTION;
 
     let params = req.params.as_deref().unwrap_or(&[]);
-    let sub_type = params.first().and_then(|v| v.as_str()).ok_or_else(|| {
-        RpcErr::BadParams("eth_subscribe requires a subscription type parameter".to_string())
-    })?;
+    let sub_type = params
+        .first()
+        .and_then(|v| serde_json::from_str::<String>(v.get()).ok())
+        .ok_or_else(|| {
+            RpcErr::BadParams("eth_subscribe requires a subscription type parameter".to_string())
+        })?;
 
     if subscription_ids.len() >= MAX_SUBSCRIPTIONS_PER_CONNECTION {
         return Err(RpcErr::BadParams(format!(
@@ -1283,7 +1328,7 @@ pub async fn handle_eth_subscribe(
         )));
     }
 
-    match sub_type {
+    match sub_type.as_str() {
         "newHeads" => {
             let ws = context
                 .ws
@@ -1318,11 +1363,10 @@ pub async fn handle_eth_unsubscribe(
     let params = req.params.as_deref().unwrap_or(&[]);
     let sub_id = params
         .first()
-        .and_then(|v| v.as_str())
+        .and_then(|v| serde_json::from_str::<String>(v.get()).ok())
         .ok_or_else(|| {
             RpcErr::BadParams("eth_unsubscribe requires a subscription ID parameter".to_string())
-        })?
-        .to_string();
+        })?;
 
     // Only unsubscribe if the requested ID belongs to this connection.
     let Some(pos) = subscription_ids.iter().position(|id| id == &sub_id) else {
@@ -1798,6 +1842,69 @@ mod tests {
                 "default allowlist should route {method}, got {result:?}"
             );
         }
+    }
+
+    const CHAIN_ID_REQUEST: &str = r#"{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}"#;
+
+    /// One object parses as a single request and an array as a batch. An oversize batch
+    /// is materialized only up to `MAX_BATCH_SIZE + 1` requests, which `validate_batch`
+    /// then rejects.
+    #[test]
+    fn request_wrapper_parses_single_and_batched_requests() {
+        assert!(matches!(
+            serde_json::from_str::<RpcRequestWrapper>(CHAIN_ID_REQUEST),
+            Ok(RpcRequestWrapper::Single(_))
+        ));
+        let batch = format!("[{CHAIN_ID_REQUEST},{CHAIN_ID_REQUEST}]");
+        assert!(matches!(
+            serde_json::from_str::<RpcRequestWrapper>(&batch),
+            Ok(RpcRequestWrapper::Multiple(requests)) if requests.len() == 2
+        ));
+
+        let oversize = format!("[{}]", vec![CHAIN_ID_REQUEST; 3 * MAX_BATCH_SIZE].join(","));
+        let wrapper: RpcRequestWrapper = serde_json::from_str(&oversize).unwrap();
+        let RpcRequestWrapper::Multiple(requests) = &wrapper else {
+            panic!("an array must parse as a batch");
+        };
+        assert_eq!(requests.len(), MAX_BATCH_SIZE + 1);
+        let error = validate_batch(&wrapper).expect("an oversize batch must be rejected");
+        assert_eq!(error["error"]["code"], -32600);
+        assert!(error["id"].is_null());
+
+        for invalid in ["1", r#""x""#, "null", "[1]", "{}", "[{}]"] {
+            assert!(
+                serde_json::from_str::<RpcRequestWrapper>(invalid).is_err(),
+                "{invalid} is not a JSON-RPC request"
+            );
+        }
+    }
+
+    /// WebSocket batches obey the same size limit as HTTP: an oversize one is rejected
+    /// whole rather than served for the requests that were parsed.
+    #[tokio::test]
+    async fn ws_rejects_oversize_batch() {
+        let storage = Store::new("temp.db", EngineType::InMemory).expect("in-memory store");
+        let context = default_context_with_storage(storage).await;
+        let (out_tx, _out_rx) = tokio::sync::mpsc::channel::<String>(1);
+        let mut subscription_ids: Vec<String> = Vec::new();
+        let route_request = |_req: RpcRequest| async move {
+            panic!("an oversize batch must not be dispatched");
+            #[allow(unreachable_code)]
+            Ok::<Value, RpcErr>(Value::Null)
+        };
+
+        let body = format!("[{}]", vec![CHAIN_ID_REQUEST; MAX_BATCH_SIZE + 1].join(","));
+        let response = handle_ws_request(
+            &body,
+            &context,
+            &out_tx,
+            &mut subscription_ids,
+            &route_request,
+        )
+        .await
+        .expect("an oversize batch must get an error response");
+        let response: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(response["error"]["code"], -32600);
     }
 
     /// WebSocket subscriptions live in the `eth` namespace and must obey the

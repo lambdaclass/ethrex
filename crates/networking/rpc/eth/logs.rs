@@ -18,8 +18,8 @@ use ethrex_common::{
 use ethrex_crypto::NativeCrypto;
 use ethrex_storage::Store;
 use serde::Deserialize;
-use serde_json::Value;
-use std::collections::HashSet;
+use serde_json::{Value, value::RawValue};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(untagged)]
@@ -64,26 +64,27 @@ pub struct LogsFilter {
     pub topics: Vec<TopicFilter>,
 }
 impl RpcHandler for LogsFilter {
-    fn parse(params: &Option<Vec<Value>>) -> Result<LogsFilter, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<LogsFilter, RpcErr> {
         match params.as_deref() {
             Some([param]) => {
-                let param = param
-                    .as_object()
-                    .ok_or(RpcErr::BadParams("Param is not a object".to_owned()))?;
+                // Split the object into its members, each kept as raw JSON and parsed
+                // straight into its own type below.
+                let param = serde_json::from_str::<HashMap<String, Box<RawValue>>>(param.get())
+                    .map_err(|_| RpcErr::BadParams("Param is not a object".to_owned()))?;
                 let from_block = param
                     .get("fromBlock")
-                    .map(|block_number| BlockIdentifier::parse(block_number.clone(), 0))
+                    .map(|block_number| BlockIdentifier::parse_param(block_number, 0))
                     .transpose()?
                     .unwrap_or(BlockIdentifier::Tag(BlockTag::Latest));
                 let to_block = param
                     .get("toBlock")
-                    .map(|block_number| BlockIdentifier::parse(block_number.clone(), 0))
+                    .map(|block_number| BlockIdentifier::parse_param(block_number, 0))
                     .transpose()?
                     .unwrap_or(BlockIdentifier::Tag(BlockTag::Latest));
                 let address_filters = param
                     .get("address")
                     .map(|address| {
-                        match serde_json::from_value::<Option<AddressFilter>>(address.clone()) {
+                        match serde_json::from_str::<Option<AddressFilter>>(address.get()) {
                             Ok(filters) => Ok(filters),
                             _ => Err(RpcErr::WrongParam("address".to_string())),
                         }
@@ -93,7 +94,7 @@ impl RpcHandler for LogsFilter {
                 let block_hash = param
                     .get("blockHash")
                     .map(
-                        |block_hash| match serde_json::from_value::<H256>(block_hash.clone()) {
+                        |block_hash| match serde_json::from_str::<H256>(block_hash.get()) {
                             Ok(hash) => Ok(hash),
                             _ => Err(RpcErr::WrongParam("blockHash".to_string())),
                         },
@@ -104,7 +105,7 @@ impl RpcHandler for LogsFilter {
                 let topics_filters = param
                     .get("topics")
                     .map(|topics| {
-                        match serde_json::from_value::<Option<Vec<TopicFilter>>>(topics.clone()) {
+                        match serde_json::from_str::<Option<Vec<TopicFilter>>>(topics.get()) {
                             Ok(filters) => Ok(filters),
                             _ => Err(RpcErr::WrongParam("topics".to_string())),
                         }
@@ -423,6 +424,7 @@ impl BloomFilterMatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::raw_params;
     use serde_json::json;
 
     #[test]
@@ -430,7 +432,7 @@ mod tests {
         let params = Some(vec![
             json!({"topics": ["0x0000000000000000000000000000000000000000000000000000000000000000"]}),
         ]);
-        let request = LogsFilter::parse(&params).unwrap();
+        let request = LogsFilter::parse(&raw_params(&params)).unwrap();
 
         assert!(request.address_filters.is_none(), "{request:?}");
         assert!(
@@ -449,7 +451,7 @@ mod tests {
         // Every field of the filter object is optional; an absent `topics` asks
         // for every log in range.
         let params = Some(vec![json!({"fromBlock": "0x1", "toBlock": "0x2"})]);
-        let request = LogsFilter::parse(&params).unwrap();
+        let request = LogsFilter::parse(&raw_params(&params)).unwrap();
 
         assert!(request.topics.is_empty(), "{request:?}");
         assert!(request.block_hash.is_none(), "{request:?}");
@@ -458,7 +460,7 @@ mod tests {
     #[test]
     fn test_get_logs_with_empty_filter() {
         let params = Some(vec![json!({})]);
-        let request = LogsFilter::parse(&params).unwrap();
+        let request = LogsFilter::parse(&raw_params(&params)).unwrap();
 
         assert!(request.topics.is_empty(), "{request:?}");
         assert!(request.address_filters.is_none(), "{request:?}");
@@ -473,7 +475,7 @@ mod tests {
         let params = Some(vec![json!({
             "blockHash": "0x0000000000000000000000000000000000000000000000000000000000000001"
         })]);
-        let request = LogsFilter::parse(&params).unwrap();
+        let request = LogsFilter::parse(&raw_params(&params)).unwrap();
 
         assert_eq!(request.block_hash, Some(H256::from_low_u64_be(1)));
         assert!(request.topics.is_empty(), "{request:?}");
@@ -488,7 +490,10 @@ mod tests {
                 extra: "0x1"
             })]);
             assert!(
-                matches!(LogsFilter::parse(&params), Err(RpcErr::BadParams(_))),
+                matches!(
+                    LogsFilter::parse(&raw_params(&params)),
+                    Err(RpcErr::BadParams(_))
+                ),
                 "expected {extra} alongside blockHash to be rejected"
             );
         }
@@ -498,7 +503,7 @@ mod tests {
     fn test_get_logs_malformed_block_hash_is_rejected() {
         let params = Some(vec![json!({"blockHash": "not a hash"})]);
         assert!(matches!(
-            LogsFilter::parse(&params),
+            LogsFilter::parse(&raw_params(&params)),
             Err(RpcErr::WrongParam(_))
         ));
     }
@@ -680,7 +685,7 @@ mod tests {
             ],
             "topics": ["0x0000000000000000000000000000000000000000000000000000000000000000"]
         })]);
-        let request = LogsFilter::parse(&params).unwrap();
+        let request = LogsFilter::parse(&raw_params(&params)).unwrap();
 
         assert_eq!(
             request.address_filters.as_ref().unwrap().as_ref(),

@@ -42,11 +42,12 @@
 //!
 //! ```ignore
 //! use ethrex_rpc::{RpcHandler, RpcApiContext, RpcErr};
+//! use serde_json::value::RawValue;
 //!
 //! struct MyHandler { /* fields */ }
 //!
 //! impl RpcHandler for MyHandler {
-//!     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+//!     fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
 //!         // Parse JSON-RPC parameters
 //!     }
 //!
@@ -94,7 +95,7 @@ pub use eth::{
 pub use rpc::{
     ClientVersion, NodeData, RpcApiContext, RpcHandler, RpcRequestWrapper, WebSocketConfig,
     handle_eth_subscribe, handle_eth_unsubscribe, handle_websocket, map_debug_requests,
-    map_eth_requests, map_http_requests, rpc_response, shutdown_signal,
+    map_eth_requests, map_http_requests, rpc_response, shutdown_signal, validate_batch,
 };
 pub use subscription_manager::{SubscriptionManager, SubscriptionManagerProtocol};
 pub use utils::{RpcErr, RpcErrorMetadata, RpcNamespace};

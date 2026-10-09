@@ -1,6 +1,6 @@
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::utils::RpcErr;
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 
 // TODO: This does not need a struct,
 // but I'm leaving it like this for consistency
@@ -11,7 +11,7 @@ use serde_json::Value;
 pub struct MaxPriorityFee;
 
 impl RpcHandler for MaxPriorityFee {
-    fn parse(_: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(_: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         Ok(MaxPriorityFee {})
     }
 
@@ -37,7 +37,7 @@ mod tests {
     };
     use crate::{
         rpc::{RpcHandler, map_http_requests},
-        utils::{RpcRequest, parse_json_hex},
+        utils::{RpcRequest, parse_json_hex, value_to_raw},
     };
     use ethrex_common::types::MIN_GAS_TIP;
     use serde_json::json;
@@ -55,7 +55,7 @@ mod tests {
 
         let gas_price = MaxPriorityFee {};
         let response = gas_price.handle(context.clone()).await.unwrap();
-        let parsed_result = parse_json_hex(&response).unwrap();
+        let parsed_result = parse_json_hex(&value_to_raw(&response)).unwrap();
         assert_eq!(parsed_result, BASE_PRICE_IN_WEI);
     }
 
@@ -67,7 +67,7 @@ mod tests {
 
         let gas_price = MaxPriorityFee {};
         let response = gas_price.handle(context.clone()).await.unwrap();
-        let parsed_result = parse_json_hex(&response).unwrap();
+        let parsed_result = parse_json_hex(&value_to_raw(&response)).unwrap();
         assert_eq!(parsed_result, BASE_PRICE_IN_WEI);
     }
 
@@ -79,7 +79,7 @@ mod tests {
 
         let gas_price = MaxPriorityFee {};
         let response = gas_price.handle(context.clone()).await.unwrap();
-        let parsed_result = parse_json_hex(&response).unwrap();
+        let parsed_result = parse_json_hex(&value_to_raw(&response)).unwrap();
         assert_eq!(parsed_result, BASE_PRICE_IN_WEI);
     }
 
@@ -91,7 +91,7 @@ mod tests {
 
         let gas_price = MaxPriorityFee {};
         let response = gas_price.handle(context.clone()).await.unwrap();
-        let parsed_result = parse_json_hex(&response).unwrap();
+        let parsed_result = parse_json_hex(&value_to_raw(&response)).unwrap();
         assert_eq!(parsed_result, MIN_GAS_TIP);
     }
 
@@ -101,7 +101,7 @@ mod tests {
         let gas_price = MaxPriorityFee {};
 
         let response = gas_price.handle(context.clone()).await.unwrap();
-        let parsed_result = parse_json_hex(&response).unwrap();
+        let parsed_result = parse_json_hex(&value_to_raw(&response)).unwrap();
         assert_eq!(parsed_result, MIN_GAS_TIP);
     }
 

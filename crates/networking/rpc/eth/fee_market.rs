@@ -8,7 +8,7 @@ use ethrex_common::{
     },
 };
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use tracing::debug;
 
 use crate::{
@@ -45,7 +45,7 @@ pub struct FeeHistoryResponse {
 // - https://ethereum.github.io/execution-apis/api-documentation/
 // - https://github.com/ethereum/go-ethereum/blob/master/eth/gasprice/feehistory.go
 impl RpcHandler for FeeHistoryRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<FeeHistoryRequest, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<FeeHistoryRequest, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -62,7 +62,7 @@ impl RpcHandler for FeeHistoryRequest {
                 "Too large block_count parameter".to_owned(),
             ));
         }
-        let rp: Vec<f32> = serde_json::from_value(params[2].clone())?;
+        let rp: Vec<f32> = serde_json::from_str(params[2].get())?;
         // NOTE: This check is offspec
         if rp.len() > MAX_PERCENTILE_ARRAY_LEN {
             return Err(RpcErr::BadParams(format!(
@@ -80,7 +80,7 @@ impl RpcHandler for FeeHistoryRequest {
 
         Ok(FeeHistoryRequest {
             block_count,
-            newest_block: BlockIdentifier::parse(params[1].clone(), 0)?,
+            newest_block: BlockIdentifier::parse_param(&params[1], 0)?,
             reward_percentiles: rp,
         })
     }

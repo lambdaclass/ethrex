@@ -10,6 +10,7 @@ use ethrex_rpc::engine::payload::{
 };
 use ethrex_rpc::rpc::RpcHandler;
 use ethrex_rpc::test_utils::default_context_with_storage;
+use ethrex_rpc::test_utils::raw_params;
 use ethrex_rpc::types::payload::ExecutionPayloadBodyV2;
 use ethrex_rpc::utils::{RpcErrorMetadata, RpcRequest};
 use ethrex_rpc::{map_debug_requests, map_eth_requests};
@@ -431,7 +432,7 @@ async fn payload_bodies_by_range_v2_serves_stored_bal() {
     let context = default_context_with_storage(storage).await;
     // params: [start, count] = [block 1, 1 block]
     let params = Some(vec![serde_json::json!("0x1"), serde_json::json!("0x1")]);
-    let request = GetPayloadBodiesByRangeV2Request::parse(&params).expect("parse");
+    let request = GetPayloadBodiesByRangeV2Request::parse(&raw_params(&params)).expect("parse");
     let got = request.handle(context.clone()).await.expect("rpc ok");
 
     let expected =

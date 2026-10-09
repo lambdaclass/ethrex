@@ -1,11 +1,11 @@
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 
 use crate::{RpcApiContext, RpcErr, RpcHandler};
 
 pub struct ChainConfigRequest;
 
 impl RpcHandler for ChainConfigRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         if let Some(params) = params
             && !params.is_empty()
         {
