@@ -119,7 +119,8 @@ if [[ -n "$_basic"  ]]; then auth_args+=(-u "$_basic"); fi
 
 prometheus_query() {
   local query="$1"
-  curl -sS -G "$QUERY_URL" "${auth_args[@]}" --data-urlencode "query=$query"
+  # POST: the generated queries run to tens of KB, past common URL length limits.
+  curl -sS "$QUERY_URL" "${auth_args[@]}" --data-urlencode "query=$query"
 }
 
 check_response() {
@@ -146,12 +147,14 @@ check_response() {
 #
 # PERF_NODES lists "display-name=host" pairs. Each host runs Lighthouse metrics on :5054.
 PERF_NODES="${PERF_NODES:-ethrex=ethrex-mainnet-2 reth=reth-mainnet-1 nethermind=nethermind-mainnet-1}"
+read -r -a nodes <<<"$PERF_NODES"
 # Per-slot values use 12 s windows aligned to slot starts. Mainnet's genesis lands 11 s after a
 # multiple of 12, so the windows end 1 s before Prometheus' 12 s-aligned evaluation points.
 PERF_SLOT_OFFSET="${PERF_SLOT_OFFSET:-1}"
 # The gas of each slot's block is a chain fact: the median of the fleet's last-block gas gauges
 # (every node that follows the chain, reported or not), so a node one block behind in a slot cannot
-# skew it.
+# skew it. The list is separate from PERF_NODES because it reads each client's own gauge, set when
+# the block is imported; the metrics exporter's gauge is polled and lags it by up to a slot.
 PERF_GAS_SOURCES="${PERF_GAS_SOURCES:-$(cat <<EOF
 last_over_time(gas_used{instance="ethrex-mainnet-2:3701"}[12s] offset ${PERF_SLOT_OFFSET}s)
 or last_over_time(gas_used{instance="geth-mainnet-1:3701"}[12s] offset ${PERF_SLOT_OFFSET}s)
@@ -159,40 +162,43 @@ or last_over_time(reth_consensus_engine_beacon_new_payload_total_gas_last{instan
 or last_over_time(nethermind_gas_used{instance="nethermind-mainnet-1:6060"}[12s] offset ${PERF_SLOT_OFFSET}s)
 EOF
 )}"
-SLOT_GAS="quantile(0.5, ${PERF_GAS_SOURCES})"
+# A slot with fewer than three gauges has no gas: with two, the median would average a stale value in.
+SLOT_GAS="(quantile(0.5, ${PERF_GAS_SOURCES}) and on() (count(${PERF_GAS_SOURCES}) >= 3))"
 OFF_A="offset ${PERF_SLOT_OFFSET}s"
 OFF_B="offset $((PERF_SLOT_OFFSET + 12))s"
 
-# Slot-aligned newPayload duration (s) of one node: Δsum/Δcount over the slot, only where a call happened.
+slot_delta() { printf '(%s %s - %s %s)' "$1" "$OFF_A" "$1" "$OFF_B"; } # slot_delta SERIES: its increase over the slot
+
+# Slot-aligned newPayload duration (s) of one node: Δsum/Δcount over the slot. A slot is kept only if
+# every call in it returned VALID: Lighthouse also times calls that failed (refused at once, or cut
+# at its 8 s timeout) and SYNCING/ACCEPTED/INVALID replies, none of which imported the block.
 slot_time() {
-  local host="$1"
-  local s="execution_layer_request_times_sum{method=\"new_payload\",instance=\"${host}:5054\"}"
-  local c="execution_layer_request_times_count{method=\"new_payload\",instance=\"${host}:5054\"}"
-  printf '(((%s %s - %s %s) / (%s %s - %s %s)) and ((%s %s - %s %s) >= 1))' \
-    "$s" "$OFF_A" "$s" "$OFF_B" "$c" "$OFF_A" "$c" "$OFF_B" "$c" "$OFF_A" "$c" "$OFF_B"
+  local sel="method=\"new_payload\",instance=\"$1:5054\"" ds dc dv
+  ds=$(slot_delta "execution_layer_request_times_sum{${sel}}")
+  dc=$(slot_delta "execution_layer_request_times_count{${sel}}")
+  dv=$(slot_delta "execution_layer_payload_status{${sel},status=\"valid\"}")
+  printf '((%s / %s) and (%s >= 1) and on(instance) (%s == ignoring(status) %s))' "$ds" "$dc" "$dc" "$dv" "$dc"
 }
 
-tag() { # tag EXPR NAME [QUANTILE]: label the series with client=NAME and, optionally, quantile=Q
-  local expr="label_replace($1, \"client\", \"$2\", \"\", \"\")"
-  if [[ -n "${3:-}" ]]; then expr="label_replace($expr, \"quantile\", \"$3\", \"\", \"\")"; fi
-  printf '%s' "$expr"
+tag() { # tag EXPR NAME STAT: label the series with client=NAME and stat=STAT
+  printf 'label_replace(label_replace(%s, "client", "%s", "", ""), "stat", "%s", "", "")' "$1" "$2" "$3"
 }
 
 bt_parts=()
 tput_parts=()
-for pair in $PERF_NODES; do
+for pair in "${nodes[@]}"; do
   name="${pair%%=*}"; host="${pair#*=}"
-  s="execution_layer_request_times_sum{method=\"new_payload\",instance=\"${host}:5054\"}"
-  c="execution_layer_request_times_count{method=\"new_payload\",instance=\"${host}:5054\"}"
   t="$(slot_time "$host")"
-  # Block time (ms): mean over every call in the range; p50/p99 over the per-slot durations.
-  bt_parts+=("$(tag "1000 * increase(${s}[${RANGE}]) / increase(${c}[${RANGE}])" "$name")")
-  bt_parts+=("$(tag "quantile_over_time(0.5, (1000 * ${t})[${RANGE}:12s])" "$name" 0.5)")
-  bt_parts+=("$(tag "quantile_over_time(0.99, (1000 * ${t})[${RANGE}:12s])" "$name" 0.99)")
-  # Throughput (Ggas/s): gas-weighted = Σ block gas / Σ newPayload time over the slots the node
-  # processed; median = median over slots of block gas / newPayload time.
-  tput_parts+=("$(tag "sum_over_time((scalar(${SLOT_GAS}) * (${t} > bool 0))[${RANGE}:12s]) / sum_over_time((${t})[${RANGE}:12s]) / 1e9" "$name")")
-  tput_parts+=("$(tag "quantile_over_time(0.5, (scalar(${SLOT_GAS}) / 1e9 / ${t})[${RANGE}:12s])" "$name" 0.5)")
+  # Block time (ms) over the per-slot durations.
+  bt_parts+=("$(tag "avg_over_time((1000 * ${t})[${RANGE}:12s])" "$name" mean)")
+  bt_parts+=("$(tag "quantile_over_time(0.5, (1000 * ${t})[${RANGE}:12s])" "$name" p50)")
+  bt_parts+=("$(tag "quantile_over_time(0.99, (1000 * ${t})[${RANGE}:12s])" "$name" p99)")
+  # Throughput (Ggas/s) over the slots the node processed that have gas: gas-weighted = Σ block gas /
+  # Σ newPayload time; median = median over slots of block gas / newPayload time. g is the slot's gas
+  # matched by vector, not scalar(), so a slot without gas is dropped instead of making the sum NaN.
+  g="((${t} > bool 0) * on() group_left() ${SLOT_GAS})"
+  tput_parts+=("$(tag "sum_over_time(${g}[${RANGE}:12s]) / sum_over_time((${t} and on() ${SLOT_GAS})[${RANGE}:12s]) / 1e9" "$name" mean)")
+  tput_parts+=("$(tag "quantile_over_time(0.5, (${g} / ${t} / 1e9)[${RANGE}:12s])" "$name" p50)")
 done
 join_or() { local IFS=; printf '%s' "${1}"; shift; for p in "$@"; do printf ' or %s' "$p"; done; }
 BLOCK_TIME_QUERY="${BLOCK_TIME_PROMETHEUS_QUERY:-$(join_or "${bt_parts[@]}")}"
@@ -221,18 +227,18 @@ node_version() {
     fi
   fi
   # Version portion of "Client/v1.2.3/platform/..."
-  jq -r --arg pattern "^${host}:" '
-    .data.result[] | select(.metric.instance | test($pattern)) | .metric.version // "unknown" | split("/")[1] // "unknown"
+  jq -r --arg prefix "${host}:" '
+    .data.result[] | select(.metric.instance | startswith($prefix)) | .metric.version // "unknown" | split("/")[1] // "unknown"
   ' <<<"$version_response" 2>/dev/null | head -1
 }
 
 # --- Parse the responses into "client|stat|value" rows (bash 3.2 compatible, no associative arrays) ---
+# A non-finite value counts as missing.
 parse_rows() {
   jq -r '
     .data.result[]
-    | [ (.metric.client // "series"),
-        (if (.metric.quantile // "") == "" then "mean" else "p" + ((.metric.quantile | tonumber) * 100 | tostring) end),
-        (.value[1]) ]
+    | select(.value[1] | IN("NaN", "+Inf", "-Inf") | not)
+    | [(.metric.client // "series"), (.metric.stat // "mean"), .value[1]]
     | join("|")
   ' <<<"$1"
 }
@@ -243,34 +249,48 @@ stat_of() { # stat_of ROWS CLIENT STAT -> value or empty
   printf '%s\n' "$1" | awk -F'|' -v c="$2" -v s="$3" '$1 == c && $2 == s { print $3; exit }'
 }
 
-clients=()
-for pair in $PERF_NODES; do clients+=("${pair%%=*}"); done
 name_width=0
-for name in "${clients[@]}"; do (( ${#name} > name_width )) && name_width=${#name}; done
+for pair in "${nodes[@]}"; do name="${pair%%=*}"; (( ${#name} > name_width )) && name_width=${#name}; done
 
-# Sort clients: block time ascending by mean, throughput descending by gas-weighted mean.
+# "name=host" pairs of the nodes with a mean, sorted by it; a node without one is reported on stderr.
+order_nodes() { # order_nodes ROWS SORT_FLAG WHAT
+  local pair v
+  for pair in "${nodes[@]}"; do
+    v=$(stat_of "$1" "${pair%%=*}" mean)
+    if [[ -n "$v" ]]; then echo "$v $pair"; else echo "WARNING: no $3 for ${pair%%=*} (${pair#*=}), left out of the report" >&2; fi
+  done | LC_ALL=C sort "$2"
+}
+# Block time ascending by mean, throughput descending by gas-weighted mean.
 bt_order=()
-while read -r _val client; do bt_order+=("$client"); done < <(
-  for name in "${clients[@]}"; do v=$(stat_of "$bt_rows" "$name" mean); [[ -n "$v" ]] && echo "$v $name"; done | LC_ALL=C sort -n)
+while read -r _val pair; do bt_order+=("$pair"); done < <(order_nodes "$bt_rows" -n "block time")
 tput_order=()
-while read -r _val client; do tput_order+=("$client"); done < <(
-  for name in "${clients[@]}"; do v=$(stat_of "$tput_rows" "$name" mean); [[ -n "$v" ]] && echo "$v $name"; done | LC_ALL=C sort -rn)
+while read -r _val pair; do tput_order+=("$pair"); done < <(order_nodes "$tput_rows" -rn "throughput")
 
+fmt_stat() { # fmt_stat WIDTH VALUE: VALUE with two decimals, or n/a when missing
+  if [[ -n "$2" ]]; then printf "%${1}.2f" "$2"; else printf "%${1}s" "n/a"; fi
+}
 fmt_bt_row() {
-  printf "%${name_width}s: %7.2f ms (mean) | %7.2f ms (p50) | %8.2f ms (p99)\n" "$1" \
-    "$(stat_of "$bt_rows" "$1" mean)" "$(stat_of "$bt_rows" "$1" p50)" "$(stat_of "$bt_rows" "$1" p99)"
+  printf "%${name_width}s: %s ms (mean) | %s ms (p50) | %s ms (p99)\n" "$1" \
+    "$(fmt_stat 7 "$(stat_of "$bt_rows" "$1" mean)")" \
+    "$(fmt_stat 7 "$(stat_of "$bt_rows" "$1" p50)")" \
+    "$(fmt_stat 8 "$(stat_of "$bt_rows" "$1" p99)")"
 }
 fmt_tput_row() {
-  printf "%${name_width}s: %5.2f Ggas/s (gas-weighted) | %5.2f Ggas/s (median block)\n" "$1" \
-    "$(stat_of "$tput_rows" "$1" mean)" "$(stat_of "$tput_rows" "$1" p50)"
+  printf "%${name_width}s: %s Ggas/s (gas-weighted) | %s Ggas/s (median block)\n" "$1" \
+    "$(fmt_stat 5 "$(stat_of "$tput_rows" "$1" mean)")" \
+    "$(fmt_stat 5 "$(stat_of "$tput_rows" "$1" p50)")"
 }
+
+bt_table=""
+for pair in "${bt_order[@]}"; do bt_table+="$(fmt_bt_row "${pair%%=*}")"$'\n'; done
+tput_table=""
+for pair in "${tput_order[@]}"; do tput_table+="$(fmt_tput_row "${pair%%=*}")"$'\n'; done
 
 # "Comparing ..." line in block time order, with each node's version
 comparing_line=""
-for name in "${bt_order[@]}"; do
-  for pair in $PERF_NODES; do [[ "${pair%%=*}" == "$name" ]] && host="${pair#*=}"; done
-  ver=$(node_version "$host"); : "${ver:=unknown}"
-  comparing_line+="${name} (${ver}), "
+for pair in "${bt_order[@]}"; do
+  ver=$(node_version "${pair#*=}"); : "${ver:=unknown}"
+  comparing_line+="${pair%%=*} (${ver}), "
 done
 comparing_line="${comparing_line%, }"
 
@@ -299,12 +319,12 @@ perf_method="Measured by each node's Lighthouse: wall-clock of engine_newPayload
 
   echo "### Block Time"
   echo
-  for name in "${bt_order[@]}"; do fmt_bt_row "$name"; done
+  printf "%s" "$bt_table"
   echo
 
   echo "### Throughput"
   echo
-  for name in "${tput_order[@]}"; do fmt_tput_row "$name"; done
+  printf "%s" "$tput_table"
 } >"${OUTPUT_DIR}/daily_report_github.txt"
 
 # --- Generate Slack JSON ---
@@ -323,12 +343,12 @@ slack_text+="Comparing ${comparing_line}"$'\n\n'
 
 slack_text+="*Block Time*"$'\n'
 slack_text+='```'$'\n'
-for name in "${bt_order[@]}"; do slack_text+="$(fmt_bt_row "$name")"$'\n'; done
+slack_text+="${bt_table}"
 slack_text+='```'$'\n\n'
 
 slack_text+="*Throughput*"$'\n'
 slack_text+='```'$'\n'
-for name in "${tput_order[@]}"; do slack_text+="$(fmt_tput_row "$name")"$'\n'; done
+slack_text+="${tput_table}"
 slack_text+='```'$'\n'
 
 jq -n --arg header "$header_text" --arg text "$slack_text" '{
@@ -365,12 +385,12 @@ tg_text+="Comparing $(escape_html "$comparing_line")"$'\n\n'
 
 tg_text+="<b>Block Time</b>"$'\n'
 tg_text+="<pre>"$'\n'
-for name in "${bt_order[@]}"; do tg_text+="$(fmt_bt_row "$name")"$'\n'; done
+tg_text+="${bt_table}"
 tg_text+="</pre>"$'\n\n'
 
 tg_text+="<b>Throughput</b>"$'\n'
 tg_text+="<pre>"$'\n'
-for name in "${tput_order[@]}"; do tg_text+="$(fmt_tput_row "$name")"$'\n'; done
+tg_text+="${tput_table}"
 tg_text+="</pre>"
 
 printf "%s" "$tg_text" >"${OUTPUT_DIR}/daily_report_telegram.txt"
