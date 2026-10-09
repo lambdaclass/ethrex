@@ -13,13 +13,13 @@ use crate::{
 use ethereum_types::{Bloom, BloomInput};
 use ethrex_common::{
     H160, H256,
-    types::{BlockBody, BlockHeader},
+    types::{BlockBody, BlockHeader, BlockNumber},
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_storage::Store;
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(untagged)]
@@ -152,6 +152,10 @@ impl RpcHandler for LogsFilter {
 //   then we simply could retrieve each log from the receipt and add the info
 //   needed for the RPCLog struct.
 
+/// Blocks whose headers one blocking task reads and checks against the filter's bloom,
+/// the same chunk size reth uses for its header pass.
+const HEADER_CHUNK_SIZE: u64 = 1_000;
+
 pub(crate) async fn fetch_logs_with_filter(
     filter: &LogsFilter,
     storage: Store,
@@ -164,7 +168,7 @@ pub(crate) async fn fetch_logs_with_filter(
     // Derive the filter's address/topic blooms once, up front, so the per-block
     // header-bloom check below is a cheap bit-subset test instead of re-hashing
     // every address and topic for each block in the range.
-    let bloom_matcher = BloomFilterMatcher::new(&address_filter, &filter.topics);
+    let bloom_matcher = Arc::new(BloomFilterMatcher::new(&address_filter, &filter.topics));
 
     let mut logs: Vec<RpcLog> = Vec::new();
     match filter.block_hash {
@@ -185,6 +189,7 @@ pub(crate) async fn fetch_logs_with_filter(
                     &block_header,
                     &block_body,
                     &address_filter,
+                    &filter.topics,
                     &mut logs,
                 )
                 .await?;
@@ -216,82 +221,85 @@ pub(crate) async fn fetch_logs_with_filter(
             // For that, we'll need each block in range, and its transactions,
             // and for each transaction, we'll need its receipts, which
             // contain the actual logs we want.
-            for block_num in from..=to {
-                // The block header carries a bloom filter over every (address, topic)
-                // pair logged in the block. If it can't possibly contain a log matching
-                // this filter, skip the block without loading its body or receipts.
-                let block_header = storage
-                    .get_block_header(block_num)?
-                    .ok_or(RpcErr::Internal(format!(
-                        "Could not get header for block {block_num}"
-                    )))?;
-                if !bloom_matcher.matches(&block_header.logs_bloom) {
-                    continue;
-                }
-                // Take the body of the block, we
-                // will use it to access the transactions.
-                let block_body =
-                    storage
-                        .get_block_body(block_num)
-                        .await?
-                        .ok_or(RpcErr::Internal(format!(
-                            "Could not get body for block {block_num}"
-                        )))?;
-                collect_block_logs(
-                    &storage,
-                    &block_header,
-                    &block_body,
-                    &address_filter,
-                    &mut logs,
+            let mut chunk_start = from;
+            while chunk_start <= to {
+                let chunk_end = chunk_start.saturating_add(HEADER_CHUNK_SIZE - 1).min(to);
+                let headers = bloom_matching_headers(
+                    storage.clone(),
+                    bloom_matcher.clone(),
+                    chunk_start,
+                    chunk_end,
                 )
                 .await?;
+                for block_header in headers {
+                    let block_num = block_header.number;
+                    // Take the body of the block, we
+                    // will use it to access the transactions.
+                    let block_body =
+                        storage
+                            .get_block_body(block_num)
+                            .await?
+                            .ok_or(RpcErr::Internal(format!(
+                                "Could not get body for block {block_num}"
+                            )))?;
+                    collect_block_logs(
+                        &storage,
+                        &block_header,
+                        &block_body,
+                        &address_filter,
+                        &filter.topics,
+                        &mut logs,
+                    )
+                    .await?;
+                }
+                let Some(next) = chunk_end.checked_add(1) else {
+                    break;
+                };
+                chunk_start = next;
             }
         }
     }
-    // Now that we have the logs filtered by address,
-    // we still need to filter by topics if it was a given parameter.
-
-    let filtered_logs = if filter.topics.is_empty() {
-        logs
-    } else {
-        logs.into_iter()
-            .filter(|rpc_log| {
-                if filter.topics.len() > rpc_log.log.topics.len() {
-                    return false;
-                }
-                for (i, topic_filter) in filter.topics.iter().enumerate() {
-                    match topic_filter {
-                        TopicFilter::Topic(topic) => {
-                            if topic.is_some_and(|topic| rpc_log.log.topics[i] != topic) {
-                                return false;
-                            }
-                        }
-                        TopicFilter::Topics(sub_topics) => {
-                            if !sub_topics.is_empty()
-                                && !sub_topics
-                                    .iter()
-                                    .any(|st| st.is_none_or(|t| rpc_log.log.topics[i] == t))
-                            {
-                                return false;
-                            }
-                        }
-                    }
-                }
-                true
-            })
-            .collect::<Vec<RpcLog>>()
-    };
-
-    Ok(filtered_logs)
+    Ok(logs)
 }
 
-/// Collect every address-matching log of one block into `logs`, pairing the
-/// block's transactions with their receipts by index.
+/// Reads the canonical headers of blocks `from..=to` on a blocking thread and returns
+/// those whose bloom could hold a log matching the filter, in block order. The header
+/// bloom covers every address and topic logged in the block, so a block it rules out is
+/// skipped without loading its body or receipts. These reads are synchronous, and for
+/// blocks the bloom rules out they are all the work there is, so they stay off the async
+/// executor.
+async fn bloom_matching_headers(
+    storage: Store,
+    bloom_matcher: Arc<BloomFilterMatcher>,
+    from: BlockNumber,
+    to: BlockNumber,
+) -> Result<Vec<BlockHeader>, RpcErr> {
+    tokio::task::spawn_blocking(move || {
+        let mut matching = Vec::new();
+        for block_num in from..=to {
+            let block_header = storage
+                .get_block_header(block_num)?
+                .ok_or(RpcErr::Internal(format!(
+                    "Could not get header for block {block_num}"
+                )))?;
+            if bloom_matcher.matches(&block_header.logs_bloom) {
+                matching.push(block_header);
+            }
+        }
+        Ok(matching)
+    })
+    .await
+    .map_err(|error| RpcErr::Internal(format!("Log scan task failed: {error}")))?
+}
+
+/// Collect every log of one block that matches the filter's addresses and topics into
+/// `logs`, pairing the block's transactions with their receipts by index.
 async fn collect_block_logs(
     storage: &Store,
     block_header: &BlockHeader,
     block_body: &BlockBody,
     address_filter: &HashSet<&H160>,
+    topic_filter: &[TopicFilter],
     logs: &mut Vec<RpcLog>,
 ) -> Result<(), RpcErr> {
     let block_num = block_header.number;
@@ -314,7 +322,9 @@ async fn collect_block_logs(
 
         if receipt.succeeded {
             for log in &receipt.logs {
-                if address_filter.is_empty() || address_filter.contains(&log.address) {
+                if (address_filter.is_empty() || address_filter.contains(&log.address))
+                    && matches_topics(&log.topics, topic_filter)
+                {
                     // Some extra data is needed when
                     // forming the RPC response.
                     logs.push(RpcLog {
@@ -333,6 +343,28 @@ async fn collect_block_logs(
         }
     }
     Ok(())
+}
+
+/// Whether a log with `topics` matches `topic_filter`: each filter position is a
+/// wildcard (`null`, an empty list, or a list containing `null`) or a set of allowed
+/// values for the log's topic at that position, and the log must have a topic at every
+/// filter position.
+fn matches_topics(topics: &[H256], topic_filter: &[TopicFilter]) -> bool {
+    if topic_filter.len() > topics.len() {
+        return false;
+    }
+    topic_filter
+        .iter()
+        .zip(topics)
+        .all(|(position, topic)| match position {
+            TopicFilter::Topic(expected) => expected.is_none_or(|expected| *topic == expected),
+            TopicFilter::Topics(alternatives) => {
+                alternatives.is_empty()
+                    || alternatives
+                        .iter()
+                        .any(|alternative| alternative.is_none_or(|t| *topic == t))
+            }
+        })
 }
 
 /// A log filter's addresses and topic positions pre-derived into header-bloom
@@ -1031,5 +1063,50 @@ mod tests {
         for (name, filter, expected) in cases {
             assert_eq!(query(&storage, filter).await, expected, "{name}");
         }
+    }
+
+    /// Header reads go in chunks of `HEADER_CHUNK_SIZE` blocks; logs on both sides of each
+    /// chunk boundary, and at both ends of the range, are all found, in block order.
+    #[tokio::test]
+    async fn get_logs_spans_header_chunks() {
+        let chunk = HEADER_CHUNK_SIZE as usize;
+        let logged = [
+            0,
+            chunk - 1,
+            chunk,
+            chunk + 1,
+            2 * chunk - 1,
+            2 * chunk,
+            2 * chunk + 2,
+        ];
+        let mut blocks = vec![vec![]; 2 * chunk + 3];
+        for number in logged {
+            blocks[number] = vec![(true, vec![(1, vec![1])])];
+        }
+        let storage = store_with_blocks(&blocks).await;
+
+        let found: Vec<u64> = query(
+            &storage,
+            json!({"fromBlock": "0x0", "toBlock": format!("{:#x}", 2 * chunk + 2)}),
+        )
+        .await
+        .into_iter()
+        .map(|(block_number, ..)| block_number)
+        .collect();
+        assert_eq!(found, logged.map(|number| number as u64));
+
+        // A range that starts and ends inside chunks.
+        let found: Vec<u64> = query(
+            &storage,
+            json!({"fromBlock": format!("{:#x}", chunk), "toBlock": format!("{:#x}", 2 * chunk - 1)}),
+        )
+        .await
+        .into_iter()
+        .map(|(block_number, ..)| block_number)
+        .collect();
+        assert_eq!(
+            found,
+            [chunk, chunk + 1, 2 * chunk - 1].map(|number| number as u64)
+        );
     }
 }
