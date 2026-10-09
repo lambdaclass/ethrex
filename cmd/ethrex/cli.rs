@@ -418,10 +418,11 @@ pub struct Options {
         long = "authrpc.max-inflight-body-size",
         default_value_t = ethrex_rpc::DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE as u64,
         value_name = "BYTES",
-        // Zero would reject every request with a body, silently disabling the engine API.
-        value_parser = clap::value_parser!(u64).range(1..),
+        // Below one maximum-size body, the budget would lower the per-request cap and
+        // reject large payloads, silently stalling block import.
+        value_parser = clap::value_parser!(u64).range(ethrex_rpc::AUTHRPC_MAX_BODY_SIZE as u64..),
         help = "Maximum request body bytes the authenticated rpc server holds at once.",
-        long_help = "Maximum request body bytes the authenticated rpc server holds at once, across all connections. A request that does not fit waits up to 8 seconds for other requests to finish, and is then rejected with HTTP 503 before its body is read. Each request body is also capped at 128 MiB, or at this value when it is lower, and a larger one is rejected with HTTP 413.",
+        long_help = "Maximum request body bytes the authenticated rpc server holds at once, across all connections. A request that does not fit waits up to 8 seconds for other requests to finish, and is then rejected with HTTP 503 before its body is read. Each request body is also capped at 128 MiB, and a larger one is rejected with HTTP 413. Must be at least that cap, 134217728.",
         help_heading = "RPC options",
         env = "ETHREX_AUTHRPC_MAX_INFLIGHT_BODY_SIZE"
     )]
@@ -1517,15 +1518,20 @@ mod tests {
     }
 
     #[test]
-    fn authrpc_max_inflight_body_size_defaults_and_rejects_zero() {
+    fn authrpc_max_inflight_body_size_defaults_and_rejects_less_than_one_body() {
         let cli = CLI::parse_from(["ethrex"]);
         assert_eq!(
             cli.opts.authrpc_max_inflight_body_size,
             ethrex_rpc::DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE as u64
         );
-        let cli = CLI::parse_from(["ethrex", "--authrpc.max-inflight-body-size", "1048576"]);
-        assert_eq!(cli.opts.authrpc_max_inflight_body_size, 1_048_576);
-        for arg in ["0", "-1", "bogus"] {
+        let one_body = ethrex_rpc::AUTHRPC_MAX_BODY_SIZE.to_string();
+        let cli = CLI::parse_from(["ethrex", "--authrpc.max-inflight-body-size", &one_body]);
+        assert_eq!(
+            cli.opts.authrpc_max_inflight_body_size,
+            ethrex_rpc::AUTHRPC_MAX_BODY_SIZE as u64
+        );
+        let just_under = (ethrex_rpc::AUTHRPC_MAX_BODY_SIZE - 1).to_string();
+        for arg in ["0", "1048576", &just_under, "-1", "bogus"] {
             let result = CLI::try_parse_from(["ethrex", "--authrpc.max-inflight-body-size", arg]);
             assert!(result.is_err(), "{arg:?} must be rejected");
         }
