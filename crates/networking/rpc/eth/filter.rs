@@ -312,11 +312,23 @@ impl FilterChangesRequest {
             let mut logs_filter = filter_data.clone();
             logs_filter.from_block = BlockIdentifier::Number(from);
             logs_filter.to_block = BlockIdentifier::Number(to);
-            filter.last_block_number = to;
             // Drop the lock early to process this filter's query
             // and not keep the lock more than we should.
             drop(active_filters_guard);
             let logs = fetch_logs_with_filter(&logs_filter, storage).await?;
+            // Move the poll position only once the logs are in hand, so a poll that fails,
+            // or whose client goes away mid-scan, leaves its blocks for the next poll. Two
+            // polls of the same filter running at once can both report them.
+            let mut active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
+                error!("THREAD CRASHED WITH MUTEX TAKEN; SYSTEM MIGHT BE UNSTABLE");
+                **poisoned_guard.get_mut() = HashMap::new();
+                filters.clear_poison();
+                poisoned_guard.into_inner()
+            });
+            if let Some((_, filter)) = active_filters_guard.get_mut(&self.id) {
+                filter.last_block_number = filter.last_block_number.max(to);
+            }
+            drop(active_filters_guard);
             serde_json::to_value(logs).map_err(|error| {
                 tracing::error!("Log filtering request failed with: {error}");
                 RpcErr::Internal("Failed to filter logs".to_string())
@@ -704,9 +716,15 @@ mod tests {
         server_handle.abort();
     }
 
-    /// Adds block `number` as the new head, with one transaction whose receipt logs once
-    /// from the address `log_from`; block 0 gets no transaction.
-    async fn add_head_block(storage: &Store, number: u64, log_from: u64) {
+    /// Block `number` with one transaction whose receipt logs once from the address
+    /// `log_from`, and that receipt; block 0 gets no transaction.
+    fn head_block(
+        number: u64,
+        log_from: u64,
+    ) -> (
+        ethrex_common::types::Block,
+        Vec<ethrex_common::types::Receipt>,
+    ) {
         use ethrex_common::{
             H160,
             types::{
@@ -745,13 +763,29 @@ mod tests {
                 withdrawals: Default::default(),
             },
         );
-        let hash = block.hash();
+        (block, receipts)
+    }
+
+    /// Adds `block` as the new head, without its receipts.
+    async fn add_head_without_receipts(
+        storage: &Store,
+        block: ethrex_common::types::Block,
+    ) -> ethrex_common::H256 {
+        let (number, hash) = (block.header.number, block.hash());
         storage.add_block(block).await.unwrap();
-        storage.add_receipts(hash, receipts).await.unwrap();
         storage
             .forkchoice_update(vec![(number, hash)], number, hash, None, None)
             .await
             .unwrap();
+        hash
+    }
+
+    /// Adds block `number` as the new head, with one transaction whose receipt logs once
+    /// from the address `log_from`; block 0 gets no transaction.
+    async fn add_head_block(storage: &Store, number: u64, log_from: u64) {
+        let (block, receipts) = head_block(number, log_from);
+        let hash = add_head_without_receipts(storage, block).await;
+        storage.add_receipts(hash, receipts).await.unwrap();
     }
 
     fn rpc_call(method: &str, params: Value) -> RpcRequest {
@@ -838,6 +872,36 @@ mod tests {
         add_head_block(&storage, 4, 1).await;
         assert_eq!(poll_log_blocks(&context, &id).await, vec![2, 3]);
         add_head_block(&storage, 5, 1).await;
+        assert_eq!(poll_log_blocks(&context, &id).await, Vec::<u64>::new());
+    }
+
+    /// A poll that fails leaves its blocks for the next poll instead of skipping them.
+    #[tokio::test]
+    async fn failed_filter_poll_does_not_advance_the_filter() {
+        let storage = Store::new("in-mem", EngineType::InMemory).unwrap();
+        add_head_block(&storage, 0, 1).await;
+        add_head_block(&storage, 1, 1).await;
+        let context = default_context_with_storage(storage.clone()).await;
+        let address = format!("{:#x}", ethrex_common::H160::from_low_u64_be(1));
+        let id = map_http_requests(
+            &rpc_call("eth_newFilter", json!([{"address": address}])),
+            context.clone(),
+        )
+        .await
+        .unwrap();
+
+        // Block 2 is the head before its receipts are stored, so reading its logs fails.
+        let (block, receipts) = head_block(2, 1);
+        let hash = add_head_without_receipts(&storage, block).await;
+        let failed = map_http_requests(
+            &rpc_call("eth_getFilterChanges", json!([id])),
+            context.clone(),
+        )
+        .await;
+        assert!(failed.is_err(), "the poll should fail: {failed:?}");
+
+        storage.add_receipts(hash, receipts).await.unwrap();
+        assert_eq!(poll_log_blocks(&context, &id).await, vec![2]);
         assert_eq!(poll_log_blocks(&context, &id).await, Vec::<u64>::new());
     }
 }
