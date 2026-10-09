@@ -78,7 +78,8 @@ pub mod utils;
 pub use clients::{EngineClient, EthClient};
 
 pub use rpc::{
-    BoundRpc, RpcRole, RpcStartupError, bind_api, bind_listener, start_api, start_block_executor,
+    AUTHRPC_MAX_BODY_SIZE, BoundRpc, DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE, RpcRole,
+    RpcStartupError, bind_api, bind_listener, start_api, start_block_executor,
 };
 
 #[cfg(any(test, feature = "test-utils"))]

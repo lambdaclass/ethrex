@@ -1,7 +1,13 @@
-use crate::utils::RpcErr;
+use axum::{
+    extract::{Request, State},
+    http::StatusCode,
+    middleware::Next,
+    response::{IntoResponse, Response},
+};
 use axum_extra::{
     TypedHeader,
     headers::{Authorization, authorization::Bearer},
+    typed_header::TypedHeaderRejection,
 };
 use bytes::Bytes;
 use jsonwebtoken::{Algorithm, DecodingKey, TokenData, Validation, decode};
@@ -15,18 +21,34 @@ pub enum AuthenticationError {
     MissingAuthentication,
 }
 
-pub fn authenticate(
-    secret: &Bytes,
-    auth_header: Option<TypedHeader<Authorization<Bearer>>>,
-) -> Result<(), RpcErr> {
-    match auth_header {
-        Some(TypedHeader(auth_header)) => {
-            let token = auth_header.token();
-            validate_jwt_authentication(token, secret).map_err(RpcErr::AuthenticationError)
+impl AuthenticationError {
+    /// Plain-text reason sent with the 401, worded like geth's.
+    fn reason(&self) -> &'static str {
+        match self {
+            AuthenticationError::MissingAuthentication => "missing token",
+            AuthenticationError::TokenDecodingError => "invalid token",
+            AuthenticationError::InvalidIssuedAtClaim => "stale or future token",
         }
-        None => Err(RpcErr::AuthenticationError(
-            AuthenticationError::MissingAuthentication,
-        )),
+    }
+}
+
+/// Auth-RPC router middleware: rejects a request without a valid JWT before its body is
+/// read. Like geth and reth, the rejection is an HTTP 401 with a plain-text reason, not a
+/// JSON-RPC error, since no request has been parsed to take an id from.
+pub(crate) async fn require_jwt(
+    State(secret): State<Bytes>,
+    auth_header: Result<TypedHeader<Authorization<Bearer>>, TypedHeaderRejection>,
+    request: Request,
+    next: Next,
+) -> Response {
+    // A malformed `Authorization` header is no better than a missing one.
+    let result = match auth_header {
+        Ok(TypedHeader(header)) => validate_jwt_authentication(header.token(), &secret),
+        Err(_) => Err(AuthenticationError::MissingAuthentication),
+    };
+    match result {
+        Ok(()) => next.run(request).await,
+        Err(error) => (StatusCode::UNAUTHORIZED, error.reason()).into_response(),
     }
 }
 

@@ -1,4 +1,5 @@
 mod authrpc_batch_tests;
+mod authrpc_limits_tests;
 mod block_access_list_tests;
 mod client_version_tests;
 mod context_teardown_tests;

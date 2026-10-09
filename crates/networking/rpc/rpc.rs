@@ -1,4 +1,4 @@
-use crate::authentication::authenticate;
+use crate::authentication::require_jwt;
 use crate::debug::bad_blocks::GetBadBlocksRequest;
 use crate::debug::chain_config::ChainConfigRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
@@ -65,13 +65,12 @@ use crate::utils::{
 };
 use crate::{admin, net};
 use crate::{eth, mempool};
+use axum::body::HttpBody;
 use axum::extract::ws::{Message, WebSocket};
-use axum::extract::{DefaultBodyLimit, State, WebSocketUpgrade};
+use axum::extract::{DefaultBodyLimit, Request, State, WebSocketUpgrade};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
 use axum::{Json, Router, http::StatusCode, routing::post};
-use axum_extra::{
-    TypedHeader,
-    headers::{Authorization, authorization::Bearer},
-};
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
@@ -100,7 +99,7 @@ use std::{
 };
 use tokio::net::TcpListener;
 use tokio::sync::{
-    Mutex as TokioMutex,
+    Mutex as TokioMutex, Semaphore,
     mpsc::{UnboundedSender, error::SendError, unbounded_channel},
     oneshot,
 };
@@ -110,8 +109,6 @@ use tower_http::cors::CorsLayer;
 use tracing::{info, warn};
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
-#[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
-use axum::response::IntoResponse;
 // only works on linux
 #[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
 pub async fn handle_get_heap() -> Result<impl IntoResponse, (StatusCode, String)> {
@@ -603,7 +600,8 @@ pub fn start_block_executor(
 ///
 /// 3. **Auth RPC** (`authrpc_addr`): JWT-authenticated endpoint for Engine API methods
 ///    (`engine_*`) used by consensus clients. Never shares a listener with the public
-///    endpoints — it alone carries the 256 MB engine body limit.
+///    endpoints — it alone carries the 128 MB engine body limit, under a shared budget of
+///    `authrpc_max_inflight_body_size` bytes in flight (see [`authrpc_router`]).
 ///
 /// # Arguments
 ///
@@ -623,6 +621,9 @@ pub fn start_block_executor(
 /// * `log_filter_handler` - Optional handler for dynamic log level changes
 /// * `gas_ceil` - Maximum gas limit for payload building
 /// * `extra_data` - Extra data to include in mined blocks
+/// * `allowed_namespaces` - Namespaces served on the public HTTP/WS endpoints
+/// * `authrpc_max_inflight_body_size` - Request body bytes the Auth-RPC listener may hold
+///   at once across all connections
 ///
 /// # Errors
 ///
@@ -647,6 +648,7 @@ pub async fn bind_api(
     gas_ceil: u64,
     extra_data: String,
     allowed_namespaces: HashSet<RpcNamespace>,
+    authrpc_max_inflight_body_size: usize,
 ) -> Result<BoundRpc, RpcStartupError> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -724,16 +726,11 @@ pub async fn bind_api(
     // Consensus-liveness channel: the sender lives in the Auth-RPC handler state (so it
     // drops when the servers stop); the receiver is handed to `serve` to spawn the monitor.
     let (timer_sender, timer_receiver) = tokio::sync::watch::channel(());
-    let authrpc_handler = move |ctx, auth, body| async move {
-        let _ = timer_sender.send(());
-        handle_authrpc_request(ctx, auth, body).await
-    };
-    let authrpc_router = Router::new()
-        .route("/", post(authrpc_handler))
-        .with_state(service_context.clone())
-        // Bump the body limit for the engine API to 256MB. This stays scoped to Auth-RPC:
-        // it is never applied to the public HTTP/WS endpoints (which keep axum's default).
-        .layer(DefaultBodyLimit::max(256 * 1024 * 1024));
+    let authrpc_router = authrpc_router(
+        service_context.clone(),
+        timer_sender,
+        authrpc_max_inflight_body_size,
+    );
 
     // Bind everything up front. The first failure aborts with an actionable error naming
     // the role, address, and flag; no listener is announced unless it actually bound.
@@ -767,6 +764,99 @@ pub async fn bind_api(
         consensus_receiver: timer_receiver,
         cancel_token,
     })
+}
+
+/// Largest request body the Auth-RPC listener accepts, the same as geth
+/// (`engineAPIBodyLimit`) and reth's auth server. Public HTTP/WS endpoints keep axum's
+/// default instead.
+pub const AUTHRPC_MAX_BODY_SIZE: usize = 128 * 1024 * 1024;
+
+/// Default for `--authrpc.max-inflight-body-size`: room for four maximum-size bodies at
+/// once, far beyond what a consensus client has in flight.
+pub const DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE: usize = 4 * AUTHRPC_MAX_BODY_SIZE;
+
+/// Builds the Auth-RPC router. Its layers run outermost first: the JWT check, then the
+/// in-flight body budget, then the handler. A request without a valid token, or one the
+/// budget cannot fit, is answered from its headers alone, before its body is read.
+///
+/// Every authenticated request pings `consensus_liveness`, which feeds the
+/// "consensus client offline" warning.
+pub(crate) fn authrpc_router(
+    service_context: RpcApiContext,
+    consensus_liveness: tokio::sync::watch::Sender<()>,
+    max_inflight_body_size: usize,
+) -> Router {
+    let jwt_secret = service_context.node_data.jwt_secret.clone();
+    let budget = BodyBudget::new(max_inflight_body_size);
+    let max_body_size = budget.max_body_size;
+    let handler = move |ctx, body| async move {
+        let _ = consensus_liveness.send(());
+        handle_authrpc_request(ctx, body).await
+    };
+    Router::new()
+        .route("/", post(handler))
+        .with_state(service_context)
+        // Bounds bodies without a `Content-Length` (chunked); declared sizes are checked
+        // by the budget layer before any byte is read.
+        .layer(DefaultBodyLimit::max(max_body_size))
+        .layer(middleware::from_fn_with_state(budget, reserve_body_budget))
+        .layer(middleware::from_fn_with_state(jwt_secret, require_jwt))
+}
+
+/// Request body bytes the Auth-RPC listener may hold at once, across all connections.
+#[derive(Clone)]
+struct BodyBudget {
+    available: Arc<Semaphore>,
+    /// Per-request cap: [`AUTHRPC_MAX_BODY_SIZE`], or the whole budget when that is
+    /// smaller, so a body that could never fit gets a 413 rather than a retryable 503.
+    max_body_size: usize,
+}
+
+impl BodyBudget {
+    fn new(max_inflight_body_size: usize) -> Self {
+        Self {
+            available: Arc::new(Semaphore::new(
+                max_inflight_body_size.min(Semaphore::MAX_PERMITS),
+            )),
+            max_body_size: AUTHRPC_MAX_BODY_SIZE.min(max_inflight_body_size),
+        }
+    }
+}
+
+/// Reserves the request's body size from the budget before the body is read, and holds
+/// the reservation until the response is ready: the buffered body and the request parsed
+/// from it live that long. A body of unknown length (chunked) reserves the per-request
+/// cap. Rejects with 413 when the size exceeds the cap and with 503 when the budget is
+/// spent, both carrying a JSON-RPC error.
+async fn reserve_body_budget(
+    State(budget): State<BodyBudget>,
+    request: Request,
+    next: Next,
+) -> Response {
+    // The size hint follows hyper's framing rather than the raw header: exact for a body
+    // delimited by `Content-Length`, absent for a chunked one.
+    let reserved = match request.body().size_hint().exact() {
+        Some(size) => usize::try_from(size).unwrap_or(usize::MAX),
+        None => budget.max_body_size,
+    };
+    // Permits are counted in `u32`; the per-request cap is far below `u32::MAX`, so a size
+    // that does not convert is over the cap anyway.
+    let permits = match u32::try_from(reserved) {
+        Ok(permits) if reserved <= budget.max_body_size => permits,
+        _ => {
+            let error = RpcErr::InvalidRequest(format!(
+                "request body exceeds the {} byte limit",
+                budget.max_body_size
+            ));
+            return (StatusCode::PAYLOAD_TOO_LARGE, Json(null_id_error(error))).into_response();
+        }
+    };
+    let Ok(_reservation) = budget.available.try_acquire_many_owned(permits) else {
+        let error =
+            RpcErr::Internal("too many request body bytes in flight, retry later".to_string());
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(null_id_error(error))).into_response();
+    };
+    next.run(request).await
 }
 
 /// RPC listeners bound and ready to serve. Produced by [`bind_api`] and consumed by
@@ -861,6 +951,7 @@ pub async fn start_api(
     gas_ceil: u64,
     extra_data: String,
     allowed_namespaces: HashSet<RpcNamespace>,
+    authrpc_max_inflight_body_size: usize,
     cancel_token: CancellationToken,
 ) -> Result<(), RpcErr> {
     bind_api(
@@ -879,6 +970,7 @@ pub async fn start_api(
         gas_ceil,
         extra_data,
         allowed_namespaces,
+        authrpc_max_inflight_body_size,
     )
     .await?
     .serve()
@@ -1070,9 +1162,12 @@ pub(crate) async fn handle_http_request(
     Ok(Json(res))
 }
 
-pub async fn handle_authrpc_request(
+/// Serves an Auth-RPC request. The JWT check and the body budget run before this as
+/// router layers (see [`authrpc_router`]), so only authenticated requests that fit the
+/// budget get their body read and parsed. Crate-private so it can only be served behind
+/// those layers.
+pub(crate) async fn handle_authrpc_request(
     State(service_context): State<RpcApiContext>,
-    auth_header: Option<TypedHeader<Authorization<Bearer>>>,
     body: String,
 ) -> Result<Json<Value>, StatusCode> {
     let wrapper: RpcRequestWrapper = match serde_json::from_str(&body) {
@@ -1084,36 +1179,9 @@ pub async fn handle_authrpc_request(
         }
     };
 
-    // Reject empty / oversize batches before any auth or dispatch work so a
-    // 100k-request body can't burn JWT crypto or memory.
+    // Reject empty / oversize batches before any dispatch work.
     if let Some(err) = validate_batch(&wrapper) {
         return Ok(Json(err));
-    }
-
-    if let Err(error) = authenticate(&service_context.node_data.jwt_secret, auth_header) {
-        // Auth failed: respond before dispatching anything. For batches, mirror
-        // the batch shape and emit one error response per request so clients
-        // can still correlate by id.
-        let error_meta: RpcErrorMetadata = error.into();
-        let res = match wrapper {
-            RpcRequestWrapper::Single(req) => serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": req.id,
-                "error": error_meta,
-            }),
-            RpcRequestWrapper::Multiple(requests) => {
-                let mut responses = Vec::with_capacity(requests.len());
-                for req in requests {
-                    responses.push(serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": req.id,
-                        "error": error_meta.clone(),
-                    }));
-                }
-                serde_json::to_value(responses).map_err(|_| StatusCode::BAD_REQUEST)?
-            }
-        };
-        return Ok(Json(res));
     }
 
     let res = match wrapper {

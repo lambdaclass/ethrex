@@ -8,8 +8,8 @@
 use crate::{
     eth::gas_tip_estimator::GasTipEstimator,
     rpc::{
-        ClientVersion, NodeData, RpcApiContext, handle_authrpc_request, handle_http_request,
-        start_api, start_block_executor,
+        ClientVersion, DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE, NodeData, RpcApiContext,
+        authrpc_router, handle_http_request, start_api, start_block_executor,
     },
     utils::RpcNamespace,
 };
@@ -42,7 +42,7 @@ use secp256k1::SecretKey;
 use serde_json::{Value, value::RawValue};
 use spawned_concurrency::tasks::ActorRef;
 use std::sync::{Arc, RwLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashSet, net::SocketAddr, str::FromStr};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
@@ -274,6 +274,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             DEFAULT_BUILDER_GAS_CEIL,
             String::new(),
             all_namespaces_for_tests(),
+            DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE,
             tokio_util::sync::CancellationToken::new(),
         )
         .await
@@ -512,17 +513,133 @@ pub fn jwt_auth_header_for(context: &RpcApiContext) -> Option<TypedHeader<Author
     Some(TypedHeader(Authorization::bearer(&token).unwrap()))
 }
 
-/// Drive the auth RPC handler without needing axum extractor types at the
-/// call site.
+/// The real Auth-RPC router (JWT check, body budget, handler) served on an ephemeral
+/// local port. Its connections hold clones of the [`RpcApiContext`], so a test must call
+/// [`AuthRpcTestServer::shutdown`] before its [`TestContext`] guard drops.
+pub struct AuthRpcTestServer {
+    pub addr: SocketAddr,
+    stop: CancellationToken,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl AuthRpcTestServer {
+    /// Stop accepting connections and wait until every open one has closed.
+    pub async fn shutdown(self) {
+        self.stop.cancel();
+        tokio::time::timeout(Duration::from_secs(10), self.task)
+            .await
+            .expect("Auth-RPC test server did not shut down within 10s")
+            .unwrap();
+    }
+}
+
+/// Serve the Auth-RPC router for `context` with `max_inflight_body_size` as its body
+/// budget.
+pub async fn spawn_authrpc_server(
+    context: &RpcApiContext,
+    max_inflight_body_size: usize,
+) -> AuthRpcTestServer {
+    let (consensus_liveness, _) = tokio::sync::watch::channel(());
+    let router = authrpc_router(context.clone(), consensus_liveness, max_inflight_body_size);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let stop = CancellationToken::new();
+    let stopped = stop.clone();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async move { stopped.cancelled().await })
+            .await
+            .unwrap()
+    });
+    AuthRpcTestServer { addr, stop, task }
+}
+
+/// POST `body` to an Auth-RPC server, returning the HTTP status and the response text.
+pub async fn post_authrpc(
+    addr: SocketAddr,
+    auth_header: Option<TypedHeader<Authorization<Bearer>>>,
+    body: String,
+) -> (u16, String) {
+    let mut request = reqwest::Client::new()
+        .post(format!("http://{addr}"))
+        .header("content-type", "application/json")
+        .body(body);
+    if let Some(TypedHeader(auth)) = auth_header {
+        request = request.bearer_auth(auth.token());
+    }
+    let response = request.send().await.unwrap();
+    (response.status().as_u16(), response.text().await.unwrap())
+}
+
+/// Drive the Auth-RPC router end to end and return the JSON-RPC response, which must
+/// come back with HTTP 200.
 pub async fn call_authrpc(
     context: &RpcApiContext,
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
     body: String,
 ) -> Value {
-    handle_authrpc_request(State(context.clone()), auth_header, body)
+    let server = spawn_authrpc_server(context, DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE).await;
+    let (status, text) = post_authrpc(server.addr, auth_header, body).await;
+    server.shutdown().await;
+    assert_eq!(status, 200, "unexpected Auth-RPC status, body: {text}");
+    serde_json::from_str(&text).unwrap()
+}
+
+/// Open a connection to `addr` and send only the head of a POST request, without any
+/// body bytes: declaring a `content_length`-byte body, or a chunked one when `None`. Lets
+/// a test observe what the server answers before reading the body, and hold a request
+/// in flight.
+pub async fn send_request_head(
+    addr: SocketAddr,
+    auth_header: Option<&TypedHeader<Authorization<Bearer>>>,
+    content_length: Option<usize>,
+) -> tokio::net::TcpStream {
+    use tokio::io::AsyncWriteExt;
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let auth = auth_header
+        .map(|TypedHeader(auth)| format!("authorization: Bearer {}\r\n", auth.token()))
+        .unwrap_or_default();
+    let framing = match content_length {
+        Some(len) => format!("content-length: {len}"),
+        None => "transfer-encoding: chunked".to_string(),
+    };
+    let head = format!(
+        "POST / HTTP/1.1\r\nhost: {addr}\r\ncontent-type: application/json\r\n{auth}{framing}\r\n\r\n"
+    );
+    stream.write_all(head.as_bytes()).await.unwrap();
+    stream
+}
+
+/// Read one HTTP/1.1 response (status code and body text) from `stream`. Panics if
+/// none arrives within ten seconds.
+pub async fn read_response(stream: &mut tokio::net::TcpStream) -> (u16, String) {
+    use tokio::io::AsyncReadExt;
+    let read = async {
+        let mut buffer = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let read = stream.read(&mut chunk).await.unwrap();
+            assert!(read > 0, "connection closed before a full response arrived");
+            buffer.extend_from_slice(&chunk[..read]);
+            let Some(head_end) = buffer.windows(4).position(|w| w == b"\r\n\r\n") else {
+                continue;
+            };
+            let head = String::from_utf8_lossy(&buffer[..head_end]).to_ascii_lowercase();
+            let status: u16 = head[9..12].parse().unwrap();
+            let body_len: usize = head
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .map(|len| len.trim().parse().unwrap())
+                .unwrap_or(0);
+            if buffer.len() >= head_end + 4 + body_len {
+                let body = &buffer[head_end + 4..head_end + 4 + body_len];
+                return (status, String::from_utf8_lossy(body).into_owned());
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(10), read)
         .await
-        .expect("handle_authrpc_request should not return a status code error")
-        .0
+        .expect("no response within 10s")
 }
 
 /// Drive the public HTTP RPC handler without needing axum extractor types at

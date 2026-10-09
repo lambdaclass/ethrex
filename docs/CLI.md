@@ -306,6 +306,12 @@ RPC options:
           [env: ETHREX_AUTHRPC_JWTSECRET_PATH=]
           [default: jwt.hex]
 
+      --authrpc.max-inflight-body-size <BYTES>
+          Maximum request body bytes the authenticated rpc server holds at once, across all connections. A request that would exceed it is rejected with HTTP 503 before its body is read. Each request body is also capped at 128 MiB, or at this value when it is lower.
+          
+          [env: ETHREX_AUTHRPC_MAX_INFLIGHT_BODY_SIZE=]
+          [default: 536870912]
+
 Block building options:
       --builder.extra-data <EXTRA_DATA>
           Block extra data message.
@@ -519,6 +525,12 @@ RPC options:
 
           [env: ETHREX_AUTHRPC_JWTSECRET_PATH=]
           [default: jwt.hex]
+
+      --authrpc.max-inflight-body-size <BYTES>
+          Maximum request body bytes the authenticated rpc server holds at once, across all connections. A request that would exceed it is rejected with HTTP 503 before its body is read. Each request body is also capped at 128 MiB, or at this value when it is lower.
+
+          [env: ETHREX_AUTHRPC_MAX_INFLIGHT_BODY_SIZE=]
+          [default: 536870912]
 
 Block building options:
       --builder.extra-data <EXTRA_DATA>
