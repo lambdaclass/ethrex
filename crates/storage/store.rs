@@ -8088,3 +8088,57 @@ mod cgroup_memory_limit_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod in_memory_receipts_tests {
+    use super::*;
+    use ethrex_common::types::TxType;
+
+    /// Receipts read back from the in-memory backend, the one `--datadir memory` uses:
+    /// every receipt of the block from the requested index on, and none of the next
+    /// block's.
+    #[tokio::test]
+    async fn in_memory_store_returns_every_receipt_of_a_block() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        let receipt = |gas| Receipt::new(TxType::Legacy, true, gas, vec![]);
+        let block = BlockHash::repeat_byte(1);
+        let next_block = BlockHash::repeat_byte(2);
+        store
+            .add_receipts(block, vec![receipt(1), receipt(2), receipt(3)])
+            .await
+            .unwrap();
+        store
+            .add_receipts(next_block, vec![receipt(4)])
+            .await
+            .unwrap();
+
+        let gas = |receipts: Vec<Receipt>| {
+            receipts
+                .iter()
+                .map(|receipt| receipt.cumulative_gas_used)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            gas(store.get_receipts_for_block(&block).await.unwrap()),
+            [1, 2, 3]
+        );
+        assert_eq!(
+            gas(store
+                .get_receipts_for_block_from_index(&block, 1, None)
+                .await
+                .unwrap()),
+            [2, 3]
+        );
+        assert_eq!(
+            gas(store
+                .get_receipts_for_block_from_index(&block, 1, Some(1))
+                .await
+                .unwrap()),
+            [2]
+        );
+        assert_eq!(
+            gas(store.get_receipts_for_block(&next_block).await.unwrap()),
+            [4]
+        );
+    }
+}

@@ -111,9 +111,12 @@ impl StorageReadView for InMemoryReadTx {
     ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
         let table_data = self.snapshot.get(table).cloned().unwrap_or_default();
 
+        // Seek and walk forward, as RocksDB does: callers seek past the start of a prefix
+        // (`block_hash || start_index` for receipts) or across several prefixes (witness
+        // pruning) and stop on their own.
         let mut entries: Vec<(Vec<u8>, Vec<u8>)> = table_data
             .into_iter()
-            .filter(|(key, _)| key.starts_with(prefix))
+            .filter(|(key, _)| key.as_slice() >= prefix)
             .collect();
         entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
 
@@ -228,5 +231,34 @@ impl StorageWriteBatch for InMemoryWriteTx {
         // recovery — a process death loses all in-memory state anyway, so a
         // half-applied batch is never observable.
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Like the RocksDB backend, which configures no prefix extractor, the iterator starts
+    /// at the first key not less than the one given and runs through the rest of the
+    /// table in key order.
+    #[test]
+    fn prefix_iterator_seeks_and_walks_forward() {
+        let backend = InMemoryBackend::open().unwrap();
+        let mut write = backend.begin_write().unwrap();
+        let keys = ["b1", "a2", "c", "a1"].map(|key| (key.as_bytes().to_vec(), vec![]));
+        write.put_batch("table", keys.to_vec()).unwrap();
+        write.commit().unwrap();
+
+        let read = backend.begin_read().unwrap();
+        let keys_from = |start: &[u8]| {
+            read.prefix_iterator("table", start)
+                .unwrap()
+                .map(|item| String::from_utf8(item.unwrap().0.to_vec()).unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(keys_from(b""), ["a1", "a2", "b1", "c"]);
+        assert_eq!(keys_from(b"a2"), ["a2", "b1", "c"]);
+        assert_eq!(keys_from(b"a3"), ["b1", "c"]);
+        assert_eq!(keys_from(b"d"), Vec::<String>::new());
     }
 }
