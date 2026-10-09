@@ -289,45 +289,38 @@ impl FilterChangesRequest {
             let FilterKind::Logs(filter_data) = &filter.kind else {
                 unreachable!("block filters are handled above")
             };
-            // We'll only get changes for a filter that either has a block
-            // range for upcoming blocks, or for the 'latest' tag.
-            let valid_block_range = match filter_data.to_block {
-                BlockIdentifier::Tag(BlockTag::Latest) => true,
-                BlockIdentifier::Number(block_num) if block_num >= latest_block_num => true,
-                _ => false,
+            // A poll reports the blocks added since the previous poll (on the first one,
+            // since the filter was created), up to the filter's `toBlock` when that is a
+            // number. A filter whose `toBlock` is a tag other than `latest`, or a number
+            // already reported, has nothing left to report.
+            let from = filter.last_block_number.saturating_add(1);
+            let to = match filter_data.to_block {
+                BlockIdentifier::Tag(BlockTag::Latest) => latest_block_num,
+                BlockIdentifier::Number(block_num) if block_num >= from => {
+                    block_num.min(latest_block_num)
+                }
+                _ => return Ok(json!([])),
             };
-            // This filter has a valid block range, so here's what we'll do:
-            // - Update the filter's timestamp and block number from the last poll.
-            // - Do the query to fetch logs in range last_block_number..=to_block for
-            //   this filter.
-            if valid_block_range {
-                // Since the filter was polled, updated its timestamp, so
-                // it does not expire.
-                *timestamp = Instant::now();
-                // Update this filter so the current query
-                // starts from the last polled block.
-                let mut logs_filter = match &filter.kind {
-                    FilterKind::Logs(data) => data.clone(),
-                    FilterKind::Blocks => unreachable!("block filters are handled above"),
-                };
-                logs_filter.from_block = BlockIdentifier::Number(filter.last_block_number);
-                logs_filter.to_block = BlockIdentifier::Number(latest_block_num);
-                filter.last_block_number = latest_block_num;
-                filter.kind = FilterKind::Logs(logs_filter.clone());
-                // Drop the lock early to process this filter's query
-                // and not keep the lock more than we should.
-                drop(active_filters_guard);
-                let logs = fetch_logs_with_filter(&logs_filter, storage).await?;
-                serde_json::to_value(logs).map_err(|error| {
-                    tracing::error!("Log filtering request failed with: {error}");
-                    RpcErr::Internal("Failed to filter logs".to_string())
-                })
-            } else {
-                serde_json::to_value(Vec::<u8>::new()).map_err(|error| {
-                    tracing::error!("Log filtering request failed with: {error}");
-                    RpcErr::Internal("Failed to filter logs".to_string())
-                })
+            // Since the filter was polled, updated its timestamp, so
+            // it does not expire.
+            *timestamp = Instant::now();
+            if from > to {
+                // No block was added since the last poll.
+                return Ok(json!([]));
             }
+            // The stored filter keeps its own range; only the poll position moves.
+            let mut logs_filter = filter_data.clone();
+            logs_filter.from_block = BlockIdentifier::Number(from);
+            logs_filter.to_block = BlockIdentifier::Number(to);
+            filter.last_block_number = to;
+            // Drop the lock early to process this filter's query
+            // and not keep the lock more than we should.
+            drop(active_filters_guard);
+            let logs = fetch_logs_with_filter(&logs_filter, storage).await?;
+            serde_json::to_value(logs).map_err(|error| {
+                tracing::error!("Log filtering request failed with: {error}");
+                RpcErr::Internal("Failed to filter logs".to_string())
+            })
         } else {
             Err(RpcErr::BadParams(
                 "No matching filter for given id".to_string(),
@@ -709,5 +702,142 @@ mod tests {
         );
 
         server_handle.abort();
+    }
+
+    /// Adds block `number` as the new head, with one transaction whose receipt logs once
+    /// from the address `log_from`; block 0 gets no transaction.
+    async fn add_head_block(storage: &Store, number: u64, log_from: u64) {
+        use ethrex_common::{
+            H160,
+            types::{
+                Block, BlockBody, BlockHeader, LegacyTransaction, Log, Receipt, Transaction,
+                TxType, bloom_from_logs,
+            },
+        };
+        use ethrex_crypto::NativeCrypto;
+
+        let logs = vec![Log {
+            address: H160::from_low_u64_be(log_from),
+            topics: vec![],
+            data: Default::default(),
+        }];
+        let (transactions, receipts, bloom) = if number == 0 {
+            (vec![], vec![], Default::default())
+        } else {
+            (
+                vec![Transaction::LegacyTransaction(LegacyTransaction {
+                    nonce: number,
+                    ..Default::default()
+                })],
+                vec![Receipt::new(TxType::Legacy, true, 21000, logs.clone())],
+                bloom_from_logs(&logs, &NativeCrypto),
+            )
+        };
+        let block = Block::new(
+            BlockHeader {
+                number,
+                logs_bloom: bloom,
+                ..Default::default()
+            },
+            BlockBody {
+                transactions,
+                ommers: Default::default(),
+                withdrawals: Default::default(),
+            },
+        );
+        let hash = block.hash();
+        storage.add_block(block).await.unwrap();
+        storage.add_receipts(hash, receipts).await.unwrap();
+        storage
+            .forkchoice_update(vec![(number, hash)], number, hash, None, None)
+            .await
+            .unwrap();
+    }
+
+    fn rpc_call(method: &str, params: Value) -> RpcRequest {
+        serde_json::from_value(
+            json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}),
+        )
+        .unwrap()
+    }
+
+    /// The block numbers of the logs one `eth_getFilterChanges` poll returns.
+    async fn poll_log_blocks(context: &crate::rpc::RpcApiContext, id: &Value) -> Vec<u64> {
+        let changes = map_http_requests(
+            &rpc_call("eth_getFilterChanges", json!([id])),
+            context.clone(),
+        )
+        .await
+        .unwrap();
+        changes
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|log| {
+                u64::from_str_radix(
+                    log["blockNumber"]
+                        .as_str()
+                        .unwrap()
+                        .trim_start_matches("0x"),
+                    16,
+                )
+                .unwrap()
+            })
+            .collect()
+    }
+
+    /// Each poll returns the logs of the blocks added since the previous one, once: not
+    /// the logs of the block that was the head when the filter was created, not the last
+    /// polled block again, and still after the chain has moved on.
+    #[tokio::test]
+    async fn filter_changes_return_each_new_log_once() {
+        let storage = Store::new("in-mem", EngineType::InMemory).unwrap();
+        add_head_block(&storage, 0, 1).await;
+        add_head_block(&storage, 1, 1).await;
+        let context = default_context_with_storage(storage.clone()).await;
+        let address = format!("{:#x}", ethrex_common::H160::from_low_u64_be(1));
+        let id = map_http_requests(
+            &rpc_call("eth_newFilter", json!([{"address": address}])),
+            context.clone(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(poll_log_blocks(&context, &id).await, Vec::<u64>::new());
+        add_head_block(&storage, 2, 1).await;
+        assert_eq!(poll_log_blocks(&context, &id).await, vec![2]);
+        assert_eq!(poll_log_blocks(&context, &id).await, Vec::<u64>::new());
+        add_head_block(&storage, 3, 1).await;
+        add_head_block(&storage, 4, 1).await;
+        assert_eq!(poll_log_blocks(&context, &id).await, vec![3, 4]);
+        add_head_block(&storage, 5, 1).await;
+        assert_eq!(poll_log_blocks(&context, &id).await, vec![5]);
+    }
+
+    /// A filter with a numeric `toBlock` reports the new logs up to that block, even when
+    /// the chain has already moved past it by the time of the poll, and nothing after.
+    #[tokio::test]
+    async fn filter_changes_stop_at_the_filter_to_block() {
+        let storage = Store::new("in-mem", EngineType::InMemory).unwrap();
+        add_head_block(&storage, 0, 1).await;
+        add_head_block(&storage, 1, 1).await;
+        let context = default_context_with_storage(storage.clone()).await;
+        let address = format!("{:#x}", ethrex_common::H160::from_low_u64_be(1));
+        let id = map_http_requests(
+            &rpc_call(
+                "eth_newFilter",
+                json!([{"address": address, "toBlock": "0x3"}]),
+            ),
+            context.clone(),
+        )
+        .await
+        .unwrap();
+
+        add_head_block(&storage, 2, 1).await;
+        add_head_block(&storage, 3, 1).await;
+        add_head_block(&storage, 4, 1).await;
+        assert_eq!(poll_log_blocks(&context, &id).await, vec![2, 3]);
+        add_head_block(&storage, 5, 1).await;
+        assert_eq!(poll_log_blocks(&context, &id).await, Vec::<u64>::new());
     }
 }
