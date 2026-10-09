@@ -630,6 +630,9 @@ pub struct VM<'a> {
     /// of copying its arguments into a fresh one each time. Inside zkVM guests whose bump
     /// allocators never free, those fresh copies are never reclaimed and exhaust the heap.
     pub calldata_pool: Vec<BytesMut>,
+    /// Pool of reusable initcode buffers for CREATE frames, for the same reason as
+    /// `calldata_pool`: each CREATE would otherwise allocate its initcode afresh.
+    pub initcode_pool: Vec<BytesMut>,
     /// VM type (L1 or L2 with fee config).
     pub vm_type: VMType,
     /// Frame transaction context (EIP-8141). Set when executing a frame tx.
@@ -1069,6 +1072,7 @@ impl<'a> VM<'a> {
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
             calldata_pool: Vec::new(),
+            initcode_pool: Vec::new(),
             vm_type,
             preserve_top_level_backup,
             state_gas_used: 0,
@@ -3555,6 +3559,7 @@ impl<'a> VM<'a> {
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
             calldata_pool: Vec::new(),
+            initcode_pool: Vec::new(),
             vm_type: VMType::L1,
             preserve_top_level_backup: false,
             state_gas_used: 0,

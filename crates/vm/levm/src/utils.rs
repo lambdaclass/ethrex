@@ -47,7 +47,7 @@ pub fn address_to_word(address: Address) -> U256 {
 /// address = keccak256(0xff || sender_address || salt || keccak256(initialization_code))[12:]
 pub fn calculate_create2_address(
     sender_address: Address,
-    initialization_code: &Bytes,
+    initialization_code: &[u8],
     salt: U256,
 ) -> Result<Address, InternalError> {
     let init_code_hash = keccak(initialization_code);

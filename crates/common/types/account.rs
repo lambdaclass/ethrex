@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock};
 
-use bytes::{BufMut, Bytes};
+use bytes::{BufMut, Bytes, BytesMut};
 use ethereum_types::{H256, U256};
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_trie::Trie;
@@ -95,6 +95,28 @@ impl Code {
             bytecode_len,
             jumpdests,
         }
+    }
+
+    /// Builds initcode from `buffer`, which holds exactly the initcode, without copying it:
+    /// the padding is appended in place and the buffer becomes the bytecode. Paired with
+    /// [`Code::into_initcode_buffer`], the next initcode can reuse the allocation. The hash
+    /// is the same placeholder any initcode gets.
+    pub fn from_initcode_buffer(mut buffer: BytesMut) -> Self {
+        let bytecode_len = buffer.len();
+        let jumpdests = Self::compute_jumpdests(&buffer);
+        buffer.extend_from_slice(&[0u8; BYTECODE_PADDING]);
+        Self {
+            hash: H256::zero(),
+            bytecode: buffer.freeze(),
+            bytecode_len,
+            jumpdests,
+        }
+    }
+
+    /// Hands back the buffer of initcode built by [`Code::from_initcode_buffer`] once nothing
+    /// else references it.
+    pub fn into_initcode_buffer(self) -> Option<BytesMut> {
+        self.bytecode.try_into_mut().ok()
     }
 
     /// Builds the [`Code::jumpdests`] bitmap: the bit of every `JUMPDEST` that is not a
