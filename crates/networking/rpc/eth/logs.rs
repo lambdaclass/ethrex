@@ -177,6 +177,12 @@ pub const DEFAULT_LOG_QUERY_WORK_BUDGET: u64 = 4 * DEFAULT_MAX_LOG_QUERY_WORK;
 /// never get a budget error while heavy ones hold it.
 const LIGHT_LOG_QUERY_WORK: u64 = 10_000;
 
+/// Work per block of a query with no address and no topic filter. Every block matches it,
+/// so it reads every block's body and receipts, where a filtered query mostly stops at the
+/// header bloom. At the default limits this caps such a query at 100,000 blocks, the range
+/// limit, and makes one over 100 blocks count against the work budget.
+const UNFILTERED_BLOCK_WORK: u64 = 100;
+
 /// What one log query may cost. `eth_getLogs` and `eth_getFilterChanges` share it, and
 /// clones share the work budget.
 #[derive(Clone, Debug)]
@@ -230,6 +236,13 @@ impl LogQueryLimits {
     /// Rejects a query whose work estimate is over the limit.
     fn check_work(&self, work: &LogQueryWork) -> Result<(), RpcErr> {
         match self.max_log_query_work {
+            Some(max) if work.total() > max && work.unfiltered => {
+                Err(RpcErr::LimitExceeded(format!(
+                    "log query too expensive (blocks {} x {UNFILTERED_BLOCK_WORK} for a query with no address or topic filter = {} units of work, limit {max}); narrow the block range or add a filter",
+                    work.blocks,
+                    work.total()
+                )))
+            }
             Some(max) if work.total() > max => Err(RpcErr::LimitExceeded(format!(
                 "log query too expensive (blocks {} x addresses {} x topic alternatives {} = {} units of work, limit {max}); narrow the block range or the filter",
                 work.blocks,
@@ -287,13 +300,16 @@ impl Default for LogQueryLimits {
 /// and the topic alternatives each block is checked against. Each extra address or
 /// alternative can make more blocks match, and every matching block costs a body and a
 /// receipts read. Only the largest OR-set counts: topic positions are ANDed, so another
-/// constrained position can only narrow the matches.
+/// constrained position can only narrow the matches. A query with no filter at all
+/// matches every block, so its blocks count [`UNFILTERED_BLOCK_WORK`] each.
 struct LogQueryWork {
     blocks: u64,
     /// Distinct addresses, at least 1.
     addresses: u64,
     /// Alternatives in the largest constrained OR-set, at least 1.
     topics: u64,
+    /// No address and no constrained topic position: every block is read in full.
+    unfiltered: bool,
 }
 
 impl LogQueryWork {
@@ -309,17 +325,33 @@ impl LogQueryWork {
             })
             .max()
             .unwrap_or(1);
+        // `null`, an empty list, or a list containing `null` accepts any topic, so the
+        // header bloom rules out no block for that position.
+        let unfiltered = addresses.is_empty()
+            && topics.iter().all(|position| match position {
+                TopicFilter::Topic(topic) => topic.is_none(),
+                TopicFilter::Topics(alternatives) => {
+                    alternatives.is_empty() || alternatives.contains(&None)
+                }
+            });
         Self {
             blocks,
             addresses: u64::try_from(addresses.len().max(1)).unwrap_or(u64::MAX),
             topics: u64::try_from(largest_or_set.max(1)).unwrap_or(u64::MAX),
+            unfiltered,
         }
     }
 
     fn total(&self) -> u64 {
+        let per_block = if self.unfiltered {
+            UNFILTERED_BLOCK_WORK
+        } else {
+            1
+        };
         self.blocks
             .saturating_mul(self.addresses)
             .saturating_mul(self.topics)
+            .saturating_mul(per_block)
     }
 }
 
@@ -1549,6 +1581,57 @@ mod tests {
         assert_eq!(
             unlimited_logs.work_budget.available_permits(),
             budget as usize
+        );
+    }
+
+    /// A query with no address or topic filter reads every block in full, so each block
+    /// counts `UNFILTERED_BLOCK_WORK`: it reaches the work limit and the budget far sooner
+    /// than a filtered query over the same range.
+    #[tokio::test]
+    async fn unfiltered_queries_count_every_block_in_full() {
+        let storage = store_with_one_log_per_block(101).await;
+        let range = |to: u64| json!({"fromBlock": "0x0", "toBlock": hex(to)});
+
+        // 10 blocks x 100 = 1,000 is within a limit of 1,000; 11 blocks are not.
+        let limits = work_limits(1_000, DEFAULT_LOG_QUERY_WORK_BUDGET);
+        assert!(query_with(&storage, range(9), &limits).await.is_ok());
+        assert_eq!(
+            code_and_message(query_with(&storage, range(10), &limits).await),
+            (
+                -32005,
+                "log query too expensive (blocks 11 x 100 for a query with no address or topic filter = 1100 units of work, limit 1000); narrow the block range or add a filter".to_string()
+            )
+        );
+        // An OR-set holding `null` filters nothing either; a single address does.
+        let wildcard = json!({"fromBlock": "0x0", "toBlock": hex(10), "topics": [[null]]});
+        assert_eq!(
+            code_and_message(query_with(&storage, wildcard, &limits).await).0,
+            -32005
+        );
+        let filtered =
+            json!({"fromBlock": "0x0", "toBlock": hex(10), "address": format!("{:#x}", addr(1))});
+        assert!(query_with(&storage, filtered, &limits).await.is_ok());
+
+        // 100 blocks are light; 101 take 10,100 from the budget, so they are refused while
+        // it is spent.
+        let limits = work_limits(0, 100_000);
+        let held = limits
+            .work_budget
+            .clone()
+            .try_acquire_many_owned(100_000)
+            .unwrap();
+        assert!(query_with(&storage, range(99), &limits).await.is_ok());
+        assert_eq!(
+            code_and_message(query_with(&storage, range(100), &limits).await).0,
+            -32005
+        );
+        drop(held);
+        assert_eq!(
+            query_with(&storage, range(100), &limits)
+                .await
+                .unwrap()
+                .len(),
+            100
         );
     }
 

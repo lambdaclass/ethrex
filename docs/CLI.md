@@ -301,7 +301,7 @@ RPC options:
           [default: 20000]
 
       --rpc.max-log-query-work <UNITS>
-          Maximum scan work of an eth_getLogs query or log filter poll, estimated as the blocks in its range x the addresses in its filter x the alternatives in its largest topic OR-set, each at least 1. A query over it fails with error -32005 before any block is read. 0 means no limit.
+          Maximum scan work of an eth_getLogs query or log filter poll, estimated as the blocks in its range x the addresses in its filter x the alternatives in its largest topic OR-set, each at least 1. A query with no address and no topic filter reads every block in full and counts 100 per block. A query over it fails with error -32005 before any block is read. 0 means no limit.
           
           [env: ETHREX_RPC_MAX_LOG_QUERY_WORK=]
           [default: 10000000]
@@ -539,7 +539,7 @@ RPC options:
           [default: 20000]
 
       --rpc.max-log-query-work <UNITS>
-          Maximum scan work of an eth_getLogs query or log filter poll, estimated as the blocks in its range x the addresses in its filter x the alternatives in its largest topic OR-set, each at least 1. A query over it fails with error -32005 before any block is read. 0 means no limit.
+          Maximum scan work of an eth_getLogs query or log filter poll, estimated as the blocks in its range x the addresses in its filter x the alternatives in its largest topic OR-set, each at least 1. A query with no address and no topic filter reads every block in full and counts 100 per block. A query over it fails with error -32005 before any block is read. 0 means no limit.
 
           [env: ETHREX_RPC_MAX_LOG_QUERY_WORK=]
           [default: 10000000]
