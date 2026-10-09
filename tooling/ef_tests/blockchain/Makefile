@@ -18,33 +18,51 @@ LEGACYTEST_URL := https://github.com/ethereum/legacytests/archive/$(LEGACYTEST_C
 LEGACYTEST_ARCHIVE_ROOT := legacytests-$(LEGACYTEST_COMMIT)/Cancun/BlockchainTests
 
 # The zkevm bundle is the Amsterdam fixtures plus the EIP-8025 stateless witness
-# fields (executionWitness / statelessInputBytes / statelessOutputBytes). Its
-# releases track the base fixture release they are filled from -- `tests-zkevm`
-# now shares the `tests@vA.B.C` numbering -- so bump it in step with
-# `.fixtures_url` above: when the two drift, the bundles describe slightly
-# different chains.
+# fields (executionWitness / statelessInputBytes / statelessOutputBytes). Each
+# release is filled from a base `tests@` release, named in its release notes,
+# and that base must match `.fixtures_url` above: when the two drift, the bundles
+# describe slightly different chains. The zkevm line shares the base's major and
+# minor numbers but ships patch releases of its own, so a zkevm-only bump such as
+# v21.0.1, on the unchanged tests@v21.0.0 base, leaves `.fixtures_url` alone.
 # Both bundles extract a `for_amsterdam/` subtree, so we keep the zkevm bundle in
 # a separate root that only the stateless harness reads, to avoid overlaying the
 # regular Amsterdam fixtures.
 ZKEVM_VECTORS_ROOT := vectors_zkevm
 ZKEVM_VECTORS_DIR := $(ZKEVM_VECTORS_ROOT)/eest
+# The same bundle's Engine API fixtures. Since tests-zkevm@v21.0.1 their payloads
+# carry stateless bytes too, including the payload mutations (block access list,
+# slot number) that have no RLP-block form, so they cover strictly more invalid
+# inputs than the blockchain fixtures do. A separate root keeps the blockchain
+# runner from parsing them.
+ZKEVM_ENGINE_VECTORS_ROOT := vectors_zkevm_engine
+ZKEVM_ENGINE_VECTORS_DIR := $(ZKEVM_ENGINE_VECTORS_ROOT)/eest
+# Subtrees extracted from both fixture kinds. `for_bpo2toamsterdamattime15k` holds
+# the fork-activation fixtures, whose witnesses carry pre-Amsterdam headers, so
+# omitting it leaves the guest untested across the fork boundary.
+ZKEVM_SUBTREES := for_amsterdam for_bpo2toamsterdamattime15k
 ZKEVM_FIXTURES_FILE := ../.fixtures_url_zkevm
 ZKEVM_ARTIFACT := zkevm-tests.tar.gz
 ZKEVM_URL := $(shell cat $(ZKEVM_FIXTURES_FILE))
 
-# tests-zkevm-benchmark@v0.8.2 — Amsterdam compute benchmarks at 10M/30M/60M gas.
-# Filled by the EEST pipeline at execution-specs 117dd1cf with go-ethereum's
-# `evm` as t8n, not the EELS t8n that produced tests-zkevm@v0.8.0 (0695c34c);
-# the two pins move independently despite the shared "zkevm" name.
+# tests-zkevm-benchmark: Amsterdam compute benchmarks at fixed gas values, filled
+# by the EEST pipeline with go-ethereum's `evm` as t8n. The release this pins is
+# built against the same stateless wire format as `.fixtures_url_zkevm`, but the
+# two pins move independently despite the shared "zkevm" name.
 #
-# Kept in its own root and NOT a `download-test-vectors` prerequisite: 519MB
-# compressed and ~3.9GB extracted, and only the zkevm bench reads it. Fetch on
+# Since v21.0.5 each gas value ships as its own tarball,
+# `fixtures_zkevm-benchmark_<gas>.tar.gz`, because all of them together exceed
+# GitHub's 2 GiB asset limit. So the pin file holds the release's download URL,
+# and the tarball names come from ZKEVM_BENCH_GAS.
+#
+# Kept in its own root and NOT a `download-test-vectors` prerequisite: ~2.4GB
+# compressed across the five tarballs, and only the zkevm bench reads it. Fetch on
 # demand with `make zkevm-benchmark-vectors`.
 ZKEVM_BENCH_VECTORS_ROOT := vectors_zkevm_benchmark
 ZKEVM_BENCH_VECTORS_DIR := $(ZKEVM_BENCH_VECTORS_ROOT)/eest
 ZKEVM_BENCH_FIXTURES_FILE := ../.fixtures_url_zkevm_benchmark
-ZKEVM_BENCH_ARTIFACT := zkevm-benchmark-tests.tar.gz
-ZKEVM_BENCH_URL := $(shell cat $(ZKEVM_BENCH_FIXTURES_FILE))
+ZKEVM_BENCH_RELEASE_URL := $(shell cat $(ZKEVM_BENCH_FIXTURES_FILE))
+ZKEVM_BENCH_GAS := 0030M 0060M 0100M 0150M 0200M
+ZKEVM_BENCH_ARTIFACTS := $(foreach gas,$(ZKEVM_BENCH_GAS),zkevm-benchmark-tests_$(gas).tar.gz)
 
 VECTORS_TARGETS := $(SPECTEST_VECTORS_DIR) $(LEGACYTEST_VECTORS_DIR)
 
@@ -71,12 +89,15 @@ $(ZKEVM_ARTIFACT): $(ZKEVM_FIXTURES_FILE)
 	$(DOWNLOAD) $(ZKEVM_URL) $(ZKEVM_ARTIFACT)
 
 $(ZKEVM_VECTORS_DIR): $(ZKEVM_ARTIFACT)
-	rm -rf $(ZKEVM_VECTORS_DIR)
-	mkdir -p $(ZKEVM_VECTORS_DIR)
-	tar -xzf $(ZKEVM_ARTIFACT) --strip-components=2 -C $(ZKEVM_VECTORS_DIR) fixtures/blockchain_tests/for_amsterdam
+	rm -rf $(ZKEVM_VECTORS_DIR) $(ZKEVM_ENGINE_VECTORS_DIR)
+	mkdir -p $(ZKEVM_VECTORS_DIR) $(ZKEVM_ENGINE_VECTORS_DIR)
+	tar -xzf $(ZKEVM_ARTIFACT) --strip-components=2 -C $(ZKEVM_VECTORS_DIR) \
+		$(addprefix fixtures/blockchain_tests/,$(ZKEVM_SUBTREES))
+	tar -xzf $(ZKEVM_ARTIFACT) --strip-components=2 -C $(ZKEVM_ENGINE_VECTORS_DIR) \
+		$(addprefix fixtures/blockchain_tests_engine/,$(ZKEVM_SUBTREES))
 
-$(ZKEVM_BENCH_ARTIFACT): $(ZKEVM_BENCH_FIXTURES_FILE)
-	$(DOWNLOAD) $(ZKEVM_BENCH_URL) $(ZKEVM_BENCH_ARTIFACT)
+zkevm-benchmark-tests_%.tar.gz: $(ZKEVM_BENCH_FIXTURES_FILE)
+	$(DOWNLOAD) $(ZKEVM_BENCH_RELEASE_URL)/fixtures_zkevm-benchmark_$*.tar.gz $@
 
 # Only the subtrees the manifest references, not all 339 fixture files: the
 # whole tree unpacks to ~3.9GB for the 15 workloads actually run.
@@ -86,9 +107,8 @@ ZKEVM_BENCH_SUBTREES := \
   compute/precompile/p256verify \
   compute/eip7928_block_level_access_lists/block_access_list \
   compute/scenario/mix_operations
-ZKEVM_BENCH_TIERS := for_amsterdam_at_0010M for_amsterdam_at_0030M for_amsterdam_at_0060M
 
-# Keyed on the release URL, and written only after a
+# Keyed on the release URL and the gas values, and written only after a
 # successful untar. Two things this buys: `clean-vectors` runs from the
 # `$(SPECTEST_ARTIFACT)` rule on any `.fixtures_url` bump, which would otherwise
 # silently discard this opt-in multi-GB download; and an interrupted extraction
@@ -96,22 +116,24 @@ ZKEVM_BENCH_TIERS := for_amsterdam_at_0010M for_amsterdam_at_0030M for_amsterdam
 # done" while workloads fail on missing files.
 ZKEVM_BENCH_STAMP := $(ZKEVM_BENCH_VECTORS_DIR)/.zkevm_benchmark_url
 
-zkevm-benchmark-vectors: ## 📥 Download the zkEVM benchmark fixtures (519MB compressed, ~3.9GB extracted)
-	@have=$$(cat $(ZKEVM_BENCH_STAMP) 2>/dev/null); \
-	if [ "$$have" = "$(ZKEVM_BENCH_URL)" ]; then \
-		echo "zkEVM benchmark fixtures already extracted from $(ZKEVM_BENCH_URL)"; \
+zkevm-benchmark-vectors: ## 📥 Download the zkEVM benchmark fixtures (~2.4GB compressed, five tarballs)
+	@want="$(ZKEVM_BENCH_RELEASE_URL) $(ZKEVM_BENCH_GAS)"; \
+	have=$$(cat $(ZKEVM_BENCH_STAMP) 2>/dev/null); \
+	if [ "$$have" = "$$want" ]; then \
+		echo "zkEVM benchmark fixtures already extracted from $(ZKEVM_BENCH_RELEASE_URL)"; \
 	else \
-		$(MAKE) $(ZKEVM_BENCH_ARTIFACT) && \
+		$(MAKE) $(ZKEVM_BENCH_ARTIFACTS) && \
 		rm -rf $(ZKEVM_BENCH_VECTORS_DIR) && \
 		mkdir -p $(ZKEVM_BENCH_VECTORS_DIR) && \
-		members=""; \
-		for tier in $(ZKEVM_BENCH_TIERS); do \
+		for gas in $(ZKEVM_BENCH_GAS); do \
+			members=""; \
 			for sub in $(ZKEVM_BENCH_SUBTREES); do \
-				members="$$members fixtures/blockchain_tests/$$tier/$$sub"; \
+				members="$$members fixtures/blockchain_tests/for_amsterdam_at_$$gas/$$sub"; \
 			done; \
-		done; \
-		tar -xzf $(ZKEVM_BENCH_ARTIFACT) --strip-components=2 -C $(ZKEVM_BENCH_VECTORS_DIR) $$members && \
-		echo "$(ZKEVM_BENCH_URL)" > $(ZKEVM_BENCH_STAMP); \
+			tar -xzf zkevm-benchmark-tests_$$gas.tar.gz --strip-components=2 \
+				-C $(ZKEVM_BENCH_VECTORS_DIR) $$members || exit 1; \
+		done && \
+		echo "$$want" > $(ZKEVM_BENCH_STAMP); \
 	fi
 
 zkevm-vectors: $(ZKEVM_VECTORS_DIR)
@@ -122,8 +144,8 @@ help: ## 📚 Show help for each of the Makefile recipes
 download-test-vectors: $(VECTORS_TARGETS) zkevm-vectors ## 📥 Download test vectors
 
 clean-vectors: ## 🗑️  Clean test vectors
-	rm -rf $(VECTORS_ROOT) $(ZKEVM_VECTORS_ROOT) $(ZKEVM_BENCH_VECTORS_ROOT)
-	rm -f $(SPECTEST_ARTIFACT) $(LEGACYTEST_ARTIFACT) $(ZKEVM_ARTIFACT) $(ZKEVM_BENCH_ARTIFACT)
+	rm -rf $(VECTORS_ROOT) $(ZKEVM_VECTORS_ROOT) $(ZKEVM_ENGINE_VECTORS_ROOT) $(ZKEVM_BENCH_VECTORS_ROOT)
+	rm -f $(SPECTEST_ARTIFACT) $(LEGACYTEST_ARTIFACT) $(ZKEVM_ARTIFACT) $(ZKEVM_BENCH_ARTIFACTS)
 
 test-levm: $(VECTORS_TARGETS) ## 🧪 Run blockchain tests with LEVM
 	cargo test --profile release-fast

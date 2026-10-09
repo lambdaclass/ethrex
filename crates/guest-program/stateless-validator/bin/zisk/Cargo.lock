@@ -813,13 +813,13 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "ere-platform-core"
-version = "0.17.0"
-source = "git+https://github.com/eth-act/ere?tag=v0.17.0#5023513851c69ab9c4871e3899608e450e6960b6"
+version = "0.18.1"
+source = "git+https://github.com/eth-act/ere?tag=v0.18.1#20e87aa7bcc09a8eac3bee2c941d8bfcf447e5ba"
 
 [[package]]
 name = "ere-platform-zisk"
-version = "0.17.0"
-source = "git+https://github.com/eth-act/ere?tag=v0.17.0#5023513851c69ab9c4871e3899608e450e6960b6"
+version = "0.18.1"
+source = "git+https://github.com/eth-act/ere?tag=v0.18.1#20e87aa7bcc09a8eac3bee2c941d8bfcf447e5ba"
 dependencies = [
  "ere-platform-core",
  "ziskos",
@@ -854,7 +854,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -885,7 +885,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -904,7 +904,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -926,7 +926,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -943,13 +943,14 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "derive_more",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
+ "foldhash 0.2.0",
  "libssz",
  "malachite",
  "rustc-hash",
@@ -960,7 +961,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -984,7 +985,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1003,7 +1004,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "derive_more",
@@ -1903,9 +1904,9 @@ dependencies = [
 
 [[package]]
 name = "proofman-fields"
-version = "1.1.0-alpha"
+version = "1.2.0-alpha"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ea663e7b8fbeaba6a3d0e6046fd7d85250186cdc2fac56ce102bfe8bfcfdf0d"
+checksum = "124c75a333fd7209e5f77da6c7734260ad54eaabf7e2e20db24917f7ec4505cd"
 dependencies = [
  "cfg-if",
  "num-bigint",
@@ -1916,9 +1917,9 @@ dependencies = [
 
 [[package]]
 name = "proofman-starks-lib-c"
-version = "1.1.0-alpha"
+version = "1.2.0-alpha"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eebeb94ceceb5009296fa5603ea710861ca262af8dcdcd43c243707aec9d6726"
+checksum = "d1f0b940c17f32bcc0b289fd11bd0f8a812c82a4d44a067cd67d773fef54b13f"
 dependencies = [
  "crossbeam-channel",
  "proofman-starks-src",
@@ -1926,15 +1927,15 @@ dependencies = [
 
 [[package]]
 name = "proofman-starks-src"
-version = "1.1.0-alpha.1"
+version = "1.2.0-alpha"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f652a3899833633da4829ee714b7d8ecdece399929bfd6673a471ecf0ce3227"
+checksum = "0efcb2cd92919487f86364fc3b51c8efa8ac2ea3a56f3d6c4d39b3bd464a5b50"
 
 [[package]]
 name = "proofman-verifier"
-version = "1.1.0-alpha"
+version = "1.2.0-alpha"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e578aca4212b4e4d083d62c54c74cbf2aa01926e15a76d6b0c9c70a4b98e2719"
+checksum = "5d265453d0cb920c636de66ef3d7dffbcef6a1a8adea91b8484d1b09398d2f51"
 dependencies = [
  "num-traits",
  "proofman-fields",
@@ -2910,27 +2911,27 @@ dependencies = [
 
 [[package]]
 name = "zisk-circuit"
-version = "1.1.0-alpha"
+version = "1.2.0-alpha"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28185dd7ca65e2ffebc9a19992239aa6e379ac95dab73ec90d34344f59719355"
+checksum = "c1bc6041f337ea1540da88363df1c7bddfadf0e9e9433faee038aa15fa374126"
 
 [[package]]
 name = "zisk-definitions"
-version = "1.1.0-alpha"
+version = "1.2.0-alpha"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc7078fc25f294bfcdf4f9089f113b60f1efc6c8a55518d6ea24093aa7c59c2a"
+checksum = "d7d1a44ad1d2ce15db39bfff3dfe4d5dd4736962c7badbd089f1f292d9347879"
 
 [[package]]
 name = "zisk-lib-c"
-version = "1.1.0-alpha"
+version = "1.2.0-alpha"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc8968509c571acf9334322c06301b2bf9443054982a82893af957a65143b8ba"
+checksum = "0238eb80fe6909d395453dba79ca27587c2ea34a87ba9f98efc55f94bde12eb0"
 
 [[package]]
 name = "zisk-precomp-helpers"
-version = "1.1.0-alpha"
+version = "1.2.0-alpha"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3416ae98910aacd8b615e04088f25f00181f1765dae7b24e0a66ebad78b8e8b8"
+checksum = "9a713dd3bd7b1ac61c7aaee725bb185afc8439f63881708a8408ab2e59694144"
 dependencies = [
  "ark-bls12-381",
  "ark-bn254",
@@ -2947,27 +2948,27 @@ dependencies = [
 
 [[package]]
 name = "zisk-verifier"
-version = "1.1.0-alpha"
+version = "1.2.0-alpha"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ffde99de17184da25de7823ad37f57d8d5aaa75bc89335fc8e13ed8dc521627"
+checksum = "9a218c0e2c72facb1324751f19f37a5a58df629e5a2d154c6932f516a22f367c"
 dependencies = [
  "proofman-verifier",
 ]
 
 [[package]]
 name = "zisk-zkvm-interface"
-version = "1.1.0-alpha"
+version = "1.2.0-alpha"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c5d7999bdac04dd84053c34946d18a1cc7b452b860d46f2025defe48a06c42d"
+checksum = "9eb81c441a0ce460f430facfb1a31e54f4a949c35468cf04d9577c86be8146e3"
 dependencies = [
  "bindgen",
 ]
 
 [[package]]
 name = "ziskos"
-version = "1.1.0-alpha"
+version = "1.2.0-alpha"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2edae833e0d199eca7145fabe0bcdf1fc9d380f68833f280d9b45d6307b1f14e"
+checksum = "08a9eee9ae285d36dd52ab8322e4e870ec2c07f8befca02813554e907c43e3ea"
 dependencies = [
  "ark-bn254",
  "ark-ec",
