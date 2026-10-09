@@ -3749,7 +3749,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3801,7 +3801,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-benches"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "criterion",
@@ -3819,7 +3819,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "crossbeam",
@@ -3845,7 +3845,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "bincode 1.3.3",
  "bytes",
@@ -3880,7 +3880,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-config"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "ethrex-common",
  "ethrex-p2p",
@@ -3891,7 +3891,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -3916,7 +3916,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-dev"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -3933,7 +3933,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "bls12_381 0.8.0 (git+https://github.com/lambdaclass/bls12_381?branch=expose-affine-constructors)",
  "bytes",
@@ -3964,7 +3964,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "agg_mode_sdk",
  "alloy",
@@ -4019,7 +4019,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -4036,7 +4036,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-prover"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "clap",
@@ -4064,7 +4064,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-rpc"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "axum 0.8.9",
  "bytes",
@@ -4095,13 +4095,14 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "derive_more 1.0.0",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
+ "foldhash 0.2.0",
  "libssz",
  "malachite 0.6.1",
  "rayon",
@@ -4113,7 +4114,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "axum 0.8.9",
  "ethrex-common",
@@ -4128,7 +4129,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-monitor"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "chrono",
@@ -4157,7 +4158,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-p2p"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -4205,7 +4206,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-prover"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "bincode 1.3.3",
  "bytes",
@@ -4233,7 +4234,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-repl"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "clap",
  "colored",
@@ -4251,7 +4252,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "criterion",
@@ -4266,7 +4267,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rpc"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "axum 0.8.9",
  "axum-extra",
@@ -4308,7 +4309,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -4332,7 +4333,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk-contract-utils"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "thiserror 2.0.18",
  "tracing",
@@ -4340,7 +4341,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4349,6 +4350,7 @@ dependencies = [
  "ethrex-rlp",
  "ethrex-trie",
  "fastbloom",
+ "indexmap 2.14.0",
  "lru 0.16.4",
  "proptest",
  "rayon",
@@ -4364,7 +4366,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage-rollup"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "async-trait",
  "bincode 1.3.3",
@@ -4381,7 +4383,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-test"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -4432,7 +4434,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4451,7 +4453,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "bytes",
  "derive_more 1.0.0",
@@ -5431,7 +5433,7 @@ dependencies = [
 
 [[package]]
 name = "history-validator"
-version = "28.0.0"
+version = "29.0.1"
 dependencies = [
  "clap",
  "ethrex-common",

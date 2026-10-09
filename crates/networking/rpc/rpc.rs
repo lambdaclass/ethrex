@@ -6,8 +6,10 @@ use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
 use crate::debug::set_head::SetHeadRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request, BlobsV4Request};
 use crate::engine::client_version::GetClientVersionV1Request;
+use crate::engine::in_flight::InFlightPayloads;
 use crate::engine::payload::{
-    GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request, NewPayloadWithWitnessV5Request,
+    GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request, NewPayloadWithWitnessV4Request,
+    NewPayloadWithWitnessV5Request,
 };
 use crate::engine::{
     ExchangeCapabilitiesRequest,
@@ -94,7 +96,7 @@ use std::{
 use tokio::net::TcpListener;
 use tokio::sync::{
     Mutex as TokioMutex,
-    mpsc::{UnboundedSender, unbounded_channel},
+    mpsc::{UnboundedSender, error::SendError, unbounded_channel},
     oneshot,
 };
 use tokio::time::timeout;
@@ -200,6 +202,26 @@ type BlockWorkerMessage = (
     Option<BlockHeader>,
 );
 
+/// Hands blocks to the block executor thread, and tracks the ones being executed so a
+/// re-sent `engine_newPayload` waits for the running execution instead of queueing its
+/// block again.
+#[derive(Clone)]
+pub struct BlockWorkerChannel {
+    sender: UnboundedSender<BlockWorkerMessage>,
+    in_flight: Arc<InFlightPayloads>,
+}
+
+impl BlockWorkerChannel {
+    /// Fails only once the block executor has stopped. The unsent message is dropped.
+    pub(crate) fn send(&self, message: BlockWorkerMessage) -> Result<(), SendError<()>> {
+        self.sender.send(message).map_err(|_| SendError(()))
+    }
+
+    pub(crate) fn in_flight(&self) -> &Arc<InFlightPayloads> {
+        &self.in_flight
+    }
+}
+
 /// This struct contains all the dependencies that RPC handlers need to process requests,
 /// including storage access, blockchain state, P2P networking, and configuration.
 ///
@@ -225,7 +247,7 @@ pub struct RpcApiContext {
     /// Maximum gas limit for blocks (used in payload building).
     pub gas_ceil: u64,
     /// Channel for sending blocks to the block executor worker thread.
-    pub block_worker_channel: UnboundedSender<BlockWorkerMessage>,
+    pub block_worker_channel: BlockWorkerChannel,
     /// WebSocket configuration. `None` when the WS server is disabled.
     pub ws: Option<WebSocketConfig>,
     /// Set of RPC namespaces that are allowed over the public HTTP/WS endpoints.
@@ -473,10 +495,7 @@ pub const FILTER_DURATION: Duration = {
 /// Panics if the worker thread cannot be spawned.
 pub fn start_block_executor(
     blockchain: Arc<Blockchain>,
-) -> (
-    UnboundedSender<BlockWorkerMessage>,
-    std::thread::JoinHandle<()>,
-) {
+) -> (BlockWorkerChannel, std::thread::JoinHandle<()>) {
     let (block_worker_channel, mut block_receiver) = unbounded_channel::<BlockWorkerMessage>();
     let prewarmer = ethrex_blockchain::prewarm::MempoolPrewarmer::spawn(blockchain.clone());
     let executor = std::thread::Builder::new()
@@ -492,7 +511,7 @@ pub fn start_block_executor(
                 }
                 let imported_header = prewarmer.as_ref().map(|_| block.header.clone());
                 // Every block on this channel was assembled from an engine payload
-                // (`engine::payload::add_block` is the only sender), which is what
+                // (`engine::payload::enqueue_block` is the only sender), which is what
                 // `add_block_pipeline_from_payload` requires.
                 let result = blockchain.add_block_pipeline_from_payload(
                     block,
@@ -515,6 +534,10 @@ pub fn start_block_executor(
             }
         })
         .expect("Falied to spawn block_executor thread");
+    let block_worker_channel = BlockWorkerChannel {
+        sender: block_worker_channel,
+        in_flight: Arc::default(),
+    };
     (block_worker_channel, executor)
 }
 
@@ -1527,7 +1550,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
 ///
 /// Handles:
 /// - Fork choice: `engine_forkchoiceUpdatedV1/V2/V3`
-/// - Payload submission: `engine_newPayloadV1/V2/V3/V4/V5`, `engine_newPayloadWithWitnessV5`
+/// - Payload submission: `engine_newPayloadV1/V2/V3/V4/V5`, `engine_newPayloadWithWitnessV4/V5`
 /// - Payload retrieval: `engine_getPayloadV1/V2/V3/V4/V5/V6`
 /// - Payload bodies: `engine_getPayloadBodiesByHashV1`, `engine_getPayloadBodiesByRangeV1`
 /// - Blob retrieval: `engine_getBlobsV1/V2/V3/V4`
@@ -1551,6 +1574,9 @@ pub async fn map_engine_requests(
         // poll overflows the 2 MB tokio worker stack in unoptimized debug builds.
         "engine_newPayloadWithWitnessV5" => {
             Box::pin(NewPayloadWithWitnessV5Request::call(req, context)).await
+        }
+        "engine_newPayloadWithWitnessV4" => {
+            Box::pin(NewPayloadWithWitnessV4Request::call(req, context)).await
         }
         "engine_newPayloadV5" => Box::pin(NewPayloadV5Request::call(req, context)).await,
         "engine_newPayloadV4" => Box::pin(NewPayloadV4Request::call(req, context)).await,

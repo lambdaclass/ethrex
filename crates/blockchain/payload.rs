@@ -548,7 +548,35 @@ impl Blockchain {
             }
         }
 
+        self.log_glamsterdam_banner_if_first_amsterdam_block(&res.payload.header);
+
         Ok(res)
+    }
+
+    /// Logs the Glamsterdam banner when `header`, a block this node just built, is the
+    /// chain's first Amsterdam block. The parent is only read while the banner is still
+    /// pending and Amsterdam applies to the block.
+    fn log_glamsterdam_banner_if_first_amsterdam_block(&self, header: &BlockHeader) {
+        if !matches!(self.options.r#type, BlockchainType::L1) || crate::glamsterdam::shown() {
+            return;
+        }
+        let config = self.storage.get_chain_config();
+        if !config.is_amsterdam_activated(header.timestamp) {
+            return;
+        }
+        match self.storage.get_block_header_by_hash(header.parent_hash) {
+            Ok(Some(parent)) => {
+                if crate::glamsterdam::is_first_amsterdam_block(
+                    &config,
+                    parent.timestamp,
+                    header.timestamp,
+                ) {
+                    crate::glamsterdam::log_once(header.number, header.hash());
+                }
+            }
+            Ok(None) => {}
+            Err(err) => debug!(%err, "Could not read the parent of a built payload"),
+        }
     }
 
     /// Completes the payload building process, return the block value.

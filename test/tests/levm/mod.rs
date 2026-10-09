@@ -28,3 +28,4 @@ mod requests_eip8282_extraction_tests;
 mod simulation_env_tests;
 mod stack_tests;
 mod trace_call_tests;
+mod transient_storage_tests;

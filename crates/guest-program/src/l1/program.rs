@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_common::types::stateless_ssz::{
-    STATELESS_INPUT_SCHEMA_ID, SszPublicKeys, SszStatelessInput, SszStatelessValidationResult,
+    STATELESS_INPUT_SCHEMA_ID, SszStatelessInput, SszStatelessValidationResult,
 };
 use ethrex_common::{constants::AMSTERDAM_MAX_CODE_SIZE, validate_bal_code_sizes};
 use ethrex_crypto::Crypto;
@@ -187,72 +187,17 @@ pub fn new_payload_request_to_block(
     Ok(Block::new(header, body))
 }
 
-/// Validate the per-transaction public keys carried by a stateless input.
-///
-/// The spec's `StatelessInput` supplies one uncompressed secp256k1 key per
-/// transaction so a guest can skip `ecrecover`; a key that does not derive to the
-/// recovered sender must reject the payload (#6716). Called from
-/// [`verify_stateless_block`] — the single point both the zkVM guest and the
-/// EXECUTE precompile pass through — so neither path can drop it.
-///
-/// Upstream `build_stateless_input` skips keys for undecodable or bad-signature
-/// transactions, so a short `public_keys` is possible; such payloads are invalid
-/// on both sides, and the length is checked before any zip so a short list fails
-/// cleanly rather than panicking.
-pub fn validate_public_keys(
-    public_keys: &SszPublicKeys,
-    block: &ethrex_common::types::Block,
-    crypto: &dyn Crypto,
-) -> Result<(), ExecutionError> {
-    if public_keys.len() != block.body.transactions.len() {
-        return Err(ExecutionError::Internal(format!(
-            "Found {} public keys in the stateless input, but there are {} transactions",
-            public_keys.len(),
-            block.body.transactions.len()
-        )));
-    }
-    for (public_key, tx) in public_keys.iter().zip(block.body.transactions.iter()) {
-        // SSZ decode fixes the length at 65; uncompressed secp256k1 is 0x04 || X || Y.
-        let pk_bytes: &[u8] = public_key;
-        let Some((tag, xy)) = pk_bytes.split_first() else {
-            return Err(ExecutionError::Internal(
-                "Stateless input public key is empty".to_string(),
-            ));
-        };
-        if *tag != 0x04 {
-            return Err(ExecutionError::Internal(
-                "Stateless input public key is not a 65-byte uncompressed secp256k1 key"
-                    .to_string(),
-            ));
-        }
-        let hashed = crypto.keccak256(xy);
-        let derived = ethrex_common::Address::from_slice(&hashed[12..]);
-        let recovered = tx.sender(crypto).map_err(|e| {
-            ExecutionError::Internal(format!("failed to recover transaction sender: {e}"))
-        })?;
-        if recovered != derived {
-            return Err(ExecutionError::Internal(
-                "Stateless input public key does not match recovered transaction sender"
-                    .to_string(),
-            ));
-        }
-    }
-    Ok(())
-}
-
 /// Stateless validation of a single payload, shared by every entrypoint: the
 /// zkVM guests via [`run_stateless_guest`], and the EXECUTE precompile via
 /// `verify_inner` in `ethrex-blockchain`. Everything a payload must satisfy
-/// belongs here rather than in a caller — see [`validate_public_keys`] for what
-/// splitting it cost.
+/// belongs here rather than in a caller, so neither path can drop a check.
 ///
 /// Implements `verify_stateless_new_payload` from execution-specs: reconstruct
-/// block → check the supplied public keys → validate versioned hashes → execute
+/// block → validate versioned hashes → execute
 /// statelessly (which validates the recomputed block access list hash on
 /// Amsterdam+) → inject recomputed `burned_fees` → verify `block_hash`.
 pub fn verify_stateless_block(
     new_payload_request: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
-    public_keys: &SszPublicKeys,
     execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
     crypto: Arc<dyn Crypto>,
 ) -> Result<(), ExecutionError> {
@@ -261,10 +206,6 @@ pub fn verify_stateless_block(
     // cached value would be stale.
     let block = new_payload_request_to_block(new_payload_request, crypto.as_ref())
         .map_err(|e| ExecutionError::Internal(format!("payload conversion: {e}")))?;
-
-    // Check the supplied keys against the recovered senders before committing to
-    // execution, so a mismatched key rejects without paying for a block.
-    validate_public_keys(public_keys, &block, crypto.as_ref())?;
 
     // Keep block in a fixed-size array so we can reclaim it after execute_blocks
     // (which borrows it as &[Block] without consuming it).
@@ -391,7 +332,7 @@ pub fn run_stateless_guest_traced<T: GuestTrace>(
 
 /// Validate a decoded stateless input: rebuild the `ExecutionWitness`, derive the
 /// `ChainConfig` from `(chain_id, Amsterdam)`, and hand off to
-/// [`verify_stateless_block`], which checks the public keys and executes.
+/// [`verify_stateless_block`], which executes it.
 pub fn validate_stateless_execution(
     input: &SszStatelessInput,
     crypto: Arc<dyn Crypto>,
@@ -403,12 +344,7 @@ pub fn validate_stateless_execution(
         )
         .map_err(|e| ExecutionError::Internal(format!("witness rebuild: {e}")))?;
 
-    verify_stateless_block(
-        &input.new_payload_request,
-        &input.public_keys,
-        execution_witness,
-        crypto,
-    )
+    verify_stateless_block(&input.new_payload_request, execution_witness, crypto)
 }
 
 /// Validate blocks statelessly against an in-memory witness.

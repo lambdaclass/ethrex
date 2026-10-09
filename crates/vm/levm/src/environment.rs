@@ -8,9 +8,11 @@ use crate::constants::{
     MAX_BLOB_COUNT_ELECTRA, TARGET_BLOB_GAS_PER_BLOCK, TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
 };
 
-use rustc_hash::FxHashMap;
 /// [EIP-1153]: https://eips.ethereum.org/EIPS/eip-1153#reference-implementation
-pub type TransientStorage = FxHashMap<(Address, U256), U256>;
+///
+/// Seeded per process and per map: contracts choose these keys, and an unseeded
+/// hasher's public constants (FxHash's) let them pick keys that all collide.
+pub type TransientStorage = foldhash::HashMap<(Address, U256), U256>;
 
 #[derive(Debug, Default, Clone)]
 /// Environmental information that the execution agent must provide.

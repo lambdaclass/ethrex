@@ -18,19 +18,19 @@
 # a second copy of the version is a second thing to keep in sync. A bare `rev` is
 # rejected for the same reason — it cannot be matched against an image tag.
 #
-# Usage: zkvm-version.sh <zisk|sp1|openvm>   -> v6.4.0    (SDK version)
-#        zkvm-version.sh --ere-tag           -> v0.17.0   (git tag)
-#        zkvm-version.sh --ere-tag --docker  -> 0.17.0    (image tag, no `v`)
+# Usage: zkvm-version.sh <zisk|sp1|openvm>   -> v6.6.0    (SDK version)
+#        zkvm-version.sh --ere-tag           -> v0.18.1   (git tag)
+#        zkvm-version.sh --ere-tag --docker  -> 0.18.1    (image tag, no `v`)
 
 set -euo pipefail
 
-ERE_TAG=v0.17.0
+ERE_TAG=v0.18.1
 
 # SDK versions resolved by ere-catalog at ERE_TAG.
 zkvm_version() {
     case "$1" in
-        zisk)   echo "v1.1.0-alpha" ;;
-        sp1)    echo "v6.4.0" ;;
+        zisk)   echo "v1.2.0-alpha" ;;
+        sp1)    echo "v6.6.0" ;;
         openvm) echo "v2.1.0-preview" ;;
         *)      echo "unknown zkvm: $1" >&2; return 1 ;;
     esac
@@ -59,7 +59,8 @@ for manifest in "${MANIFESTS[@]}"; do
         echo "Every stateless-validator manifest must pin the same ere release,"
         echo "by tag rather than rev. If ere was bumped, update the zkvm_version"
         echo "table in this script to the SDK versions that ere-catalog resolves"
-        echo "at the new tag, then update ERE_TAG."
+        echo "at the new tag, then update ERE_TAG. .github/scripts/bump-ere.sh does"
+        echo "all of this."
     } >&2
     exit 1
 done

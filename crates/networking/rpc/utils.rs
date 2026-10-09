@@ -24,7 +24,7 @@ use ethrex_blockchain::error::MempoolError;
 /// - `-32000`: Generic server error
 /// - `-38001` to `-38006`: Engine API specific errors
 /// - `3`: Execution reverted/halted
-#[derive(Debug, thiserror::Error)]
+#[derive(Clone, Debug, thiserror::Error)]
 pub enum RpcErr {
     #[error("Method not found: {0}")]
     MethodNotFound(String),

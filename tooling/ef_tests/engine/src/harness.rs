@@ -142,11 +142,19 @@ impl EngineApiHarness {
             .await
     }
 
-    /// Call `engine_newPayloadWithWitnessV5` (same params as `engine_newPayloadV5`;
-    /// the response additionally carries the geth-shaped `witness` blob).
-    pub async fn new_payload_with_witness(&self, params: &[Value]) -> anyhow::Result<Value> {
-        self.call("engine_newPayloadWithWitnessV5", params.to_vec())
-            .await
+    /// Call `engine_newPayloadWithWitnessV{version}` (same params as the matching
+    /// `engine_newPayloadV{version}`; the response additionally carries the
+    /// geth-shaped `witness` blob). Only V4 and V5 exist upstream.
+    pub async fn new_payload_with_witness(
+        &self,
+        version: u8,
+        params: &[Value],
+    ) -> anyhow::Result<Value> {
+        self.call(
+            &format!("engine_newPayloadWithWitnessV{version}"),
+            params.to_vec(),
+        )
+        .await
     }
 
     /// Call `eth_getBlockByNumber("0x0", false)` and return the raw JSON response.
