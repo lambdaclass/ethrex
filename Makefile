@@ -198,10 +198,12 @@ run-hive-eels-bal-quick: build-image setup-hive ## 🧪 Run hive EELS quick test
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit ".*(2780|7708|7732|7778|7843|7928|7954|7975|7976|7981|7997|8024|8037|8038|8045|8061|8070|8159|8246|8282).*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(AMSTERDAM_FIXTURES_URL) --sim.buildarg branch=$(AMSTERDAM_FIXTURES_BRANCH)
 
 FRAMES_FIXTURES_URL ?= $(shell cat tooling/ef_tests/.fixtures_url_frames)
-FRAMES_FIXTURES_BRANCH ?= devnets/frames/0
+FRAMES_FIXTURES_BRANCH ?= devnets/frames/1
 # The frames release refills the WHOLE suite at Bogota, so the default sweep is
 # every Bogota fixture; `run-hive-eels-frames-quick` narrows it to EIP-8141.
-FRAMES_FORK_PATTERN ?= .*fork_Bogota.*
+# `fork_.*Bogota` rather than `fork_Bogota` so the Amsterdam->Bogota activation
+# fixtures (`fork_AmsterdamToBogotaAtTime15k`) are swept alongside the Bogota ones.
+FRAMES_FORK_PATTERN ?= .*fork_.*Bogota.*
 FRAMES_QUICK_PATTERN ?= .*8141.*
 
 # Hive's ethrex client definition maps HIVE_<FORK>_TIMESTAMP env vars onto genesis

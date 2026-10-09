@@ -14,10 +14,11 @@ SPECTEST_URL := $(shell cat $(FIXTURES_FILE))
 FRAMES_FIXTURES_FILE := ../.fixtures_url_frames
 FRAMES_ARTIFACT := frames-tests.tar.gz
 FRAMES_URL := $(shell cat $(FRAMES_FIXTURES_FILE))
-# All Bogota-fork fixtures -- the EIP-8141 suites and the converted legacy
-# variants alike -- live under this one subtree, so it is the only thing the
-# frames bundle contributes here.
-FRAMES_SUBTREE := for_bogota
+# All Bogota-fork fixtures -- the frames suites and the converted legacy variants
+# alike -- live under `for_bogota`, and the Amsterdam->Bogota activation fixtures
+# under `for_amsterdamtobogotaattime15k`; those two are what the frames bundle
+# contributes here.
+FRAMES_SUBTREES := for_bogota for_amsterdamtobogotaattime15k
 FRAMES_STAMP := $(SPECTEST_VECTORS_DIR)/.frames_overlay
 VECTORS_TARGETS := $(SPECTEST_VECTORS_DIR)
 
@@ -38,15 +39,17 @@ help: ## 📚 Show help for each Makefile target
 # it, and clearing it first drops fixtures a later release renamed or removed.
 frames-vectors: | $(SPECTEST_VECTORS_DIR) ## 📥 Overlay the frames-devnet engine fixtures, re-fetching when the pinned release changed
 	@have=$$(cat $(FRAMES_STAMP) 2>/dev/null); \
-	[ -d $(SPECTEST_VECTORS_DIR)/$(FRAMES_SUBTREE) ] || have=; \
+	for subtree in $(FRAMES_SUBTREES); do \
+		[ -d $(SPECTEST_VECTORS_DIR)/$$subtree ] || have=; \
+	done; \
 	if [ "$$have" = "$(FRAMES_URL)" ]; then \
 		echo "Frames fixtures already overlaid from $(FRAMES_URL)"; \
 	else \
 		curl -fL -o $(FRAMES_ARTIFACT).part $(FRAMES_URL) && \
 		mv $(FRAMES_ARTIFACT).part $(FRAMES_ARTIFACT) && \
-		rm -rf $(SPECTEST_VECTORS_DIR)/$(FRAMES_SUBTREE) && \
+		rm -rf $(addprefix $(SPECTEST_VECTORS_DIR)/,$(FRAMES_SUBTREES)) && \
 		tar -xzf $(FRAMES_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) \
-			fixtures/blockchain_tests_engine/$(FRAMES_SUBTREE) && \
+			$(addprefix fixtures/blockchain_tests_engine/,$(FRAMES_SUBTREES)) && \
 		echo "$(FRAMES_URL)" > $(FRAMES_STAMP); \
 	fi
 
