@@ -504,8 +504,8 @@ pub struct WarmedTx {
 
 impl WarmedTx {
     /// Takes the result of the transaction that just ran on `db` with `db.tx_reads` on, or
-    /// `None` when it can't be replayed from its reads: the transaction read the coinbase,
-    /// or touched an account whose storage a self-destruct cleared.
+    /// `None` when it can't be replayed from its reads: the transaction used the coinbase's
+    /// balance or nonce, or touched an account whose storage a self-destruct cleared.
     #[cfg(feature = "rayon")]
     fn capture(
         db: &mut GeneralizedDatabase,
@@ -514,7 +514,10 @@ impl WarmedTx {
         coinbase_before: U256,
     ) -> Option<Self> {
         let reads = db.tx_reads.take()?;
-        if reads.accounts.contains_key(&coinbase) {
+        // Every earlier transaction's fee moves the coinbase's balance, so one that used that
+        // balance or the nonce cannot be replayed. One that only paid it, such as a transfer to
+        // the block's builder, can: what it added is part of the coinbase credit below.
+        if reads.balances.contains(&coinbase) || reads.nonces.contains(&coinbase) {
             return None;
         }
         let destroyed = |status: &AccountStatus| {
@@ -532,6 +535,17 @@ impl WarmedTx {
             }
             let after = AccountSnapshot::of(after);
             if after == *before {
+                continue;
+            }
+            if *address == coinbase {
+                // Its balance change is in the coinbase credit; anything else it cannot carry.
+                if after.info.nonce != before.info.nonce
+                    || after.info.code_hash != before.info.code_hash
+                    || after.has_storage != before.has_storage
+                    || after.exists != before.exists
+                {
+                    return None;
+                }
                 continue;
             }
             if after.info.code_hash != before.info.code_hash {
