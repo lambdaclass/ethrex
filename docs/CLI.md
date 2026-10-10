@@ -234,7 +234,7 @@ P2P options:
           [default: 100]
 
       --blob-sampling
-          Enable EIP-8070 PeerDAS blob sampling (sampler/provider state machine). Disabled by default; when off the node always acts as provider (p=1.0).
+          Enable EIP-8070 PeerDAS blob sampling (sampler/provider state machine) before Amsterdam. From Amsterdam onwards it is on regardless; until then the node always acts as provider (p=1.0).
 
           [env: ETHREX_BLOB_SAMPLING=]
 
