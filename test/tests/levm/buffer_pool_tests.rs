@@ -1,5 +1,5 @@
-//! Child-frame calldata is copied into buffers drawn from `VM::calldata_pool` and
-//! returned to it when the frame ends.
+//! Child-frame calldata and CREATE initcode are copied into buffers drawn from the VM's
+//! pools (`calldata_pool`, `initcode_pool`) and returned to them when the frame ends.
 //!
 //! Inside zkVM guests whose bump allocators never free, a fresh copy per call is never
 //! reclaimed: a contract issuing 50000 calls with 50 KB of arguments spent about 2.4 GiB
@@ -35,6 +35,8 @@ const SHA256_PRECOMPILE: u64 = 0x02;
 const IDENTITY_PRECOMPILE: u64 = 0x04;
 const CALLS: u8 = 64;
 const ARGS_SIZE: u16 = 1024;
+const CREATES: u8 = 8;
+const INITCODE_SIZE: u16 = 1024;
 const GAS_LIMIT: u64 = 10_000_000;
 
 /// [`TestDatabase`] plus the precompile result cache that block execution has.
@@ -84,17 +86,34 @@ fn call_loop(target: Address, calls: u8) -> Bytes {
     Bytes::from(code)
 }
 
+/// Runs CREATE `creates` times in a loop, each time with `INITCODE_SIZE` bytes of zeroed
+/// memory as initcode, which stops at once and deploys nothing.
+fn create_loop(creates: u8) -> Bytes {
+    let mut code = vec![0x60, creates, 0x5b]; // PUSH1 creates, JUMPDEST (pc 2)
+    code.push(0x61); // PUSH2 size
+    code.extend_from_slice(&INITCODE_SIZE.to_be_bytes());
+    code.extend_from_slice(&[0x60, 0x00, 0x60, 0x00]); // offset, value
+    code.extend_from_slice(&[0xf0, 0x50]); // CREATE, POP
+    code.extend_from_slice(&[0x60, 0x01, 0x90, 0x03]); // counter - 1
+    code.extend_from_slice(&[0x80, 0x60, 0x02, 0x57]); // DUP1, PUSH1 2, JUMPI
+    code.push(0x00); // STOP
+    Bytes::from(code)
+}
+
+/// Capacities of the buffers left in the VM's pools after a transaction.
+struct Pools {
+    calldata: Vec<usize>,
+    initcode: Vec<usize>,
+}
+
 /// Runs a transaction into the caller contract and returns the capacities of the buffers
 /// left in the calldata pool.
 fn pooled_buffer_capacities(target: Address) -> Vec<usize> {
-    pooled_buffer_capacities_with(target, CALLS, None)
+    run_caller(call_loop(target, CALLS), None).calldata
 }
 
-fn pooled_buffer_capacities_with(
-    target: Address,
-    calls: u8,
-    precompile_cache: Option<PrecompileCache>,
-) -> Vec<usize> {
+/// Runs a transaction into a contract with `caller_code`.
+fn run_caller(caller_code: Bytes, precompile_cache: Option<PrecompileCache>) -> Pools {
     let mut accounts: FxHashMap<Address, Account> = FxHashMap::default();
     accounts.insert(
         Address::from_low_u64_be(ORIGIN),
@@ -109,7 +128,7 @@ fn pooled_buffer_capacities_with(
         Address::from_low_u64_be(CALLER),
         Account::new(
             U256::zero(),
-            Code::from_bytecode(call_loop(target, calls), &NativeCrypto),
+            Code::from_bytecode(caller_code, &NativeCrypto),
             1,
             FxHashMap::default(),
         ),
@@ -181,7 +200,10 @@ fn pooled_buffer_capacities_with(
     .expect("VM::new");
     let report = vm.execute().expect("execute");
     assert!(report.is_success(), "caller tx failed: {:?}", report.result);
-    vm.calldata_pool.iter().map(BytesMut::capacity).collect()
+    Pools {
+        calldata: vm.calldata_pool.iter().map(BytesMut::capacity).collect(),
+        initcode: vm.initcode_pool.iter().map(BytesMut::capacity).collect(),
+    }
 }
 
 #[test]
@@ -209,11 +231,20 @@ fn a_cached_precompile_call_does_not_pin_the_calldata_buffer() {
     // input, so the call buffer still goes back to the pool instead of being held, with
     // all its capacity, by an entry whose budget only counts the input's length. One call,
     // so the result is a miss that gets inserted rather than a hit on an earlier entry.
-    let capacities = pooled_buffer_capacities_with(
-        Address::from_low_u64_be(SHA256_PRECOMPILE),
-        1,
+    let capacities = run_caller(
+        call_loop(Address::from_low_u64_be(SHA256_PRECOMPILE), 1),
         Some(PrecompileCache::new()),
-    );
+    )
+    .calldata;
 
     assert_eq!(capacities.len(), 1);
+}
+
+#[test]
+fn sequential_creates_reuse_one_initcode_buffer() {
+    let pools = run_caller(create_loop(CREATES), None);
+
+    // Each CREATE frame's initcode went back to the pool for the next CREATE to reuse.
+    assert_eq!(pools.initcode.len(), 1);
+    assert!(pools.initcode[0] >= usize::from(INITCODE_SIZE));
 }
