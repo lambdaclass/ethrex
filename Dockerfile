@@ -46,6 +46,7 @@ COPY --link cmd ./cmd
 COPY --link test ./test
 COPY --link tooling/repl ./tooling/repl
 COPY --link tooling/monitor ./tooling/monitor
+COPY --link tooling/runner ./tooling/runner
 COPY --link tooling/history_validator ./tooling/history_validator
 COPY --link Cargo.toml Cargo.lock ./
 COPY --link .cargo ./.cargo
@@ -95,6 +96,7 @@ COPY --link metrics ./metrics
 COPY --link test ./test
 COPY --link tooling/repl ./tooling/repl
 COPY --link tooling/monitor ./tooling/monitor
+COPY --link tooling/runner ./tooling/runner
 COPY --link tooling/history_validator ./tooling/history_validator
 COPY --link Cargo.toml Cargo.lock ./
 COPY --link .cargo ./.cargo

@@ -22,7 +22,7 @@ members = [
   "crates/storage",
   "crates/vm",
   "crates/vm/levm",
-  "crates/vm/levm/runner",
+  "tooling/runner",
   "crates/common/config",
   "tooling/history_validator",
   "tooling/repl",
@@ -32,7 +32,7 @@ members = [
 # which is x86-64-only (nasm + x86 asm) and cannot build on arm/macos. Keeping
 # it out of the root workspace keeps default builds, lint and Docker portable.
 exclude = [
-  "crates/vm/levm/bench/revm_comparison",
+  "tooling/revm_comparison",
   "tooling/zkevm_bench",
 ]
 resolver = "2"
