@@ -340,14 +340,32 @@ impl TrieLayerCache {
     /// it would never flush during re-execution; this depth gate bounds memory instead.
     pub(crate) fn get_commitable_by_depth(
         &self,
-        mut state_root: H256,
+        state_root: H256,
         threshold: usize,
     ) -> Option<H256> {
+        self.get_commitable_by_depth_if_at_least(state_root, threshold, threshold)
+    }
+
+    /// Returns the layer at `depth` only if at least `min_depth` layers are reachable from
+    /// `state_root` (one parent-chain walk). Requires `min_depth >= depth`; when equal,
+    /// matches [`Self::get_commitable_by_depth`].
+    pub(crate) fn get_commitable_by_depth_if_at_least(
+        &self,
+        mut state_root: H256,
+        depth: usize,
+        min_depth: usize,
+    ) -> Option<H256> {
+        debug_assert!(min_depth >= depth);
         let mut counter = 0;
+        let mut root_at_depth = None;
         while let Some(layer) = self.layers.get(&state_root) {
             counter += 1;
-            if counter >= threshold {
-                return Some(state_root);
+            // `>=` (not `==`) so depth 0 still selects the tip after the first increment.
+            if root_at_depth.is_none() && counter >= depth {
+                root_at_depth = Some(state_root);
+            }
+            if counter >= min_depth {
+                return root_at_depth;
             }
             state_root = layer.parent;
         }
@@ -1736,6 +1754,39 @@ mod tests {
             cache.get_commitable(l5),
             None,
             "canonical gate must commit nothing while safe_commit is zero (the wedge fix)"
+        );
+    }
+
+    /// Returns the layer at `depth` iff at least `min_depth` layers exist from `state_root`.
+    #[test]
+    fn get_commitable_by_depth_if_at_least_waits_for_min_then_returns_depth() {
+        let (mut cache, _cell) = cache_with_cell(4, H256::zero());
+        let roots = build_chain(&mut cache, 6);
+        let tip = *roots.last().unwrap();
+
+        assert_eq!(
+            cache.get_commitable_by_depth_if_at_least(tip, 4, 6),
+            cache.get_commitable_by_depth(tip, 4),
+            "when min is satisfied, result matches plain depth gate"
+        );
+        assert_eq!(
+            cache.get_commitable_by_depth_if_at_least(tip, 4, 7),
+            None,
+            "must wait until min_depth layers exist"
+        );
+        assert_eq!(
+            cache.get_commitable_by_depth_if_at_least(tip, 4, 4),
+            cache.get_commitable_by_depth(tip, 4),
+            "min_depth == depth matches get_commitable_by_depth"
+        );
+        assert_eq!(
+            cache.get_commitable_by_depth(tip, 0),
+            Some(tip),
+            "depth 0 must commit the tip layer when any layer exists"
+        );
+        assert_eq!(
+            cache.get_commitable_by_depth_if_at_least(tip, 0, 0),
+            Some(tip)
         );
     }
 
