@@ -359,13 +359,32 @@ impl BlockBody {
 }
 
 pub fn compute_transactions_root(transactions: &[Transaction], crypto: &dyn Crypto) -> H256 {
-    let iter = transactions.iter().enumerate().map(|(idx, tx)| {
-        // Key: RLP(tx_index)
-        // Value: tx_type || RLP(tx)  if tx_type != 0
-        //                   RLP(tx)  else
-        (idx.encode_to_vec(), tx.encode_canonical_to_vec())
-    });
-    Trie::compute_hash_from_unsorted_iter(iter, crypto)
+    // Key: RLP(tx_index)
+    // Value: tx_type || RLP(tx)  if tx_type != 0
+    //                   RLP(tx)  else
+    // A block's transactions are encoded, and the trie's subtrees hashed, in parallel: this
+    // runs on the block's critical path before execution can start.
+    #[cfg(feature = "rayon")]
+    {
+        let encoded: Vec<Vec<u8>> = transactions
+            .par_iter()
+            .map(|tx| tx.encode_canonical_to_vec())
+            .collect();
+        let mut trie = Trie::new_temp();
+        for (idx, value) in encoded.into_iter().enumerate() {
+            // An in-memory trie never fails to insert.
+            let _ = trie.insert(idx.encode_to_vec(), value);
+        }
+        trie.hash_no_commit_parallel(crypto)
+    }
+    #[cfg(not(feature = "rayon"))]
+    {
+        let iter = transactions
+            .iter()
+            .enumerate()
+            .map(|(idx, tx)| (idx.encode_to_vec(), tx.encode_canonical_to_vec()));
+        Trie::compute_hash_from_unsorted_iter(iter, crypto)
+    }
 }
 
 pub fn compute_receipts_root(receipts: &[Receipt], crypto: &dyn Crypto) -> H256 {

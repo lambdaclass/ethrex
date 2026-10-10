@@ -325,6 +325,29 @@ impl Trie {
         }
     }
 
+    /// [`Self::hash_no_commit`] for an in-memory trie with many unhashed nodes: the
+    /// subtrees two branch levels below the root are hashed in parallel first, and the
+    /// root is then hashed from their memoized hashes.
+    #[cfg(feature = "std")]
+    pub fn hash_no_commit_parallel(&self, crypto: &dyn Crypto) -> H256 {
+        fn memoize_parallel(node_ref: &NodeRef, depth: u8, crypto: &dyn Crypto) {
+            use rayon::prelude::*;
+            if depth > 0
+                && let NodeRef::Node(node, _) = node_ref
+                && let Node::Branch(branch) = node.as_ref()
+            {
+                branch
+                    .choices
+                    .par_iter()
+                    .for_each(|child| memoize_parallel(child, depth - 1, crypto));
+            }
+            let mut buf = Vec::with_capacity(512);
+            node_ref.memoize_hashes(&mut buf, crypto);
+        }
+        memoize_parallel(&self.root, 2, crypto);
+        self.hash_no_commit(crypto)
+    }
+
     pub fn get_root_node(&self, path: Nibbles) -> Result<Arc<Node>, TrieError> {
         self.root
             .get_node_checked(self.db.as_ref(), path)?
@@ -1099,5 +1122,26 @@ mod tests {
     #[test]
     fn empty_trie_hash_matches_keccak() {
         assert_eq!(EMPTY_TRIE_HASH, H256(keccak_hash([RLP_NULL])));
+    }
+
+    /// The parallel root hash equals the sequential one, for tries whose root is a leaf,
+    /// a branch with few children and a branch with subtrees under every nibble.
+    #[test]
+    fn parallel_root_hash_matches_sequential() {
+        for count in [0usize, 1, 2, 17, 300, 1000] {
+            let mut trie = Trie::new_temp();
+            let mut reference = Trie::new_temp();
+            for i in 0..count {
+                let key = i.encode_to_vec();
+                let value = vec![i as u8; 1 + i % 40];
+                trie.insert(key.clone(), value.clone()).unwrap();
+                reference.insert(key, value).unwrap();
+            }
+            assert_eq!(
+                trie.hash_no_commit_parallel(&NativeCrypto),
+                reference.hash_no_commit(&NativeCrypto),
+                "{count} leaves"
+            );
+        }
     }
 }

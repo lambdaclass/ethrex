@@ -123,10 +123,13 @@ impl ExecutionPayload {
         requests_hash: Option<H256>,
         block_access_list_hash: Option<H256>,
     ) -> Result<Block, RLPDecodeError> {
+        use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+        // Decoded in parallel: the payload's transactions are independent, and this runs
+        // on the block's critical path before anything else can start.
         let body = BlockBody {
             transactions: self
                 .transactions
-                .iter()
+                .par_iter()
                 .map(|encoded_tx| encoded_tx.decode())
                 .collect::<Result<Vec<_>, RLPDecodeError>>()?,
             ommers: vec![],
