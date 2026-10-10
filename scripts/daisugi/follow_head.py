@@ -15,10 +15,10 @@ import argparse
 import base64
 import hashlib
 import hmac
+import http.client
 import json
 import sys
 import time
-import urllib.error
 import urllib.request
 
 
@@ -100,7 +100,10 @@ def main() -> int:
             last_status = status
             if status == "INVALID":
                 print(json.dumps(result, indent=1), flush=True)
-        except (urllib.error.URLError, RuntimeError, KeyError, ValueError) as error:
+        # OSError covers URLError, timeouts, and refused or dropped connections,
+        # such as a node hanging up while it restarts; HTTPException covers a
+        # response cut short. Retry instead of leaving the node without a head.
+        except (OSError, http.client.HTTPException, RuntimeError, KeyError, ValueError) as error:
             print(time.strftime("%H:%M:%S"), f"error: {error}", flush=True)
         time.sleep(args.interval)
 
