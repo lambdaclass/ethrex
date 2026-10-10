@@ -450,15 +450,16 @@ pub(crate) async fn fetch_logs_with_filter(
                 .await?;
                 for block_header in headers {
                     let block_num = block_header.number;
-                    // Take the body of the block, we
-                    // will use it to access the transactions.
-                    let block_body =
-                        storage
-                            .get_block_body(block_num)
-                            .await?
-                            .ok_or(RpcErr::Internal(format!(
-                                "Could not get body for block {block_num}"
-                            )))?;
+                    // Take the body of the block, we will use it to access the
+                    // transactions. Read it by the header's hash, like the receipts,
+                    // not by number: a reorg after the header chunk was read would
+                    // otherwise pair another block's transactions with these receipts.
+                    let block_body = storage
+                        .get_block_body_by_hash(block_header.hash())
+                        .await?
+                        .ok_or(RpcErr::Internal(format!(
+                            "Could not get body for block {block_num}"
+                        )))?;
                     collect_block_logs(
                         &storage,
                         &block_header,
