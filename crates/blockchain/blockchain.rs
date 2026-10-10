@@ -54,6 +54,9 @@ pub mod stateless;
 pub mod tracing;
 pub mod vm;
 
+#[cfg(test)]
+mod handoff_tests;
+
 use ::tracing::{error, info, instrument, warn};
 // Every `debug!` call site lives in the rayon warmer path, so the import is
 // unused in any configuration that compiles that path out.
