@@ -29,7 +29,7 @@ use ethrex_rpc::{
     utils::{RpcRequest, RpcRequestId},
 };
 use ethrex_storage::Store;
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use std::{
     collections::{HashMap, HashSet},
     future::IntoFuture,
@@ -60,7 +60,7 @@ pub struct RpcApiContext {
 }
 
 pub trait RpcHandler: Sized {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr>;
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr>;
 
     async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
         let request = Self::parse(&req.params)?;
@@ -309,7 +309,15 @@ async fn handle_http_request(
     State(service_context): State<RpcApiContext>,
     body: String,
 ) -> Result<Json<Value>, StatusCode> {
-    let res = match serde_json::from_str::<RpcRequestWrapper>(&body) {
+    let wrapper = serde_json::from_str::<RpcRequestWrapper>(&body);
+    // An oversize batch is parsed only up to its first `MAX_BATCH_SIZE + 1` requests, so
+    // it must be rejected here rather than served partially.
+    if let Ok(wrapper) = &wrapper
+        && let Some(err) = ethrex_rpc::validate_batch(wrapper)
+    {
+        return Ok(Json(err));
+    }
+    let res = match wrapper {
         Ok(RpcRequestWrapper::Single(request)) => {
             let res = map_http_requests(&request, service_context).await;
             ethrex_rpc::rpc_response(request.id, res).map_err(|_| StatusCode::BAD_REQUEST)?
@@ -472,5 +480,19 @@ mod tests {
             }
             other => panic!("expected MethodNotServedHere, got {other:?}"),
         }
+    }
+
+    /// Batches larger than `MAX_BATCH_SIZE` (1000) are parsed only up to their first
+    /// 1001 requests, so the L2 HTTP handler must reject them whole rather than serve
+    /// the parsed prefix.
+    #[tokio::test]
+    async fn http_rejects_oversize_batch() {
+        let request = r#"{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}"#;
+        let body = format!("[{}]", vec![request; 1001].join(","));
+        let Json(response) = handle_http_request(State(test_context(true).await), body)
+            .await
+            .unwrap();
+        assert_eq!(response["error"]["code"], -32600, "got {response}");
+        assert!(response["id"].is_null());
     }
 }

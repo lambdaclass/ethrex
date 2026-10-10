@@ -43,7 +43,8 @@ impl EngineClient {
     }
 
     async fn send_request(&self, request: RpcRequest) -> Result<RpcResponse, EngineClientError> {
-        self.client
+        let response = self
+            .client
             .post(&self.execution_client_url)
             .bearer_auth(self.auth_token()?)
             .header("content-type", "application/json")
@@ -51,7 +52,12 @@ impl EngineClient {
                 EngineClientError::FailedToSerializeRequestBody(format!("{error}: {request:?}"))
             })?)
             .send()
-            .await?
+            .await?;
+        // An auth failure is answered with a plain-text reason, not a JSON-RPC error.
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(EngineClientError::Unauthorized(response.text().await?));
+        }
+        response
             .json::<RpcResponse>()
             .await
             .map_err(EngineClientError::from)

@@ -1,4 +1,4 @@
-use crate::authentication::authenticate;
+use crate::authentication::require_jwt;
 use crate::debug::bad_blocks::GetBadBlocksRequest;
 use crate::debug::chain_config::ChainConfigRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
@@ -60,18 +60,17 @@ use crate::tracing::{
 };
 use crate::types::transaction::SendRawTransactionRequest;
 use crate::utils::{
-    RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest, RpcRequestId,
-    RpcSuccessResponse,
+    CappedSeqVisitor, RpcErr, RpcErrorMetadata, RpcErrorResponse, RpcNamespace, RpcRequest,
+    RpcRequestId, RpcSuccessResponse,
 };
 use crate::{admin, net};
 use crate::{eth, mempool};
+use axum::body::HttpBody;
 use axum::extract::ws::{Message, WebSocket};
-use axum::extract::{DefaultBodyLimit, State, WebSocketUpgrade};
+use axum::extract::{DefaultBodyLimit, FromRequest, Request, State, WebSocketUpgrade};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response};
 use axum::{Json, Router, http::StatusCode, routing::post};
-use axum_extra::{
-    TypedHeader,
-    headers::{Authorization, authorization::Bearer},
-};
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
@@ -83,19 +82,24 @@ use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::SharedLocalNode;
 use ethrex_storage::Store;
-use serde::Deserialize;
-use serde_json::Value;
+use serde::{
+    Deserialize, Deserializer,
+    de::{IgnoredAny, MapAccess, SeqAccess, Visitor, value::MapAccessDeserializer},
+};
+use serde_json::{Value, value::RawValue};
 use spawned_concurrency::tasks::ActorRef;
 use std::{
     collections::{HashMap, HashSet},
+    fmt,
     future::IntoFuture,
+    marker::PhantomData,
     net::SocketAddr,
     sync::{Arc, Mutex},
     time::Duration,
 };
 use tokio::net::TcpListener;
 use tokio::sync::{
-    Mutex as TokioMutex,
+    Mutex as TokioMutex, Semaphore,
     mpsc::{UnboundedSender, error::SendError, unbounded_channel},
     oneshot,
 };
@@ -105,8 +109,6 @@ use tower_http::cors::CorsLayer;
 use tracing::{info, warn};
 use tracing_subscriber::{EnvFilter, Registry, reload};
 
-#[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
-use axum::response::IntoResponse;
 // only works on linux
 #[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
 pub async fn handle_get_heap() -> Result<impl IntoResponse, (StatusCode, String)> {
@@ -183,13 +185,46 @@ pub async fn handle_get_heap_flamegraph() -> Result<(), (StatusCode, String)> {
 ///
 /// According to the JSON-RPC 2.0 specification, clients may send either a single
 /// request object or an array of request objects (batch request).
-#[derive(Deserialize)]
-#[serde(untagged)]
 pub enum RpcRequestWrapper {
     /// A single JSON-RPC request.
     Single(RpcRequest),
     /// A batch of JSON-RPC requests to be processed together.
     Multiple(Vec<RpcRequest>),
+}
+
+// Hand-written instead of `#[serde(untagged)]`: the derived impl buffers the whole body
+// into an intermediate tree before trying each variant, which costs several times the
+// body size and would undo the raw `params`. This streams either one request object or
+// an array of them, materializing at most `MAX_BATCH_SIZE + 1` requests; callers reject
+// a batch over `MAX_BATCH_SIZE` with `validate_batch`.
+impl<'de> Deserialize<'de> for RpcRequestWrapper {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct WrapperVisitor;
+
+        impl<'de> Visitor<'de> for WrapperVisitor {
+            type Value = RpcRequestWrapper;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a JSON-RPC request object or an array of them")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+                RpcRequest::deserialize(MapAccessDeserializer::new(map))
+                    .map(RpcRequestWrapper::Single)
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<Self::Value, A::Error> {
+                CappedSeqVisitor {
+                    max: MAX_BATCH_SIZE,
+                    marker: PhantomData,
+                }
+                .visit_seq(seq)
+                .map(RpcRequestWrapper::Multiple)
+            }
+        }
+
+        deserializer.deserialize_any(WrapperVisitor)
+    }
 }
 
 /// Channel message type for the block executor worker thread.
@@ -368,11 +403,11 @@ pub struct NodeData {
 /// }
 ///
 /// impl RpcHandler for GetBalanceRequest {
-///     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+///     fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
 ///         let params = params.as_ref().ok_or(RpcErr::MissingParam("params"))?;
 ///         Ok(Self {
-///             address: serde_json::from_value(params[0].clone())?,
-///             block: serde_json::from_value(params[1].clone())?,
+///             address: serde_json::from_str(params[0].get())?,
+///             block: serde_json::from_str(params[1].get())?,
 ///         })
 ///     }
 ///
@@ -386,8 +421,11 @@ pub struct NodeData {
 pub trait RpcHandler: Sized {
     /// Parse JSON-RPC parameters into the handler struct.
     ///
+    /// Each param is raw JSON text; deserialize it straight into its target type
+    /// (`serde_json::from_str(param.get())`) rather than through a `Value`.
+    ///
     /// Returns an error if required parameters are missing or have invalid types.
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr>;
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr>;
 
     /// Entry point for handling an RPC request.
     ///
@@ -562,7 +600,8 @@ pub fn start_block_executor(
 ///
 /// 3. **Auth RPC** (`authrpc_addr`): JWT-authenticated endpoint for Engine API methods
 ///    (`engine_*`) used by consensus clients. Never shares a listener with the public
-///    endpoints — it alone carries the 256 MB engine body limit.
+///    endpoints — it alone carries the 128 MB engine body limit, under a shared budget of
+///    `authrpc_max_inflight_body_size` bytes in flight (see [`authrpc_router`]).
 ///
 /// # Arguments
 ///
@@ -582,6 +621,9 @@ pub fn start_block_executor(
 /// * `log_filter_handler` - Optional handler for dynamic log level changes
 /// * `gas_ceil` - Maximum gas limit for payload building
 /// * `extra_data` - Extra data to include in mined blocks
+/// * `allowed_namespaces` - Namespaces served on the public HTTP/WS endpoints
+/// * `authrpc_max_inflight_body_size` - Request body bytes the Auth-RPC listener may hold
+///   at once across all connections
 ///
 /// # Errors
 ///
@@ -606,6 +648,7 @@ pub async fn bind_api(
     gas_ceil: u64,
     extra_data: String,
     allowed_namespaces: HashSet<RpcNamespace>,
+    authrpc_max_inflight_body_size: usize,
 ) -> Result<BoundRpc, RpcStartupError> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -683,16 +726,13 @@ pub async fn bind_api(
     // Consensus-liveness channel: the sender lives in the Auth-RPC handler state (so it
     // drops when the servers stop); the receiver is handed to `serve` to spawn the monitor.
     let (timer_sender, timer_receiver) = tokio::sync::watch::channel(());
-    let authrpc_handler = move |ctx, auth, body| async move {
-        let _ = timer_sender.send(());
-        handle_authrpc_request(ctx, auth, body).await
-    };
-    let authrpc_router = Router::new()
-        .route("/", post(authrpc_handler))
-        .with_state(service_context.clone())
-        // Bump the body limit for the engine API to 256MB. This stays scoped to Auth-RPC:
-        // it is never applied to the public HTTP/WS endpoints (which keep axum's default).
-        .layer(DefaultBodyLimit::max(256 * 1024 * 1024));
+    let authrpc_router = authrpc_router(
+        service_context.clone(),
+        timer_sender,
+        authrpc_max_inflight_body_size,
+        AUTHRPC_BUDGET_WAIT_TIMEOUT,
+        AUTHRPC_BODY_READ_TIMEOUT,
+    );
 
     // Bind everything up front. The first failure aborts with an actionable error naming
     // the role, address, and flag; no listener is announced unless it actually bound.
@@ -726,6 +766,144 @@ pub async fn bind_api(
         consensus_receiver: timer_receiver,
         cancel_token,
     })
+}
+
+/// Largest request body the Auth-RPC listener accepts, the same as geth
+/// (`engineAPIBodyLimit`) and reth's auth server. Public HTTP/WS endpoints keep axum's
+/// default instead.
+pub const AUTHRPC_MAX_BODY_SIZE: usize = 128 * 1024 * 1024;
+
+/// Default for `--authrpc.max-inflight-body-size`: room for four maximum-size bodies at
+/// once, far beyond what a consensus client has in flight.
+pub const DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE: usize = 4 * AUTHRPC_MAX_BODY_SIZE;
+
+/// Time an Auth-RPC request has to deliver its whole body once its headers are in, the
+/// same as geth's `ReadTimeout`. Without it, a body that trickles in would hold its
+/// budget reservation indefinitely.
+pub(crate) const AUTHRPC_BODY_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Time an Auth-RPC request may wait for room in the body budget before it is refused
+/// with a 503. It matches the engine API's longest per-call timeout, 8 s for
+/// `engine_newPayload` and `engine_forkchoiceUpdated`: past it, the consensus client has
+/// stopped waiting for the answer.
+pub(crate) const AUTHRPC_BUDGET_WAIT_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// Builds the Auth-RPC router. Its layers run outermost first: the JWT check, then the
+/// in-flight body budget, then the handler. A request without a valid token, or one the
+/// budget cannot fit within `budget_wait_timeout`, is answered from its headers alone,
+/// before its body is read. The handler then gives the body `body_read_timeout` to arrive.
+///
+/// Every authenticated request pings `consensus_liveness`, which feeds the
+/// "consensus client offline" warning.
+pub(crate) fn authrpc_router(
+    service_context: RpcApiContext,
+    consensus_liveness: tokio::sync::watch::Sender<()>,
+    max_inflight_body_size: usize,
+    budget_wait_timeout: Duration,
+    body_read_timeout: Duration,
+) -> Router {
+    let jwt_secret = service_context.node_data.jwt_secret.clone();
+    let budget = BodyBudget::new(max_inflight_body_size, budget_wait_timeout);
+    let max_body_size = budget.max_body_size;
+    let handler = move |ctx, request: Request| async move {
+        let body = match timeout(body_read_timeout, String::from_request(request, &())).await {
+            Ok(Ok(body)) => body,
+            Ok(Err(rejection)) => {
+                warn!("Rejected Auth-RPC request: {rejection}");
+                return rejection.into_response();
+            }
+            Err(_) => {
+                let error = RpcErr::InvalidRequest(format!(
+                    "request body not received within {} seconds",
+                    body_read_timeout.as_secs_f64()
+                ));
+                warn!("Rejected Auth-RPC request: {error}");
+                return (StatusCode::REQUEST_TIMEOUT, Json(null_id_error(error))).into_response();
+            }
+        };
+        let _ = consensus_liveness.send(());
+        handle_authrpc_request(ctx, body).await.into_response()
+    };
+    Router::new()
+        .route("/", post(handler))
+        .with_state(service_context)
+        // Bounds bodies without a `Content-Length` (chunked); declared sizes are checked
+        // by the budget layer before any byte is read.
+        .layer(DefaultBodyLimit::max(max_body_size))
+        .layer(middleware::from_fn_with_state(budget, reserve_body_budget))
+        .layer(middleware::from_fn_with_state(jwt_secret, require_jwt))
+}
+
+/// Request body bytes the Auth-RPC listener may hold at once, across all connections.
+#[derive(Clone)]
+struct BodyBudget {
+    available: Arc<Semaphore>,
+    /// Per-request cap: [`AUTHRPC_MAX_BODY_SIZE`], or the whole budget when that is
+    /// smaller, so a body that could never fit gets a 413 rather than a retryable 503.
+    max_body_size: usize,
+    /// How long a request may wait for others to release enough of the budget.
+    wait_timeout: Duration,
+}
+
+impl BodyBudget {
+    fn new(max_inflight_body_size: usize, wait_timeout: Duration) -> Self {
+        Self {
+            available: Arc::new(Semaphore::new(
+                max_inflight_body_size.min(Semaphore::MAX_PERMITS),
+            )),
+            max_body_size: AUTHRPC_MAX_BODY_SIZE.min(max_inflight_body_size),
+            wait_timeout,
+        }
+    }
+}
+
+/// Reserves the request's body size from the budget before the body is read, and holds
+/// the reservation until the response is ready: the buffered body and the request parsed
+/// from it live that long. A body of unknown length (chunked) reserves the per-request
+/// cap. Rejects with 413 when the size exceeds the cap, and with 503 when the budget has
+/// no room for it within the wait timeout, both carrying a JSON-RPC error.
+async fn reserve_body_budget(
+    State(budget): State<BodyBudget>,
+    request: Request,
+    next: Next,
+) -> Response {
+    // The size hint follows hyper's framing rather than the raw header: exact for a body
+    // delimited by `Content-Length`, absent for a chunked one.
+    let reserved = match request.body().size_hint().exact() {
+        Some(size) => usize::try_from(size).unwrap_or(usize::MAX),
+        None => budget.max_body_size,
+    };
+    // Permits are counted in `u32`; the per-request cap is far below `u32::MAX`, so a size
+    // that does not convert is over the cap anyway.
+    let permits = match u32::try_from(reserved) {
+        Ok(permits) if reserved <= budget.max_body_size => permits,
+        _ => {
+            let error = RpcErr::InvalidRequest(format!(
+                "request body exceeds the {} byte limit",
+                budget.max_body_size
+            ));
+            warn!("Rejected Auth-RPC request of {reserved} body bytes: {error}");
+            return (StatusCode::PAYLOAD_TOO_LARGE, Json(null_id_error(error))).into_response();
+        }
+    };
+    // A request that does not fit yet waits for others to finish instead of failing at
+    // once. Waiting holds no body bytes, since the body is read only after the reservation.
+    // The semaphore is never closed, so an acquire error is handled like a timeout.
+    let reservation = timeout(
+        budget.wait_timeout,
+        budget.available.clone().acquire_many_owned(permits),
+    )
+    .await;
+    let Ok(Ok(_reservation)) = reservation else {
+        warn!(
+            "Rejected Auth-RPC request: no room for {permits} body bytes in the in-flight budget after waiting {} seconds. Raise --authrpc.max-inflight-body-size if this repeats",
+            budget.wait_timeout.as_secs_f64()
+        );
+        let error =
+            RpcErr::Internal("too many request body bytes in flight, retry later".to_string());
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(null_id_error(error))).into_response();
+    };
+    next.run(request).await
 }
 
 /// RPC listeners bound and ready to serve. Produced by [`bind_api`] and consumed by
@@ -820,6 +998,7 @@ pub async fn start_api(
     gas_ceil: u64,
     extra_data: String,
     allowed_namespaces: HashSet<RpcNamespace>,
+    authrpc_max_inflight_body_size: usize,
     cancel_token: CancellationToken,
 ) -> Result<(), RpcErr> {
     bind_api(
@@ -838,6 +1017,7 @@ pub async fn start_api(
         gas_ceil,
         extra_data,
         allowed_namespaces,
+        authrpc_max_inflight_body_size,
     )
     .await?
     .serve()
@@ -972,8 +1152,9 @@ fn null_id_error(err: RpcErr) -> Value {
 
 /// Validate a batch envelope. Returns `Some(error_value)` for empty or
 /// oversize batches (short-circuits dispatch), `None` if the request is
-/// ok to process.
-fn validate_batch(wrapper: &RpcRequestWrapper) -> Option<Value> {
+/// ok to process. Every consumer of a parsed [`RpcRequestWrapper`] must call
+/// this: an oversize batch is parsed only up to `MAX_BATCH_SIZE + 1` requests.
+pub fn validate_batch(wrapper: &RpcRequestWrapper) -> Option<Value> {
     let RpcRequestWrapper::Multiple(requests) = wrapper else {
         return None;
     };
@@ -984,8 +1165,7 @@ fn validate_batch(wrapper: &RpcRequestWrapper) -> Option<Value> {
     }
     if requests.len() > MAX_BATCH_SIZE {
         return Some(null_id_error(RpcErr::InvalidRequest(format!(
-            "batch too large: {} > {MAX_BATCH_SIZE}",
-            requests.len()
+            "batch too large: more than {MAX_BATCH_SIZE} requests"
         ))));
     }
     None
@@ -1029,9 +1209,12 @@ pub(crate) async fn handle_http_request(
     Ok(Json(res))
 }
 
-pub async fn handle_authrpc_request(
+/// Serves an Auth-RPC request. The JWT check and the body budget run before this as
+/// router layers (see [`authrpc_router`]), so only authenticated requests that fit the
+/// budget get their body read and parsed. Crate-private so it can only be served behind
+/// those layers.
+pub(crate) async fn handle_authrpc_request(
     State(service_context): State<RpcApiContext>,
-    auth_header: Option<TypedHeader<Authorization<Bearer>>>,
     body: String,
 ) -> Result<Json<Value>, StatusCode> {
     let wrapper: RpcRequestWrapper = match serde_json::from_str(&body) {
@@ -1043,36 +1226,9 @@ pub async fn handle_authrpc_request(
         }
     };
 
-    // Reject empty / oversize batches before any auth or dispatch work so a
-    // 100k-request body can't burn JWT crypto or memory.
+    // Reject empty / oversize batches before any dispatch work.
     if let Some(err) = validate_batch(&wrapper) {
         return Ok(Json(err));
-    }
-
-    if let Err(error) = authenticate(&service_context.node_data.jwt_secret, auth_header) {
-        // Auth failed: respond before dispatching anything. For batches, mirror
-        // the batch shape and emit one error response per request so clients
-        // can still correlate by id.
-        let error_meta: RpcErrorMetadata = error.into();
-        let res = match wrapper {
-            RpcRequestWrapper::Single(req) => serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": req.id,
-                "error": error_meta,
-            }),
-            RpcRequestWrapper::Multiple(requests) => {
-                let mut responses = Vec::with_capacity(requests.len());
-                for req in requests {
-                    responses.push(serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "id": req.id,
-                        "error": error_meta.clone(),
-                    }));
-                }
-                serde_json::to_value(responses).map_err(|_| StatusCode::BAD_REQUEST)?
-            }
-        };
-        return Ok(Json(res));
     }
 
     let res = match wrapper {
@@ -1165,16 +1321,15 @@ where
     Fut: std::future::Future<Output = Result<Value, E>>,
     E: Into<RpcErrorMetadata>,
 {
-    // Parse as raw JSON first so we can distinguish between:
+    // Check the syntax first, without allocating, so we can distinguish between:
     //   -32700 Parse error (malformed JSON)
     //   -32600 Invalid Request (valid JSON, but not a valid JSON-RPC request object)
-    let parsed: Value = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Some(ws_error_response(None, -32700, "Parse error")),
-    };
+    if serde_json::from_str::<IgnoredAny>(body).is_err() {
+        return Some(ws_error_response(None, -32700, "Parse error"));
+    }
 
     // Accept both a single request and a batch (array), matching HTTP behavior.
-    let wrapper: RpcRequestWrapper = match serde_json::from_value(parsed) {
+    let wrapper: RpcRequestWrapper = match serde_json::from_str(body) {
         Ok(w) => w,
         Err(_) => return Some(ws_error_response(None, -32600, "Invalid Request")),
     };
@@ -1186,8 +1341,10 @@ where
             Some(resp.to_string())
         }
         RpcRequestWrapper::Multiple(reqs) => {
-            // Per JSON-RPC 2.0 spec, an empty batch is an invalid request.
-            if reqs.is_empty() {
+            // Per JSON-RPC 2.0 spec, an empty batch is an invalid request. An oversize
+            // one was only parsed up to `MAX_BATCH_SIZE + 1` requests, so it must be
+            // rejected rather than served partially.
+            if reqs.is_empty() || reqs.len() > MAX_BATCH_SIZE {
                 return Some(ws_error_response(None, -32600, "Invalid Request"));
             }
             let mut responses = Vec::with_capacity(reqs.len());
@@ -1273,9 +1430,12 @@ pub async fn handle_eth_subscribe(
     use crate::subscription_manager::MAX_SUBSCRIPTIONS_PER_CONNECTION;
 
     let params = req.params.as_deref().unwrap_or(&[]);
-    let sub_type = params.first().and_then(|v| v.as_str()).ok_or_else(|| {
-        RpcErr::BadParams("eth_subscribe requires a subscription type parameter".to_string())
-    })?;
+    let sub_type = params
+        .first()
+        .and_then(|v| serde_json::from_str::<String>(v.get()).ok())
+        .ok_or_else(|| {
+            RpcErr::BadParams("eth_subscribe requires a subscription type parameter".to_string())
+        })?;
 
     if subscription_ids.len() >= MAX_SUBSCRIPTIONS_PER_CONNECTION {
         return Err(RpcErr::BadParams(format!(
@@ -1283,7 +1443,7 @@ pub async fn handle_eth_subscribe(
         )));
     }
 
-    match sub_type {
+    match sub_type.as_str() {
         "newHeads" => {
             let ws = context
                 .ws
@@ -1318,11 +1478,10 @@ pub async fn handle_eth_unsubscribe(
     let params = req.params.as_deref().unwrap_or(&[]);
     let sub_id = params
         .first()
-        .and_then(|v| v.as_str())
+        .and_then(|v| serde_json::from_str::<String>(v.get()).ok())
         .ok_or_else(|| {
             RpcErr::BadParams("eth_unsubscribe requires a subscription ID parameter".to_string())
-        })?
-        .to_string();
+        })?;
 
     // Only unsubscribe if the requested ID belongs to this connection.
     let Some(pos) = subscription_ids.iter().position(|id| id == &sub_id) else {
@@ -1798,6 +1957,69 @@ mod tests {
                 "default allowlist should route {method}, got {result:?}"
             );
         }
+    }
+
+    const CHAIN_ID_REQUEST: &str = r#"{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}"#;
+
+    /// One object parses as a single request and an array as a batch. An oversize batch
+    /// is materialized only up to `MAX_BATCH_SIZE + 1` requests, which `validate_batch`
+    /// then rejects.
+    #[test]
+    fn request_wrapper_parses_single_and_batched_requests() {
+        assert!(matches!(
+            serde_json::from_str::<RpcRequestWrapper>(CHAIN_ID_REQUEST),
+            Ok(RpcRequestWrapper::Single(_))
+        ));
+        let batch = format!("[{CHAIN_ID_REQUEST},{CHAIN_ID_REQUEST}]");
+        assert!(matches!(
+            serde_json::from_str::<RpcRequestWrapper>(&batch),
+            Ok(RpcRequestWrapper::Multiple(requests)) if requests.len() == 2
+        ));
+
+        let oversize = format!("[{}]", vec![CHAIN_ID_REQUEST; 3 * MAX_BATCH_SIZE].join(","));
+        let wrapper: RpcRequestWrapper = serde_json::from_str(&oversize).unwrap();
+        let RpcRequestWrapper::Multiple(requests) = &wrapper else {
+            panic!("an array must parse as a batch");
+        };
+        assert_eq!(requests.len(), MAX_BATCH_SIZE + 1);
+        let error = validate_batch(&wrapper).expect("an oversize batch must be rejected");
+        assert_eq!(error["error"]["code"], -32600);
+        assert!(error["id"].is_null());
+
+        for invalid in ["1", r#""x""#, "null", "[1]", "{}", "[{}]"] {
+            assert!(
+                serde_json::from_str::<RpcRequestWrapper>(invalid).is_err(),
+                "{invalid} is not a JSON-RPC request"
+            );
+        }
+    }
+
+    /// WebSocket batches obey the same size limit as HTTP: an oversize one is rejected
+    /// whole rather than served for the requests that were parsed.
+    #[tokio::test]
+    async fn ws_rejects_oversize_batch() {
+        let storage = Store::new("temp.db", EngineType::InMemory).expect("in-memory store");
+        let context = default_context_with_storage(storage).await;
+        let (out_tx, _out_rx) = tokio::sync::mpsc::channel::<String>(1);
+        let mut subscription_ids: Vec<String> = Vec::new();
+        let route_request = |_req: RpcRequest| async move {
+            panic!("an oversize batch must not be dispatched");
+            #[allow(unreachable_code)]
+            Ok::<Value, RpcErr>(Value::Null)
+        };
+
+        let body = format!("[{}]", vec![CHAIN_ID_REQUEST; MAX_BATCH_SIZE + 1].join(","));
+        let response = handle_ws_request(
+            &body,
+            &context,
+            &out_tx,
+            &mut subscription_ids,
+            &route_request,
+        )
+        .await
+        .expect("an oversize batch must get an error response");
+        let response: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(response["error"]["code"], -32600);
     }
 
     /// WebSocket subscriptions live in the `eth` namespace and must obey the

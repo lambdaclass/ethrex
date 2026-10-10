@@ -7,7 +7,7 @@ use ethrex_common::{
     types::{BYTES_PER_CELL, Blob, BlobsBundle, CELLS_PER_EXT_BLOB, Proof},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use tracing::debug;
 
 use crate::{
@@ -52,7 +52,7 @@ pub struct BlobAndProofV2 {
 }
 
 impl RpcHandler for BlobsV1Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -60,7 +60,7 @@ impl RpcHandler for BlobsV1Request {
             return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
         };
         Ok(BlobsV1Request {
-            blob_versioned_hashes: serde_json::from_value(params[0].clone())?,
+            blob_versioned_hashes: serde_json::from_str(params[0].get())?,
         })
     }
 
@@ -116,7 +116,7 @@ impl RpcHandler for BlobsV1Request {
 }
 
 impl RpcHandler for BlobsV2Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -124,7 +124,7 @@ impl RpcHandler for BlobsV2Request {
             return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
         };
         Ok(BlobsV2Request {
-            blob_versioned_hashes: serde_json::from_value(params[0].clone())?,
+            blob_versioned_hashes: serde_json::from_str(params[0].get())?,
         })
     }
 
@@ -139,7 +139,7 @@ impl RpcHandler for BlobsV2Request {
 }
 
 impl RpcHandler for BlobsV3Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -147,7 +147,7 @@ impl RpcHandler for BlobsV3Request {
             return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
         };
         Ok(BlobsV3Request {
-            blob_versioned_hashes: serde_json::from_value(params[0].clone())?,
+            blob_versioned_hashes: serde_json::from_str(params[0].get())?,
         })
     }
 
@@ -309,14 +309,14 @@ pub struct BlobsV4Request {
 }
 
 impl RpcHandler for BlobsV4Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 2 {
             return Err(RpcErr::BadParams("Expected 2 params".to_owned()));
         }
-        let versioned_blob_hashes: Vec<H256> = serde_json::from_value(params[0].clone())?;
+        let versioned_blob_hashes: Vec<H256> = serde_json::from_str(params[0].get())?;
         let indices_bitarray = parse_indices_bitarray(&params[1])?;
         Ok(BlobsV4Request {
             versioned_blob_hashes,
@@ -461,11 +461,10 @@ impl RpcHandler for BlobsV4Request {
 
 /// Parse the 16-byte little-endian hex `indices_bitarray` param (column `i` →
 /// byte `i/8`, bit `i%8`; same CustodyBitmap layout as `custodyColumns`).
-pub(crate) fn parse_indices_bitarray(value: &Value) -> Result<u128, RpcErr> {
-    let hex_str = value
-        .as_str()
-        .ok_or_else(|| RpcErr::BadParams("indices_bitarray must be a hex string".into()))?;
-    let stripped = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+pub(crate) fn parse_indices_bitarray(value: &RawValue) -> Result<u128, RpcErr> {
+    let hex_str = serde_json::from_str::<String>(value.get())
+        .map_err(|_| RpcErr::BadParams("indices_bitarray must be a hex string".into()))?;
+    let stripped = hex_str.strip_prefix("0x").unwrap_or(&hex_str);
     let bytes = hex::decode(stripped)
         .map_err(|_| RpcErr::BadParams("indices_bitarray: invalid hex".into()))?;
     if bytes.len() != 16 {

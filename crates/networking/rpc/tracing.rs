@@ -8,7 +8,7 @@ use ethrex_common::{
 };
 use ethrex_vm::tracing::OpcodeTracerConfig;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
@@ -155,7 +155,7 @@ impl<TxTrace: Serialize> From<(H256, TxTrace)> for BlockTraceComponent<TxTrace> 
 }
 
 impl RpcHandler for TraceTransactionRequest {
-    fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -163,13 +163,13 @@ impl RpcHandler for TraceTransactionRequest {
             return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         };
         let trace_config = if params.len() == 2 {
-            serde_json::from_value(params[1].clone())?
+            serde_json::from_str(params[1].get())?
         } else {
             TraceConfig::default()
         };
 
         Ok(TraceTransactionRequest {
-            tx_hash: serde_json::from_value(params[0].clone())?,
+            tx_hash: serde_json::from_str(params[0].get())?,
             trace_config,
         })
     }
@@ -260,7 +260,7 @@ impl RpcHandler for TraceTransactionRequest {
 }
 
 impl RpcHandler for TraceBlockByNumberRequest {
-    fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -268,12 +268,12 @@ impl RpcHandler for TraceBlockByNumberRequest {
             return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         };
         let trace_config = if params.len() == 2 {
-            serde_json::from_value(params[1].clone())?
+            serde_json::from_str(params[1].get())?
         } else {
             TraceConfig::default()
         };
 
-        let block = BlockIdentifier::parse(params[0].clone(), 0)?;
+        let block = BlockIdentifier::parse_param(&params[0], 0)?;
 
         Ok(TraceBlockByNumberRequest {
             block,
@@ -300,7 +300,7 @@ impl RpcHandler for TraceBlockByNumberRequest {
 }
 
 impl RpcHandler for TraceBlockByHashRequest {
-    fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -308,13 +308,13 @@ impl RpcHandler for TraceBlockByHashRequest {
             return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         };
         let trace_config = if params.len() == 2 {
-            serde_json::from_value(params[1].clone())?
+            serde_json::from_str(params[1].get())?
         } else {
             TraceConfig::default()
         };
 
         Ok(TraceBlockByHashRequest {
-            block_hash: serde_json::from_value(params[0].clone())?,
+            block_hash: serde_json::from_str(params[0].get())?,
             trace_config,
         })
     }
@@ -495,7 +495,7 @@ impl TraceCallRequest {
 }
 
 impl RpcHandler for TraceCallRequest {
-    fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -503,32 +503,32 @@ impl RpcHandler for TraceCallRequest {
             return Err(RpcErr::BadParams("Expected 1 to 5 params".to_owned()));
         }
 
-        let transaction = serde_json::from_value(params[0].clone())?;
+        let transaction = serde_json::from_str(params[0].get())?;
 
         // Block and traceConfig are optional: a JSON `null` is treated the same as an
         // omitted argument, matching geth (which accepts `traceCall(call, null, {...})`).
         // Block defaults to `latest` when absent.
         let block = match params.get(1) {
-            Some(value) if !value.is_null() => BlockIdentifierOrHash::parse(value.clone(), 1)?,
+            Some(value) if value.get() != "null" => BlockIdentifierOrHash::parse_param(value, 1)?,
             _ => BlockIdentifierOrHash::Identifier(BlockIdentifier::default()),
         };
 
         let mut trace_config: TraceCallConfig = match params.get(2) {
-            Some(value) if !value.is_null() => serde_json::from_value(value.clone())?,
+            Some(value) if value.get() != "null" => serde_json::from_str(value.get())?,
             _ => TraceCallConfig::default(),
         };
 
         // Positional params 4 and 5 are an ethrex extension kept for backwards
         // compatibility. The geth-shaped nested fields win when both are present.
         if trace_config.state_overrides.is_none()
-            && let Some(value) = params.get(3).filter(|v| !v.is_null())
+            && let Some(value) = params.get(3).filter(|v| v.get() != "null")
         {
-            trace_config.state_overrides = Some(serde_json::from_value(value.clone())?);
+            trace_config.state_overrides = Some(serde_json::from_str(value.get())?);
         }
         if trace_config.block_overrides.is_none()
-            && let Some(value) = params.get(4).filter(|v| !v.is_null())
+            && let Some(value) = params.get(4).filter(|v| v.get() != "null")
         {
-            trace_config.block_overrides = Some(serde_json::from_value(value.clone())?);
+            trace_config.block_overrides = Some(serde_json::from_str(value.get())?);
         }
 
         Ok(TraceCallRequest {

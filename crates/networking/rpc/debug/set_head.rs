@@ -1,6 +1,6 @@
 use ethrex_blockchain::fork_choice::apply_fork_choice;
 use ethrex_common::types::BlockNumber;
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 
 use crate::{RpcApiContext, RpcErr, RpcHandler};
 
@@ -14,7 +14,7 @@ pub struct SetHeadRequest {
 }
 
 impl RpcHandler for SetHeadRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -24,16 +24,14 @@ impl RpcHandler for SetHeadRequest {
                 params.len()
             )));
         }
-        let block_number = match &params[0] {
-            Value::String(hex) => {
-                let trimmed = hex.strip_prefix("0x").unwrap_or(hex);
-                BlockNumber::from_str_radix(trimmed, 16)
-                    .map_err(|err| RpcErr::BadParams(format!("invalid block number: {err}")))?
-            }
-            Value::Number(num) => num
-                .as_u64()
-                .ok_or_else(|| RpcErr::BadParams("invalid block number".to_owned()))?,
-            _ => return Err(RpcErr::BadParams("invalid block number".to_owned())),
+        // Accepts a hex string or a plain JSON number.
+        let block_number = if let Ok(hex) = serde_json::from_str::<String>(params[0].get()) {
+            let trimmed = hex.strip_prefix("0x").unwrap_or(&hex);
+            BlockNumber::from_str_radix(trimmed, 16)
+                .map_err(|err| RpcErr::BadParams(format!("invalid block number: {err}")))?
+        } else {
+            serde_json::from_str::<u64>(params[0].get())
+                .map_err(|_| RpcErr::BadParams("invalid block number".to_owned()))?
         };
         Ok(Self { block_number })
     }

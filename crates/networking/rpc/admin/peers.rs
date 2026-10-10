@@ -112,11 +112,11 @@ fn parse(request: &RpcRequest) -> Result<Node, RpcErr> {
 
     let url = params
         .first()
-        .ok_or(RpcErr::MissingParam("enode url".to_string()))?
-        .as_str()
-        .ok_or(RpcErr::WrongParam("Expected string".to_string()))?;
+        .ok_or(RpcErr::MissingParam("enode url".to_string()))?;
+    let url = serde_json::from_str::<String>(url.get())
+        .map_err(|_| RpcErr::WrongParam("Expected string".to_string()))?;
 
-    Node::from_enode_url(url).map_err(|error| RpcErr::BadParams(error.to_string()))
+    Node::from_enode_url(&url).map_err(|error| RpcErr::BadParams(error.to_string()))
 }
 
 pub async fn add_peer(context: &mut RpcApiContext, request: &RpcRequest) -> Result<Value, RpcErr> {
