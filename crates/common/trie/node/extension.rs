@@ -116,7 +116,8 @@ impl ExtensionNode {
             };
             let mut choices = BranchNode::EMPTY_CHOICES;
             let mut branch_node = if self.prefix.at(0) == 16 {
-                match new_node.get_node_mut(db, path.current())? {
+                // Child is keyed at own_path ++ prefix (see NodeRef::commit).
+                match new_node.get_node_mut(db, path.current().concat(&self.prefix))? {
                     Some(Node::Leaf(leaf)) => {
                         BranchNode::new_with_value(choices, leaf.value.clone())
                     }
@@ -131,7 +132,7 @@ impl ExtensionNode {
                                         .compute_hash(&NativeCrypto)
                                         .finalize(&NativeCrypto),
                                     extension_node_prefix: self.prefix.clone(),
-                                    node_path: path.current(),
+                                    node_path: path.current().concat(&self.prefix),
                                 },
                             ),
                         )));
@@ -147,7 +148,7 @@ impl ExtensionNode {
                                         .compute_hash(&NativeCrypto)
                                         .finalize(&NativeCrypto),
                                     extension_node_prefix: self.prefix.clone(),
-                                    node_path: path.current(),
+                                    node_path: path.current().concat(&self.prefix),
                                 },
                             ),
                         )));
@@ -602,6 +603,95 @@ mod test {
                 0xA3, 0x48, 0xD3, 0x30, 0x76, 0x26, 0x14, 0x84, 0x55, 0xA0, 0xAE, 0xFE, 0x0F, 0x52,
                 0x89, 0x5F, 0x36, 0x06,
             ],
+        );
+    }
+
+    #[test]
+    fn insert_leaf_flag_prefix_hashed_child_db_key() {
+        use crate::db::InMemoryTrieDB;
+        use crate::node_hash::NodeHash;
+
+        let db = InMemoryTrieDB::new_empty();
+        let value = vec![0xAB; 40];
+        let leaf = LeafNode::new(Nibbles::from_hex(vec![16]), value.clone());
+        let enc = Node::from(leaf).encode_to_vec();
+        let hash = NodeHash::from_encoded(&enc, &NativeCrypto);
+        assert!(
+            matches!(hash, NodeHash::Hashed(_)),
+            "leaf must be Hashed so the path-keyed DB read is exercised"
+        );
+
+        let own_path = Nibbles::default();
+        let child_key = own_path.concat(&Nibbles::from_hex(vec![16]));
+        db.put(child_key.clone(), enc).unwrap();
+
+        // Leaf is stored under own_path ++ prefix, not under own_path.
+        assert!(db.get(own_path).unwrap().is_none());
+        assert!(db.get(child_key).unwrap().is_some());
+
+        let mut ext = ExtensionNode::new(Nibbles::from_hex(vec![16]), hash.into());
+        let result = ext.insert(&db, Nibbles::from_bytes(&[0x00]), vec![0x01].into());
+        let node = result.expect("child must load at own_path ++ prefix");
+        let Some(Node::Branch(branch)) = node else {
+            panic!("expected branch node, got {node:?}");
+        };
+        assert_eq!(branch.value, value);
+        assert!(branch.choices[0].is_valid());
+        assert_eq!(
+            branch.get(&db, Nibbles::from_bytes(&[0x00])).unwrap(),
+            Some(vec![0x01])
+        );
+    }
+
+    #[test]
+    fn insert_leaf_flag_prefix_hashed_child_nested_own_path() {
+        use crate::db::InMemoryTrieDB;
+        use crate::node_hash::NodeHash;
+
+        let db = InMemoryTrieDB::new_empty();
+        let value = vec![0xCD; 40];
+        let leaf = LeafNode::new(Nibbles::from_hex(vec![16]), value.clone());
+        let enc = Node::from(leaf).encode_to_vec();
+        let hash = NodeHash::from_encoded(&enc, &NativeCrypto);
+        assert!(matches!(hash, NodeHash::Hashed(_)));
+
+        let own_path = Nibbles::from_hex(vec![5]);
+        let child_key = own_path.concat(&Nibbles::from_hex(vec![16]));
+        db.put(child_key.clone(), enc).unwrap();
+
+        assert!(db.get(own_path.clone()).unwrap().is_none());
+        assert!(db.get(child_key).unwrap().is_some());
+
+        let mut ext = ExtensionNode::new(Nibbles::from_hex(vec![16]), hash.into());
+        // Path after descending through branch choice 5.
+        let mut path = Nibbles::from_bytes(&[0x50]); // [5, 0, 16]
+        assert_eq!(path.next(), Some(5));
+        assert_eq!(path.current().as_ref(), &[5]);
+
+        let result = ext.insert(&db, path, vec![0x02].into());
+        let node = result.expect("child must load at nested own_path ++ prefix");
+        let Some(Node::Branch(branch)) = node else {
+            panic!("expected branch node, got {node:?}");
+        };
+        assert_eq!(branch.value, value);
+        assert!(branch.choices[0].is_valid());
+        assert_eq!(
+            branch.get(&db, Nibbles::from_hex(vec![0, 16])).unwrap(),
+            Some(vec![0x02])
+        );
+    }
+
+    #[test]
+    fn insert_leaf_flag_prefix_embedded_child_ok() {
+        use crate::db::InMemoryTrieDB;
+
+        let db = InMemoryTrieDB::new_empty();
+        let leaf = LeafNode::new(Nibbles::from_hex(vec![16]), vec![0xAB; 40]);
+        let mut ext = ExtensionNode::new(Nibbles::from_hex(vec![16]), Node::from(leaf).into());
+        let result = ext.insert(&db, Nibbles::from_bytes(&[0x00]), vec![0x01].into());
+        assert!(
+            matches!(result, Ok(Some(Node::Branch(_)))),
+            "embedded child must ignore the DB key; got {result:?}"
         );
     }
 
