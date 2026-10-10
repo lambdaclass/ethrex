@@ -1456,9 +1456,12 @@ impl Blockchain {
         )?;
         // The warmed results hold the block's read and write maps; freeing them here would
         // run on the block's critical path.
+        #[cfg(feature = "rayon")]
         if let Some(warmed_results) = warmed_results {
             ethrex_vm::backends::levm::spawn_warm_io(move || drop(warmed_results));
         }
+        #[cfg(not(feature = "rayon"))]
+        drop(warmed_results);
         let (account_updates_list, streaming_witness, merkle_start_instant, merkle_end_instant) =
             merkleization_result?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
