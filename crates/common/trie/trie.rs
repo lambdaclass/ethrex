@@ -623,18 +623,20 @@ impl Trie {
         Trie::new(Box::new(NullTrieDB))
     }
 
-    /// Obtain the encoded node given its path.
-    /// Allows usage of full paths (byte slice of 32 bytes) or compact-encoded nibble slices (with length lower than 32)
+    /// Maximum compact-encoded path length accepted by [`Self::get_node`].
+    /// Longer inputs return an empty node (aligned with geth's snap path guard).
+    const MAX_GET_NODE_PATH_LEN: usize = 32;
+
+    /// Obtain the RLP encoding of the trie node at a compact-encoded path.
+    ///
+    /// Empty path returns the root. Paths longer than [`Self::MAX_GET_NODE_PATH_LEN`]
+    /// return an empty vector. The path is snap `GetTrieNodes` compact encoding,
+    /// not a raw 32-byte account or storage key — use [`Self::get`] for values.
     pub fn get_node(&self, partial_path: &PathRLP) -> Result<Vec<u8>, TrieError> {
-        // Convert compact-encoded nibbles into a byte slice if necessary
-        let partial_path = match partial_path.len() {
-            // Compact-encoded nibbles
-            n if n < 32 => Nibbles::decode_compact(partial_path),
-            // Full path (No conversion needed)
-            32 => Nibbles::from_bytes(partial_path),
-            // We won't handle paths with length over 32
-            _ => return Ok(vec![]),
-        };
+        if partial_path.len() > Self::MAX_GET_NODE_PATH_LEN {
+            return Ok(vec![]);
+        }
+        let partial_path = Nibbles::decode_compact(partial_path);
 
         fn get_node_inner(
             db: &dyn TrieDB,
@@ -647,38 +649,52 @@ impl Trie {
                 return Ok(node.encode_to_vec());
             }
             match node {
-                Node::Branch(branch_node) => match partial_path.next_choice() {
-                    Some(idx) => {
-                        let child_ref = &branch_node.choices[idx];
-                        if child_ref.is_valid() {
-                            let child_path = current_path.append_new(idx as u8);
-                            let child_node = child_ref
-                                .get_node_checked(db, child_path.clone())?
-                                .ok_or_else(|| {
-                                    TrieError::InconsistentTree(Box::new(
-                                        InconsistentTreeError::NodeNotFoundOnBranchNode(
-                                            child_ref
-                                                .compute_hash(&NativeCrypto)
-                                                .finalize(&NativeCrypto),
-                                            branch_node
-                                                .compute_hash(&NativeCrypto)
-                                                .finalize(&NativeCrypto),
-                                            child_path.clone(),
-                                        ),
-                                    ))
-                                })?;
-                            get_node_inner(db, child_path, &child_node, partial_path)
+                Node::Branch(branch_node) => {
+                    // Path is non-empty here; avoid `next_choice` (it treats 16 as a miss).
+                    let nibble = partial_path
+                        .next()
+                        .expect("non-empty partial_path checked above");
+                    if nibble == 16 {
+                        // Leaf terminator: return this branch only if the path ends here.
+                        return if partial_path.is_empty() {
+                            Ok(node.encode_to_vec())
                         } else {
                             Ok(vec![])
-                        }
+                        };
                     }
-                    _ => Ok(vec![]),
-                },
+                    if nibble > 15 {
+                        return Ok(vec![]);
+                    }
+                    let idx = nibble as usize;
+                    let child_ref = &branch_node.choices[idx];
+                    if child_ref.is_valid() {
+                        let child_path = current_path.append_new(nibble);
+                        let child_node = child_ref
+                            .get_node_checked(db, child_path.clone())?
+                            .ok_or_else(|| {
+                                TrieError::InconsistentTree(Box::new(
+                                    InconsistentTreeError::NodeNotFoundOnBranchNode(
+                                        child_ref
+                                            .compute_hash(&NativeCrypto)
+                                            .finalize(&NativeCrypto),
+                                        branch_node
+                                            .compute_hash(&NativeCrypto)
+                                            .finalize(&NativeCrypto),
+                                        child_path.clone(),
+                                    ),
+                                ))
+                            })?;
+                        get_node_inner(db, child_path, &child_node, partial_path)
+                    } else {
+                        Ok(vec![])
+                    }
+                }
                 Node::Extension(extension_node) => {
                     if partial_path.skip_prefix(&extension_node.prefix)
                         && extension_node.child.is_valid()
                     {
-                        let child_path = partial_path.concat(&extension_node.prefix);
+                        // Child is keyed at current_path ++ prefix (see NodeRef::commit).
+                        let child_path = current_path.concat(&extension_node.prefix);
                         let child_node = extension_node
                             .child
                             .get_node_checked(db, child_path.clone())?
