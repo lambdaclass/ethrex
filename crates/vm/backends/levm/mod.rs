@@ -770,8 +770,9 @@ impl ReceiptHasher {
 /// One slot per transaction of a block, filled by the warmer and taken by execution.
 pub struct WarmedTxs {
     slots: Box<[std::sync::Mutex<Option<WarmedTx>>]>,
-    /// How many of the block's transactions execution has finished.
-    executed: AtomicUsize,
+    /// How many of the block's transactions execution has finished. Shared with each warming
+    /// run, which stops at its next state access once execution has passed its transaction.
+    executed: Arc<AtomicUsize>,
     /// The changes of every result published so far, by block position.
     #[cfg(feature = "rayon")]
     writes: Arc<std::sync::RwLock<WarmedWrites>>,
@@ -801,7 +802,7 @@ impl WarmedTxs {
             slots: (0..transactions)
                 .map(|_| std::sync::Mutex::new(None))
                 .collect(),
-            executed: AtomicUsize::new(0),
+            executed: Arc::new(AtomicUsize::new(0)),
             #[cfg(feature = "rayon")]
             writes: Arc::default(),
             #[cfg(feature = "rayon")]
@@ -4769,6 +4770,7 @@ impl LEVM {
                 position,
             });
             let mut db = GeneralizedDatabase::new(merged);
+            db.stop_when_executed_past = Some((results.executed.clone(), position));
             let coinbase_before = coinbase_balance(&mut db, header.coinbase).ok()?;
             db.tx_reads = Some(TxReads::default());
             let report = Self::run_tx_in_block(
@@ -4825,6 +4827,16 @@ impl LEVM {
                     if should_stop() {
                         break;
                     }
+                    // Execution past this transaction has no use for its result, and a run it
+                    // overtakes stops at its next state access; either way the rest of the unit
+                    // runs on a state execution has already left behind.
+                    let passed_position =
+                        |results: &WarmedTxs| results.executed.load(Ordering::Relaxed) > position;
+                    if results.is_some_and(passed_position) {
+                        break;
+                    }
+                    db.stop_when_executed_past =
+                        results.map(|results| (results.executed.clone(), position));
                     if keep_results {
                         // The balance check stays on: turning it off also skips charging the
                         // sender, which would leave its balance wrong.
@@ -4871,6 +4883,9 @@ impl LEVM {
                             ))) => db.tx_reads = None,
                             _ => {
                                 db.tx_reads = None;
+                                if results.is_some_and(passed_position) {
+                                    break;
+                                }
                                 continue;
                             }
                         }
@@ -4891,7 +4906,11 @@ impl LEVM {
                         chain_id,
                         None,
                     );
+                    if results.is_some_and(passed_position) {
+                        break;
+                    }
                 }
+                db.stop_when_executed_past = None;
                 warmed
             };
             for _ in 0..passes {

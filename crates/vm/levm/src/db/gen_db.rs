@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ethrex_common::Address;
 use ethrex_common::H256;
@@ -18,6 +19,7 @@ use super::Database;
 use crate::account::AccountStatus;
 use crate::account::LevmAccount;
 use crate::call_frame::CallFrameBackup;
+use crate::errors::DatabaseError;
 use crate::errors::InternalError;
 use crate::errors::VMError;
 use crate::precompiles::PrecompileMoves;
@@ -287,6 +289,10 @@ pub struct GeneralizedDatabase {
     pub tx_reads: Option<TxReads>,
     /// Stops `tx_reads` from recording, for reads that are not the transaction's own.
     pub reads_paused: bool,
+    /// Stops the run at its next state access once the counter has passed the position: a
+    /// warming run whose transaction block execution already finished has no use left, and the
+    /// core it holds is wanted elsewhere.
+    pub stop_when_executed_past: Option<(Arc<AtomicUsize>, usize)>,
     /// Optional BAL cursor for lazy per-read prefix materialization.
     /// When set, account loads and storage reads consult the BAL before hitting the store.
     pub lazy_bal: Option<LazyBalCursor>,
@@ -310,6 +316,7 @@ impl GeneralizedDatabase {
             skip_initial_tracking: false,
             accessed_accounts: None,
             tx_reads: None,
+            stop_when_executed_past: None,
             reads_paused: false,
             lazy_bal: None,
             precompile_moves: None,
@@ -347,6 +354,7 @@ impl GeneralizedDatabase {
             skip_initial_tracking: true,
             accessed_accounts: None,
             tx_reads: None,
+            stop_when_executed_past: None,
             reads_paused: false,
             lazy_bal: None,
             precompile_moves: None,
@@ -410,6 +418,7 @@ impl GeneralizedDatabase {
             skip_initial_tracking: false,
             accessed_accounts: None,
             tx_reads: None,
+            stop_when_executed_past: None,
             reads_paused: false,
             lazy_bal: None,
             precompile_moves: None,
@@ -417,9 +426,21 @@ impl GeneralizedDatabase {
     }
 
     // ================== Account related functions =====================
+    /// Fails once block execution has passed the position this run serves, if a stop was set.
+    #[inline]
+    fn stop_if_passed(&self) -> Result<(), InternalError> {
+        if let Some((executed, position)) = &self.stop_when_executed_past
+            && executed.load(Ordering::Relaxed) > *position
+        {
+            return Err(InternalError::Database(DatabaseError::Interrupted));
+        }
+        Ok(())
+    }
+
     /// Loads account
     /// If it's the first time it's loaded store it in `initial_accounts_state` and also cache it in `current_accounts_state` for making changes to it
     fn load_account(&mut self, address: Address) -> Result<&mut LevmAccount, InternalError> {
+        self.stop_if_passed()?;
         if !self.reads_paused
             && self
                 .tx_reads
@@ -676,6 +697,7 @@ impl GeneralizedDatabase {
     /// and records it in `tx_reads` if that is on.
     #[inline(always)]
     pub fn storage_value(&mut self, address: Address, key: H256) -> Result<U256, InternalError> {
+        self.stop_if_passed()?;
         let value = self.storage_value_unrecorded(address, key)?;
         if !self.reads_paused
             && let Some(reads) = self.tx_reads.as_mut()

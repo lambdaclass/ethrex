@@ -239,6 +239,9 @@ pub enum PrecompileError {
 pub enum DatabaseError {
     #[error("{0}")]
     Custom(String),
+    /// The run this database serves is no longer wanted; its caller stops it here.
+    #[error("database access interrupted: the run's result is no longer wanted")]
+    Interrupted,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
