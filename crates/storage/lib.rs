@@ -77,7 +77,7 @@ pub mod trie;
 pub mod utils;
 
 pub use api::{CfStats, RocksDbStats};
-pub use layering::apply_prefix;
+pub use layering::{apply_prefix, apply_prefix_bytes};
 pub use store::{
     AccountUpdatesList, BATCH_COMMIT_THRESHOLD, BackfilledBlock, DB_COMMIT_THRESHOLD, EngineType,
     MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES, MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,

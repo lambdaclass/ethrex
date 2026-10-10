@@ -477,7 +477,7 @@ pub fn node_pending_children(
                     continue;
                 }
                 let validity = child
-                    .get_node_checked(trie_state, child_path.clone())
+                    .get_node_checked(trie_state, child_path.as_ref())
                     .inspect_err(|_| {
                         debug!("Malformed data when doing get child of a branch node")
                     })?
@@ -501,7 +501,7 @@ pub fn node_pending_children(
             }
             let validity = node
                 .child
-                .get_node_checked(trie_state, child_path.clone())
+                .get_node_checked(trie_state, child_path.as_ref())
                 .inspect_err(|_| debug!("Malformed data when doing get child of a branch node"))?
                 .is_some();
             if validity {

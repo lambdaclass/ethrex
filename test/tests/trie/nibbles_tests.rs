@@ -3,34 +3,38 @@ use std::cmp::Ordering;
 
 #[test]
 fn skip_prefix_true() {
-    let mut a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
+    let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
     let b = Nibbles::from_hex(vec![1, 2, 3]);
-    assert!(a.skip_prefix(&b));
-    assert_eq!(a.as_ref(), &[4, 5])
+    let mut cursor = a.cursor();
+    assert!(cursor.skip_prefix(b.as_ref()));
+    assert_eq!(cursor.remaining(), &[4, 5])
 }
 
 #[test]
 fn skip_prefix_true_same_length() {
-    let mut a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
+    let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
     let b = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
-    assert!(a.skip_prefix(&b));
-    assert!(a.is_empty());
+    let mut cursor = a.cursor();
+    assert!(cursor.skip_prefix(b.as_ref()));
+    assert!(cursor.is_empty());
 }
 
 #[test]
 fn skip_prefix_longer_prefix() {
-    let mut a = Nibbles::from_hex(vec![1, 2, 3]);
+    let a = Nibbles::from_hex(vec![1, 2, 3]);
     let b = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
-    assert!(!a.skip_prefix(&b));
-    assert_eq!(a.as_ref(), &[1, 2, 3])
+    let mut cursor = a.cursor();
+    assert!(!cursor.skip_prefix(b.as_ref()));
+    assert_eq!(cursor.remaining(), &[1, 2, 3])
 }
 
 #[test]
 fn skip_prefix_false() {
-    let mut a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
+    let a = Nibbles::from_hex(vec![1, 2, 3, 4, 5]);
     let b = Nibbles::from_hex(vec![1, 2, 4]);
-    assert!(!a.skip_prefix(&b));
-    assert_eq!(a.as_ref(), &[1, 2, 3, 4, 5])
+    let mut cursor = a.cursor();
+    assert!(!cursor.skip_prefix(b.as_ref()));
+    assert_eq!(cursor.remaining(), &[1, 2, 3, 4, 5])
 }
 
 #[test]

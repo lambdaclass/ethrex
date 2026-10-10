@@ -11,6 +11,7 @@ use crate::{
     nibbles::Nibbles,
     node::{BranchNode, NodeRemoveResult},
     node_hash::NodeHash,
+    path_cursor::PathCursor,
 };
 
 use super::{ExtensionNode, Node, ValueOrHash};
@@ -40,8 +41,8 @@ impl LeafNode {
     }
 
     /// Returns the stored value if the given path matches the stored path
-    pub fn get(&self, path: Nibbles) -> Result<Option<ValueRLP>, TrieError> {
-        if self.partial == path {
+    pub fn get(&self, path: PathCursor<'_>) -> Result<Option<ValueRLP>, TrieError> {
+        if self.partial.as_ref() == path.remaining() {
             Ok(Some(self.value.clone()))
         } else {
             Ok(None)
@@ -49,7 +50,11 @@ impl LeafNode {
     }
 
     /// Stores the received value and returns the new root of the subtrie previously consisting of self
-    pub fn insert(&mut self, path: Nibbles, value: ValueOrHash) -> Result<Option<Node>, TrieError> {
+    pub fn insert(
+        &mut self,
+        path: PathCursor<'_>,
+        value: ValueOrHash,
+    ) -> Result<Option<Node>, TrieError> {
         /* Possible flow paths:
             Leaf { SelfValue } -> Leaf { Value }
             Leaf { SelfValue } -> Extension { Branch { [Self,...] Value } }
@@ -57,7 +62,7 @@ impl LeafNode {
             Leaf { SelfValue } -> Branch { [ Leaf { Value }, Self, ... ], None}
         */
         // If the path matches the stored path, update the value and return self
-        if self.partial == path {
+        if self.partial.as_ref() == path.remaining() {
             match value {
                 ValueOrHash::Value(value) => self.value = value,
                 ValueOrHash::Hash(_) => {
@@ -68,9 +73,11 @@ impl LeafNode {
             }
             Ok(None)
         } else {
-            let match_index = path.count_prefix(&self.partial);
+            // Both indexes are relative to what is *left* of the lookup path, which
+            // is what `self.partial` is compared against.
+            let match_index = path.count_prefix(self.partial.as_ref());
             let self_choice_idx = self.partial.at(match_index);
-            let new_leaf_choice_idx = path.at(match_index);
+            let new_leaf_choice_idx = path.remaining()[match_index] as usize;
             self.partial = self.partial.offset(match_index + 1);
 
             let branch_node = if self_choice_idx == 16 {
@@ -79,9 +86,11 @@ impl LeafNode {
                 // Branch { [ Leaf { Value } , ... ], SelfValue}
                 let mut choices = BranchNode::EMPTY_CHOICES;
                 choices[new_leaf_choice_idx] = match value {
-                    ValueOrHash::Value(value) => {
-                        Node::from(LeafNode::new(path.offset(match_index + 1), value)).into()
-                    }
+                    ValueOrHash::Value(value) => Node::from(LeafNode::new(
+                        path.advanced(match_index + 1).to_nibbles(),
+                        value,
+                    ))
+                    .into(),
                     ValueOrHash::Hash(hash) => hash.into(),
                 };
                 BranchNode::new_with_value(choices, mem::take(&mut self.value))
@@ -105,9 +114,11 @@ impl LeafNode {
                 // Branch { [ Leaf { Path, Value }, Self, ... ], None, None}
                 let mut choices = BranchNode::EMPTY_CHOICES;
                 choices[new_leaf_choice_idx] = match value {
-                    ValueOrHash::Value(value) => {
-                        Node::from(LeafNode::new(path.offset(match_index + 1), value)).into()
-                    }
+                    ValueOrHash::Value(value) => Node::from(LeafNode::new(
+                        path.advanced(match_index + 1).to_nibbles(),
+                        value,
+                    ))
+                    .into(),
                     ValueOrHash::Hash(hash) => hash.into(),
                 };
                 let child: Node = self.take().into();
@@ -120,8 +131,11 @@ impl LeafNode {
             } else {
                 // Create an extension node with the branch node as child
                 // Extension { BranchNode }
-                ExtensionNode::new(path.slice(0, match_index), Node::from(branch_node).into())
-                    .into()
+                ExtensionNode::new(
+                    Nibbles::from_hex(path.remaining()[..match_index].to_vec()),
+                    Node::from(branch_node).into(),
+                )
+                .into()
             };
 
             Ok(Some(final_node))
@@ -131,9 +145,9 @@ impl LeafNode {
     /// Removes own value if the path matches own path and returns self and the value if it was removed
     pub fn remove(
         &mut self,
-        path: Nibbles,
+        path: PathCursor<'_>,
     ) -> Result<(Option<NodeRemoveResult>, Option<ValueRLP>), TrieError> {
-        Ok(if self.partial == path {
+        Ok(if self.partial.as_ref() == path.remaining() {
             (None, Some(mem::take(&mut self.value)))
         } else {
             (Some(NodeRemoveResult::Mutated), None)
@@ -194,8 +208,9 @@ mod test {
             leaf { vec![1, 2, 16] => vec![0x12, 0x34, 0x56, 0x78] }
         };
 
+        let path = Nibbles::from_bytes(&[0x12]);
         assert_eq!(
-            node.get(Nibbles::from_bytes(&[0x12])).unwrap(),
+            node.get(path.cursor()).unwrap(),
             Some(vec![0x12, 0x34, 0x56, 0x78]),
         );
     }
@@ -206,7 +221,8 @@ mod test {
             leaf { vec![1,2,16] => vec![0x12, 0x34, 0x56, 0x78] }
         };
 
-        assert!(node.get(Nibbles::from_bytes(&[0x34])).unwrap().is_none());
+        let path = Nibbles::from_bytes(&[0x34]);
+        assert!(node.get(path.cursor()).unwrap().is_none());
     }
 
     #[test]
@@ -215,8 +231,9 @@ mod test {
             leaf { vec![1,2,16] => vec![0x12, 0x34, 0x56, 0x78] }
         };
 
+        let path = Nibbles::from_bytes(&[0x12]);
         assert!(
-            node.insert(Nibbles::from_bytes(&[0x12]), vec![0x13].into())
+            node.insert(path.cursor(), vec![0x13].into())
                 .unwrap()
                 .is_none()
         );
@@ -232,12 +249,15 @@ mod test {
         };
         let path = Nibbles::from_bytes(&[0x22]);
         let value = vec![0x23];
-        let node = node.insert(path.clone(), value.clone().into()).unwrap();
+        let node = node.insert(path.cursor(), value.clone().into()).unwrap();
         let node = match node {
             Some(Node::Branch(x)) => x,
             _ => panic!("expected a branch node"),
         };
-        assert_eq!(node.get(trie.db.as_ref(), path).unwrap(), Some(value));
+        assert_eq!(
+            node.get(trie.db.as_ref(), path.cursor()).unwrap(),
+            Some(value)
+        );
     }
 
     #[test]
@@ -250,11 +270,11 @@ mod test {
         let path = Nibbles::from_bytes(&[0x13]);
         let value = vec![0x15];
 
-        let node = node.insert(path.clone(), value.clone().into()).unwrap();
+        let node = node.insert(path.cursor(), value.clone().into()).unwrap();
 
         assert!(matches!(node, Some(Node::Extension(_))));
         assert_eq!(
-            node.unwrap().get(trie.db.as_ref(), path).unwrap(),
+            node.unwrap().get(trie.db.as_ref(), path.cursor()).unwrap(),
             Some(value)
         );
     }
@@ -269,11 +289,11 @@ mod test {
         let path = Nibbles::from_bytes(&[0x12, 0x34]);
         let value = vec![0x17];
 
-        let node = node.insert(path.clone(), value.clone().into()).unwrap();
+        let node = node.insert(path.cursor(), value.clone().into()).unwrap();
 
         assert!(matches!(node, Some(Node::Extension(_))));
         assert_eq!(
-            node.unwrap().get(trie.db.as_ref(), path).unwrap(),
+            node.unwrap().get(trie.db.as_ref(), path.cursor()).unwrap(),
             Some(value)
         );
     }
@@ -288,11 +308,11 @@ mod test {
         let path = Nibbles::from_bytes(&[0x12]);
         let value = vec![0x17];
 
-        let node = node.insert(path.clone(), value.clone().into()).unwrap();
+        let node = node.insert(path.cursor(), value.clone().into()).unwrap();
 
         assert!(matches!(node, Some(Node::Extension(_))));
         assert_eq!(
-            node.unwrap().get(trie.db.as_ref(), path).unwrap(),
+            node.unwrap().get(trie.db.as_ref(), path.cursor()).unwrap(),
             Some(value)
         );
     }
@@ -311,7 +331,8 @@ mod test {
             Nibbles::from_bytes(&[0x12, 0x34]),
             vec![0x12, 0x34, 0x56, 0x78],
         );
-        let (node, value) = node.remove(Nibbles::from_bytes(&[0x12, 0x34])).unwrap();
+        let path = Nibbles::from_bytes(&[0x12, 0x34]);
+        let (node, value) = node.remove(path.cursor()).unwrap();
 
         assert!(node.is_none());
         assert_eq!(value, Some(vec![0x12, 0x34, 0x56, 0x78]));
@@ -324,7 +345,8 @@ mod test {
             vec![0x12, 0x34, 0x56, 0x78],
         );
 
-        let (node, value) = node.remove(Nibbles::from_bytes(&[0x12])).unwrap();
+        let path = Nibbles::from_bytes(&[0x12]);
+        let (node, value) = node.remove(path.cursor()).unwrap();
 
         assert!(node.is_some());
         assert_eq!(value, None);
