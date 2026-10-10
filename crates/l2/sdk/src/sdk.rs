@@ -1116,6 +1116,15 @@ pub async fn build_generic_tx(
             "fee_token must be set for FeeToken tx type".to_owned(),
         ));
     };
+    // The max fee is fetched first because a tip taken from the node is capped at it.
+    let max_fee_per_gas =
+        get_fee_from_override_or_get_gas_price(client, overrides.max_fee_per_gas).await?;
+    let max_priority_fee_per_gas = priority_fee_from_override_or_rpc(
+        client,
+        overrides.max_priority_fee_per_gas,
+        max_fee_per_gas,
+    )
+    .await?;
     let mut tx = GenericTransaction {
         r#type,
         to: overrides.to.clone().unwrap_or(TxKind::Call(to)),
@@ -1127,12 +1136,8 @@ pub async fn build_generic_tx(
             })?
         }),
         nonce: Some(get_nonce_from_overrides_or_rpc(client, &overrides, from).await?),
-        max_fee_per_gas: Some(
-            get_fee_from_override_or_get_gas_price(client, overrides.max_fee_per_gas).await?,
-        ),
-        max_priority_fee_per_gas: Some(
-            priority_fee_from_override_or_rpc(client, overrides.max_priority_fee_per_gas).await?,
-        ),
+        max_fee_per_gas: Some(max_fee_per_gas),
+        max_priority_fee_per_gas: Some(max_priority_fee_per_gas),
         max_fee_per_blob_gas: overrides.gas_price_per_blob,
         value: overrides.value.unwrap_or_default(),
         input: calldata,
@@ -1220,21 +1225,33 @@ async fn get_fee_from_override_or_get_gas_price(
         .map_err(|_| EthClientError::Custom("Failed to get gas for fee".to_owned()))
 }
 
+/// The transaction's tip: the caller's override when given, otherwise the node's
+/// suggestion capped at `max_fee_per_gas`.
+///
+/// EIP-1559 requires `max_priority_fee_per_gas <= max_fee_per_gas`, and a node rejects a
+/// transaction that breaks it outright. The max fee comes from a separate `eth_gasPrice`
+/// call, and both answers are read from the node's tip estimate, which moves whenever a
+/// block lands. So a block between the two calls can make the suggested tip exceed the max
+/// fee just fetched. On a quiet chain the base fee sits near its floor and `eth_gasPrice`
+/// is almost all tip, so any rise in the estimate is enough. A tip the caller set is left
+/// as given.
 async fn priority_fee_from_override_or_rpc(
     client: &EthClient,
     maybe_priority_fee: Option<u64>,
+    max_fee_per_gas: u64,
 ) -> Result<u64, EthClientError> {
     if let Some(priority_fee) = maybe_priority_fee {
         return Ok(priority_fee);
     }
 
-    if let Ok(priority_fee) = client.get_max_priority_fee().await
+    let suggested = if let Ok(priority_fee) = client.get_max_priority_fee().await
         && let Ok(priority_fee_u64) = priority_fee.try_into()
     {
-        return Ok(priority_fee_u64);
-    }
-
-    get_fee_from_override_or_get_gas_price(client, None).await
+        priority_fee_u64
+    } else {
+        get_fee_from_override_or_get_gas_price(client, None).await?
+    };
+    Ok(suggested.min(max_fee_per_gas))
 }
 
 pub async fn wait_for_l1_message_proof(
@@ -1630,6 +1647,7 @@ pub async fn wait_for_l2_deposit_receipt(
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
 
@@ -1822,5 +1840,156 @@ mod tests {
             old_result,
             MEMPOOL_PRICE_BUMP_PERCENT,
         ));
+    }
+
+    /// Serves the two fee methods `build_generic_tx` calls once chain id, nonce and gas
+    /// limit are overridden, answering with fixed values, and returns its URL. Any other
+    /// method gets a JSON-RPC error, so a test that needs more fails loudly.
+    fn serve_fee_rpc(gas_price: u64, max_priority_fee: u64) -> reqwest::Url {
+        use std::io::{BufRead, BufReader, Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind mock RPC");
+        let url = format!(
+            "http://{}",
+            listener.local_addr().expect("mock RPC address")
+        );
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let Ok(read_half) = stream.try_clone() else {
+                    continue;
+                };
+                let mut reader = BufReader::new(read_half);
+                // One connection can carry several requests.
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                        break;
+                    }
+                    let mut content_length = 0;
+                    loop {
+                        line.clear();
+                        if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                            break;
+                        }
+                        if let Some(value) =
+                            line.to_ascii_lowercase().strip_prefix("content-length:")
+                        {
+                            content_length = value.trim().parse().unwrap_or(0);
+                        }
+                    }
+                    let mut body = vec![0; content_length];
+                    if reader.read_exact(&mut body).is_err() {
+                        break;
+                    }
+                    let request: serde_json::Value =
+                        serde_json::from_slice(&body).unwrap_or_default();
+                    let id = request["id"].clone();
+                    let response = match request["method"].as_str() {
+                        Some("eth_gasPrice") => serde_json::json!({
+                            "jsonrpc": "2.0", "id": id, "result": format!("{gas_price:#x}")
+                        }),
+                        Some("eth_maxPriorityFeePerGas") => serde_json::json!({
+                            "jsonrpc": "2.0", "id": id, "result": format!("{max_priority_fee:#x}")
+                        }),
+                        _ => serde_json::json!({
+                            "jsonrpc": "2.0", "id": id,
+                            "error": { "code": -32601, "message": "not served by this mock" }
+                        }),
+                    }
+                    .to_string();
+                    let reply = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{response}",
+                        response.len()
+                    );
+                    if stream.write_all(reply.as_bytes()).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+        reqwest::Url::parse(&url).expect("mock RPC URL")
+    }
+
+    /// Builds a transaction against `client` and returns its `(max fee, tip)`.
+    async fn built_fees(
+        client: &EthClient,
+        max_fee_per_gas: Option<u64>,
+        max_priority_fee_per_gas: Option<u64>,
+    ) -> (u64, u64) {
+        let overrides = Overrides {
+            chain_id: Some(1),
+            nonce: Some(0),
+            gas_limit: Some(21_000),
+            max_fee_per_gas,
+            max_priority_fee_per_gas,
+            ..Default::default()
+        };
+        let tx = build_generic_tx(
+            client,
+            TxType::EIP1559,
+            Address::zero(),
+            Address::zero(),
+            Bytes::new(),
+            overrides,
+        )
+        .await
+        .expect("build_generic_tx");
+        (
+            tx.max_fee_per_gas.expect("max fee is always set"),
+            tx.max_priority_fee_per_gas.expect("tip is always set"),
+        )
+    }
+
+    /// The fees from the L2 (SP1 Backend) integration test failure on main at 006bffbc,
+    /// where a block landed between the two fee calls and the node's suggested tip came
+    /// back above the max fee, so the node rejected the transaction.
+    const GAS_PRICE_BEFORE_THE_BLOCK: u64 = 785_562_963;
+    const TIP_AFTER_THE_BLOCK: u64 = 942_675_548;
+
+    #[tokio::test]
+    async fn suggested_tip_above_the_max_fee_is_capped_at_it() {
+        let url = serve_fee_rpc(GAS_PRICE_BEFORE_THE_BLOCK, TIP_AFTER_THE_BLOCK);
+        let client = EthClient::new(url).expect("client");
+        let (max_fee, tip) = built_fees(&client, None, None).await;
+        assert_eq!(max_fee, GAS_PRICE_BEFORE_THE_BLOCK);
+        assert_eq!(tip, max_fee, "EIP-1559 forbids a tip above the max fee");
+    }
+
+    #[tokio::test]
+    async fn suggested_tip_below_the_max_fee_is_kept() {
+        let client = EthClient::new(serve_fee_rpc(2_000_000_000, 1_000_000_000)).expect("client");
+        assert_eq!(
+            built_fees(&client, None, None).await,
+            (2_000_000_000, 1_000_000_000)
+        );
+    }
+
+    /// The cap applies to whatever max fee the transaction ends up with, including one
+    /// the caller set.
+    #[tokio::test]
+    async fn suggested_tip_is_capped_at_a_caller_set_max_fee() {
+        let client = EthClient::new(serve_fee_rpc(2_000_000_000, 1_000_000_000)).expect("client");
+        assert_eq!(
+            built_fees(&client, Some(500_000_000), None).await,
+            (500_000_000, 500_000_000)
+        );
+    }
+
+    /// The deployer, committer and proof sender set both fees themselves; those must
+    /// pass through untouched, even where they look inconsistent.
+    #[tokio::test]
+    async fn caller_set_fees_are_never_rewritten() {
+        let url = serve_fee_rpc(GAS_PRICE_BEFORE_THE_BLOCK, TIP_AFTER_THE_BLOCK);
+        let client = EthClient::new(url).expect("client");
+        assert_eq!(
+            built_fees(
+                &client,
+                Some(GAS_PRICE_BEFORE_THE_BLOCK),
+                Some(TIP_AFTER_THE_BLOCK)
+            )
+            .await,
+            (GAS_PRICE_BEFORE_THE_BLOCK, TIP_AFTER_THE_BLOCK)
+        );
     }
 }
