@@ -1303,11 +1303,13 @@ fn get_block_from_payload(
     let block_number = payload.block_number;
     debug!(%block_hash, %block_number, "Received new payload");
 
-    payload.clone().into_block(
+    let block = payload.clone().into_block(
         parent_beacon_block_root,
         requests_hash,
         block_access_list_hash,
-    )
+    )?;
+    payload.recover_senders_in_background();
+    Ok(block)
 }
 
 fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), RpcErr> {

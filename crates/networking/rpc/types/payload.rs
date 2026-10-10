@@ -173,6 +173,29 @@ impl ExecutionPayload {
         Ok(Block::new(header, body))
     }
 
+    /// Recovers the senders of the payload's transactions on the rayon pool, in the background,
+    /// into the process-wide signer cache.
+    ///
+    /// The block warmer recovers every sender before it warms its first transaction, while
+    /// execution starts without it, so the transactions at the head of the block run before
+    /// the warmer reaches them. Started once the payload is decoded, the recovery runs while
+    /// the block is checked and queued, and the warmer then finds the senders cached. Senders
+    /// a payload's own transactions do not have yet are only computed earlier, never
+    /// differently: the cache is keyed by transaction hash.
+    pub fn recover_senders_in_background(&self) {
+        use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+        // The encoded transactions are reference-counted bytes, so this copy is cheap; the job
+        // decodes its own copies rather than holding the block.
+        let transactions = self.transactions.clone();
+        rayon::spawn(move || {
+            transactions.par_iter().for_each(|encoded_tx| {
+                if let Ok(tx) = encoded_tx.decode() {
+                    let _ = tx.sender(&ethrex_crypto::NativeCrypto);
+                }
+            });
+        });
+    }
+
     pub fn from_block(block: Block, block_access_list: Option<BlockAccessList>) -> Self {
         Self {
             parent_hash: block.header.parent_hash,
