@@ -606,4 +606,34 @@ mod tests {
         }];
         assert_test_cases(test_cases, genesis.config, genesis_hash);
     }
+    /// Pin the fork ID ethrex advertises on Sepolia across the Amsterdam boundary.
+    ///
+    /// `sepolia_test_cases` drives this through `is_valid`, which can also accept a
+    /// remote hash by the EIP-2124 subset/superset rules, so on its own it does not
+    /// pin the value we put on the wire. Clients compared these by hand ahead of the
+    /// fork and geth, reth and nethermind all advertise 0x6c1d9423, so an accidental
+    /// change here would partition us from the network rather than fail a test.
+    #[test]
+    fn sepolia_advertises_amsterdam_fork_id() {
+        let (genesis, genesis_header) = get_sepolia_genesis();
+        // Any post-Merge head works: Amsterdam is timestamp-based.
+        let head = 1_735_372;
+
+        // Before activation the head fork is still BPO2, with Amsterdam announced as
+        // the next one so peers can apply validation rule #1.
+        let before = ForkId::new(genesis.config, genesis_header.clone(), 1_791_294_815, head);
+        assert_eq!(before.fork_hash, H32::from_str("0x268956b6").unwrap());
+        assert_eq!(before.fork_next, 1_791_294_816);
+
+        // From activation onwards Amsterdam is the head fork and nothing follows it.
+        for time in [1_791_294_816, 2_741_159_776] {
+            let at = ForkId::new(genesis.config, genesis_header.clone(), time, head);
+            assert_eq!(
+                at.fork_hash,
+                H32::from_str("0x6c1d9423").unwrap(),
+                "fork hash at {time}"
+            );
+            assert_eq!(at.fork_next, 0, "fork next at {time}");
+        }
+    }
 }
