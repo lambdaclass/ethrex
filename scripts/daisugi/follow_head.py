@@ -41,7 +41,9 @@ def rpc(url: str, method: str, params: list, token: str | None = None):
     if token:
         headers["authorization"] = f"Bearer {token}"
     request = urllib.request.Request(url, data=body, headers=headers)
-    with urllib.request.urlopen(request, timeout=30) as response:
+    # Every call is a small read or a forkchoice update. One still pending after
+    # 10 seconds has hung, and waiting longer only stops the node's head moving.
+    with urllib.request.urlopen(request, timeout=10) as response:
         reply = json.loads(response.read())
     if "error" in reply:
         raise RuntimeError(f"{method}: {reply['error']}")
