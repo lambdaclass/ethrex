@@ -35,3 +35,4 @@ To enable this feature, add the `docker-compose-metrics-alerts.override.yaml` fi
 
 - `GRAFANA_SLACK_CHANNEL`: The name of the channel (or user ID) where the will be sent.
 - `GRAFANA_SLACK_TOKEN`: A Slack token with write permissions on the desired channel's chat. This token starts with `xoxb-`.
+

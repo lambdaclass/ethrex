@@ -17,851 +17,1523 @@
   },
   "editable": true,
   "fiscalYearStartMonth": 0,
-  "graphTooltip": 0,
-  "id": 42,
+  "graphTooltip": 1,
+  "id": 59,
   "links": [],
   "panels": [
     {
-      "collapsed": true,
+      "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
         "y": 0
       },
-      "id": 14,
-      "panels": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prom-001"
-          },
-          "description": "",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "showValues": false,
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": 0
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "si:gas"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 12,
-            "w": 24,
-            "x": 0,
-            "y": 1
-          },
-          "id": 13,
-          "interval": "10s",
-          "options": {
-            "legend": {
-              "calcs": [
-                "mean"
-              ],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "12.2.0",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"reth-mainnet-1:6060\", quantile=\"0.999\"}",
-              "hide": false,
-              "legendFormat": "reth mainnet p99.9",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"reth-mainnet-1:6060\", quantile=\"0.5\"}",
-              "hide": false,
-              "instant": false,
-              "legendFormat": "reth mainnet p50",
-              "range": true,
-              "refId": "E"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "nethermind_mgas_per_sec{instance=\"nethermind-mainnet-1:6060\"} * 1000000",
-              "hide": true,
-              "instant": false,
-              "legendFormat": "nethermind mainnet",
-              "range": true,
-              "refId": "C"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "chain_mgasps{instance=\"geth-mainnet-1:6060\", job=\"geth\", quantile=\"0.999\"} * 1000000",
-              "hide": true,
-              "instant": false,
-              "legendFormat": "geth mainnet p99.9",
-              "range": true,
-              "refId": "D"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "gigagas{job=\"ethrex L1\",instance=~\"$instance(:\\\\d+)?$\"} * 1000000000",
-              "hide": false,
-              "instant": false,
-              "legendFormat": "{{ instance }}",
-              "range": true,
-              "refId": "B"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.999, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[30s])) * 1000000000",
-              "hide": false,
-              "instant": false,
-              "legendFormat": "{{ instance }} p99.9",
-              "range": true,
-              "refId": "F"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.5, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[30s])) * 1000000000",
-              "hide": false,
-              "instant": false,
-              "legendFormat": "{{ instance }} p50",
-              "range": true,
-              "refId": "G"
-            }
-          ],
-          "title": "Ggas/s vs other clients (MAINNET)",
-          "transformations": [
-            {
-              "id": "renameByRegex",
-              "options": {
-                "regex": "^([^:]+):\\d+$",
-                "renamePattern": "$1"
-              }
-            }
-          ],
-          "type": "timeseries"
-        }
-      ],
-      "title": "Ggas/s MAINNET Latest client Update (21/11/25)",
+      "id": 17,
+      "panels": [],
+      "title": "Block time (newPayload) MAINNET",
       "type": "row"
     },
     {
-      "collapsed": true,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "Duration",
+            "axisPlacement": "auto",
+            "axisSoftMin": 4,
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineStyle": {
+              "fill": "solid"
+            },
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "always",
+            "showValues": false,
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
       "gridPos": {
-        "h": 1,
+        "h": 8,
         "w": 24,
         "x": 0,
         "y": 1
       },
-      "id": 4,
-      "panels": [
+      "id": 16,
+      "interval": "10s",
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
         {
           "datasource": {
             "type": "prometheus",
             "uid": "prom-001"
           },
-          "description": "",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "showValues": false,
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": 0
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "si:gas"
-            },
-            "overrides": []
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.999, rate(rpc_request_duration_seconds_bucket{job=\"ethrex L1\", method=\"engine_newPayloadV4\", instance=~\"$instance(:\\\\d+)?$\"}[24s]))",
+          "hide": true,
+          "instant": false,
+          "legendFormat": "{{instance}} - p99.9",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
           },
-          "gridPos": {
-            "h": 12,
-            "w": 24,
-            "x": 0,
-            "y": 49
-          },
-          "id": 7,
-          "interval": "10s",
-          "options": {
-            "legend": {
-              "calcs": [
-                "mean"
-              ],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "12.2.0",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "builder",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-mainnet-rpc:6060\", quantile=\"0.999\"}",
-              "hide": false,
-              "legendFormat": "reth mainnet p99.9",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-mainnet-rpc:6060\", quantile=\"0.5\"}",
-              "hide": false,
-              "instant": false,
-              "legendFormat": "reth mainnet p50",
-              "range": true,
-              "refId": "E"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "nethermind_mgas_per_sec{instance=\"eth-mainnet-rpc-1:6060\"} * 1000000",
-              "hide": true,
-              "instant": false,
-              "legendFormat": "nethermind mainnet",
-              "range": true,
-              "refId": "C"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "chain_mgasps{instance=\"eth-mainnet-rpc-2:6060\", job=\"geth\", quantile=\"0.999\"} * 1000000",
-              "hide": true,
-              "instant": false,
-              "legendFormat": "geth mainnet p99.9",
-              "range": true,
-              "refId": "D"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "gigagas{job=\"ethrex L1\",instance=~\"$instance(:\\\\d+)?$\"} * 1000000000",
-              "hide": false,
-              "instant": false,
-              "legendFormat": "{{ instance }}",
-              "range": true,
-              "refId": "B"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.999, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[30s])) * 1000000000",
-              "hide": false,
-              "instant": false,
-              "legendFormat": "{{ instance }} p99.9",
-              "range": true,
-              "refId": "F"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "histogram_quantile(0.5, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[30s])) * 1000000000",
-              "hide": false,
-              "instant": false,
-              "legendFormat": "{{ instance }} p50",
-              "range": true,
-              "refId": "G"
-            }
-          ],
-          "title": "Ggas/s vs other clients (MAINNET)",
-          "transformations": [
-            {
-              "id": "renameByRegex",
-              "options": {
-                "regex": "^([^:]+):\\d+$",
-                "renamePattern": "$1"
-              }
-            }
-          ],
-          "type": "timeseries"
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "sum by (method, instance) (increase(rpc_request_duration_seconds_sum{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\", method=\"engine_newPayloadV4\", namespace=\"engine\"}[18s])) \n/ sum by (method, instance) (increase(rpc_request_duration_seconds_count{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\",method=\"engine_newPayloadV4\", namespace=\"engine\"}[18s]))",
+          "hide": false,
+          "instant": false,
+          "interval": "",
+          "legendFormat": "{{instance}} - calc",
+          "range": true,
+          "refId": "A"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "prom-001"
           },
-          "description": "",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "showValues": false,
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": 0
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "si:gas"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 13,
-            "w": 12,
-            "x": 0,
-            "y": 61
-          },
-          "id": 2,
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "12.2.0",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "builder",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-mainnet-rpc:6060\", quantile=\"0.999\"}",
-              "hide": false,
-              "legendFormat": "reth mainnet p99.9",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "chain_mgasps{instance=\"eth-mainnet-rpc-2:6060\", job=\"geth\", quantile=\"0.999\"} * 1000000",
-              "hide": false,
-              "instant": false,
-              "legendFormat": "geth mainnet p99.9",
-              "range": true,
-              "refId": "D"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "nethermind_mgas_per_sec{instance=\"eth-mainnet-rpc-1:6060\"} * 1000000",
-              "hide": false,
-              "instant": false,
-              "legendFormat": "nethermind mainnet",
-              "range": true,
-              "refId": "C"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "gigagas{job=\"ethrex L1\",instance=\"ethrex-mainnet-3-0-0:3701\"} * 1000000000",
-              "hide": false,
-              "instant": false,
-              "legendFormat": "{{ instance }}",
-              "range": true,
-              "refId": "B"
-            },
-            {
-              "datasource": {
-                "name": "Expression",
-                "type": "__expr__",
-                "uid": "__expr__"
-              },
-              "expression": "$A - $B",
-              "hide": false,
-              "refId": "E",
-              "type": "math"
-            },
-            {
-              "datasource": {
-                "name": "Expression",
-                "type": "__expr__",
-                "uid": "__expr__"
-              },
-              "expression": "$C - $B",
-              "hide": false,
-              "refId": "F",
-              "type": "math"
-            },
-            {
-              "datasource": {
-                "name": "Expression",
-                "type": "__expr__",
-                "uid": "__expr__"
-              },
-              "expression": "$D - $B",
-              "hide": true,
-              "refId": "G",
-              "type": "math"
-            }
-          ],
-          "title": "Ethrex mainnet 3.0.0 distance vs other clients",
-          "transformations": [
-            {
-              "id": "renameByRegex",
-              "options": {
-                "regex": "^([^:]+):\\d+$",
-                "renamePattern": "$1"
-              }
-            },
-            {
-              "id": "renameByRegex",
-              "options": {
-                "regex": "E",
-                "renamePattern": "reth mainnet p99.9 - ethrex mainnet 3.0.0"
-              }
-            },
-            {
-              "id": "renameByRegex",
-              "options": {
-                "regex": "F",
-                "renamePattern": "nethermind mainnet - ethrex mainnet 3.0.0"
-              }
-            },
-            {
-              "id": "renameByRegex",
-              "options": {
-                "regex": "G",
-                "renamePattern": "geth mainnet p99.9 - ethrex mainnet 3.0.0"
-              }
-            },
-            {
-              "id": "filterFieldsByName",
-              "options": {
-                "include": {
-                  "names": [
-                    "Time",
-                    "reth mainnet p99.9 - ethrex mainnet 3.0.0",
-                    "nethermind mainnet - ethrex mainnet 3.0.0",
-                    "geth mainnet p99.9 - ethrex mainnet 3.0.0"
-                  ]
-                }
-              }
-            }
-          ],
-          "type": "timeseries"
+          "editorMode": "code",
+          "expr": "max without (BuildTimestamp,Commit,Version) (nethermind_last_block_processing_time_in_ms{instance=\"nethermind-mainnet-1:6060\"} / 1000)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "nethermind",
+          "range": true,
+          "refId": "B"
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "prom-001"
           },
-          "description": "",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 0,
-                "gradientMode": "none",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "auto",
-                "showValues": false,
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": 0
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "si:gas"
-            },
-            "overrides": []
+          "editorMode": "code",
+          "expr": "reth_engine_rpc_new_payload_v4{instance=\"reth-mainnet-1:6060\", quantile=\"0.999\"}",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "reth mainnet p99.9",
+          "range": true,
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
           },
-          "gridPos": {
-            "h": 13,
-            "w": 12,
-            "x": 12,
-            "y": 61
+          "editorMode": "code",
+          "expr": "reth_engine_rpc_new_payload_v4{instance=\"reth-mainnet-1:6060\", quantile=\"0.5\"}",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "reth mainnet p50",
+          "range": true,
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
           },
-          "id": 3,
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "single",
-              "sort": "none"
-            }
-          },
-          "pluginVersion": "12.2.0",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "builder",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-mainnet-rpc:6060\", quantile=\"0.999\"}",
-              "hide": false,
-              "legendFormat": "reth mainnet p99.9",
-              "range": true,
-              "refId": "A"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "chain_mgasps{instance=\"eth-mainnet-rpc-2:6060\", job=\"geth\", quantile=\"0.999\"} * 1000000",
-              "hide": false,
-              "instant": false,
-              "legendFormat": "geth mainnet p99.9",
-              "range": true,
-              "refId": "D"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "nethermind_mgas_per_sec{instance=\"eth-mainnet-rpc-1:6060\"} * 1000000",
-              "hide": false,
-              "instant": false,
-              "legendFormat": "nethermind mainnet",
-              "range": true,
-              "refId": "C"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prom-001"
-              },
-              "editorMode": "code",
-              "expr": "gigagas{job=\"ethrex L1\",instance=\"ethrex-mainnet-4-0-0-pathbased:3701\"} * 1000000000",
-              "hide": false,
-              "instant": false,
-              "legendFormat": "{{ instance }}",
-              "range": true,
-              "refId": "B"
-            },
-            {
-              "datasource": {
-                "name": "Expression",
-                "type": "__expr__",
-                "uid": "__expr__"
-              },
-              "expression": "$A - $B",
-              "hide": false,
-              "refId": "E",
-              "type": "math"
-            },
-            {
-              "datasource": {
-                "name": "Expression",
-                "type": "__expr__",
-                "uid": "__expr__"
-              },
-              "expression": "$C - $B",
-              "hide": false,
-              "refId": "F",
-              "type": "math"
-            },
-            {
-              "datasource": {
-                "name": "Expression",
-                "type": "__expr__",
-                "uid": "__expr__"
-              },
-              "expression": "$D - $B",
-              "hide": true,
-              "refId": "G",
-              "type": "math"
-            }
-          ],
-          "title": "Ethrex mainnet 4.0.0-pathbased distance vs other clients",
-          "transformations": [
-            {
-              "id": "renameByRegex",
-              "options": {
-                "regex": "^([^:]+):\\d+$",
-                "renamePattern": "$1"
-              }
-            },
-            {
-              "id": "renameByRegex",
-              "options": {
-                "regex": "E",
-                "renamePattern": "reth mainnet p99.9 - ethrex mainnet 3.0.0"
-              }
-            },
-            {
-              "id": "renameByRegex",
-              "options": {
-                "regex": "F",
-                "renamePattern": "nethermind mainnet - ethrex mainnet 3.0.0"
-              }
-            },
-            {
-              "id": "renameByRegex",
-              "options": {
-                "regex": "G",
-                "renamePattern": "geth mainnet p99.9 - ethrex mainnet 3.0.0"
-              }
-            },
-            {
-              "id": "filterFieldsByName",
-              "options": {
-                "include": {
-                  "names": [
-                    "Time",
-                    "reth mainnet p99.9 - ethrex mainnet 3.0.0",
-                    "nethermind mainnet - ethrex mainnet 3.0.0",
-                    "geth mainnet p99.9 - ethrex mainnet 3.0.0"
-                  ]
-                }
-              }
-            }
-          ],
-          "type": "timeseries"
+          "editorMode": "code",
+          "expr": "reth_consensus_engine_beacon_new_payload_last{instance=\"reth-mainnet-1:6060\"}",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "reth mainnet last",
+          "range": true,
+          "refId": "LAST_TIME"
         }
       ],
+      "title": "Block time (newPayload) vs other clients (MAINNET)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "description": "Latency difference: positive = ethrex is faster (lower latency). Shows (other - ethrex) in ms.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": true,
+            "axisColorMode": "text",
+            "axisLabel": "ms difference",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "line+area"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          },
+          "unit": "ms"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind - ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth - ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "id": 102,
+      "interval": "10s",
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "(sum by (instance) (increase(rpc_request_duration_seconds_sum{job=\"ethrex L1\", instance=\"ethrex-mainnet-1:3701\", method=\"engine_newPayloadV4\", namespace=\"engine\"}[18s])) / sum by (instance) (increase(rpc_request_duration_seconds_count{job=\"ethrex L1\", instance=\"ethrex-mainnet-1:3701\", method=\"engine_newPayloadV4\", namespace=\"engine\"}[18s]))) * 1000",
+          "hide": true,
+          "instant": false,
+          "legendFormat": "ethrex",
+          "range": true,
+          "refId": "ETHREX"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "max without (BuildTimestamp,Commit,Version) (nethermind_last_block_processing_time_in_ms{instance=\"nethermind-mainnet-1:6060\"})",
+          "hide": true,
+          "instant": false,
+          "legendFormat": "nethermind",
+          "range": true,
+          "refId": "NETHERMIND"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "reth_consensus_engine_beacon_new_payload_last{instance=\"reth-mainnet-1:6060\"} * 1000",
+          "hide": true,
+          "instant": false,
+          "legendFormat": "reth",
+          "range": true,
+          "refId": "RETH"
+        },
+        {
+          "datasource": {
+            "name": "Expression",
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "$NETHERMIND - $ETHREX",
+          "hide": false,
+          "refId": "DIFF_NETHERMIND",
+          "type": "math"
+        },
+        {
+          "datasource": {
+            "name": "Expression",
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "$RETH - $ETHREX",
+          "hide": false,
+          "refId": "DIFF_RETH",
+          "type": "math"
+        }
+      ],
+      "title": "Latency Difference (positive = ethrex faster)",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DIFF_NETHERMIND",
+            "renamePattern": "nethermind - ethrex"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DIFF_RETH",
+            "renamePattern": "reth - ethrex"
+          }
+        }
+      ],
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      },
+      "id": 14,
+      "panels": [],
       "title": "Ggas/s MAINNET",
       "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "description": "",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "si:gas"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "id": 13,
+      "interval": "10s",
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "chain_mgasps{instance=\"geth-mainnet-1:6060\",quantile=\"0.999\"} * 1000000",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "geth mainnet p99",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second{instance=\"reth-mainnet-1:6060\", quantile=\"0.999\"}",
+          "hide": false,
+          "legendFormat": "reth mainnet p99.9",
+          "range": true,
+          "refId": "H"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second{instance=\"reth-mainnet-1:6060\", quantile=\"0.5\"}",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "reth mainnet p50",
+          "range": true,
+          "refId": "I"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second_last{instance=\"reth-mainnet-1:6060\"}",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "reth mainnet last",
+          "range": true,
+          "refId": "LAST"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "nethermind_mgas_per_sec{instance=\"nethermind-mainnet-1:6060\"} * 1000000",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "nethermind mainnet",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "gigagas{job=\"ethrex L1\",instance=~\"$instance(:\\\\d+)?$\"} * 1000000000",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "{{ instance }}",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.999, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[30s])) * 1000000000",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "{{ instance }} p99.9",
+          "range": true,
+          "refId": "F"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.5, rate(gigagas_histogram_bucket{job=\"ethrex L1\", instance=~\"$instance(:\\\\d+)?$\"}[30s])) * 1000000000",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "{{ instance }} p50",
+          "range": true,
+          "refId": "G"
+        }
+      ],
+      "title": "Ggas/s vs other clients (MAINNET)",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "^([^:]+):\\d+$",
+            "renamePattern": "$1"
+          }
+        }
+      ],
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "description": "Throughput difference: positive = ethrex is faster. Shows (ethrex - other) in gas/s.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": true,
+            "axisColorMode": "text",
+            "axisLabel": "gas/s difference",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "line+area"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          },
+          "unit": "si:gas"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex - nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex - reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "id": 101,
+      "interval": "10s",
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "gigagas{job=\"ethrex L1\",instance=\"ethrex-mainnet-1:3701\"} * 1000000000",
+          "hide": true,
+          "instant": false,
+          "legendFormat": "ethrex",
+          "range": true,
+          "refId": "ETHREX"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "nethermind_mgas_per_sec{instance=\"nethermind-mainnet-1:6060\"} * 1000000",
+          "hide": true,
+          "instant": false,
+          "legendFormat": "nethermind",
+          "range": true,
+          "refId": "NETHERMIND"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second_last{instance=\"reth-mainnet-1:6060\"}",
+          "hide": true,
+          "instant": false,
+          "legendFormat": "reth",
+          "range": true,
+          "refId": "RETH"
+        },
+        {
+          "datasource": {
+            "name": "Expression",
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "$ETHREX - $NETHERMIND",
+          "hide": false,
+          "refId": "DIFF_NETHERMIND",
+          "type": "math"
+        },
+        {
+          "datasource": {
+            "name": "Expression",
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "$ETHREX - $RETH",
+          "hide": false,
+          "refId": "DIFF_RETH",
+          "type": "math"
+        }
+      ],
+      "title": "Throughput Difference (positive = ethrex faster)",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DIFF_NETHERMIND",
+            "renamePattern": "ethrex - nethermind"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DIFF_RETH",
+            "renamePattern": "ethrex - reth"
+          }
+        }
+      ],
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 42
+      },
+      "id": 200,
+      "panels": [],
+      "title": "Ggas/s by Block Number (EXPERIMENTAL)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "description": "Throughput plotted against block number instead of time. This allows comparing performance at the same blocks across clients.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "pointSize": {
+              "fixed": 6
+            },
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "show": "lines+points",
+            "lineWidth": 1
+          },
+          "mappings": []
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "block_number"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "unit",
+                "value": "Ggas/s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "unit",
+                "value": "Ggas/s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "unit",
+                "value": "Ggas/s"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "id": 201,
+      "options": {
+        "dims": {
+          "x": "block_number"
+        },
+        "legend": {
+          "calcs": [
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "seriesMapping": "auto",
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "block_number{instance=\"ethrex-mainnet-1:3701\"}",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "block_number",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "gigagas{instance=\"ethrex-mainnet-1:3701\"}",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "ethrex",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second_last{instance=\"reth-mainnet-1:6060\"} / 1000000000",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "reth",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "nethermind_mgas_per_sec{instance=\"nethermind-mainnet-1:6060\"} / 1000",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "nethermind",
+          "range": true,
+          "refId": "D"
+        }
+      ],
+      "title": "Ggas/s by Block Number (MAINNET)",
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "Time",
+            "mode": "outer"
+          }
+        }
+      ],
+      "type": "xychart"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "description": "Block processing latency plotted against block number. Allows comparing latency at the same blocks across clients.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "pointSize": {
+              "fixed": 6
+            },
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "show": "lines+points",
+            "lineWidth": 1
+          },
+          "mappings": []
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "block_number"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 55
+      },
+      "id": 202,
+      "options": {
+        "dims": {
+          "x": "block_number"
+        },
+        "legend": {
+          "calcs": [
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "seriesMapping": "auto",
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "block_number{instance=\"ethrex-mainnet-1:3701\"}",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "block_number",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "(sum by (instance) (increase(rpc_request_duration_seconds_sum{job=\"ethrex L1\", instance=\"ethrex-mainnet-1:3701\", method=\"engine_newPayloadV4\", namespace=\"engine\"}[18s])) / sum by (instance) (increase(rpc_request_duration_seconds_count{job=\"ethrex L1\", instance=\"ethrex-mainnet-1:3701\", method=\"engine_newPayloadV4\", namespace=\"engine\"}[18s]))) * 1000",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "ethrex",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "reth_consensus_engine_beacon_new_payload_last{instance=\"reth-mainnet-1:6060\"} * 1000",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "reth",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "max without (BuildTimestamp,Commit,Version) (nethermind_last_block_processing_time_in_ms{instance=\"nethermind-mainnet-1:6060\"})",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "nethermind",
+          "range": true,
+          "refId": "D"
+        }
+      ],
+      "title": "Latency by Block Number (MAINNET)",
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "Time",
+            "mode": "outer"
+          }
+        }
+      ],
+      "type": "xychart"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "description": "Latency difference by block number. Positive = ethrex is faster (lower latency). Shows (other - ethrex) in ms.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "pointSize": {
+              "fixed": 6
+            },
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "show": "lines+points",
+            "lineWidth": 1
+          },
+          "mappings": []
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "block_number"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "nethermind - ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reth - ethrex"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 67
+      },
+      "id": 203,
+      "options": {
+        "dims": {
+          "x": "block_number"
+        },
+        "legend": {
+          "calcs": [
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "seriesMapping": "auto",
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "block_number{instance=\"ethrex-mainnet-1:3701\"}",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "block_number",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "max without (BuildTimestamp,Commit,Version) (nethermind_last_block_processing_time_in_ms{instance=\"nethermind-mainnet-1:6060\"}) - on() ((sum (increase(rpc_request_duration_seconds_sum{job=\"ethrex L1\", instance=\"ethrex-mainnet-1:3701\", method=\"engine_newPayloadV4\", namespace=\"engine\"}[18s])) / sum (increase(rpc_request_duration_seconds_count{job=\"ethrex L1\", instance=\"ethrex-mainnet-1:3701\", method=\"engine_newPayloadV4\", namespace=\"engine\"}[18s]))) * 1000)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "nethermind - ethrex",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "(reth_consensus_engine_beacon_new_payload_last{instance=\"reth-mainnet-1:6060\"} * 1000) - on() ((sum (increase(rpc_request_duration_seconds_sum{job=\"ethrex L1\", instance=\"ethrex-mainnet-1:3701\", method=\"engine_newPayloadV4\", namespace=\"engine\"}[18s])) / sum (increase(rpc_request_duration_seconds_count{job=\"ethrex L1\", instance=\"ethrex-mainnet-1:3701\", method=\"engine_newPayloadV4\", namespace=\"engine\"}[18s]))) * 1000)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "reth - ethrex",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Latency Difference by Block Number (MAINNET)",
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "Time",
+            "mode": "outer"
+          }
+        }
+      ],
+      "type": "xychart"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prom-001"
+      },
+      "description": "Throughput difference by block number. Positive = ethrex is faster. Shows (ethrex - other) in Ggas/s.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "pointSize": {
+              "fixed": 6
+            },
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "show": "lines+points",
+            "lineWidth": 1
+          },
+          "mappings": []
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "block_number"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex - nethermind"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "unit",
+                "value": "Ggas/s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethrex - reth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "unit",
+                "value": "Ggas/s"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 79
+      },
+      "id": 204,
+      "options": {
+        "dims": {
+          "x": "block_number"
+        },
+        "legend": {
+          "calcs": [
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "seriesMapping": "auto",
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "block_number{instance=\"ethrex-mainnet-1:3701\"}",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "block_number",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "gigagas{instance=\"ethrex-mainnet-1:3701\"} - on() (nethermind_mgas_per_sec{instance=\"nethermind-mainnet-1:6060\"} / 1000)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "ethrex - nethermind",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-001"
+          },
+          "editorMode": "code",
+          "expr": "gigagas{instance=\"ethrex-mainnet-1:3701\"} - on() (reth_consensus_engine_beacon_new_payload_gas_per_second_last{instance=\"reth-mainnet-1:6060\"} / 1000000000)",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "ethrex - reth",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Throughput Difference by Block Number (MAINNET)",
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "Time",
+            "mode": "outer"
+          }
+        }
+      ],
+      "type": "xychart"
     },
     {
       "collapsed": true,
@@ -869,7 +1541,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 2
+        "y": 91
       },
       "id": 5,
       "panels": [
@@ -940,7 +1612,7 @@
             "h": 14,
             "w": 24,
             "x": 0,
-            "y": 77
+            "y": 31
           },
           "id": 6,
           "options": {
@@ -966,11 +1638,11 @@
                 "uid": "prom-001"
               },
               "editorMode": "builder",
-              "expr": "reth_process_resident_memory_bytes{instance=\"eth-mainnet-rpc:6060\"}",
+              "expr": "reth_process_resident_memory_bytes{instance=\"reth-mainnet-1:6060\"}",
               "hide": false,
               "legendFormat": "reth mainnet resident memory",
               "range": true,
-              "refId": "A"
+              "refId": "E"
             },
             {
               "datasource": {
@@ -1034,7 +1706,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 3
+        "y": 43
       },
       "id": 8,
       "panels": [
@@ -1105,7 +1777,7 @@
             "h": 13,
             "w": 24,
             "x": 0,
-            "y": 167
+            "y": 241
           },
           "id": 1,
           "interval": "10s",
@@ -1132,7 +1804,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-hoodi-reth-lighthouse:6060\", quantile=\"0.999\"}",
+              "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second{instance=\"eth-hoodi-reth-lighthouse:6060\", quantile=\"0.999\"}",
               "hide": false,
               "legendFormat": "reth hoodi p99.9",
               "range": true,
@@ -1144,7 +1816,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-hoodi-reth-lighthouse:6060\", quantile=\"0.5\"}",
+              "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second{instance=\"eth-hoodi-reth-lighthouse:6060\", quantile=\"0.5\"}",
               "hide": false,
               "instant": false,
               "legendFormat": "reth hoodi p50",
@@ -1283,7 +1955,7 @@
             "h": 13,
             "w": 12,
             "x": 0,
-            "y": 180
+            "y": 254
           },
           "id": 9,
           "options": {
@@ -1307,7 +1979,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-hoodi-reth-lighthouse:6060\", quantile=\"0.999\"}",
+              "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second{instance=\"eth-hoodi-reth-lighthouse:6060\", quantile=\"0.999\"}",
               "hide": false,
               "legendFormat": "reth hoodi p99.9",
               "range": true,
@@ -1410,7 +2082,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 4
+        "y": 44
       },
       "id": 10,
       "panels": [
@@ -1481,7 +2153,7 @@
             "h": 13,
             "w": 24,
             "x": 0,
-            "y": 168
+            "y": 242
           },
           "id": 11,
           "interval": "10s",
@@ -1508,7 +2180,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-sepolia-reth-lighthouse:6060\", quantile=\"0.999\"}",
+              "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second{instance=\"eth-sepolia-reth-lighthouse:6060\", quantile=\"0.999\"}",
               "hide": false,
               "legendFormat": "reth sepolia p99.9",
               "range": true,
@@ -1520,7 +2192,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-sepolia-reth-lighthouse:6060\", quantile=\"0.5\"}",
+              "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second{instance=\"eth-sepolia-reth-lighthouse:6060\", quantile=\"0.5\"}",
               "hide": false,
               "instant": false,
               "legendFormat": "reth sepolia p50",
@@ -1659,7 +2331,7 @@
             "h": 13,
             "w": 12,
             "x": 0,
-            "y": 181
+            "y": 255
           },
           "id": 12,
           "options": {
@@ -1683,7 +2355,7 @@
                 "uid": "prom-001"
               },
               "editorMode": "code",
-              "expr": "reth_engine_rpc_new_payload_gas_per_second{instance=\"eth-sepolia-reth-lighthouse:6060\", quantile=\"0.999\"}",
+              "expr": "reth_consensus_engine_beacon_new_payload_gas_per_second{instance=\"eth-sepolia-reth-lighthouse:6060\", quantile=\"0.999\"}",
               "hide": false,
               "legendFormat": "reth sepolia p99.9",
               "range": true,
@@ -1856,5 +2528,5 @@
   "timezone": "browser",
   "title": "Ethrex Comparison",
   "uid": "ads9rd7",
-  "version": 4
+  "version": 1
 }
