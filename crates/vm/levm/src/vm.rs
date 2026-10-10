@@ -1124,6 +1124,10 @@ impl<'a> VM<'a> {
             vm.debug_mode.enabled = true;
         }
 
+        if vm.db.keep_tx_backup {
+            vm.add_hook(BackupHook::default());
+        }
+
         Ok(vm)
     }
 

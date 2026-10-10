@@ -782,6 +782,17 @@ pub struct WarmedTxs {
     /// Whether published results are recorded for re-warming at all this block.
     #[cfg(feature = "rayon")]
     tracking: AtomicBool,
+    /// What execution's own runs changed, queued for the sweeper to record.
+    #[cfg(feature = "rayon")]
+    executed_writes: std::sync::Mutex<Vec<ExecutedWrites>>,
+}
+
+/// The slots and accounts a transaction execution ran itself left, by its block position.
+#[cfg(feature = "rayon")]
+struct ExecutedWrites {
+    position: usize,
+    slots: Vec<((Address, H256), U256)>,
+    accounts: Vec<(Address, AccountSnapshot)>,
 }
 
 impl WarmedTxs {
@@ -797,7 +808,84 @@ impl WarmedTxs {
             stale: (0..transactions).map(|_| AtomicBool::new(false)).collect(),
             #[cfg(feature = "rayon")]
             tracking: AtomicBool::new(false),
+            #[cfg(feature = "rayon")]
+            executed_writes: std::sync::Mutex::new(Vec::new()),
         }
+    }
+
+    /// Queues what execution's own run of `position` changed, read from `backup` (the keys the
+    /// transaction changed) and `db` (the values it left), for the sweeper to record: the
+    /// results of later positions that read those keys are then checked and re-warmed against
+    /// the state execution really left. A transaction that destroyed an account is skipped.
+    #[cfg(feature = "rayon")]
+    fn queue_executed(
+        &self,
+        position: usize,
+        db: &GeneralizedDatabase,
+        backup: &ethrex_levm::call_frame::CallFrameBackup,
+        coinbase: Address,
+    ) {
+        let mut accounts = Vec::with_capacity(backup.original_accounts_info.len());
+        for address in backup.original_accounts_info.keys() {
+            let Some(account) = db.current_accounts_state.get(address) else {
+                continue;
+            };
+            if matches!(
+                account.status,
+                AccountStatus::Destroyed | AccountStatus::DestroyedModified
+            ) {
+                return;
+            }
+            // Every transaction's fee moves the coinbase; results only depend on it where they
+            // used its exact balance, which keeps them from being captured at all.
+            if *address != coinbase {
+                accounts.push((*address, AccountSnapshot::of(account)));
+            }
+        }
+        let mut slots = Vec::new();
+        for (address, keys) in &backup.original_account_storage_slots {
+            let Some(account) = db.current_accounts_state.get(address) else {
+                continue;
+            };
+            for key in keys.keys() {
+                if let Some(value) = account.storage.get(key) {
+                    slots.push(((*address, *key), *value));
+                }
+            }
+        }
+        if let Ok(mut queue) = self.executed_writes.lock() {
+            queue.push(ExecutedWrites {
+                position,
+                slots,
+                accounts,
+            });
+        }
+    }
+
+    /// Records the queued writes of execution's own runs, marking the later positions whose
+    /// result read a key one of them changed; returns whether any was marked.
+    #[cfg(feature = "rayon")]
+    fn record_executed(&self) -> bool {
+        let queued = match self.executed_writes.lock() {
+            Ok(mut queue) => std::mem::take(&mut *queue),
+            Err(_) => return false,
+        };
+        if queued.is_empty() {
+            return false;
+        }
+        let mut marked = false;
+        let Ok(mut writes) = self.writes.write() else {
+            return false;
+        };
+        for executed in queued {
+            for reader in writes.record_executed(&executed) {
+                if let Some(flag) = self.stale.get(reader) {
+                    flag.store(true, Ordering::Relaxed);
+                    marked = true;
+                }
+            }
+        }
+        marked
     }
 
     /// Publishes the result for `position`, and marks the later positions whose result read
@@ -978,6 +1066,47 @@ impl WarmedWrites {
                 .push(position);
             keys.read_accounts.push(address);
         }
+        self.by_position.insert(position, keys);
+        affected
+    }
+
+    /// Records what execution's own run of a position changed, in place of the result published
+    /// for it, if any; returns the later positions whose result read a key either wrote.
+    fn record_executed(&mut self, executed: &ExecutedWrites) -> Vec<usize> {
+        let position = executed.position;
+        let replaced = self.forget(position);
+        let mut keys = PositionKeys::default();
+        for &((address, key), value) in &executed.slots {
+            insert_version(
+                self.slots.entry((address, key)).or_default(),
+                position,
+                value,
+            );
+            keys.written_slots.push((address, key));
+        }
+        for (address, after) in &executed.accounts {
+            insert_version(
+                self.accounts.entry(*address).or_default(),
+                position,
+                after.clone(),
+            );
+            keys.written_accounts.push(*address);
+        }
+        let mut affected = Vec::new();
+        for written in [Some(&keys), replaced.as_ref()].into_iter().flatten() {
+            for key in &written.written_slots {
+                if let Some(readers) = self.slot_readers.get(key) {
+                    affected.extend(readers.iter().copied().filter(|&reader| reader > position));
+                }
+            }
+            for address in &written.written_accounts {
+                if let Some(readers) = self.account_readers.get(address) {
+                    affected.extend(readers.iter().copied().filter(|&reader| reader > position));
+                }
+            }
+        }
+        affected.sort_unstable();
+        affected.dedup();
         self.by_position.insert(position, keys);
         affected
     }
@@ -2142,22 +2271,41 @@ impl LEVM {
                     reused_txs += 1;
                     warmed_tx.apply(db, block.header.coinbase)?
                 }
-                _ => Self::execute_tx_in_block(
-                    tx,
-                    tx_sender,
-                    &block.header,
-                    db,
-                    vm_type,
-                    base_blob_fee_per_gas,
-                    &mut shared_stack_pool,
-                    &mut shared_memory_pool,
-                    false,
-                    false,
-                    crypto,
-                    evm_config,
-                    chain_id,
-                    stateless_validator,
-                )?,
+                _ => {
+                    // The warmer only knows the writes of the results it published: a
+                    // transaction run here hands it the keys it changed, so the results that
+                    // read them are re-warmed on the state it really left.
+                    #[cfg(feature = "rayon")]
+                    let feeding = warmed.filter(|warmed| warmed.tracking.load(Ordering::Relaxed));
+                    #[cfg(feature = "rayon")]
+                    if feeding.is_some() {
+                        db.keep_tx_backup = true;
+                    }
+                    let report = Self::execute_tx_in_block(
+                        tx,
+                        tx_sender,
+                        &block.header,
+                        db,
+                        vm_type,
+                        base_blob_fee_per_gas,
+                        &mut shared_stack_pool,
+                        &mut shared_memory_pool,
+                        false,
+                        false,
+                        crypto,
+                        evm_config,
+                        chain_id,
+                        stateless_validator,
+                    );
+                    #[cfg(feature = "rayon")]
+                    if let Some(warmed) = feeding {
+                        db.keep_tx_backup = false;
+                        if let Some(backup) = db.tx_backup.take() {
+                            warmed.queue_executed(tx_idx, db, &backup, block.header.coinbase);
+                        }
+                    }
+                    report?
+                }
             };
 
             if let Some(warmed) = warmed {
@@ -4819,8 +4967,7 @@ impl LEVM {
             let mut stack_pool = Vec::with_capacity(STACK_LIMIT);
             let mut memory_pool = Vec::with_capacity(1);
             loop {
-                let units_left = finished_units.load(Ordering::Relaxed) < units.len();
-                let mut found = false;
+                let mut found = results.record_executed();
                 let mut position = results.executed.load(Ordering::Relaxed);
                 while position < by_position.len() {
                     if should_stop() {
@@ -4840,10 +4987,10 @@ impl LEVM {
                     position = position.saturating_add(1);
                 }
                 // Nothing is left to re-warm once execution has run every transaction, and the
-                // block must not wait for one more round.
-                if (!units_left && !found)
-                    || results.executed.load(Ordering::Relaxed) >= by_position.len()
-                {
+                // block must not wait for one more round. Until then the writes of the
+                // transactions execution runs itself keep marking results, after every unit
+                // is done too.
+                if results.executed.load(Ordering::Relaxed) >= by_position.len() {
                     return;
                 }
                 if !found {
