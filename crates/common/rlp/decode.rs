@@ -72,6 +72,11 @@ impl RLPDecode for u8 {
 
             // Two bytes, where the first byte is RLP_NULL + 1
             x if rlp.len() >= 2 && *x == RLP_NULL + 1 => {
+                // Canonical RLP: a single byte in 0x00..=0x7f is its own
+                // encoding, so it must never be wrapped in a 1-byte string.
+                if rlp[1] < RLP_NULL {
+                    return Err(RLPDecodeError::MalformedData);
+                }
                 let rest = rlp.get(2..).ok_or(RLPDecodeError::MalformedData)?;
                 Ok((rlp[1], rest))
             }
@@ -559,4 +564,36 @@ pub fn static_left_pad<const N: usize>(data: &[u8]) -> Result<[u8; N], RLPDecode
         .ok_or(RLPDecodeError::InvalidLength)?
         .copy_from_slice(data);
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn u8_rejects_non_canonical_wrapped_single_byte() {
+        // Canonical RLP: a single byte in 0x00..=0x7f is its own encoding, so
+        // wrapping it in a 1-byte string (0x81 prefix) is non-canonical and
+        // must be rejected, exactly like the other uint decoders do.
+        assert_eq!(
+            u8::decode(&[0x81, 0x01]),
+            Err(RLPDecodeError::MalformedData)
+        );
+        assert_eq!(
+            u8::decode(&[0x81, 0x7f]),
+            Err(RLPDecodeError::MalformedData)
+        );
+        // Canonical zero is the empty string (0x80), not a wrapped 0x00.
+        assert_eq!(
+            u8::decode(&[0x81, 0x00]),
+            Err(RLPDecodeError::MalformedData)
+        );
+
+        // Canonical encodings still decode.
+        assert_eq!(u8::decode(&[0x05]), Ok(5));
+        assert_eq!(u8::decode(&[0x7f]), Ok(0x7f));
+        assert_eq!(u8::decode(&[0x80]), Ok(0));
+        assert_eq!(u8::decode(&[0x81, 0x80]), Ok(0x80));
+        assert_eq!(u8::decode(&[0x81, 0xff]), Ok(0xff));
+    }
 }
