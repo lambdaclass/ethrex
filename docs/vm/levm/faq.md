@@ -1,8 +1,7 @@
 # FAQ
 ## `usize` and `U256`
 In Rust, **accessing an index on a specific data structure requires a `usize` type variable.** This can be seen in methods like `get` and `get_mut`.
-
-<!-- TODO: Link in the documentation where the `U256` addresses are described -->
+For more details on how `U256` is used to represent storage keys and other 256-bit values, see the [State diffs](../../l2/fundamentals/state_diffs.md) documentation.
 On the other hand, the EVM specification requires all addresses to be in `U256`. Therefore, every opcode treats its arguments as `U256` values.
 The problem arises in the opcodes that need to access a specific index on a data structure (e.g. `CALLDATA`, `CODECOPY`, `EXTCODECOPY`, etc).
 These operands receive offsets and indexes in `U256`, but the data structure they have to access (e.g. `Memory` or  `Calldata`) **require a `usize`**. Therefore, those parameters need to be cast from `U256` to `usize`.
@@ -22,7 +21,7 @@ The main way to deal with theses cases (at least, at the time of writing) is to 
 4:       if bytecode_offset < bytecode_length {
 5:           let offset: usize = offset
 6:               .try_into()
-7:               .map_err(|_| InternalError::ConversionError)?;
+7:               .map_err(|_| InternalError::TypeConversion)?;
 8:           // After this the data vector is modified
 
         (...)
@@ -68,7 +67,7 @@ So if you want to access an account that's in the `CacheDB` it will be cheap for
 ## Errors
 
 These are the kinds of errors:
-- `InternalErorr`: These are errors that break execution, they shouldn't ever happen. For example, an underflow when substracting two values and we know for sure the first one is greater than the second.
+- `InternalError`: These are errors that break execution, they shouldn't ever happen. For example, an underflow when substracting two values and we know for sure the first one is greater than the second.
   - `DatabaseError`: Subcategory of `InternalError`, this error is only used within the `Database` trait that the LEVM crate exposes. This should be returned when there's an unexpected error when trying to read from the database.
 - `TxValidation`: These are thrown if the transaction doesn't pass the required validations, like the sender having enough value to pay for the transaction gas fees, or that the transaction nonce should match with sender's nonce. These errors **INVALIDATE** the transaction, they shouldn't make any changes to the state.
 - `ExceptionalHalt`: Any error that's contemplated in the EVM and is expected to happen, like Out-of-Gas and Stack Overflow. These errors cause the current executing context to **Revert** consuming all context gas left. Some examples include a Stack Overflow and when bytecode contains an Invalid Opcode.
