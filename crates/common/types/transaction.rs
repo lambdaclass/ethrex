@@ -3754,7 +3754,7 @@ mod serde_impl {
     #[derive(Deserialize, Debug, PartialEq, Clone, Default)]
     #[serde(rename_all = "camelCase")]
     pub struct GenericTransaction {
-        #[serde(default)]
+        #[serde(default, deserialize_with = "deserialize_generic_tx_type")]
         pub r#type: TxType,
         #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
         pub nonce: Option<u64>,
@@ -3794,6 +3794,19 @@ mod serde_impl {
         )]
         pub input: Bytes,
     }
+
+    /// Calls ignore `type`, so any byte is accepted and a value that is not a known type falls back to the default.
+    /// See https://github.com/ethereum/execution-apis/pull/939
+    fn deserialize_generic_tx_type<'de, D>(deserializer: D) -> Result<TxType, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let str = String::deserialize(deserializer)?;
+        let tx_num = u8::from_str_radix(str.trim_start_matches("0x"), 16)
+            .map_err(|_| D::Error::custom(format!("Failed to deserialize hex value {str}")))?;
+        Ok(TxType::from_u8(tx_num).unwrap_or_default())
+    }
+
     /// Custom deserialization function to parse either `data` or `input` fields, or both as long as they have the same value
     pub fn deserialize_input<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
     where
@@ -4686,6 +4699,21 @@ mod tests {
             deserialized_generic_transaction,
             serde_json::from_str(generic_transaction).unwrap()
         )
+    }
+
+    #[test]
+    fn deserialize_generic_transaction_with_unknown_type() {
+        let generic_transaction: GenericTransaction = serde_json::from_str(
+            r#"{"type":"0x7f","to":"0x6177843db3138ae69679A54b95cf345ED759450d"}"#,
+        )
+        .unwrap();
+        assert_eq!(generic_transaction.r#type, TxType::default());
+        assert!(
+            serde_json::from_str::<GenericTransaction>(
+                r#"{"type":"0x100","to":"0x6177843db3138ae69679A54b95cf345ED759450d"}"#
+            )
+            .is_err()
+        );
     }
 
     #[test]
