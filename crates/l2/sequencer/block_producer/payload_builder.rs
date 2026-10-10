@@ -128,8 +128,19 @@ pub async fn fill_transactions(
     let latest_block_number = store.get_latest_block_number()?;
     let mut txs = fetch_mempool_transactions(blockchain.as_ref(), context)?;
 
+    // Gas used by transactions executed and then rolled back in this build (an L2 message
+    // to an unregistered chain). They stay in the pool, so every build runs them again, and
+    // the code they load stays in the build's database until the build ends.
+    let mut rolled_back_gas: u64 = 0;
+
     // Execute and add transactions to payload (if suitable)
     loop {
+        // Bound that work and memory to what one full block would take.
+        if rolled_back_gas >= configured_block_gas_limit {
+            debug!("Rolled-back transactions used a block's worth of gas, closing the block");
+            break;
+        }
+
         // Check if we have enough gas to run more transactions
         if context.remaining_gas < TX_GAS_COST {
             debug!("No more gas to run transactions");
@@ -315,6 +326,8 @@ pub async fn fill_transactions(
             if !registered_chains.contains(&msg.dest_chain_id) {
                 txs.pop();
                 context.vm.undo_last_tx()?;
+                rolled_back_gas = rolled_back_gas
+                    .saturating_add(previous_remaining_gas.saturating_sub(context.remaining_gas));
                 context.remaining_gas = previous_remaining_gas;
                 context.block_value = previous_block_value;
                 context.cumulative_gas_spent = previous_cumulative_gas_spent;
