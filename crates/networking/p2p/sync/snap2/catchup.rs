@@ -16,7 +16,7 @@ use std::sync::Arc;
 use ethrex_common::{
     H256,
     constants::{AMSTERDAM_MAX_CODE_SIZE, EMPTY_BLOCK_ACCESS_LIST_HASH},
-    types::BlockHeader,
+    types::{BlockHeader, block_access_list::BlockAccessList},
     validate_bal_code_sizes,
 };
 use ethrex_crypto::NativeCrypto;
@@ -32,6 +32,23 @@ use crate::{
         snap2::{DownloadCursor, FlatState, apply_bal_flat},
     },
 };
+
+/// Why a peer's access list is not the one `header` commits to, if it is not. The hash is
+/// taken over a sorted encoding, so a list out of order matches it and is checked apart.
+fn peer_list_error(bal: &BlockAccessList, header: &BlockHeader) -> Option<String> {
+    let expected = header
+        .block_access_list_hash
+        .unwrap_or(*EMPTY_BLOCK_ACCESS_LIST_HASH);
+    let actual = bal.compute_hash(&NativeCrypto);
+    if actual != expected {
+        return Some(format!(
+            "access list {actual:?} does not match the header's commitment {expected:?}"
+        ));
+    }
+    bal.validate_ordering()
+        .err()
+        .map(|err| format!("access list is out of order: {err}"))
+}
 
 /// Furthest the flat state may be rolled forward before the access lists it
 /// needs are assumed gone.
@@ -130,24 +147,14 @@ pub async fn catch_up(
                     break;
                 };
 
-                bal.validate_ordering().map_err(|err| {
-                    SyncError::Snap2CatchUpStalled(header.number, format!("bad ordering: {err}"))
-                })?;
+                if let Some(reason) = peer_list_error(&bal, header) {
+                    let _ = peers.peer_table.record_critical_failure(peer_id);
+                    diagnostics.write().await.snap2_validation_failures += 1;
+                    return Err(SyncError::Snap2CatchUpStalled(header.number, reason));
+                }
                 validate_bal_code_sizes(&bal, AMSTERDAM_MAX_CODE_SIZE).map_err(|err| {
                     SyncError::Snap2CatchUpStalled(header.number, format!("bad code size: {err}"))
                 })?;
-                let expected = header
-                    .block_access_list_hash
-                    .unwrap_or(*EMPTY_BLOCK_ACCESS_LIST_HASH);
-                let actual = bal.compute_hash(&NativeCrypto);
-                if actual != expected {
-                    let _ = peers.peer_table.record_critical_failure(peer_id);
-                    diagnostics.write().await.snap2_validation_failures += 1;
-                    return Err(SyncError::Snap2CatchUpStalled(
-                        header.number,
-                        format!("access list hash {actual:?} does not match header {expected:?}"),
-                    ));
-                }
 
                 let stats = apply_bal_flat(flat, cursor, store, &bal)?;
                 debug!(
@@ -219,4 +226,36 @@ pub fn gap_headers(
     headers.push(current);
     headers.reverse();
     Ok(headers)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::{Address, types::block_access_list::AccountChanges};
+
+    fn header_committing_to(bal: &BlockAccessList) -> BlockHeader {
+        BlockHeader {
+            block_access_list_hash: Some(bal.compute_hash(&NativeCrypto)),
+            ..Default::default()
+        }
+    }
+
+    /// A list out of order matches the header's hash, but the peer that sent it SHALL be
+    /// penalized as for one that does not.
+    #[test]
+    fn list_out_of_order_is_the_peers_fault() {
+        let out_of_order = BlockAccessList::from_accounts(vec![
+            AccountChanges::new(Address::repeat_byte(2)),
+            AccountChanges::new(Address::repeat_byte(1)),
+        ]);
+        let header = header_committing_to(&out_of_order);
+        let reason = peer_list_error(&out_of_order, &header);
+        assert!(reason.is_some_and(|reason| reason.starts_with("access list is out of order: ")));
+
+        let in_order = BlockAccessList::from_accounts(vec![
+            AccountChanges::new(Address::repeat_byte(1)),
+            AccountChanges::new(Address::repeat_byte(2)),
+        ]);
+        assert_eq!(peer_list_error(&in_order, &header), None);
+    }
 }
