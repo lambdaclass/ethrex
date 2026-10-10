@@ -66,6 +66,12 @@ pub struct Discv5State {
     /// split across up to `total` packets sharing one request id; they expire
     /// via `PENDING_FINDNODE_TIMEOUT` instead.
     pub pending_findnodes: FxHashMap<(H256, Bytes), Instant>,
+    /// The peer table's `discovered_count` when the current lookup started, to
+    /// tell on completion whether it found any node the table did not already hold.
+    pub lookup_started_at_count: u64,
+    /// Finished lookups in a row that found nothing new. Each doubles the wait
+    /// before the next lookup starts; see `discovery::next_lookup_interval`.
+    pub empty_lookups_in_a_row: u32,
 }
 
 impl Default for Discv5State {
@@ -83,6 +89,8 @@ impl Default for Discv5State {
             whoareyou_global_window_start: Instant::now(),
             session_ips: Default::default(),
             active_lookups: Vec::new(),
+            lookup_started_at_count: 0,
+            empty_lookups_in_a_row: 0,
         }
     }
 }

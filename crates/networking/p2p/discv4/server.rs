@@ -17,6 +17,12 @@ pub struct Discv4State {
     pub pending_find_node: HashMap<H256, Instant>,
     /// Currently active iterative lookups, each with its cached signed FindNode message.
     pub active_lookups: Vec<(IterativeLookup, BytesMut)>,
+    /// The peer table's `discovered_count` when the current lookup started, to
+    /// tell on completion whether it found any node the table did not already hold.
+    pub lookup_started_at_count: u64,
+    /// Finished lookups in a row that found nothing new. Each doubles the wait
+    /// before the next lookup starts; see `discovery::next_lookup_interval`.
+    pub empty_lookups_in_a_row: u32,
 }
 
 #[derive(Debug, Clone)]
