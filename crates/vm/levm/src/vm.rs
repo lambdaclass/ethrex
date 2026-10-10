@@ -86,11 +86,19 @@ pub struct Substate {
     fork: Fork,
     /// Accounts marked for self-destruction (deleted at end of transaction).
     selfdestruct_set: FxHashSet<Address>,
-    /// Addresses accessed during execution (for EIP-2929 warm/cold gas costs).
+    /// Addresses accessed so far in the transaction, across every checkpoint (for EIP-2929
+    /// warm/cold gas costs). Only the innermost checkpoint holds them; a checkpoint's own
+    /// additions are in `access_journal` past `access_checkpoint`, so a revert removes them.
     /// Precompiles are NOT stored here; they are warm by construction (see `is_warm_precompile`).
     accessed_addresses: FxHashSet<Address>,
-    /// Storage slots accessed per address (for EIP-2929 warm/cold gas costs).
+    /// Storage slots accessed so far in the transaction, per address, held like
+    /// `accessed_addresses`.
     accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
+    /// Every address and slot added to the access sets, in order, so a revert can undo the
+    /// additions of the checkpoint it discards. Held with the access sets.
+    access_journal: Vec<AccessJournalEntry>,
+    /// Length of `access_journal` when this checkpoint was pushed.
+    access_checkpoint: usize,
     /// Accounts created during this transaction.
     created_accounts: FxHashSet<Address>,
     /// Accumulated gas refund (e.g., from storage clears).
@@ -99,6 +107,19 @@ pub struct Substate {
     transient_storage: TransientStorage,
     /// Event logs emitted during execution.
     logs: Vec<Log>,
+}
+
+/// An addition to the access sets, recorded so a revert can undo it.
+#[derive(Debug)]
+enum AccessJournalEntry {
+    Address(Address),
+    /// `created_entry` is whether the address had no slot set before, in which case undoing
+    /// the addition removes the set too.
+    Slot {
+        address: Address,
+        key: H256,
+        created_entry: bool,
+    },
 }
 
 impl Substate {
@@ -113,6 +134,8 @@ impl Substate {
             selfdestruct_set: FxHashSet::default(),
             accessed_addresses,
             accessed_storage_slots,
+            access_journal: Vec::new(),
+            access_checkpoint: 0,
             created_accounts: FxHashSet::default(),
             refunded_gas: 0,
             transient_storage: TransientStorage::default(),
@@ -146,10 +169,16 @@ impl Substate {
     /// Push a checkpoint that can be either reverted or committed. All data up to this point is
     /// still accessible.
     pub fn push_backup(&mut self) {
-        let parent = mem::take(self);
+        let mut parent = mem::take(self);
         self.refunded_gas = parent.refunded_gas;
         // Carry the fork forward so child checkpoints keep the same precompile-warmth view.
         self.fork = parent.fork;
+        // The access sets move to the new checkpoint whole; what it adds is journaled past
+        // its starting point, so a revert can take it back out.
+        self.accessed_addresses = mem::take(&mut parent.accessed_addresses);
+        self.accessed_storage_slots = mem::take(&mut parent.accessed_storage_slots);
+        self.access_journal = mem::take(&mut parent.access_journal);
+        self.access_checkpoint = self.access_journal.len();
         self.parent = Some(Box::new(parent));
     }
 
@@ -162,13 +191,11 @@ impl Substate {
             mem::swap(self, &mut delta);
 
             self.selfdestruct_set.extend(delta.selfdestruct_set);
-            self.accessed_addresses.extend(delta.accessed_addresses);
-            for (address, slot_set) in delta.accessed_storage_slots {
-                self.accessed_storage_slots
-                    .entry(address)
-                    .or_default()
-                    .extend(slot_set);
-            }
+            // The checkpoint held the whole access sets, its additions included: they go
+            // back to the parent as they are.
+            self.accessed_addresses = delta.accessed_addresses;
+            self.accessed_storage_slots = delta.accessed_storage_slots;
+            self.access_journal = delta.access_journal;
             self.created_accounts.extend(delta.created_accounts);
             self.refunded_gas = delta.refunded_gas;
             self.transient_storage.extend(delta.transient_storage);
@@ -181,7 +208,32 @@ impl Substate {
     /// Does nothing if the substate has no backup.
     pub fn revert_backup(&mut self) {
         if let Some(parent) = self.parent.as_mut() {
+            let mut addresses = mem::take(&mut self.accessed_addresses);
+            let mut slots = mem::take(&mut self.accessed_storage_slots);
+            let mut journal = mem::take(&mut self.access_journal);
+            // Undo this checkpoint's additions, newest first.
+            for entry in journal.drain(self.access_checkpoint..).rev() {
+                match entry {
+                    AccessJournalEntry::Address(address) => {
+                        addresses.remove(&address);
+                    }
+                    AccessJournalEntry::Slot {
+                        address,
+                        key,
+                        created_entry,
+                    } => {
+                        if created_entry {
+                            slots.remove(&address);
+                        } else if let Some(set) = slots.get_mut(&address) {
+                            set.remove(&key);
+                        }
+                    }
+                }
+            }
             *self = mem::take(parent);
+            self.accessed_addresses = addresses;
+            self.accessed_storage_slots = slots;
+            self.access_journal = journal;
         }
     }
 
@@ -245,19 +297,12 @@ impl Substate {
     pub fn make_access_list(&self) -> Vec<AccessListEntry> {
         let mut entries = BTreeMap::<Address, BTreeSet<H256>>::new();
 
-        let mut current = self;
-        loop {
-            for (address, slot_set) in &current.accessed_storage_slots {
-                entries
-                    .entry(*address)
-                    .or_default()
-                    .extend(slot_set.iter().copied());
-            }
-
-            current = match current.parent.as_deref() {
-                Some(x) => x,
-                None => break,
-            };
+        // The innermost checkpoint holds every accessed slot of the transaction.
+        for (address, slot_set) in &self.accessed_storage_slots {
+            entries
+                .entry(*address)
+                .or_default()
+                .extend(slot_set.iter().copied());
         }
 
         entries
@@ -271,61 +316,41 @@ impl Substate {
 
     /// Mark an address as accessed and return whether the slot was cold.
     pub fn add_accessed_slot(&mut self, address: Address, key: H256) -> bool {
-        if self
-            .accessed_storage_slots
-            .get(&address)
-            .is_some_and(|set| set.contains(&key))
-        {
-            return false;
+        let (inserted, created_entry) = match self.accessed_storage_slots.get_mut(&address) {
+            Some(set) => (set.insert(key), false),
+            None => {
+                let mut set = FxHashSet::default();
+                set.insert(key);
+                self.accessed_storage_slots.insert(address, set);
+                (true, true)
+            }
+        };
+        if inserted {
+            self.access_journal.push(AccessJournalEntry::Slot {
+                address,
+                key,
+                created_entry,
+            });
         }
-
-        let is_present = self
-            .parent
-            .as_ref()
-            .map(|parent| parent.is_slot_accessed(&address, &key))
-            .unwrap_or_default();
-
-        // Note: Do not simplify this expression, it uses `||` to avoid executing the right hand
-        //   expression if not necessary.
-        #[expect(clippy::nonminimal_bool, reason = "order of evaluation matters")]
-        !(is_present
-            || !self
-                .accessed_storage_slots
-                .entry(address)
-                .or_default()
-                .insert(key))
+        inserted
     }
 
     /// Return whether an address has already been accessed.
     pub fn is_slot_accessed(&self, address: &Address, key: &H256) -> bool {
         self.accessed_storage_slots
             .get(address)
-            .map(|slot_set| slot_set.contains(key))
-            .unwrap_or_default()
-            || self
-                .parent
-                .as_ref()
-                .map(|parent| parent.is_slot_accessed(address, key))
-                .unwrap_or_default()
+            .is_some_and(|slot_set| slot_set.contains(key))
     }
 
     /// Returns all accessed storage slots for a given address.
     /// Used by SELFDESTRUCT to record storage reads in BAL per EIP-7928:
     /// "SELFDESTRUCT: Include modified/read storage keys as storage_read"
     pub fn get_accessed_storage_slots(&self, address: &Address) -> BTreeSet<H256> {
-        let mut slots = BTreeSet::new();
-
-        // Collect from current substate
-        if let Some(slot_set) = self.accessed_storage_slots.get(address) {
-            slots.extend(slot_set.iter().copied());
-        }
-
-        // Collect from parent substates recursively
-        if let Some(parent) = self.parent.as_ref() {
-            slots.extend(parent.get_accessed_storage_slots(address));
-        }
-
-        slots
+        // The innermost checkpoint holds every accessed slot of the transaction.
+        self.accessed_storage_slots
+            .get(address)
+            .map(|slot_set| slot_set.iter().copied().collect())
+            .unwrap_or_default()
     }
 
     /// Mark an address as accessed and return whether the address was cold.
@@ -336,33 +361,19 @@ impl Substate {
             return false;
         }
 
-        if self.accessed_addresses.contains(&address) {
-            return false;
+        let inserted = self.accessed_addresses.insert(address);
+        if inserted {
+            self.access_journal
+                .push(AccessJournalEntry::Address(address));
         }
-
-        let is_present = self
-            .parent
-            .as_ref()
-            .map(|parent| parent.is_address_accessed(&address))
-            .unwrap_or_default();
-
-        // Note: Do not simplify this expression, it uses `||` to avoid executing the right hand
-        //   expression if not necessary.
-        #[expect(clippy::nonminimal_bool, reason = "order of evaluation matters")]
-        !(is_present || !self.accessed_addresses.insert(address))
+        inserted
     }
 
     /// Return whether an address has already been accessed.
     pub fn is_address_accessed(&self, address: &Address) -> bool {
         // Precompiles are always warm; the chain shares one `fork`, so this is consistent across
-        // sub-frame substates.
-        self.is_warm_precompile(address)
-            || self.accessed_addresses.contains(address)
-            || self
-                .parent
-                .as_ref()
-                .map(|parent| parent.is_address_accessed(address))
-                .unwrap_or_default()
+        // sub-frame substates. The innermost checkpoint holds every accessed address.
+        self.is_warm_precompile(address) || self.accessed_addresses.contains(address)
     }
 
     /// Mark an address as a new account and return whether is was already marked.
@@ -3611,5 +3622,116 @@ impl<'a> VM<'a> {
     }
     pub fn frame_state_gas_spilled(&self) -> u64 {
         self.current_call_frame.frame_state_gas_spilled
+    }
+}
+
+#[cfg(test)]
+mod substate_access_tests {
+    use super::Substate;
+    use ethrex_common::types::Fork;
+    use ethrex_common::{Address, H256};
+    use rustc_hash::{FxHashMap, FxHashSet};
+
+    fn addr(byte: u8) -> Address {
+        Address::repeat_byte(byte)
+    }
+
+    fn key(byte: u8) -> H256 {
+        H256::repeat_byte(byte)
+    }
+
+    /// A substate whose transaction access list warms address 0xaa with no slots.
+    fn substate() -> Substate {
+        let mut addresses = FxHashSet::default();
+        addresses.insert(addr(0xaa));
+        let mut slots: FxHashMap<Address, FxHashSet<H256>> = FxHashMap::default();
+        slots.insert(addr(0xaa), FxHashSet::default());
+        Substate::from_accesses(Fork::Prague, addresses, slots)
+    }
+
+    #[test]
+    fn a_committed_checkpoint_keeps_its_accesses() {
+        let mut substate = substate();
+        substate.push_backup();
+        assert!(substate.add_accessed_address(addr(1)));
+        assert!(substate.add_accessed_slot(addr(1), key(1)));
+        substate.commit_backup();
+        assert!(substate.is_address_accessed(&addr(1)));
+        assert!(substate.is_slot_accessed(&addr(1), &key(1)));
+        assert!(!substate.add_accessed_address(addr(1)));
+        assert!(!substate.add_accessed_slot(addr(1), key(1)));
+    }
+
+    #[test]
+    fn a_reverted_checkpoint_loses_only_its_own_accesses() {
+        let mut substate = substate();
+        assert!(substate.add_accessed_slot(addr(1), key(1)));
+        substate.push_backup();
+        // Already warm before the checkpoint: not cold, and not undone by the revert.
+        assert!(!substate.add_accessed_slot(addr(1), key(1)));
+        assert!(substate.add_accessed_slot(addr(1), key(2)));
+        assert!(substate.add_accessed_slot(addr(2), key(1)));
+        assert!(substate.add_accessed_address(addr(3)));
+        substate.revert_backup();
+        assert!(substate.is_slot_accessed(&addr(1), &key(1)));
+        assert!(!substate.is_slot_accessed(&addr(1), &key(2)));
+        assert!(!substate.is_slot_accessed(&addr(2), &key(1)));
+        assert!(!substate.is_address_accessed(&addr(3)));
+        assert!(substate.add_accessed_address(addr(3)));
+        assert!(substate.add_accessed_slot(addr(2), key(1)));
+    }
+
+    #[test]
+    fn nested_checkpoints_unwind_in_order() {
+        let mut substate = substate();
+        substate.push_backup();
+        assert!(substate.add_accessed_slot(addr(1), key(1)));
+        substate.push_backup();
+        assert!(substate.add_accessed_slot(addr(1), key(2)));
+        // The inner checkpoint commits into the outer one...
+        substate.commit_backup();
+        assert!(substate.is_slot_accessed(&addr(1), &key(2)));
+        substate.push_backup();
+        assert!(substate.add_accessed_slot(addr(1), key(3)));
+        // ...a later inner one reverts alone...
+        substate.revert_backup();
+        assert!(substate.is_slot_accessed(&addr(1), &key(1)));
+        assert!(substate.is_slot_accessed(&addr(1), &key(2)));
+        assert!(!substate.is_slot_accessed(&addr(1), &key(3)));
+        // ...and reverting the outer one takes back everything it and its committed inner
+        // checkpoint added.
+        substate.revert_backup();
+        assert!(!substate.is_slot_accessed(&addr(1), &key(1)));
+        assert!(!substate.is_slot_accessed(&addr(1), &key(2)));
+        assert!(
+            substate
+                .make_access_list()
+                .iter()
+                .all(|entry| entry.address != addr(1))
+        );
+    }
+
+    #[test]
+    fn an_access_list_entry_without_slots_survives_a_revert() {
+        let mut substate = substate();
+        substate.push_backup();
+        assert!(substate.add_accessed_slot(addr(0xaa), key(1)));
+        substate.revert_backup();
+        assert!(!substate.is_slot_accessed(&addr(0xaa), &key(1)));
+        assert!(
+            substate
+                .make_access_list()
+                .iter()
+                .any(|entry| entry.address == addr(0xaa) && entry.storage_keys.is_empty()),
+            "the access list's address keeps its entry, without slots"
+        );
+        assert!(substate.is_address_accessed(&addr(0xaa)));
+    }
+
+    #[test]
+    fn precompiles_are_warm_without_entries() {
+        let mut substate = substate();
+        assert!(substate.is_address_accessed(&Address::from_low_u64_be(1)));
+        assert!(!substate.add_accessed_address(Address::from_low_u64_be(1)));
     }
 }
