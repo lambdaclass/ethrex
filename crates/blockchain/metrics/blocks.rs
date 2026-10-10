@@ -20,6 +20,9 @@ pub struct MetricsBlocks {
     gas_used: Gauge,
     transaction_count: IntGauge,
     execution_ms: Gauge,
+    warmed_results_reused: IntGauge,
+    warmed_results_rejected: IntGauge,
+    warmed_results_missing: IntGauge,
     merkle_ms: Gauge,
     store_ms: Gauge,
     /// Keeps track of the head block number
@@ -107,6 +110,21 @@ impl MetricsBlocks {
                 "Keeps track of the block number for the head of the chain",
             )
             .expect("Failed to create head_height metric"),
+            warmed_results_reused: IntGauge::new(
+                "warmed_results_reused",
+                "Transactions of the latest block that took the block warmer's result",
+            )
+            .expect("Failed to create warmed_results_reused metric"),
+            warmed_results_rejected: IntGauge::new(
+                "warmed_results_rejected",
+                "Transactions of the latest block that rejected the block warmer's result",
+            )
+            .expect("Failed to create warmed_results_rejected metric"),
+            warmed_results_missing: IntGauge::new(
+                "warmed_results_missing",
+                "Transactions of the latest block execution reached before the block warmer",
+            )
+            .expect("Failed to create warmed_results_missing metric"),
             execution_ms: Gauge::new(
                 "execution_ms",
                 "Keeps track of the execution time spent in block execution in miliseconds",
@@ -162,6 +180,12 @@ impl MetricsBlocks {
 
     pub fn set_transaction_count(&self, transaction_count: i64) {
         self.transaction_count.set(transaction_count);
+    }
+
+    pub fn set_warmed_results(&self, reused: usize, rejected: usize, missing: usize) {
+        self.warmed_results_reused.set(reused as i64);
+        self.warmed_results_rejected.set(rejected as i64);
+        self.warmed_results_missing.set(missing as i64);
     }
 
     pub fn set_execution_ms(&self, execution_ms: f64) {
@@ -261,6 +285,12 @@ impl MetricsBlocks {
         r.register(Box::new(self.store_ms.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.execution_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.warmed_results_reused.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.warmed_results_rejected.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.warmed_results_missing.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.merkle_ms.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;

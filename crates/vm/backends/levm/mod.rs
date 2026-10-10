@@ -1887,6 +1887,7 @@ impl LEVM {
                     .then(|| lstar_burned_fees(&chain_config, &block.header, cumulative_gas_used)),
                 tx_gas_breakdowns,
                 receipts_commitment: None,
+                warmed_results: Default::default(),
             },
             bal,
         ))
@@ -2167,6 +2168,7 @@ impl LEVM {
                     burned_fees: burned_fees_par,
                     tx_gas_breakdowns,
                     receipts_commitment: None,
+                    warmed_results: Default::default(),
                 },
                 None,
             ));
@@ -2212,6 +2214,8 @@ impl LEVM {
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
         let mut reused_txs = 0_usize;
+        let mut rejected_txs = 0_usize;
+        let mut missing_txs = 0_usize;
         let receipt_hasher = ReceiptHasher::start();
 
         for (tx_idx, tx) in block.body.transactions.iter().enumerate() {
@@ -2266,12 +2270,25 @@ impl LEVM {
                         && !matches!(tx, Transaction::FrameTransaction(_))
                 })
                 .and_then(|warmed| warmed.take(tx_idx));
+            let warmed_tx = match warmed_tx {
+                Some(warmed_tx) if warmed_tx.holds(db, tx, tx_sender)? => Some(warmed_tx),
+                Some(_) => {
+                    rejected_txs += 1;
+                    None
+                }
+                None => {
+                    if warmed.is_some() {
+                        missing_txs += 1;
+                    }
+                    None
+                }
+            };
             let report = match warmed_tx {
-                Some(warmed_tx) if warmed_tx.holds(db, tx, tx_sender)? => {
+                Some(warmed_tx) => {
                     reused_txs += 1;
                     warmed_tx.apply(db, block.header.coinbase)?
                 }
-                _ => {
+                None => {
                     // The warmer only knows the writes of the results it published: a
                     // transaction run here hands it the keys it changed, so the results that
                     // read them are re-warmed on the state it really left.
@@ -2399,6 +2416,8 @@ impl LEVM {
                 block = block.header.number,
                 transactions = n_txs,
                 reused = reused_txs,
+                rejected = rejected_txs,
+                missing = missing_txs,
                 "Reused warmed transactions"
             );
         }
@@ -2452,6 +2471,11 @@ impl LEVM {
                     .then(|| lstar_burned_fees(&chain_config, &block.header, cumulative_gas_used)),
                 tx_gas_breakdowns,
                 receipts_commitment,
+                warmed_results: crate::backends::WarmedResultCounts {
+                    reused: reused_txs,
+                    rejected: rejected_txs,
+                    missing: missing_txs,
+                },
             },
             bal,
         ))

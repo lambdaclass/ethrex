@@ -216,6 +216,7 @@ impl NativeBlockProducer {
             burned_fees: None,
             tx_gas_breakdowns: Vec::new(),
             receipts_commitment: None,
+            warmed_results: Default::default(),
         };
 
         let transactions_count = block.body.transactions.len();

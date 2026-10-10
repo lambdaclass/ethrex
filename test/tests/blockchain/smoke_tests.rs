@@ -711,6 +711,7 @@ async fn store_block_l2_style(store: &Store, parent: &BlockHeader) -> H256 {
         burned_fees: None,
         tx_gas_breakdowns: Vec::new(),
         receipts_commitment: None,
+        warmed_results: Default::default(),
     };
     blockchain
         .store_block(block, account_updates_list, execution_result)

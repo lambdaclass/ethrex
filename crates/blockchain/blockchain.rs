@@ -293,6 +293,19 @@ pub struct Blockchain {
     /// State cache entries left by the last executed block, brought up to its post-state,
     /// for its child to start from; see `CarriedCache`.
     carried: CarriedCache,
+    /// What became of the block warmer's results in the last block the pipeline executed.
+    last_warmed_results: std::sync::Mutex<ethrex_vm::backends::WarmedResultCounts>,
+}
+
+impl Blockchain {
+    /// What became of the block warmer's results in the last block the pipeline executed:
+    /// how many transactions took a result, rejected one, or found none ready.
+    pub fn last_warmed_results(&self) -> ethrex_vm::backends::WarmedResultCounts {
+        self.last_warmed_results
+            .lock()
+            .map(|counts| *counts)
+            .unwrap_or_default()
+    }
 }
 
 /// A block's state cache entries carried to its child. Keyed like [`PrewarmedEntry`] by
@@ -652,6 +665,7 @@ impl Blockchain {
             merkle_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
             carried: CarriedCache::default(),
+            last_warmed_results: std::sync::Mutex::default(),
         }
     }
 
@@ -681,6 +695,7 @@ impl Blockchain {
             merkle_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
             carried: CarriedCache::default(),
+            last_warmed_results: std::sync::Mutex::default(),
         }
     }
 
@@ -732,6 +747,7 @@ impl Blockchain {
             merkle_pool: OnceLock::new(),
             prewarmed: PrewarmedCache::default(),
             carried: CarriedCache::default(),
+            last_warmed_results: std::sync::Mutex::default(),
         }
     }
 
@@ -2984,6 +3000,16 @@ impl Blockchain {
             block.body.transactions.len(),
         );
         let block_hash = block.hash();
+
+        let warmed_results = res.warmed_results;
+        if let Ok(mut last) = self.last_warmed_results.lock() {
+            *last = warmed_results;
+        }
+        metrics!(METRICS_BLOCKS.set_warmed_results(
+            warmed_results.reused,
+            warmed_results.rejected,
+            warmed_results.missing
+        ));
 
         let mut witness = None;
         if let Some(logger) = logger
