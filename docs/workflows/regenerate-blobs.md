@@ -2,8 +2,12 @@
 
 ## Overview
 
-The state reconstruction test (`crates/l2/tests/state_reconstruct.rs`) replays a fixed set of blobs to verify L2 state can be correctly reconstructed. These blob fixtures must be regenerated whenever the L2 genesis file (`fixtures/genesis/l2.json`) changes, because a new genesis alters the hash of the first block and all descendant blocks. The stored blobs encode parent pointers, so stale hashes make the fixtures unusable.
+The state reconstruction test (`crates/l2/tests/state_reconstruct.rs`) replays a fixed set of blobs to verify L2 state can be correctly reconstructed. These blob fixtures must be regenerated (or migrated) whenever:
 
+- the L2 genesis file (`fixtures/genesis/l2.json`) changes, because a new genesis alters the hash of the first block and all descendant blocks — the stored blobs encode parent pointers, so stale hashes make the fixtures unusable; or
+- the block header/body schema (RLP fields, e.g. in `crates/common/types/block.rs`) or block validation rules change in a way that affects encoding or acceptance of historical blocks — the fixtures then fail to decode or to pass `validate_block_body`. Encoding-only changes can often be migrated **in place** (decode → adjust → re-encode) without a full sequencer run; see #7063 for an example.
+
+A fast guard (`crates/common/tests/blob_fixtures.rs`) decodes every fixture blob, runs `validate_block_body` on each block, and checks genesis linkage; it runs in the always-on workspace test suite on every PR.
 
 ## Prerequisites
 

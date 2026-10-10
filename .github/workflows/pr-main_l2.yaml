@@ -35,6 +35,8 @@ jobs:
           filters: |
             run_tests:
               - "crates/l2/**"
+              - "crates/common/types/**"
+              - "crates/blockchain/**"
               - "test/tests/l2/**"
               - "fixtures/keys/**"
               - "fixtures/genesis/l1.json"
