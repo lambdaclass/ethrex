@@ -22,6 +22,7 @@ use ethrex_blockchain::error::MempoolError;
 /// - `-32602`: Invalid params
 /// - `-32603`: Internal error
 /// - `-32000`: Generic server error
+/// - `-32005`: Limit exceeded
 /// - `-38001` to `-38006`: Engine API specific errors
 /// - `3`: Execution reverted/halted
 #[derive(Clone, Debug, thiserror::Error)]
@@ -96,6 +97,11 @@ pub enum RpcErr {
     /// block-access-list getters.
     #[error("Pruned history unavailable: {0}")]
     PrunedHistoryUnavailable(String),
+    /// `-32005: Limit exceeded` (EIP-1474): the request is valid but costs more than the
+    /// node allows, or the node is out of room for it right now. The message, used
+    /// verbatim, says which limit and how to stay under it.
+    #[error("{0}")]
+    LimitExceeded(String),
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -247,6 +253,11 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: 4444,
                 data: Some(context),
                 message: "Pruned history unavailable".to_string(),
+            },
+            RpcErr::LimitExceeded(context) => RpcErrorMetadata {
+                code: -32005,
+                data: None,
+                message: context,
             },
         }
     }

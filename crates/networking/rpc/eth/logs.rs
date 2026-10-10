@@ -13,13 +13,14 @@ use crate::{
 use ethereum_types::{Bloom, BloomInput};
 use ethrex_common::{
     H160, H256,
-    types::{BlockBody, BlockHeader},
+    types::{BlockBody, BlockHeader, BlockNumber},
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_storage::Store;
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(untagged)]
@@ -135,7 +136,8 @@ impl RpcHandler for LogsFilter {
         }
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let filtered_logs = fetch_logs_with_filter(self, context.storage).await?;
+        let filtered_logs =
+            fetch_logs_with_filter(self, context.storage, &context.log_query_limits).await?;
         serde_json::to_value(filtered_logs).map_err(|error| {
             tracing::error!("Log filtering request failed with: {error}");
             RpcErr::Internal("Failed to filter logs".to_string())
@@ -152,19 +154,228 @@ impl RpcHandler for LogsFilter {
 //   then we simply could retrieve each log from the receipt and add the info
 //   needed for the RPCLog struct.
 
+/// Blocks whose headers one blocking task reads and checks against the filter's bloom,
+/// the same chunk size reth uses for its header pass.
+const HEADER_CHUNK_SIZE: u64 = 1_000;
+
+/// Default for `--rpc.max-blocks-per-filter`, the same as reth.
+pub const DEFAULT_MAX_BLOCKS_PER_FILTER: u64 = 100_000;
+
+/// Default for `--rpc.max-logs-per-response`, the same as reth.
+pub const DEFAULT_MAX_LOGS_PER_RESPONSE: u64 = 20_000;
+
+/// Default for `--rpc.max-log-query-work`: a query over the full default range may check
+/// 100 address and topic combinations, and a 10,000-block one may check 1,000 addresses,
+/// geth's per-filter address limit.
+pub const DEFAULT_MAX_LOG_QUERY_WORK: u64 = 100 * DEFAULT_MAX_BLOCKS_PER_FILTER;
+
+/// Default for `--rpc.log-query-work-budget`: room for four queries at the work limit.
+pub const DEFAULT_LOG_QUERY_WORK_BUDGET: u64 = 4 * DEFAULT_MAX_LOG_QUERY_WORK;
+
+/// Queries with at most this much work, such as 10,000 blocks for one address and topic,
+/// skip the work budget. They are cheap, and keeping them out means ordinary queries
+/// never get a budget error while heavy ones hold it.
+const LIGHT_LOG_QUERY_WORK: u64 = 10_000;
+
+/// Work per block of a query with no address and no topic filter. Every block matches it,
+/// so it reads every block's body and receipts, where a filtered query mostly stops at the
+/// header bloom. At the default limits this caps such a query at 100,000 blocks, the range
+/// limit, and makes one over 100 blocks count against the work budget.
+const UNFILTERED_BLOCK_WORK: u64 = 100;
+
+/// What one log query may cost. `eth_getLogs` and `eth_getFilterChanges` share it, and
+/// clones share the work budget.
+#[derive(Clone, Debug)]
+pub struct LogQueryLimits {
+    /// Largest `to - from` of a range query; `None` for no limit.
+    max_blocks_per_filter: Option<u64>,
+    /// Most logs a query spanning several blocks may return; `None` for no limit.
+    max_logs_per_response: Option<usize>,
+    /// Largest scan-work estimate (see [`LogQueryWork`]) a query may have; `None` for no
+    /// limit.
+    max_log_query_work: Option<u64>,
+    /// Work of the heavy queries in flight. Each takes its estimate, capped at the whole
+    /// budget, and gives it back when it finishes, fails, or is dropped.
+    work_budget: Arc<Semaphore>,
+    /// Permits in `work_budget` while no query holds any.
+    work_budget_size: usize,
+}
+
+impl LogQueryLimits {
+    /// Zero for any of the first three limits means no limit. A zero `work_budget`
+    /// refuses every query above the light threshold.
+    pub fn new(
+        max_blocks_per_filter: u64,
+        max_logs_per_response: u64,
+        max_log_query_work: u64,
+        work_budget: u64,
+    ) -> Self {
+        let work_budget_size = usize::try_from(work_budget)
+            .unwrap_or(usize::MAX)
+            .min(Semaphore::MAX_PERMITS);
+        Self {
+            max_blocks_per_filter: (max_blocks_per_filter != 0).then_some(max_blocks_per_filter),
+            max_logs_per_response: (max_logs_per_response != 0)
+                .then(|| usize::try_from(max_logs_per_response).unwrap_or(usize::MAX)),
+            max_log_query_work: (max_log_query_work != 0).then_some(max_log_query_work),
+            work_budget: Arc::new(Semaphore::new(work_budget_size)),
+            work_budget_size,
+        }
+    }
+
+    /// Rejects a range query spanning more blocks than allowed, with reth's message.
+    fn check_block_range(&self, from: BlockNumber, to: BlockNumber) -> Result<(), RpcErr> {
+        match self.max_blocks_per_filter {
+            Some(max) if to - from > max => Err(RpcErr::InvalidParams(format!(
+                "query exceeds max block range {max}"
+            ))),
+            _ => Ok(()),
+        }
+    }
+
+    /// Rejects a query whose work estimate is over the limit.
+    fn check_work(&self, work: &LogQueryWork) -> Result<(), RpcErr> {
+        match self.max_log_query_work {
+            Some(max) if work.total() > max && work.unfiltered => {
+                Err(RpcErr::LimitExceeded(format!(
+                    "log query too expensive (blocks {} x {UNFILTERED_BLOCK_WORK} for a query with no address or topic filter = {} units of work, limit {max}); narrow the block range or add a filter",
+                    work.blocks,
+                    work.total()
+                )))
+            }
+            Some(max) if work.total() > max => Err(RpcErr::LimitExceeded(format!(
+                "log query too expensive (blocks {} x addresses {} x topic alternatives {} = {} units of work, limit {max}); narrow the block range or the filter",
+                work.blocks,
+                work.addresses,
+                work.topics,
+                work.total()
+            ))),
+            _ => Ok(()),
+        }
+    }
+
+    /// Takes the query's work from the budget for as long as the returned permit lives.
+    /// Light queries take nothing. Fails at once when the budget has no room, instead of
+    /// queueing.
+    fn reserve(&self, work: &LogQueryWork) -> Result<Option<OwnedSemaphorePermit>, RpcErr> {
+        let work = work.total();
+        if work <= LIGHT_LOG_QUERY_WORK {
+            return Ok(None);
+        }
+        // A query never needs more than the whole budget, and at least one permit, so an
+        // empty budget refuses it.
+        let permits = usize::try_from(work)
+            .unwrap_or(usize::MAX)
+            .min(self.work_budget_size)
+            .max(1);
+        let permits = u32::try_from(permits).unwrap_or(u32::MAX);
+        self.work_budget
+            .clone()
+            .try_acquire_many_owned(permits)
+            .map(Some)
+            .map_err(|_| {
+                RpcErr::LimitExceeded("too many log queries in flight, retry later".to_string())
+            })
+    }
+
+    /// Rejects a filter that could not scan even one block within the work limit, so
+    /// `eth_newFilter` refuses it up front instead of failing every poll.
+    pub(crate) fn check_filter(&self, filter: &LogsFilter) -> Result<(), RpcErr> {
+        self.check_work(&LogQueryWork::new(1, &filter.address_set(), &filter.topics))
+    }
+}
+
+impl Default for LogQueryLimits {
+    fn default() -> Self {
+        Self::new(
+            DEFAULT_MAX_BLOCKS_PER_FILTER,
+            DEFAULT_MAX_LOGS_PER_RESPONSE,
+            DEFAULT_MAX_LOG_QUERY_WORK,
+            DEFAULT_LOG_QUERY_WORK_BUDGET,
+        )
+    }
+}
+
+/// Upper bound on the scan work of a log query: the blocks it scans, times the addresses
+/// and the topic alternatives each block is checked against. Each extra address or
+/// alternative can make more blocks match, and every matching block costs a body and a
+/// receipts read. Only the largest OR-set counts: topic positions are ANDed, so another
+/// constrained position can only narrow the matches. A query with no filter at all
+/// matches every block, so its blocks count [`UNFILTERED_BLOCK_WORK`] each.
+struct LogQueryWork {
+    blocks: u64,
+    /// Distinct addresses, at least 1.
+    addresses: u64,
+    /// Alternatives in the largest constrained OR-set, at least 1.
+    topics: u64,
+    /// No address and no constrained topic position: every block is read in full.
+    unfiltered: bool,
+}
+
+impl LogQueryWork {
+    fn new(blocks: u64, addresses: &HashSet<&H160>, topics: &[TopicFilter]) -> Self {
+        let largest_or_set = topics
+            .iter()
+            .map(|position| match position {
+                // A list containing `null` is a wildcard, like a single `null`.
+                TopicFilter::Topics(alternatives) if !alternatives.contains(&None) => {
+                    alternatives.len()
+                }
+                TopicFilter::Topics(_) | TopicFilter::Topic(_) => 1,
+            })
+            .max()
+            .unwrap_or(1);
+        // `null`, an empty list, or a list containing `null` accepts any topic, so the
+        // header bloom rules out no block for that position.
+        let unfiltered = addresses.is_empty()
+            && topics.iter().all(|position| match position {
+                TopicFilter::Topic(topic) => topic.is_none(),
+                TopicFilter::Topics(alternatives) => {
+                    alternatives.is_empty() || alternatives.contains(&None)
+                }
+            });
+        Self {
+            blocks,
+            addresses: u64::try_from(addresses.len().max(1)).unwrap_or(u64::MAX),
+            topics: u64::try_from(largest_or_set.max(1)).unwrap_or(u64::MAX),
+            unfiltered,
+        }
+    }
+
+    fn total(&self) -> u64 {
+        let per_block = if self.unfiltered {
+            UNFILTERED_BLOCK_WORK
+        } else {
+            1
+        };
+        self.blocks
+            .saturating_mul(self.addresses)
+            .saturating_mul(self.topics)
+            .saturating_mul(per_block)
+    }
+}
+
+impl LogsFilter {
+    /// The filter's addresses, without repeats; empty when it has none.
+    fn address_set(&self) -> HashSet<&H160> {
+        match &self.address_filters {
+            Some(AddressFilter::Single(address)) => std::iter::once(address).collect(),
+            Some(AddressFilter::Many(addresses)) => addresses.iter().collect(),
+            None => HashSet::new(),
+        }
+    }
+}
+
 pub(crate) async fn fetch_logs_with_filter(
     filter: &LogsFilter,
     storage: Store,
+    limits: &LogQueryLimits,
 ) -> Result<Vec<RpcLog>, RpcErr> {
-    let address_filter: HashSet<_> = match &filter.address_filters {
-        Some(AddressFilter::Single(address)) => std::iter::once(address).collect(),
-        Some(AddressFilter::Many(addresses)) => addresses.iter().collect(),
-        None => HashSet::new(),
-    };
+    let address_filter = filter.address_set();
     // Derive the filter's address/topic blooms once, up front, so the per-block
     // header-bloom check below is a cheap bit-subset test instead of re-hashing
     // every address and topic for each block in the range.
-    let bloom_matcher = BloomFilterMatcher::new(&address_filter, &filter.topics);
+    let bloom_matcher = Arc::new(BloomFilterMatcher::new(&address_filter, &filter.topics));
 
     let mut logs: Vec<RpcLog> = Vec::new();
     match filter.block_hash {
@@ -172,6 +383,9 @@ pub(crate) async fn fetch_logs_with_filter(
             let block_header = storage
                 .get_block_header_by_hash(block_hash)?
                 .ok_or_else(|| RpcErr::BadParams(format!("Unknown block hash {block_hash:#x}")))?;
+            let work = LogQueryWork::new(1, &address_filter, &filter.topics);
+            limits.check_work(&work)?;
+            let _reservation = limits.reserve(&work)?;
             if bloom_matcher.matches(&block_header.logs_bloom) {
                 let block_body =
                     storage
@@ -185,6 +399,7 @@ pub(crate) async fn fetch_logs_with_filter(
                     &block_header,
                     &block_body,
                     &address_filter,
+                    &filter.topics,
                     &mut logs,
                 )
                 .await?;
@@ -212,86 +427,107 @@ pub(crate) async fn fetch_logs_with_filter(
                     "block range extends beyond current head block".to_string(),
                 ));
             }
+            limits.check_block_range(from, to)?;
+            let work = LogQueryWork::new(to - from + 1, &address_filter, &filter.topics);
+            limits.check_work(&work)?;
+            let _reservation = limits.reserve(&work)?;
+            // A single block cannot be split any further, so it is exempt from the cap on
+            // results, as in reth.
+            let max_logs = limits.max_logs_per_response.filter(|_| from != to);
             // The idea here is to fetch every log and filter by address, if given.
             // For that, we'll need each block in range, and its transactions,
             // and for each transaction, we'll need its receipts, which
             // contain the actual logs we want.
-            for block_num in from..=to {
-                // The block header carries a bloom filter over every (address, topic)
-                // pair logged in the block. If it can't possibly contain a log matching
-                // this filter, skip the block without loading its body or receipts.
-                let block_header = storage
-                    .get_block_header(block_num)?
-                    .ok_or(RpcErr::Internal(format!(
-                        "Could not get header for block {block_num}"
-                    )))?;
-                if !bloom_matcher.matches(&block_header.logs_bloom) {
-                    continue;
-                }
-                // Take the body of the block, we
-                // will use it to access the transactions.
-                let block_body =
-                    storage
-                        .get_block_body(block_num)
+            let mut chunk_start = from;
+            while chunk_start <= to {
+                let chunk_end = chunk_start.saturating_add(HEADER_CHUNK_SIZE - 1).min(to);
+                let headers = bloom_matching_headers(
+                    storage.clone(),
+                    bloom_matcher.clone(),
+                    chunk_start,
+                    chunk_end,
+                )
+                .await?;
+                for block_header in headers {
+                    let block_num = block_header.number;
+                    // Take the body of the block, we will use it to access the
+                    // transactions. Read it by the header's hash, like the receipts,
+                    // not by number: a reorg after the header chunk was read would
+                    // otherwise pair another block's transactions with these receipts.
+                    let block_body = storage
+                        .get_block_body_by_hash(block_header.hash())
                         .await?
                         .ok_or(RpcErr::Internal(format!(
                             "Could not get body for block {block_num}"
                         )))?;
-                collect_block_logs(
-                    &storage,
-                    &block_header,
-                    &block_body,
-                    &address_filter,
-                    &mut logs,
-                )
-                .await?;
+                    collect_block_logs(
+                        &storage,
+                        &block_header,
+                        &block_body,
+                        &address_filter,
+                        &filter.topics,
+                        &mut logs,
+                    )
+                    .await?;
+                    if let Some(max) = max_logs
+                        && logs.len() > max
+                    {
+                        // Suggest the blocks scanned in full before this one, as reth does,
+                        // so clients can split the range from there.
+                        let last_complete = block_num.saturating_sub(1).max(from);
+                        return Err(RpcErr::InvalidParams(format!(
+                            "query exceeds max results {max}, retry with the range {from}-{last_complete}"
+                        )));
+                    }
+                }
+                let Some(next) = chunk_end.checked_add(1) else {
+                    break;
+                };
+                chunk_start = next;
             }
         }
     }
-    // Now that we have the logs filtered by address,
-    // we still need to filter by topics if it was a given parameter.
-
-    let filtered_logs = if filter.topics.is_empty() {
-        logs
-    } else {
-        logs.into_iter()
-            .filter(|rpc_log| {
-                if filter.topics.len() > rpc_log.log.topics.len() {
-                    return false;
-                }
-                for (i, topic_filter) in filter.topics.iter().enumerate() {
-                    match topic_filter {
-                        TopicFilter::Topic(topic) => {
-                            if topic.is_some_and(|topic| rpc_log.log.topics[i] != topic) {
-                                return false;
-                            }
-                        }
-                        TopicFilter::Topics(sub_topics) => {
-                            if !sub_topics.is_empty()
-                                && !sub_topics
-                                    .iter()
-                                    .any(|st| st.is_none_or(|t| rpc_log.log.topics[i] == t))
-                            {
-                                return false;
-                            }
-                        }
-                    }
-                }
-                true
-            })
-            .collect::<Vec<RpcLog>>()
-    };
-
-    Ok(filtered_logs)
+    Ok(logs)
 }
 
-/// Collect every address-matching log of one block into `logs`, pairing the
-/// block's transactions with their receipts by index.
+/// Reads the canonical headers of blocks `from..=to` on a blocking thread and returns
+/// those whose bloom could hold a log matching the filter, in block order. The header
+/// bloom covers every address and topic logged in the block, so a block it rules out is
+/// skipped without loading its body or receipts. These reads are synchronous, and for
+/// blocks the bloom rules out they are all the work there is, so they stay off the async
+/// executor.
+async fn bloom_matching_headers(
+    storage: Store,
+    bloom_matcher: Arc<BloomFilterMatcher>,
+    from: BlockNumber,
+    to: BlockNumber,
+) -> Result<Vec<BlockHeader>, RpcErr> {
+    tokio::task::spawn_blocking(move || {
+        let mut matching = Vec::new();
+        for block_num in from..=to {
+            let block_header = storage
+                .get_block_header(block_num)?
+                .ok_or(RpcErr::Internal(format!(
+                    "Could not get header for block {block_num}"
+                )))?;
+            if bloom_matcher.matches(&block_header.logs_bloom) {
+                matching.push(block_header);
+            }
+        }
+        Ok(matching)
+    })
+    .await
+    .map_err(|error| RpcErr::Internal(format!("Log scan task failed: {error}")))?
+}
+
+/// Collect every log of one block that matches the filter's addresses and topics into
+/// `logs`, pairing the block's transactions with their receipts by index.
 async fn collect_block_logs(
     storage: &Store,
     block_header: &BlockHeader,
     block_body: &BlockBody,
     address_filter: &HashSet<&H160>,
+    topic_filter: &[TopicFilter],
     logs: &mut Vec<RpcLog>,
 ) -> Result<(), RpcErr> {
     let block_num = block_header.number;
@@ -314,7 +550,9 @@ async fn collect_block_logs(
 
         if receipt.succeeded {
             for log in &receipt.logs {
-                if address_filter.is_empty() || address_filter.contains(&log.address) {
+                if (address_filter.is_empty() || address_filter.contains(&log.address))
+                    && matches_topics(&log.topics, topic_filter)
+                {
                     // Some extra data is needed when
                     // forming the RPC response.
                     logs.push(RpcLog {
@@ -333,6 +571,28 @@ async fn collect_block_logs(
         }
     }
     Ok(())
+}
+
+/// Whether a log with `topics` matches `topic_filter`: each filter position is a
+/// wildcard (`null`, an empty list, or a list containing `null`) or a set of allowed
+/// values for the log's topic at that position, and the log must have a topic at every
+/// filter position.
+fn matches_topics(topics: &[H256], topic_filter: &[TopicFilter]) -> bool {
+    if topic_filter.len() > topics.len() {
+        return false;
+    }
+    topic_filter
+        .iter()
+        .zip(topics)
+        .all(|(position, topic)| match position {
+            TopicFilter::Topic(expected) => expected.is_none_or(|expected| *topic == expected),
+            TopicFilter::Topics(alternatives) => {
+                alternatives.is_empty()
+                    || alternatives
+                        .iter()
+                        .any(|alternative| alternative.is_none_or(|t| *topic == t))
+            }
+        })
 }
 
 /// A log filter's addresses and topic positions pre-derived into header-bloom
@@ -540,6 +800,7 @@ mod tests {
         let err = fetch_logs_with_filter(
             &filter_for(BlockIdentifier::Number(1), BlockIdentifier::Number(3)),
             storage.clone(),
+            &LogQueryLimits::default(),
         )
         .await
         .unwrap_err();
@@ -554,6 +815,7 @@ mod tests {
                 BlockIdentifier::Tag(BlockTag::Latest),
             ),
             storage.clone(),
+            &LogQueryLimits::default(),
         )
         .await
         .unwrap_err();
@@ -565,6 +827,7 @@ mod tests {
         let err = fetch_logs_with_filter(
             &filter_for(BlockIdentifier::Number(1), BlockIdentifier::Number(0)),
             storage,
+            &LogQueryLimits::default(),
         )
         .await
         .unwrap_err();
@@ -648,17 +911,25 @@ mod tests {
         };
 
         // The demoted block's hash returns the demoted block's own logs.
-        let logs = fetch_logs_with_filter(&filter_for(reorged_hash), storage.clone())
-            .await
-            .unwrap();
+        let logs = fetch_logs_with_filter(
+            &filter_for(reorged_hash),
+            storage.clone(),
+            &LogQueryLimits::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(logs.len(), 1, "{logs:?}");
         assert_eq!(logs[0].block_hash, reorged_hash);
         assert_eq!(logs[0].log.address, H160::repeat_byte(1));
 
         // The canonical block's hash returns its logs, not the demoted one's.
-        let logs = fetch_logs_with_filter(&filter_for(canonical_hash), storage.clone())
-            .await
-            .unwrap();
+        let logs = fetch_logs_with_filter(
+            &filter_for(canonical_hash),
+            storage.clone(),
+            &LogQueryLimits::default(),
+        )
+        .await
+        .unwrap();
         assert_eq!(logs.len(), 1, "{logs:?}");
         assert_eq!(logs[0].block_hash, canonical_hash);
         assert_eq!(logs[0].log.address, H160::repeat_byte(2));
@@ -666,7 +937,7 @@ mod tests {
         // A hash the node has never seen is an error, not an empty result.
         let unknown = H256::repeat_byte(0xff);
         assert!(matches!(
-            fetch_logs_with_filter(&filter_for(unknown), storage).await,
+            fetch_logs_with_filter(&filter_for(unknown), storage, &LogQueryLimits::default()).await,
             Err(RpcErr::BadParams(_))
         ));
     }
@@ -833,5 +1104,649 @@ mod tests {
             &addr_set(&[addr(1)]),
             &[TopicFilter::Topic(Some(topic(2)))]
         ));
+    }
+
+    /// A transaction in a test block: whether its receipt succeeded, and its logs as
+    /// `(address, topics)` built from `addr` and `topic`.
+    type TestTx = (bool, Vec<(u64, Vec<u64>)>);
+
+    /// An in-memory chain whose block `n` holds `blocks[n]`, with header blooms built from
+    /// the successful receipts' logs, all canonical.
+    async fn store_with_blocks(blocks: &[Vec<TestTx>]) -> Store {
+        use ethrex_common::types::{
+            Block, BlockBody, LegacyTransaction, Log, Receipt, Transaction, TxType, bloom_from_logs,
+        };
+        use ethrex_storage::EngineType;
+
+        let storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        let mut canonical = Vec::new();
+        for (number, txs) in blocks.iter().enumerate() {
+            let number = number as u64;
+            let mut transactions = Vec::new();
+            let mut receipts = Vec::new();
+            let mut logged = Vec::new();
+            for (nonce, (succeeded, logs)) in txs.iter().enumerate() {
+                transactions.push(Transaction::LegacyTransaction(LegacyTransaction {
+                    nonce: number * 100 + nonce as u64,
+                    ..Default::default()
+                }));
+                let logs: Vec<Log> = logs
+                    .iter()
+                    .map(|(address, topics)| Log {
+                        address: addr(*address),
+                        topics: topics.iter().map(|t| topic(*t)).collect(),
+                        data: Default::default(),
+                    })
+                    .collect();
+                if *succeeded {
+                    logged.extend(logs.iter().cloned());
+                }
+                receipts.push(Receipt::new(TxType::Legacy, *succeeded, 21000, logs));
+            }
+            let header = BlockHeader {
+                number,
+                timestamp: number * 12,
+                logs_bloom: bloom_from_logs(&logged, &NativeCrypto),
+                ..Default::default()
+            };
+            let block = Block::new(
+                header,
+                BlockBody {
+                    transactions,
+                    ommers: Default::default(),
+                    withdrawals: Default::default(),
+                },
+            );
+            let hash = block.hash();
+            storage.add_block(block).await.unwrap();
+            storage.add_receipts(hash, receipts).await.unwrap();
+            canonical.push((number, hash));
+        }
+        let (head_number, head_hash) = *canonical.last().unwrap();
+        storage
+            .forkchoice_update(canonical, head_number, head_hash, None, None)
+            .await
+            .unwrap();
+        storage
+    }
+
+    /// Where a returned log sits: `(block number, transaction index, log index, address)`.
+    type LogPosition = (u64, u64, u64, u64);
+
+    /// The positions of the logs answering `filter` (a JSON filter object).
+    async fn query(storage: &Store, filter: Value) -> Vec<LogPosition> {
+        let filter = LogsFilter::parse(&Some(vec![filter])).unwrap();
+        let logs = fetch_logs_with_filter(&filter, storage.clone(), &LogQueryLimits::default())
+            .await
+            .unwrap();
+        for log in &logs {
+            let header = storage.get_block_header(log.block_number).unwrap().unwrap();
+            assert_eq!(log.block_hash, header.hash());
+            assert_eq!(log.block_timestamp, header.timestamp);
+            assert!(!log.removed);
+        }
+        logs.iter()
+            .map(|log| {
+                (
+                    log.block_number,
+                    log.transaction_index,
+                    log.log_index,
+                    log.log.address.to_low_u64_be(),
+                )
+            })
+            .collect()
+    }
+
+    /// Pins which logs each kind of filter returns, and in what order, over a small chain
+    /// with several addresses, topics, a failed receipt and empty blocks. Each block has at
+    /// most one transaction: the in-memory backend's receipt iterator only returns a
+    /// block's first receipt.
+    #[tokio::test]
+    async fn get_logs_returns_the_matching_logs_in_order() {
+        let storage = store_with_blocks(&[
+            vec![],
+            vec![(true, vec![(1, vec![1]), (2, vec![1, 2])])],
+            vec![(false, vec![(1, vec![1])])],
+            vec![(true, vec![(3, vec![3])])],
+            vec![(true, vec![(2, vec![2, 1])])],
+            vec![],
+            vec![(true, vec![(1, vec![1, 2, 3]), (1, vec![])])],
+        ])
+        .await;
+        let t = |n: u64| format!("{:#x}", topic(n));
+        let a = |n: u64| format!("{:#x}", addr(n));
+        let block_1_hash = format!(
+            "{:#x}",
+            storage.get_block_header(1).unwrap().unwrap().hash()
+        );
+        let range = |filter: Value| {
+            let mut filter = filter;
+            filter["fromBlock"] = json!("0x0");
+            filter["toBlock"] = json!("0x6");
+            filter
+        };
+        let with_a_topic = vec![
+            (1, 0, 0, 1),
+            (1, 0, 1, 2),
+            (3, 0, 0, 3),
+            (4, 0, 0, 2),
+            (6, 0, 0, 1),
+        ];
+
+        let cases: Vec<(&str, Value, Vec<LogPosition>)> = vec![
+            (
+                "no filter",
+                range(json!({})),
+                vec![
+                    (1, 0, 0, 1),
+                    (1, 0, 1, 2),
+                    (3, 0, 0, 3),
+                    (4, 0, 0, 2),
+                    (6, 0, 0, 1),
+                    (6, 0, 1, 1),
+                ],
+            ),
+            (
+                "one address",
+                range(json!({"address": a(1)})),
+                vec![(1, 0, 0, 1), (6, 0, 0, 1), (6, 0, 1, 1)],
+            ),
+            (
+                "address list",
+                range(json!({"address": [a(2), a(3)]})),
+                vec![(1, 0, 1, 2), (3, 0, 0, 3), (4, 0, 0, 2)],
+            ),
+            (
+                "topic0",
+                range(json!({"topics": [t(1)]})),
+                vec![(1, 0, 0, 1), (1, 0, 1, 2), (6, 0, 0, 1)],
+            ),
+            (
+                "topic1 after a wildcard",
+                range(json!({"topics": [null, t(1)]})),
+                vec![(4, 0, 0, 2)],
+            ),
+            (
+                "OR-set",
+                range(json!({"topics": [[t(2), t(3)]]})),
+                vec![(3, 0, 0, 3), (4, 0, 0, 2)],
+            ),
+            (
+                "empty OR-set needs a topic at that position",
+                range(json!({"topics": [[]]})),
+                with_a_topic.clone(),
+            ),
+            (
+                "OR-set with null is a wildcard",
+                range(json!({"topics": [[null, t(9)]]})),
+                with_a_topic,
+            ),
+            (
+                "address and two topics",
+                range(json!({"address": a(1), "topics": [t(1), t(2)]})),
+                vec![(6, 0, 0, 1)],
+            ),
+            ("no match", range(json!({"topics": [t(9)]})), vec![]),
+            (
+                "sub-range",
+                json!({"fromBlock": "0x3", "toBlock": "0x5"}),
+                vec![(3, 0, 0, 3), (4, 0, 0, 2)],
+            ),
+            (
+                "block hash",
+                json!({"blockHash": block_1_hash, "address": a(2)}),
+                vec![(1, 0, 1, 2)],
+            ),
+        ];
+        for (name, filter, expected) in cases {
+            assert_eq!(query(&storage, filter).await, expected, "{name}");
+        }
+    }
+
+    /// Header reads go in chunks of `HEADER_CHUNK_SIZE` blocks; logs on both sides of each
+    /// chunk boundary, and at both ends of the range, are all found, in block order.
+    #[tokio::test]
+    async fn get_logs_spans_header_chunks() {
+        let chunk = HEADER_CHUNK_SIZE as usize;
+        let logged = [
+            0,
+            chunk - 1,
+            chunk,
+            chunk + 1,
+            2 * chunk - 1,
+            2 * chunk,
+            2 * chunk + 2,
+        ];
+        let mut blocks = vec![vec![]; 2 * chunk + 3];
+        for number in logged {
+            blocks[number] = vec![(true, vec![(1, vec![1])])];
+        }
+        let storage = store_with_blocks(&blocks).await;
+
+        let found: Vec<u64> = query(
+            &storage,
+            json!({"fromBlock": "0x0", "toBlock": format!("{:#x}", 2 * chunk + 2)}),
+        )
+        .await
+        .into_iter()
+        .map(|(block_number, ..)| block_number)
+        .collect();
+        assert_eq!(found, logged.map(|number| number as u64));
+
+        // A range that starts and ends inside chunks.
+        let found: Vec<u64> = query(
+            &storage,
+            json!({"fromBlock": format!("{:#x}", chunk), "toBlock": format!("{:#x}", 2 * chunk - 1)}),
+        )
+        .await
+        .into_iter()
+        .map(|(block_number, ..)| block_number)
+        .collect();
+        assert_eq!(
+            found,
+            [chunk, chunk + 1, 2 * chunk - 1].map(|number| number as u64)
+        );
+    }
+
+    /// Runs `filter` (a JSON filter object) through the log scan under `limits`.
+    async fn query_with(
+        storage: &Store,
+        filter: Value,
+        limits: &LogQueryLimits,
+    ) -> Result<Vec<RpcLog>, RpcErr> {
+        let filter = LogsFilter::parse(&Some(vec![filter])).unwrap();
+        fetch_logs_with_filter(&filter, storage.clone(), limits).await
+    }
+
+    /// The JSON-RPC code and message a failed query answers with.
+    fn code_and_message(result: Result<Vec<RpcLog>, RpcErr>) -> (i32, String) {
+        let error: crate::utils::RpcErrorMetadata = result.unwrap_err().into();
+        (error.code, error.message)
+    }
+
+    fn hex(number: u64) -> String {
+        format!("{number:#x}")
+    }
+
+    /// `count` distinct addresses as a JSON list, starting at `addr(first)`.
+    fn address_list(first: u64, count: u64) -> Value {
+        json!(
+            (first..first + count)
+                .map(|n| format!("{:#x}", addr(n)))
+                .collect::<Vec<_>>()
+        )
+    }
+
+    /// Limits with only `max_log_query_work` set and the given work budget.
+    fn work_limits(max_log_query_work: u64, work_budget: u64) -> LogQueryLimits {
+        LogQueryLimits::new(0, 0, max_log_query_work, work_budget)
+    }
+
+    /// `blocks + 1` blocks, each with one log from `addr(1)` with `topic(1)`, except the
+    /// genesis block.
+    async fn store_with_one_log_per_block(blocks: usize) -> Store {
+        let mut chain = vec![vec![(true, vec![(1, vec![1])])]; blocks + 1];
+        chain[0] = vec![];
+        store_with_blocks(&chain).await
+    }
+
+    #[tokio::test]
+    async fn get_logs_rejects_ranges_over_the_block_limit() {
+        let storage = store_with_one_log_per_block(15).await;
+        let limits = LogQueryLimits::new(10, 0, 0, DEFAULT_LOG_QUERY_WORK_BUDGET);
+
+        // `to - from` is the range, as in reth and geth: 11 blocks are within a limit of 10.
+        let logs = query_with(
+            &storage,
+            json!({"fromBlock": "0x0", "toBlock": hex(10)}),
+            &limits,
+        )
+        .await
+        .unwrap();
+        assert_eq!(logs.len(), 10);
+
+        let result = query_with(
+            &storage,
+            json!({"fromBlock": "0x0", "toBlock": hex(11)}),
+            &limits,
+        )
+        .await;
+        assert_eq!(
+            code_and_message(result),
+            (-32602, "query exceeds max block range 10".to_string())
+        );
+
+        // The existing range errors keep their precedence.
+        let result = query_with(
+            &storage,
+            json!({"fromBlock": hex(12), "toBlock": "0x0"}),
+            &limits,
+        )
+        .await;
+        assert_eq!(
+            code_and_message(result),
+            (-32602, "invalid block range params".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn get_logs_rejects_queries_over_the_work_limit() {
+        let storage = store_with_one_log_per_block(15).await;
+        let limits = work_limits(100, DEFAULT_LOG_QUERY_WORK_BUDGET);
+        let range = |filter: Value| {
+            let mut filter = filter;
+            filter["fromBlock"] = json!("0x0");
+            filter["toBlock"] = json!(hex(14));
+            filter
+        };
+        let topics = [topic(1), topic(2)].map(|t| format!("{t:#x}"));
+
+        // 15 blocks x 3 addresses x 2 alternatives = 90.
+        let within = range(json!({"address": address_list(1, 3), "topics": [topics]}));
+        assert_eq!(
+            query_with(&storage, within, &limits).await.unwrap().len(),
+            14
+        );
+
+        // 15 blocks x 4 addresses x 2 alternatives = 120.
+        let over = range(json!({"address": address_list(1, 4), "topics": [topics]}));
+        assert_eq!(
+            code_and_message(query_with(&storage, over, &limits).await),
+            (
+                -32005,
+                "log query too expensive (blocks 15 x addresses 4 x topic alternatives 2 = 120 units of work, limit 100); narrow the block range or the filter".to_string()
+            )
+        );
+
+        // Only the largest OR-set counts, and one containing `null` is a wildcard:
+        // 15 x 1 x 6 = 90, where multiplying the positions would give 15 x 2 x 6 = 180.
+        let six = (1..=6)
+            .map(|n| format!("{:#x}", topic(n)))
+            .collect::<Vec<_>>();
+        let wildcard = json!([null, format!("{:#x}", topic(7))]);
+        let positions = range(json!({"topics": [topics, six, wildcard]}));
+        assert!(query_with(&storage, positions, &limits).await.is_ok());
+
+        // A blockHash query counts one block.
+        let block_hash = format!(
+            "{:#x}",
+            storage.get_block_header(1).unwrap().unwrap().hash()
+        );
+        let by_hash = json!({"blockHash": block_hash, "address": address_list(1, 100)});
+        assert!(query_with(&storage, by_hash, &limits).await.is_ok());
+        let by_hash = json!({"blockHash": block_hash, "address": address_list(1, 101)});
+        assert_eq!(
+            code_and_message(query_with(&storage, by_hash, &limits).await).0,
+            -32005
+        );
+    }
+
+    #[tokio::test]
+    async fn get_logs_rejects_responses_over_the_log_limit() {
+        // Blocks 1 to 3 have one log each, block 4 has three.
+        let one_log = vec![(true, vec![(1, vec![1])])];
+        let storage = store_with_blocks(&[
+            vec![],
+            one_log.clone(),
+            one_log.clone(),
+            one_log,
+            vec![(true, vec![(1, vec![1]), (1, vec![1]), (1, vec![1])])],
+            vec![],
+        ])
+        .await;
+        let limits = LogQueryLimits::new(0, 2, 0, DEFAULT_LOG_QUERY_WORK_BUDGET);
+        let range = |from: u64, to: u64| json!({"fromBlock": hex(from), "toBlock": hex(to)});
+
+        assert_eq!(
+            query_with(&storage, range(1, 2), &limits)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+        // The third log arrives with block 3, so blocks 0 to 2 are the ones to retry.
+        assert_eq!(
+            code_and_message(query_with(&storage, range(0, 3), &limits).await),
+            (
+                -32602,
+                "query exceeds max results 2, retry with the range 0-2".to_string()
+            )
+        );
+        // The first block already goes over: the suggestion is that block alone.
+        assert_eq!(
+            code_and_message(query_with(&storage, range(4, 5), &limits).await).1,
+            "query exceeds max results 2, retry with the range 4-4"
+        );
+        // A single block cannot be split, so it is exempt, by number or by hash.
+        assert_eq!(
+            query_with(&storage, range(4, 4), &limits)
+                .await
+                .unwrap()
+                .len(),
+            3
+        );
+        let block_hash = format!(
+            "{:#x}",
+            storage.get_block_header(4).unwrap().unwrap().hash()
+        );
+        let by_hash = json!({"blockHash": block_hash});
+        assert_eq!(
+            query_with(&storage, by_hash, &limits).await.unwrap().len(),
+            3
+        );
+    }
+
+    /// Heavy queries fail at once while the budget is spent, light ones never touch it,
+    /// and the budget is whole again after a query succeeds or fails.
+    #[tokio::test]
+    async fn get_logs_work_budget_is_held_while_running_and_released_after() {
+        let storage = store_with_one_log_per_block(15).await;
+        let budget = 100_000;
+        let limits = LogQueryLimits::new(0, 1, 0, budget);
+        // 16 blocks x 700 addresses = 11,200 units, above the light threshold.
+        let heavy =
+            json!({"fromBlock": "0x0", "toBlock": hex(15), "address": address_list(1, 700)});
+        let light = json!({"fromBlock": "0x1", "toBlock": "0x1"});
+
+        let held = limits
+            .work_budget
+            .clone()
+            .try_acquire_many_owned(budget as u32)
+            .unwrap();
+        assert_eq!(
+            code_and_message(query_with(&storage, heavy.clone(), &limits).await),
+            (
+                -32005,
+                "too many log queries in flight, retry later".to_string()
+            )
+        );
+        assert_eq!(query_with(&storage, light, &limits).await.unwrap().len(), 1);
+        drop(held);
+
+        // Fails on the log limit after reserving its work, and gives it back.
+        assert_eq!(
+            code_and_message(query_with(&storage, heavy.clone(), &limits).await).0,
+            -32602
+        );
+        assert_eq!(limits.work_budget.available_permits(), budget as usize);
+
+        let unlimited_logs = LogQueryLimits::new(0, 0, 0, budget);
+        assert_eq!(
+            query_with(&storage, heavy, &unlimited_logs)
+                .await
+                .unwrap()
+                .len(),
+            15
+        );
+        assert_eq!(
+            unlimited_logs.work_budget.available_permits(),
+            budget as usize
+        );
+    }
+
+    /// A query with no address or topic filter reads every block in full, so each block
+    /// counts `UNFILTERED_BLOCK_WORK`: it reaches the work limit and the budget far sooner
+    /// than a filtered query over the same range.
+    #[tokio::test]
+    async fn unfiltered_queries_count_every_block_in_full() {
+        let storage = store_with_one_log_per_block(101).await;
+        let range = |to: u64| json!({"fromBlock": "0x0", "toBlock": hex(to)});
+
+        // 10 blocks x 100 = 1,000 is within a limit of 1,000; 11 blocks are not.
+        let limits = work_limits(1_000, DEFAULT_LOG_QUERY_WORK_BUDGET);
+        assert!(query_with(&storage, range(9), &limits).await.is_ok());
+        assert_eq!(
+            code_and_message(query_with(&storage, range(10), &limits).await),
+            (
+                -32005,
+                "log query too expensive (blocks 11 x 100 for a query with no address or topic filter = 1100 units of work, limit 1000); narrow the block range or add a filter".to_string()
+            )
+        );
+        // An OR-set holding `null` filters nothing either; a single address does.
+        let wildcard = json!({"fromBlock": "0x0", "toBlock": hex(10), "topics": [[null]]});
+        assert_eq!(
+            code_and_message(query_with(&storage, wildcard, &limits).await).0,
+            -32005
+        );
+        let filtered =
+            json!({"fromBlock": "0x0", "toBlock": hex(10), "address": format!("{:#x}", addr(1))});
+        assert!(query_with(&storage, filtered, &limits).await.is_ok());
+
+        // 100 blocks are light; 101 take 10,100 from the budget, so they are refused while
+        // it is spent.
+        let limits = work_limits(0, 100_000);
+        let held = limits
+            .work_budget
+            .clone()
+            .try_acquire_many_owned(100_000)
+            .unwrap();
+        assert!(query_with(&storage, range(99), &limits).await.is_ok());
+        assert_eq!(
+            code_and_message(query_with(&storage, range(100), &limits).await).0,
+            -32005
+        );
+        drop(held);
+        assert_eq!(
+            query_with(&storage, range(100), &limits)
+                .await
+                .unwrap()
+                .len(),
+            100
+        );
+    }
+
+    /// A query dropped mid-scan (the client went away) gives its work back.
+    #[tokio::test]
+    async fn get_logs_work_budget_is_released_when_a_query_is_dropped() {
+        let storage = store_with_one_log_per_block(1_500).await;
+        let budget = 100_000;
+        let limits = work_limits(0, budget);
+        let filter = LogsFilter::parse(&Some(vec![json!({
+            "fromBlock": "0x0",
+            "toBlock": hex(1_500),
+            "address": address_list(1, 10),
+        })]))
+        .unwrap();
+
+        let mut scan = Box::pin(fetch_logs_with_filter(&filter, storage.clone(), &limits));
+        // Poll once: the query reserves its work and waits on its first header chunk.
+        let first_poll = tokio::time::timeout(std::time::Duration::ZERO, &mut scan).await;
+        assert!(first_poll.is_err(), "the scan should still be running");
+        assert!(limits.work_budget.available_permits() < budget as usize);
+
+        drop(scan);
+        assert_eq!(limits.work_budget.available_permits(), budget as usize);
+    }
+
+    /// `eth_getFilterChanges` scans through the same path, so it returns what
+    /// `eth_getLogs` returns for the same range and gets the same limit errors, and
+    /// `eth_newFilter` refuses a filter that could not scan even one block.
+    #[tokio::test]
+    async fn filter_changes_match_get_logs_and_share_its_limits() {
+        use crate::eth::filter::{FilterKind, PollableFilter};
+        use crate::rpc::map_http_requests;
+        use crate::test_utils::default_context_with_storage;
+        use crate::utils::RpcRequest;
+        use std::time::Instant;
+
+        let storage = store_with_one_log_per_block(5).await;
+        let mut context = default_context_with_storage(storage.clone()).await;
+        let call = |method: &str, params: Value| {
+            serde_json::from_value::<RpcRequest>(
+                json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}),
+            )
+            .unwrap()
+        };
+        let watch_from_genesis = |context: &crate::rpc::RpcApiContext| {
+            let filter =
+                LogsFilter::parse(&Some(vec![json!({"address": format!("{:#x}", addr(1))})]))
+                    .unwrap();
+            context.active_filters.lock().unwrap().insert(
+                7,
+                (
+                    Instant::now(),
+                    PollableFilter {
+                        last_block_number: 0,
+                        kind: FilterKind::Logs(filter),
+                    },
+                ),
+            );
+        };
+
+        // Block 0 has no logs, so the comparison holds whether a poll starts at the
+        // filter's last polled block or at the one after it.
+        watch_from_genesis(&context);
+        let changes = map_http_requests(
+            &call("eth_getFilterChanges", json!(["0x7"])),
+            context.clone(),
+        )
+        .await
+        .unwrap();
+        let logs = map_http_requests(
+            &call(
+                "eth_getLogs",
+                json!([{"fromBlock": "0x1", "toBlock": "0x5", "address": format!("{:#x}", addr(1))}]),
+            ),
+            context.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(changes, logs);
+        assert_eq!(changes.as_array().unwrap().len(), 5);
+
+        context.log_query_limits = LogQueryLimits::new(0, 2, 0, DEFAULT_LOG_QUERY_WORK_BUDGET);
+        watch_from_genesis(&context);
+        let error: crate::utils::RpcErrorMetadata = map_http_requests(
+            &call("eth_getFilterChanges", json!(["0x7"])),
+            context.clone(),
+        )
+        .await
+        .unwrap_err()
+        .into();
+        assert_eq!(error.code, -32602);
+        assert!(
+            error
+                .message
+                .starts_with("query exceeds max results 2, retry with the range "),
+            "{}",
+            error.message
+        );
+
+        context.log_query_limits = work_limits(10, DEFAULT_LOG_QUERY_WORK_BUDGET);
+        let error: crate::utils::RpcErrorMetadata = map_http_requests(
+            &call("eth_newFilter", json!([{"address": address_list(1, 11)}])),
+            context.clone(),
+        )
+        .await
+        .unwrap_err()
+        .into();
+        assert_eq!(error.code, -32005);
+        let accepted = map_http_requests(
+            &call("eth_newFilter", json!([{"address": address_list(1, 10)}])),
+            context.clone(),
+        )
+        .await;
+        assert!(accepted.is_ok(), "{accepted:?}");
     }
 }

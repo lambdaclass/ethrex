@@ -18,7 +18,7 @@ use crate::{
 };
 use serde_json::{Value, json};
 
-use super::logs::{LogsFilter, fetch_logs_with_filter};
+use super::logs::{LogQueryLimits, LogsFilter, fetch_logs_with_filter};
 
 #[derive(Debug, Clone)]
 pub struct NewFilterRequest {
@@ -86,6 +86,7 @@ impl NewFilterRequest {
         &self,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
+        limits: &LogQueryLimits,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let from = self
             .request_data
@@ -103,6 +104,7 @@ impl NewFilterRequest {
         if (from..=to).is_empty() {
             return Err(RpcErr::BadParams("Invalid block range".to_string()));
         }
+        limits.check_filter(&self.request_data)?;
 
         let last_block_number = storage.get_latest_block_number()?;
         let id: u64 = rand::random();
@@ -131,9 +133,10 @@ impl NewFilterRequest {
         req: &RpcRequest,
         storage: Store,
         state: ActiveFilters,
+        limits: &LogQueryLimits,
     ) -> Result<Value, RpcErr> {
         let request = Self::parse(&req.params)?;
-        request.handle(storage, state).await
+        request.handle(storage, state, limits).await
     }
 }
 
@@ -254,6 +257,7 @@ impl FilterChangesRequest {
         &self,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
+        limits: &LogQueryLimits,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let latest_block_num = storage.get_latest_block_number()?;
         // Box needed to keep the future Sync
@@ -317,7 +321,7 @@ impl FilterChangesRequest {
                 // Drop the lock early to process this filter's query
                 // and not keep the lock more than we should.
                 drop(active_filters_guard);
-                let logs = fetch_logs_with_filter(&logs_filter, storage).await?;
+                let logs = fetch_logs_with_filter(&logs_filter, storage, limits).await?;
                 serde_json::to_value(logs).map_err(|error| {
                     tracing::error!("Log filtering request failed with: {error}");
                     RpcErr::Internal("Failed to filter logs".to_string())
@@ -338,9 +342,10 @@ impl FilterChangesRequest {
         req: &RpcRequest,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
+        limits: &LogQueryLimits,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let request = Self::parse(&req.params)?;
-        request.handle(storage, filters).await
+        request.handle(storage, filters, limits).await
     }
 }
 

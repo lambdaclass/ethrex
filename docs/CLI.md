@@ -288,6 +288,30 @@ RPC options:
           
           [env: ETHREX_WS_PORT=]
 
+      --rpc.max-blocks-per-filter <BLOCKS>
+          Maximum block range (toBlock - fromBlock) of an eth_getLogs query or log filter poll. A wider query fails with error -32602 before any block is read. 0 means no limit.
+          
+          [env: ETHREX_RPC_MAX_BLOCKS_PER_FILTER=]
+          [default: 100000]
+
+      --rpc.max-logs-per-response <LOGS>
+          Maximum logs returned by an eth_getLogs query or log filter poll. A query that matches more fails with error -32602 naming the range to retry with. Queries for a single block are exempt. 0 means no limit.
+          
+          [env: ETHREX_RPC_MAX_LOGS_PER_RESPONSE=]
+          [default: 20000]
+
+      --rpc.max-log-query-work <UNITS>
+          Maximum scan work of an eth_getLogs query or log filter poll, estimated as the blocks in its range x the addresses in its filter x the alternatives in its largest topic OR-set, each at least 1. A query with no address and no topic filter reads every block in full and counts 100 per block. A query over it fails with error -32005 before any block is read. 0 means no limit.
+          
+          [env: ETHREX_RPC_MAX_LOG_QUERY_WORK=]
+          [default: 10000000]
+
+      --rpc.log-query-work-budget <UNITS>
+          Total scan work (see --rpc.max-log-query-work) of the eth_getLogs queries and log filter polls running at once. A query that does not fit fails at once with error -32005. Queries of at most 10000 units do not count against it.
+          
+          [env: ETHREX_RPC_LOG_QUERY_WORK_BUDGET=]
+          [default: 40000000]
+
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
           
@@ -501,6 +525,30 @@ RPC options:
           Listening port for the WebSocket JSON-RPC server. When unset it inherits `--http.port`, so an enabled WebSocket shares the HTTP listener unless a different port is given.
 
           [env: ETHREX_WS_PORT=]
+
+      --rpc.max-blocks-per-filter <BLOCKS>
+          Maximum block range (toBlock - fromBlock) of an eth_getLogs query or log filter poll. A wider query fails with error -32602 before any block is read. 0 means no limit.
+
+          [env: ETHREX_RPC_MAX_BLOCKS_PER_FILTER=]
+          [default: 100000]
+
+      --rpc.max-logs-per-response <LOGS>
+          Maximum logs returned by an eth_getLogs query or log filter poll. A query that matches more fails with error -32602 naming the range to retry with. Queries for a single block are exempt. 0 means no limit.
+
+          [env: ETHREX_RPC_MAX_LOGS_PER_RESPONSE=]
+          [default: 20000]
+
+      --rpc.max-log-query-work <UNITS>
+          Maximum scan work of an eth_getLogs query or log filter poll, estimated as the blocks in its range x the addresses in its filter x the alternatives in its largest topic OR-set, each at least 1. A query with no address and no topic filter reads every block in full and counts 100 per block. A query over it fails with error -32005 before any block is read. 0 means no limit.
+
+          [env: ETHREX_RPC_MAX_LOG_QUERY_WORK=]
+          [default: 10000000]
+
+      --rpc.log-query-work-budget <UNITS>
+          Total scan work (see --rpc.max-log-query-work) of the eth_getLogs queries and log filter polls running at once. A query that does not fit fails at once with error -32005. Queries of at most 10000 units do not count against it.
+
+          [env: ETHREX_RPC_LOG_QUERY_WORK_BUDGET=]
+          [default: 40000000]
 
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
