@@ -35,7 +35,7 @@ fn test_trie_db_with_address_prefix() {
 
     // Create TrieDB with address prefix and write data
     let address = H256::from([0xaa; 32]);
-    let trie_db = BackendTrieDB::new_for_account_storage(backend.clone(), address, vec![]).unwrap();
+    let trie_db = BackendTrieDB::new_for_storages(backend.clone(), Some(address), vec![]).unwrap();
 
     let node_hash = Nibbles::from_hex(vec![1]);
     let node_data = vec![1, 2, 3, 4, 5];
@@ -45,7 +45,7 @@ fn test_trie_db_with_address_prefix() {
         .unwrap();
 
     // Create a fresh TrieDB to read back
-    let trie_db = BackendTrieDB::new_for_account_storage(backend, address, vec![]).unwrap();
+    let trie_db = BackendTrieDB::new_for_storages(backend, Some(address), vec![]).unwrap();
 
     let retrieved_data = trie_db.get(node_hash).unwrap().unwrap();
     assert_eq!(retrieved_data, node_data);
