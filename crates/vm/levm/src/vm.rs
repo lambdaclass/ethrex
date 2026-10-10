@@ -26,7 +26,7 @@ use crate::{
     tracing::LevmCallTracer,
     validation_observer::ValidationObserver,
 };
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use ethrex_common::{
     Address, BigEndianHash, H160, H256, U256,
     tracing::CallType,
@@ -625,6 +625,11 @@ pub struct VM<'a> {
     pub debug_mode: DebugMode,
     /// Pool of reusable stacks to reduce allocations.
     pub stack_pool: Vec<Stack>,
+    /// Pool of reusable calldata buffers for child call frames. A buffer returns here when
+    /// its frame ends, so a contract that issues many calls reuses one allocation instead
+    /// of copying its arguments into a fresh one each time. Inside zkVM guests whose bump
+    /// allocators never free, those fresh copies are never reclaimed and exhaust the heap.
+    pub calldata_pool: Vec<BytesMut>,
     /// VM type (L1 or L2 with fee config).
     pub vm_type: VMType,
     /// Frame transaction context (EIP-8141). Set when executing a frame tx.
@@ -1063,6 +1068,7 @@ impl<'a> VM<'a> {
             validation_observer: ValidationObserver::disabled(),
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
+            calldata_pool: Vec::new(),
             vm_type,
             preserve_top_level_backup,
             state_gas_used: 0,
@@ -3548,6 +3554,7 @@ impl<'a> VM<'a> {
             opcode_tracer: LevmOpcodeTracer::disabled(),
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
+            calldata_pool: Vec::new(),
             vm_type: VMType::L1,
             preserve_top_level_backup: false,
             state_gas_used: 0,
