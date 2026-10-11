@@ -38,6 +38,22 @@ fn bench_bn254(c: &mut Criterion) {
     c.bench_function("bn254_double", |bench| {
         bench.iter(|| crypto.bn254_g1_add(black_box(&a), black_box(&a)).unwrap())
     });
+    // Scalars 2 and 2^bits - 1 (all bits set), below and around the GLV threshold.
+    for bits in [2usize, 32, 64, 96, 128, 160, 192] {
+        let mut small = [0u8; 32];
+        if bits == 2 {
+            small[31] = 2;
+        } else {
+            small[32 - bits / 8..].fill(0xff);
+        }
+        c.bench_function(&format!("bn254_mul_{bits}_bit_scalar"), |bench| {
+            bench.iter(|| {
+                crypto
+                    .bn254_g1_mul(black_box(&a), black_box(&small))
+                    .unwrap()
+            })
+        });
+    }
     c.bench_function("bn254_mul_max_scalar", |bench| {
         bench.iter(|| {
             crypto
