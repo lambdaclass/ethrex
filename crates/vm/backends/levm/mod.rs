@@ -94,6 +94,35 @@ use std::sync::mpsc::Sender;
 #[cfg(feature = "rayon")]
 const BAL_WARM_CHUNK_ACCOUNTS: usize = 64;
 
+/// Floor on the BAL warmer's thread count, see [`bal_warm_pool`].
+#[cfg(feature = "rayon")]
+const BAL_WARM_MIN_THREADS: usize = 64;
+
+/// Thread pool for [`LEVM::warm_block_from_bal`].
+///
+/// Warming is a stream of point reads that block on storage, not on CPU. On the
+/// global pool (one thread per core) it kept at most one read in flight per core
+/// and competed with the parallel transaction execution for those same threads,
+/// so a block touching tens of thousands of cold accounts was bound by read
+/// latency at a queue depth of a handful. A dedicated pool wider than the core
+/// count keeps enough reads in flight to use the device's parallelism; when the
+/// data is already cached the chunks finish in microseconds either way.
+#[cfg(feature = "rayon")]
+fn bal_warm_pool() -> &'static rayon::ThreadPool {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let threads = std::thread::available_parallelism()
+            .map_or(8, |p| p.get())
+            .saturating_mul(2)
+            .max(BAL_WARM_MIN_THREADS);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|i| format!("bal-warmer-{i}"))
+            .build()
+            .expect("Failed to create BAL warmer thread pool")
+    })
+}
+
 /// EIP-7928 `block_access_index` of the pre-block system calls.
 /// Only the parallel BAL path reads it, and that path is rayon-gated.
 #[cfg(feature = "rayon")]
@@ -3372,28 +3401,30 @@ impl LEVM {
         // warmer read the same data in the background, and both finished together.
         // Storage slots are prefetched synchronously before the executor starts (see
         // `bal_storage_slots` at the call site), so only states and code are left here.
-        accounts
-            .par_chunks(BAL_WARM_CHUNK_ACCOUNTS)
-            .try_for_each(|chunk| -> Result<(), EvmError> {
-                if cancelled.load(Ordering::Relaxed) {
-                    return Ok(());
-                }
-                let addresses: Vec<Address> = chunk.iter().map(|ac| ac.address).collect();
-                store
-                    .prefetch_accounts(&addresses)
-                    .map_err(|e| EvmError::Custom(format!("prefetch_accounts: {e}")))?;
-                for address in addresses {
+        bal_warm_pool().install(|| {
+            accounts.par_chunks(BAL_WARM_CHUNK_ACCOUNTS).try_for_each(
+                |chunk| -> Result<(), EvmError> {
                     if cancelled.load(Ordering::Relaxed) {
                         return Ok(());
                     }
-                    if let Ok(state) = store.get_account_state(address)
-                        && state.code_hash != *EMPTY_KECCAK_HASH
-                    {
-                        let _ = store.get_account_code(state.code_hash);
+                    let addresses: Vec<Address> = chunk.iter().map(|ac| ac.address).collect();
+                    store
+                        .prefetch_accounts(&addresses)
+                        .map_err(|e| EvmError::Custom(format!("prefetch_accounts: {e}")))?;
+                    for address in addresses {
+                        if cancelled.load(Ordering::Relaxed) {
+                            return Ok(());
+                        }
+                        if let Ok(state) = store.get_account_state(address)
+                            && state.code_hash != *EMPTY_KECCAK_HASH
+                        {
+                            let _ = store.get_account_code(state.code_hash);
+                        }
                     }
-                }
-                Ok(())
-            })
+                    Ok(())
+                },
+            )
+        })
     }
 
     fn send_state_transitions_tx(
