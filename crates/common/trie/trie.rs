@@ -154,13 +154,18 @@ impl Trie {
         Ok(match self.root {
             NodeRef::Node(ref node, _) => node.get(self.db.as_ref(), path)?,
             NodeRef::Hash(hash) if hash.is_valid() => {
-                Node::decode(&self.db.get(Nibbles::default())?.ok_or_else(|| {
-                    TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(
-                        hash.finalize(&NativeCrypto),
-                    )))
-                })?)
-                .map_err(TrieError::RLPDecode)?
-                .get(self.db.as_ref(), path)?
+                // Trie nodes are stored by path, not by hash, so path `""` only ever holds
+                // the most recently committed root. Verify it actually hashes to the root
+                // this trie claims, otherwise a Trie opened at a historical root would
+                // silently walk the latest state. See `NodeRef::get_node_checked`.
+                self.root
+                    .get_node_checked(self.db.as_ref(), Nibbles::default())?
+                    .ok_or_else(|| {
+                        TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(
+                            hash.finalize(&NativeCrypto),
+                        )))
+                    })?
+                    .get(self.db.as_ref(), path)?
             }
             _ => None,
         })
@@ -1099,5 +1104,101 @@ mod tests {
     #[test]
     fn empty_trie_hash_matches_keccak() {
         assert_eq!(EMPTY_TRIE_HASH, H256(keccak_hash([RLP_NULL])));
+    }
+
+    // Regression test for #6578: the `NodeRef::Hash` fallback in `Trie::get` decoded
+    // whatever bytes sat at path `""` and walked them, without checking the decoded
+    // node's hash against the trie's own root. ethrex keys trie nodes by path, not by
+    // hash, so path `""` only ever holds the most recently committed root -- meaning a
+    // Trie opened at a historical root silently read latest state.
+    //
+    // Lives inline in `trie.rs` because it relies on that module's private imports
+    // (`NodeRef`, `NativeCrypto`, `H256`, ...), which a sibling file cannot see.
+
+    #[cfg(test)]
+    mod issue_6578 {
+        use super::*;
+        use crate::db::NodeMap;
+        use std::sync::Mutex;
+
+        /// The hash a `NodeRef` points at, normalized to an `H256`.
+        fn node_ref_hash(root: NodeRef) -> H256 {
+            match root {
+                NodeRef::Hash(h) => h.finalize(&NativeCrypto),
+                NodeRef::Node(node, _) => node.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+            }
+        }
+
+        /// Build a trie with several keys, commit it into `db`, and return its root hash.
+        /// Several keys are needed so the root node exceeds 32 bytes and is therefore
+        /// referenced by hash (`NodeHash::Hashed`) rather than inlined, which is how
+        /// real account and storage roots look.
+        fn commit_keys(db: &NodeMap, keys: &[u8], tag: &[u8]) -> H256 {
+            let mut trie = Trie::new(Box::new(InMemoryTrieDB::new(db.clone())));
+            for key in keys {
+                let mut value = tag.to_vec();
+                value.push(*key);
+                trie.insert(PathRLP::from(vec![*key]), ValueRLP::from(value))
+                    .expect("insert");
+            }
+            trie.commit(&NativeCrypto).expect("commit");
+            node_ref_hash(trie.root)
+        }
+
+        /// Open a Trie asserting `claimed_root`, then read `probe_key`.
+        fn claimed_root_read(
+            db: NodeMap,
+            claimed_root: H256,
+            probe_key: u8,
+        ) -> Result<Option<ValueRLP>, TrieError> {
+            let trie = Trie::open(Box::new(InMemoryTrieDB::new(db)), claimed_root);
+            assert!(
+                matches!(trie.root, NodeRef::Hash(_)),
+                "setup: root must be a Hash ref to exercise the fallback arm"
+            );
+            trie.get(&[probe_key])
+        }
+
+        /// A Trie rooted at A must not surface a key that only exists in B, even though
+        /// the DB's path-"" entry now holds B.
+        #[test]
+        fn trie_get_does_not_walk_a_foreign_root() {
+            let db: NodeMap = Arc::new(Mutex::new(Default::default()));
+
+            // Key 0x02 exists only in B.
+            let root_a = commit_keys(&db, &[1, 3, 5, 7, 9], b"valueA");
+            let root_b = commit_keys(&db, &[2, 4, 6, 8, 10], b"valueB");
+            assert_ne!(root_a, root_b, "setup: roots must differ");
+
+            // The DB's path-"" entry is B (the most recent commit).
+            let stored = InMemoryTrieDB::new(db.clone())
+                .get(Nibbles::default())
+                .expect("db get")
+                .expect("path \"\" populated after a commit");
+            assert_eq!(
+                H256(keccak_hash(stored.as_slice())),
+                root_b,
+                "setup: DB path \"\" must hold the latest root"
+            );
+
+            let leaked = claimed_root_read(db, root_a, 2u8);
+            assert!(
+                !matches!(leaked, Ok(Some(_))),
+                "Trie::get surfaced key 0x02 (only in root B = {root_b:#x}) through a Trie \
+             claiming root A = {root_a:#x}: the NodeRef::Hash fallback never verifies \
+             the loaded node's hash, so historical queries read latest state"
+            );
+        }
+
+        /// Control: when the claimed root IS the DB's root, the read must still resolve.
+        /// Guards against "fixing" this by rejecting every hashed-root read.
+        #[test]
+        fn trie_get_still_works_when_claimed_root_matches_db() {
+            let db: NodeMap = Arc::new(Mutex::new(Default::default()));
+            let root_b = commit_keys(&db, &[2, 4, 6, 8, 10], b"valueB");
+
+            let got = claimed_root_read(db, root_b, 2u8).expect("matching root must not error");
+            assert_eq!(got, Some(b"valueB\x02".to_vec()));
+        }
     }
 }
