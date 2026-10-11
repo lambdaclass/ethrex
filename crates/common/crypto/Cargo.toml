@@ -75,5 +75,9 @@ harness = false
 name = "bn254_ops"
 harness = false
 
+[[bench]]
+name = "keccak"
+harness = false
+
 [lints]
 workspace = true
