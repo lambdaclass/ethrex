@@ -4,26 +4,22 @@ core::arch::global_asm!(include_str!("keccak1600-armv8-elf.s"), options(raw));
 core::arch::global_asm!(include_str!("keccak1600-armv8-macho.s"), options(raw));
 #[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(include_str!("keccak1600-x86_64.s"), options(att_syntax));
-// The AVX-512F code is only ever reached through runtime CPU detection (see `imp::backend`),
-// never through compile-time target features: release builds target x86-64-v3 and must keep
-// running on CPUs without AVX-512. Detection needs `std`, so `no_std` builds keep the scalar
-// code only. `raw` because the AVX-512 mask syntax (`{%k1}`) would otherwise be read as format
-// placeholders.
-#[cfg(all(target_arch = "x86_64", feature = "std"))]
-core::arch::global_asm!(
-    include_str!("keccak1600-avx512.s"),
-    options(att_syntax, raw)
-);
 
 pub use imp::*;
 
+// Only ever reached through runtime CPU detection (see `imp::backend`), never through
+// compile-time target features: release builds target x86-64-v3 and must keep running on CPUs
+// without AVX-512. Detection needs `std`, so `no_std` builds keep the scalar code only.
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+mod avx512vl;
+
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 mod imp {
-    const BLOCK_SIZE: usize = 136;
+    pub(super) const BLOCK_SIZE: usize = 136;
 
     #[derive(Default, Clone, Copy)]
     #[repr(transparent)]
-    struct State([u64; 25]);
+    pub(super) struct State(pub(super) [u64; 25]);
 
     type AbsorbFn =
         unsafe extern "C" fn(state: *mut State, buf: *const u8, len: usize, r: usize) -> usize;
@@ -40,15 +36,6 @@ mod imp {
         #[link_name = "SHA3_absorb"]
         unsafe fn SHA3_absorb(state: *mut State, buf: *const u8, len: usize, r: usize) -> usize;
         unsafe fn SHA3_squeeze(state: *mut State, buf: *mut u8, len: usize, r: usize);
-        #[cfg(all(target_arch = "x86_64", feature = "std"))]
-        unsafe fn SHA3_absorb_avx512(
-            state: *mut State,
-            buf: *const u8,
-            len: usize,
-            r: usize,
-        ) -> usize;
-        #[cfg(all(target_arch = "x86_64", feature = "std"))]
-        unsafe fn SHA3_squeeze_avx512(state: *mut State, buf: *mut u8, len: usize, r: usize);
     }
 
     static SCALAR: Backend = Backend {
@@ -57,29 +44,26 @@ mod imp {
     };
 
     #[cfg(all(target_arch = "x86_64", feature = "std"))]
-    static AVX512: Backend = Backend {
-        absorb: SHA3_absorb_avx512,
-        squeeze: SHA3_squeeze_avx512,
+    static AVX512VL: Backend = Backend {
+        absorb: super::avx512vl::absorb,
+        squeeze: super::avx512vl::squeeze,
     };
 
     #[cfg(all(target_arch = "x86_64", feature = "std"))]
-    fn is_intel() -> bool {
-        // SAFETY: every x86_64 CPU implements `cpuid`, and leaf 0 always exists.
-        let vendor = unsafe { core::arch::x86_64::__cpuid(0) };
-        // "GenuineIntel", spread over EBX, EDX and ECX.
-        (vendor.ebx, vendor.edx, vendor.ecx) == (0x756e_6547, 0x4965_6e69, 0x6c65_746e)
+    fn avx512vl_supported() -> bool {
+        std::is_x86_feature_detected!("avx512f") && std::is_x86_feature_detected!("avx512vl")
     }
 
-    /// Picks the backend once per process. The AVX-512F code is only used on Intel: on AMD it is
-    /// no faster than the scalar code on Zen 5 for EVM-sized inputs, and Zen 4 splits every
-    /// 512-bit operation into two 256-bit halves, where the upstream figures put it about 9%
-    /// behind the scalar code.
+    /// Picks the backend once per process: the AVX-512VL code wherever it runs. Measured per
+    /// one-block hash, it is 7-9% faster than the scalar code on Intel (Emerald Rapids) and about
+    /// level on AMD Zen 5, whose vector logic and rotates have two-cycle latency. Zen 4 runs them
+    /// in one cycle, so it should gain the most.
     #[cfg(all(target_arch = "x86_64", feature = "std"))]
     fn backend() -> &'static Backend {
         static SELECTED: std::sync::OnceLock<&'static Backend> = std::sync::OnceLock::new();
         SELECTED.get_or_init(|| {
-            if std::is_x86_feature_detected!("avx512f") && is_intel() {
-                &AVX512
+            if avx512vl_supported() {
+                &AVX512VL
             } else {
                 &SCALAR
             }
@@ -245,13 +229,13 @@ mod imp {
         use tiny_keccak::{Hasher, Keccak};
 
         /// Every backend the running CPU can execute, whether dispatch would pick it or not, so
-        /// both the scalar fallback and the AVX-512F code are checked on an AVX-512 machine.
+        /// both the scalar fallback and the AVX-512VL code are checked on an AVX-512 machine.
         fn runnable_backends() -> Vec<&'static Backend> {
             #[allow(unused_mut)]
             let mut backends = vec![&SCALAR];
             #[cfg(all(target_arch = "x86_64", feature = "std"))]
-            if std::is_x86_feature_detected!("avx512f") {
-                backends.push(&AVX512);
+            if avx512vl_supported() {
+                backends.push(&AVX512VL);
             }
             backends
         }
@@ -298,13 +282,12 @@ mod imp {
 
         #[cfg(all(target_arch = "x86_64", feature = "std"))]
         #[test]
-        fn dispatch_selects_avx512_only_on_intel() {
-            let expected: &'static Backend =
-                if std::is_x86_feature_detected!("avx512f") && is_intel() {
-                    &AVX512
-                } else {
-                    &SCALAR
-                };
+        fn dispatch_selects_avx512vl_when_supported() {
+            let expected: &'static Backend = if avx512vl_supported() {
+                &AVX512VL
+            } else {
+                &SCALAR
+            };
             assert!(core::ptr::eq(backend(), expected));
             assert!(core::ptr::eq(Keccak256::new().backend, expected));
         }
