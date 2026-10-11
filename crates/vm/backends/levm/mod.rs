@@ -4311,7 +4311,7 @@ pub(crate) fn env_from_generic(
     } else {
         Some(tx.max_fee_per_blob_gas.unwrap_or_default())
     };
-    // A zero caller cap zeroes the blob base fee, with or without blob hashes, as geth does.
+    // A zero cap zeroes the blob base fee, as geth does.
     let base_blob_fee_per_gas = if max_fee_per_blob_gas.is_some_and(|cap| cap.is_zero()) {
         U256::zero()
     } else {
@@ -4357,11 +4357,7 @@ pub(crate) fn env_from_generic(
         tx_blob_hashes: tx.blob_versioned_hashes.clone(),
         tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas.map(U256::from),
         tx_max_fee_per_gas: tx.max_fee_per_gas.map(U256::from),
-        // The fields decide the type: from Cancun, a blob fee cap without blob hashes does
-        // not make the call a blob transaction. Before Cancun the cap is kept, so the type-3
-        // fork check rejects it.
-        tx_max_fee_per_blob_gas: max_fee_per_blob_gas
-            .filter(|_| !tx.blob_versioned_hashes.is_empty() || config.fork < Fork::Cancun),
+        tx_max_fee_per_blob_gas: max_fee_per_blob_gas,
         tx_nonce: tx.nonce.unwrap_or_default(),
         block_gas_limit: header.gas_limit,
         difficulty: header.difficulty,

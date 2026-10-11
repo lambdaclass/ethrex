@@ -26,7 +26,7 @@ use ethrex_levm::errors::TxValidationError;
 use ethrex_levm::vm::VMType;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::backends::levm::LEVM;
-use ethrex_vm::{DynVmDatabase, EvmError, ExecutionResult};
+use ethrex_vm::{DynVmDatabase, EvmError, ExecutionResult, VMError};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -348,31 +348,40 @@ fn call_with_blob_fee_cap(cap: U256) -> GenericTransaction {
 }
 
 #[test]
-fn simulation_runs_a_blob_fee_cap_without_blob_hashes() {
-    // The fields decide the call's type: without blob hashes the call is not a blob
-    // transaction, so from Cancun a blob fee cap alone must not make it invalid.
+fn simulation_rejects_a_blob_fee_cap_without_blob_hashes() {
+    // A blob fee cap only describes a blob transaction, which needs at least one blob
+    // hash, so a cap alone makes the request invalid at every fork.
     for cap in [U256::zero(), U256::one()] {
         let (mut db, header) = amsterdam_db_and_header(Some(0));
         let tx = call_with_blob_fee_cap(cap);
-        let result =
+        let err =
             LEVM::simulate_tx_from_generic(&tx, &header, &mut db, VMType::L1, &NativeCrypto, None)
-                .expect("a blob fee cap without blob hashes must not be rejected");
+                .expect_err("a blob fee cap without blob hashes must be rejected");
         assert!(
-            matches!(result, ExecutionResult::Success { .. }),
-            "expected the call to run, got {result:?}"
+            matches!(&err, EvmError::Transaction(msg) if msg.contains(&TxValidationError::Type3TxZeroBlobs.to_string())),
+            "expected a zero-blobs error, got {err:?}"
         );
-        let result = access_list_result(call_with_blob_fee_cap(cap));
+        let (mut db, header) = amsterdam_db_and_header(Some(0));
+        let err = LEVM::create_access_list(
+            call_with_blob_fee_cap(cap),
+            &header,
+            &mut db,
+            VMType::L1,
+            &NativeCrypto,
+        )
+        .expect_err("a blob fee cap without blob hashes must be rejected");
         assert!(
-            matches!(result, ExecutionResult::Success { .. }),
-            "expected the access list call to run, got {result:?}"
+            matches!(
+                err,
+                VMError::TxValidation(TxValidationError::Type3TxZeroBlobs)
+            ),
+            "expected a zero-blobs error, got {err:?}"
         );
     }
 }
 
 #[test]
 fn simulation_rejects_a_blob_fee_cap_before_cancun() {
-    // Before Cancun the field's EIP is not active, so the request is invalid even
-    // without blob hashes.
     let chain_config = ChainConfig {
         shanghai_time: Some(0),
         ..Default::default()
@@ -408,20 +417,6 @@ fn simulated_blob_base_fee(
         ExecutionResult::Success { output, .. } => U256::from_big_endian(&output),
         other => panic!("expected BLOBBASEFEE call to succeed, got {other:?}"),
     }
-}
-
-#[test]
-fn simulation_zeroes_the_blob_base_fee_for_a_zero_cap_without_blob_hashes() {
-    // Like geth, a zero cap opts out of blob fees whether or not the call carries
-    // blob hashes.
-    assert_eq!(
-        simulated_blob_base_fee(Some(U256::zero()), vec![]),
-        U256::zero()
-    );
-    assert_eq!(
-        simulated_blob_base_fee(Some(U256::one()), vec![]),
-        U256::one()
-    );
 }
 
 #[test]
@@ -468,7 +463,7 @@ fn simulation_rejects_fields_before_their_block_scheduled_fork() {
         ..Default::default()
     };
     assert_simulation_rejects(
-        pre_fork.clone(),
+        pre_fork,
         with_access_list.clone(),
         TxValidationError::Type1TxPreFork,
     );
@@ -479,7 +474,7 @@ fn simulation_rejects_fields_before_their_block_scheduled_fork() {
         ..Default::default()
     };
     assert_simulation_rejects(
-        pre_fork.clone(),
+        pre_fork,
         with_priority_fee.clone(),
         TxValidationError::Type2TxPreFork,
     );
@@ -498,7 +493,7 @@ fn simulation_rejects_fields_before_their_block_scheduled_fork() {
         ..Default::default()
     };
     for tx in [with_access_list, with_priority_fee] {
-        let (mut db, header) = db_and_header(at_fork.clone(), None);
+        let (mut db, header) = db_and_header(at_fork, None);
         let result =
             LEVM::simulate_tx_from_generic(&tx, &header, &mut db, VMType::L1, &NativeCrypto, None)
                 .expect("the field is valid once its fork is active");
