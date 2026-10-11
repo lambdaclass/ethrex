@@ -79,5 +79,9 @@ harness = false
 name = "keccak"
 harness = false
 
+[[bench]]
+name = "u256_div"
+harness = false
+
 [lints]
 workspace = true

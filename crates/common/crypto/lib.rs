@@ -13,6 +13,7 @@ pub mod native;
 #[cfg(feature = "aws-lc-rs")]
 mod p256_awslc;
 pub mod provider;
+pub mod u256_div;
 pub use native::NativeCrypto;
 pub use provider::{Crypto, CryptoError};
 
