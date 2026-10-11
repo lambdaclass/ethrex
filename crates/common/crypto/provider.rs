@@ -396,28 +396,15 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     }
 
     /// 256-bit modular multiplication.
-    /// Used by the MULMOD opcode. Default impl uses standard bigint arithmetic.
+    /// Used by the MULMOD opcode. Default impl reduces the 512-bit product with
+    /// [`crate::u256_div::mul_mod`].
     /// ZisK overrides with a native circuit instruction.
     fn mulmod256(&self, a: &[u8; 32], b: &[u8; 32], m: &[u8; 32]) -> [u8; 32] {
         let a = ethereum_types::U256::from_big_endian(a);
         let b = ethereum_types::U256::from_big_endian(b);
         let m = ethereum_types::U256::from_big_endian(m);
 
-        let result = if m.is_zero() {
-            ethereum_types::U256::zero()
-        } else {
-            let product = a.full_mul(b);
-            let m512 = ethereum_types::U512::from(m);
-            if product < m512 {
-                // Product fits below modulus — no division needed.
-                product.try_into().unwrap_or(ethereum_types::U256::zero())
-            } else {
-                let (_, rem) = product.div_mod(m512);
-                rem.try_into().unwrap_or(ethereum_types::U256::zero())
-            }
-        };
-
-        result.to_big_endian()
+        crate::u256_div::mul_mod(a, b, m).to_big_endian()
     }
 
     // ── Blake2 ─────────────────────────────────────────────────────────
