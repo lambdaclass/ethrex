@@ -94,6 +94,11 @@ use std::sync::mpsc::Sender;
 #[cfg(feature = "rayon")]
 const BAL_WARM_CHUNK_ACCOUNTS: usize = 64;
 
+/// Block access lists with at most this many accounts are warmed on the calling
+/// thread instead of the pool, see [`LEVM::warm_block_from_bal`].
+#[cfg(feature = "rayon")]
+const BAL_WARM_INLINE_ACCOUNTS: usize = 2 * BAL_WARM_CHUNK_ACCOUNTS;
+
 /// Floor on the BAL warmer's thread count, see [`bal_warm_pool`].
 #[cfg(feature = "rayon")]
 const BAL_WARM_MIN_THREADS: usize = 64;
@@ -3401,29 +3406,38 @@ impl LEVM {
         // warmer read the same data in the background, and both finished together.
         // Storage slots are prefetched synchronously before the executor starts (see
         // `bal_storage_slots` at the call site), so only states and code are left here.
+        let warm_chunk = |chunk: &[AccountChanges]| -> Result<(), EvmError> {
+            if cancelled.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+            let addresses: Vec<Address> = chunk.iter().map(|ac| ac.address).collect();
+            store
+                .prefetch_accounts(&addresses)
+                .map_err(|e| EvmError::Custom(format!("prefetch_accounts: {e}")))?;
+            for address in addresses {
+                if cancelled.load(Ordering::Relaxed) {
+                    return Ok(());
+                }
+                if let Ok(state) = store.get_account_state(address)
+                    && state.code_hash != *EMPTY_KECCAK_HASH
+                {
+                    let _ = store.get_account_code(state.code_hash);
+                }
+            }
+            Ok(())
+        };
+
+        // A short list is read on this thread: waking dozens of pool threads costs
+        // more than the handful of reads, and on a short block that wake-up shows.
+        if accounts.len() <= BAL_WARM_INLINE_ACCOUNTS {
+            return accounts
+                .chunks(BAL_WARM_CHUNK_ACCOUNTS)
+                .try_for_each(warm_chunk);
+        }
         bal_warm_pool().install(|| {
-            accounts.par_chunks(BAL_WARM_CHUNK_ACCOUNTS).try_for_each(
-                |chunk| -> Result<(), EvmError> {
-                    if cancelled.load(Ordering::Relaxed) {
-                        return Ok(());
-                    }
-                    let addresses: Vec<Address> = chunk.iter().map(|ac| ac.address).collect();
-                    store
-                        .prefetch_accounts(&addresses)
-                        .map_err(|e| EvmError::Custom(format!("prefetch_accounts: {e}")))?;
-                    for address in addresses {
-                        if cancelled.load(Ordering::Relaxed) {
-                            return Ok(());
-                        }
-                        if let Ok(state) = store.get_account_state(address)
-                            && state.code_hash != *EMPTY_KECCAK_HASH
-                        {
-                            let _ = store.get_account_code(state.code_hash);
-                        }
-                    }
-                    Ok(())
-                },
-            )
+            accounts
+                .par_chunks(BAL_WARM_CHUNK_ACCOUNTS)
+                .try_for_each(warm_chunk)
         })
     }
 
