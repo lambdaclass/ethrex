@@ -31,7 +31,7 @@ impl OpcodeHandler for OpLtHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::LT)?;
 
-        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (&lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         #[expect(clippy::as_conversions, reason = "safe")]
         let res = (lhs < *rhs) as u64;
         *rhs = res.into();
@@ -47,7 +47,7 @@ impl OpcodeHandler for OpGtHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::GT)?;
 
-        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (&lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         #[expect(clippy::as_conversions, reason = "safe")]
         let res = (lhs > *rhs) as u64;
         *rhs = res.into();
@@ -63,7 +63,7 @@ impl OpcodeHandler for OpSLtHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SLT)?;
 
-        let (lhs, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (&lhs, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         let rhs = *slot;
         let lhs_sign = lhs.bit(255);
         let rhs_sign = rhs.bit(255);
@@ -86,7 +86,7 @@ impl OpcodeHandler for OpSGtHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SGT)?;
 
-        let (lhs, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (&lhs, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         let rhs = *slot;
         let lhs_sign = lhs.bit(255);
         let rhs_sign = rhs.bit(255);
@@ -109,7 +109,7 @@ impl OpcodeHandler for OpEqHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::EQ)?;
 
-        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (&lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         #[expect(clippy::as_conversions, reason = "safe")]
         let res = (lhs == *rhs) as u64;
         *rhs = res.into();
@@ -143,7 +143,7 @@ impl OpcodeHandler for OpAndHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::AND)?;
 
-        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (&lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         *rhs = lhs & *rhs;
 
         Ok(OpcodeResult::Continue)
@@ -157,7 +157,7 @@ impl OpcodeHandler for OpOrHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::OR)?;
 
-        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (&lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         *rhs = lhs | *rhs;
 
         Ok(OpcodeResult::Continue)
@@ -171,7 +171,7 @@ impl OpcodeHandler for OpXorHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::XOR)?;
 
-        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (&lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         *rhs = lhs ^ *rhs;
 
         Ok(OpcodeResult::Continue)
@@ -201,7 +201,7 @@ impl OpcodeHandler for OpByteHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::BYTE)?;
 
-        let (index, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (&index, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         let value = *slot;
         *slot = match usize::try_from(index) {
             #[expect(
@@ -223,7 +223,7 @@ impl OpcodeHandler for OpShlHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SHL)?;
 
-        let (shift_amount, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (&shift_amount, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         let value = *slot;
         *slot = match u8::try_from(shift_amount) {
             #[expect(clippy::arithmetic_side_effects, reason = "U256 shift by u8 is safe")]
@@ -242,7 +242,7 @@ impl OpcodeHandler for OpShrHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SHR)?;
 
-        let (shift_amount, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (&shift_amount, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         let value = *slot;
         *slot = match u8::try_from(shift_amount) {
             #[expect(clippy::arithmetic_side_effects, reason = "U256 shift by u8 is safe")]
@@ -261,7 +261,7 @@ impl OpcodeHandler for OpSarHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SAR)?;
 
-        let (shift_amount, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (&shift_amount, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         let value = *slot;
         #[expect(clippy::arithmetic_side_effects, reason = "U256 shift by u8 is safe")]
         {

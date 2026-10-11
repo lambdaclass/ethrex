@@ -30,7 +30,7 @@ impl OpcodeHandler for OpAddHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::ADD)?;
 
-        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (&lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         *rhs = lhs.overflowing_add(*rhs).0;
 
         Ok(OpcodeResult::Continue)
@@ -44,7 +44,7 @@ impl OpcodeHandler for OpSubHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SUB)?;
 
-        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (&lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         *rhs = lhs.overflowing_sub(*rhs).0;
 
         Ok(OpcodeResult::Continue)
@@ -58,7 +58,7 @@ impl OpcodeHandler for OpMulHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::MUL)?;
 
-        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (&lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         *rhs = wrapping_mul(&lhs, rhs);
 
         Ok(OpcodeResult::Continue)
@@ -72,7 +72,7 @@ impl OpcodeHandler for OpDivHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::DIV)?;
 
-        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (&lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         *rhs = u256_div::div(lhs, *rhs);
 
         Ok(OpcodeResult::Continue)
@@ -87,7 +87,7 @@ impl OpcodeHandler for OpSDivHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::SDIV)?;
 
-        let (top, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (&top, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         let mut lhs = top;
         let mut rhs = *slot;
 
@@ -118,7 +118,7 @@ impl OpcodeHandler for OpModHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::MOD)?;
 
-        let (lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (&lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         *rhs = u256_div::rem(lhs, *rhs);
 
         Ok(OpcodeResult::Continue)
@@ -133,7 +133,7 @@ impl OpcodeHandler for OpSModHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::SMOD)?;
 
-        let (top, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (&top, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         let mut lhs = top;
         let mut rhs = *slot;
 
@@ -219,7 +219,7 @@ impl OpcodeHandler for OpSignExtendHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::SIGNEXTEND)?;
 
-        let (index, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
+        let (&index, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         *slot = sign_extend(index, *slot);
 
         Ok(OpcodeResult::Continue)
