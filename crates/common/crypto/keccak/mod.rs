@@ -21,10 +21,29 @@ mod imp {
         unsafe fn SHA3_squeeze(state: *mut State, buf: *mut u8, len: usize, r: usize);
     }
 
+    /// Hashes straight from the input instead of going through `Keccak256`: the streaming state
+    /// is moved and copied around (tail buffer, `finalize(self)`), and for the short messages
+    /// the EVM hashes most (one permutation) that bookkeeping costs up to a tenth of the hash.
     pub fn keccak_hash(data: impl AsRef<[u8]>) -> [u8; 32] {
-        let mut state = Keccak256::new();
-        state.update(data);
-        state.finalize()
+        let data = data.as_ref();
+        let full_blocks_len = data.len() - data.len() % BLOCK_SIZE;
+        let tail = &data[full_blocks_len..];
+
+        let mut last_block = [0u8; BLOCK_SIZE];
+        last_block[..tail.len()].copy_from_slice(tail);
+        last_block[tail.len()] = 0x01;
+        last_block[BLOCK_SIZE - 1] |= 0x80;
+
+        let mut state = State::default();
+        let mut hash = [0u8; 32];
+        unsafe {
+            if full_blocks_len != 0 {
+                SHA3_absorb(&mut state, data.as_ptr(), full_blocks_len, BLOCK_SIZE);
+            }
+            SHA3_absorb(&mut state, last_block.as_ptr(), BLOCK_SIZE, BLOCK_SIZE);
+            SHA3_squeeze(&mut state, hash.as_mut_ptr(), hash.len(), BLOCK_SIZE);
+        }
+        hash
     }
 
     #[derive(Clone)]
@@ -127,6 +146,118 @@ mod imp {
             }
 
             hash_buf
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        // `alloc` explicitly: the crate is `no_std` without the `std` feature.
+        extern crate alloc;
+
+        use super::*;
+        use alloc::vec::Vec;
+        use tiny_keccak::{Hasher, Keccak};
+
+        fn reference(data: &[u8]) -> [u8; 32] {
+            let mut out = [0u8; 32];
+            let mut hasher = Keccak::v256();
+            hasher.update(data);
+            hasher.finalize(&mut out);
+            out
+        }
+
+        /// splitmix64: deterministic, so a failure reproduces exactly.
+        struct Rng(u64);
+
+        impl Rng {
+            fn next(&mut self) -> u64 {
+                self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+                let mut z = self.0;
+                z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+                z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+                z ^ (z >> 31)
+            }
+
+            fn below(&mut self, bound: usize) -> usize {
+                (self.next() % bound as u64) as usize
+            }
+
+            fn bytes(&mut self, len: usize) -> Vec<u8> {
+                (0..len).map(|_| self.next() as u8).collect()
+            }
+
+            fn message(&mut self, max_len: usize) -> Vec<u8> {
+                let len = self.below(max_len + 1);
+                self.bytes(len)
+            }
+        }
+
+        fn streaming_one_update(data: &[u8]) -> [u8; 32] {
+            let mut hasher = Keccak256::new();
+            hasher.update(data);
+            hasher.finalize()
+        }
+
+        #[test]
+        fn matches_reference_for_every_length_around_the_rate() {
+            let mut rng = Rng(1);
+            let data = rng.bytes(3 * BLOCK_SIZE + 1);
+            for len in 0..=data.len() {
+                let expected = reference(&data[..len]);
+                assert_eq!(keccak_hash(&data[..len]), expected, "len {len}");
+                assert_eq!(streaming_one_update(&data[..len]), expected, "len {len}");
+            }
+        }
+
+        #[test]
+        fn matches_reference_for_random_lengths() {
+            let mut rng = Rng(2);
+            for _ in 0..500 {
+                let data = rng.message(10_000);
+                let expected = reference(&data);
+                assert_eq!(keccak_hash(&data), expected, "len {}", data.len());
+                assert_eq!(streaming_one_update(&data), expected, "len {}", data.len());
+            }
+        }
+
+        #[test]
+        fn streaming_matches_reference_across_chunk_boundaries() {
+            // Chunk sizes that land exactly on, just before and just after the rate, mixed
+            // with arbitrary ones, so a partial tail is completed, flushed and restarted in
+            // every possible position.
+            const EDGES: [usize; 8] = [0, 1, 7, 8, 135, 136, 137, 272];
+            let mut rng = Rng(4);
+            for _ in 0..500 {
+                let data = rng.message(10_000);
+                let mut hasher = Keccak256::new();
+                let mut fed = 0;
+                while fed < data.len() {
+                    let chunk = if rng.below(2) == 0 {
+                        EDGES[rng.below(EDGES.len())]
+                    } else {
+                        rng.below(600)
+                    };
+                    let end = (fed + chunk).min(data.len());
+                    hasher.update(&data[fed..end]);
+                    fed = end;
+                }
+                assert_eq!(hasher.finalize(), reference(&data), "len {}", data.len());
+            }
+        }
+
+        #[test]
+        fn finalizing_a_clone_leaves_the_original_usable() {
+            // The RLPx MAC reads its running digest by finalizing a clone mid-stream.
+            let mut rng = Rng(5);
+            for _ in 0..100 {
+                let first = rng.message(1_000);
+                let second = rng.message(1_000);
+                let mut hasher = Keccak256::new();
+                hasher.update(&first);
+                assert_eq!(hasher.clone().finalize(), reference(&first));
+                hasher.update(&second);
+                assert_eq!(hasher.finalize(), reference(&[first, second].concat()));
+            }
         }
     }
 }

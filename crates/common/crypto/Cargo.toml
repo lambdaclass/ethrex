@@ -71,5 +71,9 @@ blst = "0.3.16"
 name = "bls_single_op"
 harness = false
 
+[[bench]]
+name = "keccak"
+harness = false
+
 [lints]
 workspace = true
