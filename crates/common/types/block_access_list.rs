@@ -1089,6 +1089,17 @@ impl BlockAccessListRecorder {
         std::mem::take(&mut self.tx_initial_storage)
     }
 
+    /// Adds `address` to the touched set. Loops tend to touch the same address
+    /// over and over (SELFBALANCE, repeated calls to one precompile), and
+    /// re-inserting an address that is already present is a no-op, so the most
+    /// recently inserted entry is checked first to skip hashing it again.
+    #[inline]
+    fn insert_touched(&mut self, address: Address) {
+        if self.touched_addresses.last() != Some(&address) {
+            self.touched_addresses.insert(address);
+        }
+    }
+
     /// Records an address as touched during execution.
     /// The address will appear in the BAL even if it has no state changes.
     ///
@@ -1097,7 +1108,7 @@ impl BlockAccessListRecorder {
         if address == SYSTEM_ADDRESS && self.in_system_call {
             return;
         }
-        self.touched_addresses.insert(address);
+        self.insert_touched(address);
     }
 
     /// Records multiple addresses as touched during execution.
@@ -1126,7 +1137,7 @@ impl BlockAccessListRecorder {
         }
         self.storage_reads.entry(address).or_default().insert(slot);
         // Also mark the address as touched
-        self.touched_addresses.insert(address);
+        self.insert_touched(address);
     }
 
     /// Records a storage slot write.
@@ -1167,7 +1178,7 @@ impl BlockAccessListRecorder {
         changes.push((self.current_index, post_value));
         self.storage_writes_journal.push((address, slot, prev_len));
         // Mark address as touched (include SYSTEM_ADDRESS for actual state changes)
-        self.touched_addresses.insert(address);
+        self.insert_touched(address);
     }
 
     /// Captures the pre-storage value for net-zero filtering.
@@ -1207,7 +1218,7 @@ impl BlockAccessListRecorder {
         self.balance_changes_journal.push((address, prev_len));
 
         // Mark address as touched
-        self.touched_addresses.insert(address);
+        self.insert_touched(address);
     }
 
     /// Sets the initial balance for an address before any changes.
@@ -1239,7 +1250,7 @@ impl BlockAccessListRecorder {
         changes.push((self.current_index, post_nonce));
         self.nonce_changes_journal.push((address, prev_len));
         // Mark address as touched
-        self.touched_addresses.insert(address);
+        self.insert_touched(address);
     }
 
     /// Records a code change (contract deployment or EIP-7702 delegation).
@@ -1270,7 +1281,7 @@ impl BlockAccessListRecorder {
         // No initial code and setting to empty = no change, skip
         // Had initial code and setting to empty = delegation clear, record it
         if new_code.is_empty() && !self.addresses_with_initial_code.contains(&address) {
-            self.touched_addresses.insert(address);
+            self.insert_touched(address);
             return;
         }
 
@@ -1279,7 +1290,7 @@ impl BlockAccessListRecorder {
         changes.push((self.current_index, new_code));
         self.code_changes_journal.push((address, prev_len));
         // Mark address as touched (include SYSTEM_ADDRESS for actual state changes)
-        self.touched_addresses.insert(address);
+        self.insert_touched(address);
     }
 
     /// Merges additional touched addresses from an iterator.
