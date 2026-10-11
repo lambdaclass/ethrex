@@ -13,7 +13,6 @@ use rustc_hash::FxHashMap;
 use std::{
     fmt,
     hash::{Hash, Hasher},
-    hint::assert_unchecked,
 };
 
 /// [`u64`]s that make up a [`U256`]
@@ -185,6 +184,9 @@ impl Stack {
         const {
             assert!(STACK_LIMIT.checked_add(N).is_some());
         }
+        const {
+            assert!(N >= 1);
+        }
         #[expect(clippy::arithmetic_side_effects)]
         let index = self.offset + N;
 
@@ -192,13 +194,44 @@ impl Stack {
             return Err(ExceptionalHalt::StackUnderflow);
         }
 
-        #[expect(unsafe_code, reason = "self.offset always < STACK_LIMIT")]
+        #[expect(
+            unsafe_code,
+            reason = "self.offset < index < STACK_LIMIT, checked above"
+        )]
         unsafe {
-            assert_unchecked(self.offset < STACK_LIMIT)
+            self.swap_distinct_unchecked(self.offset, index)
         };
-
-        self.values.swap(self.offset, index);
         Ok(())
+    }
+
+    /// Swaps the values in slots `a` and `b`.
+    ///
+    /// A 32-byte swap otherwise compiles to a round trip of one value through a stack
+    /// temporary, which adds a store-to-load forward to every swap in a chain of SWAPs.
+    /// With AVX both values stay in vector registers.
+    ///
+    /// # Safety
+    ///
+    /// `a` and `b` must be distinct and below `STACK_LIMIT`.
+    #[inline(always)]
+    #[expect(unsafe_code, reason = "caller guarantees distinct in-bounds slots")]
+    pub(crate) unsafe fn swap_distinct_unchecked(&mut self, a: usize, b: usize) {
+        #[cfg(all(target_arch = "x86_64", target_feature = "avx"))]
+        unsafe {
+            use std::arch::x86_64::{__m256i, _mm256_loadu_si256, _mm256_storeu_si256};
+            let values = self.values.as_mut_ptr();
+            let a = values.add(a).cast::<__m256i>();
+            let b = values.add(b).cast::<__m256i>();
+            let a_value = _mm256_loadu_si256(a);
+            let b_value = _mm256_loadu_si256(b);
+            _mm256_storeu_si256(a, b_value);
+            _mm256_storeu_si256(b, a_value);
+        }
+        #[cfg(not(all(target_arch = "x86_64", target_feature = "avx")))]
+        unsafe {
+            let [a, b] = self.values.get_disjoint_unchecked_mut([a, b]);
+            std::mem::swap(a, b);
+        }
     }
 
     pub fn clear(&mut self) {
