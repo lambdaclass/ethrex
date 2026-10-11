@@ -23,9 +23,9 @@ impl Keccak256 {
 impl Default for Keccak256;
 ```
 There are no feature flags. If building for `x86_64`, it will link an optimized assembly implementation using generic `x86_64` code, which runs everywhere.
-With `std`, it also links the _Cryptogams_ AVX-512F implementation and picks it at runtime, once per process, on Intel CPUs that support AVX-512F. It is never selected at compile time, since release builds target `x86-64-v3`.
+With `std`, CPUs with AVX-512F and AVX-512VL instead use `avx512vl.rs`, picked at runtime once per process (never at compile time, since release builds target `x86-64-v3`). It is plain Rust over `core::arch` intrinsics that keeps each of the 25 lanes in its own 128-bit register, so the state never leaves the 32 vector registers, and uses `vpternlogq` for the three-input XORs of Theta and for Chi and `vprolq` for the rotations.
 If building for `ARMv8`, it will link an optimized implementation using generic `ARMv8` instructions.
-The baseline instruction sets are kept everywhere else because the alternatives measured worse: on `ARMv8` the specialized `SHA3` instructions showed no improvement, `AVX2` showed a 30% throughput regression, the 256-bit `AVX512VL` variant was slower than scalar for one-block messages on both an Intel Xeon (Emerald Rapids, 4%) and an AMD Zen 5 (15%), and the 512-bit `AVX-512F` code was within 2% of scalar on Zen 5 for the message sizes the EVM hashes most (and is expected to be slower on Zen 4, which splits 512-bit operations in two). On the Xeon the `AVX-512F` code is 8% faster for one-block messages and 12-14% faster for long ones.
+Other variants measured worse. On `ARMv8` the specialized `SHA3` instructions showed no improvement. On x86_64 the _Cryptogams_ alternatives lost or tied against the code above: `AVX2` was 31-36% slower than scalar on an Intel Xeon (Emerald Rapids) and an AMD Zen 5, the 256-bit `AVX512VL` variant was slower than scalar on both, and the 512-bit `AVX-512F` variant was within a few percent of the register-per-lane code on Intel (ahead on long messages, behind on one-block ones), was level with scalar on Zen 5, and is published as slower than scalar on Zen 4, which splits 512-bit operations in two.
 For other architectures, it falls back to `tiny_keccak`. This is specially necessary for proving, as the ZKVMs are RISC-V based, but they are not guaranteed to support all of its extensions. We may revisit adding assembly versions for them at a later time.
 
 ## Code Generation
@@ -37,7 +37,6 @@ $ cd cryptogams/arm
 $ ./keccak1600-armv8.pl linux64 keccak1600-armv8.s
 $ cd ../x86_64
 $ ./keccak1600-x86_64.pl linux64 keccak1600-x86_64.s
-$ ./keccak1600-avx512.pl > keccak1600-avx512.s
 ```
 - Both the x86 and the ARM code need a few changes before the Rust compiler can import them. Each file lists its
   own changes in a `Modified:` comment at the top; the ARM code needs the most of them.
