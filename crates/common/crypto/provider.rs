@@ -351,28 +351,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     /// Used by MODEXP precompile (0x05).
     #[cfg(feature = "std")]
     fn modexp(&self, base: &[u8], exp: &[u8], modulus: &[u8]) -> Result<Vec<u8>, CryptoError> {
-        use malachite::base::num::arithmetic::traits::ModPow as _;
-        use malachite::base::num::basic::traits::Zero as _;
-        use malachite::{Natural, base::num::conversion::traits::*};
-
-        let base_nat = Natural::from_power_of_2_digits_desc(8u64, base.iter().cloned())
-            .ok_or(CryptoError::InvalidInput("base"))?;
-        let exp_nat = Natural::from_power_of_2_digits_desc(8u64, exp.iter().cloned())
-            .ok_or(CryptoError::InvalidInput("exponent"))?;
-        let mod_nat = Natural::from_power_of_2_digits_desc(8u64, modulus.iter().cloned())
-            .ok_or(CryptoError::InvalidInput("modulus"))?;
-
-        let result = if mod_nat == Natural::ZERO {
-            Natural::ZERO
-        } else if exp_nat == Natural::ZERO {
-            Natural::from(1_u8) % &mod_nat
-        } else {
-            let base_mod = base_nat % &mod_nat;
-            base_mod.mod_pow(&exp_nat, &mod_nat)
-        };
-
-        let res_bytes: Vec<u8> = result.to_power_of_2_digits_desc(8);
-        pad_modexp_output(res_bytes, modulus.len())
+        modexp_arbitrary_precision(base, exp, modulus)
     }
 
     #[cfg(not(feature = "std"))]
@@ -688,3 +667,34 @@ fn pad_modexp_output(res_bytes: Vec<u8>, modulus_len: usize) -> Result<Vec<u8>, 
 // The BLS12-381 point parse/serialize helpers that backed the portable trait
 // defaults now live in `ethrex-guest-program` alongside the guest `Crypto`
 // providers, so this crate no longer depends on the `bls12_381` git fork.
+
+/// MODEXP over arbitrary-precision integers (the generic path, any operand size).
+#[cfg(feature = "std")]
+pub(crate) fn modexp_arbitrary_precision(
+    base: &[u8],
+    exp: &[u8],
+    modulus: &[u8],
+) -> Result<Vec<u8>, CryptoError> {
+    use malachite::base::num::arithmetic::traits::ModPow as _;
+    use malachite::base::num::basic::traits::Zero as _;
+    use malachite::{Natural, base::num::conversion::traits::*};
+
+    let base_nat = Natural::from_power_of_2_digits_desc(8u64, base.iter().cloned())
+        .ok_or(CryptoError::InvalidInput("base"))?;
+    let exp_nat = Natural::from_power_of_2_digits_desc(8u64, exp.iter().cloned())
+        .ok_or(CryptoError::InvalidInput("exponent"))?;
+    let mod_nat = Natural::from_power_of_2_digits_desc(8u64, modulus.iter().cloned())
+        .ok_or(CryptoError::InvalidInput("modulus"))?;
+
+    let result = if mod_nat == Natural::ZERO {
+        Natural::ZERO
+    } else if exp_nat == Natural::ZERO {
+        Natural::from(1_u8) % &mod_nat
+    } else {
+        let base_mod = base_nat % &mod_nat;
+        base_mod.mod_pow(&exp_nat, &mod_nat)
+    };
+
+    let res_bytes: Vec<u8> = result.to_power_of_2_digits_desc(8);
+    pad_modexp_output(res_bytes, modulus.len())
+}
