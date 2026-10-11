@@ -56,5 +56,34 @@ fn bench_bn254(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_bn254);
+fn bench_pairing_parts(c: &mut Criterion) {
+    use ark_ec::pairing::Pairing;
+    let g = ark_bn254::G1Affine::generator();
+    let h = ark_bn254::G2Affine::generator();
+    let p = (g * ark_bn254::Fr::from(7u64)).into_affine();
+    let q = (h * ark_bn254::Fr::from(11u64)).into_affine();
+    c.bench_function("part_g1_subgroup_oncurve", |b| {
+        b.iter(|| black_box(&p).is_on_curve())
+    });
+    c.bench_function("part_g2_subgroup_check", |b| {
+        b.iter(|| black_box(&q).is_in_correct_subgroup_assuming_on_curve())
+    });
+    c.bench_function("part_miller_loop_1", |b| {
+        b.iter(|| ark_bn254::Bn254::multi_miller_loop([black_box(p)], [black_box(q)]))
+    });
+    c.bench_function("part_miller_loop_2", |b| {
+        b.iter(|| {
+            ark_bn254::Bn254::multi_miller_loop(
+                [black_box(p), black_box(p)],
+                [black_box(q), black_box(q)],
+            )
+        })
+    });
+    let ml = ark_bn254::Bn254::multi_miller_loop([p], [q]);
+    c.bench_function("part_final_exp", |b| {
+        b.iter(|| ark_bn254::Bn254::final_exponentiation(black_box(ml)))
+    });
+}
+
+criterion_group!(benches, bench_bn254, bench_pairing_parts);
 criterion_main!(benches);

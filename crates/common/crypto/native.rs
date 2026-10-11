@@ -31,4 +31,8 @@ impl Crypto for NativeCrypto {
     fn bn254_g1_mul(&self, point: &[u8], scalar: &[u8]) -> Result<[u8; 64], CryptoError> {
         crate::bn254::g1_mul(point, scalar)
     }
+
+    fn bn254_pairing_check(&self, pairs: &[(&[u8], &[u8])]) -> Result<bool, CryptoError> {
+        crate::bn254::pairing_check(pairs)
+    }
 }

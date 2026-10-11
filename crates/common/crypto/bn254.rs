@@ -4,9 +4,11 @@
 //! that dominate a single precompile call: decoding the inputs, the field
 //! inversion needed to return an affine point, and the scalar multiplication.
 
-use ark_bn254::{Fq, Fr};
+use ark_bn254::{Bn254, Fq, Fq2, Fr, G1Affine, G2Affine, G2Projective};
+use ark_ec::pairing::Pairing;
 use ark_ec::scalar_mul::glv::GLVConfig;
-use ark_ff::{AdditiveGroup, BigInt, Field, PrimeField, Zero};
+use ark_ec::{AffineRepr, PrimeGroup};
+use ark_ff::{AdditiveGroup, BigInt, Field, One, PrimeField, Zero};
 
 use crate::CryptoError;
 
@@ -96,6 +98,102 @@ pub(crate) fn g1_mul(point: &[u8], scalar: &[u8]) -> Result<[u8; 64], CryptoErro
         return Ok([0u8; 64]);
     }
     Ok(encode_g1(&mul_glv(x, y, k)))
+}
+
+/// ECPAIRING: `true` when the product of the pairings of all pairs is one.
+/// Each pair is a 64-byte G1 point and a 128-byte G2 point (imaginary parts
+/// first, as the precompile encodes them).
+pub(crate) fn pairing_check(pairs: &[(&[u8], &[u8])]) -> Result<bool, CryptoError> {
+    let mut g1_points = Vec::with_capacity(pairs.len());
+    let mut g2_points = Vec::with_capacity(pairs.len());
+    for (g1_bytes, g2_bytes) in pairs {
+        let g1 = match decode_g1(g1_bytes)? {
+            Some((x, y)) => G1Affine::new_unchecked(x, y),
+            None => G1Affine::identity(),
+        };
+        let g2 = decode_g2(g2_bytes)?;
+        if g1.is_zero() || g2.is_zero() {
+            // A pair with the identity on either side contributes one.
+            continue;
+        }
+        g1_points.push(g1);
+        g2_points.push(g2);
+    }
+    if g1_points.is_empty() {
+        return Ok(true);
+    }
+    Ok(Bn254::multi_pairing(g1_points, g2_points).0.is_one())
+}
+
+/// Decodes a 128-byte G2 point and checks that it lies on the twist and in the
+/// prime-order subgroup.
+fn decode_g2(bytes: &[u8]) -> Result<G2Affine, CryptoError> {
+    let mut coordinates = [Fq::ZERO; 4];
+    for (i, coordinate) in coordinates.iter_mut().enumerate() {
+        let Some(chunk) = bytes.get(32 * i..32 * (i + 1)) else {
+            return Err(CryptoError::InvalidInput("G2 point must be 128 bytes"));
+        };
+        *coordinate = decode_fq(chunk).ok_or(CryptoError::InvalidPoint(
+            "G2 coordinate exceeds field modulus",
+        ))?;
+    }
+    let [x_im, x_re, y_im, y_re] = coordinates;
+    if x_im.is_zero() && x_re.is_zero() && y_im.is_zero() && y_re.is_zero() {
+        return Ok(G2Affine::identity());
+    }
+    let point = G2Affine::new_unchecked(Fq2::new(x_re, x_im), Fq2::new(y_re, y_im));
+    if !point.is_on_curve() {
+        return Err(CryptoError::InvalidPoint("G2 point not on curve"));
+    }
+    if !g2_in_subgroup(&point) {
+        return Err(CryptoError::InvalidPoint("G2 point not in subgroup"));
+    }
+    Ok(point)
+}
+
+/// BN254 seed `x0` (the curve parameter `u`).
+const SEED: u64 = 4_965_661_367_192_848_881;
+
+/// `(u + 9)^((p - 1) / 3)` and `(u + 9)^((p - 1) / 2)`, the coefficients of the
+/// untwist-Frobenius-twist endomorphism psi on E'(Fq2).
+const PSI_X: Fq2 = Fq2::new(
+    ark_ff::MontFp!(
+        "21575463638280843010398324269430826099269044274347216827212613867836435027261"
+    ),
+    ark_ff::MontFp!(
+        "10307601595873709700152284273816112264069230130616436755625194854815875713954"
+    ),
+);
+const PSI_Y: Fq2 = Fq2::new(
+    ark_ff::MontFp!("2821565182194536844548159561693502659359617185244120367078079554186484126554"),
+    ark_ff::MontFp!("3505843767911556378687030309984248845540243509899259641013678093033130930403"),
+);
+
+/// psi(x, y) = (conj(x) * PSI_X, conj(y) * PSI_Y), applied to Jacobian
+/// coordinates (conjugation is a field automorphism, so Z is conjugated too).
+fn psi(point: &G2Projective) -> G2Projective {
+    let mut result = *point;
+    result.x.conjugate_in_place();
+    result.x *= PSI_X;
+    result.y.conjugate_in_place();
+    result.y *= PSI_Y;
+    result.z.conjugate_in_place();
+    result
+}
+
+/// G2 membership for a point already on the twist, using
+/// `[x0 + 1]P + psi([x0]P) + psi^2([x0]P) == psi^3([2 x0]P)` ("Fast subgroup
+/// membership testing for G1, G2 and GT on pairing-friendly curves", Dai, Lin,
+/// Zhao and Zhou, 2022, section 5.1). It needs one 63-bit scalar
+/// multiplication instead of the 127-bit `[6 x0^2]P` of the generic check.
+fn g2_in_subgroup(point: &G2Affine) -> bool {
+    let p = point.into_group();
+    let x0_p = p.mul_bigint([SEED]);
+    let psi_x0_p = psi(&x0_p);
+    let psi2_x0_p = psi(&psi_x0_p);
+    let lhs = x0_p + p + psi_x0_p + psi2_x0_p;
+    let rhs = psi(&psi2_x0_p).double();
+    lhs == rhs
 }
 
 /// Affine addition with a single field inversion.
@@ -873,6 +971,77 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn g2_encode(p: &G2Affine) -> [u8; 128] {
+        let mut out = [0u8; 128];
+        if p.is_zero() {
+            return out;
+        }
+        encode_fq(&p.x.c1, &mut out[..32]);
+        encode_fq(&p.x.c0, &mut out[32..64]);
+        encode_fq(&p.y.c1, &mut out[64..96]);
+        encode_fq(&p.y.c0, &mut out[96..]);
+        out
+    }
+
+    #[test]
+    fn g2_subgroup_check_matches_reference() {
+        let h = G2Affine::generator();
+        for seed in 0..200u64 {
+            let k = Fr::from_be_bytes_mod_order(&random_bytes(seed + 7_000_000));
+            let in_group = (h * k).into_affine();
+            assert!(g2_in_subgroup(&in_group), "subgroup point {seed}");
+            // Points on the twist taken from random x are almost never in the
+            // subgroup (the cofactor is about 2^254).
+            let x = Fq2::new(random_fq(seed + 8_000_000), random_fq(seed + 9_000_000));
+            if let Some(off) = G2Affine::get_point_from_x_unchecked(x, seed % 2 == 0) {
+                assert_eq!(
+                    g2_in_subgroup(&off),
+                    off.is_in_correct_subgroup_assuming_on_curve(),
+                    "twist point {seed}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pairing_check_matches_reference() {
+        let g = ark_bn254::G1Affine::generator();
+        let h = G2Affine::generator();
+        for seed in 0..40u64 {
+            let a = Fr::from_be_bytes_mod_order(&random_bytes(seed + 1));
+            let b = Fr::from_be_bytes_mod_order(&random_bytes(seed + 2));
+            // e(aG, bH) * e(-abG, H) == 1
+            let p1 = (g * a).into_affine();
+            let q1 = (h * b).into_affine();
+            let p2 = (-(g * (a * b))).into_affine();
+            let (e1, f1, e2, f2) = (
+                ark_encode(&p1),
+                g2_encode(&q1),
+                ark_encode(&p2),
+                g2_encode(&h),
+            );
+            assert!(pairing_check(&[(&e1, &f1), (&e2, &f2)]).unwrap());
+            // Break it: e(aG, bH) alone is not one.
+            assert!(!pairing_check(&[(&e1, &f1)]).unwrap());
+            // Identity pairs are skipped.
+            assert!(pairing_check(&[(&[0u8; 64], &f1), (&e1, &[0u8; 128])]).unwrap());
+        }
+        assert!(pairing_check(&[]).unwrap());
+        // An on-curve G2 point outside the subgroup is rejected.
+        let mut seed = 0u64;
+        let off = loop {
+            let x = Fq2::new(random_fq(seed + 11_000_000), random_fq(seed));
+            if let Some(p) = G2Affine::get_point_from_x_unchecked(x, true)
+                && !p.is_in_correct_subgroup_assuming_on_curve()
+            {
+                break p;
+            }
+            seed += 1;
+        };
+        let e1 = ark_encode(&g);
+        assert!(pairing_check(&[(&e1, &g2_encode(&off))]).is_err());
     }
 
     #[test]
