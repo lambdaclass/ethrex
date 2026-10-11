@@ -1,5 +1,5 @@
 //! Keccak-256 over the message sizes the EVM hashes most (one word, one rate block and its
-//! edges) and a few multi-block sizes.
+//! edges) and a few multi-block sizes, through the backend the running CPU selects.
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use ethrex_crypto::keccak::keccak_hash;
