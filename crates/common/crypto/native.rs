@@ -36,7 +36,7 @@ impl Crypto for NativeCrypto {
         crate::bn254::pairing_check(pairs)
     }
 
-    /// Odd moduli of up to 32 bytes take the fixed-width Montgomery path;
+    /// Odd moduli of up to 128 bytes take the fixed-width Montgomery path;
     /// everything else uses the arbitrary-precision default.
     #[cfg(feature = "std")]
     fn modexp(
@@ -45,7 +45,7 @@ impl Crypto for NativeCrypto {
         exp: &[u8],
         modulus: &[u8],
     ) -> Result<Vec<u8>, crate::provider::CryptoError> {
-        match crate::modexp256::modexp(base, exp, modulus) {
+        match crate::modexp_montgomery::modexp(base, exp, modulus) {
             Some(result) => Ok(result),
             None => crate::provider::modexp_arbitrary_precision(base, exp, modulus),
         }
