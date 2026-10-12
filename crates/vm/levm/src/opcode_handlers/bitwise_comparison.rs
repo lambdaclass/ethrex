@@ -202,13 +202,12 @@ impl OpcodeHandler for OpByteHandler {
             .increase_consumed_gas(gas_cost::BYTE)?;
 
         let (&index, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
-        let value = *slot;
-        *slot = match usize::try_from(index) {
+        *slot = match u8::try_from(index) {
             #[expect(
                 clippy::arithmetic_side_effects,
                 reason = "x < 32 guard prevents overflow"
             )]
-            Ok(x) if x < 32 => value.byte(31 - x).into(),
+            Ok(x) if x < 32 => U256::from(shift_right(slot, 8 * (31 - x), 0).0[0] & 0xff),
             _ => U256::zero(),
         };
 
@@ -224,10 +223,8 @@ impl OpcodeHandler for OpShlHandler {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SHL)?;
 
         let (&shift_amount, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
-        let value = *slot;
         *slot = match u8::try_from(shift_amount) {
-            #[expect(clippy::arithmetic_side_effects, reason = "U256 shift by u8 is safe")]
-            Ok(shift_amount) => value << shift_amount,
+            Ok(shift_amount) => shift_left(slot, shift_amount),
             Err(_) => U256::zero(),
         };
 
@@ -243,10 +240,8 @@ impl OpcodeHandler for OpShrHandler {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SHR)?;
 
         let (&shift_amount, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
-        let value = *slot;
         *slot = match u8::try_from(shift_amount) {
-            #[expect(clippy::arithmetic_side_effects, reason = "U256 shift by u8 is safe")]
-            Ok(shift_amount) => value >> shift_amount,
+            Ok(shift_amount) => shift_right(slot, shift_amount, 0),
             Err(_) => U256::zero(),
         };
 
@@ -262,17 +257,145 @@ impl OpcodeHandler for OpSarHandler {
         vm.current_call_frame.increase_consumed_gas(gas_cost::SAR)?;
 
         let (&shift_amount, slot) = vm.current_call_frame.stack.pop1_and_top_mut()?;
-        let value = *slot;
-        #[expect(clippy::arithmetic_side_effects, reason = "U256 shift by u8 is safe")]
-        {
-            *slot = match (u8::try_from(shift_amount), value.bit(255)) {
-                (Ok(shift_amount), false) => value >> shift_amount,
-                (Ok(shift_amount), true) => !(!value >> shift_amount),
-                (Err(_), false) => U256::zero(),
-                (Err(_), true) => U256::MAX,
-            };
-        }
+        // All ones when negative: the bits shifted in from above.
+        let fill = 0u64.wrapping_sub(slot.0[3] >> 63);
+        *slot = match u8::try_from(shift_amount) {
+            Ok(shift_amount) => shift_right(slot, shift_amount, fill),
+            Err(_) => U256([fill; 4]),
+        };
 
         Ok(OpcodeResult::Continue)
+    }
+}
+
+/// `value >> shift`, filling the vacated high bits with `fill` (zero for SHR and BYTE,
+/// the sign for SAR).
+///
+/// Each word offset gets its own branch, so every limb index is a constant and the value
+/// stays in registers: a limb index computed at run time sends it through a stack
+/// temporary, which the next load has to wait on.
+#[inline(always)]
+fn shift_right(value: &U256, shift: u8, fill: u64) -> U256 {
+    let bits = u32::from(shift % 64);
+    match shift / 64 {
+        0 => shift_right_words::<0>(&value.0, bits, fill),
+        1 => shift_right_words::<1>(&value.0, bits, fill),
+        2 => shift_right_words::<2>(&value.0, bits, fill),
+        _ => shift_right_words::<3>(&value.0, bits, fill),
+    }
+}
+
+/// `value << shift`, see [`shift_right`].
+#[inline(always)]
+fn shift_left(value: &U256, shift: u8) -> U256 {
+    let bits = u32::from(shift % 64);
+    match shift / 64 {
+        0 => shift_left_words::<0>(&value.0, bits),
+        1 => shift_left_words::<1>(&value.0, bits),
+        2 => shift_left_words::<2>(&value.0, bits),
+        _ => shift_left_words::<3>(&value.0, bits),
+    }
+}
+
+/// Shifts right by `WORDS` limbs plus `bits < 64` bits.
+#[inline(always)]
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "limb indexes and bits < 64 are bounded"
+)]
+fn shift_right_words<const WORDS: usize>(limbs: &[u64; 4], bits: u32, fill: u64) -> U256 {
+    let word = |i: usize| limbs.get(i).copied().unwrap_or(fill);
+    let mut out = [fill; 4];
+    for (i, limb) in out.iter_mut().enumerate().take(4 - WORDS) {
+        *limb = funnel_right(word(i + WORDS + 1), word(i + WORDS), bits);
+    }
+    U256(out)
+}
+
+/// Shifts left by `WORDS` limbs plus `bits < 64` bits.
+#[inline(always)]
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "limb indexes and bits < 64 are bounded"
+)]
+fn shift_left_words<const WORDS: usize>(limbs: &[u64; 4], bits: u32) -> U256 {
+    let word = |i: usize| limbs.get(i).copied().unwrap_or(0);
+    let mut out = [0u64; 4];
+    for (i, limb) in out.iter_mut().enumerate().skip(WORDS) {
+        let low = if i > WORDS { word(i - WORDS - 1) } else { 0 };
+        *limb = (word(i - WORDS) << bits) | ((low >> 1) >> (63 - bits));
+    }
+    U256(out)
+}
+
+/// The low word of `(high:low) >> bits` for `bits < 64`, without branching on `bits == 0`.
+#[inline(always)]
+#[expect(clippy::arithmetic_side_effects, reason = "bits < 64")]
+fn funnel_right(high: u64, low: u64, bits: u32) -> u64 {
+    (low >> bits) | ((high << 1) << (63 - bits))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn values() -> Vec<U256> {
+        let mut values = vec![
+            U256::zero(),
+            U256::one(),
+            U256::MAX,
+            U256::one() << 255,
+            U256::from_big_endian(&[0x80; 32]),
+            U256::from_big_endian(&[0x7f; 32]),
+        ];
+        let mut x = U256::from(0x9e37_79b9_7f4a_7c15u64);
+        for _ in 0..16 {
+            x = x.overflowing_mul(U256::from(0x5851_f42d_4c95_7f2du64)).0
+                ^ (x >> 7)
+                ^ U256::from(0x1405_7b7e_f767_814fu64);
+            values.push(x);
+        }
+        values
+    }
+
+    #[test]
+    fn shifts_match_u256() {
+        for value in values() {
+            let negative = value.bit(255);
+            for shift in 0u8..=255 {
+                assert_eq!(
+                    shift_left(&value, shift),
+                    value << shift,
+                    "{value:x} << {shift}"
+                );
+                assert_eq!(
+                    shift_right(&value, shift, 0),
+                    value >> shift,
+                    "{value:x} >> {shift}"
+                );
+                let sar = if negative {
+                    !(!value >> shift)
+                } else {
+                    value >> shift
+                };
+                let fill = if negative { u64::MAX } else { 0 };
+                assert_eq!(
+                    shift_right(&value, shift, fill),
+                    sar,
+                    "{value:x} sar {shift}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn byte_extraction_matches_u256() {
+        for value in values() {
+            for x in 0u8..32 {
+                let expected = U256::from(value.byte(usize::from(31 - x)));
+                let got = U256::from(shift_right(&value, 8 * (31 - x), 0).0[0] & 0xff);
+                assert_eq!(got, expected, "{value:x} byte {x}");
+            }
+        }
     }
 }
