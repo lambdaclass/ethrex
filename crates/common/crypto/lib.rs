@@ -10,7 +10,7 @@ mod bn254;
 pub mod keccak;
 pub mod kzg;
 #[cfg(feature = "std")]
-mod modexp256;
+mod modexp_montgomery;
 pub mod native;
 #[cfg(feature = "aws-lc-rs")]
 mod p256_awslc;
