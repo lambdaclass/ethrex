@@ -328,7 +328,7 @@ pub struct NodeRecordPairs {
     pub secp256k1: Option<H264>,
     // https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
     pub eth: Option<ForkId>,
-    // Snap entry is being used by some tests such as `test_encode_enr_response`.
+    // Served snap versions; an empty list means snap/1 only (ethereum/devp2p#286).
     pub snap: Option<Vec<u32>>,
     /// Entries outside the predefined dictionary, kept verbatim.
     ///
