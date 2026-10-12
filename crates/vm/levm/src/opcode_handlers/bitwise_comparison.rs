@@ -34,7 +34,7 @@ impl OpcodeHandler for OpLtHandler {
         let (&lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         #[expect(clippy::as_conversions, reason = "safe")]
         let res = (lhs < *rhs) as u64;
-        *rhs = res.into();
+        store_u64(rhs, res);
 
         Ok(OpcodeResult::Continue)
     }
@@ -50,7 +50,7 @@ impl OpcodeHandler for OpGtHandler {
         let (&lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         #[expect(clippy::as_conversions, reason = "safe")]
         let res = (lhs > *rhs) as u64;
-        *rhs = res.into();
+        store_u64(rhs, res);
 
         Ok(OpcodeResult::Continue)
     }
@@ -68,12 +68,13 @@ impl OpcodeHandler for OpSLtHandler {
         let lhs_sign = lhs.bit(255);
         let rhs_sign = rhs.bit(255);
 
-        *slot = match (lhs_sign, rhs_sign) {
-            (false, true) => U256::zero(),
-            (true, false) => U256::one(),
+        let res: u64 = match (lhs_sign, rhs_sign) {
+            (false, true) => 0,
+            (true, false) => 1,
             #[expect(clippy::as_conversions, reason = "safe")]
-            _ => ((lhs < rhs) as u64).into(),
+            _ => (lhs < rhs) as u64,
         };
+        store_u64(slot, res);
 
         Ok(OpcodeResult::Continue)
     }
@@ -91,12 +92,13 @@ impl OpcodeHandler for OpSGtHandler {
         let lhs_sign = lhs.bit(255);
         let rhs_sign = rhs.bit(255);
 
-        *slot = match (lhs_sign, rhs_sign) {
-            (false, true) => U256::one(),
-            (true, false) => U256::zero(),
+        let res: u64 = match (lhs_sign, rhs_sign) {
+            (false, true) => 1,
+            (true, false) => 0,
             #[expect(clippy::as_conversions, reason = "safe")]
-            _ => ((lhs > rhs) as u64).into(),
+            _ => (lhs > rhs) as u64,
         };
+        store_u64(slot, res);
 
         Ok(OpcodeResult::Continue)
     }
@@ -112,7 +114,7 @@ impl OpcodeHandler for OpEqHandler {
         let (&lhs, rhs) = vm.current_call_frame.stack.pop1_and_top_mut()?;
         #[expect(clippy::as_conversions, reason = "safe")]
         let res = (lhs == *rhs) as u64;
-        *rhs = res.into();
+        store_u64(rhs, res);
 
         Ok(OpcodeResult::Continue)
     }
@@ -265,6 +267,32 @@ impl OpcodeHandler for OpSarHandler {
         };
 
         Ok(OpcodeResult::Continue)
+    }
+}
+
+/// Writes a comparison result (0 or 1) to a stack slot with a single 32-byte store.
+///
+/// `U256::from(u64)` stores the low limb and the zeroed upper limbs separately. The next
+/// opcode reads the slot with one 32-byte load, which cannot be forwarded from several
+/// narrower stores and waits for them to commit.
+#[inline(always)]
+fn store_u64(slot: &mut U256, value: u64) {
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx"))]
+    #[expect(
+        unsafe_code,
+        reason = "a U256 is 32 bytes, so one unaligned 32-byte store covers exactly the slot"
+    )]
+    unsafe {
+        use std::arch::x86_64::{_mm256_set_epi64x, _mm256_storeu_si256};
+        let value = i64::from_ne_bytes(value.to_ne_bytes());
+        _mm256_storeu_si256(
+            std::ptr::from_mut(slot).cast(),
+            _mm256_set_epi64x(0, 0, 0, value),
+        );
+    }
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx")))]
+    {
+        *slot = U256::from(value);
     }
 }
 
