@@ -339,6 +339,10 @@ fn funnel_right(high: u64, low: u64, bits: u32) -> u64 {
 mod tests {
     use super::*;
 
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "test values: shifts and a wrapping LCG on U256"
+    )]
     fn values() -> Vec<U256> {
         let mut values = vec![
             U256::zero(),
