@@ -262,7 +262,7 @@ pub fn eip7702_get_code(
 ) -> Result<(bool, u64, Address, Code), VMError> {
     let (bytecode, delegation) = eip7702_peek_delegation(db, accrued_substate, address, fork)?;
     let Some((auth_address, access_cost)) = delegation else {
-        return Ok((false, 0, address, bytecode));
+        return Ok((false, 0, address, bytecode.unwrap_or_default()));
     };
 
     accrued_substate.add_accessed_address(auth_address);
@@ -284,18 +284,20 @@ pub fn eip7702_peek_delegation(
     substate: &Substate,
     address: Address,
     fork: Fork,
-) -> Result<(Code, Option<(Address, u64)>), VMError> {
+) -> Result<(Option<Code>, Option<(Address, u64)>), VMError> {
     let account = db.get_account(address)?;
     // An account without code (an EOA or a precompile) cannot carry a delegation
     // designation. Calls to precompiles take this path every time, so skip the
-    // code-cache lookup and the clone of its entry.
+    // code-cache lookup and return no code at all: even an empty `Code` clones a
+    // process-wide `Arc`, whose reference count every thread executing
+    // transactions in parallel would then contend on.
     if !account.has_code() {
-        return Ok((Code::default(), None));
+        return Ok((None, None));
     }
     let code_hash = account.info.code_hash;
     let bytecode = db.get_code(code_hash)?.clone();
     if !code_has_delegation(bytecode.code())? {
-        return Ok((bytecode, None));
+        return Ok((Some(bytecode), None));
     }
     let auth_address = get_authorized_address_from_code(bytecode.code())?;
     let access_cost = if substate.is_address_accessed(&auth_address) {
@@ -306,7 +308,7 @@ pub fn eip7702_peek_delegation(
         // fork-dependent rather than the flat COLD_ADDRESS_ACCESS_COST.
         cold_account_access_cost(fork)
     };
-    Ok((bytecode, Some((auth_address, access_cost))))
+    Ok((Some(bytecode), Some((auth_address, access_cost))))
 }
 
 /// Precomputed intrinsic-gas components for a transaction.
