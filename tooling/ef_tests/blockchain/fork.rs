@@ -108,6 +108,17 @@ lazy_static! {
         ..*BPO2_TO_AMSTERDAM_AT_15K_CONFIG
     };
 
+    // EEST's "Bogota" is Hegotá in ethrex.
+    pub static ref AMSTERDAM_TO_BOGOTA_AT_15K_CONFIG: ChainConfig = ChainConfig {
+        hegota_time: Some(0x3a98),
+        ..*AMSTERDAM_CONFIG
+    };
+
+    pub static ref BOGOTA_CONFIG: ChainConfig = ChainConfig {
+        hegota_time: Some(0),
+        ..*AMSTERDAM_TO_BOGOTA_AT_15K_CONFIG
+    };
+
 }
 
 /// Most of the fork variants are just for parsing the tests
@@ -151,6 +162,8 @@ pub enum Fork {
     BPO4ToBPO5AtTime15k,
     BPO2ToAmsterdamAtTime15k,
     Amsterdam,
+    AmsterdamToBogotaAtTime15k,
+    Bogota,
 }
 
 impl Fork {
@@ -172,6 +185,8 @@ impl Fork {
             Fork::BPO4ToBPO5AtTime15k => &BPO4_TO_BPO5_AT_15K_CONFIG,
             Fork::BPO2ToAmsterdamAtTime15k => &BPO2_TO_AMSTERDAM_AT_15K_CONFIG,
             Fork::Amsterdam => &AMSTERDAM_CONFIG,
+            Fork::AmsterdamToBogotaAtTime15k => &AMSTERDAM_TO_BOGOTA_AT_15K_CONFIG,
+            Fork::Bogota => &BOGOTA_CONFIG,
             _ => {
                 panic!("Ethrex doesn't support pre-Merge forks: {self:?}")
             }
