@@ -271,6 +271,10 @@ pub fn eip7702_get_code(
     Ok((true, access_cost, auth_address, authorized_bytecode))
 }
 
+/// A call target's code (`None` when it has none) and, when it is an EIP-7702
+/// delegation, the delegate address with its access cost.
+pub type PeekedCode = (Option<Code>, Option<(Address, u64)>);
+
 /// First half of [`eip7702_get_code`]: read `address`'s code and detect a
 /// delegation designation WITHOUT touching the delegate account.
 ///
@@ -284,7 +288,7 @@ pub fn eip7702_peek_delegation(
     substate: &Substate,
     address: Address,
     fork: Fork,
-) -> Result<(Option<Code>, Option<(Address, u64)>), VMError> {
+) -> Result<PeekedCode, VMError> {
     let account = db.get_account(address)?;
     // An account without code (an EOA or a precompile) cannot carry a delegation
     // designation. Calls to precompiles take this path every time, so skip the
