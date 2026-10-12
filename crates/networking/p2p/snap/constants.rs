@@ -4,6 +4,7 @@
 //! Constants are organized by their functional area.
 
 use ethrex_common::H256;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 // =============================================================================
@@ -246,15 +247,18 @@ fn override_from_env<T: std::str::FromStr>(name: &str, default: T) -> T {
 }
 
 #[cfg(feature = "sync-test")]
-lazy_static::lazy_static! {
-    pub static ref SNAP_LIMIT: usize = override_from_env("SNAP_LIMIT", SNAP_LIMIT_DEFAULT);
-    pub static ref MIN_FULL_BLOCKS: u64 = override_from_env("MIN_FULL_BLOCKS", MIN_FULL_BLOCKS_DEFAULT);
-    pub static ref SECONDS_PER_BLOCK: u64 = override_from_env("SECONDS_PER_BLOCK", SECONDS_PER_BLOCK_DEFAULT);
-}
+pub static SNAP_LIMIT: LazyLock<usize> =
+    LazyLock::new(|| override_from_env("SNAP_LIMIT", SNAP_LIMIT_DEFAULT));
+#[cfg(feature = "sync-test")]
+pub static MIN_FULL_BLOCKS: LazyLock<u64> =
+    LazyLock::new(|| override_from_env("MIN_FULL_BLOCKS", MIN_FULL_BLOCKS_DEFAULT));
+#[cfg(feature = "sync-test")]
+pub static SECONDS_PER_BLOCK: LazyLock<u64> =
+    LazyLock::new(|| override_from_env("SECONDS_PER_BLOCK", SECONDS_PER_BLOCK_DEFAULT));
 
 #[cfg(not(feature = "sync-test"))]
-lazy_static::lazy_static! {
-    pub static ref SNAP_LIMIT: usize = SNAP_LIMIT_DEFAULT;
-    pub static ref MIN_FULL_BLOCKS: u64 = MIN_FULL_BLOCKS_DEFAULT;
-    pub static ref SECONDS_PER_BLOCK: u64 = SECONDS_PER_BLOCK_DEFAULT;
-}
+pub static SNAP_LIMIT: LazyLock<usize> = LazyLock::new(|| SNAP_LIMIT_DEFAULT);
+#[cfg(not(feature = "sync-test"))]
+pub static MIN_FULL_BLOCKS: LazyLock<u64> = LazyLock::new(|| MIN_FULL_BLOCKS_DEFAULT);
+#[cfg(not(feature = "sync-test"))]
+pub static SECONDS_PER_BLOCK: LazyLock<u64> = LazyLock::new(|| SECONDS_PER_BLOCK_DEFAULT);
