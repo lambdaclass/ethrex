@@ -120,7 +120,7 @@ impl OpcodeHandler for OpCallHandler {
                     .ok_or(ExceptionalHalt::OutOfGas)?,
             )?;
             vm.substate.add_accessed_address(auth_address);
-            vm.db.get_account_code(auth_address)?.clone()
+            Some(vm.db.get_account_code(auth_address)?.clone())
         } else {
             callee_code
         };
@@ -293,7 +293,7 @@ impl OpcodeHandler for OpCallCodeHandler {
                     .ok_or(ExceptionalHalt::OutOfGas)?,
             )?;
             vm.substate.add_accessed_address(auth_address);
-            vm.db.get_account_code(auth_address)?.clone()
+            Some(vm.db.get_account_code(auth_address)?.clone())
         } else {
             target_code
         };
@@ -416,7 +416,7 @@ impl OpcodeHandler for OpDelegateCallHandler {
                     .ok_or(ExceptionalHalt::OutOfGas)?,
             )?;
             vm.substate.add_accessed_address(auth_address);
-            vm.db.get_account_code(auth_address)?.clone()
+            Some(vm.db.get_account_code(auth_address)?.clone())
         } else {
             target_code
         };
@@ -540,7 +540,7 @@ impl OpcodeHandler for OpStaticCallHandler {
                     .ok_or(ExceptionalHalt::OutOfGas)?,
             )?;
             vm.substate.add_accessed_address(auth_address);
-            vm.db.get_account_code(auth_address)?.clone()
+            Some(vm.db.get_account_code(auth_address)?.clone())
         } else {
             target_code
         };
@@ -1211,7 +1211,7 @@ impl<'a> VM<'a> {
         calldata: CallData,
         ret_offset: usize,
         ret_size: usize,
-        bytecode: Code,
+        bytecode: Option<Code>,
         is_delegation_7702: bool,
         new_account_charged: bool,
     ) -> Result<OpcodeResult, VMError> {
@@ -1318,7 +1318,7 @@ impl<'a> VM<'a> {
                 msg_sender,
                 to,
                 code_address,
-                bytecode,
+                bytecode.unwrap_or_default(),
                 value,
                 calldata,
                 is_static,
