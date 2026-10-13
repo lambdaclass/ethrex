@@ -65,7 +65,8 @@ use crate::utils::{
 };
 use crate::{admin, net};
 use crate::{eth, mempool};
-use axum::body::HttpBody;
+use axum::BoxError;
+use axum::body::{Body, HttpBody};
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{DefaultBodyLimit, FromRequest, Request, State, WebSocketUpgrade};
 use axum::middleware::{self, Next};
@@ -82,6 +83,7 @@ use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_p2p::types::SharedLocalNode;
 use ethrex_storage::Store;
+use futures::StreamExt;
 use serde::{
     Deserialize, Deserializer,
     de::{IgnoredAny, MapAccess, SeqAccess, Visitor, value::MapAccessDeserializer},
@@ -94,12 +96,12 @@ use std::{
     future::IntoFuture,
     marker::PhantomData,
     net::SocketAddr,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
     time::Duration,
 };
 use tokio::net::TcpListener;
 use tokio::sync::{
-    Mutex as TokioMutex, Semaphore,
+    Mutex as TokioMutex, OwnedSemaphorePermit, Semaphore,
     mpsc::{UnboundedSender, error::SendError, unbounded_channel},
     oneshot,
 };
@@ -789,9 +791,10 @@ pub(crate) const AUTHRPC_BODY_READ_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) const AUTHRPC_BUDGET_WAIT_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Builds the Auth-RPC router. Its layers run outermost first: the JWT check, then the
-/// in-flight body budget, then the handler. A request without a valid token, or one the
-/// budget cannot fit within `budget_wait_timeout`, is answered from its headers alone,
-/// before its body is read. The handler then gives the body `body_read_timeout` to arrive.
+/// in-flight body budget, then the handler. A request without a valid token, or one whose
+/// declared body size the budget cannot fit within `budget_wait_timeout`, is answered from
+/// its headers alone, before its body is read; a chunked body is charged as it arrives.
+/// The handler then gives the body `body_read_timeout` to arrive.
 ///
 /// Every authenticated request pings `consensus_liveness`, which feeds the
 /// "consensus client offline" warning.
@@ -855,13 +858,69 @@ impl BodyBudget {
             wait_timeout,
         }
     }
+
+    /// Charges `len` more bytes of a chunked body to `charge`, waiting up to the wait
+    /// timeout for room. A body is charged at most the per-request cap: the body limit
+    /// rejects it as soon as it grows past that.
+    async fn charge_chunk(
+        &self,
+        charge: &Mutex<ChunkedCharge>,
+        len: usize,
+    ) -> Result<(), BoxError> {
+        let charged = lock_charge(charge)
+            .held
+            .as_ref()
+            .map_or(0, OwnedSemaphorePermit::num_permits);
+        let bytes = len.min(self.max_body_size.saturating_sub(charged));
+        // At most the per-request cap, which is far below `u32::MAX`.
+        let permits = u32::try_from(bytes).unwrap_or(u32::MAX);
+        let acquired = timeout(
+            self.wait_timeout,
+            self.available.clone().acquire_many_owned(permits),
+        )
+        .await;
+        let mut charge = lock_charge(charge);
+        let Ok(Ok(permit)) = acquired else {
+            charge.ran_out = true;
+            return Err(format!(
+                "no room for {permits} more body bytes in the in-flight budget after waiting {} seconds. Raise --authrpc.max-inflight-body-size if this repeats",
+                self.wait_timeout.as_secs_f64()
+            )
+            .into());
+        };
+        match &mut charge.held {
+            Some(held) => held.merge(permit),
+            None => charge.held = Some(permit),
+        }
+        Ok(())
+    }
+}
+
+/// The part of the budget a chunked body has been charged so far. The body adds to it as
+/// its chunks arrive, and [`charge_as_read`] holds it until the response is ready.
+#[derive(Default)]
+struct ChunkedCharge {
+    held: Option<OwnedSemaphorePermit>,
+    /// Set when a chunk found no room in the budget in time, which fails the body.
+    ran_out: bool,
+}
+
+fn lock_charge(charge: &Mutex<ChunkedCharge>) -> MutexGuard<'_, ChunkedCharge> {
+    charge.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The 503 for a request the budget had no room for within the wait timeout.
+fn no_room_in_budget() -> Response {
+    let error = RpcErr::Internal("too many request body bytes in flight, retry later".to_string());
+    (StatusCode::SERVICE_UNAVAILABLE, Json(null_id_error(error))).into_response()
 }
 
 /// Reserves the request's body size from the budget before the body is read, and holds
-/// the reservation until the response is ready: the buffered body and the request parsed
-/// from it live that long. A body of unknown length (chunked) reserves the per-request
-/// cap. Rejects with 413 when the size exceeds the cap, and with 503 when the budget has
-/// no room for it within the wait timeout, both carrying a JSON-RPC error.
+/// the reservation until the response is ready, since the buffered body or the request
+/// parsed from it is in memory until then. A body of unknown length (chunked) is charged
+/// as it is read instead, see [`charge_as_read`]. Rejects with 413 when the size exceeds
+/// the cap, and with 503 when the budget has no room for it within the wait timeout, both
+/// carrying a JSON-RPC error.
 async fn reserve_body_budget(
     State(budget): State<BodyBudget>,
     request: Request,
@@ -869,10 +928,10 @@ async fn reserve_body_budget(
 ) -> Response {
     // The size hint follows hyper's framing rather than the raw header: exact for a body
     // delimited by `Content-Length`, absent for a chunked one.
-    let reserved = match request.body().size_hint().exact() {
-        Some(size) => usize::try_from(size).unwrap_or(usize::MAX),
-        None => budget.max_body_size,
+    let Some(size) = request.body().size_hint().exact() else {
+        return charge_as_read(budget, request, next).await;
     };
+    let reserved = usize::try_from(size).unwrap_or(usize::MAX);
     // Permits are counted in `u32`; the per-request cap is far below `u32::MAX`, so a size
     // that does not convert is over the cap anyway.
     let permits = match u32::try_from(reserved) {
@@ -899,11 +958,35 @@ async fn reserve_body_budget(
             "Rejected Auth-RPC request: no room for {permits} body bytes in the in-flight budget after waiting {} seconds. Raise --authrpc.max-inflight-body-size if this repeats",
             budget.wait_timeout.as_secs_f64()
         );
-        let error =
-            RpcErr::Internal("too many request body bytes in flight, retry later".to_string());
-        return (StatusCode::SERVICE_UNAVAILABLE, Json(null_id_error(error))).into_response();
+        return no_room_in_budget();
     };
     next.run(request).await
+}
+
+/// Runs a request whose body has no declared length (chunked). Reserving the per-request
+/// cap for it up front would let a few such requests hold the whole budget with only a
+/// few bytes each, and keep every request queued behind them waiting, so each chunk is
+/// charged as it arrives instead. A chunk that finds no room within the wait timeout
+/// fails the body, and the request gets the same 503 as one refused up front.
+async fn charge_as_read(budget: BodyBudget, request: Request, next: Next) -> Response {
+    let charge = Arc::new(Mutex::new(ChunkedCharge::default()));
+    let body_charge = charge.clone();
+    let request = request.map(|body| {
+        Body::from_stream(body.into_data_stream().then(move |chunk| {
+            let (budget, charge) = (budget.clone(), body_charge.clone());
+            async move {
+                let chunk = chunk?;
+                budget.charge_chunk(&charge, chunk.len()).await?;
+                Ok::<_, BoxError>(chunk)
+            }
+        }))
+    });
+    let response = next.run(request).await;
+    // The handler already logged the failed body read, with the reason.
+    if lock_charge(&charge).ran_out {
+        return no_room_in_budget();
+    }
+    response
 }
 
 /// RPC listeners bound and ready to serve. Produced by [`bind_api`] and consumed by

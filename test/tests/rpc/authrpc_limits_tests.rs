@@ -1,6 +1,7 @@
-//! The Auth-RPC listener's guards run in front of the JSON-RPC handler: the JWT check
-//! and the in-flight body budget both answer from the request headers alone, so these
-//! tests drive a real server and often send a request head without its body.
+//! The Auth-RPC listener's guards run in front of the JSON-RPC handler: the JWT check,
+//! and the in-flight body budget for a body of declared size, answer from the request
+//! headers alone, so these tests drive a real server and often send a request head
+//! without its body.
 
 use bytes::Bytes;
 use ethrex_rpc::clients::{EngineClient, EngineClientError};
@@ -284,48 +285,84 @@ async fn authrpc_body_not_received_in_time_is_refused() {
     server.shutdown().await;
 }
 
-/// A chunked body has no length to reserve up front, so it reserves the whole
-/// per-request cap, which here is the whole budget: it cannot be in flight alongside even
-/// a one-byte request.
+/// A chunked body has no length to reserve up front, so it is charged its bytes as they
+/// arrive rather than the whole per-request cap: chunked requests that are open but have
+/// sent nothing hold none of the budget, and a request behind them is served at once.
 #[tokio::test]
-async fn authrpc_chunked_body_reserves_the_per_request_cap() {
+async fn authrpc_chunked_bodies_are_charged_as_they_arrive() {
     let context = default_context_with_storage(setup_store().await).await;
     let server = spawn_authrpc_server_with_timeouts(&context, 4096, SHORT_WAIT, NO_TIMEOUT).await;
     let addr = server.addr;
     let auth = jwt_auth_header_for(&context);
 
-    // Whichever of the two reserves first is held in flight waiting for its body; the
-    // other can only be refused if the chunked one claims the whole budget.
-    let mut chunked = send_request_head(addr, auth.as_ref(), None).await;
-    let mut one_byte = send_request_head(addr, auth.as_ref(), Some(1)).await;
-    let chunked_was_rejected = tokio::select! {
-        (status, response) = read_response(&mut chunked) => {
-            assert_eq!(status, 503);
-            assert_null_id_error(&response, -32603);
-            true
-        }
-        (status, response) = read_response(&mut one_byte) => {
-            assert_eq!(status, 503);
-            assert_null_id_error(&response, -32603);
-            false
-        }
-    };
-
-    if chunked_was_rejected {
-        one_byte.write_all(b"1").await.unwrap();
-        let (status, _) = read_response(&mut one_byte).await;
-        assert_eq!(status, 200);
-    } else {
-        let chunk = format!(
-            "{:x}\r\n{CHAIN_ID_REQUEST}\r\n0\r\n\r\n",
-            CHAIN_ID_REQUEST.len()
-        );
-        chunked.write_all(chunk.as_bytes()).await.unwrap();
-        let (status, response) = read_response(&mut chunked).await;
-        assert_eq!(status, 200, "chunked request must complete: {response}");
+    // Charged the per-request cap, any one of these would hold the whole budget.
+    let mut chunked = Vec::new();
+    for _ in 0..4 {
+        chunked.push(send_request_head(addr, auth.as_ref(), None).await);
     }
+    // Give the heads time to reach the budget before the next request does.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let (status, response) = post_authrpc(addr, auth.clone(), padded_chain_id_request(3000)).await;
+    assert_eq!(
+        status, 200,
+        "open chunked requests must not hold the budget: {response}"
+    );
 
-    drop((chunked, one_byte));
+    let chunk = format!(
+        "{:x}\r\n{CHAIN_ID_REQUEST}\r\n0\r\n\r\n",
+        CHAIN_ID_REQUEST.len()
+    );
+    chunked[0].write_all(chunk.as_bytes()).await.unwrap();
+    let (status, response) = read_response(&mut chunked[0]).await;
+    assert_eq!(status, 200, "chunked request must complete: {response}");
+
+    // What it was charged is released: a body the size of the whole budget fits again.
+    let (status, response) = post_authrpc(addr, auth, padded_chain_id_request(4096)).await;
+    assert_eq!(status, 200, "budget must be released: {response}");
+
+    drop(chunked);
+    server.shutdown().await;
+}
+
+/// A chunked body still counts against the budget: a chunk that finds no room in time
+/// fails the request with the same 503 as a request refused up front, and what the body
+/// was charged before that is released.
+#[tokio::test]
+async fn authrpc_chunked_body_over_the_budget_is_refused() {
+    let context = default_context_with_storage(setup_store().await).await;
+    let server = spawn_authrpc_server_with_timeouts(&context, 4096, SHORT_WAIT, NO_TIMEOUT).await;
+    let addr = server.addr;
+    let auth = jwt_auth_header_for(&context);
+
+    // Hold 3000 bytes of the budget with a request waiting for its body. A 2000-byte
+    // request is refused only once that reservation is in place.
+    let mut holder = send_request_head(addr, auth.as_ref(), Some(3000)).await;
+    let (status, response) = post_authrpc(addr, auth.clone(), padded_chain_id_request(2000)).await;
+    assert_eq!(
+        status, 503,
+        "the first request must hold its reservation: {response}"
+    );
+
+    // The first 500 bytes fit in the 1096 left, the next 1000 do not.
+    let mut chunked = send_request_head(addr, auth.as_ref(), None).await;
+    let chunks = format!("{:x}\r\n{:500}\r\n{:x}\r\n{:1000}\r\n", 500, "", 1000, "");
+    chunked.write_all(chunks.as_bytes()).await.unwrap();
+    let (status, response) = read_response(&mut chunked).await;
+    assert_eq!(status, 503);
+    assert_null_id_error(&response, -32603);
+
+    holder
+        .write_all(padded_chain_id_request(3000).as_bytes())
+        .await
+        .unwrap();
+    let (status, response) = read_response(&mut holder).await;
+    assert_eq!(status, 200, "in-flight request must complete: {response}");
+
+    // Nothing is left charged: a body the size of the whole budget fits.
+    let (status, response) = post_authrpc(addr, auth, padded_chain_id_request(4096)).await;
+    assert_eq!(status, 200, "budget must be released: {response}");
+
+    drop((holder, chunked));
     server.shutdown().await;
 }
 
