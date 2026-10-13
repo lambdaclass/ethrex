@@ -440,6 +440,8 @@ pub async fn init_rpc_api(
         opts.extra_data.clone(),
         opts.http_api.iter().copied().collect(),
         get_log_query_limits(opts),
+        // Saturating: the budget is clamped to what the semaphore can count anyway.
+        usize::try_from(opts.authrpc_max_inflight_body_size).unwrap_or(usize::MAX),
     )
     .await?;
 

@@ -4285,6 +4285,7 @@ dependencies = [
  "ethrex-storage-rollup",
  "ethrex-trie",
  "ethrex-vm",
+ "futures",
  "hex",
  "hex-literal 0.4.1",
  "jemalloc_pprof",

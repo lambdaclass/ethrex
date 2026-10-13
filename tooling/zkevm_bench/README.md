@@ -27,18 +27,7 @@ Every entry in `fixtures/manifest.toml` has a `type`:
   [Generating the exhaustive stress set](#generating-the-exhaustive-stress-set-for-slow)
   below).
 
-Benchmark-suite workloads also use the `micro` type. `tests-zkevm-benchmark@v0.8.2`
-is upstream's Amsterdam compute benchmark set at fixed 10M/30M/60M gas targets,
-pinned by `tooling/ef_tests/.fixtures_url_zkevm_benchmark` and fetched with
-`make -C tooling/ef_tests/blockchain zkevm-benchmark-vectors` (519MB compressed;
-the target unpacks only the referenced subtrees, ~370MB, rather than the full
-~3.9GB tree). It differs from `stress` in where the witnesses come from:
-`stress` uses ethrex's own witness generation, so those numbers are
-self-referential, while these are filled upstream and are therefore comparable
-against other zkEVM clients. Note the provenance is not identical to the
-`.fixtures_url_zkevm` pin — the benchmark bundle was filled at execution-specs
-`117dd1cf` with go-ethereum's `evm` as t8n, the zkevm bundle at `0695c34c` with
-the EELS t8n 2.19.0 — and the two pins move independently.
+Benchmark-suite workloads also use the `micro` type. `tests-zkevm-benchmark@v21.0.5` is upstream's Amsterdam compute benchmark set at fixed 30M/60M/100M/150M/200M gas targets, pinned by `tooling/ef_tests/.fixtures_url_zkevm_benchmark` and fetched with `make -C tooling/ef_tests/blockchain zkevm-benchmark-vectors`. Upstream ships one tarball per gas value, about 2.4GB together, and the target unpacks only the referenced subtrees, about 1.5GB. It differs from `stress` in where the witnesses come from: `stress` uses ethrex's own witness generation, so those numbers are self-referential, while these are filled upstream and are therefore comparable against other zkEVM clients. The bundle was filled at execution-specs `ad678168` with go-ethereum's `evm` as t8n and targets the same stateless wire format as `tests-zkevm@v21.0.1`, which `.fixtures_url_zkevm` pins, but the two pins move independently.
 
 All benchmark workloads are `tier = "slow"`. The download is opt-in and is not a
 `download-test-vectors` prerequisite, so putting any of them in the default
