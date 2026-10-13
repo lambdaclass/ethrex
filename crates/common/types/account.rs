@@ -39,11 +39,12 @@ impl InitcodeBuffer {
     /// [`Code::from_initcode_buffer`] appends, so that appending it does not reallocate.
     pub fn set(&mut self, initcode: &[u8]) {
         let needed = initcode.len().saturating_add(BYTECODE_PADDING);
-        if self.bytecode.capacity() < needed {
-            // A new buffer of exactly the size needed. Growing this one would copy it and
-            // double its capacity, and a buffer frozen short of its capacity allocates a
-            // header every time it becomes code.
-            self.bytecode = BytesMut::with_capacity(needed);
+        let capacity = self.bytecode.capacity();
+        if capacity < needed {
+            // A new buffer rather than this one grown, which would copy what it held. At
+            // least twice as large, so initcode that grows a little each CREATE allocates a
+            // few times rather than every time.
+            self.bytecode = BytesMut::with_capacity(needed.max(capacity.saturating_mul(2)));
         } else {
             self.bytecode.clear();
         }
@@ -79,18 +80,24 @@ fn zeroed_bitmap(len: usize) -> Arc<[u8]> {
 
 /// A zeroed jump-destination bitmap at least `len` bytes long: `scratch`, whole, when it is
 /// long enough and nothing else references it, which holds for the ones
-/// [`Code::into_initcode_buffer`] hands back, and a new one of `len` bytes otherwise.
+/// [`Code::into_initcode_buffer`] hands back, and a new one otherwise. A new one replacing a
+/// `scratch` too short is at least twice as long, as [`InitcodeBuffer::set`] does.
 fn zeroed_bitmap_in(scratch: Option<Arc<[u8]>>, len: usize) -> Arc<[u8]> {
-    if let Some(mut bitmap) = scratch.filter(|bitmap| bitmap.len() >= len)
-        && let Some(bits) = Arc::get_mut(&mut bitmap)
-    {
-        // All of it, not just the first `len` bytes. JUMP trusts the bitmap alone, so a bit
-        // left past the end of the code would make a jump there valid; and the per-opcode
-        // scan only writes the bytes that hold a jump destination.
-        bits.fill(0);
-        return bitmap;
-    }
-    zeroed_bitmap(len)
+    let outgrown = match scratch {
+        Some(mut bitmap) if bitmap.len() >= len => {
+            if let Some(bits) = Arc::get_mut(&mut bitmap) {
+                // All of it, not just the first `len` bytes. JUMP trusts the bitmap alone, so
+                // a bit left past the end of the code would make a jump there valid; and the
+                // per-opcode scan only writes the bytes that hold a jump destination.
+                bits.fill(0);
+                return bitmap;
+            }
+            0
+        }
+        Some(bitmap) => bitmap.len(),
+        None => 0,
+    };
+    zeroed_bitmap(len.max(outgrown.saturating_mul(2)))
 }
 
 /// Sets the bit of every `JUMPDEST` in `code` that is not a `PUSH` immediate in `bitmap`,
@@ -1286,15 +1293,25 @@ mod test {
     }
 
     #[test]
-    fn initcode_too_large_for_the_buffer_gets_one_of_exactly_its_size() {
+    fn a_buffer_outgrown_by_initcode_at_least_doubles() {
         let mut buffer = InitcodeBuffer::default();
-        buffer.set(&[0; 1024]);
+        buffer.set(&[0; 1000]);
 
-        buffer.set(&[0; 2000]);
+        buffer.set(&[0; 1001]);
 
-        // Growing the old buffer instead would copy it and double its capacity, to 2114,
-        // and a buffer frozen short of its capacity allocates a header on every CREATE.
-        assert_eq!(buffer.capacity(), 2000 + BYTECODE_PADDING);
+        // Replaced by one exactly the new size, initcode growing a byte each CREATE would
+        // allocate a new buffer every time.
+        assert!(buffer.capacity() >= 2 * (1000 + BYTECODE_PADDING));
+    }
+
+    #[test]
+    fn an_outgrown_bitmap_at_least_doubles() {
+        let scratch: Arc<[u8]> = Arc::from(vec![0; 4]);
+
+        let bitmap = zeroed_bitmap_in(Some(scratch), 5);
+
+        assert!(bitmap.len() >= 8);
+        assert!(bitmap.iter().all(|&byte| byte == 0));
     }
 
     #[test]

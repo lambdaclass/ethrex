@@ -29,6 +29,10 @@ use ethrex_common::{
 };
 use std::mem;
 
+/// Bytes the header `Bytes` allocates whenever it shares a buffer longer than its contents:
+/// a pointer to the buffer, its capacity and a reference count.
+const SHARED_HEADER_SIZE: usize = 3 * size_of::<usize>();
+
 pub struct OpCallHandler;
 impl OpcodeHandler for OpCallHandler {
     #[inline(always)]
@@ -1606,9 +1610,19 @@ impl<'a> VM<'a> {
     }
 
     /// Copies a child frame's arguments out of the caller's memory into a pooled buffer.
+    ///
+    /// Arguments shorter than [`SHARED_HEADER_SIZE`] are copied into an allocation of their
+    /// own size instead: a pooled buffer larger than them costs that header each time it is
+    /// handed out, more than the copy, and a buffer under 8 bytes is always larger than them.
     fn get_calldata(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {
         if size == 0 {
             return Ok(Bytes::new());
+        }
+        if size < SHARED_HEADER_SIZE {
+            return self
+                .current_call_frame
+                .memory
+                .with_range(offset, size, Bytes::copy_from_slice);
         }
         let mut buffer = self.calldata_pool.pop().unwrap_or_default();
         buffer.clear();
@@ -1637,7 +1651,10 @@ impl<'a> VM<'a> {
     /// shared (a tracer or a precompile output kept a clone) is left alone and freed normally.
     /// It stays a `BytesMut`: turning it back into a `Vec` would move every byte in place.
     fn recycle_calldata(&mut self, calldata: Bytes) {
-        if let Ok(buffer) = calldata.try_into_mut() {
+        // Arguments too short to be given a pooled buffer leave one too short to keep.
+        if let Ok(buffer) = calldata.try_into_mut()
+            && buffer.capacity() >= SHARED_HEADER_SIZE
+        {
             self.calldata_pool.push(buffer);
         }
     }

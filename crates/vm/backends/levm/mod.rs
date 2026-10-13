@@ -3486,7 +3486,8 @@ impl LEVM {
         vm.execute().map_err(VMError::into)
     }
 
-    // Like execute_tx but allows reusing the stack pool. Takes the block-invariant
+    // Like execute_tx but reuses the caller's pools of stacks, memory, calldata and initcode
+    // buffers, which the block executors keep across their txs. Takes the block-invariant
     // `config`/`chain_id` precomputed once per block (see `setup_env_with_config`).
     #[allow(clippy::too_many_arguments)]
     fn execute_tx_in_block(

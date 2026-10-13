@@ -270,20 +270,16 @@ fn caller_tx(gas_limit: u64) -> Transaction {
 
 /// Runs a transaction into a contract with `caller_code`.
 fn run_caller(caller_code: Bytes, precompile_cache: Option<PrecompileCache>) -> Pools {
-    run_on(
-        caller_db(caller_code, precompile_cache),
-        Fork::Amsterdam,
-        GAS_LIMIT,
-    )
-    .0
+    let mut db = caller_db(caller_code, precompile_cache);
+    run_on(&mut db, Fork::Amsterdam, GAS_LIMIT).0
 }
 
 /// Runs a transaction into the caller contract in `db`, on `fork` with `gas_limit`.
-fn run_on(mut db: GeneralizedDatabase, fork: Fork, gas_limit: u64) -> (Pools, ExecutionReport) {
+fn run_on(db: &mut GeneralizedDatabase, fork: Fork, gas_limit: u64) -> (Pools, ExecutionReport) {
     let tx = caller_tx(gas_limit);
     let mut vm = VM::new(
         caller_env(fork, gas_limit),
-        &mut db,
+        db,
         &tx,
         LevmCallTracer::disabled(),
         VMType::L1,
@@ -404,11 +400,19 @@ fn an_initcode_buffer_is_allocated_once_with_room_for_its_padding() {
 fn a_create_that_fails_after_copying_its_initcode_returns_the_buffer() {
     // The creator runs out of gas on the new account's state gas, after the initcode was
     // copied into a pooled buffer. Its CALL fails, the transaction does not.
-    let pools = run_caller(
+    let mut db = caller_db(
         call_with_gas(Address::from_low_u64_be(CREATOR), CREATOR_GAS),
         None,
     );
 
+    let (pools, _) = run_on(&mut db, Fork::Amsterdam, GAS_LIMIT);
+
+    // A CREATE that went ahead would also leave its buffer, emptied, in the pool.
+    let created = calculate_create_address(Address::from_low_u64_be(CREATOR), 1);
+    assert!(
+        db.get_account(created).expect("load account").is_empty(),
+        "the CREATE did not fail"
+    );
     assert_eq!(pools.initcode.len(), 1);
     // Emptied before it went back: no CREATE can run another one's initcode from the pool.
     assert_eq!(pools.initcode_held, [0]);
@@ -458,9 +462,9 @@ fn a_call_past_the_depth_limit_returns_its_calldata_buffer() {
     // The caller calls itself until the call made at depth 1024 fails. Each of the 1024
     // frames below the root returns its buffer when it ends, and the failed call returns
     // the one it took.
-    let db = caller_db(call_once(None, 0), None);
+    let mut db = caller_db(call_once(None, 0), None);
 
-    let (pools, _) = run_on(db, Fork::Prague, DEPTH_GAS_LIMIT);
+    let (pools, _) = run_on(&mut db, Fork::Prague, DEPTH_GAS_LIMIT);
 
     assert_eq!(pools.calldata.len(), 1025);
 }
@@ -476,7 +480,7 @@ fn a_create_at_an_existing_address_returns_its_initcode_buffer() {
         Account::new(U256::zero(), Code::default(), 1, FxHashMap::default()),
     );
 
-    let (pools, report) = run_on(db_with(accounts, None), Fork::Amsterdam, GAS_LIMIT);
+    let (pools, report) = run_on(&mut db_with(accounts, None), Fork::Amsterdam, GAS_LIMIT);
 
     // A collision consumes all the gas handed to the creation, which a CREATE that went
     // ahead and ran the empty initcode would mostly give back.
