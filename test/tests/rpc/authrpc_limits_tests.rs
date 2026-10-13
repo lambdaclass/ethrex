@@ -10,6 +10,7 @@ use ethrex_rpc::test_utils::{
     send_request_head, setup_store, spawn_authrpc_server, spawn_authrpc_server_with_timeouts,
 };
 use ethrex_rpc::{AUTHRPC_MAX_BODY_SIZE, DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE};
+use reqwest::StatusCode;
 use serde_json::Value;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
@@ -105,6 +106,33 @@ async fn engine_client_reports_auth_failures() {
     assert!(
         matches!(&result, Err(EngineClientError::Unauthorized(reason)) if reason == "invalid token"),
         "expected an auth failure, got {result:?}"
+    );
+
+    drop(client);
+    server.shutdown().await;
+}
+
+/// Other refusals carry a JSON-RPC error with a null id, which the engine client reports
+/// with the HTTP status instead of failing to decode it as a response.
+#[tokio::test]
+async fn engine_client_reports_refused_requests() {
+    let context = default_context_with_storage(setup_store().await).await;
+    // A per-request cap smaller than any engine request.
+    let server = spawn_authrpc_server(&context, 16).await;
+    let client = EngineClient::new(
+        &format!("http://{}", server.addr),
+        context.node_data.jwt_secret.clone(),
+    );
+
+    let result = client.engine_exchange_capabilities().await;
+    assert!(
+        matches!(
+            &result,
+            Err(EngineClientError::Rejected(status, reason))
+                if *status == StatusCode::PAYLOAD_TOO_LARGE
+                    && reason.contains("exceeds the 16 byte limit")
+        ),
+        "expected a 413 with the server's reason, got {result:?}"
     );
 
     drop(client);
