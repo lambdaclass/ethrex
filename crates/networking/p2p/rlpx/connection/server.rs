@@ -31,7 +31,9 @@ use crate::{
                 SOFT_RESPONSE_LIMIT,
             },
             status::{StatusMessage68, StatusMessage69, StatusMessage70, StatusMessage71},
-            transactions::{GetPooledTransactions, NewPooledTransactionHashes},
+            transactions::{
+                GetPooledTransactions, MAX_POOLED_RESPONSE_BYTES, NewPooledTransactionHashes,
+            },
             update::BlockRangeUpdate,
         },
         message::{EthCapVersion, SnapCapVersion},
@@ -121,6 +123,12 @@ const SERVE_REQUEST_WINDOW: Duration = Duration::from_secs(60);
 const MAX_SERVE_REQUESTS_PER_WINDOW: u64 = 500;
 /// Number of transactions sent to a peer before checking for leeching behaviour.
 const LEECH_TX_SENT_THRESHOLD: u64 = 10_000;
+/// Strikes at which a peer that keeps answering `GetPooledTransactions` with little of what it
+/// announced is dropped. A short answer (see `is_short_tx_answer`) adds one and any other answer
+/// takes one off, so an honest peer that now and then no longer holds what it announced (the tx
+/// was included in a block meanwhile, which devp2p allows) never gets there.
+const MAX_SHORT_TX_ANSWER_STRIKES: u32 = 10;
+
 pub(crate) type PeerConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
 #[protocol]
@@ -352,6 +360,8 @@ pub struct Established {
     pub(crate) serve_request_window_start: Instant,
     // Rate limiting: number of data-serving requests received in the current window
     pub(crate) serve_requests_in_window: u64,
+    // Under-delivery: net count of short answers to our GetPooledTransactions requests
+    pub(crate) short_tx_answer_strikes: u32,
     // Leech detection: total transactions sent to this peer via GetPooledTransactions responses
     pub(crate) txs_sent_to_peer: u64,
     // Leech detection: whether we have received any transactions from this peer
@@ -1484,6 +1494,28 @@ fn check_serve_request_rate(state: &mut Established) -> bool {
     state.serve_requests_in_window <= MAX_SERVE_REQUESTS_PER_WINDOW
 }
 
+/// Whether an answer to `GetPooledTransactions` delivered too little of what was asked. devp2p
+/// lets a peer skip transactions it no longer holds and stop at its own response limit
+/// (go-ethereum stops past 2 MiB, we stop just before it, and one blob transaction can take up
+/// to ~1 MiB), so an answer is short only when it delivered under a quarter of the requested
+/// transactions *and* under a quarter of that limit by their announced sizes: an answer cut by
+/// a size limit always carries more. An empty answer to a non-empty request is short.
+fn is_short_tx_answer(
+    requested_hashes: &[H256],
+    requested_sizes: &[usize],
+    delivered: &HashSet<H256>,
+) -> bool {
+    let mut delivered_count = 0usize;
+    let mut delivered_bytes = 0usize;
+    for (hash, size) in requested_hashes.iter().zip(requested_sizes) {
+        if delivered.contains(hash) {
+            delivered_count += 1;
+            delivered_bytes = delivered_bytes.saturating_add(*size);
+        }
+    }
+    delivered_count * 4 < requested_hashes.len() && delivered_bytes < MAX_POOLED_RESPONSE_BYTES / 4
+}
+
 /// Drops the alternate announcers of transactions this peer delivered for one of our requests;
 /// see `Mempool::forget_alternates`.
 fn forget_delivered_alternates(state: &Established, delivered: HashSet<H256>) {
@@ -1491,6 +1523,40 @@ fn forget_delivered_alternates(state: &Established, delivered: HashSet<H256>) {
     if let Err(e) = state.blockchain.mempool.forget_alternates(&delivered) {
         warn!(error = %e, "forget_alternates failed");
     }
+}
+
+/// Scores how much of one `GetPooledTransactions` request a peer's answer delivered. A short
+/// answer lowers the peer's score, as an empty block-header response does for the block
+/// fetchers, and adds a strike; any other answer takes one off. At
+/// `MAX_SHORT_TX_ANSWER_STRIKES` the requested hashes are retried on other announcers and the
+/// peer is disconnected.
+async fn account_tx_answer(
+    state: &mut Established,
+    requested_hashes: &[H256],
+    requested_sizes: &[usize],
+    delivered: &HashSet<H256>,
+) -> Result<(), PeerConnectionError> {
+    if !is_short_tx_answer(requested_hashes, requested_sizes, delivered) {
+        state.short_tx_answer_strikes = state.short_tx_answer_strikes.saturating_sub(1);
+        return Ok(());
+    }
+    state.short_tx_answer_strikes += 1;
+    if let Err(e) = state.peer_table.record_failure(state.node.node_id()) {
+        debug!(error = %e, "Failed to record a short transaction answer");
+    }
+    if state.short_tx_answer_strikes < MAX_SHORT_TX_ANSWER_STRIKES {
+        return Ok(());
+    }
+    debug!(
+        peer = %state.node,
+        strikes = state.short_tx_answer_strikes,
+        "Disconnecting peer: keeps answering transaction requests with little of what it announced",
+    );
+    retry_on_alternates(&state.blockchain, &state.peer_table, requested_hashes).await;
+    send_disconnect_message(state, Some(DisconnectReason::UselessPeer)).await;
+    Err(PeerConnectionError::DisconnectSent(
+        DisconnectReason::UselessPeer,
+    ))
 }
 
 async fn handle_incoming_message(
@@ -2026,6 +2092,13 @@ async fn handle_incoming_message(
                             DisconnectReason::SubprotocolError,
                         ));
                     }
+                    account_tx_answer(
+                        state,
+                        &announced.transaction_hashes,
+                        &announced.transaction_sizes,
+                        &delivered,
+                    )
+                    .await?;
                 }
                 #[cfg(feature = "l2")]
                 let is_l2_mode = state.l2_state.is_supported();
@@ -2098,6 +2171,13 @@ async fn handle_incoming_message(
                             DisconnectReason::SubprotocolError,
                         ));
                     }
+                    account_tx_answer(
+                        state,
+                        &announced.transaction_hashes,
+                        &announced.transaction_sizes,
+                        &delivered,
+                    )
+                    .await?;
                 }
                 #[cfg(feature = "l2")]
                 let is_l2_mode = state.l2_state.is_supported();
@@ -2953,6 +3033,7 @@ mod tx_announcement_tests {
             is_validated: true,
             serve_request_window_start: Instant::now(),
             serve_requests_in_window: 0,
+            short_tx_answer_strikes: 0,
             txs_sent_to_peer: 0,
             received_txs_from_peer: false,
             missed_pongs: 0,
@@ -3089,6 +3170,87 @@ mod tx_announcement_tests {
             state.teardown().await;
             assert_eq!(tracked(&state), 0, "eth/{eth_version}");
         }
+    }
+
+    #[tokio::test]
+    async fn repeated_empty_answers_disconnect_the_peer() {
+        for eth_version in [68, 72] {
+            let (mut state, mut outbound) = session(eth_version);
+            for round in 1..=MAX_SHORT_TX_ANSWER_STRIKES {
+                let tx = txs(u64::from(round), 1);
+                handle_incoming_message(&mut state, announcement(eth_version, &tx))
+                    .await
+                    .unwrap();
+                let requests = flush_requests(&mut state, &mut outbound).await;
+                let result =
+                    handle_incoming_message(&mut state, answer(eth_version, requests[0].0, vec![]))
+                        .await;
+                if round < MAX_SHORT_TX_ANSWER_STRIKES {
+                    result.expect("below the strike limit the peer is kept");
+                } else {
+                    assert!(
+                        matches!(
+                            result,
+                            Err(PeerConnectionError::DisconnectSent(
+                                DisconnectReason::UselessPeer
+                            ))
+                        ),
+                        "eth/{eth_version}: got {result:?}"
+                    );
+                }
+            }
+            assert!(matches!(
+                outbound.try_recv(),
+                Ok(Message::Disconnect(DisconnectMessage {
+                    reason: Some(DisconnectReason::UselessPeer)
+                }))
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn answers_that_deliver_what_was_announced_clear_strikes() {
+        for eth_version in [68, 72] {
+            let (mut state, mut outbound) = session(eth_version);
+            // Each empty answer is followed by a full one, many times over the strike limit.
+            for round in 0..u64::from(MAX_SHORT_TX_ANSWER_STRIKES) * 3 {
+                let tx = txs(round, 1);
+                handle_incoming_message(&mut state, announcement(eth_version, &tx))
+                    .await
+                    .unwrap();
+                let (id, _) = flush_requests(&mut state, &mut outbound).await[0];
+                let delivered = if round % 2 == 0 { vec![] } else { tx };
+                handle_incoming_message(&mut state, answer(eth_version, id, delivered))
+                    .await
+                    .expect("an occasional empty answer is not punished");
+            }
+            assert_eq!(state.short_tx_answer_strikes, 0, "eth/{eth_version}");
+
+            // An answer cut short of a large request still counts if it carries most of it.
+            let announced = txs(1_000, 8);
+            handle_incoming_message(&mut state, announcement(eth_version, &announced))
+                .await
+                .unwrap();
+            let (id, _) = flush_requests(&mut state, &mut outbound).await[0];
+            handle_incoming_message(&mut state, answer(eth_version, id, announced[..2].to_vec()))
+                .await
+                .unwrap();
+            assert_eq!(state.short_tx_answer_strikes, 0, "eth/{eth_version}");
+        }
+    }
+
+    #[test]
+    fn short_answers_are_judged_by_count_and_announced_size() {
+        let hashes: Vec<H256> = (0..8).map(H256::from_low_u64_be).collect();
+        let delivered = |n: usize| hashes[..n].iter().copied().collect::<HashSet<H256>>();
+        let small = vec![200; 8];
+        assert!(is_short_tx_answer(&hashes, &small, &delivered(0)));
+        assert!(is_short_tx_answer(&hashes, &small, &delivered(1)));
+        assert!(!is_short_tx_answer(&hashes, &small, &delivered(2)));
+        // One blob-sized tx out of eight is what a responder's size limit allows.
+        let large = vec![MAX_POOLED_RESPONSE_BYTES / 4; 8];
+        assert!(!is_short_tx_answer(&hashes, &large, &delivered(1)));
+        assert!(!is_short_tx_answer(&[], &[], &delivered(0)));
     }
 }
 
