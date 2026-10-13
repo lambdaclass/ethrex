@@ -1558,9 +1558,11 @@ fn forget_delivered_alternates(state: &Established, delivered: HashMap<H256, usi
 
 /// Scores how much of one `GetPooledTransactions` request a peer's answer delivered. A short
 /// answer lowers the peer's score, as an empty block-header response does for the block
-/// fetchers, and adds a strike; any other answer takes one off. At
-/// `MAX_SHORT_TX_ANSWER_STRIKES` the requested hashes are retried on other announcers and the
-/// peer is disconnected.
+/// fetchers, adds a strike, and has what it left out requested from other announcers, so a
+/// peer withholding what it announced does not keep those transactions from us; any other
+/// answer takes a strike off. At `MAX_SHORT_TX_ANSWER_STRIKES` every requested hash is retried
+/// on other announcers, since the delivered ones are not processed either, and the peer is
+/// disconnected.
 async fn account_tx_answer(
     state: &mut Established,
     requested_hashes: &[H256],
@@ -1575,6 +1577,12 @@ async fn account_tx_answer(
         debug!(error = %e, "Failed to record a short transaction answer");
     }
     if state.short_tx_answer_strikes < MAX_SHORT_TX_ANSWER_STRIKES {
+        let undelivered: Vec<H256> = requested_hashes
+            .iter()
+            .filter(|hash| !delivered.contains_key(*hash))
+            .copied()
+            .collect();
+        retry_on_alternates(&state.blockchain, &state.peer_table, &undelivered).await;
         return Ok(());
     }
     debug!(
@@ -3256,6 +3264,43 @@ mod tx_announcement_tests {
                     reason: Some(DisconnectReason::UselessPeer)
                 }))
             ));
+        }
+    }
+
+    #[tokio::test]
+    async fn what_a_short_answer_leaves_out_is_retried_on_other_announcers() {
+        for eth_version in [68, 72] {
+            let (mut state, mut outbound) = session(eth_version);
+            let announced = txs(0, 8);
+            handle_incoming_message(&mut state, announcement(eth_version, &announced))
+                .await
+                .unwrap();
+            // Another peer announced the same transactions meanwhile and is their fallback.
+            let other_peer = H256::from_low_u64_be(0xfa11);
+            let hashes: Vec<H256> = announced.iter().map(|tx| tx.compute_hash()).collect();
+            state
+                .blockchain
+                .mempool
+                .reserve_unknown_hashes(&hashes, &[2; 8], &[100; 8], other_peer)
+                .unwrap();
+            let (id, _) = flush_requests(&mut state, &mut outbound).await[0];
+
+            handle_incoming_message(&mut state, answer(eth_version, id, announced[..1].to_vec()))
+                .await
+                .unwrap();
+            // The fallback was taken for every hash left out (it is not connected here, so
+            // nothing is sent to it).
+            for hash in &hashes[1..] {
+                assert!(
+                    state
+                        .blockchain
+                        .mempool
+                        .pop_alternate(*hash)
+                        .unwrap()
+                        .is_none(),
+                    "eth/{eth_version}"
+                );
+            }
         }
     }
 
