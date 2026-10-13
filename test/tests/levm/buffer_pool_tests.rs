@@ -16,9 +16,11 @@ use ethrex_common::{
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
+    call_frame::Stack,
     db::{Database, gen_db::GeneralizedDatabase},
     environment::{EVMConfig, Environment},
     errors::DatabaseError,
+    memory::Memory,
     precompiles::PrecompileCache,
     tracing::LevmCallTracer,
     vm::{VM, VMType},
@@ -137,8 +139,8 @@ fn pooled_buffer_capacities(target: Address) -> Vec<usize> {
     run_caller(call_loop(target, CALLS), None).calldata
 }
 
-/// Runs a transaction into a contract with `caller_code`.
-fn run_caller(caller_code: Bytes, precompile_cache: Option<PrecompileCache>) -> Pools {
+/// The state for a transaction into a contract with `caller_code`.
+fn caller_db(caller_code: Bytes, precompile_cache: Option<PrecompileCache>) -> GeneralizedDatabase {
     let mut accounts: FxHashMap<Address, Account> = FxHashMap::default();
     accounts.insert(
         Address::from_low_u64_be(ORIGIN),
@@ -182,10 +184,13 @@ fn run_caller(caller_code: Bytes, precompile_cache: Option<PrecompileCache>) -> 
         inner: store,
         cache: precompile_cache,
     };
-    let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(store), accounts);
+    GeneralizedDatabase::new_with_account_state(Arc::new(store), accounts)
+}
 
+/// The environment of a transaction from `ORIGIN`.
+fn caller_env() -> Environment {
     let fork = Fork::Amsterdam;
-    let env = Environment {
+    Environment {
         origin: Address::from_low_u64_be(ORIGIN),
         gas_limit: GAS_LIMIT,
         config: EVMConfig::new(fork, EVMConfig::canonical_values(fork)),
@@ -214,16 +219,25 @@ fn run_caller(caller_code: Bytes, precompile_cache: Option<PrecompileCache>) -> 
         disable_gas_allowance_check: false,
         disable_sender_eoa_check: false,
         is_system_call: false,
-    };
-    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+    }
+}
+
+/// A transaction into the caller contract.
+fn caller_tx() -> Transaction {
+    Transaction::EIP1559Transaction(EIP1559Transaction {
         chain_id: 1,
         gas_limit: GAS_LIMIT,
         to: TxKind::Call(Address::from_low_u64_be(CALLER)),
         ..Default::default()
-    });
+    })
+}
 
+/// Runs a transaction into a contract with `caller_code`.
+fn run_caller(caller_code: Bytes, precompile_cache: Option<PrecompileCache>) -> Pools {
+    let mut db = caller_db(caller_code, precompile_cache);
+    let tx = caller_tx();
     let mut vm = VM::new(
-        env,
+        caller_env(),
         &mut db,
         &tx,
         LevmCallTracer::disabled(),
@@ -238,6 +252,44 @@ fn run_caller(caller_code: Bytes, precompile_cache: Option<PrecompileCache>) -> 
         calldata: vm.calldata_pool.iter().map(BytesMut::capacity).collect(),
         initcode: vm.initcode_pool.iter().map(BytesMut::capacity).collect(),
     }
+}
+
+/// The buffer pools block execution keeps across its transactions.
+#[derive(Default)]
+struct BlockPools {
+    stacks: Vec<Stack>,
+    memories: Vec<Memory>,
+    calldata: Vec<BytesMut>,
+    initcode: Vec<BytesMut>,
+}
+
+/// Runs a transaction into a contract with `caller_code` the way block execution does:
+/// the VM draws its buffers from `pools` and returns them there afterwards.
+fn run_pooled(caller_code: Bytes, pools: &mut BlockPools) {
+    let mut db = caller_db(caller_code, None);
+    let tx = caller_tx();
+    let mut vm = VM::new_pooled(
+        caller_env(),
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L1,
+        &NativeCrypto,
+        None,
+        &mut pools.stacks,
+        &mut pools.memories,
+        &mut pools.calldata,
+        &mut pools.initcode,
+    )
+    .expect("VM::new_pooled");
+    let report = vm.execute().expect("execute");
+    assert!(report.is_success(), "caller tx failed: {:?}", report.result);
+    vm.reclaim_into(
+        &mut pools.stacks,
+        &mut pools.memories,
+        &mut pools.calldata,
+        &mut pools.initcode,
+    );
 }
 
 #[test]
@@ -303,4 +355,33 @@ fn a_create_that_fails_after_copying_its_initcode_returns_the_buffer() {
     );
 
     assert_eq!(pools.initcode.len(), 1);
+}
+
+#[test]
+fn consecutive_transactions_reuse_one_calldata_buffer() {
+    let mut pools = BlockPools::default();
+    let caller_code = call_loop(Address::from_low_u64_be(CALLEE), 1);
+
+    run_pooled(caller_code.clone(), &mut pools);
+    assert_eq!(pools.calldata.len(), 1);
+    let first = pools.calldata[0].as_ptr();
+    run_pooled(caller_code, &mut pools);
+
+    // The second transaction took the first one's buffer from the block's pool and gave it
+    // back, instead of starting from an empty pool and dropping its own buffer with its VM.
+    assert_eq!(pools.calldata.len(), 1);
+    assert_eq!(pools.calldata[0].as_ptr(), first);
+}
+
+#[test]
+fn consecutive_transactions_reuse_one_initcode_buffer() {
+    let mut pools = BlockPools::default();
+
+    run_pooled(create_loop(1), &mut pools);
+    assert_eq!(pools.initcode.len(), 1);
+    let first = pools.initcode[0].as_ptr();
+    run_pooled(create_loop(1), &mut pools);
+
+    assert_eq!(pools.initcode.len(), 1);
+    assert_eq!(pools.initcode[0].as_ptr(), first);
 }
