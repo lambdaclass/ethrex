@@ -15,6 +15,7 @@ use ethrex_common::types::WrappedEIP4844Transaction;
 use ethrex_common::{H256, types::Transaction};
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{
+    decode::{RLPDecode, decode_rlp_item, get_item_with_prefix},
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
@@ -211,6 +212,50 @@ impl NewPooledTransactionHashes {
     }
 }
 
+/// Decodes the `types`, `sizes` and `hashes` fields that every `NewPooledTransactionHashes`
+/// version starts with. The three must announce the same number of transactions, and that is
+/// checked from the RLP headers alone, before any of them is decoded, so a malformed
+/// announcement is rejected without building its vectors.
+pub(crate) fn decode_announced_txs(
+    decoder: Decoder<'_>,
+) -> Result<(Bytes, Vec<usize>, Vec<H256>, Decoder<'_>), RLPDecodeError> {
+    let (types, decoder) = decoder.get_encoded_item_ref()?;
+    let (sizes, decoder) = decoder.get_encoded_item_ref()?;
+    let (hashes, decoder) = decoder.get_encoded_item_ref()?;
+
+    let types_count = match decode_rlp_item(types)? {
+        (false, payload, _) => payload.len(),
+        (true, _, _) => return Err(RLPDecodeError::UnexpectedList),
+    };
+    if rlp_list_len(sizes)? != types_count || rlp_list_len(hashes)? != types_count {
+        return Err(RLPDecodeError::Custom(
+            "transaction_hashes, transaction_sizes and transaction_types must have the same length"
+                .to_string(),
+        ));
+    }
+
+    Ok((
+        Bytes::decode(types)?,
+        Vec::<usize>::decode(sizes)?,
+        Vec::<H256>::decode(hashes)?,
+        decoder,
+    ))
+}
+
+/// Number of items in the RLP list `rlp`, walking their headers without decoding them.
+fn rlp_list_len(rlp: &[u8]) -> Result<usize, RLPDecodeError> {
+    let (is_list, mut items, _) = decode_rlp_item(rlp)?;
+    if !is_list {
+        return Err(RLPDecodeError::UnexpectedString);
+    }
+    let mut count = 0;
+    while !items.is_empty() {
+        (_, items) = get_item_with_prefix(items)?;
+        count += 1;
+    }
+    Ok(count)
+}
+
 impl RLPxMessage for NewPooledTransactionHashes {
     const CODE: u8 = 0x08;
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
@@ -229,30 +274,18 @@ impl RLPxMessage for NewPooledTransactionHashes {
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
         let decompressed_data = snappy_decompress(msg_data)?;
         let decoder = Decoder::new(&decompressed_data)?;
-        let (transaction_types, decoder): (Bytes, _) = decoder.decode_field("transactionTypes")?;
-        let (transaction_sizes, decoder): (Vec<usize>, _) =
-            decoder.decode_field("transactionSizes")?;
-        let (transaction_hashes, decoder): (Vec<H256>, _) =
-            decoder.decode_field("transactionHashes")?;
+        let (transaction_types, transaction_sizes, transaction_hashes, decoder) =
+            decode_announced_txs(decoder)?;
         // The announcement is exactly three fields until eth/72 adds `cell_mask`
         // (EIP-8070). Reject a longer list instead of ignoring the extra fields,
         // so a peer encoding a newer shape on this session is caught here.
         decoder.finish()?;
 
-        if transaction_hashes.len() == transaction_sizes.len()
-            && transaction_sizes.len() == transaction_types.len()
-        {
-            Ok(Self {
-                transaction_types,
-                transaction_sizes,
-                transaction_hashes,
-            })
-        } else {
-            Err(RLPDecodeError::Custom(
-                "transaction_hashes, transaction_sizes and transaction_types must have the same length"
-                    .to_string(),
-            ))
-        }
+        Ok(Self {
+            transaction_types,
+            transaction_sizes,
+            transaction_hashes,
+        })
     }
 }
 
@@ -476,7 +509,81 @@ impl RLPxMessage for PooledTransactions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rlpx::eth::eth72::transactions::NewPooledTransactionHashes72;
     use ethrex_common::types::EIP1559Transaction;
+
+    /// A compressed announcement with `types`, `sizes` and `hashes` as given, so the field
+    /// lengths can disagree, plus an empty `cell_mask` when `eth72` is set. Each hash is
+    /// `hash_len` bytes long: a wrong length can only be caught by decoding the item.
+    fn raw_announcement(
+        types: usize,
+        sizes: usize,
+        hashes: usize,
+        hash_len: usize,
+        eth72: bool,
+    ) -> Vec<u8> {
+        let hashes: Vec<Bytes> = (0..hashes)
+            .map(|i| Bytes::from(vec![i as u8 + 1; hash_len]))
+            .collect();
+        let mut encoded = vec![];
+        let encoder = Encoder::new(&mut encoded)
+            .encode_field(&Bytes::from(vec![2u8; types]))
+            .encode_field(&vec![100usize; sizes])
+            .encode_field(&hashes);
+        if eth72 {
+            encoder.encode_field(&Bytes::new()).finish();
+        } else {
+            encoder.finish();
+        }
+        snappy_compress(encoded).unwrap()
+    }
+
+    fn decode_announcement(msg: &[u8], eth72: bool) -> Result<usize, RLPDecodeError> {
+        if eth72 {
+            NewPooledTransactionHashes72::decode(msg).map(|a| a.transaction_hashes.len())
+        } else {
+            NewPooledTransactionHashes::decode(msg).map(|a| a.transaction_hashes.len())
+        }
+    }
+
+    #[test]
+    fn announcements_with_matching_field_lengths_decode() {
+        for eth72 in [false, true] {
+            assert_eq!(
+                decode_announcement(&raw_announcement(3, 3, 3, 32, eth72), eth72),
+                Ok(3)
+            );
+        }
+    }
+
+    #[test]
+    fn announcements_with_mismatched_field_lengths_are_rejected() {
+        let mismatch = || {
+            RLPDecodeError::Custom(
+                "transaction_hashes, transaction_sizes and transaction_types must have the same length"
+                    .to_string(),
+            )
+        };
+        for eth72 in [false, true] {
+            for (types, sizes, hashes) in [(2, 3, 3), (3, 2, 3), (3, 3, 2), (0, 0, 1)] {
+                assert_eq!(
+                    decode_announcement(&raw_announcement(types, sizes, hashes, 32, eth72), eth72),
+                    Err(mismatch()),
+                    "types {types}, sizes {sizes}, hashes {hashes}, eth72 {eth72}"
+                );
+            }
+            // The lengths are compared before any hash is decoded: 31-byte hashes are only
+            // caught by decoding them, so a mismatch must be reported first.
+            assert_eq!(
+                decode_announcement(&raw_announcement(2, 2, 3, 31, eth72), eth72),
+                Err(mismatch())
+            );
+            assert_ne!(
+                decode_announcement(&raw_announcement(3, 3, 3, 31, eth72), eth72),
+                Err(mismatch())
+            );
+        }
+    }
 
     fn p2p_tx(nonce: u64) -> P2PTransaction {
         P2PTransaction::EIP1559Transaction(EIP1559Transaction {

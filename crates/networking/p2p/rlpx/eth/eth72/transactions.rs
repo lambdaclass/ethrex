@@ -1,7 +1,9 @@
 use std::collections::HashSet;
 
 use crate::rlpx::{
-    eth::transactions::{MAX_POOLED_TRANSACTIONS_BYTES, POOLED_TX_SIZE_TOLERANCE},
+    eth::transactions::{
+        MAX_POOLED_TRANSACTIONS_BYTES, POOLED_TX_SIZE_TOLERANCE, decode_announced_txs,
+    },
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress, snappy_decompress_bounded},
 };
@@ -265,29 +267,17 @@ impl RLPxMessage for NewPooledTransactionHashes72 {
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
         let decompressed_data = snappy_decompress(msg_data)?;
         let decoder = Decoder::new(&decompressed_data)?;
-        let (transaction_types, decoder): (Bytes, _) = decoder.decode_field("transactionTypes")?;
-        let (transaction_sizes, decoder): (Vec<usize>, _) =
-            decoder.decode_field("transactionSizes")?;
-        let (transaction_hashes, decoder): (Vec<H256>, _) =
-            decoder.decode_field("transactionHashes")?;
+        let (transaction_types, transaction_sizes, transaction_hashes, decoder) =
+            decode_announced_txs(decoder)?;
         let (mask_bytes, _): (Bytes, _) = decoder.decode_field("cellMask")?;
         let cell_mask = bytes_to_cell_mask(&mask_bytes)?;
 
-        if transaction_hashes.len() == transaction_sizes.len()
-            && transaction_sizes.len() == transaction_types.len()
-        {
-            Ok(Self {
-                transaction_types,
-                transaction_sizes,
-                transaction_hashes,
-                cell_mask,
-            })
-        } else {
-            Err(RLPDecodeError::Custom(
-                "transaction_hashes, transaction_sizes and transaction_types must have the same length"
-                    .to_string(),
-            ))
-        }
+        Ok(Self {
+            transaction_types,
+            transaction_sizes,
+            transaction_hashes,
+            cell_mask,
+        })
     }
 }
 
