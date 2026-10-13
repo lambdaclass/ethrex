@@ -429,6 +429,16 @@ impl Established {
         {
             warn!(error = %e, "clear_peer_cell_availability failed during teardown");
         }
+        // Release what the peer holds of its announced-hash budget as a fallback announcer
+        // and blob provider, so a reconnect starts from what its new session reserves. A
+        // second session of the same node id, if any, registers again as it announces.
+        if let Err(e) = self
+            .blockchain
+            .mempool
+            .forget_peer_announcements(self.node.node_id())
+        {
+            warn!(error = %e, "forget_peer_announcements failed during teardown");
+        }
         // The socket sink is owned by the per-connection writer task (`spawn_outbound_writer`),
         // which closes it when this `Established` is dropped (its `outbound_tx` is the only sender).
     }
@@ -3229,6 +3239,27 @@ mod tx_announcement_tests {
             state.teardown().await;
             assert_eq!(tracked(&state), 0, "eth/{eth_version}");
         }
+    }
+
+    #[tokio::test]
+    async fn a_session_ending_releases_all_the_peer_holds() {
+        let (mut state, _outbound) = session(68);
+        let peer = state.node.node_id();
+        let mempool = &state.blockchain.mempool;
+        let hash = H256::from_low_u64_be(0xabc);
+        mempool
+            .reserve_unknown_hashes(&[hash], &[2], &[100], H256::from_low_u64_be(1))
+            .unwrap();
+        mempool
+            .reserve_unknown_hashes(&[hash], &[2], &[100], peer)
+            .unwrap();
+        mempool
+            .record_provider_announcement(H256::from_low_u64_be(0xb10b), peer)
+            .unwrap();
+        assert_eq!(tracked(&state), 2);
+
+        state.teardown().await;
+        assert_eq!(tracked(&state), 0);
     }
 
     #[tokio::test]

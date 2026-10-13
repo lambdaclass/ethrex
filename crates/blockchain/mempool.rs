@@ -1512,6 +1512,37 @@ impl Mempool {
         Ok(())
     }
 
+    /// Drops `peer` as a fallback announcer and as a blob provider everywhere, releasing what
+    /// it was charged for both. Called when its session ends: a disconnected peer can serve
+    /// neither a retry nor cells. Hashes reserved to be requested from it are released by the
+    /// session itself as it clears its requests.
+    pub fn forget_peer_announcements(&self, peer: H256) -> Result<(), StoreError> {
+        let mut guard = self.write()?;
+        let MempoolInner {
+            alternates,
+            provider_announcers,
+            announced_per_peer,
+            ..
+        } = &mut *guard;
+        alternates.retain(|_, (entries, _)| {
+            entries.retain(|alternate| {
+                let keep = alternate.peer_id != peer;
+                if !keep {
+                    release_announcer(announced_per_peer, peer);
+                }
+                keep
+            });
+            !entries.is_empty()
+        });
+        provider_announcers.retain(|_, announcers| {
+            if announcers.remove(&peer) {
+                release_announcer(announced_per_peer, peer);
+            }
+            !announcers.is_empty()
+        });
+        Ok(())
+    }
+
     /// How many announced hashes the mempool currently tracks for `peer`,
     /// out of `MAX_ANNOUNCED_HASHES_PER_PEER`.
     pub fn announced_hashes_tracked_for(&self, peer: H256) -> Result<usize, StoreError> {
@@ -2863,6 +2894,38 @@ mod tests {
         );
         assert_eq!(pool.record_provider_announcement(blob_tx, peer).unwrap(), 0);
         assert_eq!(pool.provider_announcer_count(blob_tx).unwrap(), 0);
+    }
+
+    #[test]
+    fn a_peers_announcements_are_forgotten_with_its_session() {
+        let pool = Mempool::new(64);
+        let (primary, leaving, staying) = (
+            H256::from_low_u64_be(1),
+            H256::from_low_u64_be(2),
+            H256::from_low_u64_be(3),
+        );
+        let hashes = distinct_hashes(1_000, 3);
+        let blob_tx = H256::from_low_u64_be(0xb10b);
+        reserve_all(&pool, &hashes, primary);
+        reserve_all(&pool, &hashes, leaving);
+        reserve_all(&pool, &hashes[..1], staying);
+        pool.record_provider_announcement(blob_tx, leaving).unwrap();
+        pool.record_provider_announcement(blob_tx, staying).unwrap();
+        assert_eq!(pool.announced_hashes_tracked_for(leaving).unwrap(), 4);
+
+        pool.forget_peer_announcements(leaving).unwrap();
+        assert_eq!(pool.announced_hashes_tracked_for(leaving).unwrap(), 0);
+        assert_eq!(pool.announced_hashes_tracked_for(staying).unwrap(), 2);
+        assert_eq!(pool.provider_announcer_count(blob_tx).unwrap(), 1);
+        assert_eq!(
+            pool.pop_alternate(hashes[0])
+                .unwrap()
+                .map(|alt| alt.peer_id),
+            Some(staying)
+        );
+        assert!(pool.pop_alternate(hashes[1]).unwrap().is_none());
+        // Reservations are the session's to release, not this call's.
+        assert_eq!(pool.announced_hashes_tracked_for(primary).unwrap(), 3);
     }
 
     // --- RBF price-bump helpers --------------------------------------------
