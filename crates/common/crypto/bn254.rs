@@ -1,14 +1,14 @@
-//! BN254 (alt_bn128) G1 arithmetic behind the ECADD and ECMUL precompiles.
+//! BN254 (alt_bn128) arithmetic behind the ECADD, ECMUL and ECPAIRING precompiles.
 //!
-//! Field multiplication comes from `ark-bn254`. This module replaces the parts
-//! that dominate a single precompile call: decoding the inputs, the field
-//! inversion needed to return an affine point, and the scalar multiplication.
+//! Field multiplication, the Miller loop and the final exponentiation come from
+//! `ark-bn254`. This module replaces the parts that dominate a single precompile
+//! call: decoding the inputs, the field inversion needed to return an affine
+//! point, the scalar multiplication, and the G2 subgroup check.
 
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 use ark_bn254::{Bn254, Fq, Fq2, Fr, G1Affine, G2Affine, G2Projective};
 use ark_ec::pairing::Pairing;
-use ark_ec::scalar_mul::glv::GLVConfig;
 use ark_ec::{AffineRepr, PrimeGroup};
 use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, One, PrimeField, Zero};
 
@@ -87,11 +87,11 @@ pub(crate) fn g1_add(p1: &[u8], p2: &[u8]) -> Result<[u8; 64], CryptoError> {
 
 /// ECMUL: `k * p` for a 64-byte encoded point and a 32-byte big-endian scalar.
 pub(crate) fn g1_mul(point: &[u8], scalar: &[u8]) -> Result<[u8; 64], CryptoError> {
-    let Some((x, y)) = decode_g1(point)? else {
-        return Ok([0u8; 64]);
-    };
     let Some(scalar) = scalar.get(..32) else {
         return Err(CryptoError::InvalidInput("scalar must be 32 bytes"));
+    };
+    let Some((x, y)) = decode_g1(point)? else {
+        return Ok([0u8; 64]);
     };
     // The group order is prime, so multiplying by `k` equals multiplying by
     // `k mod r`.
@@ -101,7 +101,8 @@ pub(crate) fn g1_mul(point: &[u8], scalar: &[u8]) -> Result<[u8; 64], CryptoErro
     }
     // GLV pays a fixed cost for its table of odd multiples (two field inversions in
     // all), which a short scalar does not win back: for k = 2 double-and-add takes
-    // 0.95 us against 3.3 us. The two break even at about 19 bits.
+    // 0.95 us against 3.3 us. The two break even at about 19 bits for dense scalars
+    // (the worst case for double-and-add), so the cut-off at 16 bits leaves a margin.
     if k.into_bigint().num_bits() <= SMALL_SCALAR_BITS {
         return Ok(encode_g1(&mul_double_and_add(x, y, k)));
     }
@@ -371,8 +372,6 @@ fn mul_glv(x: Fq, y: Fq, k: Fr) -> G1 {
     };
 
     let table = odd_multiples(x, y);
-    // phi(x, y) = (beta * x, y) maps the table for P to the table for phi(P).
-    let beta = <ark_bn254::g1::Config as GLVConfig>::ENDO_COEFFS[0];
 
     let mut digits1 = [0i8; MAX_WNAF_DIGITS];
     let mut digits2 = [0i8; MAX_WNAF_DIGITS];
@@ -392,7 +391,8 @@ fn mul_glv(x: Fq, y: Fq, k: Fr) -> G1 {
         if d2 != 0 {
             let (px, py) = table[usize::from(d2.unsigned_abs() >> 1)];
             let negate = (d2 < 0) == k2_positive;
-            acc = acc.add_affine(beta * px, if negate { -py } else { py });
+            // phi(x, y) = (beta * x, y) maps the table for P to the table for phi(P).
+            acc = acc.add_affine(GLV_BETA * px, if negate { -py } else { py });
         }
     }
     acc.to_affine()
@@ -420,6 +420,12 @@ const GLV_G2: [u64; 2] = [0xd91d_232e_c7e0_b3d7, 0x2];
 const GLV_N11: u128 = 0x6f4d_8248_eeb8_59fc_8211_bbeb_7d4f_1128;
 const GLV_N12: u128 = 0x89d3_2568_94d2_13e3;
 const GLV_N22: u128 = 0x6f4d_8248_eeb8_59fd_0be4_e154_1221_250b;
+/// The cube root of unity in `Fq` with `(beta * x, y) = lambda * (x, y)` for the
+/// `lambda` this lattice is built for. Pinned here instead of read from arkworks, so
+/// the two cannot drift apart if a later arkworks release picks the other root.
+const GLV_BETA: Fq = ark_ff::MontFp!(
+    "21888242871839275220042445260109153167277707414472061641714758635765020556616"
+);
 
 /// Splits `k < r` into signed halves `(positive, |k1|), (positive, |k2|)` with
 /// `k = k1 + lambda * k2 (mod r)`.
@@ -511,10 +517,14 @@ fn wnaf(mut k: u128, digits: &mut [i8; MAX_WNAF_DIGITS]) -> usize {
                 k = sum;
                 carry |= overflow;
                 // `window - WINDOW` is in `(-2^(W-1), 0)`.
-                -(i8::try_from(WINDOW - window).unwrap_or(0))
+                let magnitude = i8::try_from(WINDOW - window);
+                debug_assert!(magnitude.is_ok(), "wNAF digit does not fit in i8");
+                -magnitude.unwrap_or(0)
             } else {
                 k -= window;
-                i8::try_from(window).unwrap_or(0)
+                let digit = i8::try_from(window);
+                debug_assert!(digit.is_ok(), "wNAF digit does not fit in i8");
+                digit.unwrap_or(0)
             }
         } else {
             0
@@ -542,6 +552,10 @@ fn odd_multiples(x: Fq, y: Fq) -> [(Fq, Fq); TABLE_SIZE] {
 
     // A multiple of P can only be infinity if P has small order, which the
     // prime-order group rules out; fall back to per-point conversion anyway.
+    debug_assert!(
+        !jacobian.iter().any(Jacobian::is_infinity),
+        "odd multiple of a G1 point is infinity"
+    );
     if jacobian.iter().any(Jacobian::is_infinity) {
         let mut table = [(x, y); TABLE_SIZE];
         for (entry, point) in table.iter_mut().zip(jacobian.iter()) {
@@ -558,7 +572,9 @@ fn odd_multiples(x: Fq, y: Fq) -> [(Fq, Fq); TABLE_SIZE] {
         prefix[i] = running;
         running *= point.z;
     }
-    let mut inv = inverse(&running).unwrap_or(Fq::ZERO);
+    let inv = inverse(&running);
+    debug_assert!(inv.is_some(), "product of nonzero z coordinates is zero");
+    let mut inv = inv.unwrap_or(Fq::ZERO);
     let mut table = [(x, y); TABLE_SIZE];
     for i in (0..TABLE_SIZE).rev() {
         let z_inv = inv * prefix[i];
@@ -1069,6 +1085,8 @@ mod tests {
         bad[63] = 1;
         assert!(g1_add(&bad, &[0u8; 64]).is_err());
         assert!(g1_mul(&bad, &[1u8; 32]).is_err());
+        // A short scalar is rejected even when the point is the identity.
+        assert!(g1_mul(&[0u8; 64], &[]).is_err());
         let mut too_big = [0xffu8; 64];
         too_big[32..].copy_from_slice(&[0u8; 32]);
         assert!(g1_add(&too_big, &[0u8; 64]).is_err());

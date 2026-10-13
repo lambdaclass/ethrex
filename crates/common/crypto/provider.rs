@@ -208,6 +208,8 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     /// G1 point addition. Used by ECADD precompile (0x06).
     /// Input: two uncompressed G1 points (64 bytes each as big-endian x||y).
     /// Output: uncompressed G1 point (64 bytes).
+    /// Callers must reject coordinates `>= p` first, as the precompile does: implementations
+    /// differ there (`NativeCrypto` rejects them, this default reduces them mod p).
     fn bn254_g1_add(&self, p1: &[u8], p2: &[u8]) -> Result<[u8; 64], CryptoError> {
         use ark_bn254::Fq;
         use ark_ec::CurveGroup;
@@ -246,6 +248,8 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     /// G1 scalar multiplication. Used by ECMUL precompile (0x07).
     /// Input: uncompressed G1 point (64 bytes) + scalar (32 bytes big-endian).
     /// Output: uncompressed G1 point (64 bytes).
+    /// Callers must reject coordinates `>= p` first, as the precompile does: implementations
+    /// differ there (`NativeCrypto` rejects them, this default reduces them mod p).
     fn bn254_g1_mul(&self, point: &[u8], scalar: &[u8]) -> Result<[u8; 64], CryptoError> {
         use ark_bn254::{Fq, Fr as FrArk};
         use ark_ec::CurveGroup;
@@ -284,6 +288,8 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     /// Pairing check. Used by ECPAIRING precompile (0x08).
     /// Input: pairs of (G1 64 bytes, G2 128 bytes) as raw byte slices.
     /// Returns true if the pairing equation holds.
+    /// Callers must reject coordinates `>= p` first, as the precompile does: implementations
+    /// differ there (`NativeCrypto` rejects them, this default reduces them mod p).
     fn bn254_pairing_check(&self, pairs: &[(&[u8], &[u8])]) -> Result<bool, CryptoError> {
         use ark_bn254::{Bn254, Fq, G1Affine, G2Affine};
         use ark_ec::pairing::Pairing;
