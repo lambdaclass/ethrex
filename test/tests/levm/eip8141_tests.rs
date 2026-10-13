@@ -5212,3 +5212,39 @@ fn unaffordable_access_wins_over_unfunded_value() {
         "frame must be billed its limit, not the access cost"
     );
 }
+
+/// EIP-8141 orders a frame's entry as the target's access charge, then the balance
+/// check, then dispatch, which is where an EIP-7702 delegation is followed. A frame
+/// whose sender cannot fund its `value` therefore reverts having paid the target's
+/// access alone, even when its limit could not have covered the delegate's access
+/// on top: it never reaches the delegate.
+#[test]
+fn unfunded_value_reverts_before_the_delegate_is_charged() {
+    let recipient = Address::from_low_u64_be(0xBEEF);
+    let delegate = Address::from_low_u64_be(0xDE1E);
+    let mut delegation = ethrex_levm::constants::SET_CODE_DELEGATION_BYTES.to_vec();
+    delegation.extend_from_slice(delegate.as_bytes());
+    let target_access = ethrex_levm::gas_cost::cold_account_access_cost(Fork::Hegota);
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        sender_frame(recipient, U256::MAX, target_access + 1),
+    ]);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            U256::from(10u64).pow(U256::from(18u64)),
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (recipient, U256::zero(), 0, Bytes::from(delegation)),
+        (delegate, U256::zero(), 0, Bytes::from_static(&[0x00])),
+    ];
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("tx is valid");
+    let frames = report.frame_results.as_ref().expect("frame results");
+    assert_ne!(frames[1].0, FRAME_RECEIPT_STATUS_SUCCESS);
+    assert_eq!(
+        frames[1].1, target_access,
+        "the unfunded transfer reverts paying the target's access, not its whole limit"
+    );
+}

@@ -2554,10 +2554,6 @@ impl FrameTransaction {
     /// Validate static constraints per EIP-8141 spec.
     /// Returns an error string if the transaction is invalid.
     pub fn validate_static_constraints(&self) -> Result<(), String> {
-        // tx.sender != zero address
-        if self.sender == Address::zero() {
-            return Err("tx.sender must not be zero address".to_string());
-        }
         // EIP-8250: one to sixteen strictly increasing keys, key 0 only as `[0]`.
         if self.nonce_keys.is_empty() || self.nonce_keys.len() > FRAME_TX_MAX_NONCE_KEYS {
             return Err(format!(

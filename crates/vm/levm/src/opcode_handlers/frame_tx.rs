@@ -221,6 +221,15 @@ impl OpcodeHandler for OpApproveHandler {
         let [offset, length, scope] = *vm.current_call_frame.stack.pop()?;
         let (length, offset) = size_offset_to_usize(length, offset)?;
 
+        // The memory expansion of the return-data region is APPROVE's gas cost, as
+        // for RETURN, so it is charged before any check that refuses the approval: a
+        // refused APPROVE reverts its call frame having paid it.
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::exit_opcode(
+                calculate_memory_size(offset, length)?,
+                vm.current_call_frame.memory.len(),
+            )?)?;
+
         // Must be in a frame transaction context
         let ctx = vm
             .frame_tx_context
@@ -258,13 +267,6 @@ impl OpcodeHandler for OpApproveHandler {
         if scope_val == 0 || scope_val > 3 || (scope_val & u64::from(allowed_scope)) != scope_val {
             return Err(VMError::RevertOpcode);
         }
-
-        // Charge gas (memory expansion, same as RETURN)
-        vm.current_call_frame
-            .increase_consumed_gas(gas_cost::exit_opcode(
-                calculate_memory_size(offset, length)?,
-                vm.current_call_frame.memory.len(),
-            )?)?;
 
         apply_approve(vm, scope_val, frame_target)?;
 

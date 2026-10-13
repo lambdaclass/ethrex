@@ -2329,7 +2329,30 @@ impl<'a> VM<'a> {
                 target,
                 self.env.config.fork,
             )?;
-            let delegation_access_cost = delegation.map_or(0, |(_, cost)| cost);
+
+            // EIP-8141 top-level value transfer: the outer
+            // frame call owns CALLVALUE delivery. We only CHECK affordability
+            // here; the actual transfer runs inside whichever branch executes
+            // the frame, so it is recorded in the backup that branch restores on
+            // failure (fixes the value-leak where a reverting contract-target
+            // SENDER frame kept the funds). Static validation guarantees only
+            // SENDER frames reach here with a non-zero value.
+            let value_transfer_reverted = if !frame.value.is_zero() {
+                let sender_balance = self.db.get_account(sender)?.info.balance;
+                frame_value_exceeds_balance(sender_balance, frame.value)
+            } else {
+                false
+            };
+
+            // EIP-8141 orders the frame's entry as the target's access charge, then
+            // the balance check, then dispatch, and following a delegation is part of
+            // dispatch. A frame whose value transfer fails reverts at the balance
+            // check, so it neither pays for nor reads its target's delegate.
+            let delegation_access_cost = if value_transfer_reverted {
+                0
+            } else {
+                delegation.map_or(0, |(_, cost)| cost)
+            };
 
             // EIP-8141, Execution: a VERIFY frame whose resolved target has no code
             // runs the protocol default code *instead of* an EVM. Every other frame —
@@ -2413,7 +2436,9 @@ impl<'a> VM<'a> {
             // ADDRESS and storage stay tied to the delegator, which is why `to` below
             // stays `target` and only `code_address` moves.
             let (code_address, bytecode) = match delegation {
-                Some((auth_address, _)) if !frame_entry_unaffordable => {
+                Some((auth_address, _))
+                    if !frame_entry_unaffordable && !value_transfer_reverted =>
+                {
                     self.substate.add_accessed_address(auth_address);
                     if let Some(recorder) = self.db.bal_recorder.as_mut() {
                         recorder.record_touched_address(auth_address);
@@ -2423,20 +2448,6 @@ impl<'a> VM<'a> {
                 }
                 Some((auth_address, _)) => (auth_address, target_bytecode),
                 None => (target, target_bytecode),
-            };
-
-            // EIP-8141 top-level value transfer: the outer
-            // frame call owns CALLVALUE delivery. We only CHECK affordability
-            // here; the actual transfer runs inside whichever branch executes
-            // the frame, so it is recorded in the backup that branch restores on
-            // failure (fixes the value-leak where a reverting contract-target
-            // SENDER frame kept the funds). Static validation guarantees only
-            // SENDER frames reach here with a non-zero value.
-            let value_transfer_reverted = if !frame.value.is_zero() {
-                let sender_balance = self.db.get_account(sender)?.info.balance;
-                frame_value_exceeds_balance(sender_balance, frame.value)
-            } else {
-                false
             };
 
             // Performs the deferred SENDER-frame value transfer + EIP-7708 log.
