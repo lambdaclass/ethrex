@@ -1645,6 +1645,7 @@ impl LEVM {
                 let mut stack_pool = Vec::with_capacity(8);
                 // Holds at most one root memory buffer (popped + reclaimed per tx).
                 let mut memory_pool = Vec::with_capacity(1);
+                // Per-tx like the pools above: buffers are reused only within this tx.
                 let mut calldata_pool = Vec::new();
                 let mut initcode_pool = Vec::new();
 
@@ -3269,6 +3270,7 @@ impl LEVM {
                 // init; keep it local to this group's run, where it still amortizes the buffer
                 // alloc across the group's txs.
                 let mut memory_pool = Vec::with_capacity(1);
+                // Local to the group like `memory_pool`, reused across the group's txs.
                 let mut calldata_pool = Vec::new();
                 let mut initcode_pool = Vec::new();
                 // Each sender group gets its own db instance for state propagation
