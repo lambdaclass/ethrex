@@ -34,7 +34,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-6e750a07.js";
+            window.path_to_searchindex_js = "searchindex-767f4c70.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-f6d73635.js"></script>
@@ -481,6 +481,12 @@ RPC options:
           [env: ETHREX_AUTHRPC_JWTSECRET_PATH=]
           [default: jwt.hex]
 
+      --authrpc.max-inflight-body-size &lt;BYTES&gt;
+          Maximum request body bytes the authenticated rpc server holds at once, across all connections. It counts body bytes, not all the memory a request takes: parsing one uses about as much again. A request whose Content-Length does not fit waits up to 8 seconds for other requests to finish, and is then rejected with HTTP 503 before its body is read. A chunked body is counted as its chunks arrive, and gets the same 503 if a chunk finds no room within 8 seconds. Each request body is also capped at 128 MiB, and a larger one is rejected with HTTP 413. Must be at least that cap, 134217728.
+          
+          [env: ETHREX_AUTHRPC_MAX_INFLIGHT_BODY_SIZE=]
+          [default: 536870912]
+
 Block building options:
       --builder.extra-data &lt;EXTRA_DATA&gt;
           Block extra data message.
@@ -690,6 +696,12 @@ RPC options:
 
           [env: ETHREX_AUTHRPC_JWTSECRET_PATH=]
           [default: jwt.hex]
+
+      --authrpc.max-inflight-body-size &lt;BYTES&gt;
+          Maximum request body bytes the authenticated rpc server holds at once, across all connections. It counts body bytes, not all the memory a request takes: parsing one uses about as much again. A request whose Content-Length does not fit waits up to 8 seconds for other requests to finish, and is then rejected with HTTP 503 before its body is read. A chunked body is counted as its chunks arrive, and gets the same 503 if a chunk finds no room within 8 seconds. Each request body is also capped at 128 MiB, and a larger one is rejected with HTTP 413. Must be at least that cap, 134217728.
+
+          [env: ETHREX_AUTHRPC_MAX_INFLIGHT_BODY_SIZE=]
+          [default: 536870912]
 
 Block building options:
       --builder.extra-data &lt;EXTRA_DATA&gt;
