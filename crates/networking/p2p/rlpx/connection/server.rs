@@ -123,6 +123,10 @@ const SERVE_REQUEST_WINDOW: Duration = Duration::from_secs(60);
 const MAX_SERVE_REQUESTS_PER_WINDOW: u64 = 500;
 /// Number of transactions sent to a peer before checking for leeching behaviour.
 const LEECH_TX_SENT_THRESHOLD: u64 = 10_000;
+/// Maximum number of transaction hashes a peer may announce within one rate-limit window
+/// (`SERVE_REQUEST_WINDOW`): on average one full announcement, the devp2p soft limit of 4096
+/// hashes, per second. A peer dumping its whole pool on connect stays far below it.
+const MAX_ANNOUNCED_HASHES_PER_WINDOW: u64 = 4096 * SERVE_REQUEST_WINDOW.as_secs();
 /// Strikes at which a peer that keeps answering `GetPooledTransactions` with little of what it
 /// announced is dropped. A short answer (see `is_short_tx_answer`) adds one and any other answer
 /// takes one off, so an honest peer that now and then no longer holds what it announced (the tx
@@ -360,6 +364,10 @@ pub struct Established {
     pub(crate) serve_request_window_start: Instant,
     // Rate limiting: number of data-serving requests received in the current window
     pub(crate) serve_requests_in_window: u64,
+    // Rate limiting: start of the current transaction-announcement window
+    pub(crate) announcement_window_start: Instant,
+    // Rate limiting: transaction hashes announced in the current window
+    pub(crate) announced_hashes_in_window: u64,
     // Under-delivery: net count of short answers to our GetPooledTransactions requests
     pub(crate) short_tx_answer_strikes: u32,
     // Leech detection: total transactions sent to this peer via GetPooledTransactions responses
@@ -1494,6 +1502,21 @@ fn check_serve_request_rate(state: &mut Established) -> bool {
     state.serve_requests_in_window <= MAX_SERVE_REQUESTS_PER_WINDOW
 }
 
+/// Returns true if the peer is within its rate limit for announced transaction hashes, false if
+/// exceeded. An announcement counts as the hashes it carries, and at least one, so a flood of
+/// empty announcements is limited too. Uses the same fixed window as `check_serve_request_rate`.
+fn check_announcement_rate(state: &mut Established, hashes: usize) -> bool {
+    let now = Instant::now();
+    if now.duration_since(state.announcement_window_start) >= SERVE_REQUEST_WINDOW {
+        state.announcement_window_start = now;
+        state.announced_hashes_in_window = 0;
+    }
+    state.announced_hashes_in_window = state
+        .announced_hashes_in_window
+        .saturating_add(hashes.max(1) as u64);
+    state.announced_hashes_in_window <= MAX_ANNOUNCED_HASHES_PER_WINDOW
+}
+
 /// Whether an answer to `GetPooledTransactions` delivered too little of what was asked. devp2p
 /// lets a peer skip transactions it no longer holds and stop at its own response limit
 /// (go-ethereum stops past 2 MiB, we stop just before it, and one blob transaction can take up
@@ -1591,6 +1614,31 @@ async fn handle_incoming_message(
             peer = %state.node,
             window_requests = state.serve_requests_in_window,
             "Disconnecting peer: exceeded incoming request rate limit",
+        );
+        send_disconnect_message(state, Some(DisconnectReason::UselessPeer)).await;
+        return Err(PeerConnectionError::DisconnectSent(
+            DisconnectReason::UselessPeer,
+        ));
+    }
+
+    // Rate-limit transaction announcements by the hashes they carry: each one costs a pass over
+    // its hashes under the mempool lock, even when every hash is already known.
+    let announced_hashes = match &message {
+        Message::NewPooledTransactionHashes(announcement) => {
+            Some(announcement.transaction_hashes.len())
+        }
+        Message::NewPooledTransactionHashes72(announcement) => {
+            Some(announcement.transaction_hashes.len())
+        }
+        _ => None,
+    };
+    if let Some(hashes) = announced_hashes
+        && !check_announcement_rate(state, hashes)
+    {
+        debug!(
+            peer = %state.node,
+            window_hashes = state.announced_hashes_in_window,
+            "Disconnecting peer: exceeded transaction announcement rate limit",
         );
         send_disconnect_message(state, Some(DisconnectReason::UselessPeer)).await;
         return Err(PeerConnectionError::DisconnectSent(
@@ -3033,6 +3081,8 @@ mod tx_announcement_tests {
             is_validated: true,
             serve_request_window_start: Instant::now(),
             serve_requests_in_window: 0,
+            announcement_window_start: Instant::now(),
+            announced_hashes_in_window: 0,
             short_tx_answer_strikes: 0,
             txs_sent_to_peer: 0,
             received_txs_from_peer: false,
@@ -3251,6 +3301,30 @@ mod tx_announcement_tests {
         let large = vec![MAX_POOLED_RESPONSE_BYTES / 4; 8];
         assert!(!is_short_tx_answer(&hashes, &large, &delivered(1)));
         assert!(!is_short_tx_answer(&[], &[], &delivered(0)));
+    }
+
+    #[tokio::test]
+    async fn announcing_past_the_rate_limit_disconnects_the_peer() {
+        for eth_version in [68, 72] {
+            let (mut state, _outbound) = session(eth_version);
+            let full = announcement(eth_version, &txs(0, 4096));
+            let allowed = MAX_ANNOUNCED_HASHES_PER_WINDOW / 4096;
+            for _ in 0..allowed {
+                handle_incoming_message(&mut state, full.clone())
+                    .await
+                    .expect("within the announcement rate limit");
+            }
+            let result = handle_incoming_message(&mut state, announcement(eth_version, &[])).await;
+            assert!(
+                matches!(
+                    result,
+                    Err(PeerConnectionError::DisconnectSent(
+                        DisconnectReason::UselessPeer
+                    ))
+                ),
+                "eth/{eth_version}: got {result:?}"
+            );
+        }
     }
 }
 
