@@ -1411,8 +1411,8 @@ impl Mempool {
             if room == 0 {
                 debug!(
                     peer = %format!("{announcer:#x}"),
-                    dropped = hashes.len() - i,
-                    "Peer reached its announced-hash budget, dropping the rest of its announcement"
+                    unprocessed = hashes.len() - i,
+                    "Peer reached its announced-hash budget, ignoring the rest of its announcement"
                 );
                 break;
             }
@@ -1807,12 +1807,22 @@ impl Mempool {
         let mut guard = self.write()?;
         let inner = &mut *guard;
         let held = inner.announced_per_peer.get(&peer_id).copied().unwrap_or(0);
-        let announcers = inner.provider_announcers.entry(tx_hash).or_default();
-        if !announcers.contains(&peer_id) && held < MAX_ANNOUNCED_HASHES_PER_PEER {
-            announcers.insert(peer_id);
+        let recorded = inner
+            .provider_announcers
+            .get(&tx_hash)
+            .is_some_and(|announcers| announcers.contains(&peer_id));
+        if !recorded && held < MAX_ANNOUNCED_HASHES_PER_PEER {
+            inner
+                .provider_announcers
+                .entry(tx_hash)
+                .or_default()
+                .insert(peer_id);
             charge_announcer(&mut inner.announced_per_peer, peer_id);
         }
-        Ok(announcers.len())
+        Ok(inner
+            .provider_announcers
+            .get(&tx_hash)
+            .map_or(0, |announcers| announcers.len()))
     }
 
     /// Record the cell mask advertised by a peer in a NewPooledTransactionHashes72 message.
@@ -2893,7 +2903,13 @@ mod tests {
             peer,
         );
         assert_eq!(pool.record_provider_announcement(blob_tx, peer).unwrap(), 0);
-        assert_eq!(pool.provider_announcer_count(blob_tx).unwrap(), 0);
+        assert!(
+            !pool
+                .read()
+                .unwrap()
+                .provider_announcers
+                .contains_key(&blob_tx)
+        );
     }
 
     #[test]
