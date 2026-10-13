@@ -1712,9 +1712,18 @@ async fn handle_incoming_message(
                     .map(|tx| tx.hash(&NativeCrypto))
                     .collect();
 
+                // Tell the broadcaster right away that the peer knows these, before
+                // any of them can reach the pool: it only tracks hashes to avoid
+                // re-broadcasting to the sender, and the actual broadcast happens on
+                // a periodic timer that queries the mempool directly. Those the pool
+                // does not keep are forgotten again once insertion is done.
+                let peer_id = state.node.node_id();
+                let marked = state.tx_broadcaster.add_txs(tx_hashes.clone(), peer_id);
+
                 // Offload pool insertion to a background task so we don't block
                 // the ConnectionServer (validation + signature recovery are expensive).
                 let blockchain = state.blockchain.clone();
+                let tx_broadcaster = state.tx_broadcaster.clone();
                 let peer = state.node.to_string();
                 #[cfg(feature = "l2")]
                 let is_l2_mode = state.l2_state.is_supported();
@@ -1737,15 +1746,18 @@ async fn handle_incoming_message(
                             );
                         }
                     }
+                    let not_admitted: Vec<H256> = tx_hashes
+                        .into_iter()
+                        .filter(|hash| !blockchain.mempool.contains_tx(*hash).unwrap_or(false))
+                        .collect();
+                    if !not_admitted.is_empty()
+                        && let Err(e) = tx_broadcaster.forget_txs(not_admitted, peer_id)
+                    {
+                        debug!(peer=%peer, error=%e, "Failed to forget unadmitted transactions");
+                    }
                 });
 
-                // Notify the broadcaster immediately — it only tracks hashes
-                // to avoid re-broadcasting to the sender. The actual broadcast
-                // happens on a periodic timer that queries the mempool directly.
-                state
-                    .tx_broadcaster
-                    .add_txs(tx_hashes, state.node.node_id())
-                    .map_err(|e| PeerConnectionError::BroadcastError(e.to_string()))?;
+                marked.map_err(|e| PeerConnectionError::BroadcastError(e.to_string()))?;
             }
         }
         Message::GetBlockHeaders(msg_data) if peer_supports_eth => {
