@@ -31,7 +31,7 @@ use ethrex_common::{
     Address, BigEndianHash, H160, H256, U256,
     tracing::CallType,
     types::{
-        AccessListEntry, Code, Fork, Frame, FrameMode, Log, Transaction, TxType,
+        AccessListEntry, Code, Fork, Frame, FrameMode, InitcodeBuffer, Log, Transaction, TxType,
         block_access_list::BlockAccessListCheckpoint, fee_config::FeeConfig,
     },
 };
@@ -632,7 +632,7 @@ pub struct VM<'a> {
     pub calldata_pool: Vec<BytesMut>,
     /// Pool of reusable initcode buffers for CREATE frames, for the same reason as
     /// `calldata_pool`: each CREATE would otherwise allocate its initcode afresh.
-    pub initcode_pool: Vec<BytesMut>,
+    pub initcode_pool: Vec<InitcodeBuffer>,
     /// VM type (L1 or L2 with fee config).
     pub vm_type: VMType,
     /// Frame transaction context (EIP-8141). Set when executing a frame tx.
@@ -953,7 +953,7 @@ impl<'a> VM<'a> {
         stack_pool: &mut Vec<Stack>,
         memory_pool: &mut Vec<Memory>,
         calldata_pool: &mut Vec<BytesMut>,
-        initcode_pool: &mut Vec<BytesMut>,
+        initcode_pool: &mut Vec<InitcodeBuffer>,
     ) -> Result<Self, VMError> {
         // Reuse a pooled stack for the root frame. `clear()` only resets the offset (no zeroing),
         // which is sound because the EVM never reads stack slots it didn't write — the same
@@ -996,7 +996,7 @@ impl<'a> VM<'a> {
         stack_pool: &mut Vec<Stack>,
         memory_pool: &mut Vec<Memory>,
         calldata_pool: &mut Vec<BytesMut>,
-        initcode_pool: &mut Vec<BytesMut>,
+        initcode_pool: &mut Vec<InitcodeBuffer>,
     ) {
         // Hand the internal sub-frame pool back to the caller first.
         mem::swap(&mut self.stack_pool, stack_pool);

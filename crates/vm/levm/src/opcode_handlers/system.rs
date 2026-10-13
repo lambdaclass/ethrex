@@ -21,11 +21,11 @@ use crate::{
     utils::{address_to_word, create_eth_transfer_log, word_to_address, *},
     vm::VM,
 };
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use ethrex_common::{Address, U256, evm::calculate_create_address, types::Fork};
 use ethrex_common::{
     tracing::CallType,
-    types::{BYTECODE_PADDING, Code},
+    types::{Code, InitcodeBuffer},
 };
 use std::mem;
 
@@ -879,7 +879,6 @@ impl<'a> VM<'a> {
         // when the CREATE starts one. On every other exit, an error included, it goes back to
         // the pool here: a buffer dropped instead is never reclaimed by a bump allocator.
         let mut initcode = self.initcode_pool.pop().unwrap_or_default();
-        initcode.clear();
         let result = self.create_with_initcode_buffer(
             &mut initcode,
             value,
@@ -887,17 +886,15 @@ impl<'a> VM<'a> {
             code_size_in_memory,
             salt,
         );
-        if initcode.capacity() > 0 {
-            self.initcode_pool.push(initcode);
-        }
+        self.pool_initcode(initcode);
         result
     }
 
-    /// [`VM::generic_create`] with `initcode`, an empty buffer to copy the initcode into. It is
-    /// taken, leaving an empty one with no allocation, only when the child frame starts.
+    /// [`VM::generic_create`] with `initcode`, a buffer to copy the initcode into. It is taken,
+    /// leaving an empty one with no allocation, only when the child frame starts.
     fn create_with_initcode_buffer(
         &mut self,
-        initcode: &mut BytesMut,
+        initcode: &mut InitcodeBuffer,
         value: U256,
         code_offset_in_memory: usize,
         code_size_in_memory: usize,
@@ -923,16 +920,11 @@ impl<'a> VM<'a> {
         // Clear callframe subreturn data
         current_call_frame.sub_return_data = Bytes::new();
 
-        // Copy the initcode out of memory, once, with room for the padding `Code` appends to
-        // it: padding a buffer sized to the bare initcode would grow it to twice that by
-        // copying it.
+        // Copy the initcode out of memory, once, into the reused buffer.
         self.current_call_frame.memory.with_range(
             code_offset_in_memory,
             code_size_in_memory,
-            |code| {
-                initcode.reserve(code.len().saturating_add(BYTECODE_PADDING));
-                initcode.extend_from_slice(code);
-            },
+            |code| initcode.set(code),
         )?;
 
         // Get account info of deployer
@@ -944,7 +936,7 @@ impl<'a> VM<'a> {
 
         // Calculate create address
         let new_address = match salt {
-            Some(salt) => calculate_create2_address(deployer, initcode, salt)?,
+            Some(salt) => calculate_create2_address(deployer, initcode.initcode(), salt)?,
             None => calculate_create_address(deployer, deployer_nonce),
         };
 
@@ -984,7 +976,7 @@ impl<'a> VM<'a> {
                         new_address,
                         value,
                         preview_gas,
-                        &Bytes::copy_from_slice(initcode),
+                        &Bytes::copy_from_slice(initcode.initcode()),
                     );
                 }
                 self.current_call_frame.stack.push(FAIL)?;
@@ -1037,7 +1029,7 @@ impl<'a> VM<'a> {
                 new_address,
                 value,
                 gas_limit,
-                &Bytes::copy_from_slice(initcode),
+                &Bytes::copy_from_slice(initcode.initcode()),
             );
         }
 
@@ -1626,10 +1618,17 @@ impl<'a> VM<'a> {
         Ok(buffer.freeze())
     }
 
-    /// Returns a finished CREATE frame's initcode buffer to the pool, unless something still
-    /// references it.
+    /// Returns a finished CREATE frame's initcode buffers to the pool, except those something
+    /// still references.
     fn recycle_initcode(&mut self, code: Code) {
-        if let Some(buffer) = code.into_initcode_buffer() {
+        self.pool_initcode(code.into_initcode_buffer());
+    }
+
+    /// Keeps `buffer` for the next CREATE, emptied, so no CREATE can build another one's
+    /// initcode from the pool. A buffer holding no allocation is not worth keeping.
+    fn pool_initcode(&mut self, mut buffer: InitcodeBuffer) {
+        if buffer.is_allocated() {
+            buffer.clear();
             self.initcode_pool.push(buffer);
         }
     }

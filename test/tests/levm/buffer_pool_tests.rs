@@ -9,9 +9,10 @@
 use bytes::{Bytes, BytesMut};
 use ethrex_common::{
     Address, H256, U256,
+    evm::calculate_create_address,
     types::{
         Account, AccountState, ChainConfig, Code, CodeMetadata, EIP1559Transaction, Fork,
-        Transaction, TxKind,
+        InitcodeBuffer, Transaction, TxKind,
     },
 };
 use ethrex_crypto::NativeCrypto;
@@ -19,7 +20,7 @@ use ethrex_levm::{
     call_frame::Stack,
     db::{Database, gen_db::GeneralizedDatabase},
     environment::{EVMConfig, Environment},
-    errors::DatabaseError,
+    errors::{DatabaseError, ExecutionReport},
     memory::Memory,
     precompiles::PrecompileCache,
     tracing::LevmCallTracer,
@@ -44,6 +45,10 @@ const GAS_LIMIT: u64 = 10_000_000;
 /// Covers a CREATE's regular cost (about 32k gas) but not the 183,600 state gas a new
 /// account is charged from it under Amsterdam.
 const CREATOR_GAS: u16 = 50_000;
+/// Enough for a contract calling itself to reach the depth limit: each call passes on at
+/// most 63/64 of the gas left, so the first frame needs about 10^7 times what the last one
+/// spends. Far more than Amsterdam lets one transaction have, so it runs on Prague.
+const DEPTH_GAS_LIMIT: u64 = 1_000_000_000_000;
 
 /// [`TestDatabase`] plus the precompile result cache that block execution has.
 struct WithPrecompileCache {
@@ -127,10 +132,30 @@ fn call_with_gas(target: Address, gas: u16) -> Bytes {
     Bytes::from(code)
 }
 
+/// Calls `target`, or the running contract itself when `None`, once with all its gas, `value`
+/// wei and `ARGS_SIZE` bytes of memory as arguments.
+fn call_once(target: Option<Address>, value: u8) -> Bytes {
+    let mut code = vec![0x60, 0x00, 0x60, 0x00]; // retSize, retOffset
+    code.push(0x61); // PUSH2 argsSize
+    code.extend_from_slice(&ARGS_SIZE.to_be_bytes());
+    code.extend_from_slice(&[0x60, 0x00, 0x60, value]); // argsOffset, value
+    match target {
+        Some(target) => {
+            code.push(0x73); // PUSH20 target
+            code.extend_from_slice(target.as_bytes());
+        }
+        None => code.push(0x30), // ADDRESS
+    }
+    code.extend_from_slice(&[0x5a, 0xf1, 0x00]); // GAS, CALL, STOP
+    Bytes::from(code)
+}
+
 /// Capacities of the buffers left in the VM's pools after a transaction.
 struct Pools {
     calldata: Vec<usize>,
     initcode: Vec<usize>,
+    /// How many bytes of initcode each pooled initcode buffer still holds.
+    initcode_held: Vec<usize>,
 }
 
 /// Runs a transaction into the caller contract and returns the capacities of the buffers
@@ -139,8 +164,8 @@ fn pooled_buffer_capacities(target: Address) -> Vec<usize> {
     run_caller(call_loop(target, CALLS), None).calldata
 }
 
-/// The state for a transaction into a contract with `caller_code`.
-fn caller_db(caller_code: Bytes, precompile_cache: Option<PrecompileCache>) -> GeneralizedDatabase {
+/// The accounts for a transaction into a contract with `caller_code`.
+fn caller_accounts(caller_code: Bytes) -> FxHashMap<Address, Account> {
     let mut accounts: FxHashMap<Address, Account> = FxHashMap::default();
     accounts.insert(
         Address::from_low_u64_be(ORIGIN),
@@ -178,6 +203,18 @@ fn caller_db(caller_code: Bytes, precompile_cache: Option<PrecompileCache>) -> G
             FxHashMap::default(),
         ),
     );
+    accounts
+}
+
+/// The state for a transaction into a contract with `caller_code`.
+fn caller_db(caller_code: Bytes, precompile_cache: Option<PrecompileCache>) -> GeneralizedDatabase {
+    db_with(caller_accounts(caller_code), precompile_cache)
+}
+
+fn db_with(
+    accounts: FxHashMap<Address, Account>,
+    precompile_cache: Option<PrecompileCache>,
+) -> GeneralizedDatabase {
     let mut store = TestDatabase::new();
     store.accounts = accounts.clone();
     let store = WithPrecompileCache {
@@ -188,11 +225,10 @@ fn caller_db(caller_code: Bytes, precompile_cache: Option<PrecompileCache>) -> G
 }
 
 /// The environment of a transaction from `ORIGIN`.
-fn caller_env() -> Environment {
-    let fork = Fork::Amsterdam;
+fn caller_env(fork: Fork, gas_limit: u64) -> Environment {
     Environment {
         origin: Address::from_low_u64_be(ORIGIN),
-        gas_limit: GAS_LIMIT,
+        gas_limit,
         config: EVMConfig::new(fork, EVMConfig::canonical_values(fork)),
         block_number: 1,
         coinbase: Address::from_low_u64_be(0xCCC),
@@ -211,7 +247,7 @@ fn caller_env() -> Environment {
         tx_max_fee_per_gas: Some(U256::zero()),
         tx_max_fee_per_blob_gas: None,
         tx_nonce: 0,
-        block_gas_limit: 30_000_000,
+        block_gas_limit: gas_limit.max(30_000_000),
         is_privileged: false,
         fee_token: None,
         disable_balance_check: true,
@@ -223,10 +259,10 @@ fn caller_env() -> Environment {
 }
 
 /// A transaction into the caller contract.
-fn caller_tx() -> Transaction {
+fn caller_tx(gas_limit: u64) -> Transaction {
     Transaction::EIP1559Transaction(EIP1559Transaction {
         chain_id: 1,
-        gas_limit: GAS_LIMIT,
+        gas_limit,
         to: TxKind::Call(Address::from_low_u64_be(CALLER)),
         ..Default::default()
     })
@@ -234,10 +270,19 @@ fn caller_tx() -> Transaction {
 
 /// Runs a transaction into a contract with `caller_code`.
 fn run_caller(caller_code: Bytes, precompile_cache: Option<PrecompileCache>) -> Pools {
-    let mut db = caller_db(caller_code, precompile_cache);
-    let tx = caller_tx();
+    run_on(
+        caller_db(caller_code, precompile_cache),
+        Fork::Amsterdam,
+        GAS_LIMIT,
+    )
+    .0
+}
+
+/// Runs a transaction into the caller contract in `db`, on `fork` with `gas_limit`.
+fn run_on(mut db: GeneralizedDatabase, fork: Fork, gas_limit: u64) -> (Pools, ExecutionReport) {
+    let tx = caller_tx(gas_limit);
     let mut vm = VM::new(
-        caller_env(),
+        caller_env(fork, gas_limit),
         &mut db,
         &tx,
         LevmCallTracer::disabled(),
@@ -248,10 +293,20 @@ fn run_caller(caller_code: Bytes, precompile_cache: Option<PrecompileCache>) -> 
     .expect("VM::new");
     let report = vm.execute().expect("execute");
     assert!(report.is_success(), "caller tx failed: {:?}", report.result);
-    Pools {
+    let pools = Pools {
         calldata: vm.calldata_pool.iter().map(BytesMut::capacity).collect(),
-        initcode: vm.initcode_pool.iter().map(BytesMut::capacity).collect(),
-    }
+        initcode: vm
+            .initcode_pool
+            .iter()
+            .map(InitcodeBuffer::capacity)
+            .collect(),
+        initcode_held: vm
+            .initcode_pool
+            .iter()
+            .map(|buffer| buffer.initcode().len())
+            .collect(),
+    };
+    (pools, report)
 }
 
 /// The buffer pools block execution keeps across its transactions.
@@ -260,16 +315,16 @@ struct BlockPools {
     stacks: Vec<Stack>,
     memories: Vec<Memory>,
     calldata: Vec<BytesMut>,
-    initcode: Vec<BytesMut>,
+    initcode: Vec<InitcodeBuffer>,
 }
 
 /// Runs a transaction into a contract with `caller_code` the way block execution does:
 /// the VM draws its buffers from `pools` and returns them there afterwards.
 fn run_pooled(caller_code: Bytes, pools: &mut BlockPools) {
     let mut db = caller_db(caller_code, None);
-    let tx = caller_tx();
+    let tx = caller_tx(GAS_LIMIT);
     let mut vm = VM::new_pooled(
-        caller_env(),
+        caller_env(Fork::Amsterdam, GAS_LIMIT),
         &mut db,
         &tx,
         LevmCallTracer::disabled(),
@@ -355,6 +410,8 @@ fn a_create_that_fails_after_copying_its_initcode_returns_the_buffer() {
     );
 
     assert_eq!(pools.initcode.len(), 1);
+    // Emptied before it went back: no CREATE can run another one's initcode from the pool.
+    assert_eq!(pools.initcode_held, [0]);
 }
 
 #[test]
@@ -379,9 +436,54 @@ fn consecutive_transactions_reuse_one_initcode_buffer() {
 
     run_pooled(create_loop(1), &mut pools);
     assert_eq!(pools.initcode.len(), 1);
-    let first = pools.initcode[0].as_ptr();
+    let first = pools.initcode[0].initcode().as_ptr();
     run_pooled(create_loop(1), &mut pools);
 
     assert_eq!(pools.initcode.len(), 1);
-    assert_eq!(pools.initcode[0].as_ptr(), first);
+    assert_eq!(pools.initcode[0].initcode().as_ptr(), first);
+}
+
+#[test]
+fn a_call_without_the_funds_for_its_value_returns_its_calldata_buffer() {
+    // The caller holds no ether, so the call fails before any frame is created.
+    let caller_code = call_once(Some(Address::from_low_u64_be(CALLEE)), 1);
+
+    let pools = run_caller(caller_code, None);
+
+    assert_eq!(pools.calldata.len(), 1);
+}
+
+#[test]
+fn a_call_past_the_depth_limit_returns_its_calldata_buffer() {
+    // The caller calls itself until the call made at depth 1024 fails. Each of the 1024
+    // frames below the root returns its buffer when it ends, and the failed call returns
+    // the one it took.
+    let db = caller_db(call_once(None, 0), None);
+
+    let (pools, _) = run_on(db, Fork::Prague, DEPTH_GAS_LIMIT);
+
+    assert_eq!(pools.calldata.len(), 1025);
+}
+
+#[test]
+fn a_create_at_an_existing_address_returns_its_initcode_buffer() {
+    // The caller's first CREATE goes to the address given by its nonce of 1, which already
+    // holds an account.
+    let caller = Address::from_low_u64_be(CALLER);
+    let mut accounts = caller_accounts(create_once());
+    accounts.insert(
+        calculate_create_address(caller, 1),
+        Account::new(U256::zero(), Code::default(), 1, FxHashMap::default()),
+    );
+
+    let (pools, report) = run_on(db_with(accounts, None), Fork::Amsterdam, GAS_LIMIT);
+
+    // A collision consumes all the gas handed to the creation, which a CREATE that went
+    // ahead and ran the empty initcode would mostly give back.
+    assert!(
+        report.gas_used > GAS_LIMIT / 2,
+        "the CREATE did not collide"
+    );
+    assert_eq!(pools.initcode, [usize::from(INITCODE_SIZE) + 33]);
+    assert_eq!(pools.initcode_held, [0]);
 }

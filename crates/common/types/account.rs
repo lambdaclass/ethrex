@@ -24,6 +24,92 @@ use crate::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH};
 /// placeholder and every EOA / empty-code load would otherwise each allocate.
 static EMPTY_JUMPDESTS: LazyLock<Arc<[u8]>> = LazyLock::new(|| Arc::from(Vec::new()));
 
+/// The allocations an initcode [`Code`] is built in: its bytecode buffer and its
+/// jump-destination bitmap. A finished initcode hands them back through
+/// [`Code::into_initcode_buffer`], so the VM can keep them for the next CREATE instead of
+/// allocating new ones each time, which a zkVM guest's bump allocator never reclaims.
+#[derive(Debug, Default)]
+pub struct InitcodeBuffer {
+    bytecode: BytesMut,
+    jumpdests: Option<Arc<[u8]>>,
+}
+
+impl InitcodeBuffer {
+    /// Replaces the contents with `initcode`, with room for the padding
+    /// [`Code::from_initcode_buffer`] appends, so that appending it does not reallocate.
+    pub fn set(&mut self, initcode: &[u8]) {
+        let needed = initcode.len().saturating_add(BYTECODE_PADDING);
+        if self.bytecode.capacity() < needed {
+            // A new buffer of exactly the size needed. Growing this one would copy it and
+            // double its capacity, and a buffer frozen short of its capacity allocates a
+            // header every time it becomes code.
+            self.bytecode = BytesMut::with_capacity(needed);
+        } else {
+            self.bytecode.clear();
+        }
+        self.bytecode.extend_from_slice(initcode);
+    }
+
+    /// Empties the buffer, keeping its allocations.
+    pub fn clear(&mut self) {
+        self.bytecode.clear();
+    }
+
+    /// The initcode the buffer was last [set](InitcodeBuffer::set) to.
+    pub fn initcode(&self) -> &[u8] {
+        &self.bytecode
+    }
+
+    /// How many bytes of initcode and padding the buffer holds without reallocating.
+    pub fn capacity(&self) -> usize {
+        self.bytecode.capacity()
+    }
+
+    /// Whether the buffer holds any allocation worth keeping.
+    pub fn is_allocated(&self) -> bool {
+        self.bytecode.capacity() > 0 || self.jumpdests.is_some()
+    }
+}
+
+/// A zeroed jump-destination bitmap of `len` bytes, in one allocation: one built in a `Vec`
+/// is copied into a second allocation to become an `Arc`.
+fn zeroed_bitmap(len: usize) -> Arc<[u8]> {
+    std::iter::repeat_n(0, len).collect()
+}
+
+/// A zeroed jump-destination bitmap at least `len` bytes long: `scratch`, whole, when it is
+/// long enough and nothing else references it, which holds for the ones
+/// [`Code::into_initcode_buffer`] hands back, and a new one of `len` bytes otherwise.
+fn zeroed_bitmap_in(scratch: Option<Arc<[u8]>>, len: usize) -> Arc<[u8]> {
+    if let Some(mut bitmap) = scratch.filter(|bitmap| bitmap.len() >= len)
+        && let Some(bits) = Arc::get_mut(&mut bitmap)
+    {
+        // All of it, not just the first `len` bytes. JUMP trusts the bitmap alone, so a bit
+        // left past the end of the code would make a jump there valid; and the per-opcode
+        // scan only writes the bytes that hold a jump destination.
+        bits.fill(0);
+        return bitmap;
+    }
+    zeroed_bitmap(len)
+}
+
+/// Sets the bit of every `JUMPDEST` in `code` that is not a `PUSH` immediate in `bitmap`,
+/// which is zeroed and `ceil(code.len() / 8)` bytes long. Returns whether it set any.
+/// See [`Code::compute_jumpdests`] for why the scan depends on the target.
+fn mark_jumpdests(code: &[u8], bitmap: &mut [u8]) -> bool {
+    #[cfg(any(
+        target_arch = "aarch64",
+        all(target_arch = "x86_64", target_feature = "ssse3")
+    ))]
+    let any = by_block::jumpdests(code, bitmap);
+    #[cfg(not(any(
+        target_arch = "aarch64",
+        all(target_arch = "x86_64", target_feature = "ssse3")
+    )))]
+    let any = jumpdests_by_opcode(code, bitmap);
+    any
+}
+
 /// Trailing STOP bytes appended to every bytecode so the dispatch loop can read
 /// the next opcode without a bounds check. 33 is the widest single-opcode advance
 /// (PUSH32: 1 opcode byte + 32 immediate bytes), so `pc` can never step past the
@@ -49,7 +135,9 @@ pub struct Code {
     ///
     /// Bytecode with no jump destination stores a zero-length bitmap ([`EMPTY_JUMPDESTS`])
     /// rather than an all-zero one, so this is not always `ceil(len / 8)` bytes long;
-    /// [`Code::is_valid_jumpdest`] reads a missing byte as "no jump destination".
+    /// [`Code::is_valid_jumpdest`] reads a missing byte as "no jump destination". Initcode
+    /// built by [`Code::from_initcode_buffer`] is the exception: it keeps the bitmap it was
+    /// built in, which can be all zero, or longer than `ceil(len / 8)` and zero past it.
     //
     // `Arc<[u8]>` so cloning `Code` (hot: every message-call resolves and clones
     // the callee's code) is a refcount bump instead of deep-copying the bitmap.
@@ -97,27 +185,47 @@ impl Code {
         }
     }
 
-    /// Builds initcode from `buffer`, which holds exactly the initcode: the padding is appended
-    /// in place and the buffer becomes the bytecode, so given [`BYTECODE_PADDING`] bytes of
-    /// spare capacity it is never copied. Paired with
-    /// [`Code::into_initcode_buffer`], the next initcode can reuse the allocation. The hash
-    /// is the same placeholder any initcode gets.
-    pub fn from_initcode_buffer(mut buffer: BytesMut) -> Self {
-        let bytecode_len = buffer.len();
-        let jumpdests = Self::compute_jumpdests(&buffer);
-        buffer.extend_from_slice(&[0u8; BYTECODE_PADDING]);
+    /// Builds initcode from the initcode `buffer` was [set](InitcodeBuffer::set) to, in the
+    /// buffer's allocations: the padding is appended in place and the buffer becomes the
+    /// bytecode, and the jump-destination bitmap reuses the buffer's when that is the right
+    /// size. [`Code::into_initcode_buffer`] hands them back for the next initcode. The hash is
+    /// the same placeholder any initcode gets.
+    ///
+    /// Unlike other code, initcode keeps the bitmap it was built in, so it can be handed back
+    /// with the bytecode: even when it marks nothing, instead of the shared empty one, and
+    /// even when it is longer than the code needs, zeroed past its end.
+    pub fn from_initcode_buffer(buffer: InitcodeBuffer) -> Self {
+        let InitcodeBuffer {
+            mut bytecode,
+            jumpdests,
+        } = buffer;
+        let bytecode_len = bytecode.len();
+        let bitmap_len = bytecode_len.div_ceil(8);
+        let mut jumpdests = zeroed_bitmap_in(jumpdests, bitmap_len);
+        // The bitmap can be longer than this code needs; the scan writes its first
+        // `bitmap_len` bytes, and the rest stay zero.
+        mark_jumpdests(&bytecode, &mut Arc::make_mut(&mut jumpdests)[..bitmap_len]);
+        bytecode.extend_from_slice(&[0u8; BYTECODE_PADDING]);
         Self {
             hash: H256::zero(),
-            bytecode: buffer.freeze(),
+            bytecode: bytecode.freeze(),
             bytecode_len,
             jumpdests,
         }
     }
 
-    /// Hands back the buffer of initcode built by [`Code::from_initcode_buffer`] once nothing
-    /// else references it.
-    pub fn into_initcode_buffer(self) -> Option<BytesMut> {
-        self.bytecode.try_into_mut().ok()
+    /// Hands back the allocations of initcode built by [`Code::from_initcode_buffer`], each
+    /// only when nothing else references it. The bytecode buffer comes back empty, so handing
+    /// back any other `Code`'s is harmless too: no stale bytecode can be built from again.
+    pub fn into_initcode_buffer(self) -> InitcodeBuffer {
+        let mut bytecode = self.bytecode.try_into_mut().unwrap_or_default();
+        bytecode.clear();
+        let mut jumpdests = self.jumpdests;
+        let unique = Arc::get_mut(&mut jumpdests).is_some();
+        InitcodeBuffer {
+            bytecode,
+            jumpdests: unique.then_some(jumpdests),
+        }
     }
 
     /// Builds the [`Code::jumpdests`] bitmap: the bit of every `JUMPDEST` that is not a
@@ -130,25 +238,16 @@ impl Code {
     /// have no branch predictor and would only pay for the extra instructions, so they
     /// keep the plain scan (`jumpdests_by_opcode`).
     pub fn compute_jumpdests(code: &[u8]) -> Arc<[u8]> {
-        let mut bitmap = vec![0u8; code.len().div_ceil(8)];
-        #[cfg(any(
-            target_arch = "aarch64",
-            all(target_arch = "x86_64", target_feature = "ssse3")
-        ))]
-        let any = by_block::jumpdests(code, &mut bitmap);
-        #[cfg(not(any(
-            target_arch = "aarch64",
-            all(target_arch = "x86_64", target_feature = "ssse3")
-        )))]
-        let any = jumpdests_by_opcode(code, &mut bitmap);
-        // Share the single empty bitmap for jumpless bytecode (very common: EOAs,
-        // tiny contracts) so we don't allocate for an all-zero map; `is_valid_jumpdest`
-        // reads a missing byte as "no jump destination".
-        if any {
-            Arc::from(bitmap)
-        } else {
-            EMPTY_JUMPDESTS.clone()
+        // Even an empty `Arc` allocates its reference counts.
+        if code.is_empty() {
+            return EMPTY_JUMPDESTS.clone();
         }
+        let mut bitmap = zeroed_bitmap(code.len().div_ceil(8));
+        let any = mark_jumpdests(code, Arc::make_mut(&mut bitmap));
+        // Share the single empty bitmap for jumpless bytecode (very common: EOAs,
+        // tiny contracts) so we don't keep an all-zero map; `is_valid_jumpdest`
+        // reads a missing byte as "no jump destination".
+        if any { bitmap } else { EMPTY_JUMPDESTS.clone() }
     }
 
     /// Whether `offset` is a valid jump destination, i.e. it holds a `JUMPDEST` that is
@@ -1128,5 +1227,86 @@ mod test {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_reused_jump_destination_bitmap_keeps_nothing_of_the_initcode_before() {
+        // Initcode of the same length, so the second reuses the first one's bitmap: a
+        // JUMPDEST at offset 8, in the bitmap's second byte, then one only at offset 0, in
+        // its first. The per-opcode scan the zkVM guests use writes only the first byte, so a
+        // bitmap reused without zeroing keeps offset 8 valid there. The block scan on this
+        // host rewrites every byte; the tests below catch a missing zeroing here too.
+        let mut first_initcode = [0u8; 16];
+        first_initcode[8] = 0x5b;
+        let mut second_initcode = [0u8; 16];
+        second_initcode[0] = 0x5b;
+        let mut buffer = InitcodeBuffer::default();
+        buffer.set(&first_initcode);
+        let first = Code::from_initcode_buffer(buffer);
+
+        let mut buffer = first.into_initcode_buffer();
+        buffer.set(&second_initcode);
+        let second = Code::from_initcode_buffer(buffer);
+
+        assert!(second.is_valid_jumpdest(0));
+        assert!(!second.is_valid_jumpdest(8));
+    }
+
+    #[test]
+    fn shorter_initcode_has_no_jump_destination_past_its_end_in_a_reused_bitmap() {
+        // A JUMPDEST at every offset of the first initcode fills its 8-byte bitmap. The
+        // second, two bytes long, reuses that bitmap but needs only its first byte, and
+        // JUMP trusts the bitmap alone: a bit left past the end of the code would make a
+        // jump there valid.
+        let mut buffer = InitcodeBuffer::default();
+        buffer.set(&[0x5b; 64]);
+        let first = Code::from_initcode_buffer(buffer);
+
+        let mut buffer = first.into_initcode_buffer();
+        buffer.set(&[0x00, 0x5b]); // STOP, JUMPDEST
+        let second = Code::from_initcode_buffer(buffer);
+
+        assert!(second.is_valid_jumpdest(1));
+        assert!(
+            (0..64)
+                .filter(|&offset| offset != 1)
+                .all(|offset| !second.is_valid_jumpdest(offset))
+        );
+    }
+
+    #[test]
+    fn a_longer_bitmap_is_reused_whole_and_zeroed() {
+        let scratch: Arc<[u8]> = Arc::from(vec![0xff; 8]);
+
+        let bitmap = zeroed_bitmap_in(Some(scratch), 4);
+
+        // Kept at its length rather than replaced by a 4-byte one, and zeroed past the 4
+        // bytes the code needs too.
+        assert_eq!(&*bitmap, &[0; 8]);
+    }
+
+    #[test]
+    fn initcode_too_large_for_the_buffer_gets_one_of_exactly_its_size() {
+        let mut buffer = InitcodeBuffer::default();
+        buffer.set(&[0; 1024]);
+
+        buffer.set(&[0; 2000]);
+
+        // Growing the old buffer instead would copy it and double its capacity, to 2114,
+        // and a buffer frozen short of its capacity allocates a header on every CREATE.
+        assert_eq!(buffer.capacity(), 2000 + BYTECODE_PADDING);
+    }
+
+    #[test]
+    fn a_handed_back_initcode_buffer_holds_no_bytecode() {
+        // A buffer is meant to be set before code is built from it again. Built from as it
+        // comes back, it must give empty code, not the previous bytecode and its padding.
+        let mut buffer = InitcodeBuffer::default();
+        buffer.set(&[0x60, 0x01]); // PUSH1 1
+        let code = Code::from_initcode_buffer(buffer);
+
+        let rebuilt = Code::from_initcode_buffer(code.into_initcode_buffer());
+
+        assert!(rebuilt.is_empty());
     }
 }

@@ -13,7 +13,6 @@ use bytes::{Bytes, BytesMut};
 use ethrex_common::H256;
 #[cfg(feature = "rayon")]
 use ethrex_common::constants::EMPTY_KECCAK_HASH;
-use ethrex_common::types::Code;
 #[cfg(feature = "rayon")]
 use ethrex_common::types::TxType;
 use ethrex_common::types::block_access_list::BlockAccessList;
@@ -25,6 +24,7 @@ use ethrex_common::types::block_access_list::{
 };
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
+use ethrex_common::types::{Code, InitcodeBuffer};
 #[cfg(feature = "rayon")]
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
@@ -3502,7 +3502,7 @@ impl LEVM {
         stack_pool: &mut Vec<Stack>,
         memory_pool: &mut Vec<Memory>,
         calldata_pool: &mut Vec<BytesMut>,
-        initcode_pool: &mut Vec<BytesMut>,
+        initcode_pool: &mut Vec<InitcodeBuffer>,
         disable_balance_check: bool,
         crypto: &dyn Crypto,
         config: EVMConfig,
