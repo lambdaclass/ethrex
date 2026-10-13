@@ -266,10 +266,11 @@ impl FilterChangesRequest {
                 poisoned_guard.into_inner()
             }));
         if let Some((timestamp, filter)) = active_filters_guard.get_mut(&self.id) {
+            // Every poll keeps its filter from expiring, whatever it returns.
+            *timestamp = Instant::now();
             // A block filter has no range to validate: it always reports whatever
             // blocks arrived since the last poll.
             if matches!(filter.kind, FilterKind::Blocks) {
-                *timestamp = Instant::now();
                 let from = filter.last_block_number.saturating_add(1);
                 filter.last_block_number = latest_block_num;
                 drop(active_filters_guard);
@@ -301,9 +302,6 @@ impl FilterChangesRequest {
                 }
                 _ => return Ok(json!([])),
             };
-            // Since the filter was polled, updated its timestamp, so
-            // it does not expire.
-            *timestamp = Instant::now();
             if from > to {
                 // No block was added since the last poll.
                 return Ok(json!([]));
@@ -873,6 +871,48 @@ mod tests {
         assert_eq!(poll_log_blocks(&context, &id).await, vec![2, 3]);
         add_head_block(&storage, 5, 1).await;
         assert_eq!(poll_log_blocks(&context, &id).await, Vec::<u64>::new());
+    }
+
+    /// A poll keeps its filter from expiring even when it has nothing to report, here
+    /// because the filter's `toBlock` was already reported.
+    #[tokio::test]
+    async fn filter_changes_keep_a_filter_with_nothing_left_alive() {
+        let storage = Store::new("in-mem", EngineType::InMemory).unwrap();
+        add_head_block(&storage, 0, 1).await;
+        add_head_block(&storage, 1, 1).await;
+        let context = default_context_with_storage(storage.clone()).await;
+        let address = format!("{:#x}", ethrex_common::H160::from_low_u64_be(1));
+        let id = map_http_requests(
+            &rpc_call(
+                "eth_newFilter",
+                json!([{"address": address, "toBlock": "0x2"}]),
+            ),
+            context.clone(),
+        )
+        .await
+        .unwrap();
+        add_head_block(&storage, 2, 1).await;
+        assert_eq!(poll_log_blocks(&context, &id).await, vec![2]);
+
+        let filter_id =
+            u64::from_str_radix(id.as_str().unwrap().trim_start_matches("0x"), 16).unwrap();
+        let before_poll = Instant::now();
+        let stale = before_poll
+            .checked_sub(Duration::from_secs(1))
+            .expect("the clock has run for a second");
+        context
+            .active_filters
+            .lock()
+            .unwrap()
+            .get_mut(&filter_id)
+            .unwrap()
+            .0 = stale;
+        assert_eq!(poll_log_blocks(&context, &id).await, Vec::<u64>::new());
+        let (timestamp, _) = context.active_filters.lock().unwrap()[&filter_id].clone();
+        assert!(
+            timestamp >= before_poll,
+            "the poll must refresh the filter's timestamp"
+        );
     }
 
     /// A poll that fails leaves its blocks for the next poll instead of skipping them.
