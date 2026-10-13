@@ -76,7 +76,7 @@ use spawned_concurrency::{
 };
 use spawned_rt::tasks::BroadcastStream;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     net::SocketAddr,
     sync::{Arc, RwLock},
     time::{Duration, Instant},
@@ -1521,28 +1521,36 @@ fn check_announcement_rate(state: &mut Established, hashes: usize) -> bool {
 /// lets a peer skip transactions it no longer holds and stop at its own response limit
 /// (go-ethereum stops past 2 MiB, we stop just before it, and one blob transaction can take up
 /// to ~1 MiB), so an answer is short only when it delivered under a quarter of the requested
-/// transactions *and* under a quarter of that limit by their announced sizes: an answer cut by
-/// a size limit always carries more. An empty answer to a non-empty request is short.
-fn is_short_tx_answer(
-    requested_hashes: &[H256],
-    requested_sizes: &[usize],
-    delivered: &HashSet<H256>,
-) -> bool {
+/// transactions *and* under a quarter of that limit in bytes: an answer cut by a size limit
+/// always carries more. The bytes are those of the transactions as delivered, not their
+/// announced sizes: an eth/72 answer carries blob transactions without their blobs, and
+/// nothing checks a blob transaction's announced size against what it delivers. An empty
+/// answer to a non-empty request is short.
+fn is_short_tx_answer(requested_hashes: &[H256], delivered: &HashMap<H256, usize>) -> bool {
     let mut delivered_count = 0usize;
     let mut delivered_bytes = 0usize;
-    for (hash, size) in requested_hashes.iter().zip(requested_sizes) {
-        if delivered.contains(hash) {
-            delivered_count += 1;
-            delivered_bytes = delivered_bytes.saturating_add(*size);
-        }
+    for size in requested_hashes
+        .iter()
+        .filter_map(|hash| delivered.get(hash))
+    {
+        delivered_count += 1;
+        delivered_bytes = delivered_bytes.saturating_add(*size);
     }
     delivered_count * 4 < requested_hashes.len() && delivered_bytes < MAX_POOLED_RESPONSE_BYTES / 4
 }
 
+/// The hashes of the transactions in a `PooledTransactions` answer, each with its size as
+/// delivered.
+fn delivered_sizes(txs: &[P2PTransaction]) -> HashMap<H256, usize> {
+    txs.iter()
+        .map(|tx| (tx.compute_hash(), tx.encode_canonical_len()))
+        .collect()
+}
+
 /// Drops the alternate announcers of transactions this peer delivered for one of our requests;
 /// see `Mempool::forget_alternates`.
-fn forget_delivered_alternates(state: &Established, delivered: HashSet<H256>) {
-    let delivered: Vec<H256> = delivered.into_iter().collect();
+fn forget_delivered_alternates(state: &Established, delivered: HashMap<H256, usize>) {
+    let delivered: Vec<H256> = delivered.into_keys().collect();
     if let Err(e) = state.blockchain.mempool.forget_alternates(&delivered) {
         warn!(error = %e, "forget_alternates failed");
     }
@@ -1556,10 +1564,9 @@ fn forget_delivered_alternates(state: &Established, delivered: HashSet<H256>) {
 async fn account_tx_answer(
     state: &mut Established,
     requested_hashes: &[H256],
-    requested_sizes: &[usize],
-    delivered: &HashSet<H256>,
+    delivered: &HashMap<H256, usize>,
 ) -> Result<(), PeerConnectionError> {
-    if !is_short_tx_answer(requested_hashes, requested_sizes, delivered) {
+    if !is_short_tx_answer(requested_hashes, delivered) {
         state.short_tx_answer_strikes = state.short_tx_answer_strikes.saturating_sub(1);
         return Ok(());
     }
@@ -2051,7 +2058,12 @@ async fn handle_incoming_message(
             }
         }
         Message::GetPooledTransactions(msg) => {
-            let response = msg.handle(&state.blockchain)?;
+            // eth/72: respond with PooledTransactions72 (elided blob payload).
+            let is_eth72 = state
+                .negotiated_eth_capability
+                .as_ref()
+                .is_some_and(|cap| cap.version == 72);
+            let response = msg.handle(&state.blockchain, is_eth72)?;
             let batch_size = response.pooled_transactions.len() as u64;
             // Leech detection: disconnect peers that drain transactions but never contribute any.
             if state.txs_sent_to_peer + batch_size > LEECH_TX_SENT_THRESHOLD
@@ -2067,11 +2079,6 @@ async fn handle_incoming_message(
                     DisconnectReason::UselessPeer,
                 ));
             }
-            // eth/72: respond with PooledTransactions72 (elided blob payload).
-            let is_eth72 = state
-                .negotiated_eth_capability
-                .as_ref()
-                .is_some_and(|cap| cap.version == 72);
             if is_eth72 {
                 let response72 =
                     PooledTransactions72::new(response.id, response.pooled_transactions);
@@ -2131,11 +2138,7 @@ async fn handle_incoming_message(
                 }
             }
             if state.blockchain.is_synced() {
-                let delivered: HashSet<H256> = msg
-                    .pooled_transactions
-                    .iter()
-                    .map(|tx| tx.compute_hash())
-                    .collect();
+                let delivered = delivered_sizes(&msg.pooled_transactions);
                 if let Some((announced, requested_hashes, _)) = &removed_request {
                     let fork = state.blockchain.current_fork()?;
                     if let Err(error) = msg.validate_requested(announced, fork) {
@@ -2152,13 +2155,7 @@ async fn handle_incoming_message(
                             DisconnectReason::SubprotocolError,
                         ));
                     }
-                    account_tx_answer(
-                        state,
-                        &announced.transaction_hashes,
-                        &announced.transaction_sizes,
-                        &delivered,
-                    )
-                    .await?;
+                    account_tx_answer(state, &announced.transaction_hashes, &delivered).await?;
                 }
                 #[cfg(feature = "l2")]
                 let is_l2_mode = state.l2_state.is_supported();
@@ -2210,11 +2207,7 @@ async fn handle_incoming_message(
                     .clear_in_flight_txs(requested_hashes)?;
             }
             if state.blockchain.is_synced() {
-                let delivered: HashSet<H256> = msg
-                    .pooled_transactions
-                    .iter()
-                    .map(|tx| tx.compute_hash())
-                    .collect();
+                let delivered = delivered_sizes(&msg.pooled_transactions);
                 if let Some((announced, requested_hashes, _, _)) = &removed_request {
                     let fork = state.blockchain.current_fork()?;
                     if let Err(error) = msg.validate_requested(announced, fork) {
@@ -2231,13 +2224,7 @@ async fn handle_incoming_message(
                             DisconnectReason::SubprotocolError,
                         ));
                     }
-                    account_tx_answer(
-                        state,
-                        &announced.transaction_hashes,
-                        &announced.transaction_sizes,
-                        &delivered,
-                    )
-                    .await?;
+                    account_tx_answer(state, &announced.transaction_hashes, &delivered).await?;
                 }
                 #[cfg(feature = "l2")]
                 let is_l2_mode = state.l2_state.is_supported();
@@ -3039,7 +3026,9 @@ mod tx_announcement_tests {
     use crate::{peer_table::PeerTableServer, rlpx::eth::transactions::PooledTransactions};
     use bytes::Bytes;
     use ethrex_blockchain::mempool::MAX_ANNOUNCED_HASHES_PER_PEER;
-    use ethrex_common::types::EIP1559Transaction;
+    use ethrex_common::types::{
+        BlobsBundle, EIP1559Transaction, EIP4844Transaction, WrappedEIP4844Transaction,
+    };
     use ethrex_storage::EngineType;
     use std::net::{IpAddr, Ipv4Addr};
     use tokio::sync::mpsc;
@@ -3302,17 +3291,52 @@ mod tx_announcement_tests {
     }
 
     #[test]
-    fn short_answers_are_judged_by_count_and_announced_size() {
+    fn short_answers_are_judged_by_count_and_delivered_size() {
         let hashes: Vec<H256> = (0..8).map(H256::from_low_u64_be).collect();
-        let delivered = |n: usize| hashes[..n].iter().copied().collect::<HashSet<H256>>();
-        let small = vec![200; 8];
-        assert!(is_short_tx_answer(&hashes, &small, &delivered(0)));
-        assert!(is_short_tx_answer(&hashes, &small, &delivered(1)));
-        assert!(!is_short_tx_answer(&hashes, &small, &delivered(2)));
+        let delivered = |n: usize, size: usize| {
+            hashes[..n]
+                .iter()
+                .map(|hash| (*hash, size))
+                .collect::<HashMap<H256, usize>>()
+        };
+        assert!(is_short_tx_answer(&hashes, &delivered(0, 200)));
+        assert!(is_short_tx_answer(&hashes, &delivered(1, 200)));
+        assert!(!is_short_tx_answer(&hashes, &delivered(2, 200)));
         // One blob-sized tx out of eight is what a responder's size limit allows.
-        let large = vec![MAX_POOLED_RESPONSE_BYTES / 4; 8];
-        assert!(!is_short_tx_answer(&hashes, &large, &delivered(1)));
-        assert!(!is_short_tx_answer(&[], &[], &delivered(0)));
+        assert!(!is_short_tx_answer(
+            &hashes,
+            &delivered(1, MAX_POOLED_RESPONSE_BYTES / 4)
+        ));
+        assert!(!is_short_tx_answer(&[], &delivered(0, 200)));
+    }
+
+    #[tokio::test]
+    async fn an_elided_blob_tx_is_credited_by_what_it_delivers() {
+        let (mut state, mut outbound) = session(72);
+        // Seven filler hashes and one blob tx announced at a full-blob size; nothing checks
+        // that size against an elided delivery, so it must not count towards the answer.
+        let blob_tx = P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
+            tx: EIP4844Transaction::default(),
+            wrapper_version: None,
+            blobs_bundle: BlobsBundle::default(),
+        });
+        let fillers = txs(0, 7);
+        let mut types: Vec<u8> = fillers.iter().map(|tx| tx.tx_type() as u8).collect();
+        let mut sizes: Vec<usize> = fillers.iter().map(|tx| tx.encode_canonical_len()).collect();
+        let mut hashes: Vec<H256> = fillers.iter().map(|tx| tx.compute_hash()).collect();
+        types.push(3);
+        sizes.push(MAX_POOLED_RESPONSE_BYTES);
+        hashes.push(blob_tx.compute_hash());
+        let announcement = Message::NewPooledTransactionHashes72(
+            NewPooledTransactionHashes72::from_raw(types.into(), sizes, hashes, None),
+        );
+        handle_incoming_message(&mut state, announcement)
+            .await
+            .unwrap();
+        let (id, _) = flush_requests(&mut state, &mut outbound).await[0];
+
+        let _ = handle_incoming_message(&mut state, answer(72, id, vec![blob_tx])).await;
+        assert_eq!(state.short_tx_answer_strikes, 1);
     }
 
     #[tokio::test]

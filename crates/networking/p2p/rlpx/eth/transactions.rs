@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use crate::rlpx::{
+    eth::eth72::transactions::encode_elided_canonical,
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress, snappy_decompress_bounded},
 };
@@ -325,7 +326,14 @@ impl GetPooledTransactions {
         }
     }
 
-    pub fn handle(&self, blockchain: &Blockchain) -> Result<PooledTransactions, StoreError> {
+    /// Answers the request from the pool. With `elide_blobs`, blob transactions are measured
+    /// as an eth/72 answer carries them, without their blobs, so the response limit applies to
+    /// what is actually sent.
+    pub fn handle(
+        &self,
+        blockchain: &Blockchain,
+        elide_blobs: bool,
+    ) -> Result<PooledTransactions, StoreError> {
         // TODO(#1615): get transactions in batch instead of iterating over them.
         let mut pooled_transactions = Vec::new();
         let mut seen = HashSet::with_capacity(self.transaction_hashes.len());
@@ -346,7 +354,12 @@ impl GetPooledTransactions {
             // Cap the response size (geth `softResponseLimit`): stop before a tx would push the
             // response over the budget so we never emit more than a peer's inbound cap accepts.
             // Always serve at least one tx so a lone oversized (blob) tx still goes out.
-            let tx_size = tx.encode_canonical_len();
+            let tx_size = match &tx {
+                P2PTransaction::EIP4844TransactionWithBlobs(wrapped) if elide_blobs => {
+                    encode_elided_canonical(wrapped).len()
+                }
+                _ => tx.encode_canonical_len(),
+            };
             if !pooled_transactions.is_empty() && bytes_used + tx_size > MAX_POOLED_RESPONSE_BYTES {
                 break;
             }
