@@ -1407,16 +1407,16 @@ where
     Fut: std::future::Future<Output = Result<Value, E>>,
     E: Into<RpcErrorMetadata>,
 {
-    // Check the syntax first, without allocating, so we can distinguish between:
-    //   -32700 Parse error (malformed JSON)
-    //   -32600 Invalid Request (valid JSON, but not a valid JSON-RPC request object)
-    if serde_json::from_str::<IgnoredAny>(body).is_err() {
-        return Some(ws_error_response(None, -32700, "Parse error"));
-    }
-
     // Accept both a single request and a batch (array), matching HTTP behavior.
     let wrapper: RpcRequestWrapper = match serde_json::from_str(body) {
         Ok(w) => w,
+        // Tell -32700 Parse error (malformed JSON) from -32600 Invalid Request (valid JSON,
+        // but not a JSON-RPC request) by checking the syntax, without allocating. The
+        // parse error alone cannot: it stops at the first problem, and a value of the wrong
+        // type can come before a syntax error.
+        Err(_) if serde_json::from_str::<IgnoredAny>(body).is_err() => {
+            return Some(ws_error_response(None, -32700, "Parse error"));
+        }
         Err(_) => return Some(ws_error_response(None, -32600, "Invalid Request")),
     };
 
@@ -2106,6 +2106,50 @@ mod tests {
         .expect("an oversize batch must get an error response");
         let response: Value = serde_json::from_str(&response).unwrap();
         assert_eq!(response["error"]["code"], -32600);
+    }
+
+    /// Malformed JSON gets -32700 and valid JSON that is not a request gets -32600, also
+    /// when a value of the wrong type comes before the syntax error.
+    #[tokio::test]
+    async fn ws_tells_parse_errors_from_invalid_requests() {
+        let storage = Store::new("temp.db", EngineType::InMemory).expect("in-memory store");
+        let context = default_context_with_storage(storage).await;
+        let (out_tx, _out_rx) = tokio::sync::mpsc::channel::<String>(1);
+        let mut subscription_ids: Vec<String> = Vec::new();
+        let route_request = |_req: RpcRequest| async move {
+            panic!("an invalid request must not be dispatched");
+            #[allow(unreachable_code)]
+            Ok::<Value, RpcErr>(Value::Null)
+        };
+
+        // Parsing the request stops at the type error, so its error kind alone would
+        // call this an invalid request rather than malformed JSON.
+        let wrong_type_then_truncated = r#"{"jsonrpc":"2.0","method":5,"#;
+        assert!(
+            serde_json::from_str::<RpcRequestWrapper>(wrong_type_then_truncated)
+                .err()
+                .is_some_and(|error| error.is_data())
+        );
+
+        for (body, code) in [
+            (wrong_type_then_truncated, -32700),
+            ("[1,", -32700),
+            ("{", -32700),
+            (r#"{"jsonrpc":"2.0","method":5,"id":1}"#, -32600),
+            ("[1]", -32600),
+        ] {
+            let response = handle_ws_request(
+                body,
+                &context,
+                &out_tx,
+                &mut subscription_ids,
+                &route_request,
+            )
+            .await
+            .expect("an invalid message must get an error response");
+            let response: Value = serde_json::from_str(&response).unwrap();
+            assert_eq!(response["error"]["code"], code, "for {body}");
+        }
     }
 
     /// WebSocket subscriptions live in the `eth` namespace and must obey the
