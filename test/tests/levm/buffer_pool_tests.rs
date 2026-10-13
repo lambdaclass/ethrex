@@ -3,8 +3,9 @@
 //!
 //! Inside zkVM guests whose bump allocators never free, a fresh copy per call is never
 //! reclaimed: a contract issuing 50000 calls with 50 KB of arguments spent about 2.4 GiB
-//! of a 512 MiB heap. These tests pin the reuse, and that a buffer something still
-//! references is never handed out again.
+//! of a 512 MiB heap. These tests pin the reuse, within a transaction and from one
+//! transaction of a block to the next, and that a buffer something still references is
+//! never handed out again.
 
 use bytes::{Bytes, BytesMut};
 use ethrex_common::{
@@ -16,9 +17,11 @@ use ethrex_common::{
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
+    call_frame::Stack,
     db::{Database, gen_db::GeneralizedDatabase},
     environment::{EVMConfig, Environment},
     errors::DatabaseError,
+    memory::Memory,
     precompiles::PrecompileCache,
     tracing::LevmCallTracer,
     vm::{VM, VMType},
@@ -106,14 +109,43 @@ struct Pools {
     initcode: Vec<usize>,
 }
 
+/// The pools block execution carries from one transaction to the next.
+#[derive(Default)]
+struct BlockPools {
+    stack: Vec<Stack>,
+    memory: Vec<Memory>,
+    calldata: Vec<BytesMut>,
+    initcode: Vec<BytesMut>,
+}
+
 /// Runs a transaction into the caller contract and returns the capacities of the buffers
 /// left in the calldata pool.
 fn pooled_buffer_capacities(target: Address) -> Vec<usize> {
     run_caller(call_loop(target, CALLS), None).calldata
 }
 
-/// Runs a transaction into a contract with `caller_code`.
+/// Runs a transaction into a contract with `caller_code`, as the only one in its block.
 fn run_caller(caller_code: Bytes, precompile_cache: Option<PrecompileCache>) -> Pools {
+    let mut pools = BlockPools::default();
+    run_in_block(&mut pools, caller_code, precompile_cache);
+    Pools {
+        calldata: pools.calldata.iter().map(BytesMut::capacity).collect(),
+        initcode: pools.initcode.iter().map(BytesMut::capacity).collect(),
+    }
+}
+
+/// Addresses of the buffers in `pool`, which tell whether a later transaction reused them.
+fn buffer_addresses(pool: &[BytesMut]) -> Vec<*const u8> {
+    pool.iter().map(|buffer| buffer.as_ptr()).collect()
+}
+
+/// Runs a transaction into a contract with `caller_code` the way block execution does,
+/// drawing on `pools` and handing its buffers back to them afterwards.
+fn run_in_block(
+    pools: &mut BlockPools,
+    caller_code: Bytes,
+    precompile_cache: Option<PrecompileCache>,
+) {
     let mut accounts: FxHashMap<Address, Account> = FxHashMap::default();
     accounts.insert(
         Address::from_low_u64_be(ORIGIN),
@@ -188,7 +220,7 @@ fn run_caller(caller_code: Bytes, precompile_cache: Option<PrecompileCache>) -> 
         ..Default::default()
     });
 
-    let mut vm = VM::new(
+    let mut vm = VM::new_pooled(
         env,
         &mut db,
         &tx,
@@ -196,14 +228,20 @@ fn run_caller(caller_code: Bytes, precompile_cache: Option<PrecompileCache>) -> 
         VMType::L1,
         &NativeCrypto,
         None,
+        &mut pools.stack,
+        &mut pools.memory,
+        &mut pools.calldata,
+        &mut pools.initcode,
     )
-    .expect("VM::new");
+    .expect("VM::new_pooled");
     let report = vm.execute().expect("execute");
     assert!(report.is_success(), "caller tx failed: {:?}", report.result);
-    Pools {
-        calldata: vm.calldata_pool.iter().map(BytesMut::capacity).collect(),
-        initcode: vm.initcode_pool.iter().map(BytesMut::capacity).collect(),
-    }
+    vm.reclaim_into(
+        &mut pools.stack,
+        &mut pools.memory,
+        &mut pools.calldata,
+        &mut pools.initcode,
+    );
 }
 
 #[test]
@@ -264,4 +302,31 @@ fn a_create_allocates_its_initcode_buffer_once() {
         "initcode buffer grew to {} bytes",
         pools.initcode[0]
     );
+}
+
+#[test]
+fn the_next_transaction_reuses_the_calldata_buffer() {
+    let callee = Address::from_low_u64_be(CALLEE);
+    let mut pools = BlockPools::default();
+
+    run_in_block(&mut pools, call_loop(callee, CALLS), None);
+    let after_first = buffer_addresses(&pools.calldata);
+    run_in_block(&mut pools, call_loop(callee, CALLS), None);
+
+    // The first transaction's buffer came back to the block, and the second transaction's
+    // calls drew it instead of allocating one of their own.
+    assert_eq!(after_first.len(), 1);
+    assert_eq!(buffer_addresses(&pools.calldata), after_first);
+}
+
+#[test]
+fn the_next_transaction_reuses_the_initcode_buffer() {
+    let mut pools = BlockPools::default();
+
+    run_in_block(&mut pools, create_loop(CREATES), None);
+    let after_first = buffer_addresses(&pools.initcode);
+    run_in_block(&mut pools, create_loop(CREATES), None);
+
+    assert_eq!(after_first.len(), 1);
+    assert_eq!(buffer_addresses(&pools.initcode), after_first);
 }

@@ -935,8 +935,12 @@ impl<'a> VM<'a> {
     /// stacks for sub-call frames. This avoids the per-tx 32 KB stack alloc+zero on a warm pool —
     /// the dominant allocation for transfer-heavy blocks, where the root frame is the only frame.
     ///
+    /// It adopts `calldata_pool` and `initcode_pool` the same way, so child-frame calldata and
+    /// CREATE initcode reuse the buffers earlier transactions left instead of allocating.
+    ///
     /// Pair with [`VM::reclaim_into`] after execution to return every stack (root + sub-frame)
-    /// to `stack_pool` and the root memory buffer to `memory_pool` so the next tx reuses them.
+    /// to `stack_pool`, the root memory buffer to `memory_pool` and the calldata and initcode
+    /// buffers to their pools so the next tx reuses them.
     #[allow(clippy::too_many_arguments)]
     pub fn new_pooled(
         env: Environment,
@@ -948,6 +952,8 @@ impl<'a> VM<'a> {
         stateless_validator: Option<&'a dyn crate::StatelessValidator>,
         stack_pool: &mut Vec<Stack>,
         memory_pool: &mut Vec<Memory>,
+        calldata_pool: &mut Vec<BytesMut>,
+        initcode_pool: &mut Vec<BytesMut>,
     ) -> Result<Self, VMError> {
         // Reuse a pooled stack for the root frame. `clear()` only resets the offset (no zeroing),
         // which is sound because the EVM never reads stack slots it didn't write — the same
@@ -970,18 +976,32 @@ impl<'a> VM<'a> {
             root_stack,
             root_memory,
         )?;
-        // Adopt the caller's pooled stacks for sub-frames; returned via `reclaim_into`.
+        // Adopt the caller's pooled stacks for sub-frames, and its calldata and initcode
+        // buffers; all returned via `reclaim_into`.
         mem::swap(&mut vm.stack_pool, stack_pool);
+        mem::swap(&mut vm.calldata_pool, calldata_pool);
+        mem::swap(&mut vm.initcode_pool, initcode_pool);
         Ok(vm)
     }
 
     /// Returns this VM's reusable buffers to the caller's pools so the next transaction reuses
     /// them instead of allocating: every stack (root call-frame stack plus any sub-frame stacks
-    /// still pooled internally) to `stack_pool`, and the root memory buffer to `memory_pool`.
+    /// still pooled internally) to `stack_pool`, the root memory buffer to `memory_pool`, and
+    /// the calldata and initcode buffers to `calldata_pool` and `initcode_pool`.
     /// Must run on both the success and error paths of [`VM::execute`].
-    pub fn reclaim_into(mut self, stack_pool: &mut Vec<Stack>, memory_pool: &mut Vec<Memory>) {
+    pub fn reclaim_into(
+        mut self,
+        stack_pool: &mut Vec<Stack>,
+        memory_pool: &mut Vec<Memory>,
+        calldata_pool: &mut Vec<BytesMut>,
+        initcode_pool: &mut Vec<BytesMut>,
+    ) {
         // Hand the internal sub-frame pool back to the caller first.
         mem::swap(&mut self.stack_pool, stack_pool);
+        // Buffers still held by frames left in `call_frames` on the error path are not in
+        // these pools; they are freed with the frames.
+        mem::swap(&mut self.calldata_pool, calldata_pool);
+        mem::swap(&mut self.initcode_pool, initcode_pool);
         // Then reclaim the root frame's stack. Moving it out by value (VM/CallFrame have no Drop)
         // avoids leaving a fresh 32 KB `Stack::default()` placeholder behind — which a
         // `mem::take`/`mem::replace` against an empty pool would force, defeating the win on
