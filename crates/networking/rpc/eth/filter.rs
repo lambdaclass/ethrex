@@ -291,10 +291,14 @@ impl FilterChangesRequest {
                 unreachable!("block filters are handled above")
             };
             // A poll reports the blocks added since the previous poll (on the first one,
-            // since the filter was created), up to the filter's `toBlock` when that is a
-            // number. A filter whose `toBlock` is a tag other than `latest`, or a number
-            // already reported, has nothing left to report.
-            let from = filter.last_block_number.saturating_add(1);
+            // since the filter was created), from the filter's `fromBlock` when that is a
+            // number past them, up to its `toBlock` when that is a number. A filter whose
+            // `toBlock` is a tag other than `latest`, or a number already reported, has
+            // nothing left to report.
+            let mut from = filter.last_block_number.saturating_add(1);
+            if let BlockIdentifier::Number(from_block) = filter_data.from_block {
+                from = from.max(from_block);
+            }
             let to = match filter_data.to_block {
                 BlockIdentifier::Tag(BlockTag::Latest) => latest_block_num,
                 BlockIdentifier::Number(block_num) if block_num >= from => {
@@ -303,7 +307,8 @@ impl FilterChangesRequest {
                 _ => return Ok(json!([])),
             };
             if from > to {
-                // No block was added since the last poll.
+                // No block was added since the last poll, or the chain has not reached
+                // the filter's `fromBlock` yet.
                 return Ok(json!([]));
             }
             // The stored filter keeps its own range; only the poll position moves.
@@ -870,6 +875,35 @@ mod tests {
         add_head_block(&storage, 4, 1).await;
         assert_eq!(poll_log_blocks(&context, &id).await, vec![2, 3]);
         add_head_block(&storage, 5, 1).await;
+        assert_eq!(poll_log_blocks(&context, &id).await, Vec::<u64>::new());
+    }
+
+    /// A filter whose numeric `fromBlock` is ahead of the head when it is created reports
+    /// nothing until the chain reaches that block, and then only from it.
+    #[tokio::test]
+    async fn filter_changes_start_at_a_future_filter_from_block() {
+        let storage = Store::new("in-mem", EngineType::InMemory).unwrap();
+        add_head_block(&storage, 0, 1).await;
+        add_head_block(&storage, 1, 1).await;
+        let context = default_context_with_storage(storage.clone()).await;
+        let address = format!("{:#x}", ethrex_common::H160::from_low_u64_be(1));
+        let id = map_http_requests(
+            &rpc_call(
+                "eth_newFilter",
+                json!([{"address": address, "fromBlock": "0x4", "toBlock": "0x6"}]),
+            ),
+            context.clone(),
+        )
+        .await
+        .unwrap();
+
+        add_head_block(&storage, 2, 1).await;
+        add_head_block(&storage, 3, 1).await;
+        assert_eq!(poll_log_blocks(&context, &id).await, Vec::<u64>::new());
+        for number in 4..=7 {
+            add_head_block(&storage, number, 1).await;
+        }
+        assert_eq!(poll_log_blocks(&context, &id).await, vec![4, 5, 6]);
         assert_eq!(poll_log_blocks(&context, &id).await, Vec::<u64>::new());
     }
 
