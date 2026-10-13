@@ -4,6 +4,8 @@
 //! that dominate a single precompile call: decoding the inputs, the field
 //! inversion needed to return an affine point, and the scalar multiplication.
 
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
 use ark_bn254::{Bn254, Fq, Fq2, Fr, G1Affine, G2Affine, G2Projective};
 use ark_ec::pairing::Pairing;
 use ark_ec::scalar_mul::glv::GLVConfig;
