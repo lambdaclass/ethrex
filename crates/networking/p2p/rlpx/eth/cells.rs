@@ -308,12 +308,23 @@ impl GetCells {
     /// settled first by [`Self::plan`] from mempool bookkeeping alone; a request is cut
     /// to the budget before any cell is computed.
     pub fn handle(&self, mempool: &Mempool) -> Cells {
+        self.handle_with(mempool, get_cells_for_tx)
+    }
+
+    /// [`Self::handle`] with the per-hash cell expansion injected. The expansion
+    /// is the only KZG work in this path, so a caller can count how often it
+    /// runs: once per served hash, never for a hash the plan dropped.
+    fn handle_with(
+        &self,
+        mempool: &Mempool,
+        mut expand: impl FnMut(&Mempool, H256, u128) -> Vec<Cell>,
+    ) -> Cells {
         let plan = self.plan(mempool);
         let mut served_hashes: Vec<H256> = Vec::with_capacity(plan.hashes.len());
         let mut all_cells: Vec<Vec<Cell>> = Vec::with_capacity(plan.hashes.len());
         let mut budget = MAX_CELLS_SERVED;
         for tx_hash in plan.hashes {
-            let cells = get_cells_for_tx(mempool, tx_hash, plan.served_mask);
+            let cells = expand(mempool, tx_hash, plan.served_mask);
             // The plan sized this hash from its blob count; re-check the expanded
             // size so the response never exceeds the budget even if the pool
             // changed underneath us.
@@ -511,6 +522,14 @@ mod tests {
                 hashes: vec![]
             }
         );
+        // The rejection happens before any expansion: serving the request never
+        // reaches the KZG step.
+        let response = request.handle_with(&mempool, |_, hash, _| {
+            panic!("expanded {hash:?} after the budget rejected it")
+        });
+        assert_eq!(response.cell_mask, u128::MAX);
+        assert!(response.transaction_hashes.is_empty());
+        assert!(response.cells.is_empty());
     }
 
     #[test]
@@ -537,8 +556,17 @@ mod tests {
         let mempool = mempool_with(&[(hash, bundle.clone())]);
         let mask = (1u128 << 3) | (1u128 << 70);
 
-        let response = GetCells::new(5, vec![hash; MAX_CELL_REQUEST_HASHES], mask).handle(&mempool);
+        let mut expansions = 0;
+        let response = GetCells::new(5, vec![hash; MAX_CELL_REQUEST_HASHES], mask).handle_with(
+            &mempool,
+            |mempool, hash, mask| {
+                expansions += 1;
+                get_cells_for_tx(mempool, hash, mask)
+            },
+        );
 
+        // 256 occurrences of one hash cost exactly one KZG expansion.
+        assert_eq!(expansions, 1);
         assert_eq!(response.id, 5);
         assert_eq!(response.cell_mask, mask);
         assert_eq!(response.transaction_hashes, vec![hash]);
@@ -557,7 +585,17 @@ mod tests {
             (a, full_bundle(MAX_BLOB_COUNT, 1)),
             (b, full_bundle(MAX_BLOB_COUNT, 2)),
         ]);
-        let response = GetCells::new(1, vec![a, b, a], u128::MAX).handle(&mempool);
+        let mut expanded = Vec::new();
+        let response = GetCells::new(1, vec![a, b, a], u128::MAX).handle_with(
+            &mempool,
+            |mempool, hash, mask| {
+                expanded.push(hash);
+                get_cells_for_tx(mempool, hash, mask)
+            },
+        );
+        // Only the hash that fits the budget is ever expanded; `b` is cut by
+        // the plan and costs no KZG work.
+        assert_eq!(expanded, vec![a]);
         assert_eq!(response.cell_mask, u128::MAX);
         assert_eq!(response.transaction_hashes, vec![a]);
         assert_eq!(response.cells.len(), 1);
