@@ -307,7 +307,7 @@ RPC options:
           [default: jwt.hex]
 
       --authrpc.max-inflight-body-size <BYTES>
-          Maximum request body bytes the authenticated rpc server holds at once, across all connections. A request whose Content-Length does not fit waits up to 8 seconds for other requests to finish, and is then rejected with HTTP 503 before its body is read. A chunked body is counted as its chunks arrive, and gets the same 503 if a chunk finds no room within 8 seconds. Each request body is also capped at 128 MiB, and a larger one is rejected with HTTP 413. Must be at least that cap, 134217728.
+          Maximum request body bytes the authenticated rpc server holds at once, across all connections. It counts body bytes, not all the memory a request takes: parsing one uses about as much again. A request whose Content-Length does not fit waits up to 8 seconds for other requests to finish, and is then rejected with HTTP 503 before its body is read. A chunked body is counted as its chunks arrive, and gets the same 503 if a chunk finds no room within 8 seconds. Each request body is also capped at 128 MiB, and a larger one is rejected with HTTP 413. Must be at least that cap, 134217728.
           
           [env: ETHREX_AUTHRPC_MAX_INFLIGHT_BODY_SIZE=]
           [default: 536870912]
@@ -527,7 +527,7 @@ RPC options:
           [default: jwt.hex]
 
       --authrpc.max-inflight-body-size <BYTES>
-          Maximum request body bytes the authenticated rpc server holds at once, across all connections. A request whose Content-Length does not fit waits up to 8 seconds for other requests to finish, and is then rejected with HTTP 503 before its body is read. A chunked body is counted as its chunks arrive, and gets the same 503 if a chunk finds no room within 8 seconds. Each request body is also capped at 128 MiB, and a larger one is rejected with HTTP 413. Must be at least that cap, 134217728.
+          Maximum request body bytes the authenticated rpc server holds at once, across all connections. It counts body bytes, not all the memory a request takes: parsing one uses about as much again. A request whose Content-Length does not fit waits up to 8 seconds for other requests to finish, and is then rejected with HTTP 503 before its body is read. A chunked body is counted as its chunks arrive, and gets the same 503 if a chunk finds no room within 8 seconds. Each request body is also capped at 128 MiB, and a larger one is rejected with HTTP 413. Must be at least that cap, 134217728.
 
           [env: ETHREX_AUTHRPC_MAX_INFLIGHT_BODY_SIZE=]
           [default: 536870912]

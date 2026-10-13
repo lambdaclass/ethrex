@@ -1308,6 +1308,9 @@ pub(crate) async fn handle_authrpc_request(
             ))));
         }
     };
+    // The parsed request owns copies of its params, so the body text is not needed while
+    // they are decoded and handled.
+    drop(body);
 
     // Reject empty / oversize batches before any dispatch work.
     if let Some(err) = validate_batch(&wrapper) {
