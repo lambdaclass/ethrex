@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use crate::rlpx::{
     eth::transactions::{
         MAX_POOLED_TRANSACTIONS_BYTES, POOLED_TX_SIZE_TOLERANCE, decode_announced_txs,
+        filter_announced,
     },
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress, snappy_decompress_bounded},
@@ -224,19 +225,15 @@ impl NewPooledTransactionHashes72 {
     }
 
     /// Return a new announcement containing only the hashes in `requested`,
-    /// preserving their original type and size metadata. The `cell_mask` is
-    /// preserved from the original announcement.
+    /// preserving their original type and size metadata, in announcement order.
+    /// The `cell_mask` is preserved from the original announcement.
     pub fn filter_to(&self, requested: &[H256]) -> Self {
-        let mut types = Vec::with_capacity(requested.len());
-        let mut sizes = Vec::with_capacity(requested.len());
-        let mut hashes = Vec::with_capacity(requested.len());
-        for &hash in requested {
-            if let Some(pos) = self.transaction_hashes.iter().position(|h| *h == hash) {
-                types.push(self.transaction_types[pos]);
-                sizes.push(self.transaction_sizes[pos]);
-                hashes.push(hash);
-            }
-        }
+        let (types, sizes, hashes) = filter_announced(
+            &self.transaction_types,
+            &self.transaction_sizes,
+            &self.transaction_hashes,
+            requested,
+        );
         Self {
             transaction_types: types.into(),
             transaction_sizes: sizes,

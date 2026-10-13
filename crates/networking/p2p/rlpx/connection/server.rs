@@ -74,7 +74,7 @@ use spawned_concurrency::{
 };
 use spawned_rt::tasks::BroadcastStream;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     net::SocketAddr,
     sync::{Arc, RwLock},
     time::{Duration, Instant},
@@ -121,7 +121,6 @@ const SERVE_REQUEST_WINDOW: Duration = Duration::from_secs(60);
 const MAX_SERVE_REQUESTS_PER_WINDOW: u64 = 500;
 /// Number of transactions sent to a peer before checking for leeching behaviour.
 const LEECH_TX_SENT_THRESHOLD: u64 = 10_000;
-
 pub(crate) type PeerConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Arc<Message>)>;
 
 #[protocol]
@@ -1485,6 +1484,15 @@ fn check_serve_request_rate(state: &mut Established) -> bool {
     state.serve_requests_in_window <= MAX_SERVE_REQUESTS_PER_WINDOW
 }
 
+/// Drops the alternate announcers of transactions this peer delivered for one of our requests;
+/// see `Mempool::forget_alternates`.
+fn forget_delivered_alternates(state: &Established, delivered: HashSet<H256>) {
+    let delivered: Vec<H256> = delivered.into_iter().collect();
+    if let Err(e) = state.blockchain.mempool.forget_alternates(&delivered) {
+        warn!(error = %e, "forget_alternates failed");
+    }
+}
+
 async fn handle_incoming_message(
     state: &mut Established,
     message: Message,
@@ -1751,10 +1759,12 @@ async fn handle_incoming_message(
                     .get_transactions_to_request(&state.blockchain, state.node.node_id())?;
                 if !hashes.is_empty() {
                     // Buffer hashes for batched requesting instead of sending immediately.
-                    // The periodic flush_pending_tx_requests handler will send them.
+                    // The periodic flush_pending_tx_requests handler will send them. Keep
+                    // only the reserved entries, so the queue is bounded by the peer's
+                    // announced-hash budget rather than by the announcement's size.
                     state
                         .pending_tx_requests
-                        .push((new_pooled_transaction_hashes, hashes));
+                        .push((new_pooled_transaction_hashes.filter_to(&hashes), hashes));
                 }
             }
         }
@@ -1995,6 +2005,11 @@ async fn handle_incoming_message(
                 }
             }
             if state.blockchain.is_synced() {
+                let delivered: HashSet<H256> = msg
+                    .pooled_transactions
+                    .iter()
+                    .map(|tx| tx.compute_hash())
+                    .collect();
                 if let Some((announced, requested_hashes, _)) = &removed_request {
                     let fork = state.blockchain.current_fork()?;
                     if let Err(error) = msg.validate_requested(announced, fork) {
@@ -2043,6 +2058,9 @@ async fn handle_incoming_message(
                     }
                     return Err(error.into());
                 }
+                if removed_request.is_some() {
+                    forget_delivered_alternates(state, delivered);
+                }
             }
         }
         // eth/72 (EIP-8070): PooledTransactions72 handler.
@@ -2059,6 +2077,11 @@ async fn handle_incoming_message(
                     .clear_in_flight_txs(requested_hashes)?;
             }
             if state.blockchain.is_synced() {
+                let delivered: HashSet<H256> = msg
+                    .pooled_transactions
+                    .iter()
+                    .map(|tx| tx.compute_hash())
+                    .collect();
                 if let Some((announced, requested_hashes, _, _)) = &removed_request {
                     let fork = state.blockchain.current_fork()?;
                     if let Err(error) = msg.validate_requested(announced, fork) {
@@ -2105,6 +2128,9 @@ async fn handle_incoming_message(
                         ));
                     }
                     return Err(error.into());
+                }
+                if removed_request.is_some() {
+                    forget_delivered_alternates(state, delivered);
                 }
                 // EIP-8070 sampler: after tx validation, check if we have enough provider
                 // announcements to start fetching cells.
@@ -2863,6 +2889,205 @@ async fn retry_on_alternates(
             NewPooledTransactionHashes::from_raw(types.into(), sizes, hash_list.clone());
         if let Err(e) = conn.enqueue_tx_requests(announcement, hash_list) {
             debug!(error = %e, "Failed to enqueue tx requests on alternate peer");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tx_announcement_tests {
+    use super::*;
+    use crate::{peer_table::PeerTableServer, rlpx::eth::transactions::PooledTransactions};
+    use bytes::Bytes;
+    use ethrex_blockchain::mempool::MAX_ANNOUNCED_HASHES_PER_PEER;
+    use ethrex_common::types::EIP1559Transaction;
+    use ethrex_storage::EngineType;
+    use std::net::{IpAddr, Ipv4Addr};
+    use tokio::sync::mpsc;
+
+    /// An established, synced session with a peer speaking `eth_version`, and the receiving end
+    /// of its outbound queue, to see what the handler sends back.
+    fn session(eth_version: u8) -> (Established, mpsc::Receiver<Message>) {
+        let store = Store::new("memory", EngineType::InMemory).expect("in-memory store");
+        let blockchain = Arc::new(Blockchain::default_with_store(store.clone()));
+        blockchain.set_synced();
+        let peer_table = PeerTableServer::spawn(H256::zero(), 10, store.clone());
+        let tx_broadcaster =
+            TxBroadcaster::spawn(peer_table.clone(), blockchain.clone(), 3_600_000)
+                .expect("tx broadcaster");
+        let signer = SecretKey::from_slice(&[7; 32]).expect("signing key");
+        let peer_key = SecretKey::from_slice(&[9; 32]).expect("peer key");
+        let node = Node::new(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            30303,
+            30303,
+            public_key_from_signing_key(&peer_key),
+        );
+        let (outbound_tx, outbound_rx) = mpsc::channel(OUTBOUND_QUEUE_CAP);
+        let state = Established {
+            signer,
+            outbound_tx,
+            outbound_writer_timed_out: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            node,
+            is_inbound: true,
+            storage: store,
+            blockchain,
+            capabilities: vec![],
+            negotiated_eth_capability: Some(Capability::eth(eth_version)),
+            negotiated_snap_capability: None,
+            last_block_range_update_block: 0,
+            requested_pooled_txs: HashMap::new(),
+            requested_pooled_txs_72: HashMap::new(),
+            pending_tx_requests: Vec::new(),
+            pending_tx_requests_72: Vec::new(),
+            pending_cell_requests: Vec::new(),
+            requested_cells: HashMap::new(),
+            last_custody_generation: 0,
+            client_version: String::new(),
+            connection_broadcast_send: broadcast::channel(16).0,
+            peer_table,
+            #[cfg(feature = "l2")]
+            l2_state: L2ConnState::Unsupported,
+            tx_broadcaster,
+            current_requests: HashMap::new(),
+            disconnect_reason: None,
+            is_validated: true,
+            serve_request_window_start: Instant::now(),
+            serve_requests_in_window: 0,
+            txs_sent_to_peer: 0,
+            received_txs_from_peer: false,
+            missed_pongs: 0,
+        };
+        (state, outbound_rx)
+    }
+
+    /// Distinct well-formed transactions. They are never admitted (unsigned), which is fine:
+    /// what is checked is how they are requested and delivered.
+    fn txs(from_nonce: u64, count: usize) -> Vec<P2PTransaction> {
+        (from_nonce..from_nonce + count as u64)
+            .map(|nonce| {
+                P2PTransaction::EIP1559Transaction(EIP1559Transaction {
+                    nonce,
+                    ..Default::default()
+                })
+            })
+            .collect()
+    }
+
+    fn announcement(eth_version: u8, txs: &[P2PTransaction]) -> Message {
+        let types: Bytes = txs
+            .iter()
+            .map(|tx| tx.tx_type() as u8)
+            .collect::<Vec<_>>()
+            .into();
+        let sizes = txs.iter().map(|tx| tx.encode_canonical_len()).collect();
+        let hashes = txs.iter().map(|tx| tx.compute_hash()).collect();
+        if eth_version >= 72 {
+            Message::NewPooledTransactionHashes72(NewPooledTransactionHashes72::from_raw(
+                types, sizes, hashes, None,
+            ))
+        } else {
+            Message::NewPooledTransactionHashes(NewPooledTransactionHashes::from_raw(
+                types, sizes, hashes,
+            ))
+        }
+    }
+
+    fn answer(eth_version: u8, id: u64, txs: Vec<P2PTransaction>) -> Message {
+        if eth_version >= 72 {
+            Message::PooledTransactions72(PooledTransactions72::new(id, txs))
+        } else {
+            Message::PooledTransactions(PooledTransactions::new(id, txs))
+        }
+    }
+
+    /// Flushes the queued requests and returns what was sent, as (request id, hashes).
+    async fn flush_requests(
+        state: &mut Established,
+        outbound: &mut mpsc::Receiver<Message>,
+    ) -> Vec<(u64, Vec<H256>)> {
+        flush_pending_tx_requests(state).await.expect("flush");
+        flush_pending_tx_requests_72(state).await.expect("flush");
+        let mut requests = Vec::new();
+        while let Ok(message) = outbound.try_recv() {
+            if let Message::GetPooledTransactions(request) = message {
+                requests.push((request.id, request.transaction_hashes));
+            }
+        }
+        requests
+    }
+
+    fn queued_hashes(state: &Established) -> usize {
+        state
+            .pending_tx_requests
+            .iter()
+            .map(|(_, h)| h.len())
+            .sum::<usize>()
+            + state
+                .pending_tx_requests_72
+                .iter()
+                .map(|(_, h, _)| h.len())
+                .sum::<usize>()
+    }
+
+    fn tracked(state: &Established) -> usize {
+        state
+            .blockchain
+            .mempool
+            .announced_hashes_tracked_for(state.node.node_id())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn announcements_past_the_budget_are_trimmed_and_released() {
+        for eth_version in [68, 72] {
+            let (mut state, mut outbound) = session(eth_version);
+            let announced = txs(0, MAX_ANNOUNCED_HASHES_PER_PEER + 100);
+
+            handle_incoming_message(&mut state, announcement(eth_version, &announced))
+                .await
+                .expect("an over-budget announcement is trimmed, not refused");
+            assert_eq!(queued_hashes(&state), MAX_ANNOUNCED_HASHES_PER_PEER);
+            assert_eq!(tracked(&state), MAX_ANNOUNCED_HASHES_PER_PEER);
+            let queued_entries: usize = state
+                .pending_tx_requests
+                .iter()
+                .map(|(a, _)| a.transaction_types.len())
+                .chain(
+                    state
+                        .pending_tx_requests_72
+                        .iter()
+                        .map(|(a, _, _)| a.transaction_types.len()),
+                )
+                .sum();
+            assert_eq!(
+                queued_entries, MAX_ANNOUNCED_HASHES_PER_PEER,
+                "queued announcements hold only the reserved entries"
+            );
+
+            // Nothing more is taken from this peer while its budget is full.
+            handle_incoming_message(&mut state, announcement(eth_version, &txs(1_000_000, 10)))
+                .await
+                .unwrap();
+            assert_eq!(queued_hashes(&state), MAX_ANNOUNCED_HASHES_PER_PEER);
+
+            // An answer releases what it answered, and the rest goes with the session.
+            let requests = flush_requests(&mut state, &mut outbound).await;
+            let (id, first) = &requests[0];
+            let delivered: Vec<P2PTransaction> = announced
+                .iter()
+                .filter(|tx| first.contains(&tx.compute_hash()))
+                .cloned()
+                .collect();
+            handle_incoming_message(&mut state, answer(eth_version, *id, delivered))
+                .await
+                .unwrap();
+            assert_eq!(
+                tracked(&state),
+                MAX_ANNOUNCED_HASHES_PER_PEER - first.len(),
+                "eth/{eth_version}"
+            );
+            state.teardown().await;
+            assert_eq!(tracked(&state), 0, "eth/{eth_version}");
         }
     }
 }

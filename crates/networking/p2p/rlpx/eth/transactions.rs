@@ -192,24 +192,43 @@ impl NewPooledTransactionHashes {
     }
 
     /// Extract only the entries for the given `requested` hashes from this announcement.
-    /// Returns a trimmed announcement containing just those hashes with their types and sizes.
+    /// Returns a trimmed announcement containing just those hashes with their types and sizes,
+    /// in announcement order, taking the first entry of a hash announced twice.
     pub fn filter_to(&self, requested: &[H256]) -> NewPooledTransactionHashes {
-        let mut types = Vec::with_capacity(requested.len());
-        let mut sizes = Vec::with_capacity(requested.len());
-        let mut hashes = Vec::with_capacity(requested.len());
-        for &hash in requested {
-            if let Some(pos) = self.transaction_hashes.iter().position(|h| *h == hash) {
-                types.push(self.transaction_types[pos]);
-                sizes.push(self.transaction_sizes[pos]);
-                hashes.push(hash);
-            }
-        }
+        let (types, sizes, hashes) = filter_announced(
+            &self.transaction_types,
+            &self.transaction_sizes,
+            &self.transaction_hashes,
+            requested,
+        );
         NewPooledTransactionHashes {
             transaction_types: types.into(),
             transaction_sizes: sizes,
             transaction_hashes: hashes,
         }
     }
+}
+
+/// The entries of an announcement whose hash is in `requested`, in announcement order and
+/// once per hash. One pass over the announcement, so trimming a large one stays linear.
+pub(crate) fn filter_announced(
+    types: &[u8],
+    sizes: &[usize],
+    hashes: &[H256],
+    requested: &[H256],
+) -> (Vec<u8>, Vec<usize>, Vec<H256>) {
+    let mut wanted: HashSet<H256> = requested.iter().copied().collect();
+    let mut kept_types = Vec::with_capacity(wanted.len());
+    let mut kept_sizes = Vec::with_capacity(wanted.len());
+    let mut kept_hashes = Vec::with_capacity(wanted.len());
+    for ((hash, tx_type), size) in hashes.iter().zip(types).zip(sizes) {
+        if wanted.remove(hash) {
+            kept_types.push(*tx_type);
+            kept_sizes.push(*size);
+            kept_hashes.push(*hash);
+        }
+    }
+    (kept_types, kept_sizes, kept_hashes)
 }
 
 /// Decodes the `types`, `sizes` and `hashes` fields that every `NewPooledTransactionHashes`
@@ -583,6 +602,20 @@ mod tests {
                 Err(mismatch())
             );
         }
+    }
+
+    #[test]
+    fn filter_to_keeps_announcement_order_and_first_entries() {
+        let h = |n| H256::from_low_u64_be(n);
+        let announcement = NewPooledTransactionHashes::from_raw(
+            vec![0u8, 1, 2, 3].into(),
+            vec![10, 11, 12, 13],
+            vec![h(1), h(2), h(3), h(2)],
+        );
+        let trimmed = announcement.filter_to(&[h(3), h(2), h(9)]);
+        assert_eq!(trimmed.transaction_hashes, vec![h(2), h(3)]);
+        assert_eq!(trimmed.transaction_types.as_ref(), &[1, 2]);
+        assert_eq!(trimmed.transaction_sizes, vec![11, 12]);
     }
 
     fn p2p_tx(nonce: u64) -> P2PTransaction {
