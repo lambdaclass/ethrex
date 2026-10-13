@@ -13,4 +13,4 @@ runs:
         # HTTP error, `retry` sees success, and bash then runs the error page.
         retry curl -fsSL https://sp1.succinct.xyz -o /tmp/sp1_install.sh
         bash /tmp/sp1_install.sh
-        retry ~/.sp1/bin/sp1up --version 5.0.8
+        retry ~/.sp1/bin/sp1up --version 6.9.0

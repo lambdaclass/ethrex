@@ -902,7 +902,7 @@ Prover client options:
           [default: INFO]
 
       --sp1-server <URL>
-          Url to the moongate server to use when using sp1 backend
+          Ignored: SP1 6 proves on the local sp1-gpu-server and has no remote prover server
 
           [env: ETHREX_SP1_SERVER=]
 ```

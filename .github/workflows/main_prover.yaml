@@ -76,12 +76,12 @@ jobs:
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: rm -rf cmd/.env
 
-      # Remove stale SP1 GPU container from previous runs. The SP1 SDK
-      # spawns a Docker container named "sp1-gpu" for GPU proving which
-      # is not managed by docker compose. If a prior run was cancelled or
-      # timed out, the container may still exist and block the new run.
-      - name: Clean stale sp1-gpu container
-        run: docker rm -f sp1-gpu || true
+      # Stop a stale SP1 GPU server from previous runs. The SP1 SDK starts
+      # `sp1-gpu-server` as a child process for GPU proving, listening on
+      # /tmp/sp1-cuda-<device>.sock. If a prior run was cancelled or timed
+      # out, the server may still be running and block the new run.
+      - name: Clean stale sp1-gpu-server
+        run: pkill -x sp1-gpu-server || true
 
       - name: Build prover
         # if: ${{ always() && github.event_name == 'merge_group' }}
@@ -185,7 +185,7 @@ jobs:
         run: |
           cd crates/l2
           docker compose down
-          docker rm -f sp1-gpu || true
+          pkill -x sp1-gpu-server || true
 
       - name: Ensure admin permissions in _work
         if: always()
