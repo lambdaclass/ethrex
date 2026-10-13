@@ -21,9 +21,13 @@ use crate::{
     utils::{address_to_word, create_eth_transfer_log, word_to_address, *},
     vm::VM,
 };
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use ethrex_common::{Address, U256, evm::calculate_create_address, types::Fork};
-use ethrex_common::{tracing::CallType, types::Code};
+use ethrex_common::{
+    tracing::CallType,
+    types::{BYTECODE_PADDING, Code},
+};
+use std::mem;
 
 pub struct OpCallHandler;
 impl OpcodeHandler for OpCallHandler {
@@ -871,6 +875,34 @@ impl<'a> VM<'a> {
         code_size_in_memory: usize,
         salt: Option<U256>,
     ) -> Result<OpcodeResult, VMError> {
+        // The initcode is copied into a reused buffer, which moves into the child frame's code
+        // when the CREATE starts one. On every other exit, an error included, it goes back to
+        // the pool here: a buffer dropped instead is never reclaimed by a bump allocator.
+        let mut initcode = self.initcode_pool.pop().unwrap_or_default();
+        initcode.clear();
+        let result = self.create_with_initcode_buffer(
+            &mut initcode,
+            value,
+            code_offset_in_memory,
+            code_size_in_memory,
+            salt,
+        );
+        if initcode.capacity() > 0 {
+            self.initcode_pool.push(initcode);
+        }
+        result
+    }
+
+    /// [`VM::generic_create`] with `initcode`, an empty buffer to copy the initcode into. It is
+    /// taken, leaving an empty one with no allocation, only when the child frame starts.
+    fn create_with_initcode_buffer(
+        &mut self,
+        initcode: &mut BytesMut,
+        value: U256,
+        code_offset_in_memory: usize,
+        code_size_in_memory: usize,
+        salt: Option<U256>,
+    ) -> Result<OpcodeResult, VMError> {
         // [EIP-3860] / [EIP-7954] - Cant exceed init code max size
         let init_code_max = if self.env.config.fork >= Fork::Amsterdam {
             AMSTERDAM_INIT_CODE_MAX_SIZE
@@ -891,13 +923,16 @@ impl<'a> VM<'a> {
         // Clear callframe subreturn data
         current_call_frame.sub_return_data = Bytes::new();
 
-        // Copy the initcode out of memory, once, into a reused buffer.
-        let mut initcode = self.initcode_pool.pop().unwrap_or_default();
-        initcode.clear();
+        // Copy the initcode out of memory, once, with room for the padding `Code` appends to
+        // it: padding a buffer sized to the bare initcode would grow it to twice that by
+        // copying it.
         self.current_call_frame.memory.with_range(
             code_offset_in_memory,
             code_size_in_memory,
-            |code| initcode.extend_from_slice(code),
+            |code| {
+                initcode.reserve(code.len().saturating_add(BYTECODE_PADDING));
+                initcode.extend_from_slice(code);
+            },
         )?;
 
         // Get account info of deployer
@@ -909,7 +944,7 @@ impl<'a> VM<'a> {
 
         // Calculate create address
         let new_address = match salt {
-            Some(salt) => calculate_create2_address(deployer, &initcode, salt)?,
+            Some(salt) => calculate_create2_address(deployer, initcode, salt)?,
             None => calculate_create_address(deployer, deployer_nonce),
         };
 
@@ -949,10 +984,9 @@ impl<'a> VM<'a> {
                         new_address,
                         value,
                         preview_gas,
-                        &Bytes::copy_from_slice(&initcode),
+                        &Bytes::copy_from_slice(initcode),
                     );
                 }
-                self.initcode_pool.push(initcode);
                 self.current_call_frame.stack.push(FAIL)?;
                 self.tracer.exit_early(0, Some(reason.to_string()))?;
                 return Ok(OpcodeResult::Continue);
@@ -1003,7 +1037,7 @@ impl<'a> VM<'a> {
                 new_address,
                 value,
                 gas_limit,
-                &Bytes::copy_from_slice(&initcode),
+                &Bytes::copy_from_slice(initcode),
             );
         }
 
@@ -1019,7 +1053,6 @@ impl<'a> VM<'a> {
             if self.env.config.fork >= Fork::Amsterdam && !target_alive {
                 self.credit_state_gas_refund(self.state_gas_new_account)?;
             }
-            self.initcode_pool.push(initcode);
             self.current_call_frame.stack.push(FAIL)?;
             self.tracer
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
@@ -1038,7 +1071,7 @@ impl<'a> VM<'a> {
             deployer,
             new_address,
             new_address,
-            Code::from_initcode_buffer(initcode),
+            Code::from_initcode_buffer(mem::take(initcode)),
             value,
             Bytes::new(),
             false,

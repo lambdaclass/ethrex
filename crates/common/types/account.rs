@@ -97,8 +97,9 @@ impl Code {
         }
     }
 
-    /// Builds initcode from `buffer`, which holds exactly the initcode, without copying it:
-    /// the padding is appended in place and the buffer becomes the bytecode. Paired with
+    /// Builds initcode from `buffer`, which holds exactly the initcode: the padding is appended
+    /// in place and the buffer becomes the bytecode, so given [`BYTECODE_PADDING`] bytes of
+    /// spare capacity it is never copied. Paired with
     /// [`Code::into_initcode_buffer`], the next initcode can reuse the allocation. The hash
     /// is the same placeholder any initcode gets.
     pub fn from_initcode_buffer(mut buffer: BytesMut) -> Self {

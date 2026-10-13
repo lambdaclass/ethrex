@@ -31,6 +31,7 @@ use super::test_db::TestDatabase;
 const ORIGIN: u64 = 0x1000;
 const CALLER: u64 = 0xCA11;
 const CALLEE: u64 = 0xCA1E;
+const CREATOR: u64 = 0xC4EA;
 const SHA256_PRECOMPILE: u64 = 0x02;
 const IDENTITY_PRECOMPILE: u64 = 0x04;
 const CALLS: u8 = 64;
@@ -38,6 +39,9 @@ const ARGS_SIZE: u16 = 1024;
 const CREATES: u8 = 8;
 const INITCODE_SIZE: u16 = 1024;
 const GAS_LIMIT: u64 = 10_000_000;
+/// Covers a CREATE's regular cost (about 32k gas) but not the 183,600 state gas a new
+/// account is charged from it under Amsterdam.
+const CREATOR_GAS: u16 = 50_000;
 
 /// [`TestDatabase`] plus the precompile result cache that block execution has.
 struct WithPrecompileCache {
@@ -100,6 +104,27 @@ fn create_loop(creates: u8) -> Bytes {
     Bytes::from(code)
 }
 
+/// Runs one CREATE with `INITCODE_SIZE` bytes of zeroed memory as initcode.
+fn create_once() -> Bytes {
+    let mut code = vec![0x61]; // PUSH2 size
+    code.extend_from_slice(&INITCODE_SIZE.to_be_bytes());
+    code.extend_from_slice(&[0x60, 0x00, 0x60, 0x00]); // offset, value
+    code.extend_from_slice(&[0xf0, 0x00]); // CREATE, STOP
+    Bytes::from(code)
+}
+
+/// Calls `target` once with `gas`, no arguments and no return data.
+fn call_with_gas(target: Address, gas: u16) -> Bytes {
+    let mut code = vec![0x60, 0x00, 0x60, 0x00]; // retSize, retOffset
+    code.extend_from_slice(&[0x60, 0x00, 0x60, 0x00, 0x60, 0x00]); // argsSize, argsOffset, value
+    code.push(0x73); // PUSH20 target
+    code.extend_from_slice(target.as_bytes());
+    code.push(0x61); // PUSH2 gas
+    code.extend_from_slice(&gas.to_be_bytes());
+    code.extend_from_slice(&[0xf1, 0x50, 0x00]); // CALL, POP, STOP
+    Bytes::from(code)
+}
+
 /// Capacities of the buffers left in the VM's pools after a transaction.
 struct Pools {
     calldata: Vec<usize>,
@@ -138,6 +163,15 @@ fn run_caller(caller_code: Bytes, precompile_cache: Option<PrecompileCache>) -> 
         Account::new(
             U256::zero(),
             Code::from_bytecode(Bytes::from_static(&[0x00]), &NativeCrypto),
+            1,
+            FxHashMap::default(),
+        ),
+    );
+    accounts.insert(
+        Address::from_low_u64_be(CREATOR),
+        Account::new(
+            U256::zero(),
+            Code::from_bytecode(create_once(), &NativeCrypto),
             1,
             FxHashMap::default(),
         ),
@@ -247,4 +281,26 @@ fn sequential_creates_reuse_one_initcode_buffer() {
     // Each CREATE frame's initcode went back to the pool for the next CREATE to reuse.
     assert_eq!(pools.initcode.len(), 1);
     assert!(pools.initcode[0] >= usize::from(INITCODE_SIZE));
+}
+
+#[test]
+fn an_initcode_buffer_is_allocated_once_with_room_for_its_padding() {
+    let pools = run_caller(create_loop(1), None);
+
+    // The initcode plus its 33 bytes of STOP padding, in one allocation. Padding a buffer
+    // sized to the bare initcode would grow it to twice the initcode by copying it, which
+    // a bump allocator never reclaims.
+    assert_eq!(pools.initcode, [usize::from(INITCODE_SIZE) + 33]);
+}
+
+#[test]
+fn a_create_that_fails_after_copying_its_initcode_returns_the_buffer() {
+    // The creator runs out of gas on the new account's state gas, after the initcode was
+    // copied into a pooled buffer. Its CALL fails, the transaction does not.
+    let pools = run_caller(
+        call_with_gas(Address::from_low_u64_be(CREATOR), CREATOR_GAS),
+        None,
+    );
+
+    assert_eq!(pools.initcode.len(), 1);
 }
