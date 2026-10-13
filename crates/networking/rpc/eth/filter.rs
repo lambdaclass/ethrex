@@ -18,7 +18,7 @@ use crate::{
 };
 use serde_json::{Value, json};
 
-use super::logs::{LogQueryLimits, LogsFilter, fetch_logs_with_filter};
+use super::logs::{LogQueryLimits, LogsFilter, fetch_logs_for_poll};
 
 #[derive(Debug, Clone)]
 pub struct NewFilterRequest {
@@ -315,14 +315,14 @@ impl FilterChangesRequest {
                 // the filter's `fromBlock` yet.
                 return Ok(json!([]));
             }
-            // The stored filter keeps its own range; only the poll position moves.
-            let mut logs_filter = filter_data.clone();
-            logs_filter.from_block = BlockIdentifier::Number(from);
-            logs_filter.to_block = BlockIdentifier::Number(to);
+            let filter_data = filter_data.clone();
             // Drop the lock early to process this filter's query
             // and not keep the lock more than we should.
             drop(active_filters_guard);
-            let logs = fetch_logs_with_filter(&logs_filter, storage, limits).await?;
+            // A range that does not fit the log query limits is reported in parts, one per
+            // poll, so the poll may cover fewer blocks than `from..=to`.
+            let (logs, last_reported) =
+                fetch_logs_for_poll(&filter_data, from, to, storage, limits).await?;
             // Move the poll position only once the logs are in hand, so a poll that fails,
             // or whose client goes away mid-scan, leaves its blocks for the next poll. Two
             // polls of the same filter running at once can both report them.
@@ -333,7 +333,7 @@ impl FilterChangesRequest {
                 poisoned_guard.into_inner()
             });
             if let Some((_, filter)) = active_filters_guard.get_mut(&self.id) {
-                filter.last_block_number = filter.last_block_number.max(to);
+                filter.last_block_number = filter.last_block_number.max(last_reported);
             }
             drop(active_filters_guard);
             serde_json::to_value(logs).map_err(|error| {

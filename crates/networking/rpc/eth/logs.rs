@@ -283,6 +283,20 @@ impl LogQueryLimits {
     pub(crate) fn check_filter(&self, filter: &LogsFilter) -> Result<(), RpcErr> {
         self.check_work(&LogQueryWork::new(1, &filter.address_set(), &filter.topics))
     }
+
+    /// The most blocks one scan for these addresses and topics may cover within the block
+    /// range and work limits, and at least one.
+    fn max_blocks_within_limits(&self, addresses: &HashSet<&H160>, topics: &[TopicFilter]) -> u64 {
+        let by_range = self
+            .max_blocks_per_filter
+            .map_or(u64::MAX, |max| max.saturating_add(1));
+        // At least 1: every factor of the estimate is.
+        let block_work = LogQueryWork::new(1, addresses, topics).total();
+        let by_work = self
+            .max_log_query_work
+            .map_or(u64::MAX, |max| max / block_work);
+        by_range.min(by_work).max(1)
+    }
 }
 
 impl Default for LogQueryLimits {
@@ -434,60 +448,135 @@ pub(crate) async fn fetch_logs_with_filter(
             // A single block cannot be split any further, so it is exempt from the cap on
             // results, as in reth.
             let max_logs = limits.max_logs_per_response.filter(|_| from != to);
-            // The idea here is to fetch every log and filter by address, if given.
-            // For that, we'll need each block in range, and its transactions,
-            // and for each transaction, we'll need its receipts, which
-            // contain the actual logs we want.
-            let mut chunk_start = from;
-            while chunk_start <= to {
-                let chunk_end = chunk_start.saturating_add(HEADER_CHUNK_SIZE - 1).min(to);
-                let headers = bloom_matching_headers(
-                    storage.clone(),
-                    bloom_matcher.clone(),
-                    chunk_start,
-                    chunk_end,
-                )
-                .await?;
-                for block_header in headers {
-                    let block_num = block_header.number;
-                    // Take the body of the block, we will use it to access the
-                    // transactions. Read it by the header's hash, like the receipts,
-                    // not by number: a reorg after the header chunk was read would
-                    // otherwise pair another block's transactions with these receipts.
-                    let block_body = storage
-                        .get_block_body_by_hash(block_header.hash())
-                        .await?
-                        .ok_or(RpcErr::Internal(format!(
-                            "Could not get body for block {block_num}"
-                        )))?;
-                    collect_block_logs(
-                        &storage,
-                        &block_header,
-                        &block_body,
-                        &address_filter,
-                        &filter.topics,
-                        &mut logs,
-                    )
-                    .await?;
-                    if let Some(max) = max_logs
-                        && logs.len() > max
-                    {
-                        // Suggest the blocks scanned in full before this one, as reth does,
-                        // so clients can split the range from there.
-                        let last_complete = block_num.saturating_sub(1).max(from);
-                        return Err(RpcErr::InvalidParams(format!(
-                            "query exceeds max results {max}, retry with the range {from}-{last_complete}"
-                        )));
-                    }
-                }
-                let Some(next) = chunk_end.checked_add(1) else {
-                    break;
-                };
-                chunk_start = next;
+            let (range_logs, last_complete) = scan_block_range(
+                &storage,
+                &bloom_matcher,
+                &address_filter,
+                &filter.topics,
+                from,
+                to,
+                max_logs,
+            )
+            .await?;
+            if let Some(max) = max_logs
+                && last_complete < to
+            {
+                // Suggest the blocks scanned in full, as reth does, so clients can split
+                // the range from there.
+                return Err(RpcErr::InvalidParams(format!(
+                    "query exceeds max results {max}, retry with the range {from}-{last_complete}"
+                )));
             }
+            logs = range_logs;
         }
     }
     Ok(logs)
+}
+
+/// Logs for one `eth_getFilterChanges` poll of `filter` over blocks `from..=to`, and the
+/// last block they cover, after which the filter's next poll starts. A poll's range is
+/// whatever arrived since the previous one, which its client cannot narrow, so where
+/// `eth_getLogs` fails on the block range, work or results limit, a poll reports the
+/// first part of the range that fits them and leaves the rest to the next poll. Only a
+/// full work budget fails it, and a later poll retries the same blocks.
+pub(crate) async fn fetch_logs_for_poll(
+    filter: &LogsFilter,
+    from: BlockNumber,
+    to: BlockNumber,
+    storage: Store,
+    limits: &LogQueryLimits,
+) -> Result<(Vec<RpcLog>, BlockNumber), RpcErr> {
+    if from > to {
+        return Ok((Vec::new(), to));
+    }
+    let address_filter = filter.address_set();
+    let bloom_matcher = Arc::new(BloomFilterMatcher::new(&address_filter, &filter.topics));
+    let blocks = limits.max_blocks_within_limits(&address_filter, &filter.topics);
+    let to = to.min(from.saturating_add(blocks - 1));
+    let work = LogQueryWork::new(to - from + 1, &address_filter, &filter.topics);
+    // `eth_newFilter` accepts only filters that can scan one block within the work limit,
+    // so this holds for any filter it registered.
+    limits.check_work(&work)?;
+    let _reservation = limits.reserve(&work)?;
+    scan_block_range(
+        &storage,
+        &bloom_matcher,
+        &address_filter,
+        &filter.topics,
+        from,
+        to,
+        limits.max_logs_per_response,
+    )
+    .await
+}
+
+/// Collects the logs of blocks `from..=to` that match the filter, in block order, and
+/// returns them with the last block they cover. With `max_logs`, the scan stops at the
+/// first block that takes the total past it and leaves that block out, so the logs cover
+/// the blocks before it; a first block over the cap is kept whole, since a block cannot
+/// be split.
+async fn scan_block_range(
+    storage: &Store,
+    bloom_matcher: &Arc<BloomFilterMatcher>,
+    address_filter: &HashSet<&H160>,
+    topics: &[TopicFilter],
+    from: BlockNumber,
+    to: BlockNumber,
+    max_logs: Option<usize>,
+) -> Result<(Vec<RpcLog>, BlockNumber), RpcErr> {
+    let mut logs = Vec::new();
+    // The idea here is to fetch every log and filter by address, if given.
+    // For that, we'll need each block in range, and its transactions,
+    // and for each transaction, we'll need its receipts, which
+    // contain the actual logs we want.
+    let mut chunk_start = from;
+    while chunk_start <= to {
+        let chunk_end = chunk_start.saturating_add(HEADER_CHUNK_SIZE - 1).min(to);
+        let headers = bloom_matching_headers(
+            storage.clone(),
+            bloom_matcher.clone(),
+            chunk_start,
+            chunk_end,
+        )
+        .await?;
+        for block_header in headers {
+            let block_num = block_header.number;
+            // Take the body of the block, we will use it to access the
+            // transactions. Read it by the header's hash, like the receipts,
+            // not by number: a reorg after the header chunk was read would
+            // otherwise pair another block's transactions with these receipts.
+            let block_body = storage
+                .get_block_body_by_hash(block_header.hash())
+                .await?
+                .ok_or(RpcErr::Internal(format!(
+                    "Could not get body for block {block_num}"
+                )))?;
+            let logs_before_block = logs.len();
+            collect_block_logs(
+                storage,
+                &block_header,
+                &block_body,
+                address_filter,
+                topics,
+                &mut logs,
+            )
+            .await?;
+            if let Some(max) = max_logs
+                && logs.len() > max
+            {
+                if block_num == from {
+                    return Ok((logs, from));
+                }
+                logs.truncate(logs_before_block);
+                return Ok((logs, block_num - 1));
+            }
+        }
+        let Some(next) = chunk_end.checked_add(1) else {
+            break;
+        };
+        chunk_start = next;
+    }
+    Ok((logs, to))
 }
 
 /// Reads the canonical headers of blocks `from..=to` on a blocking thread and returns
@@ -1659,54 +1748,76 @@ mod tests {
         assert_eq!(limits.work_budget.available_permits(), budget as usize);
     }
 
-    /// `eth_getFilterChanges` scans through the same path, so it returns what
-    /// `eth_getLogs` returns for the same range and gets the same limit errors, and
+    fn rpc_call(method: &str, params: Value) -> crate::utils::RpcRequest {
+        serde_json::from_value(
+            json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}),
+        )
+        .unwrap()
+    }
+
+    /// Registers `filter` (a JSON filter object) as log filter 7, as if it had been
+    /// created when block 0 was the head.
+    fn watch_from_genesis(context: &crate::rpc::RpcApiContext, filter: Value) {
+        use crate::eth::filter::{FilterKind, PollableFilter};
+        let filter = LogsFilter::parse(&Some(vec![filter])).unwrap();
+        context.active_filters.lock().unwrap().insert(
+            7,
+            (
+                std::time::Instant::now(),
+                PollableFilter {
+                    last_block_number: 0,
+                    kind: FilterKind::Logs(filter),
+                },
+            ),
+        );
+    }
+
+    /// The block numbers of the logs one `eth_getFilterChanges` poll of filter 7 returns.
+    async fn poll_filter(context: &crate::rpc::RpcApiContext) -> Result<Vec<u64>, RpcErr> {
+        let changes = crate::rpc::map_http_requests(
+            &rpc_call("eth_getFilterChanges", json!(["0x7"])),
+            context.clone(),
+        )
+        .await?;
+        Ok(changes
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|log| {
+                u64::from_str_radix(
+                    log["blockNumber"]
+                        .as_str()
+                        .unwrap()
+                        .trim_start_matches("0x"),
+                    16,
+                )
+                .unwrap()
+            })
+            .collect())
+    }
+
+    /// `eth_getFilterChanges` returns what `eth_getLogs` returns for the same range, and
     /// `eth_newFilter` refuses a filter that could not scan even one block.
     #[tokio::test]
-    async fn filter_changes_match_get_logs_and_share_its_limits() {
-        use crate::eth::filter::{FilterKind, PollableFilter};
+    async fn filter_changes_match_get_logs() {
         use crate::rpc::map_http_requests;
         use crate::test_utils::default_context_with_storage;
-        use crate::utils::RpcRequest;
-        use std::time::Instant;
 
         let storage = store_with_one_log_per_block(5).await;
         let mut context = default_context_with_storage(storage.clone()).await;
-        let call = |method: &str, params: Value| {
-            serde_json::from_value::<RpcRequest>(
-                json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}),
-            )
-            .unwrap()
-        };
-        let watch_from_genesis = |context: &crate::rpc::RpcApiContext| {
-            let filter =
-                LogsFilter::parse(&Some(vec![json!({"address": format!("{:#x}", addr(1))})]))
-                    .unwrap();
-            context.active_filters.lock().unwrap().insert(
-                7,
-                (
-                    Instant::now(),
-                    PollableFilter {
-                        last_block_number: 0,
-                        kind: FilterKind::Logs(filter),
-                    },
-                ),
-            );
-        };
+        let address = format!("{:#x}", addr(1));
 
-        // Block 0 has no logs, so the comparison holds whether a poll starts at the
-        // filter's last polled block or at the one after it.
-        watch_from_genesis(&context);
+        watch_from_genesis(&context, json!({"address": address}));
         let changes = map_http_requests(
-            &call("eth_getFilterChanges", json!(["0x7"])),
+            &rpc_call("eth_getFilterChanges", json!(["0x7"])),
             context.clone(),
         )
         .await
         .unwrap();
         let logs = map_http_requests(
-            &call(
+            &rpc_call(
                 "eth_getLogs",
-                json!([{"fromBlock": "0x1", "toBlock": "0x5", "address": format!("{:#x}", addr(1))}]),
+                json!([{"fromBlock": "0x1", "toBlock": "0x5", "address": address}]),
             ),
             context.clone(),
         )
@@ -1715,27 +1826,9 @@ mod tests {
         assert_eq!(changes, logs);
         assert_eq!(changes.as_array().unwrap().len(), 5);
 
-        context.log_query_limits = LogQueryLimits::new(0, 2, 0, DEFAULT_LOG_QUERY_WORK_BUDGET);
-        watch_from_genesis(&context);
-        let error: crate::utils::RpcErrorMetadata = map_http_requests(
-            &call("eth_getFilterChanges", json!(["0x7"])),
-            context.clone(),
-        )
-        .await
-        .unwrap_err()
-        .into();
-        assert_eq!(error.code, -32602);
-        assert!(
-            error
-                .message
-                .starts_with("query exceeds max results 2, retry with the range "),
-            "{}",
-            error.message
-        );
-
         context.log_query_limits = work_limits(10, DEFAULT_LOG_QUERY_WORK_BUDGET);
         let error: crate::utils::RpcErrorMetadata = map_http_requests(
-            &call("eth_newFilter", json!([{"address": address_list(1, 11)}])),
+            &rpc_call("eth_newFilter", json!([{"address": address_list(1, 11)}])),
             context.clone(),
         )
         .await
@@ -1743,10 +1836,99 @@ mod tests {
         .into();
         assert_eq!(error.code, -32005);
         let accepted = map_http_requests(
-            &call("eth_newFilter", json!([{"address": address_list(1, 10)}])),
+            &rpc_call("eth_newFilter", json!([{"address": address_list(1, 10)}])),
             context.clone(),
         )
         .await;
         assert!(accepted.is_ok(), "{accepted:?}");
+    }
+
+    /// A poll's range is whatever arrived since the previous poll, which its client cannot
+    /// narrow. When it does not fit the block range, work or results limit, the poll
+    /// reports the first part that does and the next polls go on from there, instead of
+    /// failing the same way on every poll.
+    #[tokio::test]
+    async fn filter_changes_report_ranges_over_the_limits_in_parts() {
+        use crate::test_utils::default_context_with_storage;
+
+        let storage = store_with_one_log_per_block(5).await;
+        let mut context = default_context_with_storage(storage).await;
+        let budget = DEFAULT_LOG_QUERY_WORK_BUDGET;
+        let cases = [
+            (
+                "results",
+                LogQueryLimits::new(0, 2, 0, budget),
+                vec![vec![1, 2], vec![3, 4], vec![5]],
+            ),
+            (
+                "block range",
+                LogQueryLimits::new(2, 0, 0, budget),
+                vec![vec![1, 2, 3], vec![4, 5]],
+            ),
+            (
+                "work",
+                work_limits(4, budget),
+                vec![vec![1, 2, 3, 4], vec![5]],
+            ),
+        ];
+        for (limit, limits, expected) in cases {
+            context.log_query_limits = limits;
+            watch_from_genesis(&context, json!({"address": format!("{:#x}", addr(1))}));
+            let mut polls = Vec::new();
+            for _ in 0..10 {
+                let blocks = poll_filter(&context).await.unwrap();
+                if blocks.is_empty() {
+                    break;
+                }
+                polls.push(blocks);
+            }
+            assert_eq!(polls, expected, "{limit} limit");
+        }
+    }
+
+    /// A first block with more logs than the results cap is reported whole, so a poll is
+    /// never stuck on a block it cannot split.
+    #[tokio::test]
+    async fn filter_changes_report_a_block_over_the_results_cap_whole() {
+        use crate::test_utils::default_context_with_storage;
+
+        let storage = store_with_blocks(&[
+            vec![],
+            vec![(true, vec![(1, vec![1]), (1, vec![1]), (1, vec![1])])],
+            vec![(true, vec![(1, vec![1])])],
+        ])
+        .await;
+        let mut context = default_context_with_storage(storage).await;
+        context.log_query_limits = LogQueryLimits::new(0, 2, 0, DEFAULT_LOG_QUERY_WORK_BUDGET);
+        watch_from_genesis(&context, json!({"address": format!("{:#x}", addr(1))}));
+
+        assert_eq!(poll_filter(&context).await.unwrap(), vec![1, 1, 1]);
+        assert_eq!(poll_filter(&context).await.unwrap(), vec![2]);
+        assert_eq!(poll_filter(&context).await.unwrap(), Vec::<u64>::new());
+    }
+
+    /// A poll refused because the work budget is full moves the filter nowhere, so the
+    /// next poll reports the same blocks.
+    #[tokio::test]
+    async fn filter_changes_retry_when_the_work_budget_is_full() {
+        use crate::test_utils::default_context_with_storage;
+
+        let storage = store_with_one_log_per_block(5).await;
+        let mut context = default_context_with_storage(storage).await;
+        context.log_query_limits = work_limits(DEFAULT_MAX_LOG_QUERY_WORK, 20_000);
+        // 3,000 addresses over 5 blocks is 15,000 units of work, too heavy to skip the
+        // budget.
+        watch_from_genesis(&context, json!({"address": address_list(1, 3_000)}));
+
+        let held = context
+            .log_query_limits
+            .work_budget
+            .clone()
+            .try_acquire_many_owned(20_000)
+            .unwrap();
+        let error: crate::utils::RpcErrorMetadata = poll_filter(&context).await.unwrap_err().into();
+        assert_eq!(error.code, -32005);
+        drop(held);
+        assert_eq!(poll_filter(&context).await.unwrap(), vec![1, 2, 3, 4, 5]);
     }
 }
