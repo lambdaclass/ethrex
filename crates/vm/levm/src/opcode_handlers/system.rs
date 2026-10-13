@@ -23,7 +23,10 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{Address, U256, evm::calculate_create_address, types::Fork};
-use ethrex_common::{tracing::CallType, types::Code};
+use ethrex_common::{
+    tracing::CallType,
+    types::{BYTECODE_PADDING, Code},
+};
 
 pub struct OpCallHandler;
 impl OpcodeHandler for OpCallHandler {
@@ -891,9 +894,11 @@ impl<'a> VM<'a> {
         // Clear callframe subreturn data
         current_call_frame.sub_return_data = Bytes::new();
 
-        // Copy the initcode out of memory, once, into a reused buffer.
+        // Copy the initcode out of memory, once, into a reused buffer. Reserve room for the
+        // padding `Code::from_initcode_buffer` appends, so the buffer never has to grow for it.
         let mut initcode = self.initcode_pool.pop().unwrap_or_default();
         initcode.clear();
+        initcode.reserve(code_size_in_memory.saturating_add(BYTECODE_PADDING));
         self.current_call_frame.memory.with_range(
             code_offset_in_memory,
             code_size_in_memory,

@@ -100,7 +100,8 @@ impl Code {
     /// Builds initcode from `buffer`, which holds exactly the initcode, without copying it:
     /// the padding is appended in place and the buffer becomes the bytecode. Paired with
     /// [`Code::into_initcode_buffer`], the next initcode can reuse the allocation. The hash
-    /// is the same placeholder any initcode gets.
+    /// is the same placeholder any initcode gets. Give `buffer` room for [`BYTECODE_PADDING`]
+    /// more bytes, or appending the padding reallocates it and copies the initcode.
     pub fn from_initcode_buffer(mut buffer: BytesMut) -> Self {
         let bytecode_len = buffer.len();
         let jumpdests = Self::compute_jumpdests(&buffer);

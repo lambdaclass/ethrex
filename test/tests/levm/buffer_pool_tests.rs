@@ -248,3 +248,20 @@ fn sequential_creates_reuse_one_initcode_buffer() {
     assert_eq!(pools.initcode.len(), 1);
     assert!(pools.initcode[0] >= usize::from(INITCODE_SIZE));
 }
+
+#[test]
+fn a_create_allocates_its_initcode_buffer_once() {
+    let pools = run_caller(create_loop(1), None);
+
+    // The buffer holds the initcode and its 33 bytes of padding. A buffer sized for the
+    // initcode alone has to grow for the padding, which doubles it to 2048 bytes and, under
+    // a bump allocator that never frees, keeps both the 1024 and the 2048 byte allocations.
+    let initcode_size = usize::from(INITCODE_SIZE);
+    assert_eq!(pools.initcode.len(), 1);
+    assert!(pools.initcode[0] >= initcode_size + 33);
+    assert!(
+        pools.initcode[0] < 2 * initcode_size,
+        "initcode buffer grew to {} bytes",
+        pools.initcode[0]
+    );
+}
