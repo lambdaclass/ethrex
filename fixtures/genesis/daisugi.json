@@ -32,7 +32,8 @@
     "pragueTime": 0,
     "eip8141PrototypeTime": 1790274781,
     "eip8288PrototypeTime": 1791238303,
-    "daisugiLegacyFrames": true
+    "daisugiLegacyFrames": true,
+    "daisugiAdaptiveAggregationTime": 1791544301
   },
   "alloc": {
     "0x0000000000000000000000000000000000000000": {

@@ -8,7 +8,8 @@
 
 use bytes::Bytes;
 use ethrex_common::types::{
-    ChainConfig, ChainFeatures, Fork, Frame, FrameSignature, FrameTransaction, Genesis, Transaction,
+    ChainConfig, ChainFeatures, Fork, ForkId, Frame, FrameSignature, FrameTransaction, Genesis,
+    Transaction,
 };
 use ethrex_common::{Address, H256, U256};
 use ethrex_crypto::NativeCrypto;
@@ -23,6 +24,10 @@ const DAISUGI_GENESIS_HASH: &str =
 const FRAMES_TIME: u64 = 1_790_274_781;
 /// `eip8288PrototypeTime`: EIP-8288 and keyed nonces activate (block 1,000,889).
 const DEPENDENCIES_TIME: u64 = 1_791_238_303;
+/// `daisugiAdaptiveAggregationTime` (block 1,153,610), recovered from the fork ID
+/// the network's bootnode advertises: the only timestamp after
+/// `eip8288PrototypeTime` whose CRC32 step turns this chain's fork hash into it.
+const ADAPTIVE_AGGREGATION_TIME: u64 = 1_791_544_301;
 
 fn h256(hex_str: &str) -> H256 {
     H256::from_slice(&hex::decode(hex_str.trim_start_matches("0x")).unwrap())
@@ -146,6 +151,29 @@ fn daisugi_genesis_hash_matches_the_network() {
     let genesis: Genesis = serde_json::from_str(DAISUGI_GENESIS).expect("genesis parses");
     let hash = genesis.get_block().hash();
     assert_eq!(hash, h256(DAISUGI_GENESIS_HASH), "genesis block hash");
+}
+
+/// Peers compare EIP-2124 fork IDs before anything else, so a schedule missing a
+/// fork the network has passed cannot connect to it at all. Before the adaptive
+/// aggregation fork the hash is the one nodes on the original genesis advertise;
+/// from it on, the one the bootnode advertises.
+#[test]
+fn fork_id_matches_the_network_across_the_adaptive_aggregation_fork() {
+    let genesis: Genesis = serde_json::from_str(DAISUGI_GENESIS).expect("genesis parses");
+    let header = genesis.get_block().header;
+
+    let before = ForkId::new(
+        genesis.config,
+        header.clone(),
+        ADAPTIVE_AGGREGATION_TIME - 2,
+        1_153_609,
+    );
+    assert_eq!(before.fork_hash.as_bytes(), [0x27, 0xb8, 0xc9, 0x19]);
+    assert_eq!(before.fork_next, ADAPTIVE_AGGREGATION_TIME);
+
+    let after = ForkId::new(genesis.config, header, ADAPTIVE_AGGREGATION_TIME, 1_153_610);
+    assert_eq!(after.fork_hash.as_bytes(), [0xe7, 0xb9, 0x0d, 0xe2]);
+    assert_eq!(after.fork_next, 0);
 }
 
 #[test]

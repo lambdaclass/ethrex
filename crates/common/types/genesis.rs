@@ -341,6 +341,12 @@ pub struct ChainConfig {
     /// compatibility rule of the Daisugi testnet. Genesis key `daisugiLegacyFrames`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub daisugi_legacy_frames: bool,
+    /// From here a block's recursive proof may also come from the Daisugi testnet's
+    /// adaptive aggregation guest, a second leanVM program with its own verification
+    /// key; before it only the original guest is accepted. Genesis key
+    /// `daisugiAdaptiveAggregationTime`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daisugi_adaptive_aggregation_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
@@ -897,6 +903,7 @@ impl ChainConfig {
             // their EIP-2124 fork ID; leaving it out gets the handshake rejected.
             self.eip8141_prototype_time,
             self.eip8288_prototype_time,
+            self.daisugi_adaptive_aggregation_time,
         ]
         .into_iter()
         .flatten()
