@@ -9,8 +9,12 @@
 use ethrex_common::U256;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::EvmError;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::{self, IgnoredAny, SeqAccess, Visitor},
+};
+use serde_json::{Value, value::RawValue};
+use std::{fmt, marker::PhantomData};
 
 use crate::{authentication::AuthenticationError, clients::EthClientError};
 use ethrex_blockchain::error::MempoolError;
@@ -338,13 +342,117 @@ impl RpcNamespace {
 ///
 /// Per the JSON-RPC 2.0 spec, request IDs can be either numbers or strings.
 /// The same ID must be returned in the response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 pub enum RpcRequestId {
     /// Numeric request ID.
     Number(u64),
     /// String request ID.
     String(String),
+}
+
+// Hand-written instead of derived: a derived untagged enum buffers the whole value into an
+// intermediate tree before trying each variant, so an id sent as a huge array would be
+// allocated in full before being rejected. This visitor rejects anything else on sight.
+impl<'de> Deserialize<'de> for RpcRequestId {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct IdVisitor;
+
+        impl Visitor<'_> for IdVisitor {
+            type Value = RpcRequestId;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a non-negative integer or a string")
+            }
+
+            fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                Ok(RpcRequestId::Number(value))
+            }
+
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                Ok(RpcRequestId::String(value.to_owned()))
+            }
+
+            fn visit_string<E: de::Error>(self, value: String) -> Result<Self::Value, E> {
+                Ok(RpcRequestId::String(value))
+            }
+        }
+
+        deserializer.deserialize_any(IdVisitor)
+    }
+}
+
+/// Number of positional params a request can carry before the rest are skipped unread.
+/// No method takes more than a handful, so any request reaching this bound is rejected
+/// by its handler's arity check; the bound only stops a params array of millions of tiny
+/// elements from costing one heap allocation each first.
+pub const MAX_PARAMS: usize = 16;
+
+/// Deserializes a JSON array into a `Vec` holding at most `max + 1` elements. Elements
+/// past that are skipped without being allocated, so an oversized array costs no more
+/// memory than `max + 1` elements, and the one extra element left in the `Vec` lets the
+/// caller see the array was too long and reject it with its usual error.
+pub(crate) struct CappedSeqVisitor<T> {
+    pub(crate) max: usize,
+    pub(crate) marker: PhantomData<T>,
+}
+
+impl<'de, T: Deserialize<'de>> Visitor<'de> for CappedSeqVisitor<T> {
+    type Value = Vec<T>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("an array")
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        let mut items = Vec::with_capacity(seq.size_hint().unwrap_or(0).min(self.max + 1));
+        while items.len() <= self.max {
+            match seq.next_element()? {
+                Some(item) => items.push(item),
+                None => return Ok(items),
+            }
+        }
+        while seq.next_element::<IgnoredAny>()?.is_some() {}
+        Ok(items)
+    }
+}
+
+/// `params` is optional and may be `null`; when present it must be an array, read as raw
+/// JSON text per element and capped at [`MAX_PARAMS`] + 1 elements.
+fn deserialize_params<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Vec<Box<RawValue>>>, D::Error> {
+    struct ParamsVisitor;
+
+    impl<'de> Visitor<'de> for ParamsVisitor {
+        type Value = Option<Vec<Box<RawValue>>>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("null or an array of params")
+        }
+
+        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_some<D: Deserializer<'de>>(
+            self,
+            deserializer: D,
+        ) -> Result<Self::Value, D::Error> {
+            deserializer
+                .deserialize_seq(CappedSeqVisitor {
+                    max: MAX_PARAMS,
+                    marker: PhantomData,
+                })
+                .map(Some)
+        }
+    }
+
+    deserializer.deserialize_option(ParamsVisitor)
 }
 
 /// A parsed JSON-RPC 2.0 request.
@@ -367,8 +475,11 @@ pub struct RpcRequest {
     pub jsonrpc: String,
     /// Method name (e.g., "eth_getBalance").
     pub method: String,
-    /// Optional array of method parameters.
-    pub params: Option<Vec<Value>>,
+    /// Optional array of method parameters, kept as raw JSON text. Each handler
+    /// deserializes the params it expects straight into their types, so no request is
+    /// turned into a generic `Value` tree before its method has validated it.
+    #[serde(default, deserialize_with = "deserialize_params")]
+    pub params: Option<Vec<Box<RawValue>>>,
 }
 
 impl RpcRequest {
@@ -385,9 +496,16 @@ impl RpcRequest {
             id: RpcRequestId::Number(1),
             jsonrpc: "2.0".to_string(),
             method: method.to_string(),
-            params,
+            params: params.map(|params| params.iter().map(value_to_raw).collect()),
         }
     }
+}
+
+/// Converts a `Value` into raw JSON text for [`RpcRequest::params`].
+pub fn value_to_raw(value: &Value) -> Box<RawValue> {
+    // Serializing a `Value` cannot fail: its map keys are always strings and its numbers
+    // always finite. `Value`'s own `Display` relies on the same invariant.
+    serde_json::value::to_raw_value(value).expect("a serde_json::Value always serializes")
 }
 
 pub fn resolve_namespace(maybe_namespace: &str, method: String) -> Result<RpcNamespace, RpcErr> {
@@ -504,8 +622,8 @@ pub fn get_message_from_revert_data(data: &str) -> Result<String, EthClientError
     }
 }
 
-pub fn parse_json_hex(hex: &serde_json::Value) -> Result<u64, String> {
-    if let Value::String(maybe_hex) = hex {
+pub fn parse_json_hex(hex: &RawValue) -> Result<u64, String> {
+    if let Ok(maybe_hex) = serde_json::from_str::<String>(hex.get()) {
         let trimmed = maybe_hex.trim_start_matches("0x");
         let maybe_parsed = u64::from_str_radix(trimmed, 16);
         maybe_parsed.map_err(|_| format!("Could not parse given hex {maybe_hex}"))
@@ -547,5 +665,79 @@ mod tests {
     #[test]
     fn mempool_renders_as_its_cli_name() {
         assert_eq!(RpcNamespace::Mempool.as_prefix(), "txpool");
+    }
+
+    fn request_with(fields: &str) -> Result<RpcRequest, serde_json::Error> {
+        serde_json::from_str(&format!(
+            r#"{{"jsonrpc":"2.0","method":"eth_call",{fields}}}"#
+        ))
+    }
+
+    /// Params stay raw JSON text, exactly as sent, for each handler to deserialize.
+    #[test]
+    fn request_params_are_kept_as_raw_text() {
+        let request = request_with(r#""id":1,"params":[{"to":"0x01","data":[1, 2]}, "latest"]"#)
+            .expect("valid request");
+        let params = request.params.expect("params present");
+        assert_eq!(params.len(), 2);
+        assert_eq!(params[0].get(), r#"{"to":"0x01","data":[1, 2]}"#);
+        assert_eq!(params[1].get(), r#""latest""#);
+    }
+
+    #[test]
+    fn request_params_may_be_absent_or_null() {
+        assert!(request_with(r#""id":1"#).unwrap().params.is_none());
+        assert!(
+            request_with(r#""id":1,"params":null"#)
+                .unwrap()
+                .params
+                .is_none()
+        );
+        assert!(request_with(r#""id":1,"params":{"a":1}"#).is_err());
+    }
+
+    /// An oversized params array is materialized only up to `MAX_PARAMS + 1` elements,
+    /// enough for every handler's arity check to reject it.
+    #[test]
+    fn request_params_are_capped_while_parsing() {
+        let params = vec!["0"; 100_000].join(",");
+        let request = request_with(&format!(r#""id":1,"params":[{params}]"#))
+            .expect("an oversized params array still parses");
+        assert_eq!(
+            request.params.expect("params present").len(),
+            MAX_PARAMS + 1
+        );
+    }
+
+    /// The id is checked as it is read, not buffered first: only a non-negative integer
+    /// or a string is accepted.
+    #[test]
+    fn request_id_accepts_only_integers_and_strings() {
+        assert!(matches!(
+            request_with(r#""id":7"#).unwrap().id,
+            RpcRequestId::Number(7)
+        ));
+        assert!(matches!(
+            request_with(r#""id":"abc""#).unwrap().id,
+            RpcRequestId::String(id) if id == "abc"
+        ));
+        let huge_array = vec!["0"; 100_000].join(",");
+        for id in ["-1", "1.5", "null", "{}", &format!("[{huge_array}]")] {
+            assert!(
+                request_with(&format!(r#""id":{id}"#)).is_err(),
+                "id {id:.20} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn request_new_converts_value_params() {
+        let request = RpcRequest::new("eth_getBalance", Some(vec![serde_json::json!("0x01")]));
+        let params = request.params.expect("params present");
+        assert_eq!(params[0].get(), r#""0x01""#);
+        let round_trip: RpcRequest =
+            serde_json::from_str(&serde_json::to_string(&RpcRequest::new("m", None)).unwrap())
+                .unwrap();
+        assert!(round_trip.params.is_none());
     }
 }

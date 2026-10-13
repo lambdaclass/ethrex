@@ -16,7 +16,7 @@ use crate::{
     types::block_identifier::{BlockIdentifier, BlockTag},
     utils::{RpcErr, RpcRequest, parse_json_hex},
 };
-use serde_json::{Value, json};
+use serde_json::{Value, json, value::RawValue};
 
 use super::logs::{LogsFilter, fetch_logs_with_filter};
 
@@ -66,7 +66,7 @@ pub struct PollableFilter {
 }
 
 impl NewFilterRequest {
-    pub fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    pub fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let filter = LogsFilter::parse(params)?;
         // EIP-234 defines `blockHash` for eth_newFilter too, but the only thing
         // it does with such a filter is answer eth_getFilterLogs, which we don't
@@ -142,7 +142,7 @@ impl NewFilterRequest {
 pub struct NewBlockFilterRequest;
 
 impl NewBlockFilterRequest {
-    pub fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    pub fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         // Other clients accept both an absent and an empty params array here.
         match params.as_deref() {
             None | Some([]) => Ok(NewBlockFilterRequest),
@@ -193,7 +193,7 @@ pub struct DeleteFilterRequest {
 }
 
 impl DeleteFilterRequest {
-    pub fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    pub fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         match params.as_deref() {
             Some([param]) => {
                 let id = parse_json_hex(param).map_err(|_err| RpcErr::BadHexFormat(0))?;
@@ -238,7 +238,7 @@ pub struct FilterChangesRequest {
 }
 
 impl FilterChangesRequest {
-    pub fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    pub fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         match params.as_deref() {
             Some([param]) => {
                 let id = parse_json_hex(param).map_err(|_err| RpcErr::BadHexFormat(0))?;
