@@ -162,12 +162,9 @@ fn push_call(code: &mut Vec<u8>, args: u16) {
     code.extend_from_slice(&[0x5a, 0xf1, 0x50]); // GAS, CALL, POP
 }
 
-/// Calls `CALLEE` once with 1 KiB of arguments, which leaves a 1 KiB buffer in the calldata
-/// pool, then `calls` times with `args` bytes.
-fn calls_after_a_large_one(calls: u16, args: u16) -> Bytes {
-    let mut code = vec![];
-    push_call(&mut code, 1024);
-    code.push(0x61); // PUSH2 calls
+/// Calls `CALLEE` `calls` times with `args` bytes of memory as arguments.
+fn repeated_calls(calls: u16, args: u16) -> Bytes {
+    let mut code = vec![0x61]; // PUSH2 calls
     code.extend_from_slice(&calls.to_be_bytes());
     let loop_start = u16::try_from(code.len()).expect("short code");
     code.push(0x5b); // JUMPDEST
@@ -255,25 +252,24 @@ fn bytes_allocated_by(caller_code: Bytes) -> usize {
     bytes
 }
 
-/// Bytes each call of [`calls_after_a_large_one`] with `args` bytes of arguments allocates.
+/// Bytes each call of [`repeated_calls`] with `args` bytes of arguments allocates.
 fn bytes_per_call(args: u16) -> usize {
-    let few = bytes_allocated_by(calls_after_a_large_one(100, args));
-    let many = bytes_allocated_by(calls_after_a_large_one(300, args));
+    let few = bytes_allocated_by(repeated_calls(100, args));
+    let many = bytes_allocated_by(repeated_calls(300, args));
     (many - few) / 200
 }
 
 #[test]
-fn a_call_allocates_no_more_for_its_arguments_than_their_size() {
-    // Before buffers were pooled, a call copied its arguments into an allocation of their
-    // size. A pooled buffer larger than the arguments costs the header `Bytes` allocates to
-    // share it instead, 24 bytes: more than a copy of a 4-byte selector. Calls with no
-    // arguments allocate nothing for them, so they measure everything else a call allocates.
+fn a_call_allocates_nothing_for_its_arguments() {
+    // The callee reads its arguments in place in the caller's memory, so a call allocates
+    // the same whatever their size. Calls with no arguments measure everything else a call
+    // allocates.
     let without_arguments = bytes_per_call(0);
-    for args in [4, 64] {
-        let for_arguments = bytes_per_call(args) - without_arguments;
-        assert!(
-            for_arguments <= usize::from(args),
-            "{args} bytes of arguments cost {for_arguments} bytes"
+    for args in [4, 64, 1024] {
+        assert_eq!(
+            bytes_per_call(args),
+            without_arguments,
+            "a call with {args} bytes of arguments allocates more than one without"
         );
     }
 }
@@ -390,7 +386,7 @@ fn bytes_allocated_executing(block: &Block, sender: Address) -> usize {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn a_block_reuses_its_call_buffers_across_transactions() {
+async fn a_block_does_not_copy_its_call_arguments() {
     let secret = SecretKey::from_slice(&[0x11; 32]).expect("secret key");
     let signer: Signer = LocalSigner::new(secret).into();
     let few = block_of_calls(2, &signer).await;
@@ -400,9 +396,8 @@ async fn a_block_reuses_its_call_buffers_across_transactions() {
         - bytes_allocated_executing(&few, signer.address()))
         / 2;
 
-    // Each transaction copies 64 KiB of arguments for its call. With buffers kept for the
-    // whole block, every transaction after the first copies them into the buffer an earlier
-    // one returned; with buffers kept per transaction, each would allocate its own.
+    // Each transaction passes 64 KiB of arguments to its call, which reads them in place in
+    // the caller's memory: all a transaction allocates comes to less than one copy of them.
     assert!(
         per_transaction < usize::from(BLOCK_CALL_ARGS),
         "each transaction allocated {per_transaction} bytes"

@@ -16,7 +16,7 @@ use crate::{
     constants::{AMSTERDAM_INIT_CODE_MAX_SIZE, FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost,
-    memory::{self, calculate_memory_size},
+    memory::{self, CallData, calculate_memory_size},
     opcode_handlers::OpcodeHandler,
     utils::{address_to_word, create_eth_transfer_log, word_to_address, *},
     vm::VM,
@@ -28,10 +28,6 @@ use ethrex_common::{
     types::{Code, InitcodeBuffer},
 };
 use std::mem;
-
-/// Bytes the header `Bytes` allocates whenever it shares a buffer longer than its contents:
-/// a pointer to the buffer, its capacity and a reference count.
-const SHARED_HEADER_SIZE: usize = 3 * size_of::<usize>();
 
 pub struct OpCallHandler;
 impl OpcodeHandler for OpCallHandler {
@@ -206,7 +202,7 @@ impl OpcodeHandler for OpCallHandler {
             value,
             gas_limit,
             &data,
-        );
+        )?;
 
         // Generic call.
         vm.generic_call(
@@ -342,7 +338,7 @@ impl OpcodeHandler for OpCallCodeHandler {
             value,
             gas_limit,
             &data,
-        );
+        )?;
 
         // Generic call.
         vm.generic_call(
@@ -466,7 +462,7 @@ impl OpcodeHandler for OpDelegateCallHandler {
             vm.current_call_frame.msg_value,
             gas_limit,
             &data,
-        );
+        )?;
 
         // Generic call.
         vm.generic_call(
@@ -588,7 +584,7 @@ impl OpcodeHandler for OpStaticCallHandler {
             U256::zero(),
             gas_limit,
             &data,
-        );
+        )?;
 
         // Generic call.
         vm.generic_call(
@@ -842,7 +838,7 @@ impl OpcodeHandler for OpSelfDestructHandler {
             balance,
             0,
             &Default::default(),
-        );
+        )?;
         vm.tracer.exit_early(0, None)?;
 
         Ok(OpcodeResult::Halt)
@@ -980,8 +976,8 @@ impl<'a> VM<'a> {
                         new_address,
                         value,
                         preview_gas,
-                        &Bytes::copy_from_slice(initcode.initcode()),
-                    );
+                        &Bytes::copy_from_slice(initcode.initcode()).into(),
+                    )?;
                 }
                 self.current_call_frame.stack.push(FAIL)?;
                 self.tracer.exit_early(0, Some(reason.to_string()))?;
@@ -1033,8 +1029,8 @@ impl<'a> VM<'a> {
                 new_address,
                 value,
                 gas_limit,
-                &Bytes::copy_from_slice(initcode.initcode()),
-            );
+                &Bytes::copy_from_slice(initcode.initcode()).into(),
+            )?;
         }
 
         // Increment sender nonce (irreversible change)
@@ -1069,7 +1065,7 @@ impl<'a> VM<'a> {
             new_address,
             Code::from_initcode_buffer(mem::take(initcode)),
             value,
-            Bytes::new(),
+            CallData::default(),
             false,
             gas_limit,
             new_depth,
@@ -1212,7 +1208,7 @@ impl<'a> VM<'a> {
         code_address: Address,
         should_transfer_value: bool,
         is_static: bool,
-        calldata: Bytes,
+        calldata: CallData,
         ret_offset: usize,
         ret_size: usize,
         bytecode: Code,
@@ -1226,7 +1222,6 @@ impl<'a> VM<'a> {
         if should_transfer_value && !value.is_zero() {
             let sender_balance = self.db.get_account(msg_sender)?.info.balance;
             if sender_balance < value {
-                self.recycle_calldata(calldata);
                 // EIP-8037: no account is created, refund the new-account state gas.
                 self.refund_new_account_state_gas(new_account_charged)?;
                 self.early_revert_message_call(gas_limit, "OutOfFund".to_string())?;
@@ -1241,7 +1236,6 @@ impl<'a> VM<'a> {
             .checked_add(1)
             .ok_or(InternalError::Overflow)?;
         if new_depth > 1024 {
-            self.recycle_calldata(calldata);
             self.refund_new_account_state_gas(new_account_charged)?;
             self.early_revert_message_call(gas_limit, "MaxDepth".to_string())?;
             return Ok(OpcodeResult::Continue);
@@ -1254,18 +1248,9 @@ impl<'a> VM<'a> {
             }
 
             let mut gas_remaining = gas_limit;
-            let ctx_result = Self::execute_precompile(
-                // Resolve a relocation destination back to the precompile it hosts.
-                self.effective_precompile_address(code_address),
-                &calldata,
-                gas_limit,
-                &mut gas_remaining,
-                self.env.config.fork,
-                self.db.store.precompile_cache(),
-                self.crypto,
-                self.stateless_validator,
-            )?;
-            self.recycle_calldata(calldata);
+            // The precompile reads the arguments in place in the caller's memory.
+            let ctx_result =
+                self.execute_precompile(code_address, &calldata, gas_limit, &mut gas_remaining)?;
 
             let call_frame = &mut self.current_call_frame;
 
@@ -1436,7 +1421,6 @@ impl<'a> VM<'a> {
             call_frame_backup,
             stack,
             new_account_state_gas_charged,
-            calldata,
             ..
         } = executed_call_frame;
 
@@ -1510,7 +1494,6 @@ impl<'a> VM<'a> {
         let mut stack = stack;
         stack.clear();
         self.stack_pool.push(stack);
-        self.recycle_calldata(calldata);
 
         Ok(())
     }
@@ -1609,27 +1592,9 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    /// Copies a child frame's arguments out of the caller's memory into a pooled buffer.
-    ///
-    /// Arguments shorter than [`SHARED_HEADER_SIZE`] are copied into an allocation of their
-    /// own size instead: a pooled buffer larger than them costs that header each time it is
-    /// handed out, more than the copy, and a buffer under 8 bytes is always larger than them.
-    fn get_calldata(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {
-        if size == 0 {
-            return Ok(Bytes::new());
-        }
-        if size < SHARED_HEADER_SIZE {
-            return self
-                .current_call_frame
-                .memory
-                .with_range(offset, size, Bytes::copy_from_slice);
-        }
-        let mut buffer = self.calldata_pool.pop().unwrap_or_default();
-        buffer.clear();
-        self.current_call_frame
-            .memory
-            .with_range(offset, size, |range| buffer.extend_from_slice(range))?;
-        Ok(buffer.freeze())
+    /// A call's arguments, read in place in the caller's memory rather than copied.
+    fn get_calldata(&mut self, offset: usize, size: usize) -> Result<CallData, VMError> {
+        self.current_call_frame.memory.calldata_view(offset, size)
     }
 
     /// Returns a finished CREATE frame's initcode buffers to the pool, except those something
@@ -1644,18 +1609,6 @@ impl<'a> VM<'a> {
         if buffer.is_allocated() {
             buffer.clear();
             self.initcode_pool.push(buffer);
-        }
-    }
-
-    /// Returns a finished child frame's calldata buffer to the pool. A buffer that is still
-    /// shared (a tracer or a precompile output kept a clone) is left alone and freed normally.
-    /// It stays a `BytesMut`: turning it back into a `Vec` would move every byte in place.
-    fn recycle_calldata(&mut self, calldata: Bytes) {
-        // Arguments too short to be given a pooled buffer leave one too short to keep.
-        if let Ok(buffer) = calldata.try_into_mut()
-            && buffer.capacity() >= SHARED_HEADER_SIZE
-        {
-            self.calldata_pool.push(buffer);
         }
     }
 
