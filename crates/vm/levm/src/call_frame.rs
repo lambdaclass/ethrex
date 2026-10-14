@@ -2,7 +2,7 @@ use crate::{
     account::LevmAccount,
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
-    memory::Memory,
+    memory::{CallData, Memory},
     utils::restore_cache_state,
     vm::VM,
 };
@@ -303,7 +303,7 @@ pub struct CallFrame {
     pub stack: Stack,
     pub memory: Memory,
     /// Data sent along the transaction. Empty in CREATE transactions.
-    pub calldata: Bytes,
+    pub calldata: CallData,
     /// Return data of the CURRENT CONTEXT (see docs for more details)
     pub output: Bytes,
     /// Return data of the SUB-CONTEXT (see docs for more details)
@@ -439,7 +439,7 @@ impl CallFrame {
         code_address: Address,
         bytecode: Code,
         msg_value: U256,
-        calldata: Bytes,
+        calldata: CallData,
         is_static: bool,
         gas_limit: u64,
         depth: usize,

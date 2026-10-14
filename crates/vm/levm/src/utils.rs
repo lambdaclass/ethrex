@@ -623,7 +623,10 @@ impl<'a> VM<'a> {
 
         // Calldata Cost
         // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-        let calldata_cost = gas_cost::tx_calldata(&self.current_call_frame.calldata)?;
+        let calldata_cost = self
+            .current_call_frame
+            .calldata
+            .with_slice(gas_cost::tx_calldata)??;
 
         regular_gas = regular_gas.checked_add(calldata_cost).ok_or(OutOfGas)?;
 
@@ -756,10 +759,13 @@ impl<'a> VM<'a> {
         let fork = self.env.config.fork;
 
         // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
+        let tx_calldata;
         let calldata = if self.is_create()? {
             self.current_call_frame.bytecode.code()
         } else {
-            self.current_call_frame.calldata.as_ref()
+            // A transaction's own data is owned, so this shares it rather than copying.
+            tx_calldata = self.current_call_frame.calldata.to_bytes()?;
+            tx_calldata.as_ref()
         };
 
         // EIP-7976 floor tokens: for the floor arm, all calldata bytes count unweighted.
