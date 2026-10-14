@@ -22,7 +22,7 @@ async fn estimate(call_object: &str) -> u64 {
     let body = format!(
         r#"{{"jsonrpc":"2.0","method":"eth_estimateGas","params":[{call_object},"latest"],"id":1}}"#
     );
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
     let hex = response["result"]
         .as_str()
         .unwrap_or_else(|| panic!("eth_estimateGas should succeed, got {response}"));
@@ -103,7 +103,7 @@ async fn estimate_gas_for_a_gas_observing_call_is_executable_and_within_the_tole
     let body = format!(
         r#"{{"jsonrpc":"2.0","method":"eth_estimateGas","params":[{call},"latest"],"id":1}}"#
     );
-    let response = call_http(context.clone(), body).await;
+    let response = call_http(&context, body).await;
     let hex = response["result"]
         .as_str()
         .unwrap_or_else(|| panic!("eth_estimateGas should succeed, got {response}"));
@@ -115,7 +115,7 @@ async fn estimate_gas_for_a_gas_observing_call_is_executable_and_within_the_tole
             let probe = format!(
                 r#"{{"jsonrpc":"2.0","method":"eth_call","params":[{{"from":"{RICH}","to":"{OBSERVER:#x}","gas":"{gas:#x}"}},"latest"],"id":1}}"#
             );
-            call_http(context, probe).await.get("result").is_some()
+            call_http(&context, probe).await.get("result").is_some()
         }
     };
 
@@ -160,7 +160,7 @@ async fn eth_call_tolerates_gas_above_the_per_tx_cap() {
     let body = format!(
         r#"{{"jsonrpc":"2.0","method":"eth_call","params":[{{"from":"{RICH}","to":"{RICH}","gas":"{ABOVE_CAP:#x}"}},"latest"],"id":1}}"#
     );
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
     assert!(
         response.get("result").is_some(),
         "eth_call above the per-tx gas cap should still simulate, got {response}"

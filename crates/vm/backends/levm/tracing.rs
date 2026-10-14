@@ -3,7 +3,7 @@ use ethrex_common::tracing::{PrePostState, PrestateAccountState, PrestateResult,
 use ethrex_common::types::{Block, Fork, GenericTransaction, Transaction};
 use ethrex_common::{
     Address, BigEndianHash, H256, U256,
-    tracing::{CallTrace, CallTraceFrame, OpcodeTraceResult},
+    tracing::{CallTrace, OpcodeTraceResult},
     types::BlockHeader,
 };
 use ethrex_crypto::Crypto;
@@ -252,6 +252,7 @@ impl LEVM {
             crypto,
             stateless_validator,
         )
+        .map(|(trace, _)| trace)
     }
 
     /// `debug_traceCall` counterpart of [`Self::trace_tx_calls`].
@@ -278,10 +279,12 @@ impl LEVM {
             crypto,
             None,
         )
+        .map(|(trace, _)| trace)
     }
 
     /// Runs `tx` with the callTracer over a prepared `env`. Shared by the tx and call
-    /// entry points.
+    /// entry points. Also returns the next block-absolute log index, which counts the
+    /// logs `onlyTopCall` leaves out of the returned trace.
     #[expect(clippy::too_many_arguments)]
     fn run_call_trace(
         db: &mut GeneralizedDatabase,
@@ -293,7 +296,7 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
         stateless_validator: Option<&dyn StatelessValidator>,
-    ) -> Result<CallTrace, EvmError> {
+    ) -> Result<(CallTrace, u64), EvmError> {
         let mut vm = VM::new(
             env,
             db,
@@ -331,7 +334,7 @@ impl LEVM {
         }
 
         // We only return the top call because a transaction only has one call with subcalls
-        Ok(vec![callframe])
+        Ok((vec![callframe], vm.tracer.next_log_index))
     }
 
     /// Traces every transaction in `block` with the callTracer, oldest to newest.
@@ -367,7 +370,7 @@ impl LEVM {
                 vm_type,
                 base_blob_fee,
             )?;
-            let trace = Self::run_call_trace(
+            let (trace, next_log_index) = Self::run_call_trace(
                 db,
                 env,
                 tx,
@@ -378,7 +381,7 @@ impl LEVM {
                 crypto,
                 None,
             )?;
-            log_index_base = log_index_base.saturating_add(trace.iter().map(count_call_logs).sum());
+            log_index_base = next_log_index;
             traces.push((tx.hash(crypto), trace));
         }
         Ok(traces)
@@ -451,15 +454,6 @@ impl LEVM {
     }
 }
 
-/// Recursively counts the logs captured in a call frame and all its subcalls — the
-/// number of `withLog` logs a traced tx contributes to the block-absolute log index.
-fn count_call_logs(frame: &CallTraceFrame) -> u64 {
-    let own = u64::try_from(frame.logs.len()).unwrap_or(u64::MAX);
-    frame.calls.iter().fold(own, |acc, subcall| {
-        acc.saturating_add(count_call_logs(subcall))
-    })
-}
-
 /// Computes the block-invariant `(EVMConfig, chain_id, base_blob_fee)` once so a
 /// whole-block trace can reuse them across transactions instead of recomputing per tx.
 fn block_trace_env_config(
@@ -483,11 +477,9 @@ fn prepare_call_env(
     db: &GeneralizedDatabase,
     vm_type: VMType,
 ) -> Result<(Environment, Transaction), EvmError> {
+    // `env_from_generic` relaxes the allowance check without touching `block_gas_limit`:
+    // a trace must report the same GASLIMIT the traced block executed with.
     let mut env = env_from_generic(tx, block_header, db, vm_type)?;
-    // Skip the allowance check without touching `block_gas_limit`; see
-    // `simulate_tx_from_generic`. A trace must report the same GASLIMIT the traced block
-    // executed with.
-    env.disable_gas_allowance_check = true;
     adjust_disabled_base_fee(&mut env);
     let converted_tx = generic_tx_to_transaction(tx)?;
     Ok((env, converted_tx))

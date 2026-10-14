@@ -28,6 +28,7 @@ tokio = { workspace = true, features = ["rt", "sync"] }
 fastbloom = "0.14"
 rayon.workspace = true
 lru.workspace = true
+indexmap.workspace = true
 
 [features]
 default = []

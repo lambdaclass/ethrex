@@ -112,11 +112,11 @@ pub fn set_log_level(
         .ok_or(RpcErr::MissingParam("log level".to_string()))?;
     let log_level = params
         .first()
-        .ok_or(RpcErr::MissingParam("log level".to_string()))?
-        .as_str()
-        .ok_or(RpcErr::WrongParam("Expected string".to_string()))?;
+        .ok_or(RpcErr::MissingParam("log level".to_string()))?;
+    let log_level = serde_json::from_str::<String>(log_level.get())
+        .map_err(|_| RpcErr::WrongParam("Expected string".to_string()))?;
 
-    let filter = EnvFilter::try_new(log_level)
+    let filter = EnvFilter::try_new(&log_level)
         .map_err(|_| RpcErr::BadParams(format!("Cannot parse {log_level} as a log directive")))?;
 
     if let Some(handle) = log_filter_handler {

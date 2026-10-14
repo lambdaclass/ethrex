@@ -380,10 +380,9 @@ impl NewPayloadRequest {
 
 // ── Stateless validation limits ──────────────────────────────────
 
-// `state`, `codes` and `public_keys` carry no element-count bound: #3356 made
-// them `ProgressiveList`, which grows without a declared capacity, so the
-// upstream `MAX_WITNESS_NODES` / `MAX_WITNESS_CODES` / `MAX_PUBLIC_KEYS`
-// constants were deleted along with it. The per-element byte caps below stay,
+// `state` and `codes` carry no element-count bound: #3356 made them
+// `ProgressiveList`, which grows without a declared capacity, so the upstream
+// `MAX_WITNESS_NODES` / `MAX_WITNESS_CODES` constants were deleted along with it. The per-element byte caps below stay,
 // and `headers` keeps its count bound — it is deliberately still an `SszList`.
 
 /// MAX_BYTES_PER_WITNESS_NODE — max size of a single witness node.
@@ -394,8 +393,6 @@ const MAX_BYTES_PER_CODE: usize = 16_777_216; // 2^24
 const MAX_WITNESS_HEADERS: usize = 256;
 /// MAX_BYTES_PER_HEADER — max size of a single RLP-encoded header.
 const MAX_BYTES_PER_HEADER: usize = 1_024; // 2^10
-/// PUBLIC_KEY_BYTES — an uncompressed secp256k1 public key is 65 bytes.
-const PUBLIC_KEY_BYTES: usize = 65;
 
 // ── Stateless validation types ───────────────────────────────────
 //
@@ -412,23 +409,19 @@ const PUBLIC_KEY_BYTES: usize = 65;
 /// rejects any other id outright; so does ethrex.
 ///
 /// Note that upstream keeps `0x1501` across incompatible body changes, so the id
-/// does **not** identify the encoding. Three dialects have shipped under it:
+/// does **not** identify the encoding. Four dialects have shipped under it:
 /// `tests-zkevm@v0.6.2`, then #3248 + #3278, then #3356 (which moved `state`,
-/// `codes` and `public_keys` to `ProgressiveList`). ethrex speaks the last one,
-/// matching `tests-zkevm@v0.8.0` and unchanged in `v0.8.2` (upstream #3372 only
-/// renamed the Python classes; SSZ encoding is positional, so the wire is
-/// identical). A bundle from an older dialect will not be caught by this
-/// prefix — it fails later, in decode or on a mismatched root.
+/// `codes` and `public_keys` to `ProgressiveList`), then #3652 (which removed
+/// `public_keys` altogether, in `tests-zkevm@v21.0.1`). ethrex speaks the last one.
+/// Releases since have only rearranged the Python that declares it, and SSZ
+/// encoding is positional, so renames and module moves leave the wire alone;
+/// which bundle is actually pinned lives in `tooling/ef_tests/.fixtures_url_zkevm`.
+/// A bundle from an older dialect will not be caught by this prefix — it fails
+/// later, in decode or on a mismatched root.
 pub const STATELESS_INPUT_SCHEMA_ID: u16 = 0x1501;
 
 /// Byte length of the big-endian [`STATELESS_INPUT_SCHEMA_ID`] prefix.
 pub const STATELESS_INPUT_SCHEMA_ID_SIZE: usize = 2;
-
-/// SSZ shape of `SszStatelessInput::public_keys`: one fixed-size 65-byte
-/// uncompressed secp256k1 key per transaction.
-///
-/// Aliased so consumers can name the type without restating it here.
-pub type SszPublicKeys = ProgressiveList<SszVector<u8, PUBLIC_KEY_BYTES>>;
 
 /// SSZ `ExecutionWitness` container matching the execution-specs definition.
 ///
@@ -449,8 +442,10 @@ pub struct SszExecutionWitness {
 
 /// SSZ `StatelessInput` — the top-level input to `verify_stateless_new_payload`.
 ///
-/// Wraps a `NewPayloadRequest` together with the execution witness,
-/// chain configuration, and (optionally) pre-recovered public keys.
+/// Wraps a `NewPayloadRequest` together with the execution witness and the
+/// chain id. It carries no sender public keys: execution-specs #3652 removed
+/// them, so the guest recovers every sender itself, which it had to do anyway
+/// because a supplied key cannot bind the signature's recovery id.
 #[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
 pub struct SszStatelessInput {
     pub new_payload_request: NewPayloadRequest,
@@ -459,7 +454,6 @@ pub struct SszStatelessInput {
     /// activation info and blob schedules are guest-internal, keyed by
     /// `(chain_id, fork)`, with the fork coming from the schema-id prefix.
     pub chain_id: u64,
-    pub public_keys: SszPublicKeys,
 }
 
 /// SSZ `StatelessValidationResult` — the output of `verify_stateless_new_payload`.
@@ -481,26 +475,17 @@ pub struct SszStatelessValidationResult {
 impl SszExecutionWitness {
     /// Extract raw bytes from SSZ lists for codes.
     pub fn codes_as_vecs(&self) -> Vec<Vec<u8>> {
-        self.codes
-            .iter()
-            .map(|c| c.iter().copied().collect())
-            .collect()
+        self.codes.iter().map(|c| c.to_vec()).collect()
     }
 
     /// Extract raw bytes from SSZ lists for headers.
     pub fn headers_as_vecs(&self) -> Vec<Vec<u8>> {
-        self.headers
-            .iter()
-            .map(|h| h.iter().copied().collect())
-            .collect()
+        self.headers.iter().map(|h| h.to_vec()).collect()
     }
 
     /// Extract raw bytes from SSZ lists for state nodes.
     pub fn state_as_vecs(&self) -> Vec<Vec<u8>> {
-        self.state
-            .iter()
-            .map(|n| n.iter().copied().collect())
-            .collect()
+        self.state.iter().map(|n| n.to_vec()).collect()
     }
 }
 
@@ -705,16 +690,6 @@ mod tests {
     }
 
     #[test]
-    fn ssz_public_keys_are_65_byte_vectors_round_trip() {
-        let key: SszVector<u8, PUBLIC_KEY_BYTES> =
-            vec![0x04u8; 65].try_into().expect("pubkey length");
-        let mut keys: SszPublicKeys = ProgressiveList::new();
-        keys.push(key);
-        round_trip(&keys);
-        assert_eq!(keys.first().unwrap().len(), 65);
-    }
-
-    #[test]
     fn ssz_stateless_validation_result_round_trip() {
         let result = SszStatelessValidationResult {
             new_payload_request_root: [0xab; 32],
@@ -854,13 +829,12 @@ mod tests {
                 headers: SszList::new(),
             },
             chain_id: 1,
-            public_keys: ProgressiveList::new(),
         };
         let mut buf = Vec::new();
         input.ssz_append(&mut buf);
 
         // StatelessInput fixed part = npr offset(4) + witness offset(4) +
-        // chain_id(8) + public_keys offset(4) = 20 bytes. new_payload_request is
+        // chain_id(8) = 16 bytes. new_payload_request is
         // still field 0, so its offset is at byte 0 and the contract's dynamic
         // read there is unaffected.
         let npr_abs = u32_le(&buf, 0);

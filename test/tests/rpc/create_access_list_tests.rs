@@ -25,7 +25,7 @@ async fn create_access_list_omits_an_account_only_access() {
     let body = format!(
         r#"{{"jsonrpc":"2.0","method":"eth_createAccessList","params":[{{"from":"{RICH}","to":"{RICH}","value":"0x1"}},"latest"],"id":1}}"#
     );
-    let response = call_http(context, body).await;
+    let response = call_http(&context, body).await;
     let result = &response["result"];
     assert!(
         result.get("error").is_none(),

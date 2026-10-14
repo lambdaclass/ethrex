@@ -8,8 +8,9 @@
 use crate::{
     eth::gas_tip_estimator::GasTipEstimator,
     rpc::{
-        ClientVersion, NodeData, RpcApiContext, handle_authrpc_request, handle_http_request,
-        start_api, start_block_executor,
+        AUTHRPC_BODY_READ_TIMEOUT, AUTHRPC_BUDGET_WAIT_TIMEOUT, ClientVersion,
+        DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE, NodeData, RpcApiContext, authrpc_router,
+        handle_http_request, start_api, start_block_executor,
     },
     utils::RpcNamespace,
 };
@@ -39,40 +40,16 @@ use ethrex_storage::{EngineType, Store};
 use hex_literal::hex;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use secp256k1::SecretKey;
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use spawned_concurrency::tasks::ActorRef;
 use std::sync::{Arc, RwLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashSet, net::SocketAddr, str::FromStr};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 // Base price for each test transaction.
 pub const BASE_PRICE_IN_WEI: u64 = 10_u64.pow(9);
 pub const TEST_GENESIS: &str = include_str!("../../../fixtures/genesis/l1.json");
-
-thread_local! {
-    /// Per-OS-thread merkleization pool, lazily built on first use. Mirrors the
-    /// pattern in `tooling/ef_tests/*` so RPC tests don't each spawn a fresh
-    /// 17-thread rayon pool inside `Blockchain::new` (which exhausts the macOS
-    /// runner's thread limit and panics with `EAGAIN` under parallel test runs).
-    /// The merkle protocol's 16 worker jobs cross-communicate via channels, so
-    /// each pool may have only one concurrent `in_place_scope` caller (two would
-    /// deadlock). The caller is not the test thread: `default_with_store_and_pool`
-    /// contexts run block execution on a dedicated `block_executor` thread (see
-    /// `start_block_executor`). Sharing this pool is safe only because tests run
-    /// sequentially per OS thread, each builds one context, and that context's
-    /// executor processes blocks serially -> at most one live `in_place_scope` at
-    /// a time. LATENT RISK: a single test that drives block execution on two
-    /// contexts built on this thread concurrently would share this pool and
-    /// deadlock; give such a test its own pool via `Blockchain::build_merkle_pool`.
-    static MERKLE_POOL: std::cell::OnceCell<Arc<rayon::ThreadPool>> =
-        const { std::cell::OnceCell::new() };
-}
-
-/// Returns this thread's shared merkleization pool, building it on first use.
-fn merkle_pool() -> Arc<rayon::ThreadPool> {
-    MERKLE_POOL.with(|cell| cell.get_or_init(Blockchain::build_merkle_pool).clone())
-}
 
 fn test_header(block_num: u64) -> BlockHeader {
     BlockHeader {
@@ -272,10 +249,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
         .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
         .await
         .expect("Failed to build test genesis");
-    let blockchain = Arc::new(Blockchain::default_with_store_and_pool(
-        storage.clone(),
-        merkle_pool(),
-    ));
+    let blockchain = Arc::new(Blockchain::for_test_harness(storage.clone()));
     let jwt_secret = Default::default();
     let shared_local_node = example_shared_local_node();
     tokio::spawn(async move {
@@ -301,6 +275,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             DEFAULT_BUILDER_GAS_CEIL,
             String::new(),
             all_namespaces_for_tests(),
+            DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE,
             tokio_util::sync::CancellationToken::new(),
         )
         .await
@@ -321,13 +296,117 @@ pub fn all_namespaces_for_tests() -> HashSet<RpcNamespace> {
     ])
 }
 
-pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
-    let blockchain = Arc::new(Blockchain::default_with_store_and_pool(
-        storage.clone(),
-        merkle_pool(),
-    ));
-    let block_worker_channel = start_block_executor(blockchain.clone());
-    RpcApiContext {
+/// An [`RpcApiContext`] that reclaims its threads when it drops.
+///
+/// A context owns a `block_executor` OS thread, and that thread holds a strong
+/// reference to the `Blockchain` (and so to any merkleization pool it built). The
+/// thread does exit once every sender is dropped, but asynchronously: a full
+/// test-binary run creates threads faster than the OS reaps them, and the backlog
+/// can cross the macOS runner's per-task thread cap, aborting the whole process
+/// with `libc++abi: terminating`.
+///
+/// Dropping this guard is synchronous instead: it releases the context (dropping
+/// the last sender) and then joins the executor thread, so a test's threads are
+/// gone before the next test starts.
+///
+/// Derefs to [`RpcApiContext`], so field access and method calls work unchanged.
+/// Note that cloning the inner context out and storing it past the guard's own
+/// lifetime keeps a sender alive; the join is bounded by
+/// [`TEARDOWN_JOIN_TIMEOUT`] so that mistake panics with an explanation instead
+/// of hanging the test with no output.
+pub struct TestContext {
+    /// `Option` so `Drop` can release the context strictly before joining.
+    context: Option<RpcApiContext>,
+    executor: Option<std::thread::JoinHandle<()>>,
+}
+
+impl TestContext {
+    /// Consume the guard and return the inner context, leaving the
+    /// `block_executor` thread detached.
+    ///
+    /// For the rare test that must *own* an [`RpcApiContext`] by value — e.g. to
+    /// embed it in another struct — where holding the guard alongside it would
+    /// mean depending on drop order to avoid a hang. Teardown reverts to being
+    /// asynchronous here, so prefer holding the guard wherever a test can.
+    pub fn into_detached(mut self) -> RpcApiContext {
+        // Dropping the handle detaches the thread; `Drop` then has nothing to join.
+        self.executor = None;
+        self.context
+            .take()
+            .expect("TestContext is only taken apart in Drop")
+    }
+}
+
+impl std::ops::Deref for TestContext {
+    type Target = RpcApiContext;
+
+    fn deref(&self) -> &RpcApiContext {
+        self.context
+            .as_ref()
+            .expect("TestContext is only taken apart in Drop")
+    }
+}
+
+impl std::ops::DerefMut for TestContext {
+    fn deref_mut(&mut self) -> &mut RpcApiContext {
+        self.context
+            .as_mut()
+            .expect("TestContext is only taken apart in Drop")
+    }
+}
+
+/// How long [`TestContext`]'s drop waits for the `block_executor` thread before
+/// giving up and reporting a leaked context.
+///
+/// An idle executor exits as soon as its last sender drops, so the normal wait is
+/// microseconds; this only has to be longer than the slowest in-flight block
+/// import in the suite. Generous, because the cost is paid only when a test is
+/// already broken.
+pub const TEARDOWN_JOIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+impl Drop for TestContext {
+    fn drop(&mut self) {
+        // Order matters: the executor loop ends when its last sender goes away, so
+        // the context has to be released before the join can return.
+        drop(self.context.take());
+        let Some(executor) = self.executor.take() else {
+            return;
+        };
+        // An unbounded `join` here is a hang, not a failure: a surviving clone of the
+        // inner `RpcApiContext` holds a `block_worker_channel` sender open, so the
+        // executor loop never ends. On the default single-threaded `#[tokio::test]`
+        // runtime it can never end, because a spawned task holding that clone cannot
+        // be polled while this thread blocks. Bound the wait so the mistake reports
+        // itself with a diagnosis instead of a silent timeout.
+        let deadline = std::time::Instant::now() + TEARDOWN_JOIN_TIMEOUT;
+        while !executor.is_finished() {
+            if std::time::Instant::now() >= deadline {
+                // Already unwinding: a second panic would abort the process and bury
+                // the failure the test was actually reporting. Leave the thread
+                // detached and let the real error through.
+                if std::thread::panicking() {
+                    return;
+                }
+                panic!(
+                    "TestContext teardown timed out after {TEARDOWN_JOIN_TIMEOUT:?}: the \
+                     block_executor thread is still alive, so a clone of the inner \
+                     RpcApiContext outlived the guard and is holding its \
+                     block_worker_channel sender open. Keep the guard alive for the whole \
+                     test, or call `into_detached()` if the context must be owned by value."
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        // A panicking executor thread is reported by whatever test awaited its
+        // result; failing here would mask that with a teardown panic.
+        let _ = executor.join();
+    }
+}
+
+pub async fn default_context_with_storage(storage: Store) -> TestContext {
+    let blockchain = Arc::new(Blockchain::for_test_harness(storage.clone()));
+    let (block_worker_channel, executor) = start_block_executor(blockchain.clone());
+    let context = RpcApiContext {
         storage: storage.clone(),
         blockchain: blockchain.clone(),
         active_filters: Default::default(),
@@ -352,6 +431,10 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         block_worker_channel,
         ws: None,
         allowed_namespaces: Arc::new(all_namespaces_for_tests()),
+    };
+    TestContext {
+        context: Some(context),
+        executor: Some(executor),
     }
 }
 
@@ -359,10 +442,7 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
 /// This should only be used in tests as it won't be able to connect to the p2p network
 pub async fn dummy_sync_manager() -> SyncManager {
     let store = Store::new("", EngineType::InMemory).expect("Failed to start Store Engine");
-    let blockchain = Arc::new(Blockchain::default_with_store_and_pool(
-        store.clone(),
-        merkle_pool(),
-    ));
+    let blockchain = Arc::new(Blockchain::for_test_harness(store.clone()));
     SyncManager::new(
         dummy_peer_handler(store).await,
         &SyncMode::Full,
@@ -409,10 +489,7 @@ pub async fn dummy_p2p_context(peer_table: PeerTable) -> P2PContext {
         SecretKey::from_byte_array(&[0xcd; 32]).expect("32 bytes, within curve order"),
         peer_table,
         storage.clone(),
-        Arc::new(Blockchain::default_with_store_and_pool(
-            storage,
-            merkle_pool(),
-        )),
+        Arc::new(Blockchain::for_test_harness(storage)),
         "".to_string(),
         None,
         1000,
@@ -437,23 +514,162 @@ pub fn jwt_auth_header_for(context: &RpcApiContext) -> Option<TypedHeader<Author
     Some(TypedHeader(Authorization::bearer(&token).unwrap()))
 }
 
-/// Drive the auth RPC handler without needing axum extractor types at the
-/// call site.
+/// The real Auth-RPC router (JWT check, body budget, handler) served on an ephemeral
+/// local port. Its connections hold clones of the [`RpcApiContext`], so a test must call
+/// [`AuthRpcTestServer::shutdown`] before its [`TestContext`] guard drops.
+pub struct AuthRpcTestServer {
+    pub addr: SocketAddr,
+    stop: CancellationToken,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl AuthRpcTestServer {
+    /// Stop accepting connections and wait until every open one has closed.
+    pub async fn shutdown(self) {
+        self.stop.cancel();
+        tokio::time::timeout(Duration::from_secs(10), self.task)
+            .await
+            .expect("Auth-RPC test server did not shut down within 10s")
+            .unwrap();
+    }
+}
+
+/// Serve the Auth-RPC router for `context` with `max_inflight_body_size` as its body
+/// budget.
+pub async fn spawn_authrpc_server(
+    context: &RpcApiContext,
+    max_inflight_body_size: usize,
+) -> AuthRpcTestServer {
+    spawn_authrpc_server_with_timeouts(
+        context,
+        max_inflight_body_size,
+        AUTHRPC_BUDGET_WAIT_TIMEOUT,
+        AUTHRPC_BODY_READ_TIMEOUT,
+    )
+    .await
+}
+
+/// Like [`spawn_authrpc_server`], with `budget_wait_timeout` and `body_read_timeout` in
+/// place of the production limits on waiting for room in the budget and for the body.
+pub async fn spawn_authrpc_server_with_timeouts(
+    context: &RpcApiContext,
+    max_inflight_body_size: usize,
+    budget_wait_timeout: Duration,
+    body_read_timeout: Duration,
+) -> AuthRpcTestServer {
+    let (consensus_liveness, _) = tokio::sync::watch::channel(());
+    let router = authrpc_router(
+        context.clone(),
+        consensus_liveness,
+        max_inflight_body_size,
+        budget_wait_timeout,
+        body_read_timeout,
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let stop = CancellationToken::new();
+    let stopped = stop.clone();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async move { stopped.cancelled().await })
+            .await
+            .unwrap()
+    });
+    AuthRpcTestServer { addr, stop, task }
+}
+
+/// POST `body` to an Auth-RPC server, returning the HTTP status and the response text.
+pub async fn post_authrpc(
+    addr: SocketAddr,
+    auth_header: Option<TypedHeader<Authorization<Bearer>>>,
+    body: String,
+) -> (u16, String) {
+    let mut request = reqwest::Client::new()
+        .post(format!("http://{addr}"))
+        .header("content-type", "application/json")
+        .body(body);
+    if let Some(TypedHeader(auth)) = auth_header {
+        request = request.bearer_auth(auth.token());
+    }
+    let response = request.send().await.unwrap();
+    (response.status().as_u16(), response.text().await.unwrap())
+}
+
+/// Drive the Auth-RPC router end to end and return the JSON-RPC response, which must
+/// come back with HTTP 200.
 pub async fn call_authrpc(
-    context: RpcApiContext,
+    context: &RpcApiContext,
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
     body: String,
 ) -> Value {
-    handle_authrpc_request(State(context), auth_header, body)
+    let server = spawn_authrpc_server(context, DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE).await;
+    let (status, text) = post_authrpc(server.addr, auth_header, body).await;
+    server.shutdown().await;
+    assert_eq!(status, 200, "unexpected Auth-RPC status, body: {text}");
+    serde_json::from_str(&text).unwrap()
+}
+
+/// Open a connection to `addr` and send only the head of a POST request, without any
+/// body bytes: declaring a `content_length`-byte body, or a chunked one when `None`. Lets
+/// a test observe what the server answers before reading the body, and hold a request
+/// in flight.
+pub async fn send_request_head(
+    addr: SocketAddr,
+    auth_header: Option<&TypedHeader<Authorization<Bearer>>>,
+    content_length: Option<usize>,
+) -> tokio::net::TcpStream {
+    use tokio::io::AsyncWriteExt;
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let auth = auth_header
+        .map(|TypedHeader(auth)| format!("authorization: Bearer {}\r\n", auth.token()))
+        .unwrap_or_default();
+    let framing = match content_length {
+        Some(len) => format!("content-length: {len}"),
+        None => "transfer-encoding: chunked".to_string(),
+    };
+    let head = format!(
+        "POST / HTTP/1.1\r\nhost: {addr}\r\ncontent-type: application/json\r\n{auth}{framing}\r\n\r\n"
+    );
+    stream.write_all(head.as_bytes()).await.unwrap();
+    stream
+}
+
+/// Read one HTTP/1.1 response (status code and body text) from `stream`. Panics if
+/// none arrives within ten seconds.
+pub async fn read_response(stream: &mut tokio::net::TcpStream) -> (u16, String) {
+    use tokio::io::AsyncReadExt;
+    let read = async {
+        let mut buffer = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let read = stream.read(&mut chunk).await.unwrap();
+            assert!(read > 0, "connection closed before a full response arrived");
+            buffer.extend_from_slice(&chunk[..read]);
+            let Some(head_end) = buffer.windows(4).position(|w| w == b"\r\n\r\n") else {
+                continue;
+            };
+            let head = String::from_utf8_lossy(&buffer[..head_end]).to_ascii_lowercase();
+            let status: u16 = head[9..12].parse().unwrap();
+            let body_len: usize = head
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .map(|len| len.trim().parse().unwrap())
+                .unwrap_or(0);
+            if buffer.len() >= head_end + 4 + body_len {
+                let body = &buffer[head_end + 4..head_end + 4 + body_len];
+                return (status, String::from_utf8_lossy(body).into_owned());
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(10), read)
         .await
-        .expect("handle_authrpc_request should not return a status code error")
-        .0
+        .expect("no response within 10s")
 }
 
 /// Drive the public HTTP RPC handler without needing axum extractor types at
 /// the call site.
-pub async fn call_http(context: RpcApiContext, body: String) -> Value {
-    handle_http_request(State(context), body)
+pub async fn call_http(context: &RpcApiContext, body: String) -> Value {
+    handle_http_request(State(context.clone()), body)
         .await
         .expect("handle_http_request should not return a status code error")
         .0
@@ -467,7 +683,14 @@ pub async fn call_http(context: RpcApiContext, body: String) -> Value {
 // these shims do not exist in a normal build.
 use crate::engine::blobs::BlobsV4Request;
 use crate::types::fork_choice::{ForkChoiceState, PayloadAttributesV4};
-use crate::utils::RpcErr;
+use crate::utils::{RpcErr, value_to_raw};
+
+/// Convert `Value` params into the raw form [`crate::RpcHandler::parse`] takes.
+pub fn raw_params(params: &Option<Vec<Value>>) -> Option<Vec<Box<RawValue>>> {
+    params
+        .as_ref()
+        .map(|params| params.iter().map(value_to_raw).collect())
+}
 
 /// Max blob hashes per `engine_getBlobs*` request (mirror of the crate-private const).
 pub const GET_BLOBS_V1_REQUEST_MAX_SIZE: usize =
@@ -477,12 +700,12 @@ pub const GET_BLOBS_V1_REQUEST_MAX_SIZE: usize =
 pub fn parse_v4(
     params: &Option<Vec<Value>>,
 ) -> Result<(ForkChoiceState, Option<PayloadAttributesV4>, Option<u128>), RpcErr> {
-    crate::engine::fork_choice::parse_v4(params)
+    crate::engine::fork_choice::parse_v4(&raw_params(params))
 }
 
 /// Shim over the crate-private `engine::fork_choice::parse_custody_columns`.
 pub fn parse_custody_columns(value: &Value) -> Result<Option<u128>, RpcErr> {
-    crate::engine::fork_choice::parse_custody_columns(value)
+    crate::engine::fork_choice::parse_custody_columns(&value_to_raw(value))
 }
 
 /// Shim over the crate-private `engine::fork_choice::apply_custody_update`.
@@ -492,7 +715,7 @@ pub fn apply_custody_update(context: &RpcApiContext, custody_columns: Option<u12
 
 /// Shim over the crate-private `engine::blobs::parse_indices_bitarray`.
 pub fn parse_indices_bitarray(value: &Value) -> Result<u128, RpcErr> {
-    crate::engine::blobs::parse_indices_bitarray(value)
+    crate::engine::blobs::parse_indices_bitarray(&value_to_raw(value))
 }
 
 /// Construct a `BlobsV4Request` from its parts (the struct fields are crate-private).

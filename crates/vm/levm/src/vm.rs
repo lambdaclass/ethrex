@@ -26,12 +26,12 @@ use crate::{
     tracing::LevmCallTracer,
     validation_observer::ValidationObserver,
 };
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use ethrex_common::{
     Address, BigEndianHash, H160, H256, U256,
     tracing::CallType,
     types::{
-        AccessListEntry, Code, Fork, Frame, FrameMode, Log, Transaction, TxType,
+        AccessListEntry, Code, Fork, Frame, FrameMode, InitcodeBuffer, Log, Transaction, TxType,
         block_access_list::BlockAccessListCheckpoint, fee_config::FeeConfig,
     },
 };
@@ -625,6 +625,14 @@ pub struct VM<'a> {
     pub debug_mode: DebugMode,
     /// Pool of reusable stacks to reduce allocations.
     pub stack_pool: Vec<Stack>,
+    /// Pool of reusable calldata buffers for child call frames. A buffer returns here when
+    /// its frame ends, so a contract that issues many calls reuses one allocation instead
+    /// of copying its arguments into a fresh one each time. Inside zkVM guests whose bump
+    /// allocators never free, those fresh copies are never reclaimed and exhaust the heap.
+    pub calldata_pool: Vec<BytesMut>,
+    /// Pool of reusable initcode buffers for CREATE frames, for the same reason as
+    /// `calldata_pool`: each CREATE would otherwise allocate its initcode afresh.
+    pub initcode_pool: Vec<InitcodeBuffer>,
     /// VM type (L1 or L2 with fee config).
     pub vm_type: VMType,
     /// Frame transaction context (EIP-8141). Set when executing a frame tx.
@@ -927,8 +935,12 @@ impl<'a> VM<'a> {
     /// stacks for sub-call frames. This avoids the per-tx 32 KB stack alloc+zero on a warm pool —
     /// the dominant allocation for transfer-heavy blocks, where the root frame is the only frame.
     ///
+    /// It also adopts `calldata_pool` and `initcode_pool` as the VM's pools of child-frame
+    /// buffers, so a transaction reuses the buffers an earlier one left.
+    ///
     /// Pair with [`VM::reclaim_into`] after execution to return every stack (root + sub-frame)
-    /// to `stack_pool` and the root memory buffer to `memory_pool` so the next tx reuses them.
+    /// to `stack_pool`, the root memory buffer to `memory_pool` and the calldata and initcode
+    /// buffers to their pools, so the next tx reuses them.
     #[allow(clippy::too_many_arguments)]
     pub fn new_pooled(
         env: Environment,
@@ -940,6 +952,8 @@ impl<'a> VM<'a> {
         stateless_validator: Option<&'a dyn crate::StatelessValidator>,
         stack_pool: &mut Vec<Stack>,
         memory_pool: &mut Vec<Memory>,
+        calldata_pool: &mut Vec<BytesMut>,
+        initcode_pool: &mut Vec<InitcodeBuffer>,
     ) -> Result<Self, VMError> {
         // Reuse a pooled stack for the root frame. `clear()` only resets the offset (no zeroing),
         // which is sound because the EVM never reads stack slots it didn't write — the same
@@ -964,16 +978,30 @@ impl<'a> VM<'a> {
         )?;
         // Adopt the caller's pooled stacks for sub-frames; returned via `reclaim_into`.
         mem::swap(&mut vm.stack_pool, stack_pool);
+        // Likewise the calldata and initcode buffers. A pool that started empty with every
+        // transaction would make each one allocate its buffers afresh and drop them with its VM,
+        // which a zkVM guest's bump allocator never reclaims.
+        mem::swap(&mut vm.calldata_pool, calldata_pool);
+        mem::swap(&mut vm.initcode_pool, initcode_pool);
         Ok(vm)
     }
 
     /// Returns this VM's reusable buffers to the caller's pools so the next transaction reuses
     /// them instead of allocating: every stack (root call-frame stack plus any sub-frame stacks
-    /// still pooled internally) to `stack_pool`, and the root memory buffer to `memory_pool`.
+    /// still pooled internally) to `stack_pool`, the root memory buffer to `memory_pool`, and the
+    /// pooled calldata and initcode buffers to `calldata_pool` and `initcode_pool`.
     /// Must run on both the success and error paths of [`VM::execute`].
-    pub fn reclaim_into(mut self, stack_pool: &mut Vec<Stack>, memory_pool: &mut Vec<Memory>) {
+    pub fn reclaim_into(
+        mut self,
+        stack_pool: &mut Vec<Stack>,
+        memory_pool: &mut Vec<Memory>,
+        calldata_pool: &mut Vec<BytesMut>,
+        initcode_pool: &mut Vec<InitcodeBuffer>,
+    ) {
         // Hand the internal sub-frame pool back to the caller first.
         mem::swap(&mut self.stack_pool, stack_pool);
+        mem::swap(&mut self.calldata_pool, calldata_pool);
+        mem::swap(&mut self.initcode_pool, initcode_pool);
         // Then reclaim the root frame's stack. Moving it out by value (VM/CallFrame have no Drop)
         // avoids leaving a fresh 32 KB `Stack::default()` placeholder behind — which a
         // `mem::take`/`mem::replace` against an empty pool would force, defeating the win on
@@ -1063,6 +1091,8 @@ impl<'a> VM<'a> {
             validation_observer: ValidationObserver::disabled(),
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
+            calldata_pool: Vec::new(),
+            initcode_pool: Vec::new(),
             vm_type,
             preserve_top_level_backup,
             state_gas_used: 0,
@@ -1234,6 +1264,63 @@ impl<'a> VM<'a> {
         if charged {
             self.credit_state_gas_refund(self.state_gas_new_account)?;
         }
+        Ok(())
+    }
+
+    /// EIP-8037 `repay_state_gas_spill` (EELS `incorporate_child`, success arm): once a
+    /// successful child's gas has merged into this frame, the reservoir repays the spill
+    /// still outstanding, up to what the reservoir holds.
+    ///
+    /// A refund can land in a different frame than the charge it undoes: the refunding
+    /// frame's spill may be smaller than the refund, so the excess credits the reservoir
+    /// even though the charge drew from `gas_remaining`. The merge is where the claim
+    /// (this frame's spill) and the credit (the reservoir) first share a frame, so that
+    /// is where the two pools settle between themselves.
+    ///
+    /// No state creation is undone, so `state_gas_used` does not move: the gas only
+    /// crosses back between the pools it drifted across. Both settlements stay
+    /// unchanged, which is what makes this repayment billing-neutral:
+    /// - user gas (`gas_limit - gas_remaining - state_gas_reservoir`) is unchanged
+    ///   because `gas_remaining` rises by exactly what the reservoir loses;
+    /// - the EIP-7778 regular dimension subtracts the cumulative `state_gas_spill`, so
+    ///   that counter drops by the repayment too — the reservoir (the state dimension)
+    ///   covered the charge after all, so it must stop being billed as regular gas.
+    ///
+    /// A failed child repays nothing: its rollback already restored the state whose
+    /// removal any refund credited.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "subtractions proven safe by min()"
+    )]
+    pub fn repay_state_gas_spill(&mut self) -> Result<(), VMError> {
+        debug_assert!(
+            self.env.config.fork >= Fork::Amsterdam,
+            "repay_state_gas_spill called pre-Amsterdam"
+        );
+        let repayment = self
+            .state_gas_reservoir
+            .min(self.current_call_frame.frame_state_gas_spilled);
+        if repayment == 0 {
+            return Ok(());
+        }
+        self.current_call_frame.gas_remaining = self
+            .current_call_frame
+            .gas_remaining
+            .checked_add(i64::try_from(repayment).map_err(|_| InternalError::Overflow)?)
+            .ok_or(InternalError::Overflow)?;
+        // Safe: repayment = min(reservoir, frame spill) <= both.
+        self.state_gas_reservoir -= repayment;
+        self.current_call_frame.frame_state_gas_spilled -= repayment;
+        // Block accounting: every frame spill is mirrored in the cumulative counter, so
+        // it covers this repayment (`checked_sub` guards the invariant regardless).
+        self.state_gas_spill = self
+            .state_gas_spill
+            .checked_sub(repayment)
+            .ok_or(InternalError::Underflow)?;
+        // EELS asserts the claim and the credit cannot both survive a repayment.
+        debug_assert!(
+            self.state_gas_reservoir == 0 || self.current_call_frame.frame_state_gas_spilled == 0
+        );
         Ok(())
     }
 
@@ -2690,11 +2777,25 @@ impl<'a> VM<'a> {
             && self.current_call_frame.gas_remaining >= 0
             && self.tx.authorization_list().is_none()
             // Precompiles dispatch via run_execution even with empty bytecode.
-            && !precompiles::is_precompile(
-                &self.current_call_frame.to,
-                self.env.config.fork,
-                self.vm_type,
-            )
+            && !self.address_is_precompile(&self.current_call_frame.to)
+    }
+
+    /// [`precompiles::is_precompile`], honoring simulation-only relocations from
+    /// `movePrecompileToAddress`. Identical to the plain check on consensus paths,
+    /// where `db.precompile_moves` is `None`.
+    pub(crate) fn address_is_precompile(&self, address: &Address) -> bool {
+        precompiles::is_precompile_with_moves(
+            address,
+            self.env.config.fork,
+            self.vm_type,
+            self.db.precompile_moves.as_deref(),
+        )
+    }
+
+    /// The address whose precompile implementation should execute for a call to
+    /// `address` (identity mapping unless `address` is a relocation destination).
+    pub(crate) fn effective_precompile_address(&self, address: Address) -> Address {
+        precompiles::effective_precompile_address(address, self.db.precompile_moves.as_deref())
     }
 
     /// Main execution loop.
@@ -2734,11 +2835,7 @@ impl<'a> VM<'a> {
         let top_frame_new_account_charged = self.value_new_account_charged;
 
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
-        if precompiles::is_precompile(
-            &self.current_call_frame.to,
-            self.env.config.fork,
-            self.vm_type,
-        ) {
+        if self.address_is_precompile(&self.current_call_frame.to) {
             // `execute_precompile` itself never touches state gas (it only mutates
             // `gas_remaining`; it has no access to `state_gas_used` / `state_gas_reservoir` /
             // `state_gas_spill`) — the assert below guards that. The in-region EIP-2780
@@ -2748,7 +2845,9 @@ impl<'a> VM<'a> {
             // `&mut self.current_call_frame` so the refund call, which needs `&mut self`,
             // can run after `execute_precompile`.
             let state_gas_used_before_precompile = self.state_gas_used;
-            let code_address = self.current_call_frame.code_address;
+            // Resolve a relocation destination back to the precompile it hosts.
+            let code_address =
+                self.effective_precompile_address(self.current_call_frame.code_address);
             let precompile_gas_limit = self.current_call_frame.gas_limit;
             let mut gas_remaining = self.current_call_frame.gas_remaining as u64;
             let result = Self::execute_precompile(
@@ -3479,6 +3578,8 @@ impl<'a> VM<'a> {
             opcode_tracer: LevmOpcodeTracer::disabled(),
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
+            calldata_pool: Vec::new(),
+            initcode_pool: Vec::new(),
             vm_type: VMType::L1,
             preserve_top_level_backup: false,
             state_gas_used: 0,

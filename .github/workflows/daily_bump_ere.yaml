@@ -1,0 +1,100 @@
+name: Bump ere
+
+# Opens, or refreshes, one pull request moving the stateless-validator guests to
+# the newest ere release. The bump itself is .github/scripts/bump-ere.sh, which
+# can also be run by hand; this workflow only schedules it and files the result.
+#
+# The pull request is pushed with a GitHub App token rather than GITHUB_TOKEN,
+# because pull requests opened with GITHUB_TOKEN do not trigger CI. The app needs
+# Contents, Pull requests and Actions write access on this repository; configure
+# it as the ERE_BUMP_APP_ID variable and the ERE_BUMP_APP_PRIVATE_KEY secret.
+# Until both exist the job is skipped rather than failed.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "ere release to bump to, e.g. v0.18.1. Empty picks the newest."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bump-ere
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Bump ere
+    if: github.repository == 'lambdaclass/ethrex' && vars.ERE_BUMP_APP_ID != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.ERE_BUMP_APP_ID }}
+          private-key: ${{ secrets.ERE_BUMP_APP_PRIVATE_KEY }}
+
+      - name: Checkout sources
+        uses: actions/checkout@v6
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Setup Rust environment
+        uses: ./.github/actions/setup-rust
+
+      # Exit status 2 means ere moved SP1 before the SP1 fork has a branch for the
+      # new version. That is a wait, not a failure: tomorrow's run tries again.
+      - name: Bump ere
+        id: bump
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ inputs.tag }}
+          BUMP_ERE_SUMMARY: ${{ runner.temp }}/bump-ere.md
+        run: |
+          status=0
+          .github/scripts/bump-ere.sh ${TAG:+"$TAG"} || status=$?
+          if [[ $status -eq 2 ]]; then
+            echo "::warning::ere moved SP1 but the SP1 fork has no matching patch branch yet; skipping this run."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [[ $status -eq 0 ]] || exit "$status"
+          if git diff --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "tag=$(.github/scripts/zkvm-version.sh --ere-tag)" >> "$GITHUB_OUTPUT"
+          cat "$BUMP_ERE_SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+
+      # One rolling branch: a newer ere release updates the open pull request
+      # instead of opening a second one. The repository requires signed commits,
+      # which sign-commits provides by committing through the API as the app.
+      - name: Open or update the pull request
+        id: pr
+        if: steps.bump.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          branch: automation/bump-ere
+          delete-branch: true
+          sign-commits: true
+          commit-message: Bump the stateless-validator guests to ere ${{ steps.bump.outputs.tag }}
+          title: "feat(l1): upgrade stateless-validator guests to ERE ${{ steps.bump.outputs.tag }}"
+          body-path: ${{ runner.temp }}/bump-ere.md
+          labels: zkevm,dependencies
+
+      # PR CI never builds the guest ELFs, and a zkVM SDK bump is exactly what can
+      # break them. A dispatch of the release workflow builds all three guests and
+      # dry-runs the release assets without publishing anything.
+      - name: Build the guests on the bump branch
+        if: steps.pr.outputs.pull-request-operation == 'created' || steps.pr.outputs.pull-request-operation == 'updated'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: gh workflow run tag_release.yaml --ref automation/bump-ere

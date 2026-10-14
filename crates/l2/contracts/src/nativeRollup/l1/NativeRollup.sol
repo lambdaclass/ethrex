@@ -366,9 +366,9 @@ contract NativeRollup {
             bytes32 parentBeaconBlockRoot
         )
     {
-        // 22 = 2-byte schema prefix + the 20-byte SszStatelessInput fixed part
-        // (npr_off 4 | witness_off 4 | chain_id 8 | public_keys_off 4).
-        require(sszInput.length >= INPUT_SCHEMA_PREFIX_LEN + 20, "SSZ: input too short");
+        // 18 = 2-byte schema prefix + the 16-byte SszStatelessInput fixed part
+        // (npr_off 4 | witness_off 4 | chain_id 8).
+        require(sszInput.length >= INPUT_SCHEMA_PREFIX_LEN + 16, "SSZ: input too short");
         require(
             (uint16(uint8(sszInput[0])) << 8) | uint16(uint8(sszInput[1])) == EXPECTED_SCHEMA_ID,
             "SSZ: unexpected schema id"

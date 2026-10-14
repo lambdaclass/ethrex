@@ -168,7 +168,7 @@ Each subdirectory in `bin/` contains a guest implementation for a specific zkVM.
 ```
 
 1. **Input**: a 2-byte big-endian schema id followed by the SSZ `SszStatelessInput`
-   (payload, execution witness, chain id, public keys). On L2 the shape differs; see `l2/input.rs`.
+   (payload, execution witness, chain id). On L2 the shape differs; see `l2/input.rs`.
 2. **Execution**: The guest program re-executes blocks inside the zkVM
 3. **Output**: on L1, 43 bytes —
    `new_payload_request_root (32) || successful_validation (1) || chain_id (8) || schema_id (2)`

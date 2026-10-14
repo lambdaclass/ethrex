@@ -42,13 +42,13 @@ fn default_header() -> BlockHeader {
     }
 }
 
-fn make_tx(contract: Address, sender: Address) -> Transaction {
+fn make_tx(contract: Address, sender: Address, gas_limit: u64) -> Transaction {
     Transaction::EIP1559Transaction(EIP1559Transaction {
         chain_id: 1,
         nonce: 0,
         max_priority_fee_per_gas: 1,
         max_fee_per_gas: 10,
-        gas_limit: 100_000,
+        gas_limit,
         to: TxKind::Call(contract),
         value: U256::zero(),
         data: Bytes::new(),
@@ -69,6 +69,12 @@ fn make_tx(contract: Address, sender: Address) -> Transaction {
 /// Runs `bytecode` under a contract account with `cfg` and returns the trace
 /// serialized in the geth-RPC `structLogger` wire shape as a `serde_json::Value`.
 fn trace_to_json(bytecode: Vec<u8>, cfg: OpcodeTracerConfig) -> Value {
+    trace_to_json_with_gas(bytecode, cfg, 100_000)
+}
+
+/// [`trace_to_json`] with an explicit transaction gas limit, for scenarios that
+/// need execution to run out of gas at a precise opcode.
+fn trace_to_json_with_gas(bytecode: Vec<u8>, cfg: OpcodeTracerConfig, gas_limit: u64) -> Value {
     let contract_addr = Address::from_low_u64_be(0xC000);
     let sender_addr = Address::from_low_u64_be(0x1000);
 
@@ -94,7 +100,7 @@ fn trace_to_json(bytecode: Vec<u8>, cfg: OpcodeTracerConfig) -> Value {
 
     let mut db = GeneralizedDatabase::new(Arc::new(TestDatabase { accounts }));
     let header = default_header();
-    let tx = make_tx(contract_addr, sender_addr);
+    let tx = make_tx(contract_addr, sender_addr, gas_limit);
 
     let emit = StructLoggerEmit {
         mem_size: cfg.enable_memory,
@@ -242,7 +248,7 @@ fn opcode_tracer_sstore_refund_on_clearing_step() {
 
     let mut db = GeneralizedDatabase::new(Arc::new(TestDatabase { accounts }));
     let header = default_header();
-    let tx = make_tx(contract_addr, sender_addr);
+    let tx = make_tx(contract_addr, sender_addr, 100_000);
 
     // Force refund emission even on zero so we can assert against the SSTORE step
     // unambiguously (geth emits refund whenever non-zero, but the test asserts on
@@ -458,4 +464,137 @@ fn opcode_tracer_jumpdest_synthesized_after_jump() {
     // STOP gas reflects the JUMPDEST charge having been consumed.
     let stop_gas = steps[3]["gas"].as_u64().expect("STOP gas");
     assert_eq!(stop_gas, jumpdest_gas - 1);
+}
+
+/// `PUSH1 0x03 JUMP JUMPDEST STOP` with only enough gas to reach the JUMPDEST.
+///
+/// The fused JUMPDEST charge is what runs the frame out of gas. Implementations
+/// that dispatch JUMPDEST as a separate step still log it — carrying the fault —
+/// before halting, so the fused path must emit it too. Dropping it silently
+/// shortens the step stream by one, which differential fuzzers read as a
+/// consensus divergence (goevmlab compares `pc`/`op`/`gas`/`depth`/`stack`
+/// step-by-step and has no way to tell a tracer gap from a real one).
+#[test]
+fn opcode_tracer_jumpdest_synthesized_when_its_charge_runs_out_of_gas() {
+    // pc=0: PUSH1 0x03 (3 gas)
+    // pc=2: JUMP       (8 gas)
+    // pc=3: JUMPDEST   (1 gas) — nothing left to pay it with
+    // pc=4: STOP       (never reached)
+    let bytecode = vec![0x60, 0x03, 0x56, 0x5b, 0x00];
+    // 21_000 intrinsic + exactly PUSH1 + JUMP, so the JUMP leaves 0 gas behind.
+    let j = trace_to_json_with_gas(bytecode, OpcodeTracerConfig::default(), 21_000 + 3 + 8);
+    let steps = j["structLogs"].as_array().expect("structLogs");
+
+    assert_eq!(j["failed"], Value::Bool(true), "the frame must halt OOG");
+    assert_eq!(
+        steps.len(),
+        3,
+        "PUSH1 / JUMP / JUMPDEST — STOP is unreachable"
+    );
+
+    assert_eq!(steps[1]["op"].as_str(), Some("JUMP"));
+    assert_eq!(steps[1]["gas"].as_u64(), Some(8));
+    assert_eq!(
+        steps[1]["gasCost"].as_u64(),
+        Some(8),
+        "JUMP gasCost must not absorb the JUMPDEST charge"
+    );
+    assert_eq!(
+        steps[1]["error"],
+        Value::Null,
+        "the fault belongs to the JUMPDEST, not to the JUMP that reached it"
+    );
+
+    assert_eq!(steps[2]["op"].as_str(), Some("JUMPDEST"));
+    assert_eq!(steps[2]["pc"].as_u64(), Some(3));
+    assert_eq!(steps[2]["gas"].as_u64(), Some(0));
+    assert_eq!(steps[2]["gasCost"].as_u64(), Some(1));
+    assert_eq!(steps[2]["depth"].as_u64(), Some(1));
+    assert!(
+        steps[2]["error"].is_string(),
+        "the out-of-gas fault must be reported on the JUMPDEST step",
+    );
+}
+
+/// `PUSH1 0x01 PUSH1 0x05 JUMPI JUMPDEST STOP` with only enough gas to reach the
+/// JUMPDEST. Same fusion, same boundary, taken through JUMPI instead of JUMP.
+#[test]
+fn opcode_tracer_jumpdest_synthesized_when_jumpi_charge_runs_out_of_gas() {
+    // pc=0: PUSH1 0x01 (3 gas)  — condition
+    // pc=2: PUSH1 0x05 (3 gas)  — destination
+    // pc=4: JUMPI      (10 gas)
+    // pc=5: JUMPDEST   (1 gas) — nothing left to pay it with
+    // pc=6: STOP       (never reached)
+    let bytecode = vec![0x60, 0x01, 0x60, 0x05, 0x57, 0x5b, 0x00];
+    let j = trace_to_json_with_gas(bytecode, OpcodeTracerConfig::default(), 21_000 + 3 + 3 + 10);
+    let steps = j["structLogs"].as_array().expect("structLogs");
+
+    assert_eq!(j["failed"], Value::Bool(true), "the frame must halt OOG");
+    assert_eq!(
+        steps.len(),
+        4,
+        "PUSH1 / PUSH1 / JUMPI / JUMPDEST — STOP is unreachable"
+    );
+
+    assert_eq!(steps[2]["op"].as_str(), Some("JUMPI"));
+    assert_eq!(steps[2]["gas"].as_u64(), Some(10));
+    assert_eq!(steps[2]["gasCost"].as_u64(), Some(10));
+    assert_eq!(steps[2]["error"], Value::Null);
+
+    assert_eq!(steps[3]["op"].as_str(), Some("JUMPDEST"));
+    assert_eq!(steps[3]["pc"].as_u64(), Some(5));
+    assert_eq!(steps[3]["gas"].as_u64(), Some(0));
+    assert_eq!(steps[3]["gasCost"].as_u64(), Some(1));
+    assert!(steps[3]["error"].is_string());
+}
+
+/// A `limit`-capped log must be a prefix of the uncapped one, including when the
+/// cap is what drops the faulting JUMPDEST.
+///
+/// The synthetic JUMPDEST is the step that faults, so it takes over the tracer's
+/// pending finalize target. When the cap drops it there is nothing to take over,
+/// and leaving the target on the JUMP/JUMPI would let the dispatch loop write the
+/// dropped step's out-of-gas error onto a record that is inside the cap and, in the
+/// uncapped log, error-free.
+#[test]
+fn opcode_tracer_capped_log_is_a_prefix_when_the_cap_drops_the_faulting_jumpdest() {
+    // (bytecode, gas limit, cap that lands exactly on the faulting JUMPDEST)
+    let cases: [(&str, Vec<u8>, u64, usize); 2] = [
+        (
+            "JUMP",
+            vec![0x60, 0x03, 0x56, 0x5b, 0x00],
+            21_000 + 3 + 8,
+            2,
+        ),
+        (
+            "JUMPI",
+            vec![0x60, 0x01, 0x60, 0x05, 0x57, 0x5b, 0x00],
+            21_000 + 3 + 3 + 10,
+            3,
+        ),
+    ];
+
+    for (name, bytecode, gas_limit, cap) in cases {
+        let uncapped =
+            trace_to_json_with_gas(bytecode.clone(), OpcodeTracerConfig::default(), gas_limit);
+        let capped = trace_to_json_with_gas(
+            bytecode,
+            OpcodeTracerConfig {
+                limit: cap,
+                ..Default::default()
+            },
+            gas_limit,
+        );
+
+        let uncapped_steps = uncapped["structLogs"].as_array().expect("structLogs");
+        let capped_steps = capped["structLogs"].as_array().expect("structLogs");
+
+        assert_eq!(uncapped_steps.len(), cap + 1, "{name}: uncapped step count");
+        assert_eq!(capped_steps.len(), cap, "{name}: capped step count");
+        assert_eq!(
+            capped_steps.as_slice(),
+            &uncapped_steps[..cap],
+            "{name}: the capped log must be a prefix of the uncapped one",
+        );
+    }
 }

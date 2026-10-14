@@ -29,7 +29,7 @@ use ethrex_rpc::{
     utils::{RpcRequest, RpcRequestId},
 };
 use ethrex_storage::Store;
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use std::{
     collections::{HashMap, HashSet},
     future::IntoFuture,
@@ -60,7 +60,7 @@ pub struct RpcApiContext {
 }
 
 pub trait RpcHandler: Sized {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr>;
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr>;
 
     async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
         let request = Self::parse(&req.params)?;
@@ -112,7 +112,8 @@ pub async fn bind_api(
     }
 
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
-    let block_worker_channel = ethrex_rpc::start_block_executor(blockchain.clone());
+    // Detached for the lifetime of the process, as on L1.
+    let (block_worker_channel, _executor) = ethrex_rpc::start_block_executor(blockchain.clone());
     let service_context = RpcApiContext {
         l1_ctx: ethrex_rpc::RpcApiContext {
             storage,
@@ -308,7 +309,15 @@ async fn handle_http_request(
     State(service_context): State<RpcApiContext>,
     body: String,
 ) -> Result<Json<Value>, StatusCode> {
-    let res = match serde_json::from_str::<RpcRequestWrapper>(&body) {
+    let wrapper = serde_json::from_str::<RpcRequestWrapper>(&body);
+    // An oversize batch is parsed only up to its first `MAX_BATCH_SIZE + 1` requests, so
+    // it must be rejected here rather than served partially.
+    if let Ok(wrapper) = &wrapper
+        && let Some(err) = ethrex_rpc::validate_batch(wrapper)
+    {
+        return Ok(Json(err));
+    }
+    let res = match wrapper {
         Ok(RpcRequestWrapper::Single(request)) => {
             let res = map_http_requests(&request, service_context).await;
             ethrex_rpc::rpc_response(request.id, res).map_err(|_| StatusCode::BAD_REQUEST)?
@@ -348,17 +357,23 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
                 .allowed_namespaces
                 .contains(&L1RpcNamespace::Eth)
             {
-                return Err(RpcErr::L1RpcErr(ethrex_rpc::RpcErr::MethodNotFound(
-                    req.method.clone(),
-                )));
+                return Err(RpcErr::L1RpcErr(ethrex_rpc::RpcErr::MethodNotServedHere {
+                    method: req.method.clone(),
+                    reason: "the 'eth' namespace is not enabled on this endpoint; add it to \
+                             --http.api"
+                        .to_string(),
+                }));
             }
             map_eth_requests(req, context).await
         }
         Ok(RpcNamespace::EthrexL2) => {
             if !context.ethrex_namespace_allowed {
-                return Err(RpcErr::L1RpcErr(ethrex_rpc::RpcErr::MethodNotFound(
-                    req.method.clone(),
-                )));
+                return Err(RpcErr::L1RpcErr(ethrex_rpc::RpcErr::MethodNotServedHere {
+                    method: req.method.clone(),
+                    reason: "the 'ethrex' namespace is disabled on this endpoint; enable it with \
+                             --http.api.ethrex"
+                        .to_string(),
+                }));
             }
             map_l2_requests(req, context).await
         }
@@ -425,7 +440,11 @@ mod tests {
     async fn test_context(ethrex_namespace_allowed: bool) -> RpcApiContext {
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        let l1_ctx = ethrex_rpc::test_utils::default_context_with_storage(storage).await;
+        // The L2 context owns its `l1_ctx` by value, so the guard cannot be kept
+        // alive alongside it without depending on drop order.
+        let l1_ctx = ethrex_rpc::test_utils::default_context_with_storage(storage)
+            .await
+            .into_detached();
         let rollup_store = ethrex_storage_rollup::StoreRollup::new(
             std::path::Path::new(""),
             EngineTypeRollup::InMemory,
@@ -442,7 +461,8 @@ mod tests {
     }
 
     /// With `--http.api.ethrex=false`, L2-specific `ethrex_*` methods must be
-    /// rejected at the dispatcher with MethodNotFound and never reach handlers.
+    /// rejected at the dispatcher and never reach handlers — while still saying
+    /// the namespace is disabled rather than unimplemented.
     #[tokio::test]
     async fn ethrex_namespace_blocked_when_disabled() {
         let body = r#"{"jsonrpc":"2.0","method":"ethrex_batchNumber","params":[],"id":1}"#;
@@ -451,10 +471,28 @@ mod tests {
 
         let result = map_http_requests(&request, context).await;
         match result {
-            Err(RpcErr::L1RpcErr(ethrex_rpc::RpcErr::MethodNotFound(method))) => {
+            Err(RpcErr::L1RpcErr(ethrex_rpc::RpcErr::MethodNotServedHere { method, reason })) => {
                 assert_eq!(method, "ethrex_batchNumber");
+                assert!(
+                    reason.contains("--http.api.ethrex"),
+                    "names the flag: {reason}"
+                );
             }
-            other => panic!("expected MethodNotFound, got {other:?}"),
+            other => panic!("expected MethodNotServedHere, got {other:?}"),
         }
+    }
+
+    /// Batches larger than `MAX_BATCH_SIZE` (1000) are parsed only up to their first
+    /// 1001 requests, so the L2 HTTP handler must reject them whole rather than serve
+    /// the parsed prefix.
+    #[tokio::test]
+    async fn http_rejects_oversize_batch() {
+        let request = r#"{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}"#;
+        let body = format!("[{}]", vec![request; 1001].join(","));
+        let Json(response) = handle_http_request(State(test_context(true).await), body)
+            .await
+            .unwrap();
+        assert_eq!(response["error"]["code"], -32600, "got {response}");
+        assert!(response["id"].is_null());
     }
 }
