@@ -15,7 +15,7 @@ use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
     db::{Database, gen_db::GeneralizedDatabase},
     environment::{EVMConfig, Environment},
-    errors::{DatabaseError, ExecutionReport, TxResult},
+    errors::{DatabaseError, ExecutionReport, InternalError, TxResult, VMError},
     precompiles::PrecompileCache,
     tracing::LevmCallTracer,
     vm::{VM, VMType},
@@ -33,6 +33,7 @@ const CALLER: u64 = 0x2000;
 const CALLEE: u64 = 0x3000;
 const IDENTITY: u64 = 0x04;
 const MODEXP: u64 = 0x05;
+const UNLOADABLE: u64 = 0xdead;
 /// Under the EIP-7825 transaction gas cap (2^24).
 const GAS_LIMIT: u64 = 16_000_000;
 
@@ -45,10 +46,17 @@ const STATICCALL: u8 = 0xfa;
 struct Db {
     inner: TestDatabase,
     precompile_cache: Option<PrecompileCache>,
+    /// An account whose state cannot be loaded, as when a witness lacks its node.
+    unloadable: Option<Address>,
 }
 
 impl Database for Db {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
+        if self.unloadable == Some(address) {
+            return Err(DatabaseError::Custom(format!(
+                "{address:#x} is not loadable"
+            )));
+        }
         self.inner.get_account_state(address)
     }
     fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
@@ -80,12 +88,11 @@ fn contract(code: Vec<u8>) -> Account {
     )
 }
 
-/// Runs a transaction from an EOA to the `CALLER` contract.
-fn run(caller_code: Vec<u8>, callee_code: Vec<u8>, with_precompile_cache: bool) -> ExecutionReport {
-    let sender = Address::from_low_u64_be(SENDER);
+/// `store` holding a funded sender and the `CALLER` and `CALLEE` contracts.
+fn database(store: Db, caller_code: Vec<u8>, callee_code: Vec<u8>) -> GeneralizedDatabase {
     let accounts: FxHashMap<Address, Account> = [
         (
-            sender,
+            Address::from_low_u64_be(SENDER),
             Account::new(
                 U256::from(10u64).pow(U256::from(18)),
                 Code::default(),
@@ -98,15 +105,13 @@ fn run(caller_code: Vec<u8>, callee_code: Vec<u8>, with_precompile_cache: bool) 
     ]
     .into_iter()
     .collect();
-    let store = Db {
-        inner: TestDatabase::new(),
-        precompile_cache: with_precompile_cache.then(PrecompileCache::new),
-    };
-    let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(store), accounts);
+    GeneralizedDatabase::new_with_account_state(Arc::new(store), accounts)
+}
 
+fn environment() -> Environment {
     let fork = Fork::Osaka;
-    let env = Environment {
-        origin: sender,
+    Environment {
+        origin: Address::from_low_u64_be(SENDER),
         gas_limit: GAS_LIMIT,
         config: EVMConfig::new(fork, EVMConfig::canonical_values(fork)),
         block_number: 1,
@@ -134,15 +139,30 @@ fn run(caller_code: Vec<u8>, callee_code: Vec<u8>, with_precompile_cache: bool) 
         disable_gas_allowance_check: false,
         disable_sender_eoa_check: false,
         is_system_call: false,
-    };
-    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+    }
+}
+
+/// A transaction from the sender to the `CALLER` contract.
+fn transaction() -> Transaction {
+    Transaction::EIP1559Transaction(EIP1559Transaction {
         to: TxKind::Call(Address::from_low_u64_be(CALLER)),
         gas_limit: GAS_LIMIT,
         max_fee_per_gas: 1,
         ..Default::default()
-    });
+    })
+}
+
+/// Runs a transaction from an EOA to the `CALLER` contract.
+fn run(caller_code: Vec<u8>, callee_code: Vec<u8>, with_precompile_cache: bool) -> ExecutionReport {
+    let store = Db {
+        inner: TestDatabase::new(),
+        precompile_cache: with_precompile_cache.then(PrecompileCache::new),
+        unloadable: None,
+    };
+    let mut db = database(store, caller_code, callee_code);
+    let tx = transaction();
     let mut vm = VM::new(
-        env,
+        environment(),
         &mut db,
         &tx,
         LevmCallTracer::disabled(),
@@ -323,4 +343,45 @@ fn a_call_costs_the_same_whatever_the_size_of_its_arguments() {
             "cache {with_precompile_cache}: 32-byte arguments took {small:?}, 2 MiB took {large:?}"
         );
     }
+}
+
+/// An error that ends execution, such as a database failure, leaves the failing callee's
+/// frame in place, and that frame's arguments are a view of the shared memory buffer.
+/// Returning the buffer to the pool must release the view too: the pool checks, in debug
+/// builds, that it holds the only reference to the buffer it is about to clear.
+#[test]
+fn a_callee_that_fails_with_an_error_does_not_keep_the_pooled_memory_buffer() {
+    let mut caller_code = Vec::new();
+    call(&mut caller_code, CALL, CALLEE, (0, ARGS_LEN), (0, 0));
+    let mut callee_code = Vec::new();
+    push_u64(&mut callee_code, UNLOADABLE);
+    callee_code.push(0x31); // BALANCE
+    let store = Db {
+        inner: TestDatabase::new(),
+        precompile_cache: None,
+        unloadable: Some(Address::from_low_u64_be(UNLOADABLE)),
+    };
+    let mut db = database(store, caller_code, callee_code);
+    let tx = transaction();
+    let (mut stack_pool, mut memory_pool) = (Vec::new(), Vec::new());
+    let mut vm = VM::new_pooled(
+        environment(),
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L1,
+        &NativeCrypto,
+        None,
+        &mut stack_pool,
+        &mut memory_pool,
+    )
+    .expect("vm");
+
+    let result = vm.execute();
+    assert!(
+        matches!(result, Err(VMError::Internal(InternalError::Database(_)))),
+        "{result:?}"
+    );
+    vm.reclaim_into(&mut stack_pool, &mut memory_pool);
+    assert_eq!(memory_pool.len(), 1);
 }

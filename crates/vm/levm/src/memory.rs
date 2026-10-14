@@ -23,12 +23,17 @@ use ethrex_common::{
 #[derive(Debug, Clone)]
 pub enum CallData {
     Owned(Bytes),
-    CallerMemory {
-        buffer: Rc<RefCell<Vec<u8>>>,
-        /// Offset of the range in the shared buffer, not relative to the caller's base.
-        start: usize,
-        len: usize,
-    },
+    CallerMemory(CallerRange),
+}
+
+/// A range of a calling frame's memory, built only by [`Memory::calldata_view`] so that it
+/// always lies in a region that stays unchanged while the callee runs.
+#[derive(Debug, Clone)]
+pub struct CallerRange {
+    buffer: Rc<RefCell<Vec<u8>>>,
+    /// Offset of the range in the shared buffer, not relative to the caller's base.
+    start: usize,
+    len: usize,
 }
 
 impl Default for CallData {
@@ -48,7 +53,7 @@ impl CallData {
     pub fn len(&self) -> usize {
         match self {
             Self::Owned(bytes) => bytes.len(),
-            Self::CallerMemory { len, .. } => *len,
+            Self::CallerMemory(range) => range.len,
         }
     }
 
@@ -63,14 +68,14 @@ impl CallData {
     pub fn with_slice<R>(&self, f: impl FnOnce(&[u8]) -> R) -> Result<R, VMError> {
         match self {
             Self::Owned(bytes) => Ok(f(bytes)),
-            Self::CallerMemory { buffer, start, len } => {
-                let buffer = buffer.borrow();
-                let end = start.checked_add(*len).ok_or(OutOfBounds)?;
+            Self::CallerMemory(range) => {
+                let buffer = range.buffer.borrow();
+                let end = range.start.checked_add(range.len).ok_or(OutOfBounds)?;
                 // The buffer never shrinks below a live frame's memory, so this only fails
                 // if that invariant is broken.
-                let data = buffer.get(*start..end).ok_or(InternalError::Custom(
-                    "call data outside the memory buffer".to_owned(),
-                ))?;
+                let data = buffer.get(range.start..end).ok_or_else(|| {
+                    InternalError::Custom("call data outside the memory buffer".to_owned())
+                })?;
                 Ok(f(data))
             }
         }
@@ -81,7 +86,7 @@ impl CallData {
     pub fn to_bytes(&self) -> Result<Bytes, VMError> {
         match self {
             Self::Owned(bytes) => Ok(bytes.clone()),
-            Self::CallerMemory { .. } => self.with_slice(Bytes::copy_from_slice),
+            Self::CallerMemory(_) => self.with_slice(Bytes::copy_from_slice),
         }
     }
 
@@ -280,11 +285,11 @@ impl Memory {
         let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
         self.resize(new_size)?;
 
-        Ok(CallData::CallerMemory {
+        Ok(CallData::CallerMemory(CallerRange {
             buffer: Rc::clone(&self.buffer),
             start: self.current_base.checked_add(offset).ok_or(OutOfBounds)?,
             len: size,
-        })
+        }))
     }
 
     /// Copies `size` bytes of `calldata` from `src_offset` to `dst_offset`, zero-filling past
@@ -307,10 +312,8 @@ impl Memory {
         let copied = calldata.len().saturating_sub(src_offset).min(size);
         if copied > 0 {
             match calldata {
-                CallData::CallerMemory { buffer, start, .. }
-                    if Rc::ptr_eq(buffer, &self.buffer) =>
-                {
-                    let from = start.checked_add(src_offset).ok_or(OutOfBounds)?;
+                CallData::CallerMemory(range) if Rc::ptr_eq(&range.buffer, &self.buffer) => {
+                    let from = range.start.checked_add(src_offset).ok_or(OutOfBounds)?;
                     let to = self
                         .current_base
                         .checked_add(dst_offset)

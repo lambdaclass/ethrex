@@ -408,12 +408,13 @@ impl PrecompileCache {
     }
 
     /// Bytes one entry is charged against the budget: its calldata and output, plus
-    /// the fixed size of the key and value it is stored as. Hash-table slack is not
+    /// the fixed size of the key and value it is stored as in its precompile's map.
+    /// Hash-table slack and the per-precompile maps (one per precompile called) are not
     /// counted, so the budget is approximate, not an exact resident size.
     pub fn entry_size(calldata_len: usize, output_len: usize) -> usize {
         calldata_len
             .saturating_add(output_len)
-            .saturating_add(size_of::<((Address, Bytes), (Bytes, u64))>())
+            .saturating_add(size_of::<(Bytes, (Bytes, u64))>())
     }
 
     pub fn get(&self, address: &Address, calldata: &[u8]) -> Option<(Bytes, u64)> {

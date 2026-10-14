@@ -1215,24 +1215,9 @@ impl<'a> VM<'a> {
             }
 
             let mut gas_remaining = gas_limit;
-            // Resolve a relocation destination back to the precompile it hosts.
-            let precompile_address = self.effective_precompile_address(code_address);
-            let fork = self.env.config.fork;
-            let cache = self.db.store.precompile_cache();
-            let (crypto, stateless_validator) = (self.crypto, self.stateless_validator);
             // The precompile reads the arguments in place in the caller's memory.
-            let ctx_result = calldata.with_slice(|input| {
-                Self::execute_precompile(
-                    precompile_address,
-                    input,
-                    gas_limit,
-                    &mut gas_remaining,
-                    fork,
-                    cache,
-                    crypto,
-                    stateless_validator,
-                )
-            })??;
+            let ctx_result =
+                self.execute_precompile(code_address, &calldata, gas_limit, &mut gas_remaining)?;
 
             let call_frame = &mut self.current_call_frame;
 

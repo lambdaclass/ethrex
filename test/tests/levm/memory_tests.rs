@@ -70,17 +70,16 @@ fn test_copy_word_within() {
 #[test]
 fn calldata_view_reads_caller_memory_in_place() {
     use ethrex_levm::memory::CallData;
-    use std::rc::Rc;
 
     let mut caller = Memory::new();
     let args: Vec<u8> = (1..=40).collect();
     caller.store_data(8, &args).unwrap();
 
     let view = caller.calldata_view(8, 40).unwrap();
-    match &view {
-        CallData::CallerMemory { buffer, .. } => assert!(Rc::ptr_eq(buffer, &caller.buffer)),
-        CallData::Owned(_) => panic!("arguments were copied"),
-    }
+    assert!(
+        matches!(view, CallData::CallerMemory(_)),
+        "arguments were copied"
+    );
 
     let mut callee = caller.next_memory();
     let before = callee.buffer.borrow().as_ptr();

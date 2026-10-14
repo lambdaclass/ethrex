@@ -34,7 +34,7 @@ pub const EXECUTE_GAS_PER_WITNESS_BYTE: u64 = 16;
 /// Output: SSZ-encoded `StatelessValidationResult`.
 ///
 /// This wrapper exists to mimic the standard precompile signature
-/// (`fn(&Bytes, &mut u64, Fork, &dyn Crypto) -> Result<Bytes, VMError>`) plus
+/// (`fn(&[u8], &mut u64, Fork, &dyn Crypto) -> Result<Bytes, VMError>`) plus
 /// the extra `stateless_validator` slot threaded through the dispatcher. It
 /// also converts the `Option` into an error, so `run_execute` can work with a
 /// guaranteed-`Some` validator.

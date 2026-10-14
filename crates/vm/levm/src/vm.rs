@@ -28,7 +28,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    Address, BigEndianHash, H160, H256, U256,
+    Address, BigEndianHash, H256, U256,
     tracing::CallType,
     types::{
         AccessListEntry, Code, Fork, Frame, FrameMode, Log, Transaction, TxType,
@@ -801,12 +801,9 @@ pub fn validate_frame_signatures(
                 calldata[63] = v.saturating_add(27);
                 calldata[64..96].copy_from_slice(r);
                 calldata[96..128].copy_from_slice(s);
-                let Ok(result) = crate::precompiles::ecrecover(
-                    &Bytes::from(calldata),
-                    &mut scratch_gas,
-                    fork,
-                    crypto,
-                ) else {
+                let Ok(result) =
+                    crate::precompiles::ecrecover(&calldata, &mut scratch_gas, fork, crypto)
+                else {
                     return false;
                 };
                 if result.len() != 32 {
@@ -852,12 +849,9 @@ pub fn validate_frame_signatures(
                 calldata[64..96].copy_from_slice(s);
                 calldata[96..128].copy_from_slice(qx);
                 calldata[128..160].copy_from_slice(qy);
-                let Ok(result) = crate::precompiles::p_256_verify(
-                    &Bytes::from(calldata),
-                    &mut scratch_gas,
-                    fork,
-                    crypto,
-                ) else {
+                let Ok(result) =
+                    crate::precompiles::p_256_verify(&calldata, &mut scratch_gas, fork, crypto)
+                else {
                     return false;
                 };
                 if result.len() != 32 || result[31] != 1 {
@@ -989,8 +983,10 @@ impl<'a> VM<'a> {
         // popping them) still hold clones. Drop them first so the buffer is `Rc`-unique on BOTH
         // paths before we clear it — otherwise the clear would propagate to a frame still holding a
         // reference. `CallFrame` has no `Drop` and these frames are never read again, so dropping
-        // them early is free.
+        // them early is free. The frame left current on the error path may be a callee whose
+        // arguments are a view of the buffer (`CallData`), which holds a clone as well.
         self.call_frames.clear();
+        self.current_call_frame.calldata = CallData::default();
         let mut root_memory = self.current_call_frame.memory;
         debug_assert_eq!(
             Rc::strong_count(&root_memory.buffer),
@@ -2807,38 +2803,22 @@ impl<'a> VM<'a> {
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         if self.address_is_precompile(&self.current_call_frame.to) {
             // `execute_precompile` itself never touches state gas (it only mutates
-            // `gas_remaining`; it has no access to `state_gas_used` / `state_gas_reservoir` /
-            // `state_gas_spill`) — the assert below guards that. The in-region EIP-2780
-            // value-to-not-alive NEW_ACCOUNT charge (`prepare_execution`),
+            // `gas_remaining`; it takes `&self`, so it cannot change `state_gas_used` /
+            // `state_gas_reservoir` / `state_gas_spill`) — the assert below guards that. The
+            // in-region EIP-2780 value-to-not-alive NEW_ACCOUNT charge (`prepare_execution`),
             // however, IS frame state gas, and on an exceptional halt/revert it must be
             // rolled back (see below). `self` is borrowed by field rather than via
             // `&mut self.current_call_frame` so the refund call, which needs `&mut self`,
             // can run after `execute_precompile`.
             let state_gas_used_before_precompile = self.state_gas_used;
-            // Resolve a relocation destination back to the precompile it hosts.
-            let code_address =
-                self.effective_precompile_address(self.current_call_frame.code_address);
             let precompile_gas_limit = self.current_call_frame.gas_limit;
             let mut gas_remaining = self.current_call_frame.gas_remaining as u64;
-            let fork = self.env.config.fork;
-            let cache = self.db.store.precompile_cache();
-            let (crypto, stateless_validator) = (self.crypto, self.stateless_validator);
-            let result = self
-                .current_call_frame
-                .calldata
-                .with_slice(|input| {
-                    Self::execute_precompile(
-                        code_address,
-                        input,
-                        precompile_gas_limit,
-                        &mut gas_remaining,
-                        fork,
-                        cache,
-                        crypto,
-                        stateless_validator,
-                    )
-                })
-                .and_then(|result| result);
+            let result = self.execute_precompile(
+                self.current_call_frame.code_address,
+                &self.current_call_frame.calldata,
+                precompile_gas_limit,
+                &mut gas_remaining,
+            );
 
             debug_assert_eq!(
                 self.state_gas_used, state_gas_used_before_precompile,
@@ -3231,31 +3211,29 @@ impl<'a> VM<'a> {
             .finalize_step(gas_cost, refund_after, err_str.as_deref());
     }
 
-    /// Executes precompile and handles the output that it returns, generating a report.
-    #[allow(clippy::too_many_arguments)]
+    /// Executes the precompile at `code_address` (a relocation destination resolves to the
+    /// precompile it hosts) and handles the output that it returns, generating a report.
+    /// The precompile reads `calldata` in place, even when it is a range of caller memory.
     pub fn execute_precompile(
-        code_address: H160,
-        calldata: &[u8],
+        &self,
+        code_address: Address,
+        calldata: &CallData,
         gas_limit: u64,
         gas_remaining: &mut u64,
-        fork: Fork,
-        cache: Option<&precompiles::PrecompileCache>,
-        crypto: &dyn Crypto,
-        stateless_validator: Option<&dyn crate::StatelessValidator>,
     ) -> Result<ContextResult, VMError> {
-        Self::handle_precompile_result(
+        let precompile_address = self.effective_precompile_address(code_address);
+        let output = calldata.with_slice(|input| {
             precompiles::execute_precompile(
-                code_address,
-                calldata,
+                precompile_address,
+                input,
                 gas_remaining,
-                fork,
-                cache,
-                crypto,
-                stateless_validator,
-            ),
-            gas_limit,
-            *gas_remaining,
-        )
+                self.env.config.fork,
+                self.db.store.precompile_cache(),
+                self.crypto,
+                self.stateless_validator,
+            )
+        })?;
+        Self::handle_precompile_result(output, gas_limit, *gas_remaining)
     }
 
     /// True if external transaction is a contract creation
