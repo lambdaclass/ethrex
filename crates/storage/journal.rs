@@ -34,14 +34,17 @@
 //!
 //! Layers commit ~`DB_COMMIT_THRESHOLD` blocks behind the head. On a finalizing chain
 //! that block is usually final already: an L2 finalizes its head every block, and L1
-//! finality trails the head by two or three epochs. Its entry could never be read (no
-//! reorg unwinds a finalized block) and would be pruned on the next advance, so the
-//! commit path skips it. It does so only while the journal is empty and the block is
-//! at or below the head as well, which leaves the journal in a state pruning already
-//! produces: the newest entry, when there is one, still names the block whose state is
-//! on disk. In steady state the journal stays empty and pruning writes nothing; entries
-//! appear when finality falls behind the commit edge, which is when a deep reorg can
-//! need them. See `journal_skip_ceiling` in `store.rs`.
+//! finality trails the head by two or three epochs. Its entry would be pruned on the
+//! next finality advance, and until then it could only serve a reorg across finality,
+//! which ethrex does allow (finality is not a reorg limit, see `compute_reorg_ceiling`
+//! in the blockchain crate) but rejects as too deep when the journal has no entry for
+//! it. The commit path therefore skips the entry, giving up only that window: up to an
+//! epoch on L1, one block on L2. It does so only while the journal is empty and the
+//! block is at or below the head as well, which leaves the journal in a state pruning
+//! already produces: the newest entry, when there is one, still names the block whose
+//! state is on disk. In steady state the journal stays empty and pruning writes
+//! nothing; entries appear when finality falls behind the commit edge, which is when a
+//! deep reorg can need them. See `journal_skip_ceiling` in `store.rs`.
 //!
 //! ## Batch mode (full sync)
 //!

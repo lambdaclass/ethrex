@@ -5425,12 +5425,16 @@ fn commit_to_disk(
         .map(|ov| (ov.to_block(), ov.from_block()));
 
     // Layers at or below finality are committed without a journal entry. An entry only
-    // serves a reorg that unwinds its block, no reorg unwinds a finalized block, and
-    // finality pruning deletes such entries on the next advance anyway. Layers commit
-    // ~DB_COMMIT_THRESHOLD blocks behind the head, which on a finalizing chain is already
-    // final (an L2 finalizes its head every block, L1 finality trails the head by two or
-    // three epochs), so otherwise every entry is written only to be range-deleted. The
-    // reconciliation layer of a deep reorg always journals. `None` journals every layer.
+    // serves a reorg that unwinds its block, and finality pruning deletes every entry at
+    // or below finality on the next advance, so this one could only serve a reorg across
+    // finality that arrives before that advance. Finality is not a reorg limit (see
+    // `compute_reorg_ceiling` in the blockchain crate), but the limit is computed from
+    // the entries present, so such a reorg is rejected as too deep in that window instead
+    // of served. Layers commit ~DB_COMMIT_THRESHOLD blocks behind the head, which on a
+    // finalizing chain is already final (an L2 finalizes its head every block, L1
+    // finality trails the head by two or three epochs), so otherwise every entry is
+    // written only to be range-deleted. The reconciliation layer of a deep reorg always
+    // journals. `None` journals every layer.
     let skip_journal_upto = if is_batch || overlay_for_reconciliation.is_some() {
         None
     } else {
@@ -5657,9 +5661,14 @@ fn commit_to_disk(
 ///
 /// A layer is skipped only when its block is at or below finality, at or below the head,
 /// and the journal is empty. Together these leave `STATE_HISTORY` in a state it already
-/// reaches without skipping (layers committed, then pruned by a finality advance before
-/// anything read them), so no reader of the journal sees anything new:
-/// - Finality: no reorg unwinds a finalized block, so no deep-reorg overlay needs the entry.
+/// reaches without skipping (layers committed, then pruned by the next finality advance),
+/// so no reader of the journal sees anything new:
+/// - Finality: pruning deletes every entry at or below finality on the next advance, so
+///   the entry could only serve a reorg across finality that arrives before that advance.
+///   Finality is not a reorg limit (`compute_reorg_ceiling` trusts the CL's fork choice,
+///   and the engine API tests reorg across it), but the limit is computed from the entries
+///   present, so such a reorg is rejected as too deep in that window instead of served:
+///   up to an epoch on L1, one block on L2.
 /// - Head: interrupted-batch recovery adopts the newest entry only when it is above the
 ///   head, so it never needs a skipped one. Finality is normally at or below the head,
 ///   but a head rewound without a finality update (an L2 revert, a restart clamping the
