@@ -56,6 +56,7 @@ interface IOnChainProposer {
 
     // Verifier upgrade errors
     error UnverifiedBatchesPending(uint256 lastVerified, uint256 lastCommitted); // 0x47c3562a
+    error Sp1VerifierHasNoCode(); // 0x16768ee8
 
     /// @notice The latest committed batch number.
     /// @return The latest committed batch number as a uint256.
@@ -103,6 +104,7 @@ interface IOnChainProposer {
     /// the prover to it needs the new verifier as well as the new verification key.
     /// @dev Reverts with `UnverifiedBatchesPending` unless every committed batch is verified:
     /// their proofs only verify against the verifier they were proven for.
+    /// Also reverts with `Sp1VerifierHasNoCode` for a non-zero address without code.
     /// @param new_verifier the address of the new SP1 verifier contract
     function upgradeSP1Verifier(address new_verifier) external;
 

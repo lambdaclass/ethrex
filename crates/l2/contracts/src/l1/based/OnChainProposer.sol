@@ -210,6 +210,9 @@ contract OnChainProposer is
         // Aligned mode verifies SP1 proofs through the AlignedProofAggregator instead.
         if (REQUIRE_SP1_PROOF && !ALIGNED_MODE && new_verifier == address(0))
             revert MissingSp1Verifier();
+        // A mistyped address would only show up when the next proof fails to verify.
+        if (new_verifier != address(0) && new_verifier.code.length == 0)
+            revert Sp1VerifierHasNoCode();
         // Proofs of batches committed before the swap only verify against the old verifier.
         if (lastVerifiedBatch != lastCommittedBatch)
             revert UnverifiedBatchesPending(lastVerifiedBatch, lastCommittedBatch);
