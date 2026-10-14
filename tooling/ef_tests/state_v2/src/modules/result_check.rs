@@ -1,10 +1,10 @@
 use ethrex_common::H256;
+use ethrex_common::seeded_hash::SeededHashMap;
 use ethrex_common::utils::keccak;
 use ethrex_common::{
     Address, U256,
     types::{AccountUpdate, Fork, Genesis, code_hash},
 };
-use ethrex_common::seeded_hash::SeededHashMap;
 use ethrex_levm::{
     account::LevmAccount,
     db::gen_db::GeneralizedDatabase,
