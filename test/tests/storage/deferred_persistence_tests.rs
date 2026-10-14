@@ -1,6 +1,6 @@
 use ethrex_common::{
-    H256,
-    types::{Block, BlockBody, BlockHeader, BlockNumber},
+    Address, H256,
+    types::{Block, BlockBody, BlockHeader, BlockNumber, FrameReceipt, Receipt, TxType},
 };
 use ethrex_storage::{EngineType, Store, UpdateBatch};
 // Only the `rocksdb`-gated batch test below references the commit threshold. Keep the
@@ -66,6 +66,69 @@ async fn buffered_header_is_readable_before_flush() {
             .map(|h| h.number),
         Some(9)
     );
+}
+
+/// The buffer flush must persist receipts with the storage codec, the same one the
+/// read path decodes with. A frame receipt's consensus encoding omits `succeeded`
+/// and leads with `cumulative_gas_used`, so a receipt written through the wire codec
+/// is undecodable once the buffer drops it and `eth_getTransactionReceipt` starts
+/// answering with nothing for every frame transaction in a flushed block.
+#[tokio::test]
+async fn flushed_frame_receipt_survives_the_storage_codec() {
+    let store = Store::new("", EngineType::InMemory).expect("store");
+    let header = BlockHeader {
+        number: 1,
+        ..Default::default()
+    };
+    let block = Block::new(header.clone(), BlockBody::default());
+    let hash = block.hash();
+    let receipt = Receipt {
+        tx_type: TxType::Frame,
+        succeeded: false,
+        cumulative_gas_used: 22_910,
+        logs: vec![],
+        payer: Some(Address::repeat_byte(0x11)),
+        frame_receipts: Some(vec![
+            FrameReceipt {
+                status: 1,
+                gas_used: 0,
+                logs: vec![],
+            },
+            FrameReceipt {
+                status: 0,
+                gas_used: 100_000,
+                logs: vec![],
+            },
+        ]),
+    };
+
+    store
+        .store_block_updates(UpdateBatch {
+            account_updates: vec![],
+            storage_updates: vec![],
+            receipts: vec![(hash, vec![receipt.clone()])],
+            blocks: vec![block],
+            code_updates: vec![],
+            commit_depth: None,
+            wait_for_flush: false,
+        })
+        .expect("store updates");
+    store.flush_block_data_for_test().expect("flush");
+    store
+        .add_block_header(hash, header)
+        .await
+        .expect("add header");
+    store
+        .forkchoice_update(vec![], 1, hash, None, None)
+        .await
+        .expect("fcu");
+
+    let stored = store
+        .get_receipt(1, 0)
+        .await
+        .expect("read receipt")
+        .expect("receipt present after flush");
+    assert_eq!(stored, receipt);
 }
 
 /// Helper: build a minimal UpdateBatch for a single block at `number` whose
