@@ -259,6 +259,10 @@ impl BlockWorkerChannel {
     }
 }
 
+/// Default `--rpc.gascap`: the gas a simulation RPC may run with. The same value geth
+/// uses, and well above any mainnet block gas limit a single call could be asked to spend.
+pub const DEFAULT_RPC_GAS_CAP: u64 = 50_000_000;
+
 /// This struct contains all the dependencies that RPC handlers need to process requests,
 /// including storage access, blockchain state, P2P networking, and configuration.
 ///
@@ -283,6 +287,12 @@ pub struct RpcApiContext {
     pub log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     /// Maximum gas limit for blocks (used in payload building).
     pub gas_ceil: u64,
+    /// Gas cap for the simulation RPCs (`eth_call`, `eth_estimateGas`,
+    /// `eth_createAccessList`, `debug_traceCall`): a call runs with at most this much gas,
+    /// whatever the request asks for. The memory a call can buy (operand padding, memory
+    /// expansion) grows with its gas, so without a cap a request asking for 2^64 gas can
+    /// make the node attempt an allocation it cannot satisfy. `0` disables the cap.
+    pub rpc_gas_cap: u64,
     /// Channel for sending blocks to the block executor worker thread.
     pub block_worker_channel: BlockWorkerChannel,
     /// WebSocket configuration. `None` when the WS server is disabled.
@@ -651,6 +661,7 @@ pub async fn bind_api(
     client_version: ClientVersion,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: u64,
+    rpc_gas_cap: u64,
     extra_data: String,
     allowed_namespaces: HashSet<RpcNamespace>,
     log_query_limits: LogQueryLimits,
@@ -677,6 +688,7 @@ pub async fn bind_api(
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         log_filter_handler,
         gas_ceil,
+        rpc_gas_cap,
         block_worker_channel,
         ws: ws.clone(),
         allowed_namespaces: Arc::new(allowed_namespaces),
@@ -1084,6 +1096,7 @@ pub async fn start_api(
     client_version: ClientVersion,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: u64,
+    rpc_gas_cap: u64,
     extra_data: String,
     allowed_namespaces: HashSet<RpcNamespace>,
     authrpc_max_inflight_body_size: usize,
@@ -1103,6 +1116,7 @@ pub async fn start_api(
         client_version,
         log_filter_handler,
         gas_ceil,
+        rpc_gas_cap,
         extra_data,
         allowed_namespaces,
         LogQueryLimits::default(),

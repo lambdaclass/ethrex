@@ -14,7 +14,7 @@ use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
 use crate::vm::VMType;
 use crate::{
     constants::VERSIONED_HASH_VERSION_KZG,
-    errors::{InternalError, PrecompileError, VMError},
+    errors::{ExceptionalHalt, InternalError, PrecompileError, VMError},
     gas_cost::{
         self, BLAKE2F_ROUND_COST, BLS12_381_G1_K_DISCOUNT, BLS12_381_G1ADD_COST,
         BLS12_381_G2_K_DISCOUNT, BLS12_381_G2ADD_COST, BLS12_381_MAP_FP_TO_G1_COST,
@@ -817,6 +817,37 @@ pub fn modexp(
     let modulus_size =
         usize::try_from(modulus_size).map_err(|_| PrecompileError::ParsingInputError)?;
 
+    // Charge gas from the declared lengths BEFORE anything is sized by them. Pre-Osaka the
+    // lengths are uncapped, so a caller can declare operands far larger than any gas limit
+    // pays for; zero-padding them first would attempt that allocation (aborting the process
+    // when it cannot be satisfied) instead of failing the call with out-of-gas. Only the
+    // first 32 bytes of the exponent feed the cost (EIP-2565), so only those are read here.
+    // An exponent that starts past the end of the calldata (including a start offset that
+    // overflows) reads as zero, like any other missing operand bytes.
+    let exponent_start = base_size.saturating_add(96);
+    let exponent_head_size = exponent_size.min(32);
+    let exponent_head = get_slice_or_default(
+        &calldata,
+        exponent_start,
+        exponent_start.saturating_add(exponent_head_size),
+        exponent_head_size,
+    )?;
+
+    // Gas computation uses malachite Natural to compute bit length of exponent
+    use malachite::Natural;
+    use malachite::base::num::conversion::traits::*;
+    let exp_first_32 = Natural::from_power_of_2_digits_desc(8u64, exponent_head.iter().cloned())
+        .ok_or(InternalError::TypeConversion)?;
+
+    let gas_cost = gas_cost::modexp(&exp_first_32, base_size, exponent_size, modulus_size, fork)?;
+
+    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
+
+    if base_size == 0 && modulus_size == 0 {
+        return Ok(Bytes::new());
+    }
+
+    // The gas just charged bounds the declared lengths, so the operands can be materialized.
     let base_limit = base_size.checked_add(96).ok_or(InternalError::Overflow)?;
 
     let exponent_limit = exponent_size
@@ -827,25 +858,9 @@ pub fn modexp(
         .checked_add(exponent_limit)
         .ok_or(InternalError::Overflow)?;
 
-    let b = get_slice_or_default(&calldata, 96, base_limit, base_size);
-    let e = get_slice_or_default(&calldata, base_limit, exponent_limit, exponent_size);
-    let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, modulus_size);
-
-    // Gas computation uses malachite Natural to compute bit length of exponent
-    use malachite::Natural;
-    use malachite::base::num::conversion::traits::*;
-    let exp_first_32_bytes = e.get(0..32.min(exponent_size)).unwrap_or_default();
-    let exp_first_32 =
-        Natural::from_power_of_2_digits_desc(8u64, exp_first_32_bytes.iter().cloned())
-            .ok_or(InternalError::TypeConversion)?;
-
-    let gas_cost = gas_cost::modexp(&exp_first_32, base_size, exponent_size, modulus_size, fork)?;
-
-    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
-
-    if base_size == 0 && modulus_size == 0 {
-        return Ok(Bytes::new());
-    }
+    let b = get_slice_or_default(&calldata, 96, base_limit, base_size)?;
+    let e = get_slice_or_default(&calldata, base_limit, exponent_limit, exponent_size)?;
+    let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, modulus_size)?;
 
     let result = crypto
         .modexp(&b, &e, &m)
@@ -859,27 +874,34 @@ pub fn modexp(
 /// This function returns the slice between the lower and upper limit of the calldata (as a vector),
 /// padding with zeros at the end if necessary.
 ///
-/// Uses Cow so that the best case of no resizing doesn't require an allocation.
+/// Uses Cow so that the best case of no resizing doesn't require an allocation. Fails with
+/// out-of-gas when the host cannot provide `size_to_expand` bytes: the gas charged for them
+/// bounds the size under any real gas limit, but a simulation run without one can pay for an
+/// operand no machine can allocate, and that must fail the call rather than abort the process.
 #[expect(clippy::indexing_slicing, reason = "bounds checked")]
 fn get_slice_or_default<'c>(
     calldata: &'c [u8],
     lower_limit: usize,
     upper_limit: usize,
     size_to_expand: usize,
-) -> Cow<'c, [u8]> {
+) -> Result<Cow<'c, [u8]>, VMError> {
     let upper_limit = calldata.len().min(upper_limit);
     if let Some(data) = calldata.get(lower_limit..upper_limit)
         && !data.is_empty()
     {
         if data.len() == size_to_expand {
-            return data.into();
+            return Ok(data.into());
         }
-        let mut extended = vec![0u8; size_to_expand];
+        let mut extended = Vec::new();
+        extended
+            .try_reserve_exact(size_to_expand)
+            .map_err(|_| ExceptionalHalt::OutOfGas)?;
         let copy_size = size_to_expand.min(data.len());
-        extended[..copy_size].copy_from_slice(&data[..copy_size]);
-        return extended.into();
+        extended.extend_from_slice(&data[..copy_size]);
+        extended.resize(size_to_expand, 0);
+        return Ok(extended.into());
     }
-    Vec::new().into()
+    Ok(Vec::new().into())
 }
 
 /// If the result size is less than needed, pads left with zeros.
@@ -1694,9 +1716,115 @@ pub fn bls12_map_fp2_to_g2(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::arithmetic_side_effects)]
 mod tests {
     use super::*;
+    use crate::errors::ExceptionalHalt;
     use ethrex_common::types::Fork;
+    use ethrex_crypto::NativeCrypto;
+
+    /// MODEXP calldata: the 96-byte header (base, exponent and modulus lengths as 32-byte
+    /// big-endian words) followed by `operands`, which may be shorter than the declared
+    /// lengths (the precompile zero-pads missing bytes).
+    fn modexp_calldata(base_len: u64, exp_len: u64, mod_len: u64, operands: &[u8]) -> Bytes {
+        let mut calldata = Vec::with_capacity(96 + operands.len());
+        for len in [base_len, exp_len, mod_len] {
+            calldata.extend_from_slice(&[0u8; 24]);
+            calldata.extend_from_slice(&len.to_be_bytes());
+        }
+        calldata.extend_from_slice(operands);
+        Bytes::from(calldata)
+    }
+
+    /// Pre-Osaka MODEXP has no cap on the declared operand lengths (EIP-7823 only applies
+    /// from Osaka), so a caller can declare a length the gas limit can never pay for. The
+    /// call must fail with out-of-gas before any operand is sized by that length: sizing
+    /// first would try to allocate the declared length, and an allocation of 2^62 bytes
+    /// aborts the process rather than returning an error.
+    #[test]
+    fn modexp_pre_osaka_huge_declared_length_halts_with_out_of_gas() {
+        // Both fit in a 64-bit usize, so they survive the length conversion and reach the
+        // padding step. 2^62 overflows the gas formula; 2^33 does not, but its cost is far
+        // above any gas limit. Neither must ever be allocated.
+        for huge in [1u64 << 62, 1u64 << 33] {
+            // One operand declared huge at a time, the other two one byte each. The three
+            // operand bytes make every operand region non-empty, which is the branch of the
+            // padding helper that allocates.
+            for (base_len, exp_len, mod_len) in [(huge, 1, 1), (1, huge, 1), (1, 1, huge)] {
+                let calldata = modexp_calldata(base_len, exp_len, mod_len, &[1, 1, 1]);
+                let mut gas_remaining = 30_000_000;
+                let result = modexp(&calldata, &mut gas_remaining, Fork::Prague, &NativeCrypto);
+                assert!(
+                    matches!(
+                        result,
+                        Err(VMError::ExceptionalHalt(
+                            ExceptionalHalt::OutOfGas
+                                | ExceptionalHalt::Precompile(PrecompileError::NotEnoughGas)
+                        ))
+                    ),
+                    "lengths ({base_len}, {exp_len}, {mod_len}) must halt with out-of-gas, got {result:?}"
+                );
+            }
+        }
+    }
+
+    /// EIP-198 worked example under EIP-2565 pricing: 3^(p-1) mod p for the secp256k1 field
+    /// prime p is 1 (Fermat), for 1360 gas. Pins the ordinary path: gas and output.
+    #[test]
+    fn modexp_eip198_example_gas_and_output() {
+        // p - 1 and p, 32 bytes each.
+        let mut exponent = [0xffu8; 32];
+        exponent[27..].copy_from_slice(&[0xfe, 0xff, 0xff, 0xfc, 0x2e]);
+        let mut modulus = [0xffu8; 32];
+        modulus[27..].copy_from_slice(&[0xfe, 0xff, 0xff, 0xfc, 0x2f]);
+        let mut operands = vec![0x03];
+        operands.extend_from_slice(&exponent);
+        operands.extend_from_slice(&modulus);
+        let calldata = modexp_calldata(1, 32, 32, &operands);
+
+        let mut gas_remaining = 100_000;
+        let output = modexp(&calldata, &mut gas_remaining, Fork::Prague, &NativeCrypto).unwrap();
+
+        let mut expected = [0u8; 32];
+        expected[31] = 1;
+        assert_eq!(output.as_ref(), expected);
+        assert_eq!(100_000 - gas_remaining, 1360);
+    }
+
+    /// The exponent head that prices the call is read straight from the calldata, so a
+    /// calldata that ends inside the exponent must still price it zero-padded on the right
+    /// (0x80 followed by 31 missing bytes is 2^255, 256 significant bits) and a missing
+    /// modulus must still read as zero, which yields a zero output of the declared length.
+    #[test]
+    fn modexp_truncated_calldata_prices_zero_padded_exponent_head() {
+        let calldata = modexp_calldata(1, 32, 32, &[0x03, 0x80]);
+
+        let mut gas_remaining = 100_000;
+        let output = modexp(&calldata, &mut gas_remaining, Fork::Prague, &NativeCrypto).unwrap();
+
+        // words(32) = 4, multiplication complexity 16, iteration count 255: 16 * 255 / 3.
+        assert_eq!(100_000 - gas_remaining, 1360);
+        assert_eq!(output.as_ref(), [0u8; 32]);
+    }
+
+    /// A simulation run without a gas cap can pay for an operand no host can allocate: with
+    /// the largest 64-bit gas limit, a 2^61-byte exponent (one-byte base and modulus) costs
+    /// about 6.1e18, so the charge succeeds and the padding step is reached. Reserving 2^61
+    /// bytes fails on every 64-bit machine (it exceeds the address space), and the call must
+    /// fail with out-of-gas there instead of aborting the process.
+    #[test]
+    fn modexp_unsatisfiable_operand_allocation_halts_with_out_of_gas() {
+        let calldata = modexp_calldata(1, 1 << 61, 1, &[1, 1, 1]);
+        let mut gas_remaining = u64::MAX;
+        let result = modexp(&calldata, &mut gas_remaining, Fork::Prague, &NativeCrypto);
+        assert!(
+            matches!(
+                result,
+                Err(VMError::ExceptionalHalt(ExceptionalHalt::OutOfGas))
+            ),
+            "an operand the host cannot allocate must halt with out-of-gas, got {result:?}"
+        );
+    }
 
     /// I3 gate test: EXECUTE precompile is L1-only and only active since LStar.
     #[test]

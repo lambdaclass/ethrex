@@ -437,6 +437,7 @@ pub async fn init_rpc_api(
         get_client_version(),
         log_filter_handler,
         opts.gas_limit,
+        opts.rpc_gas_cap,
         opts.extra_data.clone(),
         opts.http_api.iter().copied().collect(),
         get_log_query_limits(opts),

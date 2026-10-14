@@ -574,7 +574,13 @@ impl<'a> VM<'a> {
                 let gas_limit = self.tx.gas_limit();
                 let execution_gas = gas_limit.saturating_sub(total_gas);
                 let regular_gas_budget = TX_MAX_GAS_LIMIT_AMSTERDAM.saturating_sub(regular_gas);
-                let gas_left = regular_gas_budget.min(execution_gas);
+                // A simulation that lifted the cap (eth_call, debug_traceCall) spends its
+                // whole gas limit on execution and funds no reservoir, as geth does.
+                let gas_left = if self.env.disable_execution_gas_cap {
+                    execution_gas
+                } else {
+                    regular_gas_budget.min(execution_gas)
+                };
                 let reservoir = execution_gas.saturating_sub(gas_left);
                 if reservoir > 0 {
                     // Pre-consume reservoir from gas_remaining so GAS opcode returns <= TX_MAX_GAS_LIMIT_AMSTERDAM
