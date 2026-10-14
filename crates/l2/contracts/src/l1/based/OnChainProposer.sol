@@ -145,6 +145,10 @@ contract OnChainProposer is
 
         // SP1 constants
         REQUIRE_SP1_PROOF = requireSp1Proof;
+        // In Aligned mode, SP1 proofs are verified through the AlignedProofAggregator,
+        // not through a direct SP1 verifier contract, so we don't require sp1verifier.
+        if (REQUIRE_SP1_PROOF && !aligned && sp1verifier == address(0))
+            revert MissingSp1Verifier();
         SP1_VERIFIER_ADDRESS = sp1verifier;
 
         // TDX constants
