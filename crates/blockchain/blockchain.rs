@@ -69,6 +69,7 @@ use ethrex_common::constants::{
 use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
 use crate::vm::{OverlaidVmDatabase, StateOverride, precompile_moves};
+use ethrex_common::seeded_hash::SeededHashMap;
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::EIP4844Transaction;
 #[cfg(feature = "c-kzg")]
@@ -496,7 +497,7 @@ enum WorkerRequest {
     ProcessAccount {
         prefix: H256,
         info: Option<AccountInfo>,
-        storage: FxHashMap<H256, U256>,
+        storage: SeededHashMap<H256, U256>,
         removed: bool,
         removed_storage: bool,
     },
@@ -939,7 +940,7 @@ impl Blockchain {
         // executor (see `bal_parallel_exec_enabled` below) streams per-tx
         // updates over the channel, which only the streaming merkleizer
         // consumes — the synthesized path would leave the receiver dropped.
-        let optimistic_updates: Option<FxHashMap<Address, BalSynthesisItem>> =
+        let optimistic_updates: Option<SeededHashMap<Address, BalSynthesisItem>> =
             if self.options.bal_parallel_trie_enabled && !collect_witness {
                 bal.as_deref().map(synthesize_bal_updates)
             } else {
@@ -1439,11 +1440,11 @@ impl Blockchain {
 
             // Coordination runs on the calling thread, concurrently with pool tasks.
             let mut code_updates: Vec<(H256, Code)> = vec![];
-            let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
+            let mut hashed_address_cache: SeededHashMap<Address, H256> = Default::default();
             let mut has_storage: FxHashSet<H256> = Default::default();
 
-            let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
-                collect_witness.then(FxHashMap::default);
+            let mut accumulator: Option<SeededHashMap<Address, AccountUpdate>> =
+                collect_witness.then(SeededHashMap::default);
 
             for updates in rx {
                 let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
@@ -1594,7 +1595,7 @@ impl Blockchain {
     )]
     fn handle_merkleization_bal_from_updates(
         &self,
-        prepared: FxHashMap<Address, BalSynthesisItem>,
+        prepared: SeededHashMap<Address, BalSynthesisItem>,
         parent_header: &BlockHeader,
     ) -> Result<AccountUpdatesList, StoreError> {
         const NUM_WORKERS: usize = 16;

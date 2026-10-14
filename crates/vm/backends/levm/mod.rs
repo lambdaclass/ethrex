@@ -17,6 +17,8 @@ use ethrex_common::H256;
 #[cfg(feature = "rayon")]
 use ethrex_common::constants::EMPTY_KECCAK_HASH;
 #[cfg(feature = "rayon")]
+use ethrex_common::seeded_hash::{SeededHashMap, SeededHashSet};
+#[cfg(feature = "rayon")]
 use ethrex_common::types::TxType;
 use ethrex_common::types::block_access_list::BlockAccessList;
 #[cfg(feature = "rayon")]
@@ -47,7 +49,7 @@ use ethrex_crypto::Crypto;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::StatelessValidator;
 #[cfg(feature = "rayon")]
-use ethrex_levm::account::{AccountStatus, LevmAccount};
+use ethrex_levm::account::AccountStatus;
 use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_MAX_GAS_LIMIT_AMSTERDAM,
@@ -78,7 +80,7 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 #[cfg(feature = "rayon")]
 use rayon::slice::ParallelSlice;
 #[cfg(feature = "rayon")]
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::cmp::min;
 use std::sync::Arc;
 #[cfg(feature = "rayon")]
@@ -1138,7 +1140,7 @@ impl LEVM {
             };
 
             // Storage: per slot, last entry (highest index)
-            let mut added_storage = FxHashMap::with_capacity_and_hasher(
+            let mut added_storage = SeededHashMap::with_capacity_and_hasher(
                 acct_changes.storage_changes.len(),
                 Default::default(),
             );
@@ -1314,7 +1316,7 @@ impl LEVM {
 
         // Nothing extra at the phase's own index: a no-op change there matches the
         // cache, so `validate_bal_withdrawal_index` alone accepts it.
-        let canonical: FxHashMap<Address, &AccountChanges> = phase_bal
+        let canonical: SeededHashMap<Address, &AccountChanges> = phase_bal
             .accounts()
             .iter()
             .map(|a| (a.address, a))
@@ -1501,8 +1503,8 @@ impl LEVM {
         (
             Vec<Receipt>,
             u64,
-            FxHashSet<(Address, H256)>,
-            FxHashSet<Address>,
+            SeededHashSet<(Address, H256)>,
+            SeededHashSet<Address>,
             Vec<TxGasBreakdown>,
         ),
         EvmError,
@@ -1540,10 +1542,10 @@ impl LEVM {
 
         // Build a checklist of all BAL storage_reads. Entries are removed as they
         // are actually read during execution phases. Anything left over is extraneous.
-        let mut unread_storage_reads: FxHashSet<(Address, H256)> = FxHashSet::default();
+        let mut unread_storage_reads: SeededHashSet<(Address, H256)> = Default::default();
         // Build a checklist of BAL "pure-access" accounts: entries with no mutations
         // and no storage reads. These must be accessed via load_account during execution.
-        let mut unaccessed_pure_accounts: FxHashSet<Address> = FxHashSet::default();
+        let mut unaccessed_pure_accounts: SeededHashSet<Address> = Default::default();
         for acct in bal.accounts() {
             for &slot in &acct.storage_reads {
                 let key = ethrex_common::utils::u256_to_h256(slot);
@@ -1600,10 +1602,10 @@ impl LEVM {
             usize,
             TxType,
             ExecutionReport,
-            FxHashSet<Address>,   // accessed_accounts tracker (coarse)
-            Vec<(Address, H256)>, // reads_satisfied: (addr, slot) loaded during this tx
-            Vec<Address>,         // destroyed: accounts selfdestructed during this tx
-            Option<EvmError>,     // deferred BAL validation error
+            SeededHashSet<Address>, // accessed_accounts tracker (coarse)
+            Vec<(Address, H256)>,   // reads_satisfied: (addr, slot) loaded during this tx
+            Vec<Address>,           // destroyed: accounts selfdestructed during this tx
+            Option<EvmError>,       // deferred BAL validation error
         );
 
         // Ordered gas admission (step 3 below) can only reject a block once every
@@ -1650,8 +1652,10 @@ impl LEVM {
                 // Enable accessed_accounts tracker (coarse) for `unaccessed_pure_accounts`
                 // diagnostics. Safe to over-report: used only to REMOVE entries from a
                 // extraneous-entry checklist.
-                tx_db.accessed_accounts =
-                    Some(FxHashSet::with_capacity_and_hasher(16, Default::default()));
+                tx_db.accessed_accounts = Some(SeededHashSet::with_capacity_and_hasher(
+                    16,
+                    Default::default(),
+                ));
 
                 // Enable a shadow BAL recorder on this per-tx db. The recorder is gated
                 // at the same gas-check points as the builder path, giving us an exact
@@ -1704,7 +1708,7 @@ impl LEVM {
                 // value (see `take_tx_initial_storage`). It serves the storage checks two
                 // ways: its keys are the written slots, and its values are the seeded
                 // pre-state the validator would otherwise re-read from the store. The
-                // recorder already stores it as an `FxHashMap`, so it is moved out here
+                // recorder already stores it as a map of this type, so it is moved out here
                 // (no per-tx rebuild).
                 let (shadow_touched, shadow_reads, tx_initial) = tx_db
                     .bal_recorder
@@ -1725,7 +1729,7 @@ impl LEVM {
                 // read and its BAL entry skipped. The execution->BAL check skips the
                 // DB-backed seeded lookup for genuine reads: a read never diverges from
                 // its pre-tx value, so there is nothing to validate.
-                let pure_reads: FxHashSet<(Address, U256)> = shadow_reads
+                let pure_reads: SeededHashSet<(Address, U256)> = shadow_reads
                     .iter()
                     .copied()
                     .filter(|k| !tx_initial.contains_key(k))
@@ -2158,7 +2162,7 @@ impl LEVM {
         slot: U256,
         system_seed: &CacheDB,
         store: &Arc<dyn Database>,
-        tx_initial: &FxHashMap<(Address, U256), U256>,
+        tx_initial: &SeededHashMap<(Address, U256), U256>,
     ) -> Result<U256, BalValidationError> {
         if let Some(v) = tx_initial.get(&(addr, slot)) {
             return Ok(*v);
@@ -2205,7 +2209,7 @@ impl LEVM {
         key: H256,
         system_seed: &CacheDB,
         store: &Arc<dyn Database>,
-        tx_initial: &FxHashMap<(Address, U256), U256>,
+        tx_initial: &SeededHashMap<(Address, U256), U256>,
     ) -> Result<U256, BalValidationError> {
         if let Some(v) = tx_initial.get(&(addr, sc.slot)) {
             return Ok(*v);
@@ -2252,14 +2256,14 @@ impl LEVM {
     pub fn validate_tx_execution(
         bal_idx: u32,
         seed_idx: u32,
-        current_state: &FxHashMap<Address, LevmAccount>,
+        current_state: &CacheDB,
         codes: &FxHashMap<H256, Code>,
         bal: &BlockAccessList,
         index: &BalAddressIndex,
         system_seed: &CacheDB,
         store: &Arc<dyn Database>,
-        pure_reads: &FxHashSet<(Address, U256)>,
-        tx_initial: &FxHashMap<(Address, U256), U256>,
+        pure_reads: &SeededHashSet<(Address, U256)>,
+        tx_initial: &SeededHashMap<(Address, U256), U256>,
     ) -> Result<(), BalValidationError> {
         // BAL -> execution: for each BAL account with changes at bal_idx,
         // verify execution produced the matching post-state (and that no

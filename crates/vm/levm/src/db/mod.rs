@@ -1,4 +1,5 @@
 use crate::{errors::DatabaseError, precompiles::PrecompileCache};
+use ethrex_common::seeded_hash::SeededHashMap;
 use ethrex_common::{
     Address, H256, U256,
     types::{AccountState, ChainConfig, Code, CodeMetadata},
@@ -19,9 +20,11 @@ pub mod gen_db;
 /// large-state blocks these paths target. Tunable.
 pub const BLOATED_BATCH_THRESHOLD: usize = 16_384;
 
-// Type aliases for cache storage maps
-type AccountCache = FxHashMap<Address, AccountState>;
-type StorageCache = FxHashMap<(Address, H256), U256>;
+// Type aliases for cache storage maps. The account and storage caches are seeded like
+// `TransientStorage`: transactions choose which addresses and slots get cached. Code is
+// keyed by its keccak hash, which nobody can steer into a bucket.
+type AccountCache = SeededHashMap<Address, AccountState>;
+type StorageCache = SeededHashMap<(Address, H256), U256>;
 type CodeCache = FxHashMap<H256, Code>;
 /// Touched-key snapshot returned by [`CachingDatabase::touched_keys_where`].
 pub struct TouchedKeys {
@@ -167,9 +170,9 @@ impl CachingDatabase {
     pub fn new(inner: Arc<dyn Database>, precompile_cache_enabled: bool) -> Self {
         Self {
             inner,
-            accounts: RwLock::new(FxHashMap::default()),
-            storage: RwLock::new(FxHashMap::default()),
-            code: RwLock::new(FxHashMap::default()),
+            accounts: RwLock::new(AccountCache::default()),
+            storage: RwLock::new(StorageCache::default()),
+            code: RwLock::new(CodeCache::default()),
             code_bytes: AtomicU64::new(0),
             precompile_cache: precompile_cache_enabled.then(PrecompileCache::new),
             chain_config: OnceLock::new(),
@@ -581,5 +584,92 @@ mod code_bytes_tests {
         cache.prefetch_codes(&hashes).unwrap();
         assert_eq!(cache.code_bytes(), 4 * size);
         assert_eq!(cache.read_code().unwrap().len(), 4);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod seeded_cache_tests {
+    use super::*;
+    use std::hash::{BuildHasher, Hash};
+
+    /// rustc-hash 2.x hashes a 32-byte key whose bytes `16..24` are this constant to
+    /// `32`, whatever its other bytes hold; a 20-byte key needs it at bytes `4..12`.
+    const ZEROING_WORD: u64 = 0x13198a2e03707344;
+
+    fn colliding_addresses() -> Vec<Address> {
+        (0..4096u64)
+            .map(|i| {
+                let mut bytes = [0u8; 20];
+                for (byte, value) in bytes.iter_mut().skip(4).zip(ZEROING_WORD.to_le_bytes()) {
+                    *byte = value;
+                }
+                for (byte, value) in bytes.iter_mut().skip(12).zip(i.to_le_bytes()) {
+                    *byte = value;
+                }
+                Address::from(bytes)
+            })
+            .collect()
+    }
+
+    fn colliding_slots() -> Vec<(Address, H256)> {
+        let address = Address::from_low_u64_be(0x7777);
+        (0..4096u64)
+            .map(|i| {
+                (
+                    address,
+                    H256::from(U256([i, 0, ZEROING_WORD, 0]).to_little_endian()),
+                )
+            })
+            .collect()
+    }
+
+    fn distinct_hashes<K: Hash>(hasher: &impl BuildHasher, keys: &[K]) -> usize {
+        keys.iter()
+            .map(|key| hasher.hash_one(key))
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+    }
+
+    struct EmptyStore;
+
+    impl Database for EmptyStore {
+        fn get_account_state(&self, _: Address) -> Result<AccountState, DatabaseError> {
+            Ok(AccountState::default())
+        }
+        fn get_storage_value(&self, _: Address, _: H256) -> Result<U256, DatabaseError> {
+            Ok(U256::zero())
+        }
+        fn get_block_hash(&self, _: u64) -> Result<H256, DatabaseError> {
+            Ok(H256::zero())
+        }
+        fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+            Ok(ChainConfig::default())
+        }
+        fn get_account_code(&self, _: H256) -> Result<Code, DatabaseError> {
+            Ok(Code::default())
+        }
+        fn get_code_metadata(&self, _: H256) -> Result<CodeMetadata, DatabaseError> {
+            Ok(CodeMetadata { length: 0 })
+        }
+    }
+
+    /// Transactions choose which accounts and slots the warming cache holds, so the
+    /// account and storage caches must not let crafted keys share one bucket.
+    #[test]
+    fn warming_caches_hash_colliding_keys_apart() {
+        let addresses = colliding_addresses();
+        let slots = colliding_slots();
+        assert_eq!(distinct_hashes(&rustc_hash::FxBuildHasher, &addresses), 1);
+        assert_eq!(distinct_hashes(&rustc_hash::FxBuildHasher, &slots), 1);
+
+        let cache = CachingDatabase::new(Arc::new(EmptyStore), false);
+        let accounts = cache.read_accounts().expect("account cache lock");
+        assert_eq!(
+            distinct_hashes(accounts.hasher(), &addresses),
+            addresses.len()
+        );
+        let storage = cache.read_storage().expect("storage cache lock");
+        assert_eq!(distinct_hashes(storage.hasher(), &slots), slots.len());
     }
 }

@@ -10,8 +10,7 @@ use ethrex_common::{
 use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
     EVMConfig, Environment,
-    account::LevmAccount,
-    db::gen_db::GeneralizedDatabase,
+    db::gen_db::{CacheDB, GeneralizedDatabase},
     opcodes::Opcode,
     tracing::LevmCallTracer,
     vm::{VM, VMType},
@@ -214,8 +213,8 @@ fn main() {
 
 /// Prints on screen difference between initial state and current one.
 fn compare_initial_and_current_accounts(
-    initial_accounts: FxHashMap<Address, LevmAccount>,
-    current_accounts: FxHashMap<Address, LevmAccount>,
+    initial_accounts: CacheDB,
+    current_accounts: CacheDB,
     transaction: &InputTransaction,
 ) {
     info!("\nState Diff:");

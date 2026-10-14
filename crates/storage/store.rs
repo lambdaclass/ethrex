@@ -2903,7 +2903,14 @@ impl Store {
 
         let state_root = state_trie.hash_no_commit(&NativeCrypto);
 
-        for update in account_updates.iter() {
+        // Apply in address order. The guest replays these same updates on the nodes recorded
+        // here, and the nodes a removal reads depend on what was inserted before it: a branch
+        // left with one child loads that child. Both lists are built from seeded maps, so
+        // only a sort keeps the two sides touching the same nodes.
+        let mut ordered: Vec<&AccountUpdate> = account_updates.iter().collect();
+        ordered.sort_unstable_by_key(|update| update.address);
+
+        for update in ordered {
             let hashed_address = hash_address(&update.address);
 
             if update.removed {

@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use ethrex_common::seeded_hash::SeededHashMap;
 use ethrex_common::{
     Address, H256, U256,
     constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH},
@@ -300,7 +301,8 @@ fn storage_root_for(has_storage: bool) -> H256 {
 #[derive(Clone)]
 pub struct ReplayedVmDatabase<Inner> {
     inner: Inner,
-    updates: Arc<FxHashMap<Address, AccountUpdate>>,
+    /// Seeded: the replayed call chooses these addresses.
+    updates: Arc<SeededHashMap<Address, AccountUpdate>>,
 }
 
 impl<Inner> ReplayedVmDatabase<Inner> {
@@ -479,7 +481,8 @@ struct AccountStateCacheEntry {
     hashed_address: H256,
 }
 
-type AccountStateCache = FxHashMap<Address, Option<AccountStateCacheEntry>>;
+/// Seeded: executing transactions choose these addresses.
+type AccountStateCache = SeededHashMap<Address, Option<AccountStateCacheEntry>>;
 
 #[derive(Clone)]
 pub struct StoreVmDatabase {
@@ -515,7 +518,7 @@ impl StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(BTreeMap::new())),
-            account_state_cache: Arc::new(RwLock::new(FxHashMap::default())),
+            account_state_cache: Arc::new(RwLock::new(AccountStateCache::default())),
             state_root: block_header.state_root,
         })
     }
@@ -539,7 +542,7 @@ impl StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(block_hash_cache)),
-            account_state_cache: Arc::new(RwLock::new(FxHashMap::default())),
+            account_state_cache: Arc::new(RwLock::new(AccountStateCache::default())),
             state_root: block_header.state_root,
         })
     }
@@ -553,7 +556,7 @@ impl StoreVmDatabase {
             store,
             block_hash: H256::zero(),
             block_hash_cache: Arc::new(Mutex::new(BTreeMap::new())),
-            account_state_cache: Arc::new(RwLock::new(FxHashMap::default())),
+            account_state_cache: Arc::new(RwLock::new(AccountStateCache::default())),
             state_root: H256::zero(),
         }
     }
@@ -710,7 +713,7 @@ impl VmDatabase for StoreVmDatabase {
         // which opens the storage trie from the cached account entry. Slots for
         // a non-existent account resolve to `None`, exactly as the single-get
         // path returns `None` when the account entry is missing.
-        let mut entries: FxHashMap<Address, Option<AccountStateCacheEntry>> = FxHashMap::default();
+        let mut entries = AccountStateCache::default();
         for &(addr, _) in keys {
             if let std::collections::hash_map::Entry::Vacant(slot) = entries.entry(addr) {
                 slot.insert(self.get_cached_account_state_entry(addr)?);
@@ -1321,7 +1324,7 @@ mod replayed_db_tests {
     fn storage_only_update_never_creates_an_absent_account() {
         // An update carrying only `added_storage` must NOT bring an absent account into
         // existence. Mirrors `OverlaidVmDatabase`'s gate on balance/nonce/code.
-        let mut added = FxHashMap::default();
+        let mut added = SeededHashMap::default();
         added.insert(slot(1), U256::from(42));
         let db = ReplayedVmDatabase::new(
             MockDb::default(),
@@ -1376,7 +1379,7 @@ mod replayed_db_tests {
             .lock()
             .unwrap()
             .insert((addr(5), slot(2)), U256::from(2));
-        let mut added = FxHashMap::default();
+        let mut added = SeededHashMap::default();
         added.insert(slot(1), U256::from(111));
         let db = ReplayedVmDatabase::new(
             mock,
@@ -1408,7 +1411,7 @@ mod replayed_db_tests {
             .lock()
             .unwrap()
             .insert((addr(6), slot(2)), U256::from(2));
-        let mut added = FxHashMap::default();
+        let mut added = SeededHashMap::default();
         added.insert(slot(1), U256::from(111));
         let db = ReplayedVmDatabase::new(
             mock,
@@ -1464,7 +1467,7 @@ mod replayed_db_tests {
     // layer order, and the two decorators compose without an EVM.
 
     fn replay_wrote(address: Address, key: H256, value: U256) -> Vec<AccountUpdate> {
-        let mut added = FxHashMap::default();
+        let mut added = SeededHashMap::default();
         added.insert(key, value);
         vec![AccountUpdate {
             address,
@@ -1584,7 +1587,7 @@ mod replayed_db_tests {
             .lock()
             .unwrap()
             .insert(addr(11), AccountState::default());
-        let mut added = FxHashMap::default();
+        let mut added = SeededHashMap::default();
         added.insert(slot(1), U256::from(1));
         let db = ReplayedVmDatabase::new(
             mock,
@@ -1595,5 +1598,56 @@ mod replayed_db_tests {
         );
         let state = db.get_account_state(addr(11)).unwrap().unwrap();
         assert_ne!(state.storage_root, *EMPTY_TRIE_HASH);
+    }
+}
+
+#[cfg(test)]
+mod seeded_cache_tests {
+    use super::overlaid_db_tests::MockDb;
+    use super::*;
+    use std::hash::BuildHasher;
+
+    /// rustc-hash 2.x hashes a 20-byte key whose bytes `4..12` are this constant to
+    /// `20`, whatever its other bytes hold.
+    const ZEROING_WORD: u64 = 0x13198a2e03707344;
+
+    fn colliding_addresses() -> Vec<Address> {
+        (0..4096u64)
+            .map(|i| {
+                let mut bytes = [0u8; 20];
+                for (byte, value) in bytes.iter_mut().skip(4).zip(ZEROING_WORD.to_le_bytes()) {
+                    *byte = value;
+                }
+                for (byte, value) in bytes.iter_mut().skip(12).zip(i.to_le_bytes()) {
+                    *byte = value;
+                }
+                Address::from(bytes)
+            })
+            .collect()
+    }
+
+    fn distinct_hashes(hasher: &impl BuildHasher, keys: &[Address]) -> usize {
+        keys.iter()
+            .map(|key| hasher.hash_one(key))
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+    }
+
+    /// Executing transactions choose which addresses these caches hold, so crafted
+    /// addresses must not share one bucket.
+    #[test]
+    fn account_caches_hash_colliding_addresses_apart() {
+        let keys = colliding_addresses();
+        assert_eq!(distinct_hashes(&rustc_hash::FxBuildHasher, &keys), 1);
+
+        let replayed = ReplayedVmDatabase::new(MockDb::default(), Vec::new());
+        assert_eq!(
+            distinct_hashes(replayed.updates.hasher(), &keys),
+            keys.len()
+        );
+        assert_eq!(
+            distinct_hashes(AccountStateCache::default().hasher(), &keys),
+            keys.len()
+        );
     }
 }
