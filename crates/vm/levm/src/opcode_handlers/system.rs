@@ -22,8 +22,16 @@ use crate::{
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{Address, H256, U256, evm::calculate_create_address, types::Fork};
-use ethrex_common::{tracing::CallType, types::Code};
+use ethrex_common::{Address, U256, evm::calculate_create_address, types::Fork};
+use ethrex_common::{
+    tracing::CallType,
+    types::{Code, InitcodeBuffer},
+};
+use std::mem;
+
+/// Bytes the header `Bytes` allocates whenever it shares a buffer longer than its contents:
+/// a pointer to the buffer, its capacity and a reference count.
+const SHARED_HEADER_SIZE: usize = 3 * size_of::<usize>();
 
 pub struct OpCallHandler;
 impl OpcodeHandler for OpCallHandler {
@@ -871,6 +879,31 @@ impl<'a> VM<'a> {
         code_size_in_memory: usize,
         salt: Option<U256>,
     ) -> Result<OpcodeResult, VMError> {
+        // The initcode is copied into a reused buffer, which moves into the child frame's code
+        // when the CREATE starts one. On every other exit, an error included, it goes back to
+        // the pool here: a buffer dropped instead is never reclaimed by a bump allocator.
+        let mut initcode = self.initcode_pool.pop().unwrap_or_default();
+        let result = self.create_with_initcode_buffer(
+            &mut initcode,
+            value,
+            code_offset_in_memory,
+            code_size_in_memory,
+            salt,
+        );
+        self.pool_initcode(initcode);
+        result
+    }
+
+    /// [`VM::generic_create`] with `initcode`, a buffer to copy the initcode into. It is taken,
+    /// leaving an empty one with no allocation, only when the child frame starts.
+    fn create_with_initcode_buffer(
+        &mut self,
+        initcode: &mut InitcodeBuffer,
+        value: U256,
+        code_offset_in_memory: usize,
+        code_size_in_memory: usize,
+        salt: Option<U256>,
+    ) -> Result<OpcodeResult, VMError> {
         // [EIP-3860] / [EIP-7954] - Cant exceed init code max size
         let init_code_max = if self.env.config.fork >= Fork::Amsterdam {
             AMSTERDAM_INIT_CODE_MAX_SIZE
@@ -891,11 +924,12 @@ impl<'a> VM<'a> {
         // Clear callframe subreturn data
         current_call_frame.sub_return_data = Bytes::new();
 
-        // Load code from memory
-        let code = self
-            .current_call_frame
-            .memory
-            .load_range(code_offset_in_memory, code_size_in_memory)?;
+        // Copy the initcode out of memory, once, into the reused buffer.
+        self.current_call_frame.memory.with_range(
+            code_offset_in_memory,
+            code_size_in_memory,
+            |code| initcode.set(code),
+        )?;
 
         // Get account info of deployer
         let deployer = self.current_call_frame.to;
@@ -906,7 +940,7 @@ impl<'a> VM<'a> {
 
         // Calculate create address
         let new_address = match salt {
-            Some(salt) => calculate_create2_address(deployer, &code, salt)?,
+            Some(salt) => calculate_create2_address(deployer, initcode.initcode(), salt)?,
             None => calculate_create_address(deployer, deployer_nonce),
         };
 
@@ -939,8 +973,16 @@ impl<'a> VM<'a> {
                 // Child gas preview for the tracer only; no gas is reserved on this
                 // path (mirrors EELS `push(0); return`).
                 let preview_gas = gas_cost::max_message_call_gas(&self.current_call_frame)?;
-                self.tracer
-                    .enter(call_type, deployer, new_address, value, preview_gas, &code);
+                if self.tracer.active {
+                    self.tracer.enter(
+                        call_type,
+                        deployer,
+                        new_address,
+                        value,
+                        preview_gas,
+                        &Bytes::copy_from_slice(initcode.initcode()),
+                    );
+                }
                 self.current_call_frame.stack.push(FAIL)?;
                 self.tracer.exit_early(0, Some(reason.to_string()))?;
                 return Ok(OpcodeResult::Continue);
@@ -984,8 +1026,16 @@ impl<'a> VM<'a> {
         self.current_call_frame.increase_consumed_gas(gas_limit)?;
 
         // Log CREATE in tracer (success path) with the reserved child gas.
-        self.tracer
-            .enter(call_type, deployer, new_address, value, gas_limit, &code);
+        if self.tracer.active {
+            self.tracer.enter(
+                call_type,
+                deployer,
+                new_address,
+                value,
+                gas_limit,
+                &Bytes::copy_from_slice(initcode.initcode()),
+            );
+        }
 
         // Increment sender nonce (irreversible change)
         self.increment_account_nonce(deployer)?;
@@ -1017,8 +1067,7 @@ impl<'a> VM<'a> {
             deployer,
             new_address,
             new_address,
-            // SAFETY: init code hash is never used
-            Code::from_bytecode_unchecked(code, H256::zero()),
+            Code::from_initcode_buffer(mem::take(initcode)),
             value,
             Bytes::new(),
             false,
@@ -1480,6 +1529,7 @@ impl<'a> VM<'a> {
             frame_state_gas_spilled: child_frame_state_gas_spilled,
             target_alive,
             stack,
+            bytecode,
             ..
         } = executed_call_frame;
 
@@ -1554,14 +1604,25 @@ impl<'a> VM<'a> {
         let mut stack = stack;
         stack.clear();
         self.stack_pool.push(stack);
+        self.recycle_initcode(bytecode);
 
         Ok(())
     }
 
     /// Copies a child frame's arguments out of the caller's memory into a pooled buffer.
+    ///
+    /// Arguments shorter than [`SHARED_HEADER_SIZE`] are copied into an allocation of their
+    /// own size instead: a pooled buffer larger than them costs that header each time it is
+    /// handed out, more than the copy, and a buffer under 8 bytes is always larger than them.
     fn get_calldata(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {
         if size == 0 {
             return Ok(Bytes::new());
+        }
+        if size < SHARED_HEADER_SIZE {
+            return self
+                .current_call_frame
+                .memory
+                .with_range(offset, size, Bytes::copy_from_slice);
         }
         let mut buffer = self.calldata_pool.pop().unwrap_or_default();
         buffer.clear();
@@ -1571,11 +1632,29 @@ impl<'a> VM<'a> {
         Ok(buffer.freeze())
     }
 
+    /// Returns a finished CREATE frame's initcode buffers to the pool, except those something
+    /// still references.
+    fn recycle_initcode(&mut self, code: Code) {
+        self.pool_initcode(code.into_initcode_buffer());
+    }
+
+    /// Keeps `buffer` for the next CREATE, emptied, so no CREATE can build another one's
+    /// initcode from the pool. A buffer holding no allocation is not worth keeping.
+    fn pool_initcode(&mut self, mut buffer: InitcodeBuffer) {
+        if buffer.is_allocated() {
+            buffer.clear();
+            self.initcode_pool.push(buffer);
+        }
+    }
+
     /// Returns a finished child frame's calldata buffer to the pool. A buffer that is still
     /// shared (a tracer or a precompile output kept a clone) is left alone and freed normally.
     /// It stays a `BytesMut`: turning it back into a `Vec` would move every byte in place.
     fn recycle_calldata(&mut self, calldata: Bytes) {
-        if let Ok(buffer) = calldata.try_into_mut() {
+        // Arguments too short to be given a pooled buffer leave one too short to keep.
+        if let Ok(buffer) = calldata.try_into_mut()
+            && buffer.capacity() >= SHARED_HEADER_SIZE
+        {
             self.calldata_pool.push(buffer);
         }
     }
