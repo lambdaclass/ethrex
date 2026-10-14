@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-10-13
+
+- Faster keccak on x86-64: `keccak_hash` absorbs one-shot inputs without building the streaming state, and CPUs with AVX-512F and AVX-512VL run a permutation that keeps all 25 lanes in 128-bit registers, picked at runtime: cycles per chained hash −14..−16% on Intel (Emerald Rapids) and −2..−6% on AMD Zen 5, criterion 32 B 198 → 172 ns on Zen 5 [#7398](https://github.com/lambdaclass/ethrex/pull/7398)
+
 ### 2026-09-30
 
 - Evict a random bytecode cache entry instead of the least recently used one, and raise the budget to 2 GiB (about 29k contracts of 64 KiB; `--code-cache-size` overrides it): on Plataberget blocks 297947–299844, which keep reusing a growing set of 16k+ distinct 64 KiB contracts, the LRU fell from 87% to 68% hits and blocks with two or more such transactions went from 30 to 44 ms, while with this change they stay at 19–21 ms with every code read hitting the cache, in replay; mainnet is unchanged (-0.29%, no evictions) [#7350](https://github.com/lambdaclass/ethrex/pull/7350)
