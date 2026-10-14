@@ -37,7 +37,12 @@ $ ./keccak1600-armv8.pl linux64 keccak1600-armv8.s
 $ cd ../x86_64
 $ ./keccak1600-x86_64.pl linux64 keccak1600-x86_64.s
 ```
-- The x86 can be directly imported by the Rust compiler with the current options, but the ARM code requires a few changes, commented at the top of the `keccak1600-armv8.s` file.
+- Both the x86 and the ARM code need a few changes before the Rust compiler can import them. Each file lists its
+  own changes in a `Modified:` comment at the top; the ARM code needs the most of them.
+- One change applies to every file: each `global_asm!` block must both start in `.text` and leave `.text`
+  current when it ends. Blocks in the same codegen unit share the assembler's section state, so a block that
+  finishes in some other section makes the *next* block emit its functions there instead of in `.text`.
+  This is why the trailing `.note.gnu.property` block uses `.pushsection`/`.popsection` rather than `.section`.
 
 ## Copyright Notice
 
