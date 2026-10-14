@@ -246,9 +246,16 @@ impl RpcReceiptTxInfo {
             ),
             _ => (None, None),
         };
-        let (contract_address, to) = match transaction.to() {
-            TxKind::Create => (Some(calculate_create_address(from, nonce)), None),
-            TxKind::Call(addr) => (None, Some(addr)),
+        let (contract_address, to) = match &transaction {
+            // EIP-8141: a frame transaction carries no `to` field and creates nothing at the top
+            // level. Each frame names its own target, and a creation happens inside a deploy frame.
+            // `Transaction::to()` reports the sender for one so the generic call paths have an
+            // address to work with; that is not a recipient and must not be presented as one.
+            Transaction::FrameTransaction(_) => (None, None),
+            _ => match transaction.to() {
+                TxKind::Create => (Some(calculate_create_address(from, nonce)), None),
+                TxKind::Call(addr) => (None, Some(addr)),
+            },
         };
         Ok(Self {
             transaction_hash,
@@ -269,7 +276,7 @@ mod tests {
     use super::*;
     use ethrex_common::{
         Bytes,
-        types::{Log, TxType},
+        types::{FrameTransaction, Log, TxType},
     };
     use hex_literal::hex;
 
@@ -364,5 +371,25 @@ mod tests {
             Some("0x6a81f2d0"),
             "each log must carry the block's timestamp"
         );
+    }
+
+    // EIP-8141: a frame transaction has no top-level recipient and creates nothing at the top level,
+    // so a receipt must name neither. `Transaction::to()` reports the sender for one, which would
+    // otherwise be presented as `to` and read by wallets as the account the transaction called.
+    #[test]
+    fn frame_transaction_receipt_names_neither_to_nor_contract_address() {
+        let sender = Address::from(hex!("7435ed30a8b4aeb0877cef0c6e8cffe834eb865f"));
+        let tx = Transaction::FrameTransaction(FrameTransaction {
+            sender,
+            max_fee_per_gas: 1,
+            max_priority_fee_per_gas: 1,
+            ..Default::default()
+        });
+
+        let info = RpcReceiptTxInfo::from_transaction(tx, 0, 21_000, 0, Some(0)).unwrap();
+
+        assert_eq!(info.from, sender);
+        assert_eq!(info.to, None);
+        assert_eq!(info.contract_address, None);
     }
 }
