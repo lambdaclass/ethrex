@@ -247,6 +247,21 @@ impl PeerConnection {
     }
 }
 
+#[cfg(test)]
+impl PeerConnection {
+    /// A handle whose actor never completes a handshake. Enough for the peer
+    /// table to register and rank the peer, never for sending it anything.
+    pub(crate) fn unestablished() -> PeerConnection {
+        let connection = PeerConnectionServer {
+            state: ConnectionState::HandshakeFailed,
+            _admission_permit: None,
+        };
+        Self {
+            handle: connection.start(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Initiator {
     pub(crate) context: P2PContext,
@@ -2187,7 +2202,13 @@ async fn handle_incoming_message(
         }
         // eth/72 (EIP-8070): GetCells handler — serve cells we hold.
         Message::GetCells(req) if peer_supports_eth => {
-            let response = req.handle(&state.blockchain.mempool);
+            // Serving cells expands every blob of every served tx through KZG,
+            // which is CPU-bound; keep it off the connection task and the shared
+            // runtime workers, as for `GetBlockAccessLists`.
+            let blockchain = state.blockchain.clone();
+            let response = tokio::task::spawn_blocking(move || req.handle(&blockchain.mempool))
+                .await
+                .map_err(|e| PeerConnectionError::InternalError(e.to_string()))?;
             send(state, Message::Cells(response)).await?;
         }
         // eth/72 (EIP-8070): Cells ingest — verify received cells against the

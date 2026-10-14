@@ -377,6 +377,13 @@ pub fn effective_precompile_address(address: Address, moves: Option<&PrecompileM
 /// no result is ever turned away.
 pub const PRECOMPILE_CACHE_MAX_BYTES: usize = 128 * 1024 * 1024;
 
+/// Largest precompile input that is looked up in, or added to, the [`PrecompileCache`].
+/// A lookup hashes and compares the whole input, while a precompile may read only a small
+/// part of it (MODEXP with zero lengths reads 96 bytes of any input), so caching a large
+/// input would make a cheap call cost time in proportion to its size. Real calls, such as
+/// a pairing check over a few pairs or an RSA-sized MODEXP, are far smaller.
+pub const PRECOMPILE_CACHE_MAX_INPUT_BYTES: usize = 4096;
+
 #[derive(Default)]
 struct PrecompileCacheEntries {
     /// Results by precompile, then by calldata. Two levels so a lookup can borrow the
@@ -448,8 +455,9 @@ impl PrecompileCache {
     }
 
     /// Stores copies of `calldata` and `output`, never the caller's buffers: calldata can be
-    /// a view of a larger allocation (a reused call buffer, or a slice of one), and keeping
-    /// a reference would hold that whole allocation while the budget counts only the length.
+    /// a view of a larger allocation (the calling frame's memory, or a slice of a
+    /// transaction's data), and keeping a reference would hold that whole allocation while
+    /// the budget counts only the length.
     ///
     /// The copies are made only for a call that is not cached yet and fits the budget, and
     /// outside the write lock. The warmer and the executor often compute the same call, and
@@ -491,14 +499,14 @@ impl PrecompileCache {
 #[expect(clippy::as_conversions, clippy::indexing_slicing)]
 pub fn execute_precompile(
     address: Address,
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     fork: Fork,
     cache: Option<&PrecompileCache>,
     crypto: &dyn Crypto,
     _stateless_validator: Option<&dyn crate::StatelessValidator>,
 ) -> Result<Bytes, VMError> {
-    type PrecompileFn = fn(&Bytes, &mut u64, Fork, &dyn Crypto) -> Result<Bytes, VMError>;
+    type PrecompileFn = fn(&[u8], &mut u64, Fork, &dyn Crypto) -> Result<Bytes, VMError>;
 
     const PRECOMPILES: [Option<PrecompileFn>; 512] = const {
         let mut precompiles = [const { None }; 512];
@@ -552,10 +560,11 @@ pub fn execute_precompile(
         .flatten()
         .ok_or(VMError::Internal(InternalError::InvalidPrecompileAddress))?;
 
-    // Check cache (skip identity -- copy is cheaper than lookup)
-    if address != IDENTITY.address
-        && let Some((output, gas_cost)) = cache.and_then(|c| c.get(&address, calldata))
-    {
+    // Check cache (skip identity -- copy is cheaper than lookup -- and large inputs)
+    let cache = cache.filter(|_| {
+        address != IDENTITY.address && calldata.len() <= PRECOMPILE_CACHE_MAX_INPUT_BYTES
+    });
+    if let Some((output, gas_cost)) = cache.and_then(|c| c.get(&address, calldata)) {
         increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
         return Ok(output);
     }
@@ -573,9 +582,8 @@ pub fn execute_precompile(
         timings.update(address, time);
     }
 
-    // Cache result on success (skip identity)
-    if address != IDENTITY.address
-        && let Some(cache) = cache
+    // Cache result on success
+    if let Some(cache) = cache
         && let Ok(output) = &result
     {
         let gas_cost = gas_before.saturating_sub(*gas_remaining);
@@ -599,14 +607,13 @@ pub(crate) fn increase_precompile_consumed_gas(
 /// When slice length is less than `target_len`, the rest is filled with zeros. If slice length is
 /// more than `target_len`, the excess bytes are kept.
 #[inline(always)]
-pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
+pub(crate) fn fill_with_zeros(calldata: &[u8], target_len: usize) -> Cow<'_, [u8]> {
     if calldata.len() >= target_len {
-        // this clone is cheap (Arc)
-        return calldata.clone();
+        return Cow::Borrowed(calldata);
     }
     let mut padded_calldata = calldata.to_vec();
     padded_calldata.resize(target_len, 0);
-    padded_calldata.into()
+    Cow::Owned(padded_calldata)
 }
 
 fn crypto_error_to_precompile(e: CryptoError) -> VMError {
@@ -663,7 +670,7 @@ fn bls12_msm_pairing_crypto_error(e: CryptoError) -> VMError {
 ///
 /// Returns the recovered address.
 pub fn ecrecover(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -721,7 +728,7 @@ pub fn ecrecover(
 
 /// Returns the calldata received
 pub fn identity(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     _crypto: &dyn Crypto,
@@ -730,12 +737,12 @@ pub fn identity(
 
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
-    Ok(calldata.clone())
+    Ok(Bytes::copy_from_slice(calldata))
 }
 
 /// Returns the calldata hashed by sha2-256 algorithm
 pub fn sha2_256(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -750,7 +757,7 @@ pub fn sha2_256(
 
 /// Returns the calldata hashed by ripemd-160 algorithm, padded by zeros at left
 pub fn ripemd_160(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -766,7 +773,7 @@ pub fn ripemd_160(
 /// Returns the result of the module-exponentiation operation
 #[expect(clippy::indexing_slicing, reason = "bounds checked at start")]
 pub fn modexp(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     fork: Fork,
     crypto: &dyn Crypto,
@@ -857,7 +864,7 @@ pub fn modexp(
 /// Uses Cow so that the best case of no resizing doesn't require an allocation.
 #[expect(clippy::indexing_slicing, reason = "bounds checked")]
 fn get_slice_or_default<'c>(
-    calldata: &'c Bytes,
+    calldata: &'c [u8],
     lower_limit: usize,
     upper_limit: usize,
     size_to_expand: usize,
@@ -899,7 +906,7 @@ pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Bytes {
 
 /// Makes a point addition on the elliptic curve 'alt_bn128'
 pub fn ecadd(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -927,7 +934,7 @@ pub fn ecadd(
 
 /// Makes a scalar multiplication on the elliptic curve 'alt_bn128'
 pub fn ecmul(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -1030,7 +1037,7 @@ fn validate_bn254_g2_coords(g2: &G2) -> Result<(), VMError> {
 
 /// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
 pub fn ecpairing(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -1070,7 +1077,7 @@ pub fn ecpairing(
 
 /// Returns the result of Blake2 hashing algorithm given a certain parameters from the calldata.
 pub fn blake2f(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -1079,7 +1086,8 @@ pub fn blake2f(
         return Err(PrecompileError::ParsingInputError.into());
     }
 
-    let mut calldata = calldata.slice(0..213);
+    #[expect(clippy::indexing_slicing, reason = "length checked above")]
+    let mut calldata = &calldata[..213];
 
     let rounds = calldata.get_u32();
 
@@ -1130,7 +1138,7 @@ const POINT_EVALUATION_OUTPUT_BYTES: [u8; 64] = [
 
 /// Makes verifications on the received point, proof and commitment, if true returns a constant value
 fn point_evaluation(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -1198,7 +1206,7 @@ fn point_evaluation(
 /// If the verification fails, returns an empty `Bytes` object.
 /// Implemented following https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7951.md
 pub fn p_256_verify(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -1263,7 +1271,7 @@ fn parse_bls12_padded_fp(padded: &[u8; 64]) -> Result<[u8; 48], VMError> {
 }
 
 pub fn bls12_g1add(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -1316,7 +1324,7 @@ pub fn bls12_g1add(
 }
 
 pub fn bls12_g1msm(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -1374,7 +1382,7 @@ pub fn bls12_g1msm(
 }
 
 pub fn bls12_g2add(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -1453,7 +1461,7 @@ pub fn bls12_g2add(
 }
 
 pub fn bls12_g2msm(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -1524,7 +1532,7 @@ pub fn bls12_g2msm(
 }
 
 pub fn bls12_pairing_check(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -1610,7 +1618,7 @@ pub fn bls12_pairing_check(
 }
 
 pub fn bls12_map_fp_to_g1(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -1642,7 +1650,7 @@ pub fn bls12_map_fp_to_g1(
 }
 
 pub fn bls12_map_fp2_to_g2(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,

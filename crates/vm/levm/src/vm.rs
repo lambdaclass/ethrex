@@ -17,7 +17,7 @@ use crate::{
         backup_hook::BackupHook,
         hook::{Hook, get_hooks},
     },
-    memory::Memory,
+    memory::{CallData, Memory},
     opcode_tracer::LevmOpcodeTracer,
     opcodes::OpCodeFn,
     precompiles::{
@@ -26,10 +26,10 @@ use crate::{
     tracing::LevmCallTracer,
     validation_observer::ValidationObserver,
 };
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use ethrex_common::seeded_hash::{SeededHashMap, SeededHashSet};
 use ethrex_common::{
-    Address, BigEndianHash, H160, H256, U256,
+    Address, BigEndianHash, H256, U256,
     tracing::CallType,
     types::{
         AccessListEntry, Code, Fork, Frame, FrameMode, InitcodeBuffer, Log, Transaction, TxType,
@@ -634,13 +634,10 @@ pub struct VM<'a> {
     pub debug_mode: DebugMode,
     /// Pool of reusable stacks to reduce allocations.
     pub stack_pool: Vec<Stack>,
-    /// Pool of reusable calldata buffers for child call frames. A buffer returns here when
-    /// its frame ends, so a contract that issues many calls reuses one allocation instead
-    /// of copying its arguments into a fresh one each time. Inside zkVM guests whose bump
+    /// Pool of reusable initcode buffers for CREATE frames. A buffer returns here when its
+    /// frame ends, so a contract that issues many CREATEs reuses one allocation instead of
+    /// copying its initcode into a fresh one each time. Inside zkVM guests whose bump
     /// allocators never free, those fresh copies are never reclaimed and exhaust the heap.
-    pub calldata_pool: Vec<BytesMut>,
-    /// Pool of reusable initcode buffers for CREATE frames, for the same reason as
-    /// `calldata_pool`: each CREATE would otherwise allocate its initcode afresh.
     pub initcode_pool: Vec<InitcodeBuffer>,
     /// VM type (L1 or L2 with fee config).
     pub vm_type: VMType,
@@ -818,12 +815,9 @@ pub fn validate_frame_signatures(
                 calldata[63] = v.saturating_add(27);
                 calldata[64..96].copy_from_slice(r);
                 calldata[96..128].copy_from_slice(s);
-                let Ok(result) = crate::precompiles::ecrecover(
-                    &Bytes::from(calldata),
-                    &mut scratch_gas,
-                    fork,
-                    crypto,
-                ) else {
+                let Ok(result) =
+                    crate::precompiles::ecrecover(&calldata, &mut scratch_gas, fork, crypto)
+                else {
                     return false;
                 };
                 if result.len() != 32 {
@@ -869,12 +863,9 @@ pub fn validate_frame_signatures(
                 calldata[64..96].copy_from_slice(s);
                 calldata[96..128].copy_from_slice(qx);
                 calldata[128..160].copy_from_slice(qy);
-                let Ok(result) = crate::precompiles::p_256_verify(
-                    &Bytes::from(calldata),
-                    &mut scratch_gas,
-                    fork,
-                    crypto,
-                ) else {
+                let Ok(result) =
+                    crate::precompiles::p_256_verify(&calldata, &mut scratch_gas, fork, crypto)
+                else {
                     return false;
                 };
                 if result.len() != 32 || result[31] != 1 {
@@ -944,12 +935,12 @@ impl<'a> VM<'a> {
     /// stacks for sub-call frames. This avoids the per-tx 32 KB stack alloc+zero on a warm pool —
     /// the dominant allocation for transfer-heavy blocks, where the root frame is the only frame.
     ///
-    /// It also adopts `calldata_pool` and `initcode_pool` as the VM's pools of child-frame
-    /// buffers, so a transaction reuses the buffers an earlier one left.
+    /// It also adopts `initcode_pool` as the VM's pool of CREATE initcode buffers, so a
+    /// transaction reuses the buffers an earlier one left.
     ///
     /// Pair with [`VM::reclaim_into`] after execution to return every stack (root + sub-frame)
-    /// to `stack_pool`, the root memory buffer to `memory_pool` and the calldata and initcode
-    /// buffers to their pools, so the next tx reuses them.
+    /// to `stack_pool`, the root memory buffer to `memory_pool` and the initcode buffers to
+    /// `initcode_pool`, so the next tx reuses them.
     #[allow(clippy::too_many_arguments)]
     pub fn new_pooled(
         env: Environment,
@@ -961,7 +952,6 @@ impl<'a> VM<'a> {
         stateless_validator: Option<&'a dyn crate::StatelessValidator>,
         stack_pool: &mut Vec<Stack>,
         memory_pool: &mut Vec<Memory>,
-        calldata_pool: &mut Vec<BytesMut>,
         initcode_pool: &mut Vec<InitcodeBuffer>,
     ) -> Result<Self, VMError> {
         // Reuse a pooled stack for the root frame. `clear()` only resets the offset (no zeroing),
@@ -987,10 +977,9 @@ impl<'a> VM<'a> {
         )?;
         // Adopt the caller's pooled stacks for sub-frames; returned via `reclaim_into`.
         mem::swap(&mut vm.stack_pool, stack_pool);
-        // Likewise the calldata and initcode buffers. A pool that started empty with every
-        // transaction would make each one allocate its buffers afresh and drop them with its VM,
-        // which a zkVM guest's bump allocator never reclaims.
-        mem::swap(&mut vm.calldata_pool, calldata_pool);
+        // Likewise the initcode buffers. A pool that started empty with every transaction would
+        // make each one allocate its buffers afresh and drop them with its VM, which a zkVM
+        // guest's bump allocator never reclaims.
         mem::swap(&mut vm.initcode_pool, initcode_pool);
         Ok(vm)
     }
@@ -998,18 +987,16 @@ impl<'a> VM<'a> {
     /// Returns this VM's reusable buffers to the caller's pools so the next transaction reuses
     /// them instead of allocating: every stack (root call-frame stack plus any sub-frame stacks
     /// still pooled internally) to `stack_pool`, the root memory buffer to `memory_pool`, and the
-    /// pooled calldata and initcode buffers to `calldata_pool` and `initcode_pool`.
+    /// pooled initcode buffers to `initcode_pool`.
     /// Must run on both the success and error paths of [`VM::execute`].
     pub fn reclaim_into(
         mut self,
         stack_pool: &mut Vec<Stack>,
         memory_pool: &mut Vec<Memory>,
-        calldata_pool: &mut Vec<BytesMut>,
         initcode_pool: &mut Vec<InitcodeBuffer>,
     ) {
         // Hand the internal sub-frame pool back to the caller first.
         mem::swap(&mut self.stack_pool, stack_pool);
-        mem::swap(&mut self.calldata_pool, calldata_pool);
         mem::swap(&mut self.initcode_pool, initcode_pool);
         // Then reclaim the root frame's stack. Moving it out by value (VM/CallFrame have no Drop)
         // avoids leaving a fresh 32 KB `Stack::default()` placeholder behind — which a
@@ -1026,8 +1013,10 @@ impl<'a> VM<'a> {
         // popping them) still hold clones. Drop them first so the buffer is `Rc`-unique on BOTH
         // paths before we clear it — otherwise the clear would propagate to a frame still holding a
         // reference. `CallFrame` has no `Drop` and these frames are never read again, so dropping
-        // them early is free.
+        // them early is free. The frame left current on the error path may be a callee whose
+        // arguments are a view of the buffer (`CallData`), which holds a clone as well.
         self.call_frames.clear();
+        self.current_call_frame.calldata = CallData::default();
         let mut root_memory = self.current_call_frame.memory;
         debug_assert_eq!(
             Rc::strong_count(&root_memory.buffer),
@@ -1100,7 +1089,6 @@ impl<'a> VM<'a> {
             validation_observer: ValidationObserver::disabled(),
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
-            calldata_pool: Vec::new(),
             initcode_pool: Vec::new(),
             vm_type,
             preserve_top_level_backup,
@@ -1125,7 +1113,7 @@ impl<'a> VM<'a> {
                 Address::default(), // Will be assigned at the end of prepare_execution
                 Code::default(),    // Will be assigned at the end of prepare_execution
                 tx.value(),
-                tx.data().clone(),
+                tx.data().clone().into(),
                 false,
                 env.gas_limit,
                 0,
@@ -1154,8 +1142,8 @@ impl<'a> VM<'a> {
             callee,
             vm.tx.value(),
             vm.env.gas_limit,
-            vm.tx.data(),
-        );
+            &vm.tx.data().clone().into(),
+        )?;
 
         #[cfg(feature = "debug")]
         {
@@ -2028,12 +2016,12 @@ impl<'a> VM<'a> {
                     caller,                                    // msg_sender
                     target,                                    // to (delegator; ADDRESS/storage)
                     code_address,                              // code_address (delegatee when 7702)
-                    bytecode,           // bytecode (delegatee's code when 7702)
-                    frame.value,        // msg_value -- CALLVALUE
-                    frame.data.clone(), // calldata
-                    is_static,          // is_static
-                    frame.gas_limit,    // gas_limit
-                    0,                  // depth
+                    bytecode,                  // bytecode (delegatee's code when 7702)
+                    frame.value,               // msg_value -- CALLVALUE
+                    frame.data.clone().into(), // calldata
+                    is_static,                 // is_static
+                    frame.gas_limit,           // gas_limit
+                    0,                         // depth
                     false, // should_transfer_value (do_frame_value_transfer! handles it)
                     false, // is_create
                     0,     // ret_offset
@@ -2691,7 +2679,7 @@ impl<'a> VM<'a> {
                     code_address,
                     bytecode,
                     frame.value,
-                    frame.data.clone(),
+                    frame.data.clone().into(),
                     is_static,
                     frame.gas_limit,
                     0,
@@ -2847,28 +2835,21 @@ impl<'a> VM<'a> {
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         if self.address_is_precompile(&self.current_call_frame.to) {
             // `execute_precompile` itself never touches state gas (it only mutates
-            // `gas_remaining`; it has no access to `state_gas_used` / `state_gas_reservoir` /
-            // `state_gas_spill`) — the assert below guards that. The in-region EIP-2780
-            // value-to-not-alive NEW_ACCOUNT charge (`prepare_execution`),
+            // `gas_remaining`; it takes `&self`, so it cannot change `state_gas_used` /
+            // `state_gas_reservoir` / `state_gas_spill`) — the assert below guards that. The
+            // in-region EIP-2780 value-to-not-alive NEW_ACCOUNT charge (`prepare_execution`),
             // however, IS frame state gas, and on an exceptional halt/revert it must be
             // rolled back (see below). `self` is borrowed by field rather than via
             // `&mut self.current_call_frame` so the refund call, which needs `&mut self`,
             // can run after `execute_precompile`.
             let state_gas_used_before_precompile = self.state_gas_used;
-            // Resolve a relocation destination back to the precompile it hosts.
-            let code_address =
-                self.effective_precompile_address(self.current_call_frame.code_address);
             let precompile_gas_limit = self.current_call_frame.gas_limit;
             let mut gas_remaining = self.current_call_frame.gas_remaining as u64;
-            let result = Self::execute_precompile(
-                code_address,
+            let result = self.execute_precompile(
+                self.current_call_frame.code_address,
                 &self.current_call_frame.calldata,
                 precompile_gas_limit,
                 &mut gas_remaining,
-                self.env.config.fork,
-                self.db.store.precompile_cache(),
-                self.crypto,
-                self.stateless_validator,
             );
 
             debug_assert_eq!(
@@ -3262,31 +3243,29 @@ impl<'a> VM<'a> {
             .finalize_step(gas_cost, refund_after, err_str.as_deref());
     }
 
-    /// Executes precompile and handles the output that it returns, generating a report.
-    #[allow(clippy::too_many_arguments)]
+    /// Executes the precompile at `code_address` (a relocation destination resolves to the
+    /// precompile it hosts) and handles the output that it returns, generating a report.
+    /// The precompile reads `calldata` in place, even when it is a range of caller memory.
     pub fn execute_precompile(
-        code_address: H160,
-        calldata: &Bytes,
+        &self,
+        code_address: Address,
+        calldata: &CallData,
         gas_limit: u64,
         gas_remaining: &mut u64,
-        fork: Fork,
-        cache: Option<&precompiles::PrecompileCache>,
-        crypto: &dyn Crypto,
-        stateless_validator: Option<&dyn crate::StatelessValidator>,
     ) -> Result<ContextResult, VMError> {
-        Self::handle_precompile_result(
+        let precompile_address = self.effective_precompile_address(code_address);
+        let output = calldata.with_slice(|input| {
             precompiles::execute_precompile(
-                code_address,
-                calldata,
+                precompile_address,
+                input,
                 gas_remaining,
-                fork,
-                cache,
-                crypto,
-                stateless_validator,
-            ),
-            gas_limit,
-            *gas_remaining,
-        )
+                self.env.config.fork,
+                self.db.store.precompile_cache(),
+                self.crypto,
+                self.stateless_validator,
+            )
+        })?;
+        Self::handle_precompile_result(output, gas_limit, *gas_remaining)
     }
 
     /// True if external transaction is a contract creation
@@ -3563,7 +3542,7 @@ impl<'a> VM<'a> {
             Address::default(),
             Code::default(),
             U256::zero(),
-            Bytes::new(),
+            CallData::default(),
             false,
             Self::STATE_GAS_HARNESS_FRAME_GAS,
             0,
@@ -3587,7 +3566,6 @@ impl<'a> VM<'a> {
             opcode_tracer: LevmOpcodeTracer::disabled(),
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
-            calldata_pool: Vec::new(),
             initcode_pool: Vec::new(),
             vm_type: VMType::L1,
             preserve_top_level_backup: false,
