@@ -32,12 +32,12 @@ A new verification key is enough while the prover stays on the same SP1 version.
 
 The OnChainProposer reads the verifier from `SP1_VERIFIER_ADDRESS`, the same for every batch. If that is Succinct's [`SP1VerifierGateway`](https://docs.succinct.xyz/docs/sp1/verification/contract-addresses), it routes each proof to the verifier of its SP1 version and there is nothing to replace. If it is a verifier of its own, which is what the deployer creates by default, replace it:
 
-1. Let every batch committed by the old version be verified first, with the old prover: once the verifier is replaced, their proofs no longer verify.
+1. Let every batch committed by the old version be verified first, with the old prover: once the verifier is replaced, their proofs no longer verify. `upgradeSP1Verifier` enforces it, reverting with `UnverifiedBatchesPending` while `lastVerifiedBatch` is below `lastCommittedBatch`.
 2. Deploy the new `SP1VerifierGroth16` from [sp1-contracts](https://github.com/succinctlabs/sp1-contracts), at the version that matches the prover's SP1 release (for example `v5.0.0` for SP1 5 and `v6.1.0` for SP1 6).
 3. From the OnChainProposer owner, which is the Timelock on deployments since v9, call `upgradeSP1Verifier(address)` with the new verifier's address, and register the new version's verification key as described above.
 4. Start the new sequencer and prover.
 
-A deployment whose OnChainProposer predates `upgradeSP1Verifier` upgrades its implementation first, and can set the verifier in the same Timelock call: `upgradeToAndCall(<new implementation>, <calldata of upgradeSP1Verifier(<new verifier>)>)`.
+A deployment whose OnChainProposer predates `upgradeSP1Verifier` upgrades its implementation first, and can set the verifier in the same Timelock call: `upgradeToAndCall(<new implementation>, <calldata of upgradeSP1Verifier(<new verifier>)>)`. The same check applies, so the whole call reverts if a batch is still unverified.
 
 ### Verification key artifacts
 
