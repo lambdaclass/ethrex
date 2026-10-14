@@ -3536,6 +3536,9 @@ impl Blockchain {
     /// Per-block pruning only covers the head block, so stale blob txs from
     /// non-head canonical blocks leak in and are never evicted (value/nonce
     /// eviction pins low nonces). Resetting against on-chain nonces clears them.
+    ///
+    /// A blob-carrying EIP-8141 frame tx is stale once any of its EIP-8250 nonce
+    /// keys has moved past its sequence; only key 0 is the account nonce.
     pub async fn remove_stale_blob_txs(&self, head_hash: BlockHash) -> Result<(), StoreError> {
         let blob_txs = self.mempool.blob_txs()?;
         if blob_txs.is_empty() {
@@ -3555,11 +3558,53 @@ impl Blockchain {
                     *e.insert(nonce)
                 }
             };
-            if tx_nonce < state_nonce {
+            let stale = match self.mempool.get_transaction_by_hash(hash)? {
+                Some(Transaction::FrameTransaction(frame_tx)) => {
+                    self.frame_tx_nonce_consumed(head_hash, &frame_tx, state_nonce)?
+                }
+                _ => tx_nonce < state_nonce,
+            };
+            if stale {
                 self.mempool.remove_transaction(&hash)?;
             }
         }
         Ok(())
+    }
+
+    /// Whether any of `frame_tx`'s EIP-8250 nonce keys has moved past its
+    /// sequence at `head_hash`: key 0 is `account_nonce`, every other key is
+    /// its `NONCE_MANAGER` slot.
+    fn frame_tx_nonce_consumed(
+        &self,
+        head_hash: BlockHash,
+        frame_tx: &ethrex_common::types::FrameTransaction,
+        account_nonce: u64,
+    ) -> Result<bool, StoreError> {
+        if frame_tx.nonce_keys.iter().any(U256::is_zero) && account_nonce > frame_tx.nonce_seq {
+            return Ok(true);
+        }
+        if frame_tx.nonce_keys.iter().all(U256::is_zero) {
+            return Ok(false);
+        }
+        // Without the head's state the keys cannot be read; keep the tx rather
+        // than evict it on missing information.
+        let Some(header) = self.storage.get_block_header_by_hash(head_hash)? else {
+            return Ok(false);
+        };
+        for nonce_key in frame_tx.nonce_keys.iter().filter(|key| !key.is_zero()) {
+            let sequence = self
+                .storage
+                .get_storage_at_root(
+                    header.state_root,
+                    ethrex_common::types::frame_tx_nonce_manager(),
+                    ethrex_common::types::keyed_nonce_slot(frame_tx.sender, *nonce_key),
+                )?
+                .unwrap_or_default();
+            if sequence > U256::from(frame_tx.nonce_seq) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Re-simulate pending frame transactions (EIP-8141) whose validity may have
