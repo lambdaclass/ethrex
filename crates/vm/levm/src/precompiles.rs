@@ -420,7 +420,10 @@ impl PrecompileCache {
             .cloned()
     }
 
-    pub fn insert(&self, address: Address, calldata: Bytes, output: Bytes, gas_cost: u64) {
+    /// Stores copies of `calldata` and `output`, never the caller's buffers: calldata can be
+    /// a view of a larger allocation (a reused call buffer, or a slice of one), and keeping
+    /// a reference would hold that whole allocation while the budget counts only the length.
+    pub fn insert(&self, address: Address, calldata: &[u8], output: &[u8], gas_cost: u64) {
         let entry_size = Self::entry_size(calldata.len(), output.len());
         let mut guard = self
             .cache
@@ -433,8 +436,11 @@ impl PrecompileCache {
         }
         // The warmer and the executor can both compute the same call; the result is
         // identical, so keep the first one and charge it once.
-        if let Entry::Vacant(slot) = entries.map.entry((address, calldata)) {
-            slot.insert((output, gas_cost));
+        if let Entry::Vacant(slot) = entries
+            .map
+            .entry((address, Bytes::copy_from_slice(calldata)))
+        {
+            slot.insert((Bytes::copy_from_slice(output), gas_cost));
             entries.used_bytes = used_bytes;
         }
     }
@@ -531,7 +537,7 @@ pub fn execute_precompile(
         && let Ok(output) = &result
     {
         let gas_cost = gas_before.saturating_sub(*gas_remaining);
-        cache.insert(address, calldata.clone(), output.clone(), gas_cost);
+        cache.insert(address, calldata, output, gas_cost);
     }
 
     result

@@ -31,9 +31,9 @@ fn precompile_cache_stops_caching_once_the_budget_is_full() {
     let half = half_budget_calldata(&buffer);
     let cache = PrecompileCache::default();
 
-    cache.insert(address(1), half.clone(), output(1), 1);
-    cache.insert(address(2), half.clone(), output(2), 2);
-    cache.insert(address(3), Bytes::new(), output(3), 3);
+    cache.insert(address(1), &half, &output(1), 1);
+    cache.insert(address(2), &half, &output(2), 2);
+    cache.insert(address(3), &[], &output(3), 3);
 
     // Entries cached before the budget filled stay available for the rest of the block.
     assert_eq!(cache.get(&address(1), &half), Some((output(1), 1)));
@@ -50,9 +50,9 @@ fn precompile_cache_charges_a_repeated_key_once() {
     let half = half_budget_calldata(&buffer);
     let cache = PrecompileCache::default();
 
-    cache.insert(address(1), half.clone(), output(1), 1);
-    cache.insert(address(1), half.clone(), output(1), 1);
-    cache.insert(address(2), half.clone(), output(2), 2);
+    cache.insert(address(1), &half, &output(1), 1);
+    cache.insert(address(1), &half, &output(1), 1);
+    cache.insert(address(2), &half, &output(2), 2);
 
     assert!(cache.get(&address(1), &half).is_some());
     assert!(cache.get(&address(2), &half).is_some());
@@ -63,8 +63,8 @@ fn precompile_cache_skips_an_entry_larger_than_the_budget() {
     let oversized = buffer();
     let cache = PrecompileCache::default();
 
-    cache.insert(address(1), oversized.clone(), output(9), 9);
-    cache.insert(address(2), Bytes::new(), output(2), 2);
+    cache.insert(address(1), &oversized, &output(9), 9);
+    cache.insert(address(2), &[], &output(2), 2);
 
     assert_eq!(cache.get(&address(1), &oversized), None);
     // Skipping the oversized entry must not use up any of the budget.
@@ -77,4 +77,25 @@ fn precompile_cache_skips_an_entry_larger_than_the_budget() {
 fn precompile_cache_charges_fixed_overhead_per_entry() {
     assert!(PrecompileCache::entry_size(0, 0) > 0);
     assert!(PrecompileCache::entry_size(10, 20) > 30);
+}
+
+/// Calldata can be a view of a larger allocation, such as a reused call buffer. A cached
+/// entry must not keep that allocation alive, since the budget counts only the length.
+#[test]
+fn precompile_cache_keeps_no_reference_to_the_callers_buffers() {
+    let calldata = Bytes::from(vec![7; 64]);
+    let result = output(9);
+    let cache = PrecompileCache::default();
+
+    cache.insert(address(1), &calldata, &result, 1);
+
+    assert_eq!(cache.get(&address(1), &calldata), Some((result.clone(), 1)));
+    assert!(
+        calldata.try_into_mut().is_ok(),
+        "the cache shares the calldata buffer"
+    );
+    assert!(
+        result.try_into_mut().is_ok(),
+        "the cache shares the output buffer"
+    );
 }
