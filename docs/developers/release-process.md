@@ -96,7 +96,7 @@ Before publishing the release, run through the following checks using the pre-re
 - [ ] Upgrade `ethrex-teku`
 - [ ] Upgrade `ethrex-grandine`
 - [ ] Launch multisync on `ethrex-multisync-main`
-- [ ] Upgrade an L2 created with the previous version and run the integration tests, on the GPU server (`l2-gpu`) with the SP1 prover
+- [ ] Upgrade an L2 created with the previous version, with and without downtime, and run the integration tests, on the GPU server (`l2-gpu`) with the SP1 prover
 - [ ] Run the L2 integration tests with a SP1 prover on the GPU server (`l2-gpu`)
 - [ ] Run the multiprover test: SP1 prover on the GPU server (`l2-gpu`), TDX prover and the rest of the stack on `ethrex-tdx-baremetal`
 
@@ -159,6 +159,8 @@ Check progress later with `tmux attach -t sync` (detach with `Ctrl-b` then `d`).
 #### L2 upgrade + integration tests (`l2-gpu`)
 
 See [Upgrade test](l2/upgrade-test.md) for the full procedure.
+
+It upgrades twice from the previous release: with downtime, restarting the sequencer on the new release over the old data directory, and without downtime, handing block production over to a new-release sequencer at a chosen block. Run both: the restart is the only path that opens an old data directory with the new release, and the handover is the only one where a new-release sequencer syncs the chain over p2p and commits blocks the old release produced.
 
 Run it on `l2-gpu` with `--backend sp1`, not locally with `--backend exec`. The
 `exec` backend produces no proof, so it never consults a verification key — and
