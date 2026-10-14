@@ -18,8 +18,8 @@ use ethrex_common::{
     Address, H256, U256,
     constants::{EMPTY_KECCAK_HASH, GAS_PER_BLOB},
     types::{
-        AccessListEntry, BlockHash, BlockHeader, BlockNumber, ChainConfig, GenericTransaction,
-        TxKind,
+        AccessListEntry, BlockHash, BlockHeader, BlockNumber, ChainConfig, Fork,
+        GenericTransaction, TxKind,
     },
 };
 
@@ -27,7 +27,10 @@ use crate::types::{block_override::BlockOverrideSet, state_override::StateOverri
 
 use ethrex_storage::Store;
 
-use ethrex_vm::{ExecutionResult, backends::levm::get_max_allowed_gas_limit};
+use ethrex_vm::{
+    ExecutionResult,
+    backends::{ExecutionGasCap, levm::get_max_allowed_gas_limit},
+};
 use serde::Serialize;
 
 use serde_json::{Value, value::RawValue};
@@ -165,19 +168,31 @@ impl RpcHandler for CallRequest {
             Some(bo) => Some(bo.apply_to(header.clone(), &chain_config)?),
             None => None,
         };
+        let env_header = effective_header.as_ref().unwrap_or(&header);
         let state_overrides = convert_state_overrides(
             self.state_overrides.clone(),
             &context.blockchain,
             &chain_config,
-            effective_header.as_ref().unwrap_or(&header),
+            env_header,
         )?;
+        // Bounded by the node's RPC gas cap, whatever the request asks for.
+        let mut transaction = self.transaction.clone();
+        transaction.gas = Some(simulation_gas_limit(
+            transaction.gas,
+            env_header,
+            chain_config.fork(env_header.timestamp),
+            context.rpc_gas_cap,
+        ));
+        // Nothing an `eth_call` runs is ever submitted, so after Amsterdam it may spend its
+        // whole gas limit on execution, as geth lets it (the EIP-8037 execution cap is lifted).
         let result = simulate_tx_with_overrides(
-            &self.transaction,
+            &transaction,
             &header,
             effective_header.as_ref(),
             context.storage,
             context.blockchain,
             state_overrides.as_ref(),
+            ExecutionGasCap::Lifted,
         )?;
         serde_json::to_value(format!("0x{:#x}", result.output()))
             .map_err(|error| RpcErr::Internal(error.to_string()))
@@ -422,23 +437,34 @@ impl RpcHandler for CreateAccessListRequest {
         // Build the Evm with optional override wrapper. createAccessList does not
         // accept a Block Override Set, so the header is always the real one.
         let inner = StoreVmDatabase::new(context.storage.clone(), header.clone())?;
+        let chain_config = context.storage.get_chain_config();
         let state_overrides = convert_state_overrides(
             self.state_overrides.clone(),
             &context.blockchain,
-            &context.storage.get_chain_config(),
+            &chain_config,
             &header,
         )?;
+        // Bounded by the node's RPC gas cap, whatever the request asks for. The EIP-8037
+        // execution cap stays in force (unlike `eth_call`): the reported gas must hold for
+        // the transaction the access list is built for.
+        let mut transaction = self.transaction.clone();
+        transaction.gas = Some(simulation_gas_limit(
+            transaction.gas,
+            &header,
+            chain_config.fork(header.timestamp),
+            context.rpc_gas_cap,
+        ));
         let (gas_used, access_list, error) = match state_overrides {
             Some(overrides) => {
                 let mut vm =
                     context
                         .blockchain
                         .new_overlaid_evm(inner, overrides, header.number)?;
-                vm.create_access_list(&self.transaction, &header)?
+                vm.create_access_list(&transaction, &header)?
             }
             _ => {
                 let mut vm = context.blockchain.new_evm(inner)?;
-                vm.create_access_list(&self.transaction, &header)?
+                vm.create_access_list(&transaction, &header)?
             }
         };
         let result = AccessListResult {
@@ -669,12 +695,14 @@ impl RpcHandler for EstimateGasRequest {
             }
         }
 
-        // Prepare binary search
-        let highest_gas_limit = get_max_allowed_gas_limit(env_header.gas_limit, current_fork);
-        let mut highest_gas_limit = match transaction.gas {
-            Some(gas) => gas.min(highest_gas_limit),
-            None => highest_gas_limit,
-        };
+        // Prepare binary search. The ceiling is the fork's per-transaction allowance for the
+        // block, lowered to the request's `gas` when given, and never above the node's RPC
+        // gas cap.
+        let allowance = get_max_allowed_gas_limit(env_header.gas_limit, current_fork);
+        let mut highest_gas_limit = cap_simulation_gas(
+            transaction.gas.map_or(allowance, |gas| gas.min(allowance)),
+            context.rpc_gas_cap,
+        );
 
         // The cap has to be computed against the same fee the balance check will be
         // measured against, and by the same rule: `default_hook` requires
@@ -712,6 +740,7 @@ impl RpcHandler for EstimateGasRequest {
             storage.clone(),
             blockchain.clone(),
             state_overrides.as_ref(),
+            ExecutionGasCap::Enforced,
         )?;
 
         let gas_used = result.gas_used();
@@ -734,6 +763,7 @@ impl RpcHandler for EstimateGasRequest {
             storage.clone(),
             blockchain.clone(),
             state_overrides.as_ref(),
+            ExecutionGasCap::Enforced,
         ) {
             return serde_json::to_value(format!("{gas_used:#x}"))
                 .map_err(|error| RpcErr::Internal(error.to_string()));
@@ -769,6 +799,7 @@ impl RpcHandler for EstimateGasRequest {
                 storage.clone(),
                 blockchain.clone(),
                 state_overrides.as_ref(),
+                ExecutionGasCap::Enforced,
             );
             if let Ok(ExecutionResult::Success { .. }) = result {
                 highest_gas_limit = middle_gas_limit;
@@ -877,13 +908,46 @@ async fn recap_with_account_balances(
     Ok(highest_gas_limit.min(account_gas))
 }
 
+/// `gas` lowered to the node's RPC gas cap (`--rpc.gascap`); `0` means no cap.
+pub(crate) fn cap_simulation_gas(gas: u64, rpc_gas_cap: u64) -> u64 {
+    if rpc_gas_cap == 0 {
+        gas
+    } else {
+        gas.min(rpc_gas_cap)
+    }
+}
+
+/// Gas limit a simulation RPC runs with: the call object's `gas`, else the fork's
+/// per-transaction allowance for the block, never above the node's RPC gas cap. Every
+/// simulation RPC goes through this, so a request cannot buy an unbounded amount of memory
+/// (operand padding, memory expansion) by asking for an unbounded amount of gas.
+pub(crate) fn simulation_gas_limit(
+    requested: Option<u64>,
+    header: &BlockHeader,
+    fork: Fork,
+    rpc_gas_cap: u64,
+) -> u64 {
+    cap_simulation_gas(
+        requested.unwrap_or(get_max_allowed_gas_limit(header.gas_limit, fork)),
+        rpc_gas_cap,
+    )
+}
+
 fn simulate_tx(
     transaction: &GenericTransaction,
     block_header: &BlockHeader,
     storage: Store,
     blockchain: Arc<Blockchain>,
 ) -> Result<ExecutionResult, RpcErr> {
-    simulate_tx_with_overrides(transaction, block_header, None, storage, blockchain, None)
+    simulate_tx_with_overrides(
+        transaction,
+        block_header,
+        None,
+        storage,
+        blockchain,
+        None,
+        ExecutionGasCap::Enforced,
+    )
 }
 
 /// Override-aware variant of [`simulate_tx`].
@@ -904,6 +968,10 @@ fn simulate_tx(
 /// of the chain no matter what the Block Override Set says. The overlay also takes its
 /// number as the `BLOCKHASH` cutoff, matching geth, which builds its hash function from
 /// this same header before the overrides are applied.
+///
+/// `execution_gas_cap` says whether the EIP-8037 execution cap applies after Amsterdam:
+/// `eth_call` lifts it, `eth_estimateGas` keeps it so the estimate holds for a real
+/// transaction. The caller has already bounded `transaction.gas` by the RPC gas cap.
 pub(crate) fn simulate_tx_with_overrides(
     transaction: &GenericTransaction,
     real_header: &BlockHeader,
@@ -911,6 +979,7 @@ pub(crate) fn simulate_tx_with_overrides(
     storage: Store,
     blockchain: Arc<Blockchain>,
     state_overrides: Option<&Arc<BTreeMap<Address, StateOverride>>>,
+    execution_gas_cap: ExecutionGasCap,
 ) -> Result<ExecutionResult, RpcErr> {
     let env_header = effective_header.unwrap_or(real_header);
 
@@ -927,10 +996,10 @@ pub(crate) fn simulate_tx_with_overrides(
     let raw_result = if state_overrides.is_some() || effective_header.is_some() {
         let overrides = state_overrides.cloned().unwrap_or_default();
         let mut vm = blockchain.new_overlaid_evm(inner, overrides, real_header.number)?;
-        vm.simulate_tx_from_generic(transaction, env_header)?
+        vm.simulate_tx_from_generic(transaction, env_header, execution_gas_cap)?
     } else {
         let mut vm = blockchain.new_evm(inner)?;
-        vm.simulate_tx_from_generic(transaction, env_header)?
+        vm.simulate_tx_from_generic(transaction, env_header, execution_gas_cap)?
     };
 
     match raw_result {
@@ -1462,6 +1531,263 @@ mod plain_transfer_short_circuit_tests {
             .await
             .is_err(),
             "an empty call to the deposit contract must not be priced as a transfer"
+        );
+    }
+}
+
+#[cfg(test)]
+mod simulation_gas_cap_tests {
+    use std::str::FromStr;
+
+    use crate::rpc::{DEFAULT_RPC_GAS_CAP, map_http_requests};
+    use crate::test_utils::default_context_with_storage;
+    use crate::utils::{RpcErr, RpcRequest};
+    use ethrex_common::U256;
+    use ethrex_common::types::Genesis;
+    use ethrex_storage::{EngineType, Store};
+    use serde_json::{Value, json};
+
+    /// Osaka at genesis, 25M block gas limit.
+    const OSAKA_GENESIS: &str = include_str!("../../../../fixtures/genesis/l1.json");
+    /// Amsterdam at genesis, 25M block gas limit.
+    const AMSTERDAM_GENESIS: &str = include_str!("../../../../fixtures/genesis/l1-bal.json");
+    /// Funded EOA present in both genesis files.
+    const SENDER: &str = "0x00000a8d3f37af8def18832962ee008d8dca4f7b";
+    /// Where the State Override Set places the contract under test.
+    const CONTRACT: &str = "0x000000000000000000000000000000000000c0de";
+    /// `GAS PUSH0 MSTORE PUSH1 0x20 PUSH0 RETURN`: returns the gas left at the first opcode.
+    const GAS_LEFT_CODE: &str = "0x5a5f5260205ff3";
+    /// Returns the gas left at entry when it is at least 10,000,000, reverts otherwise:
+    /// `GAS PUSH4 10000000 DUP2 LT PUSH1 0x11 JUMPI PUSH0 MSTORE PUSH1 0x20 PUSH0 RETURN
+    /// JUMPDEST PUSH0 PUSH0 REVERT`. The threshold sits under the Osaka per-transaction
+    /// allowance (2^24), so only the RPC gas cap can put it out of reach.
+    const NEEDS_10M_CODE: &str = "0x5a630098968081106011575f5260205ff35b5f5ffd";
+    /// Same shape with a 20,000,000 threshold, above the EIP-8037 execution cap (2^24).
+    const NEEDS_20M_CODE: &str = "0x5a6301312d0081106011575f5260205ff35b5f5ffd";
+    /// What a call with no calldata has paid by the time `GAS` reports: the intrinsic
+    /// 21,000 plus the 2 gas of the `GAS` opcode itself.
+    const ENTRY_OVERHEAD: u64 = 21_000 + 2;
+    const UNBOUNDED_GAS: &str = "0xffffffffffffffff";
+
+    async fn store_from(genesis: &str) -> Store {
+        let genesis: Genesis = serde_json::from_str(genesis).expect("test genesis is invalid");
+        let mut store =
+            Store::new("test-store", EngineType::InMemory).expect("Fail to create in-memory db");
+        store.add_initial_state(genesis).await.unwrap();
+        store
+    }
+
+    fn call_object(gas: Option<&str>) -> Value {
+        let mut object = json!({ "from": SENDER, "to": CONTRACT });
+        if let Some(gas) = gas {
+            object["gas"] = json!(gas);
+        }
+        object
+    }
+
+    fn overrides(code: &str) -> Value {
+        json!({ CONTRACT: { "code": code } })
+    }
+
+    /// Runs `method` with `params` on a context from `genesis` whose RPC gas cap is
+    /// `rpc_gas_cap`.
+    async fn run(
+        genesis: &str,
+        rpc_gas_cap: u64,
+        method: &str,
+        params: Vec<Value>,
+    ) -> Result<Value, RpcErr> {
+        let mut context = default_context_with_storage(store_from(genesis).await).await;
+        context.rpc_gas_cap = rpc_gas_cap;
+        let request: RpcRequest = serde_json::from_value(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": method,
+            "params": params,
+        }))
+        .unwrap();
+        map_http_requests(&request, context.clone()).await
+    }
+
+    fn word(value: &Value) -> u64 {
+        let word = U256::from_str(value.as_str().expect("hex string output")).unwrap();
+        u64::try_from(word).expect("fits a u64")
+    }
+
+    /// `eth_call` runs with `min(gas, cap)`, so the gas it reports at entry is the cap
+    /// minus the intrinsic cost however much the request asks for.
+    #[tokio::test]
+    async fn eth_call_runs_with_at_most_the_rpc_gas_cap() {
+        let params = |gas| vec![call_object(gas), json!("latest"), overrides(GAS_LEFT_CODE)];
+
+        let output = run(
+            OSAKA_GENESIS,
+            DEFAULT_RPC_GAS_CAP,
+            "eth_call",
+            params(Some(UNBOUNDED_GAS)),
+        )
+        .await
+        .unwrap();
+        assert_eq!(word(&output), DEFAULT_RPC_GAS_CAP - ENTRY_OVERHEAD);
+
+        let output = run(
+            OSAKA_GENESIS,
+            1_000_000,
+            "eth_call",
+            params(Some(UNBOUNDED_GAS)),
+        )
+        .await
+        .unwrap();
+        assert_eq!(word(&output), 1_000_000 - ENTRY_OVERHEAD);
+
+        // The default gas of a call object without `gas` is bounded too.
+        let output = run(OSAKA_GENESIS, 1_000_000, "eth_call", params(None))
+            .await
+            .unwrap();
+        assert_eq!(word(&output), 1_000_000 - ENTRY_OVERHEAD);
+    }
+
+    /// `rpc.gascap` 0 disables the cap: the request's gas is used as is.
+    #[tokio::test]
+    async fn rpc_gas_cap_zero_leaves_the_requested_gas_alone() {
+        let params = vec![
+            call_object(Some("0x1312d00")), // 20,000,000
+            json!("latest"),
+            overrides(GAS_LEFT_CODE),
+        ];
+        let output = run(OSAKA_GENESIS, 0, "eth_call", params).await.unwrap();
+        assert_eq!(word(&output), 20_000_000 - ENTRY_OVERHEAD);
+    }
+
+    /// The `eth_estimateGas` search ceiling is `min(gas, allowance, cap)`: a contract that
+    /// needs 10M gas is estimable under the default cap and unreachable under a 5M one.
+    #[tokio::test]
+    async fn estimate_gas_ceiling_is_bounded_by_the_rpc_gas_cap() {
+        let params = || {
+            vec![
+                call_object(Some(UNBOUNDED_GAS)),
+                json!("latest"),
+                overrides(NEEDS_10M_CODE),
+            ]
+        };
+
+        let estimate = run(
+            OSAKA_GENESIS,
+            DEFAULT_RPC_GAS_CAP,
+            "eth_estimateGas",
+            params(),
+        )
+        .await
+        .unwrap();
+        let estimate = word(&estimate);
+        assert!(
+            (10_000_000 + ENTRY_OVERHEAD..=16_777_216).contains(&estimate),
+            "estimate {estimate} must cover the 10M the contract needs and stay within the Osaka allowance"
+        );
+
+        let error = run(OSAKA_GENESIS, 5_000_000, "eth_estimateGas", params())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, RpcErr::Revert { .. }),
+            "with a 5M cap the contract can never get its 10M, got {error:?}"
+        );
+    }
+
+    /// `eth_createAccessList` reports the revert a capped run hits.
+    #[tokio::test]
+    async fn create_access_list_runs_with_at_most_the_rpc_gas_cap() {
+        let params = || {
+            vec![
+                call_object(Some(UNBOUNDED_GAS)),
+                json!("latest"),
+                overrides(NEEDS_10M_CODE),
+            ]
+        };
+
+        let result = run(
+            OSAKA_GENESIS,
+            DEFAULT_RPC_GAS_CAP,
+            "eth_createAccessList",
+            params(),
+        )
+        .await
+        .unwrap();
+        assert!(result.get("error").is_none(), "unexpected error: {result}");
+
+        let result = run(OSAKA_GENESIS, 5_000_000, "eth_createAccessList", params())
+            .await
+            .unwrap();
+        assert!(
+            result.get("error").is_some(),
+            "the capped run must revert: {result}"
+        );
+    }
+
+    /// `debug_traceCall` is a simulation RPC too: the traced call runs with the cap.
+    #[tokio::test]
+    async fn trace_call_runs_with_at_most_the_rpc_gas_cap() {
+        let params = vec![
+            call_object(Some(UNBOUNDED_GAS)),
+            json!("latest"),
+            json!({ "tracer": "callTracer" }),
+            overrides(GAS_LEFT_CODE),
+        ];
+        let frame = run(OSAKA_GENESIS, 1_000_000, "debug_traceCall", params)
+            .await
+            .unwrap();
+        assert_eq!(word(&frame["gas"]), 1_000_000);
+        assert_eq!(word(&frame["output"]), 1_000_000 - ENTRY_OVERHEAD);
+    }
+
+    /// After Amsterdam a transaction spends at most 2^24 gas on execution (EIP-8037) and the
+    /// rest of its limit funds the state-gas reservoir. `eth_call` lifts that cap, as geth
+    /// does, so a read-only call needing 20M gas of computation succeeds with a 25M limit;
+    /// `eth_estimateGas` and `eth_createAccessList` keep it, since a transaction with their
+    /// answer could not run.
+    #[tokio::test]
+    async fn eth_call_spends_its_whole_gas_limit_on_execution_after_amsterdam() {
+        let params = || {
+            vec![
+                call_object(Some("0x17d7840")), // 25,000,000, the block gas limit
+                json!("latest"),
+                overrides(NEEDS_20M_CODE),
+            ]
+        };
+
+        let output = run(AMSTERDAM_GENESIS, DEFAULT_RPC_GAS_CAP, "eth_call", params())
+            .await
+            .unwrap();
+        assert!(
+            word(&output) >= 20_000_000,
+            "eth_call must have more than 2^24 execution gas, had {}",
+            word(&output)
+        );
+
+        let error = run(
+            AMSTERDAM_GENESIS,
+            DEFAULT_RPC_GAS_CAP,
+            "eth_estimateGas",
+            params(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(error, RpcErr::Revert { .. }),
+            "no transaction can execute this with 20M, got {error:?}"
+        );
+
+        let result = run(
+            AMSTERDAM_GENESIS,
+            DEFAULT_RPC_GAS_CAP,
+            "eth_createAccessList",
+            params(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            result.get("error").is_some(),
+            "the capped run must revert: {result}"
         );
     }
 }

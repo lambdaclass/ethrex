@@ -674,6 +674,7 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>, intrinsic: &IntrinsicGas) -> Resu
     // NOTE: We use IntrinsicGasTooLow (not TxMaxGasLimitExceeded) intentionally —
     // this matches the EELS exception mapping for this specific case.
     if vm.env.config.fork >= Fork::Amsterdam
+        && !vm.env.disable_execution_gas_cap
         && regular_gas.max(floor_cost_by_tokens) > TX_MAX_GAS_LIMIT_AMSTERDAM
     {
         return Err(TxValidationError::IntrinsicGasTooLow.into());
