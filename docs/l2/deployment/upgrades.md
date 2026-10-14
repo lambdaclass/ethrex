@@ -26,9 +26,9 @@ rex l2 register-vk --commit <GIT_SHA> --vk <VERIFICATION_KEY> \
 
 The sha is the one the new binary prints after `HEAD-` in `ethrex --version`; the
 key is the `ethrex-riscv32im-succinct-zkvm-vk-bn254` file from the new release's
-`ethrex-contracts.tar.gz`. See
-[Registering a new verification key](../fundamentals/upgrades.md#registering-a-new-verification-key)
-for what the command does and why the Timelock is in the path.
+`ethrex-contracts.tar.gz`. "Registering a new verification key" in
+`docs/l2/fundamentals/upgrades.md` explains what the command does and why the
+Timelock is in the path.
 
 Keys are stored per commit hash, not per version, so the old key stays valid —
 which is what lets a rollback keep verifying.
