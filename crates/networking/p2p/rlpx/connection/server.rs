@@ -54,10 +54,10 @@ use ethrex_blockchain::{
     sampling::{is_provider_role, pick_random_extra_column},
 };
 use ethrex_common::H256;
+use ethrex_common::types::Receipt;
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
 use ethrex_common::types::block_access_list::BlockAccessList;
-use ethrex_common::types::{P2PTransaction, Receipt};
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
@@ -1948,12 +1948,14 @@ async fn handle_incoming_message(
                 // violation the peer disconnects us for — skip those instead,
                 // which `GetPooledTransactions` explicitly allows.
                 let mut response = response;
-                response.pooled_transactions.retain(|tx| match tx {
-                    P2PTransaction::EIP4844TransactionWithBlobs(wrapped) => {
-                        wrapped.blobs_bundle.blobs.len() == wrapped.blobs_bundle.commitments.len()
-                    }
-                    _ => true,
-                });
+                response
+                    .pooled_transactions
+                    .retain(|tx| match tx.blob_parts() {
+                        Some((_, blobs_bundle)) => {
+                            blobs_bundle.blobs.len() == blobs_bundle.commitments.len()
+                        }
+                        None => true,
+                    });
                 send(state, Message::PooledTransactions(response)).await?;
             }
             state.txs_sent_to_peer += batch_size;
@@ -1973,11 +1975,10 @@ async fn handle_incoming_message(
             }
             // If we receive a blob transaction without blobs or with blobs that don't match the versioned hashes we must disconnect from the peer
             for tx in &msg.pooled_transactions {
-                if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx
-                    && (itx.blobs_bundle.is_empty()
-                        || itx
-                            .blobs_bundle
-                            .validate_blob_commitment_hashes(&itx.tx.blob_versioned_hashes)
+                if let Some((blob_versioned_hashes, blobs_bundle)) = tx.blob_parts()
+                    && (blobs_bundle.is_empty()
+                        || blobs_bundle
+                            .validate_blob_commitment_hashes(blob_versioned_hashes)
                             .is_err())
                 {
                     debug!(

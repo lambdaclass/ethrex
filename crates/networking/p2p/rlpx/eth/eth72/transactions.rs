@@ -93,7 +93,10 @@ impl NewPooledTransactionHashes72 {
             let tx_type = transaction.tx_type();
             let transaction_hash = transaction.hash(&NativeCrypto);
             let transaction_size = match transaction {
-                Transaction::EIP4844Transaction(eip4844_tx) => {
+                // A blob-carrying tx is announced at its wrapped size: an EIP-4844 tx,
+                // and an EIP-8141 frame tx with blobs, which eth/72 carries whole since
+                // its elided encoding and `cell_mask` are defined for type 3 only.
+                transaction if transaction.is_blob_carrying() => {
                     // See `NewPooledTransactionHashes::new`: a blob tx whose bundle is no
                     // longer in the pool cannot be served, so it must not be announced.
                     // An empty bundle would announce ~162 bytes for a ~137 KB transaction.
@@ -102,13 +105,11 @@ impl NewPooledTransactionHashes72 {
                     else {
                         continue;
                     };
-                    let p2p_tx =
-                        P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
-                            tx: eip4844_tx,
-                            wrapper_version: (tx_blobs_bundle.version != 0)
-                                .then_some(tx_blobs_bundle.version),
-                            blobs_bundle: tx_blobs_bundle,
-                        });
+                    let Some(p2p_tx) =
+                        P2PTransaction::with_blobs_bundle(transaction, tx_blobs_bundle)
+                    else {
+                        continue;
+                    };
                     p2p_tx.encode_canonical_len()
                 }
                 _ => transaction.encode_canonical_len(),
@@ -398,41 +399,45 @@ impl PooledTransactions72 {
         is_l2_mode: bool,
     ) -> Result<(), MempoolError> {
         for tx in self.pooled_transactions {
-            if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                if is_l2_mode {
-                    debug!(
-                        peer=%node,
-                        "Rejecting blob transaction in L2 mode",
-                    );
-                    continue;
-                }
-                // Blobs are elided in eth/72; store commitments+proofs.
-                // Full KZG validation deferred until blobs are fetched via GetCells.
-                if let Err(e) = blockchain
-                    .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
-                    .await
-                {
-                    if matches!(e, MempoolError::BlobsBundleError(_)) {
-                        return Err(e);
+            let (tx, blobs_bundle) = tx
+                .into_transaction_and_blobs()
+                .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
+            // An EIP-4844 tx (blobs elided in eth/72, so commitments and proofs are
+            // stored and full KZG validation waits for the cells fetched via
+            // GetCells) or an EIP-8141 frame tx with blobs, which arrives whole.
+            match blobs_bundle {
+                Some(blobs_bundle) => {
+                    if is_l2_mode {
+                        debug!(
+                            peer=%node,
+                            "Rejecting blob transaction in L2 mode",
+                        );
+                        continue;
                     }
-                    debug!(
-                        peer=%node,
-                        error=%e,
-                        "Error adding blob transaction",
-                    );
-                    continue;
+                    if let Err(e) = blockchain
+                        .add_blob_transaction_to_pool(tx, blobs_bundle)
+                        .await
+                    {
+                        if matches!(e, MempoolError::BlobsBundleError(_)) {
+                            return Err(e);
+                        }
+                        debug!(
+                            peer=%node,
+                            error=%e,
+                            "Error adding blob transaction",
+                        );
+                        continue;
+                    }
                 }
-            } else {
-                let regular_tx = tx
-                    .try_into()
-                    .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
-                if let Err(e) = blockchain.add_transaction_to_pool(regular_tx).await {
-                    debug!(
-                        peer=%node,
-                        error=%e,
-                        "Error adding transaction",
-                    );
-                    continue;
+                None => {
+                    if let Err(e) = blockchain.add_transaction_to_pool(tx).await {
+                        debug!(
+                            peer=%node,
+                            error=%e,
+                            "Error adding transaction",
+                        );
+                        continue;
+                    }
                 }
             }
         }

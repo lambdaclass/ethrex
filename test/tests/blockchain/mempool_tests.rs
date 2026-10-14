@@ -871,25 +871,25 @@ async fn mempool_rejects_oversized_frame_data() {
 }
 
 #[tokio::test]
-async fn mempool_rejects_frame_tx_with_blobs() {
+async fn mempool_rejects_a_blob_carrying_frame_tx_without_its_blobs_bundle() {
     let store = setup_hegota_store().await;
     let blockchain = Blockchain::default_with_store(store);
 
+    // EIP-8141 §Networking: a blob-carrying frame tx travels with its sidecar,
+    // like an EIP-4844 tx, so the bundle-less entry point cannot admit it.
     let mut frame_tx = minimal_valid_frame_tx();
-    // Add a blob versioned hash; no sidecar transport exists for frame-tx
-    // blobs yet, so admission must reject such txs as unsupported.
     let mut hash = [0xAB; 32];
-    hash[0] = 0x01; // valid KZG version byte, so the unsupported-blobs check is what fires
+    hash[0] = 0x01; // a valid KZG version byte, so the missing bundle is what fires
     frame_tx.blob_versioned_hashes = vec![H256::from(hash)];
-
     reserve_calldata_floor(&mut frame_tx);
 
-    let tx = Transaction::FrameTransaction(frame_tx);
-    let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
-    assert!(matches!(
-        validation.await,
-        Err(MempoolError::FrameTxBlobsUnsupported)
-    ));
+    let result = blockchain
+        .add_transaction_to_pool(Transaction::FrameTransaction(frame_tx))
+        .await;
+    assert!(
+        matches!(result, Err(MempoolError::BlobTxNoBlobsBundle)),
+        "got {result:?}"
+    );
 }
 
 #[tokio::test]

@@ -11,7 +11,6 @@ use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::MempoolError;
 use ethrex_common::types::Fork;
 use ethrex_common::types::P2PTransaction;
-use ethrex_common::types::WrappedEIP4844Transaction;
 use ethrex_common::{H256, types::Transaction};
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{
@@ -125,10 +124,11 @@ impl NewPooledTransactionHashes {
             // as it would appear in a PooledTransactions response.
             // https://eips.ethereum.org/EIPS/eip-2718
             let transaction_size = match transaction {
-                // Blob transactions use the network (wrapped) representation
-                // which includes the blobs bundle.
+                // Blob-carrying transactions use the network (wrapped) representation
+                // which includes the blobs bundle: EIP-4844 txs and EIP-8141 frame txs
+                // with blobs alike.
                 // https://eips.ethereum.org/EIPS/eip-4844#networking
-                Transaction::EIP4844Transaction(eip4844_tx) => {
+                transaction if transaction.is_blob_carrying() => {
                     // If the bundle is gone (the tx was evicted or pulled into a payload
                     // between the broadcaster's snapshot and now) we cannot serve this tx
                     // either: `Blockchain::get_p2p_transaction_by_hash` errors out on a
@@ -155,13 +155,11 @@ impl NewPooledTransactionHashes {
                     if tx_blobs_bundle.blobs.len() != tx_blobs_bundle.commitments.len() {
                         continue;
                     }
-                    let p2p_tx =
-                        P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
-                            tx: eip4844_tx,
-                            wrapper_version: (tx_blobs_bundle.version != 0)
-                                .then_some(tx_blobs_bundle.version),
-                            blobs_bundle: tx_blobs_bundle,
-                        });
+                    let Some(p2p_tx) =
+                        P2PTransaction::with_blobs_bundle(transaction, tx_blobs_bundle)
+                    else {
+                        continue;
+                    };
                     p2p_tx.encode_canonical_len()
                 }
                 _ => transaction.encode_canonical_len(),
@@ -368,8 +366,8 @@ impl PooledTransactions {
             if !seen.insert(tx_hash) {
                 return Err(MempoolError::DuplicatePooledTx);
             }
-            if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                itx.blobs_bundle.validate_cheap(&itx.tx, fork)?;
+            if let Some((blob_versioned_hashes, blobs_bundle)) = tx.blob_parts() {
+                blobs_bundle.validate_cheap_for_hashes(blob_versioned_hashes, fork)?;
             }
             let Some(pos) = requested
                 .transaction_hashes
@@ -406,39 +404,43 @@ impl PooledTransactions {
         is_l2_mode: bool,
     ) -> Result<(), MempoolError> {
         for tx in self.pooled_transactions {
-            if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
-                if is_l2_mode {
-                    debug!(
-                        peer=%node,
-                        "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2",
-                    );
-                    continue;
-                }
-                if let Err(e) = blockchain
-                    .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
-                    .await
-                {
-                    if matches!(e, MempoolError::BlobsBundleError(_)) {
-                        return Err(e);
+            let (tx, blobs_bundle) = tx
+                .into_transaction_and_blobs()
+                .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
+            // An EIP-4844 tx or an EIP-8141 frame tx with blobs, with its sidecar.
+            match blobs_bundle {
+                Some(blobs_bundle) => {
+                    if is_l2_mode {
+                        debug!(
+                            peer=%node,
+                            "Rejecting blob transaction in L2 mode - blob transactions are not supported in L2",
+                        );
+                        continue;
                     }
-                    debug!(
-                        peer=%node,
-                        error=%e,
-                        "Error adding transaction"
-                    );
-                    continue;
+                    if let Err(e) = blockchain
+                        .add_blob_transaction_to_pool(tx, blobs_bundle)
+                        .await
+                    {
+                        if matches!(e, MempoolError::BlobsBundleError(_)) {
+                            return Err(e);
+                        }
+                        debug!(
+                            peer=%node,
+                            error=%e,
+                            "Error adding transaction"
+                        );
+                        continue;
+                    }
                 }
-            } else {
-                let regular_tx = tx
-                    .try_into()
-                    .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
-                if let Err(e) = blockchain.add_transaction_to_pool(regular_tx).await {
-                    debug!(
-                        peer=%node,
-                        error=%e,
-                        "Error adding transaction"
-                    );
-                    continue;
+                None => {
+                    if let Err(e) = blockchain.add_transaction_to_pool(tx).await {
+                        debug!(
+                            peer=%node,
+                            error=%e,
+                            "Error adding transaction"
+                        );
+                        continue;
+                    }
                 }
             }
         }

@@ -3,8 +3,9 @@ use ethrex_blockchain::mempool::Mempool;
 use ethrex_common::{
     Address, H256,
     types::{
-        BYTES_PER_BLOB, BYTES_PER_CELL, BlobsBundle, CELLS_PER_EXT_BLOB, EIP4844Transaction,
-        MAX_BLOB_COUNT, MempoolTransaction, P2PTransaction, Transaction, WrappedEIP4844Transaction,
+        BYTES_PER_BLOB, BYTES_PER_CELL, BlobsBundle, CELLS_PER_EXT_BLOB, EIP4844Transaction, Fork,
+        FrameTransaction, MAX_BLOB_COUNT, MempoolTransaction, P2PTransaction, Transaction, TxType,
+        WrappedEIP4844Transaction, kzg_commitment_to_versioned_hash,
     },
 };
 use ethrex_p2p::rlpx::{
@@ -13,7 +14,7 @@ use ethrex_p2p::rlpx::{
         eth72::transactions::{
             NewPooledTransactionHashes72, PooledTransactions72, b16_to_u128, u128_to_b16,
         },
-        transactions::NewPooledTransactionHashes,
+        transactions::{GetPooledTransactions, NewPooledTransactionHashes},
     },
     message::RLPxMessage,
 };
@@ -449,4 +450,63 @@ fn eth72_announcement_skips_a_gone_bundle_blob_tx_and_keeps_cell_mask_nil() {
         announcement.cell_mask, None,
         "cell_mask must be nil when no type-3 tx is announced"
     );
+}
+
+/// EIP-8070 defines blob elision and `cell_mask` for type-3 txs only, and EIP-8141
+/// propagates a frame tx with blobs in its full EIP-7594 wrapper. On eth/72 such a
+/// tx is therefore announced at its wrapped size without a cell mask and served
+/// whole, so what a peer receives matches what was announced.
+#[test]
+fn eth72_announces_and_serves_a_frame_tx_with_blobs_whole() {
+    let bc = test_blockchain();
+    let commitment = [0u8; 48];
+    let bundle = BlobsBundle {
+        blobs: vec![[0u8; BYTES_PER_BLOB]],
+        commitments: vec![commitment],
+        proofs: vec![[0u8; 48]; CELLS_PER_EXT_BLOB],
+        version: 1,
+    };
+    let tx = Transaction::FrameTransaction(FrameTransaction {
+        blob_versioned_hashes: vec![kzg_commitment_to_versioned_hash(&commitment)],
+        ..Default::default()
+    });
+    let sender = Address::from_low_u64_be(3);
+    let mtx = MempoolTransaction::new(tx.clone(), sender);
+    let hash = mtx.hash(&ethrex_crypto::NativeCrypto);
+    bc.mempool
+        .add_blobs_bundle(hash, bundle.clone())
+        .expect("add bundle");
+    bc.mempool
+        .add_transaction(hash, sender, mtx, None, None)
+        .expect("add to mempool");
+
+    let announcement = NewPooledTransactionHashes72::new(vec![tx], &bc).expect("announce");
+    assert_eq!(announcement.transaction_hashes, vec![hash]);
+    assert_eq!(
+        announcement.transaction_types.as_ref(),
+        &[TxType::Frame as u8]
+    );
+    assert_eq!(
+        announcement.cell_mask, None,
+        "cell_mask covers type-3 txs only"
+    );
+
+    let served = GetPooledTransactions::new(1, vec![hash])
+        .handle(&bc)
+        .expect("serve the request");
+    let delivered = PooledTransactions72::decode(&encode(&PooledTransactions72::new(
+        1,
+        served.pooled_transactions,
+    )))
+    .expect("decode the response");
+    let Some((_, delivered_bundle)) = delivered.pooled_transactions[0].blob_parts() else {
+        panic!("expected the frame tx in its blob network wrapper");
+    };
+    assert_eq!(
+        delivered_bundle, &bundle,
+        "a frame tx's blobs are never elided"
+    );
+    delivered
+        .validate_requested(&announcement, Fork::Hegota)
+        .expect("the delivery matches the announced size");
 }

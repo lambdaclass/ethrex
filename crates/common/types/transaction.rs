@@ -88,6 +88,9 @@ pub enum P2PTransaction {
     EIP7702Transaction(EIP7702Transaction),
     FeeTokenTransaction(FeeTokenTransaction),
     FrameTransaction(FrameTransaction),
+    /// An EIP-8141 frame transaction carrying blobs, in its EIP-7594 network
+    /// wrapper. A blobless frame transaction travels as `FrameTransaction`.
+    FrameTransactionWithBlobs(WrappedFrameTransaction),
 }
 
 impl TryInto<Transaction> for P2PTransaction {
@@ -101,6 +104,62 @@ impl TryInto<Transaction> for P2PTransaction {
             P2PTransaction::EIP7702Transaction(itx) => Ok(Transaction::EIP7702Transaction(itx)),
             P2PTransaction::FrameTransaction(itx) => Ok(Transaction::FrameTransaction(itx)),
             _ => Err("Can't convert blob p2p transaction into regular transaction. Blob bundle would be lost.".to_string()),
+        }
+    }
+}
+
+impl P2PTransaction {
+    /// The network form of a blob-carrying `tx` with its `blobs_bundle`: the
+    /// EIP-7594 wrapper of an EIP-4844 transaction or of an EIP-8141 frame
+    /// transaction with blobs. `None` for a transaction that carries no blobs.
+    pub fn with_blobs_bundle(tx: Transaction, blobs_bundle: BlobsBundle) -> Option<Self> {
+        let wrapper_version = (blobs_bundle.version != 0).then_some(blobs_bundle.version);
+        match tx {
+            Transaction::EIP4844Transaction(tx) => Some(Self::EIP4844TransactionWithBlobs(
+                WrappedEIP4844Transaction {
+                    tx,
+                    wrapper_version,
+                    blobs_bundle,
+                },
+            )),
+            Transaction::FrameTransaction(tx) if !tx.blob_versioned_hashes.is_empty() => {
+                Some(Self::FrameTransactionWithBlobs(WrappedFrameTransaction {
+                    tx,
+                    wrapper_version,
+                    blobs_bundle,
+                }))
+            }
+            _ => None,
+        }
+    }
+
+    /// Splits a transaction received from a peer into the transaction and, for a
+    /// network-wrapped blob-carrying one, its blobs bundle.
+    pub fn into_transaction_and_blobs(self) -> Result<(Transaction, Option<BlobsBundle>), String> {
+        match self {
+            Self::EIP4844TransactionWithBlobs(wrapped) => Ok((
+                Transaction::EIP4844Transaction(wrapped.tx),
+                Some(wrapped.blobs_bundle),
+            )),
+            Self::FrameTransactionWithBlobs(wrapped) => Ok((
+                Transaction::FrameTransaction(wrapped.tx),
+                Some(wrapped.blobs_bundle),
+            )),
+            other => Ok((other.try_into()?, None)),
+        }
+    }
+
+    /// The versioned hashes and blobs bundle of a network-wrapped blob-carrying
+    /// transaction.
+    pub fn blob_parts(&self) -> Option<(&[H256], &BlobsBundle)> {
+        match self {
+            Self::EIP4844TransactionWithBlobs(wrapped) => {
+                Some((&wrapped.tx.blob_versioned_hashes, &wrapped.blobs_bundle))
+            }
+            Self::FrameTransactionWithBlobs(wrapped) => {
+                Some((&wrapped.tx.blob_versioned_hashes, &wrapped.blobs_bundle))
+            }
+            _ => None,
         }
     }
 }
@@ -136,7 +195,13 @@ impl RLPDecode for P2PTransaction {
                     P2PTransaction::EIP7702Transaction(EIP7702Transaction::decode(tx_encoding)?)
                 }
                 EnvelopeTxType::Frame => {
-                    P2PTransaction::FrameTransaction(FrameTransaction::decode(tx_encoding)?)
+                    if WrappedFrameTransaction::is_wrapped(tx_encoding)? {
+                        P2PTransaction::FrameTransactionWithBlobs(WrappedFrameTransaction::decode(
+                            tx_encoding,
+                        )?)
+                    } else {
+                        P2PTransaction::FrameTransaction(FrameTransaction::decode(tx_encoding)?)
+                    }
                 }
                 EnvelopeTxType::FeeToken => {
                     P2PTransaction::FeeTokenTransaction(FeeTokenTransaction::decode(tx_encoding)?)
@@ -200,6 +265,67 @@ impl RLPDecode for WrappedEIP4844Transaction {
         let (proofs, decoder) = decoder.decode_field("proofs")?;
 
         let wrapped = WrappedEIP4844Transaction {
+            tx,
+            wrapper_version,
+            blobs_bundle: BlobsBundle {
+                blobs,
+                commitments,
+                proofs,
+                version: wrapper_version.unwrap_or_default(),
+            },
+        };
+        Ok((wrapped, decoder.finish()?))
+    }
+}
+
+/// An EIP-8141 frame transaction carrying blobs, in the network wrapper EIP-8141
+/// takes from EIP-7594: `rlp([tx_payload_body, wrapper_version, blobs, commitments,
+/// cell_proofs])`. It is used wherever an EIP-4844 transaction travels with its
+/// sidecar (`PooledTransactions`, `eth_sendRawTransaction`), and never inside a
+/// block body.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WrappedFrameTransaction {
+    pub tx: FrameTransaction,
+    pub wrapper_version: Option<u8>,
+    pub blobs_bundle: BlobsBundle,
+}
+
+impl WrappedFrameTransaction {
+    /// Whether a type-6 payload is the network wrapper rather than a bare frame
+    /// transaction: the wrapper's first item is the transaction body, a list, where
+    /// a bare transaction's first item is its `chain_id`.
+    pub fn is_wrapped(rlp: &[u8]) -> Result<bool, RLPDecodeError> {
+        let (is_list, payload, _) = decode_rlp_item(rlp)?;
+        if !is_list {
+            return Err(RLPDecodeError::UnexpectedString);
+        }
+        let (first_is_list, _, _) = decode_rlp_item(payload)?;
+        Ok(first_is_list)
+    }
+}
+
+impl RLPEncode for WrappedFrameTransaction {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        let encoder = Encoder::new(buf);
+        encoder
+            .encode_field(&self.tx)
+            .encode_optional_field(&self.wrapper_version)
+            .encode_field(&self.blobs_bundle.blobs)
+            .encode_field(&self.blobs_bundle.commitments)
+            .encode_field(&self.blobs_bundle.proofs)
+            .finish();
+    }
+}
+
+impl RLPDecode for WrappedFrameTransaction {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(WrappedFrameTransaction, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (tx, decoder) = decoder.decode_field("tx")?;
+        let (wrapper_version, decoder) = decoder.decode_optional_field();
+        let (blobs, decoder) = decoder.decode_field("blobs")?;
+        let (commitments, decoder) = decoder.decode_field("commitments")?;
+        let (proofs, decoder) = decoder.decode_field("proofs")?;
+        let wrapped = WrappedFrameTransaction {
             tx,
             wrapper_version,
             blobs_bundle: BlobsBundle {
@@ -3340,7 +3466,8 @@ mod canonic_encoding {
                 P2PTransaction::EIP4844TransactionWithBlobs(_) => TxType::EIP4844,
                 P2PTransaction::EIP7702Transaction(_) => TxType::EIP7702,
                 P2PTransaction::FeeTokenTransaction(_) => TxType::FeeToken,
-                P2PTransaction::FrameTransaction(_) => TxType::Frame,
+                P2PTransaction::FrameTransaction(_)
+                | P2PTransaction::FrameTransactionWithBlobs(_) => TxType::Frame,
             }
         }
 
@@ -3358,6 +3485,7 @@ mod canonic_encoding {
                 P2PTransaction::EIP7702Transaction(t) => t.encode(buf),
                 P2PTransaction::FeeTokenTransaction(t) => t.encode(buf),
                 P2PTransaction::FrameTransaction(t) => t.encode(buf),
+                P2PTransaction::FrameTransactionWithBlobs(t) => t.encode(buf),
             };
         }
 
@@ -3384,6 +3512,7 @@ mod canonic_encoding {
                 P2PTransaction::EIP7702Transaction(t) => t.length(),
                 P2PTransaction::FeeTokenTransaction(t) => t.length(),
                 P2PTransaction::FrameTransaction(t) => t.length(),
+                P2PTransaction::FrameTransactionWithBlobs(t) => t.length(),
             };
             prefix_len + inner_len
         }
@@ -3410,6 +3539,9 @@ mod canonic_encoding {
                 }
                 P2PTransaction::FrameTransaction(t) => {
                     Transaction::FrameTransaction(t.clone()).compute_hash(&NativeCrypto)
+                }
+                P2PTransaction::FrameTransactionWithBlobs(t) => {
+                    Transaction::FrameTransaction(t.tx.clone()).compute_hash(&NativeCrypto)
                 }
             }
         }

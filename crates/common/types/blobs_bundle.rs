@@ -149,7 +149,18 @@ impl BlobsBundle {
         tx: &super::EIP4844Transaction,
         fork: super::Fork,
     ) -> Result<(), BlobsBundleError> {
-        self.validate_cheap(tx, fork)?;
+        self.validate_for_hashes(&tx.blob_versioned_hashes, fork)
+    }
+
+    /// [`Self::validate`] against the versioned hashes of any blob-carrying
+    /// transaction: an EIP-4844 transaction or an EIP-8141 frame transaction.
+    #[cfg(feature = "c-kzg")]
+    pub fn validate_for_hashes(
+        &self,
+        blob_versioned_hashes: &[H256],
+        fork: super::Fork,
+    ) -> Result<(), BlobsBundleError> {
+        self.validate_cheap_for_hashes(blob_versioned_hashes, fork)?;
         self.verify_kzg_proofs()
     }
 
@@ -184,6 +195,17 @@ impl BlobsBundle {
     pub fn validate_cheap(
         &self,
         tx: &super::EIP4844Transaction,
+        fork: super::Fork,
+    ) -> Result<(), BlobsBundleError> {
+        self.validate_cheap_for_hashes(&tx.blob_versioned_hashes, fork)
+    }
+
+    /// [`Self::validate_cheap`] against the versioned hashes of any blob-carrying
+    /// transaction.
+    #[cfg(feature = "c-kzg")]
+    pub fn validate_cheap_for_hashes(
+        &self,
+        blob_versioned_hashes: &[H256],
         fork: super::Fork,
     ) -> Result<(), BlobsBundleError> {
         use super::CELLS_PER_EXT_BLOB;
@@ -227,12 +249,12 @@ impl BlobsBundle {
         if blob_count != self.commitments.len()
             || (self.version == 0 && blob_count != self.proofs.len())
             || (self.version != 0 && blob_count * CELLS_PER_EXT_BLOB != self.proofs.len())
-            || blob_count != tx.blob_versioned_hashes.len()
+            || blob_count != blob_versioned_hashes.len()
         {
             return Err(BlobsBundleError::BlobsBundleWrongLen);
         };
 
-        self.validate_blob_commitment_hashes(&tx.blob_versioned_hashes)?;
+        self.validate_blob_commitment_hashes(blob_versioned_hashes)?;
 
         Ok(())
     }
@@ -245,6 +267,17 @@ impl BlobsBundle {
     pub fn validate_elided(
         &self,
         tx: &super::EIP4844Transaction,
+        fork: super::Fork,
+    ) -> Result<(), BlobsBundleError> {
+        self.validate_elided_for_hashes(&tx.blob_versioned_hashes, fork)
+    }
+
+    /// [`Self::validate_elided`] against the versioned hashes of any blob-carrying
+    /// transaction.
+    #[cfg(feature = "c-kzg")]
+    pub fn validate_elided_for_hashes(
+        &self,
+        blob_versioned_hashes: &[H256],
         fork: super::Fork,
     ) -> Result<(), BlobsBundleError> {
         use super::CELLS_PER_EXT_BLOB;
@@ -261,13 +294,13 @@ impl BlobsBundle {
         if self.version == 0 || fork < Fork::Osaka {
             return Err(BlobsBundleError::InvalidBlobVersionForFork);
         }
-        if blob_count != tx.blob_versioned_hashes.len()
+        if blob_count != blob_versioned_hashes.len()
             || blob_count * CELLS_PER_EXT_BLOB != self.proofs.len()
         {
             return Err(BlobsBundleError::BlobsBundleWrongLen);
         }
 
-        self.validate_blob_commitment_hashes(&tx.blob_versioned_hashes)
+        self.validate_blob_commitment_hashes(blob_versioned_hashes)
     }
 
     /// Return cells for the requested column indices (one inner Vec per blob).

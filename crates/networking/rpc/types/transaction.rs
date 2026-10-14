@@ -4,7 +4,7 @@ use ethrex_common::{
     types::{
         BlockHash, BlockNumber, EIP1559Transaction, EIP2930Transaction, EIP7702Transaction,
         EnvelopeTxType, FeeTokenTransaction, FrameTransaction, LegacyTransaction,
-        PrivilegedL2Transaction, Transaction, WrappedEIP4844Transaction,
+        PrivilegedL2Transaction, Transaction, WrappedEIP4844Transaction, WrappedFrameTransaction,
     },
 };
 use ethrex_crypto::NativeCrypto;
@@ -57,6 +57,8 @@ pub enum SendRawTransactionRequest {
     PrivilegedL2(PrivilegedL2Transaction),
     FeeToken(FeeTokenTransaction),
     Frame(FrameTransaction),
+    /// A blob-carrying frame transaction in its EIP-7594 network wrapper.
+    FrameWithBlobs(WrappedFrameTransaction),
 }
 
 impl SendRawTransactionRequest {
@@ -72,6 +74,9 @@ impl SendRawTransactionRequest {
             }
             SendRawTransactionRequest::FeeToken(t) => Transaction::FeeTokenTransaction(t.clone()),
             SendRawTransactionRequest::Frame(t) => Transaction::FrameTransaction(t.clone()),
+            SendRawTransactionRequest::FrameWithBlobs(t) => {
+                Transaction::FrameTransaction(t.tx.clone())
+            }
         }
     }
 
@@ -96,6 +101,10 @@ impl SendRawTransactionRequest {
                         .map(SendRawTransactionRequest::EIP4844),
                     EnvelopeTxType::EIP7702 => {
                         EIP7702Transaction::decode(tx_bytes).map(SendRawTransactionRequest::EIP7702)
+                    }
+                    EnvelopeTxType::Frame if WrappedFrameTransaction::is_wrapped(tx_bytes)? => {
+                        WrappedFrameTransaction::decode(tx_bytes)
+                            .map(SendRawTransactionRequest::FrameWithBlobs)
                     }
                     EnvelopeTxType::Frame => {
                         FrameTransaction::decode(tx_bytes).map(SendRawTransactionRequest::Frame)

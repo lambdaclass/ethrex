@@ -297,7 +297,9 @@ impl MempoolInner {
         let Some(tx) = self.transaction_pool.remove(hash) else {
             return Ok(());
         };
-        if matches!(tx.tx_type(), TxType::EIP4844) {
+        // "Blob" means carrying a sidecar: an EIP-4844 tx or an EIP-8141 frame tx
+        // with blobs, whose bundle is stored the same way.
+        if tx.transaction().is_blob_carrying() {
             self.remove_blob_bundle(hash);
             // EIP-8070: prune cell data and provider tracking for this tx.
             self.cells.remove(hash);
@@ -895,7 +897,7 @@ impl Mempool {
     ) -> Result<(), MempoolError> {
         let mut inner = self.write()?;
         let is_frame = matches!(transaction.tx_type(), TxType::Frame);
-        let is_blob = matches!(transaction.tx_type(), TxType::EIP4844);
+        let is_blob = transaction.transaction().is_blob_carrying();
 
         // Per-sender admission gates (queued cap #6603, gapped-nonce #6609,
         // cumulative balance #6606), re-checked atomically under the same write
@@ -1305,8 +1307,8 @@ impl Mempool {
         filter: &PendingTxFilter,
     ) -> Result<FxHashMap<Address, Vec<MempoolTransaction>>, StoreError> {
         let filter_tx = |tx: &Transaction| -> bool {
-            // Filter by tx type
-            let is_blob_tx = matches!(tx, Transaction::EIP4844Transaction(_));
+            // Filter by blob-carrying: an EIP-4844 tx or a frame tx with blobs
+            let is_blob_tx = tx.is_blob_carrying();
             if filter.only_plain_txs && is_blob_tx || filter.only_blob_txs && !is_blob_tx {
                 return false;
             }
@@ -2007,9 +2009,7 @@ impl Mempool {
         // one too. Matching on `EIP4844Transaction` alone would classify such
         // a frame tx as non-blob, so a frame↔frame replacement would take the
         // 10% bump and skip the blob-fee comparison entirely — the cheap
-        // sidecar re-propagation the 100% bump exists to prevent. Admission
-        // rejects blob-carrying frame txs today (`FrameTxBlobsUnsupported`),
-        // so this is not yet reachable, but it goes live with #7038.
+        // sidecar re-propagation the 100% bump exists to prevent.
         let new_is_blob = tx.is_blob_carrying();
         let old_is_blob = tx_in_pool.transaction().is_blob_carrying();
         if new_is_blob != old_is_blob {

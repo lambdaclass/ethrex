@@ -1167,6 +1167,13 @@ impl Blockchain {
     ) -> Result<Receipt, ChainError> {
         match **head {
             Transaction::EIP4844Transaction(_) => self.apply_blob_transaction(head, context),
+            // EIP-8141: a frame tx with blobs counts toward the block's blob gas and
+            // carries its bundle into the payload, as an EIP-4844 tx does.
+            Transaction::FrameTransaction(ref frame_tx)
+                if !frame_tx.blob_versioned_hashes.is_empty() =>
+            {
+                self.apply_blob_transaction(head, context)
+            }
             _ => apply_plain_transaction(head, context),
         }
     }

@@ -44,7 +44,7 @@ The mempool is the single in-memory pool of pending transactions held by the nod
 The mempool participates in four flows:
 
 - **RPC ingress** — `eth_sendRawTransaction` calls `Blockchain::add_transaction_to_pool` / `add_blob_transaction_to_pool`.
-- **P2P ingress** — incoming `Transactions` / `PooledTransactions` messages call the same `add_transaction_to_pool` / `add_blob_transaction_to_pool` entry points.
+- **P2P ingress** — incoming `Transactions` / `PooledTransactions` messages call the same `add_transaction_to_pool` / `add_blob_transaction_to_pool` entry points. A transaction delivered with its blobs, EIP-4844 or an EIP-8141 frame transaction with blobs, takes `add_blob_transaction_to_pool`.
 - **Block-building source** — the payload builder calls `Mempool::filter_transactions` to pull pending transactions grouped by sender and sorted by nonce.
 - **Block-removal source** — when fork-choice promotes a new canonical head, `Blockchain::remove_block_transactions_from_pool` evicts every included transaction.
 
@@ -61,7 +61,7 @@ The inner state, mutated only under the write lock:
 | `transaction_pool` | `FxHashMap<H256, MempoolTransaction>` | The authoritative set of pooled transactions, keyed by hash. |
 | `broadcast_pool` | `FxHashSet<H256>` | Hashes still pending the next P2P broadcast tick. Drained by `tx_broadcaster`. |
 | `private_pool` | `FxHashSet<H256>` | Hashes admitted under `--mempool.private`. Never propagated by any P2P path. Cleared on removal alongside `broadcast_pool`. |
-| `blobs_bundle_pool` | `FxHashMap<H256, BlobsBundle>` | EIP-4844 sidecars, keyed by the owning transaction hash. Its key set is the blob txs currently held. |
+| `blobs_bundle_pool` | `FxHashMap<H256, BlobsBundle>` | Blob sidecars of EIP-4844 and blob-carrying EIP-8141 transactions, keyed by the owning transaction hash. Its key set is the blob txs currently held. |
 | `blobs_bundle_by_versioned_hash` | `FxHashMap<H256, FxHashMap<H256, usize>>` | Reverse index: `versioned_hash → { tx_hash → position_in_bundle }`. A blob can be referenced by more than one transaction, so each referencing tx has its own inner entry. |
 | `in_flight_txs` | `FxHashSet<H256>` | Hashes for which a `GetPooledTransactions` request was sent but no response has arrived. Prevents duplicate requests across peers. |
 | `alternates` | `FxHashMap<H256, (VecDeque<Alternate>, Instant)>` | Per-hash queue of alternate announcers (fallback peers to retry against) plus a last-touched instant. |
@@ -118,7 +118,7 @@ Notes on individual checks:
 
 **Privileged short-circuit.** `Transaction::PrivilegedL2Transaction` returns early before pool admission; these are produced by the L2 sequencer.
 
-**Frame transactions (EIP-8141).** Frame txs go through an extended set of gates — fork activation (`FrameTxPreFork`), expiry (`FrameTxExpired`), static structural validity (`InvalidFrameTransaction`), a no-blobs rule (`FrameTxBlobsUnsupported`), a signature-verification gas budget (`FrameTxVerifyGasExceeded` / `FrameTxVerifyGasBudgetExceeded`), signature authenticity and low-`s` malleability (`InvalidFrameSignature` / `FrameTxMalleableSignature`), and validation-prefix shape (`FrameTxUnrecognizedPrefix` / `FrameTxInvalidPrefixStructure`). The validation-prefix simulation and paymaster accounting run last (see [Frame transactions](#frame-transactions-eip-8141)).
+**Frame transactions (EIP-8141).** Frame txs go through an extended set of gates — fork activation (`FrameTxPreFork`), expiry (`FrameTxExpired`), static structural validity (`InvalidFrameTransaction`), a signature-verification gas budget (`FrameTxVerifyGasExceeded` / `FrameTxVerifyGasBudgetExceeded`), signature authenticity and low-`s` malleability (`InvalidFrameSignature` / `FrameTxMalleableSignature`), and validation-prefix shape (`FrameTxUnrecognizedPrefix` / `FrameTxInvalidPrefixStructure`). The validation-prefix simulation and paymaster accounting run last (see [Frame transactions](#frame-transactions-eip-8141)).
 
 **Per-tx wire-size cap.** Non-blob transactions are bounded by `MAX_TX_SIZE = 128 KiB` against `Transaction::encode_canonical_len()`. Blob transactions are bounded by `MAX_BLOB_TX_SIZE` in `add_blob_transaction_to_pool` against the wire wrapper, since ethrex stores the core transaction and the sidecar in separate structs.
 

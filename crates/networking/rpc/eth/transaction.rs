@@ -19,7 +19,7 @@ use ethrex_common::{
     constants::{EMPTY_KECCAK_HASH, GAS_PER_BLOB},
     types::{
         AccessListEntry, BlockHash, BlockHeader, BlockNumber, ChainConfig, GenericTransaction,
-        TxKind,
+        Transaction, TxKind,
     },
 };
 
@@ -968,8 +968,16 @@ impl RpcHandler for SendRawTransactionRequest {
             context
                 .blockchain
                 .add_local_blob_transaction_to_pool(
-                    wrapped_blob_tx.tx.clone(),
+                    Transaction::EIP4844Transaction(wrapped_blob_tx.tx.clone()),
                     wrapped_blob_tx.blobs_bundle.clone(),
+                )
+                .await
+        } else if let SendRawTransactionRequest::FrameWithBlobs(wrapped_frame_tx) = self {
+            context
+                .blockchain
+                .add_local_blob_transaction_to_pool(
+                    Transaction::FrameTransaction(wrapped_frame_tx.tx.clone()),
+                    wrapped_frame_tx.blobs_bundle.clone(),
                 )
                 .await
         } else {
