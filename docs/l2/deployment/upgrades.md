@@ -124,7 +124,7 @@ After updating the on-chain value, restart the sequencer for it to take effect. 
 
 The SP1 prover moves from SP1 5 to SP1 6.9.0. Its proofs need the `v6.1.0` `SP1VerifierGroth16`, and the OnChainProposer gains `upgradeSP1Verifier(address)` to point at it. Deployments that require SP1 proofs need both: the SP1 5 verifier they were deployed with rejects SP1 6 proofs whatever verification key is registered, because SP1 6 wraps its proofs in a different Groth16 circuit. The OnChainProposer has not changed since v25, so deployments from v25 onwards follow the same steps.
 
-The OnChainProposer reads a single verifier address, so the contract steps go between two points: after every batch committed by the old version is verified, since its proofs only pass the old verifier, and before the new version submits its first proof. The nodes can move either without downtime or with a stop.
+The OnChainProposer reads a single verifier address, so the contract steps go between two points: after every batch committed by the old version is verified, since its proofs only pass the old verifier, and before the new version submits its first proof. The v30 OnChainProposer enforces the first point: the call in step 2 reverts with `UnverifiedBatchesPending` while a batch is unverified. The nodes can move either without downtime or with a stop.
 
 #### Contract steps
 
