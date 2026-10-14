@@ -17,6 +17,7 @@ use crate::PrewarmedEntry;
 use crate::{Blockchain, BlockchainType};
 #[cfg(feature = "rayon")]
 use ethrex_common::H256;
+#[cfg(feature = "rayon")]
 use ethrex_common::seeded_hash::{SeededHashMap, SeededHashSet};
 use ethrex_common::types::{BlockHeader, MempoolTransaction, Transaction};
 use ethrex_common::{Address, U256};
