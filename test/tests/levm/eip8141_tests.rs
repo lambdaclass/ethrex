@@ -13,8 +13,8 @@
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::{
-    Account, BlockHeader, Code, FRAME_RECEIPT_STATUS_SUCCESS, Fork, Frame, FrameMode,
-    FrameTransaction, Transaction,
+    Account, BlockHeader, Code, FRAME_RECEIPT_STATUS_SKIPPED, FRAME_RECEIPT_STATUS_SUCCESS, Fork,
+    Frame, FrameMode, FrameTransaction, Transaction,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
@@ -567,6 +567,158 @@ fn frameparam_reads_frame_index_from_stack_top() {
         stored,
         U256::from(77_777u64),
         "FRAMEPARAM read the wrong operand order (stored {stored:#x}, expected 77_777)"
+    );
+}
+
+/// FRAMEPARAM(param=0x05, frameIndex=3) -> status of frame[3], then SSTORE at slot 0.
+/// FRAMEPARAM takes frameIndex from the top of the stack and param below it, so 0x03 (the
+/// frameIndex) is pushed last.
+/// Bytecode: PUSH1 0x05 (param), PUSH1 0x03 (frameIndex), FRAMEPARAM (0xB3),
+///           PUSH1 0x00 (slot key), SSTORE (0x55), STOP (0x00).
+const FRAMEPARAM_READ_FRAME3_STATUS: &[u8] =
+    &[0x60, 0x05, 0x60, 0x03, 0xB3, 0x60, 0x00, 0x55, 0x00];
+
+/// Covers both halves of an atomic-batch revert: a frame the batch never reached
+/// reports `0x2` SKIPPED and is refunded, and a frame that executed before the
+/// failure keeps the status and gas it earned, losing only its logs. Both feed the
+/// block header `gasUsed` and the receipts trie, so each assertion here is
+/// consensus-visible.
+#[test]
+fn frameparam_status_of_skipped_frame_is_two() {
+    // EIP-8141: a frame skipped by a failed atomic batch reports status 0x2
+    // (not 0x3). Layout:
+    //   frame0: VERIFY on the sender -> APPROVE(3) -> payer + sender_approved.
+    //   frame1: DEFAULT, atomic-batch flag, succeeds -> rolled back with the batch.
+    //   frame2: DEFAULT, atomic-batch flag, reverts -> unrolls the batch.
+    //   frame3: DEFAULT, atomic-batch flag -> SKIPPED.
+    //   frame4: DEFAULT, no flag -> batch terminator, also SKIPPED.
+    //   frame5: DEFAULT, no flag -> reads FRAMEPARAM(0x05, 3) and stores it.
+    const ROLLED_BACK_FRAME_GAS_LIMIT: u64 = 30_000;
+    let reverter = Address::from_low_u64_be(0xD1);
+    let stop_ct = Address::from_low_u64_be(0xD2);
+    let reader = Address::from_low_u64_be(0xD3);
+    // Emits an empty LOG0 and stops, so the rolled-back frame has both gas and a log
+    // to account for: PUSH1 0x00, PUSH1 0x00, LOG0, STOP.
+    let logger = Address::from_low_u64_be(0xD4);
+    const LOGGER_CODE: &[u8] = &[0x60, 0x00, 0x60, 0x00, 0xA0, 0x00];
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0x04,
+            target: Some(logger),
+            gas_limit: ROLLED_BACK_FRAME_GAS_LIMIT,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0x04,
+            target: Some(reverter),
+            gas_limit: 60_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0x04,
+            target: Some(stop_ct),
+            gas_limit: 30_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0x00,
+            target: Some(stop_ct),
+            gas_limit: 30_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0x00,
+            target: Some(reader),
+            // EIP-8037 (active at Hegota): the new-slot SSTORE spills
+            // STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte (~98k) into
+            // the frame's regular gas, so the budget must cover it.
+            gas_limit: 300_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ]);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (
+            reverter,
+            U256::zero(),
+            0,
+            Bytes::from(PURE_REVERT_CODE.to_vec()),
+        ),
+        (stop_ct, U256::zero(), 0, Bytes::from(vec![0x00u8])), // STOP
+        (logger, U256::zero(), 0, Bytes::from(LOGGER_CODE.to_vec())),
+        (
+            reader,
+            U256::zero(),
+            0,
+            Bytes::from(FRAMEPARAM_READ_FRAME3_STATUS.to_vec()),
+        ),
+    ];
+    let (result, db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("a DEFAULT-frame batch revert must not invalidate the tx");
+
+    let frame_results = report
+        .frame_results
+        .expect("frame tx report must carry per-frame results");
+    assert_eq!(
+        frame_results[3].0, FRAME_RECEIPT_STATUS_SKIPPED,
+        "frame[3] must be recorded as skipped"
+    );
+    assert_eq!(
+        frame_results[4].0, FRAME_RECEIPT_STATUS_SKIPPED,
+        "the batch terminator is part of the skip"
+    );
+    // Skipped frames are refunded, and `gas_used` here feeds the block header's
+    // `gasUsed`, so the zero is consensus-visible.
+    assert_eq!(frame_results[3].1, 0, "a skipped frame consumes no gas");
+    assert_eq!(frame_results[4].1, 0);
+    // EIP-8141: "Those frame receipts retain their execution status and gas used,
+    // with empty logs." frame[1] ran and succeeded before the batch failed, so it
+    // keeps SUCCESS and the gas it actually used — charging its full gas_limit would
+    // bill the payer for gas the transaction never spent, and bills a frame
+    // differently inside a batch than outside one.
+    assert_eq!(
+        frame_results[1].0,
+        ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
+        "a frame that succeeded before the batch failed keeps its status"
+    );
+    assert!(
+        frame_results[1].1 > 0 && frame_results[1].1 < ROLLED_BACK_FRAME_GAS_LIMIT,
+        "a rolled-back batch frame keeps the gas it used, not its full limit: {}",
+        frame_results[1].1
+    );
+    assert!(
+        frame_results[1].2.is_empty(),
+        "logs written before the failure are discarded with the batch state"
+    );
+    // The failing frame reverted, so it is charged what it used, exactly as it would
+    // be outside a batch.
+    assert!(
+        frame_results[2].1 < 60_000,
+        "a REVERTing frame is charged its actual gas inside a batch too: {}",
+        frame_results[2].1
+    );
+
+    // FRAMEPARAM(0x05) must surface the same code, and it must be 2.
+    assert_eq!(
+        storage_slot(&db, reader, H256::zero()),
+        U256::from(2u64),
+        "FRAMEPARAM param 0x05 must return 2 for a frame skipped by a failed atomic batch"
     );
 }
 
