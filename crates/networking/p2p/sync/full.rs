@@ -700,7 +700,10 @@ async fn add_blocks_in_batch(
             .iter()
             .any(|b| chain_config.is_amsterdam_activated(b.header.timestamp));
         if any_amsterdam {
-            match peers.request_block_access_lists(&blocks_hashes).await {
+            let headers: Vec<BlockHeader> = blocks.iter().map(|b| b.header.clone()).collect();
+            match peers.request_block_access_lists(&headers).await {
+                // Every list returned matches its block's header commitment. That matters
+                // for the final batch: `run_blocks_pipeline` executes with it as given.
                 // Servers stop a response at a byte budget and keep request order, so a
                 // shorter answer covers the first blocks; the rest run without a BAL.
                 Ok(Some(mut bals)) if !bals.is_empty() && bals.len() <= blocks.len() => {

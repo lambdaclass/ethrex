@@ -30,7 +30,7 @@ use ethrex_storage::Store;
 use ethrex_vm::{ExecutionResult, backends::levm::get_max_allowed_gas_limit};
 use serde::Serialize;
 
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use tracing::debug;
 
 /// Allowed upward overestimation before the estimate's binary search stops, matching
@@ -115,7 +115,7 @@ pub struct AccessListResult {
 }
 
 impl RpcHandler for CallRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<CallRequest, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<CallRequest, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -130,19 +130,19 @@ impl RpcHandler for CallRequest {
         }
         let block = match params.get(1) {
             // Differentiate between missing and bad block param
-            Some(value) => Some(BlockIdentifierOrHash::parse(value.clone(), 1)?),
+            Some(value) => Some(BlockIdentifierOrHash::parse_param(value, 1)?),
             None => None,
         };
         let state_overrides = match params.get(2) {
-            Some(value) if !value.is_null() => Some(serde_json::from_value(value.clone())?),
+            Some(value) if value.get() != "null" => Some(serde_json::from_str(value.get())?),
             _ => None,
         };
         let block_overrides = match params.get(3) {
-            Some(value) if !value.is_null() => Some(serde_json::from_value(value.clone())?),
+            Some(value) if value.get() != "null" => Some(serde_json::from_str(value.get())?),
             _ => None,
         };
         Ok(CallRequest {
-            transaction: serde_json::from_value(params[0].clone())?,
+            transaction: serde_json::from_str(params[0].get())?,
             block,
             state_overrides,
             block_overrides,
@@ -186,7 +186,7 @@ impl RpcHandler for CallRequest {
 
 impl RpcHandler for GetTransactionByBlockNumberAndIndexRequest {
     fn parse(
-        params: &Option<Vec<Value>>,
+        params: &Option<Vec<Box<RawValue>>>,
     ) -> Result<GetTransactionByBlockNumberAndIndexRequest, RpcErr> {
         let params = params
             .as_ref()
@@ -197,9 +197,9 @@ impl RpcHandler for GetTransactionByBlockNumberAndIndexRequest {
                 params.len()
             )));
         };
-        let index_as_string: String = serde_json::from_value(params[1].clone())?;
+        let index_as_string: String = serde_json::from_str(params[1].get())?;
         Ok(GetTransactionByBlockNumberAndIndexRequest {
-            block: BlockIdentifier::parse(params[0].clone(), 0)?,
+            block: BlockIdentifier::parse_param(&params[0], 0)?,
             transaction_index: usize::from_str_radix(index_as_string.trim_start_matches("0x"), 16)
                 .map_err(|error| RpcErr::BadParams(error.to_string()))?,
         })
@@ -238,7 +238,7 @@ impl RpcHandler for GetTransactionByBlockNumberAndIndexRequest {
 
 impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
     fn parse(
-        params: &Option<Vec<Value>>,
+        params: &Option<Vec<Box<RawValue>>>,
     ) -> Result<GetTransactionByBlockHashAndIndexRequest, RpcErr> {
         let params = params
             .as_ref()
@@ -249,9 +249,9 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
                 params.len()
             )));
         };
-        let index_as_string: String = serde_json::from_value(params[1].clone())?;
+        let index_as_string: String = serde_json::from_str(params[1].get())?;
         Ok(GetTransactionByBlockHashAndIndexRequest {
-            block: serde_json::from_value(params[0].clone())?,
+            block: serde_json::from_str(params[0].get())?,
             transaction_index: usize::from_str_radix(index_as_string.trim_start_matches("0x"), 16)
                 .map_err(|error| RpcErr::BadParams(error.to_string()))?,
         })
@@ -284,7 +284,7 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
 }
 
 impl RpcHandler for GetTransactionByHashRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetTransactionByHashRequest, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<GetTransactionByHashRequest, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -295,7 +295,7 @@ impl RpcHandler for GetTransactionByHashRequest {
             )));
         };
         Ok(GetTransactionByHashRequest {
-            transaction_hash: serde_json::from_value(params[0].clone())?,
+            transaction_hash: serde_json::from_str(params[0].get())?,
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -335,7 +335,7 @@ impl RpcHandler for GetTransactionByHashRequest {
 }
 
 impl RpcHandler for GetTransactionReceiptRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetTransactionReceiptRequest, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<GetTransactionReceiptRequest, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -346,7 +346,7 @@ impl RpcHandler for GetTransactionReceiptRequest {
             )));
         };
         Ok(GetTransactionReceiptRequest {
-            transaction_hash: serde_json::from_value(params[0].clone())?,
+            transaction_hash: serde_json::from_str(params[0].get())?,
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -376,7 +376,7 @@ impl RpcHandler for GetTransactionReceiptRequest {
 }
 
 impl RpcHandler for CreateAccessListRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<CreateAccessListRequest, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<CreateAccessListRequest, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -391,15 +391,15 @@ impl RpcHandler for CreateAccessListRequest {
         }
         let block = match params.get(1) {
             // Differentiate between missing and bad block param
-            Some(value) => Some(BlockIdentifierOrHash::parse(value.clone(), 1)?),
+            Some(value) => Some(BlockIdentifierOrHash::parse_param(value, 1)?),
             None => None,
         };
         let state_overrides = match params.get(2) {
-            Some(value) if !value.is_null() => Some(serde_json::from_value(value.clone())?),
+            Some(value) if value.get() != "null" => Some(serde_json::from_str(value.get())?),
             _ => None,
         };
         Ok(CreateAccessListRequest {
-            transaction: serde_json::from_value(params[0].clone())?,
+            transaction: serde_json::from_str(params[0].get())?,
             block,
             state_overrides,
         })
@@ -458,7 +458,7 @@ impl RpcHandler for CreateAccessListRequest {
 }
 
 impl RpcHandler for GetRawTransactionByBlockAndIndex {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -468,9 +468,9 @@ impl RpcHandler for GetRawTransactionByBlockAndIndex {
                 params.len()
             )));
         };
-        let index_as_string: String = serde_json::from_value(params[1].clone())?;
+        let index_as_string: String = serde_json::from_str(params[1].get())?;
         Ok(GetRawTransactionByBlockAndIndex {
-            block: BlockIdentifierOrHash::parse(params[0].clone(), 0)?,
+            block: BlockIdentifierOrHash::parse_param(&params[0], 0)?,
             transaction_index: usize::from_str_radix(index_as_string.trim_start_matches("0x"), 16)
                 .map_err(|error| RpcErr::BadParams(error.to_string()))?,
         })
@@ -500,7 +500,7 @@ impl RpcHandler for GetRawTransactionByBlockAndIndex {
 }
 
 impl RpcHandler for GetRawTransaction {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -511,13 +511,13 @@ impl RpcHandler for GetRawTransaction {
             )));
         };
 
-        let transaction_str: String = serde_json::from_value(params[0].clone())?;
+        let transaction_str: String = serde_json::from_str(params[0].get())?;
         if !transaction_str.starts_with("0x") {
             return Err(RpcErr::BadHexFormat(0));
         }
 
         Ok(GetRawTransaction {
-            transaction_hash: serde_json::from_value(params[0].clone())?,
+            transaction_hash: serde_json::from_str(params[0].get())?,
         })
     }
 
@@ -544,7 +544,7 @@ impl RpcHandler for GetRawTransaction {
 }
 
 impl RpcHandler for EstimateGasRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<EstimateGasRequest, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<EstimateGasRequest, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -559,19 +559,19 @@ impl RpcHandler for EstimateGasRequest {
         }
         let block = match params.get(1) {
             // Differentiate between missing and bad block param
-            Some(value) => Some(BlockIdentifierOrHash::parse(value.clone(), 1)?),
+            Some(value) => Some(BlockIdentifierOrHash::parse_param(value, 1)?),
             None => None,
         };
         let state_overrides = match params.get(2) {
-            Some(value) if !value.is_null() => Some(serde_json::from_value(value.clone())?),
+            Some(value) if value.get() != "null" => Some(serde_json::from_str(value.get())?),
             _ => None,
         };
         let block_overrides = match params.get(3) {
-            Some(value) if !value.is_null() => Some(serde_json::from_value(value.clone())?),
+            Some(value) if value.get() != "null" => Some(serde_json::from_str(value.get())?),
             _ => None,
         };
         Ok(EstimateGasRequest {
-            transaction: serde_json::from_value(params[0].clone())?,
+            transaction: serde_json::from_str(params[0].get())?,
             block,
             state_overrides,
             block_overrides,
@@ -946,7 +946,7 @@ pub(crate) fn simulate_tx_with_overrides(
 }
 
 impl RpcHandler for SendRawTransactionRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<SendRawTransactionRequest, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<SendRawTransactionRequest, RpcErr> {
         let data = get_transaction_data(params)?;
 
         let transaction = SendRawTransactionRequest::decode_canonical(&data)
@@ -983,7 +983,7 @@ impl RpcHandler for SendRawTransactionRequest {
     }
 }
 
-fn get_transaction_data(rpc_req_params: &Option<Vec<Value>>) -> Result<Vec<u8>, RpcErr> {
+fn get_transaction_data(rpc_req_params: &Option<Vec<Box<RawValue>>>) -> Result<Vec<u8>, RpcErr> {
     let params = rpc_req_params
         .as_ref()
         .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -994,7 +994,7 @@ fn get_transaction_data(rpc_req_params: &Option<Vec<Value>>) -> Result<Vec<u8>, 
         )));
     };
 
-    let str_data = serde_json::from_value::<String>(params[0].clone())?;
+    let str_data = serde_json::from_str::<String>(params[0].get())?;
     let str_data = str_data
         .strip_prefix("0x")
         .ok_or(RpcErr::BadParams("Params are note 0x prefixed".to_owned()))?;
@@ -1004,6 +1004,7 @@ fn get_transaction_data(rpc_req_params: &Option<Vec<Value>>) -> Result<Vec<u8>, 
 #[cfg(test)]
 mod override_parse_tests {
     use super::*;
+    use crate::test_utils::raw_params;
     use serde_json::json;
 
     fn make_tx() -> Value {
@@ -1023,7 +1024,7 @@ mod override_parse_tests {
                 "0x000000000000000000000000000000000000beef": {"balance": "0xff"}
             }),
         ]);
-        let req = CallRequest::parse(&params).unwrap();
+        let req = CallRequest::parse(&raw_params(&params)).unwrap();
         assert!(req.state_overrides.is_some());
         assert!(req.block_overrides.is_none());
     }
@@ -1036,7 +1037,7 @@ mod override_parse_tests {
             json!({}),
             json!({"number": "0x1234"}),
         ]);
-        let req = CallRequest::parse(&params).unwrap();
+        let req = CallRequest::parse(&raw_params(&params)).unwrap();
         assert_eq!(req.block_overrides.as_ref().unwrap().number, Some(0x1234));
     }
 
@@ -1049,7 +1050,7 @@ mod override_parse_tests {
             json!({}),
             json!(null),
         ]);
-        match CallRequest::parse(&params) {
+        match CallRequest::parse(&raw_params(&params)) {
             Err(e) => assert!(format!("{e}").contains("Expected"), "{e}"),
             Ok(_) => panic!("expected BadParams"),
         }
@@ -1063,7 +1064,7 @@ mod override_parse_tests {
             json!({}),
             json!({"time": "0x65000000"}),
         ]);
-        let req = EstimateGasRequest::parse(&params).unwrap();
+        let req = EstimateGasRequest::parse(&raw_params(&params)).unwrap();
         assert!(req.block_overrides.is_some());
     }
 
@@ -1074,14 +1075,14 @@ mod override_parse_tests {
             json!("latest"),
             json!({"0x000000000000000000000000000000000000beef": {"balance": "0x1"}}),
         ]);
-        let req = CreateAccessListRequest::parse(&params).unwrap();
+        let req = CreateAccessListRequest::parse(&raw_params(&params)).unwrap();
         assert!(req.state_overrides.is_some());
     }
 
     #[test]
     fn create_access_list_rejects_4_params() {
         let params = Some(vec![make_tx(), json!("latest"), json!({}), json!({})]);
-        match CreateAccessListRequest::parse(&params) {
+        match CreateAccessListRequest::parse(&raw_params(&params)) {
             Err(e) => assert!(format!("{e}").contains("Expected"), "{e}"),
             Ok(_) => panic!("expected BadParams"),
         }
@@ -1091,7 +1092,7 @@ mod override_parse_tests {
     fn estimate_gas_request_accepts_block_hash() {
         let hash = "0xd226371d0b1551adb03fb52b71f08e3e11247fe9b1af994768af8cdaa8e7dcd7";
         let params = Some(vec![make_tx(), json!(hash)]);
-        let req = EstimateGasRequest::parse(&params).unwrap();
+        let req = EstimateGasRequest::parse(&raw_params(&params)).unwrap();
         assert!(matches!(req.block, Some(BlockIdentifierOrHash::Hash(_))));
     }
 
@@ -1099,14 +1100,14 @@ mod override_parse_tests {
     fn create_access_list_accepts_block_hash() {
         let hash = "0xd226371d0b1551adb03fb52b71f08e3e11247fe9b1af994768af8cdaa8e7dcd7";
         let params = Some(vec![make_tx(), json!(hash)]);
-        let req = CreateAccessListRequest::parse(&params).unwrap();
+        let req = CreateAccessListRequest::parse(&raw_params(&params)).unwrap();
         assert!(matches!(req.block, Some(BlockIdentifierOrHash::Hash(_))));
     }
 
     #[test]
     fn null_state_override_param_is_no_op() {
         let params = Some(vec![make_tx(), json!("latest"), json!(null), json!(null)]);
-        let req = CallRequest::parse(&params).unwrap();
+        let req = CallRequest::parse(&raw_params(&params)).unwrap();
         assert!(req.state_overrides.is_none());
         assert!(req.block_overrides.is_none());
     }
