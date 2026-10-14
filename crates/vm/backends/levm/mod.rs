@@ -1,7 +1,10 @@
 pub mod db;
 mod tracing;
 
-use super::{BlockExecutionResult, FrameValidationOutcome, TxGasBreakdown, compute_burned_fees};
+use super::{
+    BlockExecutionResult, ExecutionGasCap, FrameValidationOutcome, TxGasBreakdown,
+    compute_burned_fees,
+};
 use crate::system_contracts::{
     AMSTERDAM_REQUEST_PREDEPLOYS, BEACON_ROOTS_ADDRESS, BUILDER_DEPOSIT_CONTRACT_ADDRESS,
     BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
@@ -3436,6 +3439,7 @@ impl LEVM {
             disable_nonce_check: false,
             disable_gas_allowance_check: false,
             disable_sender_eoa_check: false,
+            disable_execution_gas_cap: false,
             is_system_call: false,
         };
 
@@ -3533,12 +3537,14 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
         stateless_validator: Option<&dyn StatelessValidator>,
+        execution_gas_cap: ExecutionGasCap,
     ) -> Result<ExecutionResult, EvmError> {
         // `env_from_generic` already relaxes the admission-only validations for every
         // simulation RPC, the gas allowance included. `block_gas_limit` keeps the block's
         // real value there: the GASLIMIT opcode reads it, so overwriting it would make
         // 0x45 return a number that appears nowhere on chain.
         let mut env = env_from_generic(tx, block_header, db, vm_type)?;
+        env.disable_execution_gas_cap = execution_gas_cap == ExecutionGasCap::Lifted;
 
         adjust_disabled_base_fee(&mut env);
 
@@ -4365,6 +4371,10 @@ pub(crate) fn env_from_generic(
         // Same reasoning: a simulated call carries no signature, so EIP-3607 has nothing
         // to protect, and a contract as `from` is a normal thing to simulate.
         disable_sender_eoa_check: true,
+        // Lifted per caller: `eth_call` and `debug_traceCall` may spend their whole gas
+        // limit on execution after Amsterdam, `eth_estimateGas` and `eth_createAccessList`
+        // keep the transaction rule so their answers hold for a real transaction.
+        disable_execution_gas_cap: false,
         is_system_call: false,
     })
 }

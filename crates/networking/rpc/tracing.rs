@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, value::RawValue};
 
 use crate::{
+    eth::transaction::simulation_gas_limit,
     rpc::{RpcApiContext, RpcHandler},
     types::{
         block_identifier::{BlockIdentifier, BlockIdentifierOrHash},
@@ -578,7 +579,7 @@ impl RpcHandler for TraceCallRequest {
         // `ToMessage` (`args.Nonce = db.GetNonce(from)`) and `eth_estimateGas`. Without this
         // the VM's nonce check compares the account's real nonce against a default of 0 and
         // rejects the call.
-        let transaction = match self.transaction.nonce {
+        let mut transaction = match self.transaction.nonce {
             Some(_) => self.transaction.clone(),
             None => {
                 let nonce = context
@@ -590,6 +591,21 @@ impl RpcHandler for TraceCallRequest {
                 transaction
             }
         };
+        // Bounded by the node's RPC gas cap, whatever the request asks for. The header the
+        // call runs against decides the fork, and with it the default allowance.
+        {
+            let env_header = overrides.effective_header.as_ref().unwrap_or(&block.header);
+            let fork = context
+                .storage
+                .get_chain_config()
+                .fork(env_header.timestamp);
+            transaction.gas = Some(simulation_gas_limit(
+                transaction.gas,
+                env_header,
+                fork,
+                context.rpc_gas_cap,
+            ));
+        }
 
         match self.trace_config.base.tracer {
             TracerType::CallTracer => {

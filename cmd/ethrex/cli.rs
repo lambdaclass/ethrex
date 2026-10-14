@@ -360,6 +360,16 @@ pub struct Options {
     )]
     pub http_api: Vec<ethrex_rpc::RpcNamespace>,
     #[arg(
+        long = "rpc.gascap",
+        default_value_t = ethrex_rpc::DEFAULT_RPC_GAS_CAP,
+        value_name = "GAS",
+        help = "Gas cap for eth_call, eth_estimateGas, eth_createAccessList and debug_traceCall. 0 disables the cap.",
+        long_help = "Upper bound on the gas a simulation RPC (eth_call, eth_estimateGas, eth_createAccessList, debug_traceCall) runs with, whatever the request asks for. The memory a call can use grows with its gas, so the cap bounds what one request can make the node allocate. 0 disables the cap.",
+        help_heading = "RPC options",
+        env = "ETHREX_RPC_GAS_CAP"
+    )]
+    pub rpc_gas_cap: u64,
+    #[arg(
         long = "ws.enabled",
         default_value = "false",
         help = "Enable websocket rpc server. Disabled by default.",
@@ -622,6 +632,7 @@ impl Default for Options {
             http_addr: Default::default(),
             http_port: Default::default(),
             http_api: ethrex_rpc::DEFAULT_HTTP_API.to_vec(),
+            rpc_gas_cap: ethrex_rpc::DEFAULT_RPC_GAS_CAP,
             ws_enabled: false,
             ws_addr: Default::default(),
             ws_port: Default::default(),
@@ -1474,6 +1485,15 @@ mod tests {
             ws, http,
             "WS must share the HTTP endpoint by default (single listener)"
         );
+    }
+
+    /// `--rpc.gascap` defaults to geth's 50M and accepts 0 to disable the cap.
+    #[test]
+    fn rpc_gascap_defaults_to_50m_and_accepts_zero() {
+        let cli = CLI::parse_from(["ethrex"]);
+        assert_eq!(cli.opts.rpc_gas_cap, 50_000_000);
+        let cli = CLI::parse_from(["ethrex", "--rpc.gascap", "0"]);
+        assert_eq!(cli.opts.rpc_gas_cap, 0);
     }
 
     /// `--http.api` must default to `eth,net,web3`. Operators have to opt in
