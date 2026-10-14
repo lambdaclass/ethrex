@@ -26,15 +26,19 @@ ethrex l2 prover \
 
 ## Troubleshooting
 
-### `docker: Error response from daemon: could not select device driver "" with capabilities: [[gpu]]`
+### `Could not connect to sp1-gpu-server socket`
 
-If you encounter the following error when starting the SP1 prover with GPU support:
+If the SP1 GPU prover stops at startup with:
 
 ```plaintext
-docker: Error response from daemon: could not select device driver "" with capabilities: [[gpu]]
+Failed to create the CUDA prover impl: CudaClientError: Connect(Os { code: 2, kind: NotFound, message: "No such file or directory" })
+Context: "Could not connect to `sp1-gpu-server` socket"
 ```
 
-This error indicates that Docker is unable to find a suitable GPU driver for running containers with GPU support. To resolve this issue, follow these steps:
+the SP1 SDK started its `sp1-gpu-server`, but the server did not open its socket within the one second the SDK waits for it. The server initializes the GPU before it opens the socket, and with persistence mode disabled the NVIDIA driver initializes the GPU again on every start, which can take a few seconds. Enable persistence mode and start the prover again:
 
-1. **Install NVIDIA Container Toolkit**: Ensure that you have the NVIDIA Container Toolkit installed on your system. This toolkit allows Docker to utilize NVIDIA GPUs. You can follow the installation instructions from the [official NVIDIA documentation](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
-2. **Configure Docker to use the NVIDIA runtime**: After installing the NVIDIA Container Toolkit, you need to configure Docker to use the NVIDIA runtime by default. You can do this by following the instructions in the [Configuring Docker documentation](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html#configuring-docker).
+```shell
+sudo nvidia-smi -pm 1
+```
+
+Persistence mode is reset on reboot. To keep it enabled, run the `nvidia-persistenced` service.

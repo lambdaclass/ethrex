@@ -83,6 +83,13 @@ jobs:
       - name: Clean stale sp1-gpu-server
         run: pkill -x sp1-gpu-server || true
 
+      # The SP1 SDK gives the `sp1-gpu-server` it starts about one second to
+      # open its socket, and the server initializes the GPU first. With
+      # persistence mode disabled the driver initializes the GPU again on every
+      # start, which takes about two seconds on this runner.
+      - name: Enable GPU persistence mode
+        run: sudo nvidia-smi -pm 1
+
       - name: Build prover
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
