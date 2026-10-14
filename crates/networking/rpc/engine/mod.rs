@@ -2,6 +2,7 @@ pub mod blobs;
 pub mod client_version;
 pub mod exchange_transition_config;
 pub mod fork_choice;
+pub(crate) mod in_flight;
 pub mod payload;
 
 use crate::{
@@ -9,7 +10,7 @@ use crate::{
     utils::RpcErr,
     utils::RpcRequest,
 };
-use serde_json::{Value, json};
+use serde_json::{Value, json, value::RawValue};
 
 pub type ExchangeCapabilitiesRequest = Vec<String>;
 
@@ -46,24 +47,22 @@ pub const CAPABILITIES: [&str; 26] = [
 
 impl From<ExchangeCapabilitiesRequest> for RpcRequest {
     fn from(val: ExchangeCapabilitiesRequest) -> Self {
-        RpcRequest {
-            method: "engine_exchangeCapabilities".to_string(),
-            params: Some(vec![serde_json::json!(val)]),
-            ..Default::default()
-        }
+        RpcRequest::new(
+            "engine_exchangeCapabilities",
+            Some(vec![serde_json::json!(val)]),
+        )
     }
 }
 
 impl RpcHandler for ExchangeCapabilitiesRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?
             .first()
             .ok_or(RpcErr::BadParams("Expected 1 param".to_owned()))
             .and_then(|v| {
-                serde_json::from_value(v.clone())
-                    .map_err(|error| RpcErr::BadParams(error.to_string()))
+                serde_json::from_str(v.get()).map_err(|error| RpcErr::BadParams(error.to_string()))
             })
     }
 

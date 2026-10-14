@@ -1,4 +1,5 @@
 mod authrpc_batch_tests;
+mod authrpc_limits_tests;
 mod block_access_list_tests;
 mod client_version_tests;
 mod context_teardown_tests;
@@ -10,6 +11,7 @@ mod get_block_by_hash_tests;
 mod http_batch_tests;
 mod missing_rpc_methods_tests;
 mod new_payload_bal_tests;
+mod new_payload_duplicate_tests;
 mod new_payload_known_canonical_tests;
 mod precompile_move_tests;
 mod raw_receipts_completeness_tests;
