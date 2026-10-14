@@ -12,11 +12,10 @@ use crate::system_contracts::{
     PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use ethrex_common::H256;
 #[cfg(feature = "rayon")]
 use ethrex_common::constants::EMPTY_KECCAK_HASH;
-use ethrex_common::types::Code;
 #[cfg(feature = "rayon")]
 use ethrex_common::types::TxType;
 use ethrex_common::types::block_access_list::BlockAccessList;
@@ -28,6 +27,7 @@ use ethrex_common::types::block_access_list::{
 };
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
+use ethrex_common::types::{Code, InitcodeBuffer};
 #[cfg(feature = "rayon")]
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
@@ -364,9 +364,12 @@ impl LEVM {
         let chain_id = chain_config.chain_id;
         let base_blob_fee_per_gas =
             get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_config)?;
-        // Stack/memory buffer pools reused across txs (each tx draws one and reclaims it).
+        // Stack, memory, calldata and initcode buffer pools reused across txs (each tx draws from
+        // them and reclaims into them).
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
         let mut shared_memory_pool = Vec::with_capacity(1);
+        let mut shared_calldata_pool = Vec::new();
+        let mut shared_initcode_pool = Vec::new();
 
         let n_txs = block.body.transactions.len();
         let mut receipts = Vec::with_capacity(n_txs);
@@ -429,6 +432,8 @@ impl LEVM {
                 base_blob_fee_per_gas,
                 &mut shared_stack_pool,
                 &mut shared_memory_pool,
+                &mut shared_calldata_pool,
+                &mut shared_initcode_pool,
                 false,
                 crypto,
                 evm_config,
@@ -866,6 +871,9 @@ impl LEVM {
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
         // Holds at most one root memory buffer at a time (each tx pops one and reclaims one).
         let mut shared_memory_pool = Vec::with_capacity(1);
+        // Child-frame calldata and initcode buffers, reused across txs like the stacks.
+        let mut shared_calldata_pool = Vec::new();
+        let mut shared_initcode_pool = Vec::new();
 
         let n_txs = block.body.transactions.len();
         let mut receipts = Vec::with_capacity(n_txs);
@@ -924,6 +932,8 @@ impl LEVM {
                 base_blob_fee_per_gas,
                 &mut shared_stack_pool,
                 &mut shared_memory_pool,
+                &mut shared_calldata_pool,
+                &mut shared_initcode_pool,
                 false,
                 crypto,
                 evm_config,
@@ -1638,6 +1648,9 @@ impl LEVM {
                 let mut stack_pool = Vec::with_capacity(8);
                 // Holds at most one root memory buffer (popped + reclaimed per tx).
                 let mut memory_pool = Vec::with_capacity(1);
+                // Per-tx like the pools above: buffers are reused only within this tx.
+                let mut calldata_pool = Vec::new();
+                let mut initcode_pool = Vec::new();
 
                 // Enable accessed_accounts tracker (coarse) for `unaccessed_pure_accounts`
                 // diagnostics. Safe to over-report: used only to REMOVE entries from a
@@ -1668,6 +1681,8 @@ impl LEVM {
                     base_blob_fee_per_gas,
                     &mut stack_pool,
                     &mut memory_pool,
+                    &mut calldata_pool,
+                    &mut initcode_pool,
                     false,
                     crypto,
                     evm_config,
@@ -3258,6 +3273,9 @@ impl LEVM {
                 // init; keep it local to this group's run, where it still amortizes the buffer
                 // alloc across the group's txs.
                 let mut memory_pool = Vec::with_capacity(1);
+                // Local to the group like `memory_pool`, reused across the group's txs.
+                let mut calldata_pool = Vec::new();
+                let mut initcode_pool = Vec::new();
                 // Each sender group gets its own db instance for state propagation
                 let mut group_db = GeneralizedDatabase::new(store.clone());
                 for tx in txs {
@@ -3273,6 +3291,8 @@ impl LEVM {
                         base_blob_fee_per_gas,
                         stack_pool,
                         &mut memory_pool,
+                        &mut calldata_pool,
+                        &mut initcode_pool,
                         true,
                         crypto,
                         evm_config,
@@ -3472,7 +3492,8 @@ impl LEVM {
         vm.execute().map_err(VMError::into)
     }
 
-    // Like execute_tx but allows reusing the stack pool. Takes the block-invariant
+    // Like execute_tx but reuses the caller's pools of stacks, memory, calldata and initcode
+    // buffers, which the block executors keep across their txs. Takes the block-invariant
     // `config`/`chain_id` precomputed once per block (see `setup_env_with_config`).
     #[allow(clippy::too_many_arguments)]
     fn execute_tx_in_block(
@@ -3487,6 +3508,8 @@ impl LEVM {
         base_blob_fee_per_gas: U256,
         stack_pool: &mut Vec<Stack>,
         memory_pool: &mut Vec<Memory>,
+        calldata_pool: &mut Vec<BytesMut>,
+        initcode_pool: &mut Vec<InitcodeBuffer>,
         disable_balance_check: bool,
         crypto: &dyn Crypto,
         config: EVMConfig,
@@ -3504,8 +3527,9 @@ impl LEVM {
         )?;
         env.disable_balance_check = disable_balance_check;
         // Draw the root frame's stack and memory buffer from the shared pools (and adopt the
-        // stacks for sub-frames), then return them afterwards so the next tx reuses them instead
-        // of allocating + zeroing a fresh 32 KB stack and a fresh memory buffer per transaction.
+        // stacks and the calldata and initcode buffers for sub-frames), then return them
+        // afterwards so the next tx reuses them instead of allocating + zeroing a fresh 32 KB
+        // stack and a fresh memory buffer per transaction.
         let mut vm = VM::new_pooled(
             env,
             db,
@@ -3516,10 +3540,12 @@ impl LEVM {
             stateless_validator,
             stack_pool,
             memory_pool,
+            calldata_pool,
+            initcode_pool,
         )?;
         let result = vm.execute().map_err(VMError::into);
         // Runs on both success and error paths (execute borrowed `vm` mutably but left it intact).
-        vm.reclaim_into(stack_pool, memory_pool);
+        vm.reclaim_into(stack_pool, memory_pool, calldata_pool, initcode_pool);
         result
     }
 

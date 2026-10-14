@@ -432,6 +432,7 @@ pub async fn default_context_with_storage(storage: Store) -> TestContext {
         rpc_gas_cap: DEFAULT_RPC_GAS_CAP,
         block_worker_channel,
         ws: None,
+        log_query_limits: Default::default(),
         allowed_namespaces: Arc::new(all_namespaces_for_tests()),
     };
     TestContext {
