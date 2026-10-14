@@ -26,6 +26,7 @@ thiserror.workspace = true
 tracing.workspace = true
 bytes.workspace = true
 rustc-hash.workspace = true
+foldhash.workspace = true
 crossbeam.workspace = true
 rayon.workspace = true
 tokio = { workspace = true, features = ["time", "rt", "sync", "macros"] }

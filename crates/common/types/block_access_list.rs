@@ -596,13 +596,13 @@ impl BlockAccessList {
         // up-front allocation here, before the per-account and size-cap checks
         // downstream reject it. The block's own account count is far below this.
         const PREALLOC_CAP: usize = 8192;
-        let mut addr_to_idx = FxHashMap::with_capacity_and_hasher(
+        let mut addr_to_idx = foldhash::HashMap::with_capacity_and_hasher(
             self.inner.len().min(PREALLOC_CAP),
             Default::default(),
         );
         let mut tx_to_accounts: FxHashMap<u32, Vec<usize>> = FxHashMap::default();
         let mut accounts_by_min_index: Vec<(u32, usize)> = Vec::new();
-        let mut slot_idx_by_account: Vec<FxHashMap<H256, usize>> =
+        let mut slot_idx_by_account: Vec<foldhash::HashMap<H256, usize>> =
             Vec::with_capacity(self.inner.len().min(PREALLOC_CAP));
 
         for (i, acct) in self.inner.iter().enumerate() {
@@ -635,10 +635,11 @@ impl BlockAccessList {
 
             // Per-account slot → storage_changes index map for O(1) lookup on
             // lazy-cursor cache miss. Empty for accounts with no storage writes.
-            let mut slot_map: FxHashMap<H256, usize> = FxHashMap::with_capacity_and_hasher(
-                acct.storage_changes.len().min(PREALLOC_CAP),
-                Default::default(),
-            );
+            let mut slot_map: foldhash::HashMap<H256, usize> =
+                foldhash::HashMap::with_capacity_and_hasher(
+                    acct.storage_changes.len().min(PREALLOC_CAP),
+                    Default::default(),
+                );
             for (sc_idx, sc) in acct.storage_changes.iter().enumerate() {
                 slot_map.insert(u256_to_h256(sc.slot), sc_idx);
             }
@@ -661,7 +662,8 @@ impl BlockAccessList {
 #[derive(Clone)]
 pub struct BalAddressIndex {
     /// Maps each address in the BAL to its index in `BlockAccessList.inner`.
-    pub addr_to_idx: FxHashMap<Address, usize>,
+    /// Seeded (as is `slot_idx_by_account`): the block producer chooses these keys.
+    pub addr_to_idx: foldhash::HashMap<Address, usize>,
     /// For each block_access_index, the BAL-inner indices with changes at that index.
     pub tx_to_accounts: FxHashMap<u32, Vec<usize>>,
     /// BAL-inner indices sorted by their minimum block_access_index.
@@ -672,7 +674,7 @@ pub struct BalAddressIndex {
     /// resolve a slot key to its `SlotChange` in O(1) instead of a linear scan. Indexed by
     /// the same `acct_idx` used by `addr_to_idx`; empty inner map for accounts with no
     /// storage writes. Slot uniqueness is enforced by canonical-ordering validation.
-    pub slot_idx_by_account: Vec<FxHashMap<H256, usize>>,
+    pub slot_idx_by_account: Vec<foldhash::HashMap<H256, usize>>,
 }
 
 /// Binary search for exact match at `idx` in balance changes (sorted by block_access_index).
@@ -849,9 +851,9 @@ pub struct BlockAccessListRecorder {
     /// is equal to its pre-transaction value, the slot MUST NOT be recorded as modified."
     /// Key is (address, slot), value is the pre-transaction value.
     /// Unordered: the only consumer (`filter_net_zero_storage`) does keyed
-    /// lookups, and parallel BAL validation consumes it as an `FxHashMap`, so
-    /// there is no ordering requirement.
-    tx_initial_storage: FxHashMap<(Address, U256), U256>,
+    /// lookups, and parallel BAL validation consumes it as the same map, so
+    /// there is no ordering requirement. Seeded: contracts choose the slot keys.
+    tx_initial_storage: foldhash::HashMap<(Address, U256), U256>,
     /// Per-transaction initial code for net-zero filtering.
     /// Per EIP-7928: similar to storage, if code changes but post-transaction code equals
     /// pre-transaction code (e.g., delegate then reset), it MUST NOT be recorded.
@@ -1083,7 +1085,7 @@ impl BlockAccessListRecorder {
     /// genuinely written (so `reads - keys` yields the pure reads), and the values
     /// are the start-of-tx seed for those slots — letting the validator reuse a
     /// value the EVM already computed instead of re-reading it from the store.
-    pub fn take_tx_initial_storage(&mut self) -> FxHashMap<(Address, U256), U256> {
+    pub fn take_tx_initial_storage(&mut self) -> foldhash::HashMap<(Address, U256), U256> {
         std::mem::take(&mut self.tx_initial_storage)
     }
 
@@ -1789,7 +1791,7 @@ pub struct BalSynthesisItem {
     pub nonce: Option<u64>,
     pub code_hash: Option<H256>,
     pub code: Option<Code>,
-    pub added_storage: FxHashMap<H256, U256>,
+    pub added_storage: foldhash::HashMap<H256, U256>,
 }
 
 /// Converts a [`BlockAccessList`] into a per-account map of field-level deltas.
@@ -1797,8 +1799,10 @@ pub struct BalSynthesisItem {
 /// Accounts that appear only via `storage_reads` (no balance/nonce/code/storage
 /// changes) are omitted: Stage B weight is 0, Stage C field writes all no-op,
 /// and the witness builder captures them from `logger.state_accessed`.
-pub fn synthesize_bal_updates(bal: &BlockAccessList) -> FxHashMap<Address, BalSynthesisItem> {
-    let mut result = FxHashMap::default();
+pub fn synthesize_bal_updates(
+    bal: &BlockAccessList,
+) -> foldhash::HashMap<Address, BalSynthesisItem> {
+    let mut result = foldhash::HashMap::default();
 
     for account in bal.accounts() {
         // Skip accounts with no actual changes (storage_reads only).
@@ -1818,7 +1822,7 @@ pub fn synthesize_bal_updates(bal: &BlockAccessList) -> FxHashMap<Address, BalSy
         });
         let code_hash = code.as_ref().map(|c| c.hash);
 
-        let mut added_storage: FxHashMap<H256, U256> = FxHashMap::default();
+        let mut added_storage: foldhash::HashMap<H256, U256> = foldhash::HashMap::default();
         for sc in &account.storage_changes {
             // Canonical BAL ordering requires `slot_changes` to be non-empty, but
             // wire-format decoding is permissive. Defensively skip empty entries

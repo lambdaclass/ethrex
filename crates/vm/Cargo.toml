@@ -21,6 +21,7 @@ tracing.workspace = true
 serde.workspace = true
 rayon = { workspace = true, optional = true }
 rustc-hash.workspace = true
+foldhash.workspace = true
 
 dyn-clone = "1.0"
 

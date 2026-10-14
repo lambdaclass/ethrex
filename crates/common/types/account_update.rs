@@ -2,7 +2,6 @@ use crate::{
     Address, H256, U256,
     types::{AccountInfo, Code},
 };
-use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -11,7 +10,9 @@ pub struct AccountUpdate {
     pub removed: bool,
     pub info: Option<AccountInfo>,
     pub code: Option<Code>,
-    pub added_storage: FxHashMap<H256, U256>,
+    /// Seeded like `ethrex_levm::environment::TransientStorage`: contracts choose
+    /// these slot keys.
+    pub added_storage: foldhash::HashMap<H256, U256>,
     /// If account was destroyed and then modified we need this for removing its storage but not the entire account.
     pub removed_storage: bool,
     // Matches TODO in code

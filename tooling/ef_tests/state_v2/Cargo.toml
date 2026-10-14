@@ -25,7 +25,7 @@ thiserror.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 tokio = { workspace = true, features = ["full"] }
-rustc-hash = "2.1.1"
+foldhash = "0.2.0"
 colored = "2.1.0"
 alloy-rlp = "0.3.12"
 chrono = "0.4"

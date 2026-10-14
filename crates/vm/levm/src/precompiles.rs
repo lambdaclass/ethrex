@@ -380,7 +380,8 @@ pub const PRECOMPILE_CACHE_MAX_BYTES: usize = 128 * 1024 * 1024;
 struct PrecompileCacheEntries {
     /// Results by precompile, then by calldata. Two levels so a lookup can borrow the
     /// caller's calldata as the key: a single `(Address, Bytes)` key needs an owned one.
-    map: FxHashMap<Address, FxHashMap<Bytes, (Bytes, u64)>>,
+    /// The inner map is seeded like `TransientStorage`: contracts choose the calldata.
+    map: FxHashMap<Address, foldhash::HashMap<Bytes, (Bytes, u64)>>,
     /// Sum of [`PrecompileCache::entry_size`] over `map`.
     used_bytes: usize,
 }
@@ -1704,5 +1705,40 @@ mod tests {
         ));
         // LStar on L1: is a precompile.
         assert!(is_precompile(&execute_addr, Fork::LStar, VMType::L1));
+    }
+}
+
+#[cfg(test)]
+mod seeded_calldata_tests {
+    use super::*;
+    use std::hash::BuildHasher;
+
+    /// rustc-hash 2.x hashes a 32-byte key whose bytes `16..24` are this constant to
+    /// `32`, whatever its other bytes hold.
+    const ZEROING_WORD: u64 = 0x13198a2e03707344;
+
+    fn colliding_calldata() -> Vec<Bytes> {
+        (0..4096u64)
+            .map(|i| Bytes::copy_from_slice(&U256([i, 0, ZEROING_WORD, 0]).to_little_endian()))
+            .collect()
+    }
+
+    fn distinct_hashes(hasher: &impl BuildHasher, keys: &[Bytes]) -> usize {
+        keys.iter()
+            .map(|key| hasher.hash_one(key))
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+    }
+
+    /// Calldata is chosen by the calling contract, so the per-precompile result map
+    /// must not let crafted inputs share one bucket.
+    #[test]
+    fn precompile_results_hash_colliding_calldata_apart() {
+        let keys = colliding_calldata();
+        assert_eq!(distinct_hashes(&rustc_hash::FxBuildHasher, &keys), 1);
+
+        let mut entries = PrecompileCacheEntries::default();
+        let results = entries.map.entry(Address::zero()).or_default();
+        assert_eq!(distinct_hashes(results.hasher(), &keys), keys.len());
     }
 }

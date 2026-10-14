@@ -128,7 +128,7 @@ fn dummy_tx() -> Transaction {
 /// A `DestroyedModified` account holding only the slots written after recreation,
 /// as the per-flush drain-back leaves it in `initial_accounts_state`.
 fn destroyed_modified_with(slot: H256, value: U256) -> LevmAccount {
-    let mut storage = FxHashMap::default();
+    let mut storage = foldhash::HashMap::default();
     storage.insert(slot, value);
     LevmAccount {
         info: AccountInfo {
