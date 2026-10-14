@@ -4,6 +4,7 @@
 //! `map_debug_requests`.
 
 use ethrex_rpc::rpc::RpcHandler;
+use ethrex_rpc::test_utils::raw_params;
 use ethrex_rpc::test_utils::{call_http, default_context_with_storage, setup_store};
 use ethrex_rpc::tracing::TraceCallRequest;
 use ethrex_rpc::utils::RpcErr;
@@ -21,7 +22,7 @@ fn call_object() -> Value {
 }
 
 fn parse(params: Vec<Value>) -> Result<TraceCallRequest, RpcErr> {
-    TraceCallRequest::parse(&Some(params))
+    TraceCallRequest::parse(&raw_params(&Some(params)))
 }
 
 /// Only the call object is required; block and traceConfig default in.

@@ -890,18 +890,23 @@ impl PeerHandler {
         Ok(None)
     }
 
-    /// Requests block access lists from a peer that supports eth/71.
-    /// Returns a vector of optional BALs (one per requested block hash) or None if:
+    /// Requests block access lists for the given block headers from a peer that supports eth/71.
+    /// Returns a vector of optional BALs (aligned with the leading `block_headers`) or None if:
     /// - There are no available eth/71 peers
     /// - The peer did not respond in time
+    /// - The peer returned more entries than were requested
+    ///
+    /// Every returned BAL matches its header's `block_access_list_hash`, as EIP-8159 requires
+    /// of a receiver. A peer that sends one that does not is penalized, and that entry comes
+    /// back as `None`.
     pub async fn request_block_access_lists(
         &mut self,
-        block_hashes: &[H256],
+        block_headers: &[BlockHeader],
     ) -> Result<Option<Vec<Option<BlockAccessList>>>, PeerHandlerError> {
         let request_id = rand::random();
         let request = RLPxMessage::GetBlockAccessLists(GetBlockAccessLists {
             id: request_id,
-            block_hashes: block_hashes.to_vec(),
+            block_hashes: block_headers.iter().map(|header| header.hash()).collect(),
         });
         match self.get_random_peer(&[Capability::eth(71)]).await? {
             None => Ok(None),
@@ -913,9 +918,24 @@ impl PeerHandler {
                 match response {
                     Ok(RLPxMessage::BlockAccessLists(BlockAccessLists {
                         id,
-                        block_access_lists,
+                        mut block_access_lists,
                     })) if id == request_id => {
-                        self.peer_table.record_success(peer_id)?;
+                        if block_access_lists.len() > block_headers.len() {
+                            debug!("Received oversized block access lists from peer {peer_id}");
+                            self.peer_table.record_failure(peer_id)?;
+                            return Ok(None);
+                        }
+                        if drop_mismatched_block_access_lists(
+                            &mut block_access_lists,
+                            block_headers,
+                        ) {
+                            debug!(
+                                "Block access list from peer {peer_id} does not match its header, discarding peer"
+                            );
+                            self.peer_table.record_critical_failure(peer_id)?;
+                        } else {
+                            self.peer_table.record_success(peer_id)?;
+                        }
                         Ok(Some(block_access_lists))
                     }
                     _ => {
@@ -1134,6 +1154,26 @@ fn truncate_to_single_chain(block_headers: &mut Vec<BlockHeader>) -> usize {
     dropped
 }
 
+/// Replaces with `None` every block access list that does not hash to the
+/// `block_access_list_hash` of the header at the same position, and returns whether it
+/// replaced any. A wrong list must never reach execution: full sync runs a block with the
+/// list it is given, and a wrong one can get a valid block rejected as invalid.
+fn drop_mismatched_block_access_lists(
+    block_access_lists: &mut [Option<BlockAccessList>],
+    block_headers: &[BlockHeader],
+) -> bool {
+    let mut dropped = false;
+    for (bal, header) in block_access_lists.iter_mut().zip(block_headers) {
+        if bal.as_ref().is_some_and(|bal| {
+            !bal.matches_commitment(header.block_access_list_hash, &NativeCrypto)
+        }) {
+            *bal = None;
+            dropped = true;
+        }
+    }
+    dropped
+}
+
 fn format_duration(duration: Duration) -> String {
     let total_seconds = duration.as_secs();
     let hours = total_seconds / 3600;
@@ -1252,5 +1292,59 @@ mod tests {
         headers.extend(foreign.into_iter().skip(2));
         assert_eq!(truncate_to_single_chain(&mut headers), 5);
         assert_eq!(headers.last().map(|h| h.number), Some(14));
+    }
+
+    fn bal(balance: u64) -> BlockAccessList {
+        use ethrex_common::types::block_access_list::{AccountChanges, BalanceChange};
+        BlockAccessList::from_accounts(vec![
+            AccountChanges::new(ethrex_common::Address::repeat_byte(1)).with_balance_changes(vec![
+                BalanceChange::new(1, ethrex_common::U256::from(balance)),
+            ]),
+        ])
+    }
+
+    fn header_committing_to(bal: &BlockAccessList) -> BlockHeader {
+        BlockHeader {
+            block_access_list_hash: Some(bal.compute_hash(&NativeCrypto)),
+            ..Default::default()
+        }
+    }
+
+    /// Lists that match their headers SHALL be kept, as SHALL the entries a peer marked
+    /// unavailable and a response shorter than the request.
+    #[test]
+    fn matching_block_access_lists_are_kept() {
+        let headers = [header_committing_to(&bal(1)), header_committing_to(&bal(2))];
+        let mut response = vec![Some(bal(1)), None];
+        assert!(!drop_mismatched_block_access_lists(&mut response, &headers));
+        assert_eq!(response, vec![Some(bal(1)), None]);
+
+        let mut prefix = vec![Some(bal(1))];
+        assert!(!drop_mismatched_block_access_lists(&mut prefix, &headers));
+        assert_eq!(prefix, vec![Some(bal(1))]);
+    }
+
+    /// A list that does not match the header at its position SHALL be dropped, whether its
+    /// content was altered, it belongs to another requested block, or the header predates
+    /// block access lists. The matching ones around it SHALL be kept.
+    #[test]
+    fn mismatched_block_access_lists_are_dropped() {
+        let pre_amsterdam = BlockHeader::default();
+        let headers = [
+            header_committing_to(&bal(1)),
+            header_committing_to(&bal(2)),
+            header_committing_to(&bal(3)),
+            header_committing_to(&bal(4)),
+            pre_amsterdam,
+        ];
+        let mut response = vec![
+            Some(bal(1)),
+            Some(bal(20)),
+            Some(bal(4)),
+            Some(bal(3)),
+            Some(bal(5)),
+        ];
+        assert!(drop_mismatched_block_access_lists(&mut response, &headers));
+        assert_eq!(response, vec![Some(bal(1)), None, None, None, None]);
     }
 }
