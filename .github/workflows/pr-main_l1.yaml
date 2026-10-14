@@ -317,7 +317,7 @@ jobs:
             # the eth/72 message count, and ethrex only offers eth/72 with blob
             # sampling on, so every snap request arrives on the wrong code and
             # the suite has failed on every main push since 2026-09-02. Restore
-            # it once the upstream fix is in the harness.
+            # it once the upstream fix is in the harness (tracked in #7418).
             limit: discv4|discv5|eth
             artifact_prefix: devp2p
           - name: "Engine Auth and EC tests"
