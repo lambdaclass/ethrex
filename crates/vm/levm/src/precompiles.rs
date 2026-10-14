@@ -14,7 +14,7 @@ use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
 use crate::vm::VMType;
 use crate::{
     constants::VERSIONED_HASH_VERSION_KZG,
-    errors::{InternalError, PrecompileError, VMError},
+    errors::{ExceptionalHalt, InternalError, PrecompileError, VMError},
     gas_cost::{
         self, BLAKE2F_ROUND_COST, BLS12_381_G1_K_DISCOUNT, BLS12_381_G1ADD_COST,
         BLS12_381_G2_K_DISCOUNT, BLS12_381_G2ADD_COST, BLS12_381_MAP_FP_TO_G1_COST,
@@ -778,7 +778,7 @@ pub fn modexp(
         exponent_start,
         exponent_start.saturating_add(exponent_head_size),
         exponent_head_size,
-    );
+    )?;
 
     // Gas computation uses malachite Natural to compute bit length of exponent
     use malachite::Natural;
@@ -805,9 +805,9 @@ pub fn modexp(
         .checked_add(exponent_limit)
         .ok_or(InternalError::Overflow)?;
 
-    let b = get_slice_or_default(&calldata, 96, base_limit, base_size);
-    let e = get_slice_or_default(&calldata, base_limit, exponent_limit, exponent_size);
-    let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, modulus_size);
+    let b = get_slice_or_default(&calldata, 96, base_limit, base_size)?;
+    let e = get_slice_or_default(&calldata, base_limit, exponent_limit, exponent_size)?;
+    let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, modulus_size)?;
 
     let result = crypto
         .modexp(&b, &e, &m)
@@ -821,27 +821,34 @@ pub fn modexp(
 /// This function returns the slice between the lower and upper limit of the calldata (as a vector),
 /// padding with zeros at the end if necessary.
 ///
-/// Uses Cow so that the best case of no resizing doesn't require an allocation.
+/// Uses Cow so that the best case of no resizing doesn't require an allocation. Fails with
+/// out-of-gas when the host cannot provide `size_to_expand` bytes: the gas charged for them
+/// bounds the size under any real gas limit, but a simulation run without one can pay for an
+/// operand no machine can allocate, and that must fail the call rather than abort the process.
 #[expect(clippy::indexing_slicing, reason = "bounds checked")]
 fn get_slice_or_default<'c>(
     calldata: &'c Bytes,
     lower_limit: usize,
     upper_limit: usize,
     size_to_expand: usize,
-) -> Cow<'c, [u8]> {
+) -> Result<Cow<'c, [u8]>, VMError> {
     let upper_limit = calldata.len().min(upper_limit);
     if let Some(data) = calldata.get(lower_limit..upper_limit)
         && !data.is_empty()
     {
         if data.len() == size_to_expand {
-            return data.into();
+            return Ok(data.into());
         }
-        let mut extended = vec![0u8; size_to_expand];
+        let mut extended = Vec::new();
+        extended
+            .try_reserve_exact(size_to_expand)
+            .map_err(|_| ExceptionalHalt::OutOfGas)?;
         let copy_size = size_to_expand.min(data.len());
-        extended[..copy_size].copy_from_slice(&data[..copy_size]);
-        return extended.into();
+        extended.extend_from_slice(&data[..copy_size]);
+        extended.resize(size_to_expand, 0);
+        return Ok(extended.into());
     }
-    Vec::new().into()
+    Ok(Vec::new().into())
 }
 
 /// If the result size is less than needed, pads left with zeros.
@@ -1744,6 +1751,25 @@ mod tests {
         // words(32) = 4, multiplication complexity 16, iteration count 255: 16 * 255 / 3.
         assert_eq!(100_000 - gas_remaining, 1360);
         assert_eq!(output.as_ref(), [0u8; 32]);
+    }
+
+    /// A simulation run without a gas cap can pay for an operand no host can allocate: with
+    /// the largest 64-bit gas limit, a 2^61-byte exponent (one-byte base and modulus) costs
+    /// about 6.1e18, so the charge succeeds and the padding step is reached. Reserving 2^61
+    /// bytes fails on every 64-bit machine (it exceeds the address space), and the call must
+    /// fail with out-of-gas there instead of aborting the process.
+    #[test]
+    fn modexp_unsatisfiable_operand_allocation_halts_with_out_of_gas() {
+        let calldata = modexp_calldata(1, 1 << 61, 1, &[1, 1, 1]);
+        let mut gas_remaining = u64::MAX;
+        let result = modexp(&calldata, &mut gas_remaining, Fork::Prague, &NativeCrypto);
+        assert!(
+            matches!(
+                result,
+                Err(VMError::ExceptionalHalt(ExceptionalHalt::OutOfGas))
+            ),
+            "an operand the host cannot allocate must halt with out-of-gas, got {result:?}"
+        );
     }
 
     /// I3 gate test: EXECUTE precompile is L1-only and only active since LStar.
