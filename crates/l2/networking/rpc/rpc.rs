@@ -102,6 +102,7 @@ pub async fn bind_api(
     sponsored_gas_limit: u64,
     allowed_namespaces: HashSet<L1RpcNamespace>,
     ethrex_namespace_allowed: bool,
+    log_query_limits: ethrex_rpc::LogQueryLimits,
 ) -> Result<BoundRpc, RpcStartupError> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -133,6 +134,7 @@ pub async fn bind_api(
             block_worker_channel,
             ws: ws.clone(),
             allowed_namespaces: Arc::new(allowed_namespaces),
+            log_query_limits,
         },
         valid_delegation_addresses,
         sponsor_pk,
@@ -241,6 +243,7 @@ impl BoundRpc {
 
 /// Binds and serves the L2 RPC API. Compatibility wrapper over [`bind_api`] +
 /// [`BoundRpc::serve`]; the node uses `bind_api` directly so a bind failure fails fast.
+/// Log queries get [`ethrex_rpc::LogQueryLimits::default`].
 #[expect(clippy::too_many_arguments)]
 pub async fn start_api(
     http_addr: SocketAddr,
@@ -282,6 +285,7 @@ pub async fn start_api(
         sponsored_gas_limit,
         allowed_namespaces,
         ethrex_namespace_allowed,
+        ethrex_rpc::LogQueryLimits::default(),
     )
     .await
     .map_err(|e| RpcErr::Internal(e.to_string()))?
