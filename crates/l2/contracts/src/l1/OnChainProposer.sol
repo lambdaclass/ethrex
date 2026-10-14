@@ -211,6 +211,15 @@ contract OnChainProposer is
     }
 
     /// @inheritdoc IOnChainProposer
+    function upgradeSP1Verifier(address new_verifier) public onlyOwner {
+        // Aligned mode verifies SP1 proofs through the AlignedProofAggregator instead.
+        if (REQUIRE_SP1_PROOF && !ALIGNED_MODE && new_verifier == address(0))
+            revert MissingSp1Verifier();
+        SP1_VERIFIER_ADDRESS = new_verifier;
+        emit SP1VerifierUpgraded(new_verifier);
+    }
+
+    /// @inheritdoc IOnChainProposer
     function upgradeRISC0VerificationKey(
         bytes32 commit_hash,
         bytes32 new_vk

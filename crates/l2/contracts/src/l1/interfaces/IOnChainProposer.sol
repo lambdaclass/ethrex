@@ -94,6 +94,17 @@ interface IOnChainProposer {
         bytes32 new_vk
     ) external;
 
+    /// @notice The SP1 verifier contract has been replaced.
+    /// @dev Event emitted when the SP1 verifier address is upgraded.
+    /// @param newVerifier The address of the new SP1 verifier contract.
+    event SP1VerifierUpgraded(address newVerifier);
+
+    /// @notice Replaces the SP1 verifier contract. A new SP1 version can wrap its proofs
+    /// in a different Groth16 circuit that only a matching verifier accepts, so moving
+    /// the prover to it needs the new verifier as well as the new verification key.
+    /// @param new_verifier the address of the new SP1 verifier contract
+    function upgradeSP1Verifier(address new_verifier) external;
+
     /// @notice Upgrades the RISC0 verification key that represents the sequencer's code.
     /// @param new_vk new verification key for RISC0 verifier
     /// @param commit_hash git commit hash that produced the new verification key
