@@ -37,7 +37,7 @@ mkdir -p "$WORK"
 ## Prerequisites
 
 - A CUDA-capable GPU (this is why it runs on `l2-gpu`), and the `ethrex-l2-$ARCH-gpu` release asset
-- [`rex`](https://github.com/lambdaclass/rex) on `$PATH` (used to call `upgradeToAndCall` and read contract state)
+- [`rex`](https://github.com/lambdaclass/rex) on `$PATH` (used to call `upgradeToAndCall` and read contract state), built from its `main` branch with `cargo install --git https://github.com/lambdaclass/rex --locked`: `rex l2 register-vk` (Step 3.6) is not in a rex release yet
 - `curl`, `jq`
 - `git` (to fetch genesis / fixture files for each version)
 
@@ -465,7 +465,7 @@ TO_COMMIT_HASH=$(cast keccak "$TO_SHA")
 
 # The vk is the same hex-text file the deployer takes via --sp1-vk-path,
 # from $VERSION_TO's ethrex-contracts.tar.gz.
-TO_VK=0x$(tr -d '\n' < ethrex-riscv32im-succinct-zkvm-vk-bn254 | sed 's/^0x//')
+TO_VK=0x$(tr -d '\n' < "$WORK/contracts-$VERSION_TO/ethrex-riscv32im-succinct-zkvm-vk-bn254" | sed 's/^0x//')
 ```
 
 `rex l2 register-vk` derives the commit hash, routes the call through the
@@ -556,7 +556,7 @@ while :; do
   COMMITTED=$(rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'lastCommittedBatch()' --rpc-url http://localhost:8545)
   VERIFIED=$(rex call  "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'lastVerifiedBatch()'  --rpc-url http://localhost:8545)
   echo "committed=$COMMITTED verified=$VERIFIED (need a verified batch covering L2 block $LEGACY_HEAD)"
-  [ "$VERIFIED" -gt "$FIRST_UNCOMMITTED" ] && break
+  [ $((VERIFIED)) -gt "$FIRST_UNCOMMITTED" ] && break  # rex prints a 32-byte hex word
   sleep 10
 done
 ```
