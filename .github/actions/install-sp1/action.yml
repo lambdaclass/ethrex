@@ -4,6 +4,12 @@ description: "Install SP1 Toolchain"
 runs:
   using: "composite"
   steps:
+    # SP1 6's build scripts (sp1-prover-types) compile protobuf definitions.
+    - name: Install protoc
+      uses: arduino/setup-protoc@v3
+      with:
+        repo-token: ${{ github.token }}
+
     - name: Install SP1
       shell: bash
       run: |
