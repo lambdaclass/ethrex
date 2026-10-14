@@ -312,7 +312,13 @@ jobs:
             artifact_prefix: rpc_compat
           - name: "Devp2p tests"
             simulation: devp2p
-            limit: discv4|discv5|eth|snap
+            # `snap` is left out until go-ethereum's devp2p harness places snap
+            # messages after the negotiated eth version's range: it hard-codes
+            # the eth/72 message count, and ethrex only offers eth/72 with blob
+            # sampling on, so every snap request arrives on the wrong code and
+            # the suite has failed on every main push since 2026-09-02. Restore
+            # it once the upstream fix is in the harness.
+            limit: discv4|discv5|eth
             artifact_prefix: devp2p
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
