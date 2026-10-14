@@ -74,7 +74,7 @@ pub async fn catch_up(
     catch_up_via(
         store,
         &peers.peer_table,
-        move |pending| async move { peers.request_snap2_bals(&pending).await },
+        move |pending, exclude| async move { peers.request_snap2_bals(&pending, &exclude).await },
         flat,
         cursor,
         from,
@@ -89,12 +89,13 @@ pub async fn catch_up(
 type ServedBals = Option<(Vec<Option<BlockAccessList>>, H256)>;
 
 /// [`catch_up`] with the request step injected, so tests can script what the
-/// peers answer while the real peer table scores and ranks them.
+/// peers answer while the real peer table scores and ranks them. The step takes
+/// the pending block hashes and the peers not to ask.
 #[allow(clippy::too_many_arguments)]
 async fn catch_up_via<F>(
     store: &Store,
     peer_table: &PeerTable,
-    request_bals: impl Fn(Vec<H256>) -> F,
+    request_bals: impl Fn(Vec<H256>, Vec<H256>) -> F,
     flat: &FlatState,
     cursor: &DownloadCursor,
     from: &BlockHeader,
@@ -121,6 +122,11 @@ where
         // first pending block — the run stops at the first bad or missing entry —
         // so this is that block's retry count.
         let mut attempts = 0u32;
+        // Peers that answered without the first pending block since it was last
+        // requested. A retry skips them, so one well-ranked peer that lacks a
+        // list cannot take every attempt while a peer holding it is never asked;
+        // a stall then means the peers we could ask all answered without it.
+        let mut tried: Vec<H256> = Vec::new();
 
         while applied < batch.len() {
             let pending: Vec<H256> = batch[applied..]
@@ -128,19 +134,27 @@ where
                 .map(|header| header.hash())
                 .collect();
 
-            diagnostics.write().await.snap2_bal_requests_sent += 1;
-
-            let Some((response, peer_id)) = request_bals(pending).await? else {
-                diagnostics.write().await.snap2_peer_failures += 1;
-                return Err(SyncError::Snap2CatchUpStalled(
-                    batch[applied].number,
-                    "no peer could serve block access lists".to_string(),
-                ));
+            let (response, peer_id) = loop {
+                diagnostics.write().await.snap2_bal_requests_sent += 1;
+                match request_bals(pending.clone(), tried.clone()).await? {
+                    Some(served) => break served,
+                    // Every peer not yet tried for this block has been. Ask the
+                    // tried ones again, until the retry cap below settles it.
+                    None if !tried.is_empty() => tried.clear(),
+                    None => {
+                        diagnostics.write().await.snap2_peer_failures += 1;
+                        return Err(SyncError::Snap2CatchUpStalled(
+                            batch[applied].number,
+                            "no peer could serve block access lists".to_string(),
+                        ));
+                    }
+                }
             };
 
             // A response may be truncated from the tail but must cover at least
             // the first slot, or nothing progresses.
             if response.is_empty() {
+                tried.push(peer_id);
                 attempts += 1;
                 let _ = if attempts >= BAL_MAX_RETRIES_PER_BLOCK {
                     peer_table.record_critical_failure(peer_id)
@@ -167,6 +181,7 @@ where
                     // holding nothing would stay the best ranked and be asked
                     // for the same block forever.
                     diagnostics.write().await.snap2_bals_unavailable += 1;
+                    tried.push(peer_id);
                     attempts += 1;
                     if attempts >= BAL_MAX_RETRIES_PER_BLOCK {
                         let _ = peer_table.record_critical_failure(peer_id);
@@ -179,12 +194,22 @@ where
                     break;
                 };
 
-                bal.validate_ordering().map_err(|err| {
-                    SyncError::Snap2CatchUpStalled(header.number, format!("bad ordering: {err}"))
-                })?;
-                validate_bal_code_sizes(&bal, AMSTERDAM_MAX_CODE_SIZE).map_err(|err| {
-                    SyncError::Snap2CatchUpStalled(header.number, format!("bad code size: {err}"))
-                })?;
+                // A list that is malformed is as bad as one with the wrong hash:
+                // the peer served data it should not have. Charged the same way,
+                // or the peer would stay best ranked and serve it again after
+                // the restart this error causes.
+                let malformed = bal
+                    .validate_ordering()
+                    .map_err(|err| format!("bad ordering: {err}"))
+                    .and_then(|()| {
+                        validate_bal_code_sizes(&bal, AMSTERDAM_MAX_CODE_SIZE)
+                            .map_err(|err| format!("bad code size: {err}"))
+                    });
+                if let Err(reason) = malformed {
+                    let _ = peer_table.record_critical_failure(peer_id);
+                    diagnostics.write().await.snap2_validation_failures += 1;
+                    return Err(SyncError::Snap2CatchUpStalled(header.number, reason));
+                }
                 let expected = header
                     .block_access_list_hash
                     .unwrap_or(*EMPTY_BLOCK_ACCESS_LIST_HASH);
@@ -216,6 +241,7 @@ where
 
                 applied += 1;
                 attempts = 0;
+                tried.clear();
                 diagnostics.write().await.snap2_blocks_replayed += 1;
                 // Credit goes per verified and applied list, never for the
                 // reply as such: one made only of unavailable markers served
@@ -379,17 +405,19 @@ mod tests {
         table
     }
 
-    /// The request step of a catch-up: the real peer table chooses whom to ask
-    /// and the script answers for it. Every choice is recorded in `asked`.
+    /// The request step of a catch-up: the real peer table chooses whom to ask,
+    /// skipping `exclude` as the real step does, and the script answers for it.
+    /// Every choice is recorded in `asked`.
     async fn scripted_request(
         table: &PeerTable,
         script: &HashMap<H256, Answer>,
         bals: &HashMap<H256, BlockAccessList>,
         asked: &Mutex<Vec<H256>>,
         pending: Vec<H256>,
+        exclude: Vec<H256>,
     ) -> Result<ServedBals, PeerHandlerError> {
         let Some((peer_id, _connection, _permit)) = table
-            .get_best_peer_excluding(vec![Capability::snap(2)], vec![])
+            .get_best_peer_excluding(vec![Capability::snap(2)], exclude)
             .await?
         else {
             return Ok(None);
@@ -439,7 +467,9 @@ mod tests {
             catch_up_via(
                 &store,
                 &table,
-                |pending| scripted_request(&table, &script, &bals, &asked, pending),
+                |pending, exclude| {
+                    scripted_request(&table, &script, &bals, &asked, pending, exclude)
+                },
                 &flat,
                 &cursor,
                 &from,
@@ -496,7 +526,9 @@ mod tests {
             catch_up_via(
                 &store,
                 &table,
-                |pending| scripted_request(&table, &script, &bals, &asked, pending),
+                |pending, exclude| {
+                    scripted_request(&table, &script, &bals, &asked, pending, exclude)
+                },
                 &flat,
                 &cursor,
                 &from,
@@ -523,5 +555,62 @@ mod tests {
             diagnostics.read().await.snap2_bals_unavailable,
             u64::from(BAL_MAX_RETRIES_PER_BLOCK)
         );
+    }
+
+    /// A peer that lacks the list SHALL not be asked for it again while another
+    /// peer is untried, however far ahead it ranks: a stall discards the whole
+    /// partial state, so it must mean no peer we can ask has the list, not that
+    /// the best-ranked one answered without it three times in a row.
+    #[tokio::test]
+    async fn unavailable_peer_with_a_lead_does_not_take_every_retry() {
+        let store = Store::new("memory", EngineType::InMemory).expect("in-memory store");
+        let (from, headers, bals) = chain(&store, 3).await;
+        let to = headers.last().expect("chain").clone();
+        let (empty, full) = (node(1), node(2));
+        let table = table_with(&store, &[empty.clone(), full.clone()]);
+        // A lead larger than the retry cap: charged once per attempt, the empty
+        // peer would still out-rank the full one on every retry.
+        let lead = i64::from(BAL_MAX_RETRIES_PER_BLOCK) + 2;
+        for _ in 0..lead {
+            table.record_success(empty.node_id()).expect("score");
+        }
+        let script = HashMap::from([
+            (empty.node_id(), Answer::Unavailable),
+            (full.node_id(), Answer::Serve),
+        ]);
+        let (_dir, flat) = flat_state();
+        let (cursor, diagnostics) = (DownloadCursor::new(1), diagnostics());
+        let asked = Mutex::new(Vec::new());
+
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            catch_up_via(
+                &store,
+                &table,
+                |pending, exclude| {
+                    scripted_request(&table, &script, &bals, &asked, pending, exclude)
+                },
+                &flat,
+                &cursor,
+                &from,
+                &to,
+                &diagnostics,
+            ),
+        )
+        .await
+        .expect("the catch-up must not loop")
+        .expect("the serving peer must be asked before the catch-up stalls");
+
+        assert_eq!(
+            asked.into_inner().expect("asked"),
+            vec![empty.node_id(), full.node_id()],
+            "one miss, then the untried peer"
+        );
+        assert_eq!(
+            table.get_score(empty.node_id()).await.expect("score"),
+            lead - 1
+        );
+        assert_eq!(table.get_score(full.node_id()).await.expect("score"), 3);
+        assert_eq!(diagnostics.read().await.snap2_blocks_replayed, 3);
     }
 }
