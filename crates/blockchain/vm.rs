@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use ethrex_common::seeded_hash::SeededHashMap;
 use ethrex_common::{
     Address, H256, U256,
     constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH},
@@ -300,8 +301,8 @@ fn storage_root_for(has_storage: bool) -> H256 {
 #[derive(Clone)]
 pub struct ReplayedVmDatabase<Inner> {
     inner: Inner,
-    /// Seeded like `TransientStorage`: the replayed call chooses these addresses.
-    updates: Arc<foldhash::HashMap<Address, AccountUpdate>>,
+    /// Seeded: the replayed call chooses these addresses.
+    updates: Arc<SeededHashMap<Address, AccountUpdate>>,
 }
 
 impl<Inner> ReplayedVmDatabase<Inner> {
@@ -480,8 +481,8 @@ struct AccountStateCacheEntry {
     hashed_address: H256,
 }
 
-/// Seeded like `TransientStorage`: executing transactions choose these addresses.
-type AccountStateCache = foldhash::HashMap<Address, Option<AccountStateCacheEntry>>;
+/// Seeded: executing transactions choose these addresses.
+type AccountStateCache = SeededHashMap<Address, Option<AccountStateCacheEntry>>;
 
 #[derive(Clone)]
 pub struct StoreVmDatabase {
@@ -1323,7 +1324,7 @@ mod replayed_db_tests {
     fn storage_only_update_never_creates_an_absent_account() {
         // An update carrying only `added_storage` must NOT bring an absent account into
         // existence. Mirrors `OverlaidVmDatabase`'s gate on balance/nonce/code.
-        let mut added = foldhash::HashMap::default();
+        let mut added = SeededHashMap::default();
         added.insert(slot(1), U256::from(42));
         let db = ReplayedVmDatabase::new(
             MockDb::default(),
@@ -1378,7 +1379,7 @@ mod replayed_db_tests {
             .lock()
             .unwrap()
             .insert((addr(5), slot(2)), U256::from(2));
-        let mut added = foldhash::HashMap::default();
+        let mut added = SeededHashMap::default();
         added.insert(slot(1), U256::from(111));
         let db = ReplayedVmDatabase::new(
             mock,
@@ -1410,7 +1411,7 @@ mod replayed_db_tests {
             .lock()
             .unwrap()
             .insert((addr(6), slot(2)), U256::from(2));
-        let mut added = foldhash::HashMap::default();
+        let mut added = SeededHashMap::default();
         added.insert(slot(1), U256::from(111));
         let db = ReplayedVmDatabase::new(
             mock,
@@ -1466,7 +1467,7 @@ mod replayed_db_tests {
     // layer order, and the two decorators compose without an EVM.
 
     fn replay_wrote(address: Address, key: H256, value: U256) -> Vec<AccountUpdate> {
-        let mut added = foldhash::HashMap::default();
+        let mut added = SeededHashMap::default();
         added.insert(key, value);
         vec![AccountUpdate {
             address,
@@ -1586,7 +1587,7 @@ mod replayed_db_tests {
             .lock()
             .unwrap()
             .insert(addr(11), AccountState::default());
-        let mut added = foldhash::HashMap::default();
+        let mut added = SeededHashMap::default();
         added.insert(slot(1), U256::from(1));
         let db = ReplayedVmDatabase::new(
             mock,

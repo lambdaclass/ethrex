@@ -27,6 +27,7 @@ use crate::{
     validation_observer::ValidationObserver,
 };
 use bytes::{Bytes, BytesMut};
+use ethrex_common::seeded_hash::{SeededHashMap, SeededHashSet};
 use ethrex_common::{
     Address, BigEndianHash, H160, H256, U256,
     tracing::CallType,
@@ -47,12 +48,12 @@ use std::{
 /// Storage mapping from slot key to value.
 pub type Storage = FxHashMap<U256, H256>;
 
-/// Addresses accessed by a transaction (EIP-2929). Seeded like [`TransientStorage`]:
-/// contracts choose which addresses they touch.
-pub type AccessedAddresses = foldhash::HashSet<Address>;
-/// Storage slots accessed by a transaction, per address (EIP-2929). Seeded like
-/// [`TransientStorage`]: contracts choose the slot keys.
-pub type AccessedStorageSlots = foldhash::HashMap<Address, foldhash::HashSet<H256>>;
+/// Addresses accessed by a transaction (EIP-2929). Seeded: contracts choose which
+/// addresses they touch.
+pub type AccessedAddresses = SeededHashSet<Address>;
+/// Storage slots accessed by a transaction, per address (EIP-2929). Seeded: contracts
+/// choose the slot keys.
+pub type AccessedStorageSlots = SeededHashMap<Address, SeededHashSet<H256>>;
 
 /// Specifies whether the VM operates in L1 or L2 mode.
 #[derive(Debug, Clone, Copy, Default)]
@@ -568,9 +569,9 @@ impl FrameTxContext {
 #[derive(Debug, Default)]
 pub struct PrepareRegionBackupMarker {
     /// Addresses already backed up in `original_accounts_info` before the region.
-    accounts: foldhash::HashSet<Address>,
+    accounts: SeededHashSet<Address>,
     /// Addresses already backed up in `original_account_storage_slots` before the region.
-    storage: foldhash::HashSet<Address>,
+    storage: SeededHashSet<Address>,
     /// Length of `inserted_code_hashes` before the region.
     code_hashes_len: usize,
     /// Region-entry state of every account already backed up before the region
@@ -580,7 +581,7 @@ pub struct PrepareRegionBackupMarker {
     /// authorization on the sender) leaves no new backup entry. `fail_prepare_region`
     /// restores these to the captured state, reverting the in-region write while
     /// keeping the pre-region nonce bump / fee deduction.
-    entry_state: foldhash::HashMap<Address, LevmAccount>,
+    entry_state: SeededHashMap<Address, LevmAccount>,
     /// BAL recorder checkpoint at region entry, so an applied-then-reverted
     /// delegation's code/nonce changes are discarded (demoted to an access-only
     /// touch) rather than leaking into the block access list.
@@ -618,8 +619,8 @@ pub struct VM<'a> {
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
     /// Original storage values before transaction (for SSTORE gas calculation),
     /// keyed first by account to avoid hashing the full tuple on each access.
-    /// Seeded like [`TransientStorage`]: contracts choose the keys at both levels.
-    pub storage_original_values: foldhash::HashMap<Address, foldhash::HashMap<H256, U256>>,
+    /// Seeded: contracts choose the keys at both levels.
+    pub storage_original_values: SeededHashMap<Address, SeededHashMap<H256, U256>>,
     /// Call tracer for execution tracing.
     pub tracer: LevmCallTracer,
     /// Opcode (EIP-3155) tracer.  Disabled by default; zero overhead when inactive.
@@ -1418,9 +1419,9 @@ impl<'a> VM<'a> {
         self.prep_baseline_reservoir = self.state_gas_reservoir;
         self.prep_baseline_state_gas_spill = self.state_gas_spill;
         let backup = &self.current_call_frame.call_frame_backup;
-        let accounts: foldhash::HashSet<Address> =
+        let accounts: SeededHashSet<Address> =
             backup.original_accounts_info.keys().copied().collect();
-        let storage: foldhash::HashSet<Address> = backup
+        let storage: SeededHashSet<Address> = backup
             .original_account_storage_slots
             .keys()
             .copied()
@@ -1430,7 +1431,7 @@ impl<'a> VM<'a> {
         // self-sponsored EIP-7702 authorization (or any in-region write to a
         // pre-region-touched account) can be reverted without disturbing its
         // pre-region nonce/fee writes. See `PrepareRegionBackupMarker::entry_state`.
-        let entry_state: foldhash::HashMap<Address, LevmAccount> = accounts
+        let entry_state: SeededHashMap<Address, LevmAccount> = accounts
             .iter()
             .filter_map(|address| {
                 self.db

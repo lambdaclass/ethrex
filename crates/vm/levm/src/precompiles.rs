@@ -1,5 +1,6 @@
 use bytes::{Buf, Bytes};
 use ethrex_common::H160;
+use ethrex_common::seeded_hash::SeededHashMap;
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
     Address, H256, U256, types::Fork, types::Fork::*, utils::u256_from_big_endian,
@@ -381,7 +382,7 @@ struct PrecompileCacheEntries {
     /// Results by precompile, then by calldata. Two levels so a lookup can borrow the
     /// caller's calldata as the key: a single `(Address, Bytes)` key needs an owned one.
     /// The inner map is seeded like `TransientStorage`: contracts choose the calldata.
-    map: FxHashMap<Address, foldhash::HashMap<Bytes, (Bytes, u64)>>,
+    map: FxHashMap<Address, SeededHashMap<Bytes, (Bytes, u64)>>,
     /// Sum of [`PrecompileCache::entry_size`] over `map`.
     used_bytes: usize,
 }

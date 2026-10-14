@@ -23,14 +23,14 @@ use crate::precompiles::PrecompileMoves;
 use crate::utils::account_to_levm_account;
 use crate::utils::restore_cache_state;
 use crate::vm::VM;
+use ethrex_common::seeded_hash::{SeededHashMap, SeededHashSet};
 pub use ethrex_common::types::AccountUpdate;
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 
-/// Accounts touched by execution, by address. Seeded like
-/// [`crate::environment::TransientStorage`]: contracts choose which addresses they
-/// touch, and an unseeded hasher's public constants let them pick ones that all collide.
-pub type CacheDB = foldhash::HashMap<Address, LevmAccount>;
+/// Accounts touched by execution, by address. Seeded: contracts choose which addresses
+/// they touch (see [`SeededHashMap`]).
+pub type CacheDB = SeededHashMap<Address, LevmAccount>;
 
 /// Per-tx BAL cursor for lazy on-read prefix materialization.
 /// `bal_index = tx_idx + 1`; cursor's effective max_idx is `bal_index - 1`,
@@ -228,7 +228,7 @@ pub struct GeneralizedDatabase {
     skip_initial_tracking: bool,
     /// Optional tracker for BAL validation: records addresses accessed via load_account.
     /// Enabled only during parallel execution to detect extraneous BAL pure-access entries.
-    pub accessed_accounts: Option<foldhash::HashSet<Address>>,
+    pub accessed_accounts: Option<SeededHashSet<Address>>,
     /// Optional BAL cursor for lazy per-read prefix materialization.
     /// When set, account loads and storage reads consult the BAL before hitting the store.
     pub lazy_bal: Option<LazyBalCursor>,
@@ -630,7 +630,7 @@ impl GeneralizedDatabase {
             let removed_storage = was_destroyed && initial_state_account.has_storage;
 
             // 2. Storage has been updated if the current value is different from the one before execution.
-            let mut added_storage: foldhash::HashMap<_, _> = Default::default();
+            let mut added_storage: SeededHashMap<_, _> = Default::default();
 
             for (key, new_value) in &new_state_account.storage {
                 let old_value = if !was_destroyed {
@@ -738,7 +738,7 @@ impl GeneralizedDatabase {
             let removed_storage = was_destroyed && initial_state_account.has_storage;
 
             // 2. Storage has been updated if the current value is different from the one before execution.
-            let mut added_storage: foldhash::HashMap<_, _> = Default::default();
+            let mut added_storage: SeededHashMap<_, _> = Default::default();
 
             for (key, new_value) in &new_state_account.storage {
                 let old_value = if !was_destroyed {

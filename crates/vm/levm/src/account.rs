@@ -1,5 +1,6 @@
 use ethrex_common::H256;
 use ethrex_common::constants::EMPTY_TRIE_HASH;
+use ethrex_common::seeded_hash::SeededHashMap;
 use ethrex_common::types::{AccountState, GenesisAccount};
 use ethrex_common::utils::keccak;
 use ethrex_common::{U256, constants::EMPTY_KECCAK_HASH, types::AccountInfo};
@@ -15,8 +16,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LevmAccount {
     pub info: AccountInfo,
-    /// Seeded like [`crate::environment::TransientStorage`]: contracts choose the slot keys.
-    pub storage: foldhash::HashMap<H256, U256>,
+    /// Seeded: contracts choose the slot keys.
+    pub storage: SeededHashMap<H256, U256>,
     /// If true it means that attempting to create an account with this address it would at least collide because of storage.
     /// We just care about this kind of collision if the account doesn't have code or nonce. Otherwise its value doesn't matter.
     /// For more information see EIP-7610: https://eips.ethereum.org/EIPS/eip-7610
@@ -45,7 +46,7 @@ pub struct LevmAccount {
 // This is used only in state_v2 runner, storage is already fully filled in the genesis account.
 impl From<GenesisAccount> for LevmAccount {
     fn from(genesis: GenesisAccount) -> Self {
-        let storage: foldhash::HashMap<H256, U256> = genesis
+        let storage: SeededHashMap<H256, U256> = genesis
             .storage
             .into_iter()
             .map(|(key, value)| (H256::from(key.to_big_endian()), value))

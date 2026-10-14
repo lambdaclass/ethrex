@@ -17,6 +17,7 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
+use ethrex_common::seeded_hash::SeededHashMap;
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -846,7 +847,7 @@ fn storage_seed_uses_tx_initial_fast_path() {
     let index = bal.build_validation_index();
     let codes: FxHashMap<H256, Code> = FxHashMap::default();
 
-    let mut tx_initial: foldhash::HashMap<(Address, U256), U256> = Default::default();
+    let mut tx_initial: SeededHashMap<(Address, U256), U256> = Default::default();
     tx_initial.insert((address, slot), pre);
 
     let result = LEVM::validate_tx_execution(
@@ -897,7 +898,7 @@ fn storage_noop_detected_via_tx_initial() {
     let codes: FxHashMap<H256, Code> = FxHashMap::default();
 
     // Start-of-tx value == post value → no-op.
-    let mut tx_initial: foldhash::HashMap<(Address, U256), U256> = Default::default();
+    let mut tx_initial: SeededHashMap<(Address, U256), U256> = Default::default();
     tx_initial.insert((address, slot), value);
 
     let result = LEVM::validate_tx_execution(

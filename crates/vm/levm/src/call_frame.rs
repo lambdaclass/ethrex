@@ -7,6 +7,7 @@ use crate::{
     vm::VM,
 };
 use bytes::Bytes;
+use ethrex_common::seeded_hash::SeededHashMap;
 use ethrex_common::types::block_access_list::BlockAccessListCheckpoint;
 use ethrex_common::{Address, H256, U256, types::Code};
 use std::{
@@ -340,10 +341,10 @@ pub struct CallFrame {
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct CallFrameBackup {
-    /// Both maps are seeded like [`crate::environment::TransientStorage`]: the
+    /// Both maps are seeded: the
     /// accounts and slots a frame touches are chosen by contract code.
-    pub original_accounts_info: foldhash::HashMap<Address, LevmAccount>,
-    pub original_account_storage_slots: foldhash::HashMap<Address, foldhash::HashMap<H256, U256>>,
+    pub original_accounts_info: SeededHashMap<Address, LevmAccount>,
+    pub original_account_storage_slots: SeededHashMap<Address, SeededHashMap<H256, U256>>,
     /// BAL checkpoint for EIP-7928 - used to restore state changes on revert
     /// while preserving touched_addresses.
     pub bal_checkpoint: Option<BlockAccessListCheckpoint>,

@@ -1,4 +1,5 @@
 use crate::{errors::DatabaseError, precompiles::PrecompileCache};
+use ethrex_common::seeded_hash::SeededHashMap;
 use ethrex_common::{
     Address, H256, U256,
     types::{AccountState, ChainConfig, Code, CodeMetadata},
@@ -22,8 +23,8 @@ pub const BLOATED_BATCH_THRESHOLD: usize = 16_384;
 // Type aliases for cache storage maps. The account and storage caches are seeded like
 // `TransientStorage`: transactions choose which addresses and slots get cached. Code is
 // keyed by its keccak hash, which nobody can steer into a bucket.
-type AccountCache = foldhash::HashMap<Address, AccountState>;
-type StorageCache = foldhash::HashMap<(Address, H256), U256>;
+type AccountCache = SeededHashMap<Address, AccountState>;
+type StorageCache = SeededHashMap<(Address, H256), U256>;
 type CodeCache = FxHashMap<H256, Code>;
 /// Touched-key snapshot returned by [`CachingDatabase::touched_keys_where`].
 pub struct TouchedKeys {
