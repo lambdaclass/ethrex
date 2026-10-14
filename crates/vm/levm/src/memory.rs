@@ -11,6 +11,95 @@ use ethrex_common::{
     utils::{u256_from_big_endian_const, u256_to_big_endian},
 };
 
+/// The input of a call frame: a transaction's data, or a range of the calling frame's memory.
+///
+/// A call's arguments are read where they are instead of being copied for each call, so a
+/// CALL-family opcode costs the same whatever the size of its argument region. This is safe
+/// because the caller's memory cannot change while the callee runs: the caller grows its
+/// memory over the argument and return regions before the call, and only the running frame
+/// writes memory, past its own base. The callee's growth can still move the whole buffer to a
+/// new allocation, so a range is located through the buffer on every read rather than held
+/// as a pointer.
+#[derive(Debug, Clone)]
+pub enum CallData {
+    Owned(Bytes),
+    CallerMemory {
+        buffer: Rc<RefCell<Vec<u8>>>,
+        /// Offset of the range in the shared buffer, not relative to the caller's base.
+        start: usize,
+        len: usize,
+    },
+}
+
+impl Default for CallData {
+    fn default() -> Self {
+        Self::Owned(Bytes::new())
+    }
+}
+
+impl From<Bytes> for CallData {
+    fn from(bytes: Bytes) -> Self {
+        Self::Owned(bytes)
+    }
+}
+
+impl CallData {
+    #[inline]
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Owned(bytes) => bytes.len(),
+            Self::CallerMemory { len, .. } => *len,
+        }
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Passes the input to `f` as a slice. For a range of caller memory the buffer stays
+    /// borrowed while `f` runs, so `f` must not write memory.
+    #[inline]
+    pub fn with_slice<R>(&self, f: impl FnOnce(&[u8]) -> R) -> Result<R, VMError> {
+        match self {
+            Self::Owned(bytes) => Ok(f(bytes)),
+            Self::CallerMemory { buffer, start, len } => {
+                let buffer = buffer.borrow();
+                let end = start.checked_add(*len).ok_or(OutOfBounds)?;
+                // The buffer never shrinks below a live frame's memory, so this only fails
+                // if that invariant is broken.
+                let data = buffer.get(*start..end).ok_or(InternalError::Custom(
+                    "call data outside the memory buffer".to_owned(),
+                ))?;
+                Ok(f(data))
+            }
+        }
+    }
+
+    /// The input as `Bytes`: shared when owned, copied when it is a range of caller memory.
+    /// For uses that outlive the call, such as traces.
+    pub fn to_bytes(&self) -> Result<Bytes, VMError> {
+        match self {
+            Self::Owned(bytes) => Ok(bytes.clone()),
+            Self::CallerMemory { .. } => self.with_slice(Bytes::copy_from_slice),
+        }
+    }
+
+    /// The 32-byte word at `offset`, zero-padded past the end of the input (CALLDATALOAD).
+    #[inline]
+    pub fn load_word(&self, offset: usize) -> Result<U256, VMError> {
+        self.with_slice(|data| {
+            let mut word = [0u8; WORD_SIZE_IN_BYTES_USIZE];
+            if let Some(tail) = data.get(offset..) {
+                let available = tail.len().min(WORD_SIZE_IN_BYTES_USIZE);
+                #[expect(clippy::indexing_slicing, reason = "available is within both slices")]
+                word[..available].copy_from_slice(&tail[..available]);
+            }
+            u256_from_big_endian_const(word)
+        })
+    }
+}
+
 /// A cheaply clonable callframe-shared memory buffer.
 ///
 /// When a new callframe is created a RC clone of this memory is made, with the current base offset at the length of the buffer at that time.
@@ -177,6 +266,78 @@ impl Memory {
                 true_offset..(true_offset.wrapping_add(size)),
             )))
         }
+    }
+
+    /// The `size` bytes at `offset` as a call's input, read in place rather than copied; see
+    /// [`CallData`]. Grows memory over the range first, like `load_range`, so reads past the
+    /// current length see zeros.
+    #[inline]
+    pub fn calldata_view(&mut self, offset: usize, size: usize) -> Result<CallData, VMError> {
+        if size == 0 {
+            return Ok(CallData::default());
+        }
+
+        let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
+        self.resize(new_size)?;
+
+        Ok(CallData::CallerMemory {
+            buffer: Rc::clone(&self.buffer),
+            start: self.current_base.checked_add(offset).ok_or(OutOfBounds)?,
+            len: size,
+        })
+    }
+
+    /// Copies `size` bytes of `calldata` from `src_offset` to `dst_offset`, zero-filling past
+    /// the end of the input (CALLDATACOPY).
+    pub fn store_calldata(
+        &mut self,
+        dst_offset: usize,
+        calldata: &CallData,
+        src_offset: usize,
+        size: usize,
+    ) -> Result<(), VMError> {
+        if size == 0 {
+            return Ok(());
+        }
+
+        // Grow first: growing can move the buffer, and with it a caller range being read.
+        let new_size = dst_offset.checked_add(size).ok_or(OutOfBounds)?;
+        self.resize(new_size)?;
+
+        let copied = calldata.len().saturating_sub(src_offset).min(size);
+        if copied > 0 {
+            match calldata {
+                CallData::CallerMemory { buffer, start, .. }
+                    if Rc::ptr_eq(buffer, &self.buffer) =>
+                {
+                    let from = start.checked_add(src_offset).ok_or(OutOfBounds)?;
+                    let to = self
+                        .current_base
+                        .checked_add(dst_offset)
+                        .ok_or(OutOfBounds)?;
+                    let from_end = from.checked_add(copied).ok_or(OutOfBounds)?;
+                    let buffer = self.buf_mut();
+                    if from_end > buffer.len() {
+                        return Err(InternalError::Custom(
+                            "call data outside the memory buffer".to_owned(),
+                        )
+                        .into());
+                    }
+                    buffer.copy_within(from..from_end, to);
+                }
+                _ => calldata.with_slice(|data| {
+                    let data = data.get(src_offset..).unwrap_or_default();
+                    self.store(data, dst_offset, copied)
+                })??,
+            }
+        }
+
+        if copied < size {
+            #[expect(clippy::arithmetic_side_effects, reason = "copied < size")]
+            self.store_zeros(dst_offset.wrapping_add(copied), size - copied)?;
+        }
+
+        Ok(())
     }
 
     /// Borrow `size` bytes from the given offset and pass them to `f`, without

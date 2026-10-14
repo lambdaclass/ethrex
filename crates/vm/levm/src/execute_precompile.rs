@@ -39,7 +39,7 @@ pub const EXECUTE_GAS_PER_WITNESS_BYTE: u64 = 16;
 /// also converts the `Option` into an error, so `run_execute` can work with a
 /// guaranteed-`Some` validator.
 pub fn execute_precompile(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     _crypto: &dyn Crypto,
@@ -56,7 +56,7 @@ pub fn execute_precompile(
 /// Validate L2 constraints, charge gas, delegate.
 fn run_execute(
     validator: &dyn crate::StatelessValidator,
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
 ) -> Result<Bytes, VMError> {
     use ethrex_common::types::stateless_ssz::{

@@ -17,7 +17,7 @@ use crate::{
         backup_hook::BackupHook,
         hook::{Hook, get_hooks},
     },
-    memory::Memory,
+    memory::{CallData, Memory},
     opcode_tracer::LevmOpcodeTracer,
     opcodes::OpCodeFn,
     precompiles::{
@@ -1086,7 +1086,7 @@ impl<'a> VM<'a> {
                 Address::default(), // Will be assigned at the end of prepare_execution
                 Code::default(),    // Will be assigned at the end of prepare_execution
                 tx.value(),
-                tx.data().clone(),
+                tx.data().clone().into(),
                 false,
                 env.gas_limit,
                 0,
@@ -1115,8 +1115,8 @@ impl<'a> VM<'a> {
             callee,
             vm.tx.value(),
             vm.env.gas_limit,
-            vm.tx.data(),
-        );
+            &vm.tx.data().clone().into(),
+        )?;
 
         #[cfg(feature = "debug")]
         {
@@ -1988,12 +1988,12 @@ impl<'a> VM<'a> {
                     caller,                                    // msg_sender
                     target,                                    // to (delegator; ADDRESS/storage)
                     code_address,                              // code_address (delegatee when 7702)
-                    bytecode,           // bytecode (delegatee's code when 7702)
-                    frame.value,        // msg_value -- CALLVALUE
-                    frame.data.clone(), // calldata
-                    is_static,          // is_static
-                    frame.gas_limit,    // gas_limit
-                    0,                  // depth
+                    bytecode,                  // bytecode (delegatee's code when 7702)
+                    frame.value,               // msg_value -- CALLVALUE
+                    frame.data.clone().into(), // calldata
+                    is_static,                 // is_static
+                    frame.gas_limit,           // gas_limit
+                    0,                         // depth
                     false, // should_transfer_value (do_frame_value_transfer! handles it)
                     false, // is_create
                     0,     // ret_offset
@@ -2651,7 +2651,7 @@ impl<'a> VM<'a> {
                     code_address,
                     bytecode,
                     frame.value,
-                    frame.data.clone(),
+                    frame.data.clone().into(),
                     is_static,
                     frame.gas_limit,
                     0,
@@ -2820,16 +2820,25 @@ impl<'a> VM<'a> {
                 self.effective_precompile_address(self.current_call_frame.code_address);
             let precompile_gas_limit = self.current_call_frame.gas_limit;
             let mut gas_remaining = self.current_call_frame.gas_remaining as u64;
-            let result = Self::execute_precompile(
-                code_address,
-                &self.current_call_frame.calldata,
-                precompile_gas_limit,
-                &mut gas_remaining,
-                self.env.config.fork,
-                self.db.store.precompile_cache(),
-                self.crypto,
-                self.stateless_validator,
-            );
+            let fork = self.env.config.fork;
+            let cache = self.db.store.precompile_cache();
+            let (crypto, stateless_validator) = (self.crypto, self.stateless_validator);
+            let result = self
+                .current_call_frame
+                .calldata
+                .with_slice(|input| {
+                    Self::execute_precompile(
+                        code_address,
+                        input,
+                        precompile_gas_limit,
+                        &mut gas_remaining,
+                        fork,
+                        cache,
+                        crypto,
+                        stateless_validator,
+                    )
+                })
+                .and_then(|result| result);
 
             debug_assert_eq!(
                 self.state_gas_used, state_gas_used_before_precompile,
@@ -3226,7 +3235,7 @@ impl<'a> VM<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn execute_precompile(
         code_address: H160,
-        calldata: &Bytes,
+        calldata: &[u8],
         gas_limit: u64,
         gas_remaining: &mut u64,
         fork: Fork,
@@ -3524,7 +3533,7 @@ impl<'a> VM<'a> {
             Address::default(),
             Code::default(),
             U256::zero(),
-            Bytes::new(),
+            CallData::default(),
             false,
             Self::STATE_GAS_HARNESS_FRAME_GAS,
             0,

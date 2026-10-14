@@ -16,7 +16,7 @@ use crate::{
     constants::{AMSTERDAM_INIT_CODE_MAX_SIZE, FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost,
-    memory::{self, calculate_memory_size},
+    memory::{self, CallData, calculate_memory_size},
     opcode_handlers::OpcodeHandler,
     utils::{address_to_word, create_eth_transfer_log, word_to_address, *},
     vm::VM,
@@ -198,7 +198,7 @@ impl OpcodeHandler for OpCallHandler {
             value,
             gas_limit,
             &data,
-        );
+        )?;
 
         // Generic call.
         vm.generic_call(
@@ -334,7 +334,7 @@ impl OpcodeHandler for OpCallCodeHandler {
             value,
             gas_limit,
             &data,
-        );
+        )?;
 
         // Generic call.
         vm.generic_call(
@@ -458,7 +458,7 @@ impl OpcodeHandler for OpDelegateCallHandler {
             vm.current_call_frame.msg_value,
             gas_limit,
             &data,
-        );
+        )?;
 
         // Generic call.
         vm.generic_call(
@@ -580,7 +580,7 @@ impl OpcodeHandler for OpStaticCallHandler {
             U256::zero(),
             gas_limit,
             &data,
-        );
+        )?;
 
         // Generic call.
         vm.generic_call(
@@ -834,7 +834,7 @@ impl OpcodeHandler for OpSelfDestructHandler {
             balance,
             0,
             &Default::default(),
-        );
+        )?;
         vm.tracer.exit_early(0, None)?;
 
         Ok(OpcodeResult::Halt)
@@ -939,8 +939,14 @@ impl<'a> VM<'a> {
                 // Child gas preview for the tracer only; no gas is reserved on this
                 // path (mirrors EELS `push(0); return`).
                 let preview_gas = gas_cost::max_message_call_gas(&self.current_call_frame)?;
-                self.tracer
-                    .enter(call_type, deployer, new_address, value, preview_gas, &code);
+                self.tracer.enter(
+                    call_type,
+                    deployer,
+                    new_address,
+                    value,
+                    preview_gas,
+                    &code.into(),
+                )?;
                 self.current_call_frame.stack.push(FAIL)?;
                 self.tracer.exit_early(0, Some(reason.to_string()))?;
                 return Ok(OpcodeResult::Continue);
@@ -984,8 +990,14 @@ impl<'a> VM<'a> {
         self.current_call_frame.increase_consumed_gas(gas_limit)?;
 
         // Log CREATE in tracer (success path) with the reserved child gas.
-        self.tracer
-            .enter(call_type, deployer, new_address, value, gas_limit, &code);
+        self.tracer.enter(
+            call_type,
+            deployer,
+            new_address,
+            value,
+            gas_limit,
+            &code.clone().into(),
+        )?;
 
         // Increment sender nonce (irreversible change)
         self.increment_account_nonce(deployer)?;
@@ -1020,7 +1032,7 @@ impl<'a> VM<'a> {
             // SAFETY: init code hash is never used
             Code::from_bytecode_unchecked(code, H256::zero()),
             value,
-            Bytes::new(),
+            CallData::default(),
             false,
             gas_limit,
             new_depth,
@@ -1163,7 +1175,7 @@ impl<'a> VM<'a> {
         code_address: Address,
         should_transfer_value: bool,
         is_static: bool,
-        calldata: Bytes,
+        calldata: CallData,
         ret_offset: usize,
         ret_size: usize,
         bytecode: Code,
@@ -1203,17 +1215,24 @@ impl<'a> VM<'a> {
             }
 
             let mut gas_remaining = gas_limit;
-            let ctx_result = Self::execute_precompile(
-                // Resolve a relocation destination back to the precompile it hosts.
-                self.effective_precompile_address(code_address),
-                &calldata,
-                gas_limit,
-                &mut gas_remaining,
-                self.env.config.fork,
-                self.db.store.precompile_cache(),
-                self.crypto,
-                self.stateless_validator,
-            )?;
+            // Resolve a relocation destination back to the precompile it hosts.
+            let precompile_address = self.effective_precompile_address(code_address);
+            let fork = self.env.config.fork;
+            let cache = self.db.store.precompile_cache();
+            let (crypto, stateless_validator) = (self.crypto, self.stateless_validator);
+            // The precompile reads the arguments in place in the caller's memory.
+            let ctx_result = calldata.with_slice(|input| {
+                Self::execute_precompile(
+                    precompile_address,
+                    input,
+                    gas_limit,
+                    &mut gas_remaining,
+                    fork,
+                    cache,
+                    crypto,
+                    stateless_validator,
+                )
+            })??;
 
             let call_frame = &mut self.current_call_frame;
 
@@ -1553,8 +1572,9 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    fn get_calldata(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {
-        self.current_call_frame.memory.load_range(offset, size)
+    /// A call's arguments, read in place in the caller's memory rather than copied.
+    fn get_calldata(&mut self, offset: usize, size: usize) -> Result<CallData, VMError> {
+        self.current_call_frame.memory.calldata_view(offset, size)
     }
 
     #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
