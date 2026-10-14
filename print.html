@@ -4339,7 +4339,7 @@ ethrex l2 deploy \
 <blockquote class="blockquote-tag blockquote-tag-note">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
 <p>This command requires the <code>COMPILE_CONTRACTS</code> env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
-In this step we are initializing the <code>OnChainProposer</code> contract with the <code>ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS</code> and skipping the rest of verifiers; you can find the address for the aligned aggregator service <a href="https://docs.alignedlayer.com/guides/7_contract_addresses">here</a>.
+In this step we are initializing the <code>OnChainProposer</code> contract with the <code>ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS</code> and skipping the rest of verifiers; you can find the address for the aligned aggregator service <a href="https://docs.alignedlayer.com/proof-aggregation-layer/guides/7_contract_addresses">here</a>.
 Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
 Accounts for the deployer, on-chain proposer owner, bridge owner, and proof sender must have funds. Add <code>--bridge-owner-pk &lt;PRIVATE_KEY&gt;</code> if you want the deployer to immediately call <code>acceptOwnership</code> on behalf of that owner; otherwise, they can accept later.</p>
 </blockquote>
@@ -9620,8 +9620,8 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 <h2 id="references-4"><a class="header" href="#references-4">References</a></h2>
 <ul>
 <li><a href="https://docs.alignedlayer.com/">Aligned Layer Documentation</a></li>
-<li><a href="https://docs.alignedlayer.com/guides/1.2_sdk_api_reference">Aligned SDK API Reference</a></li>
-<li><a href="https://docs.alignedlayer.com/guides/7_contract_addresses">Aligned Contract Addresses</a></li>
+<li><a href="https://docs.alignedlayer.com/proof-aggregation-layer/guides/4_sdk#api-reference">Aligned SDK API Reference</a></li>
+<li><a href="https://docs.alignedlayer.com/proof-aggregation-layer/guides/7_contract_addresses">Aligned Contract Addresses</a></li>
 <li><a href="#running-ethrex-in-aligned-mode">Running Ethrex in Aligned Mode</a></li>
 <li><a href="#aligned-layer-failure-recovery-guide">Aligned Failure Recovery Guide</a></li>
 <li><a href="#deploying-an-ethrex-l2">ethrex L2 Deployment Guide</a></li>
