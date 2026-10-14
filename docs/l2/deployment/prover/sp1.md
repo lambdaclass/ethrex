@@ -42,3 +42,18 @@ sudo nvidia-smi -pm 1
 ```
 
 Persistence mode is reset on reboot. To keep it enabled, run the `nvidia-persistenced` service.
+
+### `sp1-gpu-server` is killed for running out of memory
+
+The GPU prover keeps much of each proof in host memory: with SP1's default settings, `sp1-gpu-server` reached 42 GB on large proofs. If the host runs out of memory, the kernel kills it, the prover logs `CudaClientError: Failed to read the response` with `early eof`, and `dmesg` shows `Out of memory: Killed process ... (sp1-gpu-server)`. Run the prover with a smaller proving pipeline, which the server reads from the environment:
+
+```shell
+SP1_WORKER_NUM_CORE_WORKERS=1 SP1_WORKER_CORE_BUFFER_SIZE=1 \
+SP1_WORKER_NUM_SPLICING_WORKERS=1 SP1_WORKER_SPLICING_BUFFER_SIZE=1 \
+SP1_WORKER_NUM_RECURSION_EXECUTOR_WORKERS=1 SP1_WORKER_RECURSION_EXECUTOR_BUFFER_SIZE=1 \
+SP1_WORKER_NUM_PREPARE_REDUCE_WORKERS=1 SP1_WORKER_PREPARE_REDUCE_BUFFER_SIZE=1 \
+SP1_WORKER_NUM_RECURSION_PROVER_WORKERS=2 SP1_WORKER_RECURSION_PROVER_BUFFER_SIZE=2 \
+ethrex l2 prover --backend sp1 --proof-coordinators http://localhost:3900
+```
+
+With these values the server peaked at about 35 GB on the same proofs. Small proofs take about as long as before; the largest ones took about 50% longer.

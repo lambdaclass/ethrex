@@ -177,6 +177,21 @@ jobs:
 
       - name: Run test
         # if: ${{ always() && github.event_name == 'merge_group' }}
+        # The prover's sp1-gpu-server reads these. With SP1's default proving
+        # pipeline it peaks at about 42 GB of host memory and the runner, which
+        # has 44 GB, kills it. With one worker per stage it peaks at about 35 GB,
+        # and small proofs, like this test's batches, take the same time.
+        env:
+          SP1_WORKER_NUM_CORE_WORKERS: 1
+          SP1_WORKER_CORE_BUFFER_SIZE: 1
+          SP1_WORKER_NUM_SPLICING_WORKERS: 1
+          SP1_WORKER_SPLICING_BUFFER_SIZE: 1
+          SP1_WORKER_NUM_RECURSION_EXECUTOR_WORKERS: 1
+          SP1_WORKER_RECURSION_EXECUTOR_BUFFER_SIZE: 1
+          SP1_WORKER_NUM_PREPARE_REDUCE_WORKERS: 1
+          SP1_WORKER_PREPARE_REDUCE_BUFFER_SIZE: 1
+          SP1_WORKER_NUM_RECURSION_PROVER_WORKERS: 2
+          SP1_WORKER_RECURSION_PROVER_BUFFER_SIZE: 2
         run: |
           cd crates/l2
           RUST_LOG=info,ethrex_l2_prover=debug ../../target/release/ethrex l2 prover --proof-coordinators tcp://127.0.0.1:3900 --backend sp1 &
