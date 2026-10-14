@@ -88,6 +88,7 @@ pub async fn engine_only_context(storage: Store) -> RpcApiContext {
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
         block_worker_channel,
         ws: None,
+        log_query_limits: Default::default(),
         allowed_namespaces: Arc::new(all_namespaces_for_tests()),
     }
 }

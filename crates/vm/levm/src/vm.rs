@@ -31,7 +31,7 @@ use ethrex_common::{
     Address, BigEndianHash, H256, U256,
     tracing::CallType,
     types::{
-        AccessListEntry, Code, Fork, Frame, FrameMode, Log, Transaction, TxType,
+        AccessListEntry, Code, Fork, Frame, FrameMode, InitcodeBuffer, Log, Transaction, TxType,
         block_access_list::BlockAccessListCheckpoint, fee_config::FeeConfig,
     },
 };
@@ -625,6 +625,11 @@ pub struct VM<'a> {
     pub debug_mode: DebugMode,
     /// Pool of reusable stacks to reduce allocations.
     pub stack_pool: Vec<Stack>,
+    /// Pool of reusable initcode buffers for CREATE frames. A buffer returns here when its
+    /// frame ends, so a contract that issues many CREATEs reuses one allocation instead of
+    /// copying its initcode into a fresh one each time. Inside zkVM guests whose bump
+    /// allocators never free, those fresh copies are never reclaimed and exhaust the heap.
+    pub initcode_pool: Vec<InitcodeBuffer>,
     /// VM type (L1 or L2 with fee config).
     pub vm_type: VMType,
     /// Frame transaction context (EIP-8141). Set when executing a frame tx.
@@ -921,8 +926,12 @@ impl<'a> VM<'a> {
     /// stacks for sub-call frames. This avoids the per-tx 32 KB stack alloc+zero on a warm pool —
     /// the dominant allocation for transfer-heavy blocks, where the root frame is the only frame.
     ///
+    /// It also adopts `initcode_pool` as the VM's pool of CREATE initcode buffers, so a
+    /// transaction reuses the buffers an earlier one left.
+    ///
     /// Pair with [`VM::reclaim_into`] after execution to return every stack (root + sub-frame)
-    /// to `stack_pool` and the root memory buffer to `memory_pool` so the next tx reuses them.
+    /// to `stack_pool`, the root memory buffer to `memory_pool` and the initcode buffers to
+    /// `initcode_pool`, so the next tx reuses them.
     #[allow(clippy::too_many_arguments)]
     pub fn new_pooled(
         env: Environment,
@@ -934,6 +943,7 @@ impl<'a> VM<'a> {
         stateless_validator: Option<&'a dyn crate::StatelessValidator>,
         stack_pool: &mut Vec<Stack>,
         memory_pool: &mut Vec<Memory>,
+        initcode_pool: &mut Vec<InitcodeBuffer>,
     ) -> Result<Self, VMError> {
         // Reuse a pooled stack for the root frame. `clear()` only resets the offset (no zeroing),
         // which is sound because the EVM never reads stack slots it didn't write — the same
@@ -958,16 +968,27 @@ impl<'a> VM<'a> {
         )?;
         // Adopt the caller's pooled stacks for sub-frames; returned via `reclaim_into`.
         mem::swap(&mut vm.stack_pool, stack_pool);
+        // Likewise the initcode buffers. A pool that started empty with every transaction would
+        // make each one allocate its buffers afresh and drop them with its VM, which a zkVM
+        // guest's bump allocator never reclaims.
+        mem::swap(&mut vm.initcode_pool, initcode_pool);
         Ok(vm)
     }
 
     /// Returns this VM's reusable buffers to the caller's pools so the next transaction reuses
     /// them instead of allocating: every stack (root call-frame stack plus any sub-frame stacks
-    /// still pooled internally) to `stack_pool`, and the root memory buffer to `memory_pool`.
+    /// still pooled internally) to `stack_pool`, the root memory buffer to `memory_pool`, and the
+    /// pooled initcode buffers to `initcode_pool`.
     /// Must run on both the success and error paths of [`VM::execute`].
-    pub fn reclaim_into(mut self, stack_pool: &mut Vec<Stack>, memory_pool: &mut Vec<Memory>) {
+    pub fn reclaim_into(
+        mut self,
+        stack_pool: &mut Vec<Stack>,
+        memory_pool: &mut Vec<Memory>,
+        initcode_pool: &mut Vec<InitcodeBuffer>,
+    ) {
         // Hand the internal sub-frame pool back to the caller first.
         mem::swap(&mut self.stack_pool, stack_pool);
+        mem::swap(&mut self.initcode_pool, initcode_pool);
         // Then reclaim the root frame's stack. Moving it out by value (VM/CallFrame have no Drop)
         // avoids leaving a fresh 32 KB `Stack::default()` placeholder behind — which a
         // `mem::take`/`mem::replace` against an empty pool would force, defeating the win on
@@ -1059,6 +1080,7 @@ impl<'a> VM<'a> {
             validation_observer: ValidationObserver::disabled(),
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
+            initcode_pool: Vec::new(),
             vm_type,
             preserve_top_level_backup,
             state_gas_used: 0,
@@ -3535,6 +3557,7 @@ impl<'a> VM<'a> {
             opcode_tracer: LevmOpcodeTracer::disabled(),
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
+            initcode_pool: Vec::new(),
             vm_type: VMType::L1,
             preserve_top_level_backup: false,
             state_gas_used: 0,

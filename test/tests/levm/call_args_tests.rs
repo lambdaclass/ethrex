@@ -363,7 +363,7 @@ fn a_callee_that_fails_with_an_error_does_not_keep_the_pooled_memory_buffer() {
     };
     let mut db = database(store, caller_code, callee_code);
     let tx = transaction();
-    let (mut stack_pool, mut memory_pool) = (Vec::new(), Vec::new());
+    let (mut stack_pool, mut memory_pool, mut initcode_pool) = (Vec::new(), Vec::new(), Vec::new());
     let mut vm = VM::new_pooled(
         environment(),
         &mut db,
@@ -374,6 +374,7 @@ fn a_callee_that_fails_with_an_error_does_not_keep_the_pooled_memory_buffer() {
         None,
         &mut stack_pool,
         &mut memory_pool,
+        &mut initcode_pool,
     )
     .expect("vm");
 
@@ -382,6 +383,6 @@ fn a_callee_that_fails_with_an_error_does_not_keep_the_pooled_memory_buffer() {
         matches!(result, Err(VMError::Internal(InternalError::Database(_)))),
         "{result:?}"
     );
-    vm.reclaim_into(&mut stack_pool, &mut memory_pool);
+    vm.reclaim_into(&mut stack_pool, &mut memory_pool, &mut initcode_pool);
     assert_eq!(memory_pool.len(), 1);
 }

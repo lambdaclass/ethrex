@@ -385,21 +385,37 @@ pub const PRECOMPILE_CACHE_MAX_INPUT_BYTES: usize = 4096;
 
 #[derive(Default)]
 struct PrecompileCacheEntries {
-    /// Results by precompile, then by input, so an input can be looked up as a slice.
+    /// Results by precompile, then by calldata. Two levels so a lookup can borrow the
+    /// caller's calldata as the key: a single `(Address, Bytes)` key needs an owned one.
     map: FxHashMap<Address, FxHashMap<Bytes, (Bytes, u64)>>,
     /// Sum of [`PrecompileCache::entry_size`] over `map`.
     used_bytes: usize,
 }
 
+impl PrecompileCacheEntries {
+    fn contains(&self, address: &Address, calldata: &[u8]) -> bool {
+        self.map
+            .get(address)
+            .is_some_and(|calls| calls.contains_key(calldata))
+    }
+}
+
 /// Per-block cache for precompile results shared between warmer and executor.
 ///
-/// Holds at most [`PRECOMPILE_CACHE_MAX_BYTES`], as counted by
-/// [`PrecompileCache::entry_size`]; once full, further results are simply not cached.
+/// Holds at most its budget, [`PRECOMPILE_CACHE_MAX_BYTES`] unless built with
+/// [`PrecompileCache::with_max_bytes`], as counted by [`PrecompileCache::entry_size`];
+/// once full, further results are simply not cached.
 /// Nothing is evicted: the cache is dropped with its block, so there is no recency worth
 /// tracking, and lookups stay on the shared read lock.
-#[derive(Default)]
 pub struct PrecompileCache {
     cache: RwLock<PrecompileCacheEntries>,
+    max_bytes: usize,
+}
+
+impl Default for PrecompileCache {
+    fn default() -> Self {
+        Self::with_max_bytes(PRECOMPILE_CACHE_MAX_BYTES)
+    }
 }
 
 impl PrecompileCache {
@@ -407,10 +423,18 @@ impl PrecompileCache {
         Self::default()
     }
 
+    /// A cache that holds at most `max_bytes`, as counted by [`PrecompileCache::entry_size`].
+    pub fn with_max_bytes(max_bytes: usize) -> Self {
+        Self {
+            cache: RwLock::default(),
+            max_bytes,
+        }
+    }
+
     /// Bytes one entry is charged against the budget: its calldata and output, plus
-    /// the fixed size of the key and value it is stored as in its precompile's map.
-    /// Hash-table slack and the per-precompile maps (one per precompile called) are not
-    /// counted, so the budget is approximate, not an exact resident size.
+    /// the fixed size of the key and value it is stored as. Hash-table slack and the
+    /// per-precompile tables are not counted, so the budget is approximate, not an exact
+    /// resident size.
     pub fn entry_size(calldata_len: usize, output_len: usize) -> usize {
         calldata_len
             .saturating_add(output_len)
@@ -421,24 +445,44 @@ impl PrecompileCache {
         // Graceful degradation: if the lock is poisoned (a thread panicked while
         // holding it), skip the cache rather than propagating the panic. The cache
         // is a pure optimization — missing it only costs a recomputation.
-        self.cache
+        let entries = self
+            .cache
             .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .map
-            .get(address)
-            .and_then(|results| results.get(calldata))
-            .cloned()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        entries.map.get(address)?.get(calldata).cloned()
     }
 
-    pub fn insert(&self, address: Address, calldata: Bytes, output: Bytes, gas_cost: u64) {
+    /// Stores copies of `calldata` and `output`, never the caller's buffers: calldata can be
+    /// a view of a larger allocation (the calling frame's memory, or a slice of a
+    /// transaction's data), and keeping a reference would hold that whole allocation while
+    /// the budget counts only the length.
+    ///
+    /// The copies are made only for a call that is not cached yet and fits the budget, and
+    /// outside the write lock. The warmer and the executor often compute the same call, and
+    /// the second insert then costs a lookup under the shared read lock and nothing more.
+    pub fn insert(&self, address: Address, calldata: &[u8], output: &[u8], gas_cost: u64) {
         let entry_size = Self::entry_size(calldata.len(), output.len());
+        {
+            let entries = self
+                .cache
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if entries.used_bytes.saturating_add(entry_size) > self.max_bytes
+                || entries.contains(&address, calldata)
+            {
+                return;
+            }
+        }
+        let calldata = Bytes::copy_from_slice(calldata);
+        let output = Bytes::copy_from_slice(output);
         let mut guard = self
             .cache
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let entries = &mut *guard;
+        // Checked again: another thread may have inserted since the read lock was released.
         let used_bytes = entries.used_bytes.saturating_add(entry_size);
-        if used_bytes > PRECOMPILE_CACHE_MAX_BYTES {
+        if used_bytes > self.max_bytes {
             return;
         }
         // The warmer and the executor can both compute the same call; the result is
@@ -541,12 +585,7 @@ pub fn execute_precompile(
         && let Ok(output) = &result
     {
         let gas_cost = gas_before.saturating_sub(*gas_remaining);
-        cache.insert(
-            address,
-            Bytes::copy_from_slice(calldata),
-            output.clone(),
-            gas_cost,
-        );
+        cache.insert(address, calldata, output, gas_cost);
     }
 
     result

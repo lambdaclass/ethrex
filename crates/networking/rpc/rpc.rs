@@ -45,7 +45,7 @@ use crate::eth::{
     },
     gas_price::GasPrice,
     gas_tip_estimator::GasTipEstimator,
-    logs::LogsFilter,
+    logs::{LogQueryLimits, LogsFilter},
     transaction::{
         CallRequest, CreateAccessListRequest, EstimateGasRequest, GetRawTransaction,
         GetRawTransactionByBlockAndIndex, GetTransactionByBlockHashAndIndexRequest,
@@ -293,6 +293,8 @@ pub struct RpcApiContext {
     /// The `engine` namespace is always served via the authenticated RPC port
     /// and is not gated here.
     pub allowed_namespaces: Arc<HashSet<RpcNamespace>>,
+    /// What `eth_getLogs` and log-filter polls may cost, and the work budget they share.
+    pub log_query_limits: LogQueryLimits,
 }
 
 /// Configuration for the WebSocket RPC server.
@@ -491,6 +493,7 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::ProofGenerationUnavailable(_) => "ProofGenerationUnavailable",
         RpcErr::ResourceNotFound(_) => "ResourceNotFound",
         RpcErr::PrunedHistoryUnavailable(_) => "PrunedHistoryUnavailable",
+        RpcErr::LimitExceeded(_) => "LimitExceeded",
     }
 }
 
@@ -650,6 +653,7 @@ pub async fn bind_api(
     gas_ceil: u64,
     extra_data: String,
     allowed_namespaces: HashSet<RpcNamespace>,
+    log_query_limits: LogQueryLimits,
     authrpc_max_inflight_body_size: usize,
 ) -> Result<BoundRpc, RpcStartupError> {
     // TODO: Refactor how filters are handled,
@@ -676,6 +680,7 @@ pub async fn bind_api(
         block_worker_channel,
         ws: ws.clone(),
         allowed_namespaces: Arc::new(allowed_namespaces),
+        log_query_limits,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -1059,7 +1064,7 @@ impl BoundRpc {
 
 /// Binds and serves the RPC API until shutdown. Compatibility wrapper over [`bind_api`] +
 /// [`BoundRpc::serve`] for embedders; the node itself uses `bind_api` directly so a bind
-/// failure fails fast in the foreground.
+/// failure fails fast in the foreground. Log queries get [`LogQueryLimits::default`].
 ///
 /// # Shutdown
 ///
@@ -1100,6 +1105,7 @@ pub async fn start_api(
         gas_ceil,
         extra_data,
         allowed_namespaces,
+        LogQueryLimits::default(),
         authrpc_max_inflight_body_size,
     )
     .await?
@@ -1723,7 +1729,13 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_estimateGas" => EstimateGasRequest::call(req, context).await,
         "eth_getLogs" => LogsFilter::call(req, context).await,
         "eth_newFilter" => {
-            NewFilterRequest::stateful_call(req, context.storage, context.active_filters).await
+            NewFilterRequest::stateful_call(
+                req,
+                context.storage,
+                context.active_filters,
+                &context.log_query_limits,
+            )
+            .await
         }
         "eth_newBlockFilter" => {
             NewBlockFilterRequest::stateful_call(req, context.storage, context.active_filters).await
@@ -1732,7 +1744,13 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
             DeleteFilterRequest::stateful_call(req, context.storage, context.active_filters)
         }
         "eth_getFilterChanges" => {
-            FilterChangesRequest::stateful_call(req, context.storage, context.active_filters).await
+            FilterChangesRequest::stateful_call(
+                req,
+                context.storage,
+                context.active_filters,
+                &context.log_query_limits,
+            )
+            .await
         }
         "eth_sendRawTransaction" => SendRawTransactionRequest::call(req, context).await,
         "eth_getProof" => GetProofRequest::call(req, context).await,

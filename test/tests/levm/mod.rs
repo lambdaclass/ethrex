@@ -3,6 +3,7 @@ mod test_db;
 mod bal_selfdestruct_reads_tests;
 mod bal_view_tests;
 mod bls12_tests;
+mod buffer_pool_tests;
 mod call_args_tests;
 mod destroyed_refault_tests;
 mod eip2780_tests;
