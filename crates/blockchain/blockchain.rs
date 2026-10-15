@@ -4972,17 +4972,6 @@ pub fn new_evm<D: VmDatabase + 'static>(
     Ok(evm)
 }
 
-/// Attach the stateless validator to an `Evm` so its `EXECUTE` precompile
-/// can delegate to `verify_stateless_new_payload` when processing native-rollup
-/// `advance()` calls.
-///
-/// Lives here (not in `Evm`'s constructor) because `StatelessExecutor` is
-/// implemented by the blockchain crate and calls back into `Evm::new_for_l1`
-/// when verifying — an auto-inject in the constructor would recurse. Other
-/// callers that build `Evm::new_for_l1` without blockchain access (the
-/// guest-program crate, the stateless verifier itself, witness generation,
-/// the prover backend) also rely on the constructor staying validator-less.
-///
 /// The code hashes in `accessed`, each once, in the order they were first read. The logger
 /// records one entry per read, and a contract read for both its bytecode and its length is
 /// recorded twice; a repeated hash would put the same (up to 24KB) bytecode in a witness more
@@ -4996,6 +4985,16 @@ fn unique_code_hashes(accessed: &[H256]) -> Vec<H256> {
         .collect()
 }
 
+/// Attach the stateless validator to an `Evm` so its `EXECUTE` precompile
+/// can delegate to `verify_stateless_new_payload` when processing native-rollup
+/// `advance()` calls.
+///
+/// Lives here (not in `Evm`'s constructor) because `StatelessExecutor` is
+/// implemented by the blockchain crate and calls back into `Evm::new_for_l1`
+/// when verifying — an auto-inject in the constructor would recurse. Other
+/// callers that build `Evm::new_for_l1` without blockchain access (the
+/// guest-program crate, the stateless verifier itself, witness generation,
+/// the prover backend) also rely on the constructor staying validator-less.
 fn attach_stateless_validator(evm: &mut Evm) {
     evm.stateless_validator = Some(Arc::new(stateless::StatelessExecutor {
         crypto: Arc::new(NativeCrypto),
