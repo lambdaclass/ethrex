@@ -914,3 +914,91 @@ fn storage_noop_detected_via_tx_initial() {
     );
     assert_mismatch(&result, "no-op BAL storage change");
 }
+
+// --- reproducible rejections: many offenders, the lowest one named ---
+//
+// `current_state` and each account's storage are seeded maps, which walk in a different order
+// on every node and every run. A rejection names the lowest offender, so all of them report
+// the same one.
+
+/// Offenders injected per test. Naming whichever one a map walks to first would name the
+/// lowest with probability 1/256.
+const OFFENDERS: u8 = 255;
+
+/// Many accounts changed by execution and absent from the BAL: the lowest address is named.
+#[test]
+fn names_the_lowest_account_absent_from_bal() {
+    let mut system_seed = CacheDB::default();
+    let mut current_state = CacheDB::default();
+    for byte in 1..=OFFENDERS {
+        let empty = *ethrex_common::constants::EMPTY_KECCAK_HASH;
+        system_seed.insert(
+            addr(byte),
+            account_with(U256::zero(), 0, empty, AccountStatus::Unmodified),
+        );
+        current_state.insert(
+            addr(byte),
+            account_with(U256::one(), 0, empty, AccountStatus::Modified),
+        );
+    }
+    let bal = BlockAccessList::from_accounts(Vec::new());
+    let index = bal.build_validation_index();
+    let codes: SeededHashMap<H256, Code> = Default::default();
+
+    let result = LEVM::validate_tx_execution(
+        1,
+        0,
+        &current_state,
+        &codes,
+        &bal,
+        &index,
+        &system_seed,
+        &unused_store(),
+        &Default::default(),
+        &Default::default(),
+    );
+    assert_mismatch(
+        &result,
+        &format!(
+            "account {:?} was modified by execution but is absent",
+            addr(1)
+        ),
+    );
+}
+
+/// Many slots of one BAL account written by execution with no `storage_changes` entry: the
+/// lowest slot is named.
+#[test]
+fn names_the_lowest_unrecorded_storage_write() {
+    let address = addr(6);
+    let empty = *ethrex_common::constants::EMPTY_KECCAK_HASH;
+    let mut seed_account = account_with(U256::zero(), 0, empty, AccountStatus::Unmodified);
+    let mut current_account = account_with(U256::zero(), 0, empty, AccountStatus::Modified);
+    for slot in 1..=u64::from(OFFENDERS) {
+        let key = u256_to_h256(U256::from(slot));
+        seed_account.storage.insert(key, U256::zero());
+        current_account.storage.insert(key, U256::from(9));
+    }
+    let mut system_seed = CacheDB::default();
+    system_seed.insert(address, seed_account);
+    let mut current_state = CacheDB::default();
+    current_state.insert(address, current_account);
+
+    let bal = BlockAccessList::from_accounts(vec![AccountChanges::new(address)]);
+    let index = bal.build_validation_index();
+    let codes: SeededHashMap<H256, Code> = Default::default();
+
+    let result = LEVM::validate_tx_execution(
+        1,
+        0,
+        &current_state,
+        &codes,
+        &bal,
+        &index,
+        &system_seed,
+        &unused_store(),
+        &Default::default(),
+        &Default::default(),
+    );
+    assert_mismatch(&result, "storage slot 1 was written by execution");
+}

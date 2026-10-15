@@ -321,6 +321,31 @@ pub enum BalValidationError {
     Database(String),
 }
 
+/// Runs `check` on every entry of `map` and returns the failure of the lowest key.
+///
+/// A seeded map walks in a different order on every node and every run, so stopping at the
+/// first failure the walk meets would name a different offender for the same invalid block.
+/// A map that passes is walked once, in its own order; only a failure pays for sorting the
+/// keys and walking again. `check` only reads, so the second walk sees what the first did.
+#[cfg(feature = "rayon")]
+fn first_failure_by_key<K: Ord, V, S, E>(
+    map: &std::collections::HashMap<K, V, S>,
+    mut check: impl FnMut(&K, &V) -> Result<(), E>,
+) -> Result<(), E> {
+    if map
+        .iter()
+        .try_for_each(|(key, value)| check(key, value))
+        .is_ok()
+    {
+        return Ok(());
+    }
+    let mut entries: Vec<(&K, &V)> = map.iter().collect();
+    entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
+    entries
+        .into_iter()
+        .try_for_each(|(key, value)| check(key, value))
+}
+
 impl LEVM {
     /// Execute a block and return the execution result.
     ///
@@ -1375,10 +1400,11 @@ impl LEVM {
             }
         }
 
-        // Backstop from the cache, independent of the recorder.
-        for (addr, acct) in cache {
+        // Backstop from the cache, independent of the recorder. The cache is seeded, so a
+        // rejection names the lowest offending account and slot.
+        first_failure_by_key(cache, |addr, acct| {
             if *addr == SYSTEM_ADDRESS {
-                continue;
+                return Ok(());
             }
             let supplied = match index
                 .addr_to_idx
@@ -1393,7 +1419,7 @@ impl LEVM {
                          but is missing from BAL"
                     )));
                 }
-                None => continue,
+                None => return Ok(()),
             };
             // storage_reads is strictly ascending, as at the per-tx check; binary
             // search fails closed on an unsorted list, so release stays sound.
@@ -1401,7 +1427,7 @@ impl LEVM {
                 supplied.storage_reads.windows(2).all(|w| w[0] < w[1]),
                 "storage_reads must be strictly ascending for binary_search"
             );
-            for key in acct.storage.keys() {
+            first_failure_by_key(&acct.storage, |key, _| {
                 let slot = ethrex_common::BigEndianHash::into_uint(key);
                 if supplied.storage_reads.binary_search(&slot).is_err()
                     && supplied
@@ -1414,9 +1440,9 @@ impl LEVM {
                          read during {phase} but is missing from BAL"
                     )));
                 }
-            }
-        }
-        Ok(())
+                Ok(())
+            })
+        })
     }
 
     /// Eager BAL prefix seed — used only by the outer DB path (parallel-execution
@@ -2552,10 +2578,11 @@ impl LEVM {
         }
 
         // execution -> BAL: for each account modified by execution, verify every
-        // mutation it produced is claimed by the BAL (no unrecorded change).
-        for (addr, account) in current_state {
+        // mutation it produced is claimed by the BAL (no unrecorded change). The state is
+        // seeded, so a rejection names the lowest offending account and slot.
+        first_failure_by_key(current_state, |addr, account| {
             if account.is_unmodified() {
-                continue;
+                return Ok(());
             }
 
             let Some(&bal_acct_idx) = index.addr_to_idx.get(addr) else {
@@ -2582,7 +2609,7 @@ impl LEVM {
                         "account {addr:?} was modified by execution but is absent from BAL"
                     )));
                 }
-                continue;
+                return Ok(());
             };
 
             let acct = &bal.accounts()[bal_acct_idx];
@@ -2625,7 +2652,7 @@ impl LEVM {
             }
 
             // Storage: for each slot in execution state, check it's expected
-            for (key_h256, &value) in &account.storage {
+            first_failure_by_key(&account.storage, |key_h256, &value| {
                 let slot_u256 = u256_from_big_endian_const(key_h256.0);
                 // EIP-7928 requires storage_changes sorted by slot, so use binary search.
                 let pos = acct
@@ -2691,10 +2718,9 @@ impl LEVM {
                         )));
                     }
                 }
-            }
-        }
-
-        Ok(())
+                Ok(())
+            })
+        })
     }
 
     /// Validates BAL entries at the withdrawal index against actual post-withdrawal state.
@@ -2810,10 +2836,11 @@ impl LEVM {
         }
 
         // DB -> BAL: For each account modified during the withdrawal/request phase,
-        //         verify it has a corresponding BAL entry claiming the change.
-        for (addr, account) in &db.current_accounts_state {
+        //         verify it has a corresponding BAL entry claiming the change. The state
+        //         is seeded, so a rejection names the lowest offending account and slot.
+        first_failure_by_key(&db.current_accounts_state, |addr, account| {
             if account.is_unmodified() {
-                continue;
+                return Ok(());
             }
 
             let Some(&bal_acct_idx) = index.addr_to_idx.get(addr) else {
@@ -2840,7 +2867,7 @@ impl LEVM {
                 }
                 // Also check storage: if any slot differs from pre-state,
                 // the account should have been in the BAL.
-                for (key_h256, &value) in &account.storage {
+                return first_failure_by_key(&account.storage, |key_h256, &value| {
                     let pre_value = db.store.get_storage_value(*addr, *key_h256).map_err(|e| {
                         EvmError::Custom(format!(
                             "BAL validation failed for withdrawal: db error reading \
@@ -2856,8 +2883,8 @@ impl LEVM {
                             u256_from_big_endian_const(key_h256.0)
                         )));
                     }
-                }
-                continue;
+                    Ok(())
+                });
             };
 
             let acct = &bal.accounts()[bal_acct_idx];
@@ -2945,7 +2972,7 @@ impl LEVM {
 
             // Storage: for each slot in the withdrawal/request-phase state,
             // verify the BAL has a corresponding entry or the value is unchanged.
-            for (key_h256, &value) in &account.storage {
+            first_failure_by_key(&account.storage, |key_h256, &value| {
                 let slot_u256 = u256_from_big_endian_const(key_h256.0);
                 let pos = acct
                     .storage_changes
@@ -2991,10 +3018,9 @@ impl LEVM {
                         )));
                     }
                 }
-            }
-        }
-
-        Ok(())
+                Ok(())
+            })
+        })
     }
 
     /// Validates supplied-BAL entries at the pre-execution index (0) on the
@@ -5532,5 +5558,56 @@ mod simulated_tx_encoding_tests {
                 data.len(),
             );
         }
+    }
+}
+
+#[cfg(all(test, feature = "rayon"))]
+mod first_failure_by_key_tests {
+    use super::first_failure_by_key;
+    use ethrex_common::seeded_hash::SeededHashMap;
+
+    /// Entries that fail per map. Naming whichever one a seeded map walks to first would
+    /// name the lowest with probability 1/256.
+    const FAILING: u64 = 256;
+
+    #[test]
+    fn names_the_lowest_failing_key() {
+        // Even keys pass, odd keys fail: the lowest failure is 1, behind a passing 0.
+        let map: SeededHashMap<u64, ()> = (0..2 * FAILING).map(|key| (key, ())).collect();
+        let result = first_failure_by_key(&map, |key, _| match key % 2 {
+            0 => Ok(()),
+            _ => Err(*key),
+        });
+        assert_eq!(result, Err(1));
+    }
+
+    #[test]
+    fn walks_a_passing_map_once() {
+        let map: SeededHashMap<u64, ()> = (0..FAILING).map(|key| (key, ())).collect();
+        let mut checked = 0;
+        let result: Result<(), ()> = first_failure_by_key(&map, |_, _| {
+            checked += 1;
+            Ok(())
+        });
+        assert_eq!(result, Ok(()));
+        assert_eq!(checked, FAILING);
+    }
+
+    #[test]
+    fn names_the_lowest_failure_of_a_nested_map() {
+        // The lowest failing outer key whose inner map fails, then the lowest inner key.
+        let map: SeededHashMap<u64, SeededHashMap<u64, ()>> = (0..FAILING)
+            .map(|outer| {
+                let inner = (0..FAILING).map(|key| (key, ())).collect();
+                (outer, inner)
+            })
+            .collect();
+        let result = first_failure_by_key(&map, |outer, inner| {
+            first_failure_by_key(inner, |key, _| match (*outer >= 7, *key >= 3) {
+                (true, true) => Err((*outer, *key)),
+                _ => Ok(()),
+            })
+        });
+        assert_eq!(result, Err((7, 3)));
     }
 }
