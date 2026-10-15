@@ -2123,22 +2123,11 @@ impl Blockchain {
                 }
             }
 
-            // Store all the accessed evm bytecodes. `code_accessed` records one entry
-            // per read, and a contract read for both its bytecode and its length is
-            // recorded twice, so dedup before embedding: a repeated hash would put the
-            // same (up to 24KB) bytecode in the witness more than once.
-            let accessed_codes: Vec<H256> = {
-                let accessed = logger.code_accessed.lock().map_err(|_e| {
+            // Store all the accessed evm bytecodes, each once.
+            let accessed_codes =
+                unique_code_hashes(&logger.code_accessed.lock().map_err(|_e| {
                     ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
-                })?;
-                let mut seen =
-                    SeededHashSet::with_capacity_and_hasher(accessed.len(), Default::default());
-                accessed
-                    .iter()
-                    .copied()
-                    .filter(|h| seen.insert(*h))
-                    .collect()
-            };
+                })?);
             for code_hash in &accessed_codes {
                 let code = self
                     .storage
@@ -2396,21 +2385,10 @@ impl Blockchain {
             }
         }
 
-        // Store all the accessed evm bytecodes. `code_accessed` records one entry
-        // per read, and a contract read for both its bytecode and its length is
-        // recorded twice, so dedup before embedding: a repeated hash would put the
-        // same (up to 24KB) bytecode in the witness more than once.
-        let accessed_codes: Vec<H256> = {
-            let accessed = logger.code_accessed.lock().map_err(|_e| {
-                ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
-            })?;
-            let mut seen = FxHashSet::with_capacity_and_hasher(accessed.len(), Default::default());
-            accessed
-                .iter()
-                .copied()
-                .filter(|h| seen.insert(*h))
-                .collect()
-        };
+        // Store all the accessed evm bytecodes, each once.
+        let accessed_codes = unique_code_hashes(&logger.code_accessed.lock().map_err(|_e| {
+            ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
+        })?);
         for code_hash in &accessed_codes {
             let code = self
                 .storage
@@ -5005,6 +4983,19 @@ pub fn new_evm<D: VmDatabase + 'static>(
 /// guest-program crate, the stateless verifier itself, witness generation,
 /// the prover backend) also rely on the constructor staying validator-less.
 ///
+/// The code hashes in `accessed`, each once, in the order they were first read. The logger
+/// records one entry per read, and a contract read for both its bytecode and its length is
+/// recorded twice; a repeated hash would put the same (up to 24KB) bytecode in a witness more
+/// than once. Seeded: a deployer can grind its code hash into a chosen bucket.
+fn unique_code_hashes(accessed: &[H256]) -> Vec<H256> {
+    let mut seen = SeededHashSet::with_capacity_and_hasher(accessed.len(), Default::default());
+    accessed
+        .iter()
+        .copied()
+        .filter(|hash| seen.insert(*hash))
+        .collect()
+}
+
 fn attach_stateless_validator(evm: &mut Evm) {
     evm.stateless_validator = Some(Arc::new(stateless::StatelessExecutor {
         crypto: Arc::new(NativeCrypto),
@@ -5316,6 +5307,13 @@ mod tests {
     };
     use ethrex_storage::EngineType;
     use std::path::Path;
+
+    #[test]
+    fn unique_code_hashes_keeps_the_first_read_of_each_hash() {
+        let [a, b, c] = [1, 2, 3].map(H256::from_low_u64_be);
+        assert_eq!(unique_code_hashes(&[b, a, b, c, a, b]), vec![b, a, c]);
+        assert!(unique_code_hashes(&[]).is_empty());
+    }
 
     async fn build_test_blockchain_with_one_block() -> (Blockchain, Vec<Block>) {
         let genesis_path = Path::new(concat!(
