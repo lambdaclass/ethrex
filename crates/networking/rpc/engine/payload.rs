@@ -625,6 +625,19 @@ impl RpcHandler for NewPayloadV6Request {
             Vec::with_capacity(self.inclusion_list_transactions.len());
         for (i, raw) in self.inclusion_list_transactions.iter().enumerate() {
             match ethrex_common::types::Transaction::decode_canonical(raw.as_ref()) {
+                // ethrex's decoder also reads its L2-only types (fee token 0x7d,
+                // privileged 0x7e). They are not L1 transactions: the spec's
+                // decoder rejects those bytes, so they are skipped like any
+                // other entry that does not decode.
+                Ok(
+                    ethrex_common::types::Transaction::FeeTokenTransaction(_)
+                    | ethrex_common::types::Transaction::PrivilegedL2Transaction(_),
+                ) => {
+                    debug!(
+                        index = i,
+                        "engine_newPayloadV6: skipping an L2-only transaction type in the inclusion list"
+                    );
+                }
                 Ok(tx) => decoded_il.push(tx),
                 Err(e) => {
                     debug!(
