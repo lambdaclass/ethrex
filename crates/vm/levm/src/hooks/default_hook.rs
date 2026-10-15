@@ -85,7 +85,7 @@ impl Hook for DefaultHook {
             // Gated at Hegota, not Amsterdam: the cap entered forks/amsterdam
             // after glamsterdam-devnet-8 (execution-specs #3582), and this
             // branch runs devnet-8's Amsterdam, whose v8.1.4 fixtures accept
-            // gas limits above it. tests-focil-devnet v0.3.0 fills Bogota on
+            // gas limits above it. tests-heze-devnet v2.0.0 fills Bogota on
             // the newer Amsterdam, so the cap applies from Hegota. Move this to
             // Amsterdam once the Amsterdam fixtures adopt #3582.
             if !vm.env.disable_gas_allowance_check
