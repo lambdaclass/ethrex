@@ -1236,22 +1236,21 @@ impl Transaction {
     pub fn signing_payload(&self) -> Result<Option<SigningPayload>, CryptoError> {
         let (buf, sig) = match self {
             Transaction::LegacyTransaction(tx) => {
-                let v = u64::try_from(tx.v).map_err(|_| CryptoError::InvalidSignature)?;
                 // EIP-155: valid legacy `v` is 27/28 (pre-155) or
                 // {35,36} + chain_id * 2. Any other value is a malformed
                 // signature and must be rejected rather than coerced into a
-                // parity bit (which would recover a bogus sender).
+                // parity bit (which would recover a bogus sender). `v` is a
+                // U256 and so is this arithmetic: a 64-bit chain id puts `v`
+                // past 64 bits.
                 let signature_y_parity = match self.chain_id() {
-                    Some(chain_id) => match v.checked_sub(35 + chain_id * 2) {
-                        Some(0) => false,
-                        Some(1) => true,
+                    Some(chain_id) => match tx.v.checked_sub(U256::from(chain_id) * 2 + 35) {
+                        Some(parity) if parity.is_zero() => false,
+                        Some(parity) if parity == U256::one() => true,
                         _ => return Err(CryptoError::InvalidSignature),
                     },
-                    None => match v {
-                        27 => false,
-                        28 => true,
-                        _ => return Err(CryptoError::InvalidSignature),
-                    },
+                    None if tx.v == U256::from(27) => false,
+                    None if tx.v == U256::from(28) => true,
+                    None => return Err(CryptoError::InvalidSignature),
                 };
                 let mut buf = vec![];
                 match self.chain_id() {
@@ -1655,12 +1654,18 @@ impl Transaction {
 }
 
 fn derive_legacy_chain_id(v: U256) -> Option<u64> {
-    let v = u64::try_from(v).ok()?;
     // EIP-155 encodes the chain id as `v = chain_id * 2 + 35` (or 36), so any
     // replay-protected `v` is >= 35. Pre-EIP-155 txs use v=27/28, and malformed
     // signatures (e.g. v=0 from an unsigned IL transaction) are < 35 too; none
     // carry a chain id. Guard the subtraction to avoid an underflow panic.
-    if v < 35 { None } else { Some((v - 35) / 2) }
+    if v < U256::from(35) {
+        return None;
+    }
+    // Derived in U256: the largest 64-bit chain id needs a `v` past 64 bits.
+    // A chain id that does not fit in 64 bits is a bad `v` (execution-specs
+    // #3828); returning none makes the signature check reject it, since such a
+    // `v` is not 27/28 either.
+    u64::try_from((v - 35) >> 1).ok()
 }
 
 impl TxType {
@@ -3371,6 +3376,36 @@ mod tests {
         assert_eq!(legacy_chain_id(35), Some(0));
         assert_eq!(legacy_chain_id(36), Some(0));
         assert_eq!(legacy_chain_id(37), Some(1));
+    }
+
+    #[test]
+    fn legacy_chain_id_spans_64_bits() {
+        // execution-specs #3828: the largest chain id that fits in 64 bits is a
+        // chain id like any other (its `v` needs 65 bits), and one past it is a
+        // bad `v`, which the signature check rejects.
+        let legacy = |v: U256| {
+            Transaction::LegacyTransaction(LegacyTransaction {
+                v,
+                ..Default::default()
+            })
+        };
+        let largest = U256::from(u64::MAX) * 2 + 35;
+        assert_eq!(legacy(largest).chain_id(), Some(u64::MAX));
+        assert_eq!(legacy(largest + 1).chain_id(), Some(u64::MAX));
+        let too_large = largest + 2;
+        assert_eq!(legacy(too_large).chain_id(), None);
+        assert!(matches!(
+            legacy(too_large).signing_payload(),
+            Err(CryptoError::InvalidSignature)
+        ));
+        // The parity bit is still read off `v` for a 64-bit chain id.
+        let payload = |v| {
+            legacy(v)
+                .signing_payload()
+                .map(|p| p.map(|(_, sig)| sig[64]))
+        };
+        assert!(matches!(payload(largest), Ok(Some(0))));
+        assert!(matches!(payload(largest + 1), Ok(Some(1))));
     }
 
     #[test]
