@@ -543,16 +543,26 @@ impl RpcHandler for TraceCallRequest {
         &self,
         context: crate::rpc::RpcApiContext,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
-        let block_number = self
-            .block
-            .resolve_block_number(&context.storage)
-            .await?
-            .ok_or(RpcErr::Internal("Block not Found".to_string()))?;
-        let block = context
-            .storage
-            .get_block_by_number(block_number)
-            .await?
-            .ok_or(RpcErr::Internal("Block not Found".to_string()))?;
+        // A hash names that block. `get_block_by_number` is the canonical block
+        // at the height, so a non-canonical hash must not be folded into one.
+        let block = match &self.block {
+            BlockIdentifierOrHash::Hash(hash) => context
+                .storage
+                .get_block_by_hash(*hash)
+                .await?
+                .ok_or(RpcErr::Internal("Block not Found".to_string()))?,
+            BlockIdentifierOrHash::Identifier(id) => {
+                let block_number = id
+                    .resolve_block_number(&context.storage)
+                    .await?
+                    .ok_or(RpcErr::Internal("Block not Found".to_string()))?;
+                context
+                    .storage
+                    .get_block_by_number(block_number)
+                    .await?
+                    .ok_or(RpcErr::Internal("Block not Found".to_string()))?
+            }
+        };
 
         // `None` traces on top of the full block (geth's default); `Some(i)` runs the
         // call against the state just before the block's transaction `i`.
@@ -584,7 +594,7 @@ impl RpcHandler for TraceCallRequest {
             None => {
                 let nonce = context
                     .storage
-                    .get_nonce_by_account_address(block_number, self.transaction.from)
+                    .get_nonce_by_account_address(block.header.number, self.transaction.from)
                     .await?;
                 let mut transaction = self.transaction.clone();
                 transaction.nonce = nonce;

@@ -109,13 +109,22 @@ impl BlockIdentifier {
 }
 
 impl BlockIdentifierOrHash {
+    /// Header the call should execute against.
+    ///
+    /// A hash names that block, including one that is no longer canonical.
+    /// Resolving it to a height and then calling `get_block_header` would load
+    /// the canonical sibling: `get_block_header` reads `CANONICAL_BLOCK_HASHES`.
+    /// `eth_call` and `eth_estimateGas` copy `slot_number` from this header, so
+    /// that substitution makes `SLOTNUM` return the canonical slot.
     pub async fn resolve_block_header(
         &self,
         storage: &Store,
     ) -> Result<Option<BlockHeader>, StoreError> {
-        match self.resolve_block_number(storage).await? {
-            Some(block_number) => storage.get_block_header(block_number),
-            _ => Ok(None),
+        match self {
+            BlockIdentifierOrHash::Hash(block_hash) => {
+                storage.get_block_header_by_hash(*block_hash)
+            }
+            BlockIdentifierOrHash::Identifier(id) => id.resolve_block_header(storage).await,
         }
     }
 
@@ -309,5 +318,63 @@ mod tests {
             BlockIdentifierOrHash::parse(json!("latest"), 0).unwrap(),
             BlockTag::Latest
         );
+    }
+
+    fn header_at(number: u64, slot: u64) -> BlockHeader {
+        // Earlier optional header fields have to be present. RLP decodes trailing
+        // optionals greedily, so a bare `slot_number` is read as `base_fee_per_gas`.
+        BlockHeader {
+            number,
+            base_fee_per_gas: Some(1),
+            withdrawals_root: Some(ethrex_common::H256::zero()),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Some(ethrex_common::H256::zero()),
+            requests_hash: Some(ethrex_common::H256::zero()),
+            block_access_list_hash: Some(ethrex_common::H256::zero()),
+            slot_number: Some(slot),
+            ..Default::default()
+        }
+    }
+
+    /// Two headers share a height. The canonical one must not answer a query for the other hash.
+    #[tokio::test]
+    async fn hash_resolves_to_that_header_not_the_canonical_sibling() {
+        use ethrex_storage::EngineType;
+
+        let storage = Store::new("slotnum-hash", EngineType::InMemory).expect("store");
+        let canonical = header_at(7, 4);
+        let side = header_at(7, 9);
+        storage
+            .add_block_headers(vec![canonical.clone(), side.clone()])
+            .await
+            .expect("headers");
+        storage
+            .forkchoice_update(vec![(7, canonical.hash())], 7, canonical.hash(), None, None)
+            .await
+            .expect("forkchoice");
+
+        let by_side = BlockIdentifierOrHash::Hash(side.hash())
+            .resolve_block_header(&storage)
+            .await
+            .expect("resolve side")
+            .expect("side header");
+        assert_eq!(by_side.hash(), side.hash());
+        assert_eq!(by_side.slot_number, Some(9));
+
+        let by_canonical = BlockIdentifierOrHash::Hash(canonical.hash())
+            .resolve_block_header(&storage)
+            .await
+            .expect("resolve canonical")
+            .expect("canonical header");
+        assert_eq!(by_canonical.slot_number, Some(4));
+
+        let by_number = BlockIdentifierOrHash::Identifier(BlockIdentifier::Number(7))
+            .resolve_block_header(&storage)
+            .await
+            .expect("resolve number")
+            .expect("number header");
+        assert_eq!(by_number.hash(), canonical.hash());
+        assert_eq!(by_number.slot_number, Some(4));
     }
 }
