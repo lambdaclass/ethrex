@@ -3,21 +3,22 @@
 //! It computes the same values as the `ark-ec` BN pairing: the Miller loop uses the
 //! same line formulas in homogeneous projective coordinates and the same loop over
 //! `6 x0 + 2`, so its output matches `Bn254::multi_miller_loop` exactly, and the
-//! final exponentiation is arkworks' own. The differences only change the cost:
+//! final exponentiation follows the same chain. The differences only change the
+//! cost:
 //! - each line is evaluated as soon as it is computed, instead of first storing
 //!   every line of every pair in a vector (`G2Prepared`);
 //! - all pairs share one accumulator. Without the `parallel` feature, arkworks runs
 //!   one Miller loop per group of four pairs and multiplies the results, which
 //!   repeats the 64 squarings of the accumulator for every group;
-//! - lines are multiplied into the accumulator two at a time.
+//! - lines are multiplied into the accumulator two at a time;
+//! - the exponentiations by `x0` in the final exponentiation use an addition chain.
 
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
-use ark_bn254::{Bn254, Fq, Fq2, Fq6, Fq12, G1Affine, G2Affine};
+use ark_bn254::{Fq, Fq2, Fq6, Fq12, G1Affine, G2Affine};
 use ark_ec::bn::BnConfig;
-use ark_ec::pairing::{MillerLoopOutput, Pairing};
 use ark_ec::short_weierstrass::SWCurveConfig;
-use ark_ff::{AdditiveGroup, Field, Fp6Config, Fp12Config, One};
+use ark_ff::{AdditiveGroup, CyclotomicMultSubgroup, Field, Fp6Config, Fp12Config, One};
 
 /// `6 x0 + 2` in NAF, least significant digit first.
 const ATE_LOOP_COUNT: &[i8] = <ark_bn254::Config as BnConfig>::ATE_LOOP_COUNT;
@@ -211,20 +212,108 @@ fn miller_loop(pairs: &[(G1Affine, G2Affine)]) -> Fq12 {
     f
 }
 
+/// `x^x0` for `x` in the cyclotomic subgroup, with an addition chain of 62
+/// squarings and 17 multiplications (non-adjacent form needs 23 multiplications):
+///
+/// ```text
+/// _10 = 2*1, _100 = 2*_10, _1000 = 2*_100, _10000 = 2*_1000
+/// _10001 = 1 + _10000, _10011 = _10 + _10001, _10100 = 1 + _10011
+/// _11001 = _1000 + _10001, _100010 = 2*_10001, _100111 = _10011 + _10100
+/// _101001 = _10 + _100111
+/// i27 = (_100010 << 6 + _100 + _11001) << 7 + _11001
+/// i44 = (i27 << 8 + _101001 + _10) << 6 + _10001
+/// i70 = ((i44 << 8 + _101001) << 6 + _101001) << 10
+/// x0  = (_100111 + i70) << 6 + _101001 + _1000
+/// ```
+fn cyclotomic_exp_by_seed(x: &Fq12) -> Fq12 {
+    let square = |value: Fq12, times: usize| {
+        let mut result = value;
+        for _ in 0..times {
+            result.cyclotomic_square_in_place();
+        }
+        result
+    };
+    let x_10 = square(*x, 1);
+    let x_100 = square(x_10, 1);
+    let x_1000 = square(x_100, 1);
+    let x_10000 = square(x_1000, 1);
+    let x_10001 = x_10000 * x;
+    let x_10011 = x_10 * x_10001;
+    let x_10100 = x_10011 * x;
+    let x_11001 = x_1000 * x_10001;
+    let x_100010 = square(x_10001, 1);
+    let x_100111 = x_10011 * x_10100;
+    let x_101001 = x_10 * x_100111;
+
+    let mut t = square(x_100010, 6) * x_100 * x_11001;
+    t = square(t, 7) * x_11001;
+    t = square(t, 8) * x_101001 * x_10;
+    t = square(t, 6) * x_10001;
+    t = square(t, 8) * x_101001;
+    t = square(t, 6) * x_101001;
+    t = square(t, 10) * x_100111;
+    square(t, 6) * x_101001 * x_1000
+}
+
+/// `f^((p^12 - 1) / r)`: the chain of `ark-ec`'s `final_exponentiation`
+/// (Fuentes-Castaneda et al., "Faster hashing to G2") with the exponentiations by
+/// `x0` done by `cyclotomic_exp_by_seed`. `None` when `f` is zero.
+fn final_exponentiation(f: &Fq12) -> Option<Fq12> {
+    // Easy part: f^((p^6 - 1)(p^2 + 1)).
+    let mut f1 = *f;
+    f1.cyclotomic_inverse_in_place();
+    let f2 = f.inverse()?;
+    let mut r = f1 * f2;
+    let f2 = r;
+    r.frobenius_map_in_place(2);
+    r *= f2;
+
+    // Hard part. x0 is positive, so "exp by -x" is the exponentiation followed by
+    // an inverse, which is a conjugation in the cyclotomic subgroup.
+    let exp_by_neg_x = |value: &Fq12| {
+        let mut result = cyclotomic_exp_by_seed(value);
+        result.cyclotomic_inverse_in_place();
+        result
+    };
+    let y0 = exp_by_neg_x(&r);
+    let y1 = y0.cyclotomic_square();
+    let y2 = y1.cyclotomic_square();
+    let mut y3 = y2 * y1;
+    let y4 = exp_by_neg_x(&y3);
+    let y5 = y4.cyclotomic_square();
+    let mut y6 = exp_by_neg_x(&y5);
+    y3.cyclotomic_inverse_in_place();
+    y6.cyclotomic_inverse_in_place();
+    let y7 = y6 * y4;
+    let mut y8 = y7 * y3;
+    let y9 = y8 * y1;
+    let y10 = y8 * y4;
+    let y11 = y10 * r;
+    let mut y12 = y9;
+    y12.frobenius_map_in_place(1);
+    let y13 = y12 * y11;
+    y8.frobenius_map_in_place(2);
+    let y14 = y8 * y13;
+    r.cyclotomic_inverse_in_place();
+    let mut y15 = r * y9;
+    y15.frobenius_map_in_place(3);
+    Some(y15 * y14)
+}
+
 /// `true` when the product of the pairings is one. Every pair must hold two
 /// non-identity points already checked to be on their curves and in their
 /// subgroups.
 pub(super) fn pairing_is_one(pairs: &[(G1Affine, G2Affine)]) -> bool {
     // The Miller loop of points in G1 and G2 is never zero, so the final
     // exponentiation always succeeds.
-    Bn254::final_exponentiation(MillerLoopOutput(miller_loop(pairs)))
-        .is_some_and(|result| result.0.is_one())
+    final_exponentiation(&miller_loop(pairs)).is_some_and(|result| result.is_one())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_bn254::Fr;
+    use ark_bn254::{Bn254, Fr};
+    use ark_ec::pairing::{MillerLoopOutput, Pairing};
     use ark_ec::{AffineRepr, CurveGroup};
     use ark_ff::PrimeField;
     use sha2::{Digest, Sha256};
@@ -258,6 +347,32 @@ mod tests {
                 );
                 assert!(!pairing_is_one(&input));
                 assert!(!Bn254::multi_pairing(g1, g2).0.is_one());
+            }
+        }
+    }
+
+    #[test]
+    fn final_exponentiation_matches_arkworks() {
+        for n in 1..=3 {
+            for seed in 10..20 {
+                let input = random_pairs(n, seed);
+                let f = miller_loop(&input);
+                assert_eq!(
+                    final_exponentiation(&f),
+                    Bn254::final_exponentiation(MillerLoopOutput(f)).map(|r| r.0),
+                    "{n} pairs, seed {seed}"
+                );
+                // An element of the cyclotomic subgroup for the exponentiation alone.
+                let mut c = f;
+                c.cyclotomic_inverse_in_place();
+                c *= f.inverse().unwrap();
+                let c_p6 = c;
+                c.frobenius_map_in_place(2);
+                c *= c_p6;
+                assert_eq!(
+                    cyclotomic_exp_by_seed(&c),
+                    c.cyclotomic_exp([crate::bn254::SEED])
+                );
             }
         }
     }
