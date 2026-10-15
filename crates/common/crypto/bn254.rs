@@ -1,16 +1,17 @@
 //! BN254 (alt_bn128) arithmetic behind the ECADD, ECMUL and ECPAIRING precompiles.
 //!
-//! Field multiplication, the Miller loop and the final exponentiation come from
-//! `ark-bn254`. This module replaces the parts that dominate a single precompile
-//! call: decoding the inputs, the field inversion needed to return an affine
-//! point, the scalar multiplication, and the G2 subgroup check.
+//! Field arithmetic and the final exponentiation come from `ark-bn254`. This module
+//! replaces the parts that dominate a single precompile call: decoding the inputs,
+//! the field inversion needed to return an affine point, the scalar
+//! multiplication, the G2 subgroup check, and the Miller loop (`pairing`).
+
+mod pairing;
 
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
-use ark_bn254::{Bn254, Fq, Fq2, Fr, G1Affine, G2Affine, G2Projective};
-use ark_ec::pairing::Pairing;
+use ark_bn254::{Fq, Fq2, Fr, G1Affine, G2Affine, G2Projective};
 use ark_ec::{AffineRepr, PrimeGroup};
-use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, One, PrimeField, Zero};
+use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, PrimeField, Zero};
 
 use crate::CryptoError;
 
@@ -116,25 +117,23 @@ const SMALL_SCALAR_BITS: u32 = 16;
 /// Each pair is a 64-byte G1 point and a 128-byte G2 point (imaginary parts
 /// first, as the precompile encodes them).
 pub(crate) fn pairing_check(pairs: &[(&[u8], &[u8])]) -> Result<bool, CryptoError> {
-    let mut g1_points = Vec::with_capacity(pairs.len());
-    let mut g2_points = Vec::with_capacity(pairs.len());
+    let mut points = Vec::with_capacity(pairs.len());
     for (g1_bytes, g2_bytes) in pairs {
-        let g1 = match decode_g1(g1_bytes)? {
-            Some((x, y)) => G1Affine::new_unchecked(x, y),
-            None => G1Affine::identity(),
-        };
+        let g1 = decode_g1(g1_bytes)?;
         let g2 = decode_g2(g2_bytes)?;
-        if g1.is_zero() || g2.is_zero() {
-            // A pair with the identity on either side contributes one.
+        // A pair with the identity on either side contributes one.
+        let Some((x, y)) = g1 else {
+            continue;
+        };
+        if g2.is_zero() {
             continue;
         }
-        g1_points.push(g1);
-        g2_points.push(g2);
+        points.push((G1Affine::new_unchecked(x, y), g2));
     }
-    if g1_points.is_empty() {
+    if points.is_empty() {
         return Ok(true);
     }
-    Ok(Bn254::multi_pairing(g1_points, g2_points).0.is_one())
+    Ok(pairing::pairing_is_one(&points))
 }
 
 /// Decodes a 128-byte G2 point and checks that it lies on the twist and in the
