@@ -35,8 +35,8 @@ mkdir -p $WORK && cd $WORK
   export NEW=<path to the new checkout>
   export OUT=$(ls -d $NEW/target/release/build/ethrex-*/out/contracts/solc_out | head -1)
   # $OUT/OnChainProposer.bytecode and $OUT/SP1Verifier.bytecode (raw bytes)
-  # The new release's key, under the keccak of the commit its binary reports
-  export COMMIT_HASH=$(cast keccak $($NEW/target/release/ethrex --version | sed 's|.*HEAD-||; s|/.*||'))
+  # The new release's key, under the keccak of the full commit hash its binary reports
+  export COMMIT_HASH=$(cast keccak $($NEW/target/release/ethrex --version | grep -oE '[0-9a-f]{40}' | head -1))
   export VK=0x$(tr -d '\n' < $NEW/crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254 | sed 's/^0x//')
   ```
 
@@ -52,10 +52,10 @@ timelock() { cast send $TIMELOCK 'emergencyExecute(address,uint256,bytes)' $OCP 
 
 ## Run the old release
 
-Start the L1 and deploy the old release with SP1 proofs required, following the [upgrade test](./upgrade-test.md) (Step 1), with one change for the gateway cases: deploy the gateway first (see below) and pass `--sp1.verifier-address $GW` to `ethrex l2 deploy`. Then:
+Start the L1 and deploy the old release with SP1 proofs required, following the [upgrade test](./upgrade-test.md) (Step 1), with one change for the gateway cases: deploy the gateway first (see below) and pass `--sp1.verifier-address $GW` to `ethrex l2 deploy`. Run the deployer from `$WORK`, so that it writes `$WORK/cmd/.env`, which the steps below read. Then:
 
 ```bash
-set -a; source cmd/.env; set +a
+set -a; source $WORK/cmd/.env; set +a
 export OCP=$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS TIMELOCK=$ETHREX_TIMELOCK_ADDRESS BRIDGE=$ETHREX_WATCHER_BRIDGE_ADDRESS
 ```
 
@@ -128,7 +128,7 @@ From here the old sequencer keeps committing batches, but `lastVerifiedBatch` st
    C=$(cast call $OCP 'lastCommittedBatch()(uint256)' --rpc-url $L1_RPC)
    ```
 
-2. Check that none of the batches to revert published withdrawals. `CommonBridge` refuses to publish withdrawals twice for one batch number and `revertBatch` does not clear them, so a batch with a non-zero root cannot be committed again.
+2. Check that none of the batches to revert published withdrawals. `CommonBridge` refuses to publish withdrawals twice for one batch number and `revertBatch` does not clear them, so a batch with a non-zero root cannot be committed again. If any root is non-zero, stop here: there is no way to recover that batch until the contracts clear the roots on revert (#7414).
 
    ```bash
    for n in $(seq $((V+1)) $C); do cast call $BRIDGE 'batchWithdrawalLogsMerkleRoots(uint256)(bytes32)' $n --rpc-url $L1_RPC; done
@@ -147,8 +147,8 @@ From here the old sequencer keeps committing batches, but `lastVerifiedBatch` st
 
    ```bash
    ethrex l2 revert-batch $V $OCP --datadir <L2 datadir>
-   for d in <L2 datadir>/checkpoint_batch_* <L2 datadir>/temp_checkpoint_batch_*; do
-     n=$(basename $d | sed -E 's/^(temp_)?checkpoint_batch_([0-9]+).*/\2/'); [ "$n" -gt "$V" ] && rm -rf "$d"
+   find <L2 datadir> -maxdepth 1 -type d \( -name 'checkpoint_batch_*' -o -name 'temp_checkpoint_batch_*' \) | while read -r d; do
+     n=$(basename "$d" | sed -E 's/^(temp_)?checkpoint_batch_([0-9]+).*/\2/'); [ "$n" -gt "$V" ] && rm -rf "$d"
    done
    ```
 
@@ -158,7 +158,7 @@ Expected: the first re-committed batch is proven with SP1 6 and verified through
 
 ## Handover without downtime
 
-1. Start the new sequencer next to the old one, with its own data directory, ports and proof coordinator, following the old one over p2p. The L2 RPC does not serve `admin_nodeInfo`, so take the old sequencer's enode from its startup log. `N` is a block far enough ahead for the new sequencer to catch up.
+1. Start the new sequencer next to the old one, with its own data directory, ports and proof coordinator, following the old one over p2p. The L2 RPC only serves `admin_nodeInfo` when `admin` is in its `--http.api`, so take the old sequencer's enode from its startup log. `N` is a block far enough ahead for the new sequencer to catch up.
 
    ```bash
    ENODE=$(grep -m1 -oE 'enode://[0-9a-f]+@[0-9.]+:[0-9]+' <old sequencer log>)

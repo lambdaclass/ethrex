@@ -150,7 +150,7 @@ The v30 sequencer runs next to the old one, follows it over p2p, and takes over 
 2. Wait until `lastVerifiedBatch` equals `lastCommittedBatch`, then stop the old prover.
 3. Run the [contract steps](#contract-steps).
 4. Start the v30 sequencer with its own data directory, ports and proof coordinator, and:
-   - `--bootnodes <enode of the old sequencer>`, which the old sequencer logs at startup as `Local node initialized enode=...`;
+   - `--bootnodes <enode of the old sequencer>`, which the old sequencer logs at startup as `Local node initialized enode=...` (its RPC only serves `admin_nodeInfo` when `admin` is in `--http.api`);
    - `--admin.start-at <N>`, a block far enough ahead for it to catch up;
    - `--admin.l2-head-check-rpc-url <old sequencer RPC>`.
 
@@ -158,7 +158,7 @@ The v30 sequencer runs next to the old one, follows it over p2p, and takes over 
 5. Send `POST /state-updater/stop-at/<N>` to the old sequencer's admin server. It produces block `N` and stops; the v30 sequencer produces the next block.
 6. Move RPC traffic to the v30 sequencer, since the old one stays at block `N`, then stop the old sequencer.
 
-Block production does not pause. L1 verification pauses from step 1 until the v30 sequencer's first batch is proven; that batch holds the blocks the old sequencer produced after step 1.
+Block production does not pause. No new batch is committed from step 1 until the v30 sequencer commits its first one, which holds the blocks the old sequencer produced after step 1; the batches already committed keep being verified meanwhile.
 
 #### With a stop
 
@@ -171,7 +171,7 @@ Block production does not pause. L1 verification pauses from step 1 until the v3
 If `SP1_VERIFIER_ADDRESS()` is Succinct's [`SP1VerifierGateway`](https://docs.succinct.xyz/docs/sp1/verification/contract-addresses), the gateway routes SP1 6 proofs to its `v6.1.0` verifier, so contract steps 1 and 2 are not needed: register the v30 key (step 3) and move the nodes. The gateway froze its `v5.0.0` route, though, so batches committed with SP1 5 and not verified before the freeze can no longer be verified. They are reverted and committed again by v30:
 
 1. Stop the old committer and the old prover. Note `lastVerifiedBatch` as `V` and `lastCommittedBatch` as `C`; if they are equal, go to step 4.
-2. Check that `batchWithdrawalLogsMerkleRoots(n)` on the CommonBridge is zero for every batch from `V + 1` to `C`. `CommonBridge` refuses to publish withdrawals twice for one batch number and `revertBatch` does not clear them, so a batch that published withdrawals cannot be committed again.
+2. Check that `batchWithdrawalLogsMerkleRoots(n)` on the CommonBridge is zero for every batch from `V + 1` to `C`. `CommonBridge` refuses to publish withdrawals twice for one batch number and `revertBatch` does not clear them, so a batch that published withdrawals cannot be committed again. If any root is non-zero, stop here and do not revert: there is no way to recover that batch until the contracts clear the roots on revert (#7414).
 3. Through the Timelock, call `pause()`, `revertBatch(V + 1)` and `unpause()` on the OnChainProposer.
 4. Register the v30 key (contract step 3).
 5. Move the nodes:
