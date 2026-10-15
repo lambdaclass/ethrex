@@ -10,7 +10,7 @@ mod pairing;
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 use ark_bn254::{Fq, Fq2, Fr, G1Affine, G2Affine, G2Projective};
-use ark_ec::{AffineRepr, PrimeGroup};
+use ark_ec::AffineRepr;
 use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, PrimeField, Zero};
 
 use crate::CryptoError;
@@ -199,12 +199,59 @@ fn psi(point: &G2Projective) -> G2Projective {
 /// multiplication instead of the 127-bit `[6 x0^2]P` of the generic check.
 fn g2_in_subgroup(point: &G2Affine) -> bool {
     let p = point.into_group();
-    let x0_p = p.mul_bigint([SEED]);
+    let x0_p = mul_by_seed(point);
     let psi_x0_p = psi(&x0_p);
     let psi2_x0_p = psi(&psi_x0_p);
     let lhs = x0_p + p + psi_x0_p + psi2_x0_p;
     let rhs = psi(&psi2_x0_p).double();
     lhs == rhs
+}
+
+/// `x0` in non-adjacent form, most significant digit first (24 non-zero digits
+/// against 28 set bits).
+const SEED_NAF: [i8; 64] = seed_naf();
+
+const fn seed_naf() -> [i8; 64] {
+    let mut little_endian = [0i8; 64];
+    let mut k = SEED;
+    let mut len = 0;
+    // x0 < 2^63, so k + 1 cannot overflow and the NAF has at most 64 digits.
+    while k != 0 {
+        let digit: i8 = if k & 1 == 0 {
+            0
+        } else if k & 3 == 3 {
+            k += 1;
+            -1
+        } else {
+            k -= 1;
+            1
+        };
+        little_endian[len] = digit;
+        len += 1;
+        k >>= 1;
+    }
+    let mut digits = [0i8; 64];
+    let mut i = 0;
+    while i < len {
+        digits[64 - len + i] = little_endian[len - 1 - i];
+        i += 1;
+    }
+    digits
+}
+
+/// `[x0]P` with signed digits and mixed additions of the affine `P` or `-P`.
+fn mul_by_seed(point: &G2Affine) -> G2Projective {
+    let negated = -*point;
+    let mut acc = G2Projective::zero();
+    for digit in SEED_NAF {
+        acc.double_in_place();
+        match digit {
+            1 => acc += point,
+            -1 => acc += &negated,
+            _ => {}
+        }
+    }
+    acc
 }
 
 /// Affine addition with a single field inversion.
@@ -851,7 +898,7 @@ mod safegcd {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ark_ec::{AffineRepr, CurveGroup};
+    use ark_ec::{AffineRepr, CurveGroup, PrimeGroup};
     use ark_ff::BigInteger;
     use sha2::{Digest, Sha256};
 
@@ -1016,6 +1063,15 @@ mod tests {
         encode_fq(&p.y.c1, &mut out[64..96]);
         encode_fq(&p.y.c0, &mut out[96..]);
         out
+    }
+
+    #[test]
+    fn mul_by_seed_matches_reference() {
+        for seed in 0..200u64 {
+            let k = Fr::from_be_bytes_mod_order(&random_bytes(seed + 6_000_000));
+            let q = (G2Affine::generator() * k).into_affine();
+            assert_eq!(mul_by_seed(&q), q.into_group().mul_bigint([SEED]));
+        }
     }
 
     #[test]
