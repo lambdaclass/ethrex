@@ -34,10 +34,10 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-31115c3c.js";
+            window.path_to_searchindex_js = "../../searchindex-b4f2640f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../../toc-f6d73635.js"></script>
+        <script src="../../toc-34260634.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -181,7 +181,7 @@
 <p>This validates a release’s SP1 <strong>GPU</strong> proving path end to end: bring up an L1 + L2 testnet from the <strong>release binaries</strong> with the SP1 GPU prover, then run the integration test against it. Run it on a host with an NVIDIA GPU (<code>l2-gpu</code>). It is one of the checks in the <a href="../release-process.html#testing-checklist">release testing checklist</a>.</p>
 <blockquote class="blockquote-tag blockquote-tag-note">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
-<p>The standard <a href="integration-tests.html">integration tests</a> run the prover in <code>exec</code> mode (no real proofs). This variant swaps in the SP1 GPU backend so the release’s proving path is actually exercised. GPU/driver setup (CUDA, <code>nvidia-container-toolkit</code>, the <code>docker</code> group) is covered in <a href="prover.html#gpu-mode">Prover § GPU mode</a> and <a href="../../l2/deployment/prover/sp1.html">Run an ethrex L2 SP1 prover</a>; the SP1 wrap step runs in a <code>moongate</code> Docker container, so <code>docker run --gpus all</code> must work.</p>
+<p>The standard <a href="integration-tests.html">integration tests</a> run the prover in <code>exec</code> mode (no real proofs). This variant swaps in the SP1 GPU backend so the release’s proving path is actually exercised. GPU/driver setup (CUDA, <code>nvidia-container-toolkit</code>, the <code>docker</code> group) is covered in <a href="prover.html#gpu-mode">Prover § GPU mode</a> and <a href="../../l2/deployment/prover/sp1.html">Run an ethrex L2 SP1 prover</a>; SP1 6 proves with a local <code>sp1-gpu-server</code> process, which the SDK downloads into <code>~/.sp1/bin</code> on first use, and wraps Groth16 proofs in the <code>sp1-gnark</code> Docker container, so Docker must work.</p>
 </blockquote>
 <p>Host prerequisites: <code>solc</code> <strong>0.8.31 exactly</strong> (the FeeToken pragmas are pinned), <code>foundry</code> (<code>cast</code>/<code>forge</code>) on <code>PATH</code>, and the Rust toolchain from <code>rust-toolchain.toml</code>.</p>
 <ol>
@@ -259,7 +259,7 @@ grep -E "(Timelock|OnChainProposer|CommonBridge|SP1Verifier) deployed" deploy.lo
 <p><code>--no-monitor</code> is mandatory when running headless — otherwise the binary starts the monitor TUI and emits no logs.</p>
 </li>
 <li>
-<p><strong>Start the SP1 GPU prover</strong> (first run pulls the <code>moongate</code> container and loads ~15 GB into VRAM):</p>
+<p><strong>Start the SP1 GPU prover</strong> (first run downloads <code>sp1-gpu-server</code> into <code>~/.sp1/bin</code>):</p>
 <pre><code class="language-bash">nohup ./ethrex-l2 l2 prover --backend sp1 \
   --proof-coordinators tcp://127.0.0.1:3900 --log.level info &gt; prover.log 2&gt;&amp;1 &amp;
 </code></pre>
@@ -287,11 +287,11 @@ cargo test -p ethrex-test l2::integration_tests --release --features l2 -- --noc
 <p>Pass criterion: <code>test result: ok. 1 passed; 0 failed</code>, plus the final <code>Total L2 ETH == Bridge locked ETH on L1</code> reconciliation line. Expect a multi-hour run on the GPU backend (proving dominates the wall-clock). See <a href="integration-tests.html#i-think-my-tests-are-taking-too-long-how-can-i-debug-this">integration tests § “taking too long”</a> if it appears to stall.</p>
 </li>
 <li>
-<p><strong>Clean up</strong> — the L1, sequencer, and prover were started with <code>nohup</code> and keep running; stop them (and the prover’s GPU container) when you’re done:</p>
+<p><strong>Clean up</strong> — the L1, sequencer, and prover were started with <code>nohup</code> and keep running; stop them (and the prover’s <code>sp1-gpu-server</code>) when you’re done:</p>
 <pre><code class="language-bash">pkill -f 'ethrex-l2 l2 prover'        # prover first
 pkill -f 'ethrex-l2 l2 --no-monitor'  # sequencer
 pkill -f 'ethrex --network l1.json'   # L1
-docker rm -f "$(docker ps -q --filter ancestor=public.ecr.aws/succinct-labs/moongate)" 2&gt;/dev/null || true
+pkill -f sp1-gpu-server
 </code></pre>
 </li>
 </ol>
@@ -300,7 +300,7 @@ docker rm -f "$(docker ps -q --filter ancestor=public.ecr.aws/succinct-labs/moon
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../../developers/l2/upgrade-test.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../../developers/l2/sp1-upgrade-test.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
@@ -314,7 +314,7 @@ docker rm -f "$(docker ps -q --filter ancestor=public.ecr.aws/succinct-labs/moon
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../../developers/l2/upgrade-test.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../../developers/l2/sp1-upgrade-test.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 

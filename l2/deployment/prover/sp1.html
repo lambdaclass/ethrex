@@ -34,10 +34,10 @@
             const path_to_root = "../../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../../searchindex-31115c3c.js";
+            window.path_to_searchindex_js = "../../../searchindex-b4f2640f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../../../toc-f6d73635.js"></script>
+        <script src="../../../toc-34260634.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -200,15 +200,25 @@
 We choose SP1 as the backend to indicate the prover to generate SP1 proofs.</p>
 </blockquote>
 <h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
-<h3 id="docker-error-response-from-daemon-could-not-select-device-driver--with-capabilities-gpu"><a class="header" href="#docker-error-response-from-daemon-could-not-select-device-driver--with-capabilities-gpu"><code>docker: Error response from daemon: could not select device driver "" with capabilities: [[gpu]]</code></a></h3>
-<p>If you encounter the following error when starting the SP1 prover with GPU support:</p>
-<pre><code class="language-plaintext">docker: Error response from daemon: could not select device driver "" with capabilities: [[gpu]]
+<h3 id="could-not-connect-to-sp1-gpu-server-socket"><a class="header" href="#could-not-connect-to-sp1-gpu-server-socket"><code>Could not connect to sp1-gpu-server socket</code></a></h3>
+<p>If the SP1 GPU prover stops at startup with:</p>
+<pre><code class="language-plaintext">Failed to create the CUDA prover impl: CudaClientError: Connect(Os { code: 2, kind: NotFound, message: "No such file or directory" })
+Context: "Could not connect to `sp1-gpu-server` socket"
 </code></pre>
-<p>This error indicates that Docker is unable to find a suitable GPU driver for running containers with GPU support. To resolve this issue, follow these steps:</p>
-<ol>
-<li><strong>Install NVIDIA Container Toolkit</strong>: Ensure that you have the NVIDIA Container Toolkit installed on your system. This toolkit allows Docker to utilize NVIDIA GPUs. You can follow the installation instructions from the <a href="https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html">official NVIDIA documentation</a>.</li>
-<li><strong>Configure Docker to use the NVIDIA runtime</strong>: After installing the NVIDIA Container Toolkit, you need to configure Docker to use the NVIDIA runtime by default. You can do this by following the instructions in the <a href="https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html#configuring-docker">Configuring Docker documentation</a>.</li>
-</ol>
+<p>the SP1 SDK started its <code>sp1-gpu-server</code>, but the server did not open its socket within the one second the SDK waits for it. The server initializes the GPU before it opens the socket, and with persistence mode disabled the NVIDIA driver initializes the GPU again on every start, which can take a few seconds. Enable persistence mode and start the prover again:</p>
+<pre><code class="language-shell">sudo nvidia-smi -pm 1
+</code></pre>
+<p>Persistence mode is reset on reboot. To keep it enabled, run the <code>nvidia-persistenced</code> service.</p>
+<h3 id="sp1-gpu-server-is-killed-for-running-out-of-memory"><a class="header" href="#sp1-gpu-server-is-killed-for-running-out-of-memory"><code>sp1-gpu-server</code> is killed for running out of memory</a></h3>
+<p>The GPU prover keeps much of each proof in host memory: with SP1’s default settings, <code>sp1-gpu-server</code> reached 42 GB on large proofs. If the host runs out of memory, the kernel kills it, the prover logs <code>CudaClientError: Failed to read the response</code> with <code>early eof</code>, and <code>dmesg</code> shows <code>Out of memory: Killed process ... (sp1-gpu-server)</code>. Run the prover with a smaller proving pipeline, which the server reads from the environment:</p>
+<pre><code class="language-shell">SP1_WORKER_NUM_CORE_WORKERS=1 SP1_WORKER_CORE_BUFFER_SIZE=1 \
+SP1_WORKER_NUM_SPLICING_WORKERS=1 SP1_WORKER_SPLICING_BUFFER_SIZE=1 \
+SP1_WORKER_NUM_RECURSION_EXECUTOR_WORKERS=1 SP1_WORKER_RECURSION_EXECUTOR_BUFFER_SIZE=1 \
+SP1_WORKER_NUM_PREPARE_REDUCE_WORKERS=1 SP1_WORKER_PREPARE_REDUCE_BUFFER_SIZE=1 \
+SP1_WORKER_NUM_RECURSION_PROVER_WORKERS=2 SP1_WORKER_RECURSION_PROVER_BUFFER_SIZE=2 \
+ethrex l2 prover --backend sp1 --proof-coordinators http://localhost:3900
+</code></pre>
+<p>With these values the server peaked at about 35 GB on the same proofs. Small proofs take about as long as before; the largest ones took about 50% longer.</p>
 
                     </main>
 

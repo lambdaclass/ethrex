@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-31115c3c.js";
+            window.path_to_searchindex_js = "searchindex-b4f2640f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-f6d73635.js"></script>
+        <script src="toc-34260634.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -4303,6 +4303,10 @@ rm -rf services/blockscout-db-data services/stats-db-data
 <blockquote>
 <p><strong>Important</strong>: Aligned mode only supports <strong>SP1 proofs</strong>. The <code>sp1</code> feature must be enabled when building with Aligned mode.</p>
 </blockquote>
+<blockquote class="blockquote-tag blockquote-tag-warning">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path></svg>Warning</p>
+<p>Aligned mode is currently unavailable: the SP1 guest is built with SP1 6, while the Aligned SDK still uses SP1 5, so a sequencer started with <code>--aligned</code> stops with an error. It will be re-enabled once the Aligned SDK moves to SP1 6.</p>
+</blockquote>
 <ul>
 <li>Check <a href="#how-to-run-local-devnet">How to Run (local devnet)</a> for development or testing.</li>
 <li>Check <a href="#how-to-run-testnet">How to Run (testnet)</a> for a prod-like environment.</li>
@@ -5222,6 +5226,84 @@ ADD COLUMN value_per_token BLOB;
   --rpc-url &lt;L1_RPC_URL&gt;
 </code></pre>
 <p>After updating the on-chain value, restart the sequencer for it to take effect. Until the restart, the sequencer continues using the previous gas limit, which may cause a temporary mismatch with the on-chain value.</p>
+<h2 id="from-v29-to-v30"><a class="header" href="#from-v29-to-v30">From v29 to v30</a></h2>
+<h3 id="sp1-6-onchainproposer-and-sp1-verifier"><a class="header" href="#sp1-6-onchainproposer-and-sp1-verifier">SP1 6 (OnChainProposer and SP1 verifier)</a></h3>
+<p>The SP1 prover moves from SP1 5 to SP1 6.9.0. Its proofs need the <code>v6.1.0</code> <code>SP1VerifierGroth16</code>, and the OnChainProposer gains <code>upgradeSP1Verifier(address)</code> to point at it. Deployments that require SP1 proofs need both: the SP1 5 verifier they were deployed with rejects SP1 6 proofs whatever verification key is registered, because SP1 6 wraps its proofs in a different Groth16 circuit. The OnChainProposer has not changed since v25, so deployments from v25 onwards follow the same steps.</p>
+<p>The OnChainProposer reads a single verifier address, so the contract steps go between two points: after every batch committed by the old version is verified, since its proofs only pass the old verifier, and before the new version submits its first proof. The v30 OnChainProposer enforces the first point: the call in step 2 reverts with <code>UnverifiedBatchesPending</code> while a batch is unverified. The nodes can move either without downtime or with a stop.</p>
+<h4 id="contract-steps"><a class="header" href="#contract-steps">Contract steps</a></h4>
+<ol>
+<li>
+<p>Deploy <code>SP1VerifierGroth16</code> from sp1-contracts <code>v6.1.0</code> and the v30 OnChainProposer implementation.</p>
+</li>
+<li>
+<p>Through the Timelock, upgrade the OnChainProposer and point it at the new verifier in a single call, <code>upgradeToAndCall(&lt;new implementation&gt;, &lt;calldata of upgradeSP1Verifier(&lt;new verifier&gt;)&gt;)</code>. Use <code>schedule</code> and <code>execute</code>, or <code>emergencyExecute</code> from the Security Council. For example, with the Security Council key:</p>
+<pre><code class="language-shell">UPGRADE=$(cast calldata 'upgradeToAndCall(address,bytes)' &lt;NEW_IMPLEMENTATION&gt; \
+  $(cast calldata 'upgradeSP1Verifier(address)' &lt;NEW_VERIFIER&gt;))
+cast send &lt;TIMELOCK_ADDRESS&gt; 'emergencyExecute(address,uint256,bytes)' \
+  &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; 0 "$UPGRADE" \
+  --private-key &lt;SECURITY_COUNCIL_PK&gt; --rpc-url &lt;L1_RPC_URL&gt;
+</code></pre>
+</li>
+<li>
+<p>Through the Timelock, call <code>upgradeSP1VerificationKey(bytes32,bytes32)</code> with the keccak of the v30 commit and the <code>ethrex-riscv32im-succinct-zkvm-vk-bn254</code> key from the v30 release. The v30 sequencer cannot commit a batch before its key is registered.</p>
+</li>
+<li>
+<p>Check <code>SP1_VERIFIER_ADDRESS()</code> and <code>verificationKeys(&lt;commit hash&gt;, 1)</code> on the OnChainProposer.</p>
+</li>
+</ol>
+<h4 id="without-downtime"><a class="header" href="#without-downtime">Without downtime</a></h4>
+<p>The v30 sequencer runs next to the old one, follows it over p2p, and takes over block production at a chosen block. Only one prover version can serve a batch, and a sequencer that stops sequencing also stops sending proofs, so the old version’s batches are verified before the handover:</p>
+<ol>
+<li>
+<p>Stop the old sequencer’s committer with <code>GET /committer/stop</code> on its admin server. It keeps producing blocks and sending the old prover’s proofs.</p>
+</li>
+<li>
+<p>Wait until <code>lastVerifiedBatch</code> equals <code>lastCommittedBatch</code>, then stop the old prover.</p>
+</li>
+<li>
+<p>Run the <a href="#contract-steps">contract steps</a>.</p>
+</li>
+<li>
+<p>Start the v30 sequencer with its own data directory, ports and proof coordinator, and:</p>
+<ul>
+<li><code>--bootnodes &lt;enode of the old sequencer&gt;</code>, which the old sequencer logs at startup as <code>Local node initialized enode=...</code> (its RPC only serves <code>admin_nodeInfo</code> when <code>admin</code> is in <code>--http.api</code>);</li>
+<li><code>--admin.start-at &lt;N&gt;</code>, a block far enough ahead for it to catch up;</li>
+<li><code>--admin.l2-head-check-rpc-url &lt;old sequencer RPC&gt;</code>.</li>
+</ul>
+<p>Start the v30 SP1 prover against the v30 sequencer’s proof coordinator.</p>
+</li>
+<li>
+<p>Send <code>POST /state-updater/stop-at/&lt;N&gt;</code> to the old sequencer’s admin server. It produces block <code>N</code> and stops; the v30 sequencer produces the next block.</p>
+</li>
+<li>
+<p>Move RPC traffic to the v30 sequencer, since the old one stays at block <code>N</code>, then stop the old sequencer.</p>
+</li>
+</ol>
+<p>Block production does not pause. No new batch is committed from step 1 until the v30 sequencer commits its first one, which holds the blocks the old sequencer produced after step 1; the batches already committed keep being verified meanwhile.</p>
+<h4 id="with-a-stop"><a class="header" href="#with-a-stop">With a stop</a></h4>
+<ol>
+<li>Stop the committer and wait until <code>lastVerifiedBatch</code> equals <code>lastCommittedBatch</code>, then stop the old sequencer and prover.</li>
+<li>Run the <a href="#contract-steps">contract steps</a>.</li>
+<li>Start the v30 sequencer and prover with the existing data directories; the node migrates its database at startup.</li>
+</ol>
+<h4 id="with-succincts-sp1-verifier-gateway"><a class="header" href="#with-succincts-sp1-verifier-gateway">With Succinct’s SP1 verifier gateway</a></h4>
+<p>If <code>SP1_VERIFIER_ADDRESS()</code> is Succinct’s <a href="https://docs.succinct.xyz/docs/sp1/verification/contract-addresses"><code>SP1VerifierGateway</code></a>, the gateway routes SP1 6 proofs to its <code>v6.1.0</code> verifier, so contract steps 1 and 2 are not needed: register the v30 key (step 3) and move the nodes. The gateway froze its <code>v5.0.0</code> route, though, so batches committed with SP1 5 and not verified before the freeze can no longer be verified. They are reverted and committed again by v30:</p>
+<ol>
+<li>Stop the old committer and the old prover. Note <code>lastVerifiedBatch</code> as <code>V</code> and <code>lastCommittedBatch</code> as <code>C</code>; if they are equal, go to step 4.</li>
+<li>Check that <code>batchWithdrawalLogsMerkleRoots(n)</code> on the CommonBridge is zero for every batch from <code>V + 1</code> to <code>C</code>. <code>CommonBridge</code> refuses to publish withdrawals twice for one batch number and <code>revertBatch</code> does not clear them, so a batch that published withdrawals cannot be committed again. If any root is non-zero, stop here and do not revert: there is no way to recover that batch until the contracts clear the roots on revert (#7414).</li>
+<li>Through the Timelock, call <code>pause()</code>, <code>revertBatch(V + 1)</code> and <code>unpause()</code> on the OnChainProposer.</li>
+<li>Register the v30 key (contract step 3).</li>
+<li>Move the nodes:
+<ul>
+<li>With a stop: stop the old sequencer, run <code>ethrex l2 revert-batch &lt;V&gt; &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; --datadir &lt;L2 datadir&gt;</code>, which keeps the batch it is given and deletes the later ones, delete the <code>checkpoint_batch_&lt;n&gt;</code> directories for <code>n</code> above <code>V</code> in the data directory, and start v30 on it.</li>
+<li>Without downtime: hand over as above, from step 4. The v30 sequencer commits the batches the old one sealed again, generating its own prover input for each.</li>
+</ul>
+</li>
+</ol>
+<p>The <a href="#sp1-version-upgrade-test">SP1 version upgrade test</a> runs both.</p>
+<h4 id="prover-1"><a class="header" href="#prover-1">Prover</a></h4>
+<p>The SP1 GPU prover now runs on a local <code>sp1-gpu-server</code> that the SDK downloads, so <code>--sp1-server</code> is ignored; see the <a href="#troubleshooting">SP1 prover guide</a> for GPU persistence mode and host memory.</p>
+<p>Aligned mode is not available in v30: the Aligned SDK still verifies SP1 5 proofs.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="run-a-prover"><a class="header" href="#run-a-prover">Run a prover</a></h1>
 <p>This section provides step-by-step guides for running an ethrex L2 prover, which is responsible for generating ZK proofs for L2 blocks. These proofs are then submitted to L1 for verification, finalizing the state of your L2.</p>
@@ -5319,15 +5401,25 @@ cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql,sp1,r
 We choose SP1 as the backend to indicate the prover to generate SP1 proofs.</p>
 </blockquote>
 <h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
-<h3 id="docker-error-response-from-daemon-could-not-select-device-driver--with-capabilities-gpu"><a class="header" href="#docker-error-response-from-daemon-could-not-select-device-driver--with-capabilities-gpu"><code>docker: Error response from daemon: could not select device driver "" with capabilities: [[gpu]]</code></a></h3>
-<p>If you encounter the following error when starting the SP1 prover with GPU support:</p>
-<pre><code class="language-plaintext">docker: Error response from daemon: could not select device driver "" with capabilities: [[gpu]]
+<h3 id="could-not-connect-to-sp1-gpu-server-socket"><a class="header" href="#could-not-connect-to-sp1-gpu-server-socket"><code>Could not connect to sp1-gpu-server socket</code></a></h3>
+<p>If the SP1 GPU prover stops at startup with:</p>
+<pre><code class="language-plaintext">Failed to create the CUDA prover impl: CudaClientError: Connect(Os { code: 2, kind: NotFound, message: "No such file or directory" })
+Context: "Could not connect to `sp1-gpu-server` socket"
 </code></pre>
-<p>This error indicates that Docker is unable to find a suitable GPU driver for running containers with GPU support. To resolve this issue, follow these steps:</p>
-<ol>
-<li><strong>Install NVIDIA Container Toolkit</strong>: Ensure that you have the NVIDIA Container Toolkit installed on your system. This toolkit allows Docker to utilize NVIDIA GPUs. You can follow the installation instructions from the <a href="https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html">official NVIDIA documentation</a>.</li>
-<li><strong>Configure Docker to use the NVIDIA runtime</strong>: After installing the NVIDIA Container Toolkit, you need to configure Docker to use the NVIDIA runtime by default. You can do this by following the instructions in the <a href="https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html#configuring-docker">Configuring Docker documentation</a>.</li>
-</ol>
+<p>the SP1 SDK started its <code>sp1-gpu-server</code>, but the server did not open its socket within the one second the SDK waits for it. The server initializes the GPU before it opens the socket, and with persistence mode disabled the NVIDIA driver initializes the GPU again on every start, which can take a few seconds. Enable persistence mode and start the prover again:</p>
+<pre><code class="language-shell">sudo nvidia-smi -pm 1
+</code></pre>
+<p>Persistence mode is reset on reboot. To keep it enabled, run the <code>nvidia-persistenced</code> service.</p>
+<h3 id="sp1-gpu-server-is-killed-for-running-out-of-memory"><a class="header" href="#sp1-gpu-server-is-killed-for-running-out-of-memory"><code>sp1-gpu-server</code> is killed for running out of memory</a></h3>
+<p>The GPU prover keeps much of each proof in host memory: with SP1’s default settings, <code>sp1-gpu-server</code> reached 42 GB on large proofs. If the host runs out of memory, the kernel kills it, the prover logs <code>CudaClientError: Failed to read the response</code> with <code>early eof</code>, and <code>dmesg</code> shows <code>Out of memory: Killed process ... (sp1-gpu-server)</code>. Run the prover with a smaller proving pipeline, which the server reads from the environment:</p>
+<pre><code class="language-shell">SP1_WORKER_NUM_CORE_WORKERS=1 SP1_WORKER_CORE_BUFFER_SIZE=1 \
+SP1_WORKER_NUM_SPLICING_WORKERS=1 SP1_WORKER_SPLICING_BUFFER_SIZE=1 \
+SP1_WORKER_NUM_RECURSION_EXECUTOR_WORKERS=1 SP1_WORKER_RECURSION_EXECUTOR_BUFFER_SIZE=1 \
+SP1_WORKER_NUM_PREPARE_REDUCE_WORKERS=1 SP1_WORKER_PREPARE_REDUCE_BUFFER_SIZE=1 \
+SP1_WORKER_NUM_RECURSION_PROVER_WORKERS=2 SP1_WORKER_RECURSION_PROVER_BUFFER_SIZE=2 \
+ethrex l2 prover --backend sp1 --proof-coordinators http://localhost:3900
+</code></pre>
+<p>With these values the server peaked at about 35 GB on the same proofs. Small proofs take about as long as before; the largest ones took about 50% longer.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="run-an-ethrex-l2-risc0-prover"><a class="header" href="#run-an-ethrex-l2-risc0-prover">Run an ethrex L2 RISC0 prover</a></h1>
 <p>In this section, we’ll guide you through the steps to run an ethrex L2 prover that utilizes RISC0 for generating ZK proofs. These proofs are essential for validating batch execution and state settlement on your ethrex L2.</p>
@@ -9708,7 +9800,7 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 </thead>
 <tbody>
 <tr><td><code>--proof-coordinators</code></td><td><code>PROVER_CLIENT_PROOF_COORDINATOR_URL</code></td><td><code>tcp://127.0.0.1:3900</code></td><td>Space-separated coordinator URLs</td></tr>
-<tr><td><code>--backend</code></td><td><code>PROVER_CLIENT_BACKEND</code></td><td><code>exec</code></td><td>Backend: <code>exec</code>, <code>sp1</code>, <code>risc0</code>, <code>zisk</code>, <code>openvm</code></td></tr>
+<tr><td><code>--backend</code></td><td><code>PROVER_CLIENT_BACKEND</code></td><td><code>exec</code></td><td>Backend: <code>exec</code>, <code>sp1</code>, <code>risc0</code>, <code>zisk</code></td></tr>
 <tr><td><code>--proving-time</code></td><td><code>PROVER_CLIENT_PROVING_TIME</code></td><td><code>5000</code></td><td>Wait time (ms) between requesting new work</td></tr>
 </tbody>
 </table>
@@ -11391,11 +11483,212 @@ make test
 <li>the failing test name from the <code>make test</code> output.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<h1 id="sp1-version-upgrade-test"><a class="header" href="#sp1-version-upgrade-test">SP1 version upgrade test</a></h1>
+<p>This test checks that an L2 running a release with one SP1 version can move to a release with a newer one, such as SP1 5 to SP1 6, without redeploying. It runs on the GPU host (<code>l2-gpu</code>) with real proofs: the verification key and the verifier contract are what an SP1 upgrade changes, and the <code>exec</code> backend never consults either.</p>
+<p>How the upgrade goes depends on what the OnChainProposer’s <code>SP1_VERIFIER_ADDRESS</code> points at:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Case</th><th><code>SP1_VERIFIER_ADDRESS</code></th><th>What changes on L1</th></tr>
+</thead>
+<tbody>
+<tr><td>1. Own verifier</td><td>The <code>SP1VerifierGroth16</code> the deployer created, the default</td><td>A new OnChainProposer implementation and verifier, and the new verification key</td></tr>
+<tr><td>2. Gateway, with downtime</td><td>Succinct’s <a href="https://docs.succinct.xyz/docs/sp1/verification/contract-addresses"><code>SP1VerifierGateway</code></a></td><td>The new verification key, after reverting the batches the gateway can no longer verify</td></tr>
+<tr><td>3. Gateway, without downtime</td><td>Succinct’s <code>SP1VerifierGateway</code></td><td>As in case 2, while the old sequencer keeps producing blocks</td></tr>
+</tbody>
+</table>
+</div>
+<p>Case 1 can also run without downtime; the steps are the same as case 3’s handover, without the revert.</p>
+<p>The gateway routes each proof by its first four bytes to the verifier of its SP1 version, so proofs of a new SP1 version need no change on L1. It also freezes old routes: Succinct froze the <code>v5.0.0</code> route (<code>0xa4594c59</code>) on Ethereum, Sepolia and Hoodi. A batch committed with SP1 5 and not verified before the freeze can no longer be verified with its SP1 5 proof, so it is reverted and committed again by the new release.</p>
+<h2 id="setup-1"><a class="header" href="#setup-1">Setup</a></h2>
+<pre><code class="language-bash">export OLD=&lt;previous release tag, e.g. v25.0.0&gt;
+export WORK=$HOME/sp1-upgrade-test
+export L1_RPC=http://localhost:8545
+export DEPLOYER_PK=0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924
+# The --on-chain-proposer-owner and --bridge-owner account, which is also the Timelock's Security Council
+export SC_PK=0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e
+export SC_ADDR=0x4417092b70a3e5f10dc504d0947dd256b965fc62
+mkdir -p $WORK &amp;&amp; cd $WORK
+</code></pre>
+<ul>
+<li>
+<p>The old release: its <code>ethrex-l2-linux-x86_64-gpu</code> binary, its <code>ethrex-contracts.tar.gz</code> (for <code>ethrex-riscv32im-succinct-zkvm-vk-bn254</code>) and a checkout of its tag (for <code>fixtures/</code>).</p>
+</li>
+<li>
+<p>The new release, built from source with its contracts:</p>
+<pre><code class="language-bash">COMPILE_CONTRACTS=true cargo build --release --features l2,l2-sql,sp1,gpu --bin ethrex
+export NEW=&lt;path to the new checkout&gt;
+export OUT=$(ls -d $NEW/target/release/build/ethrex-*/out/contracts/solc_out | head -1)
+# $OUT/OnChainProposer.bytecode and $OUT/SP1Verifier.bytecode (raw bytes)
+# The new release's key, under the keccak of the full commit hash its binary reports
+export COMMIT_HASH=$(cast keccak $($NEW/target/release/ethrex --version | grep -oE '[0-9a-f]{40}' | head -1))
+export VK=0x$(tr -d '\n' &lt; $NEW/crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254 | sed 's/^0x//')
+</code></pre>
+</li>
+<li>
+<p><code>cast</code>, <code>jq</code>, <code>xxd</code>, and <code>solc</code> for the gateway cases.</p>
+</li>
+<li>
+<p>GPU persistence mode on (<code>sudo nvidia-smi -pm 1</code>), and the reduced <code>SP1_WORKER_*</code> settings from the <a href="#troubleshooting">SP1 prover guide</a> on hosts with less than about 48 GB of memory.</p>
+</li>
+</ul>
+<p>Helpers used below. <code>cast</code> reads every option placed after <code>--create</code> as a constructor argument, so the options go first.</p>
+<pre><code class="language-bash">deploy_bytes() { cast send --private-key $SC_PK --rpc-url $L1_RPC --json --create 0x$(xxd -p "$1" | tr -d '\n') | jq -r .contractAddress; }
+timelock() { cast send $TIMELOCK 'emergencyExecute(address,uint256,bytes)' $OCP 0 "$1" --private-key $SC_PK --rpc-url $L1_RPC --json | jq -r .status; }
+</code></pre>
+<h2 id="run-the-old-release"><a class="header" href="#run-the-old-release">Run the old release</a></h2>
+<p>Start the L1 and deploy the old release with SP1 proofs required, following the <a href="#upgrade-test">upgrade test</a> (Step 1), with one change for the gateway cases: deploy the gateway first (see below) and pass <code>--sp1.verifier-address $GW</code> to <code>ethrex l2 deploy</code>. Run the deployer from <code>$WORK</code>, so that it writes <code>$WORK/cmd/.env</code>, which the steps below read. Then:</p>
+<pre><code class="language-bash">set -a; source $WORK/cmd/.env; set +a
+export OCP=$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS TIMELOCK=$ETHREX_TIMELOCK_ADDRESS BRIDGE=$ETHREX_WATCHER_BRIDGE_ADDRESS
+</code></pre>
+<p>For the zero-downtime cases, start the old sequencer with p2p and its own admin server and proof coordinator, for example <code>--p2p.addr 127.0.0.1 --p2p.port 30303 --discovery.port 30303 --admin-server.port 5555 --proof-coordinator.port 3900</code>, and give the L1 node a different p2p port. Start the old prover against the old proof coordinator and wait until <code>lastVerifiedBatch()</code> is at least 1.</p>
+<h2 id="case-1-own-verifier"><a class="header" href="#case-1-own-verifier">Case 1: own verifier</a></h2>
+<ol>
+<li>
+<p>Stop the old committer and wait until every committed batch is verified. With downtime, stop the old sequencer too; without downtime it keeps producing blocks.</p>
+<pre><code class="language-bash">curl -sf http://localhost:5555/committer/stop
+cast call $OCP 'lastCommittedBatch()(uint256)' --rpc-url $L1_RPC
+cast call $OCP 'lastVerifiedBatch()(uint256)' --rpc-url $L1_RPC
+</code></pre>
+</li>
+<li>
+<p>Stop the old prover.</p>
+</li>
+<li>
+<p>Deploy the new verifier and OnChainProposer implementation, upgrade the OnChainProposer and set the verifier in one Timelock call, and register the new key.</p>
+<pre><code class="language-bash">NEW_VERIFIER=$(deploy_bytes $OUT/SP1Verifier.bytecode)
+NEW_IMPL=$(deploy_bytes $OUT/OnChainProposer.bytecode)
+timelock $(cast calldata 'upgradeToAndCall(address,bytes)' $NEW_IMPL $(cast calldata 'upgradeSP1Verifier(address)' $NEW_VERIFIER))
+timelock $(cast calldata 'upgradeSP1VerificationKey(bytes32,bytes32)' $COMMIT_HASH $VK)
+</code></pre>
+</li>
+<li>
+<p>Move to the new release: with downtime, restart the sequencer and prover with the new binary on the old data directories; without downtime, follow <a href="#handover-without-downtime">the handover</a>.</p>
+</li>
+</ol>
+<p>Expected: <code>SP1_VERIFIER_ADDRESS()</code> is <code>$NEW_VERIFIER</code> and <code>VERSION()</code> on it is <code>"v6.1.0"</code>, the first batch committed by the new release is verified, and the <a href="#checks">checks</a> pass.</p>
+<h2 id="cases-2-and-3-succincts-gateway"><a class="header" href="#cases-2-and-3-succincts-gateway">Cases 2 and 3: Succinct’s gateway</a></h2>
+<h3 id="deploy-a-gateway-on-the-test-l1"><a class="header" href="#deploy-a-gateway-on-the-test-l1">Deploy a gateway on the test L1</a></h3>
+<p>The gateway is not on the local L1, so the test deploys one from sp1-contracts, which the build already fetched, with routes for both SP1 versions. Its owner stands in for Succinct.</p>
+<pre><code class="language-bash">SRC=$(ls -d $NEW/target/release/build/ethrex-*/out/contracts/lib/sp1-contracts/contracts | head -1)
+mkdir -p gw/lib &amp;&amp; cp -r $SRC/src gw/src
+ln -s $(dirname $SRC)/../openzeppelin-contracts-upgradeable/lib/openzeppelin-contracts gw/lib/openzeppelin-contracts
+(cd gw &amp;&amp; solc --base-path . --allow-paths .,$(readlink -f lib/openzeppelin-contracts) --optimize --bin -o out \
+  src/SP1VerifierGateway.sol src/v5.0.0/SP1VerifierGroth16.sol)
+
+V5=$(cast send --private-key $SC_PK --rpc-url $L1_RPC --json --create 0x$(cat gw/out/SP1Verifier.bin) | jq -r .contractAddress)
+V6=$(deploy_bytes $OUT/SP1Verifier.bytecode)
+GW=$(cast send --private-key $SC_PK --rpc-url $L1_RPC --json --create 0x$(cat gw/out/SP1VerifierGateway.bin) 'constructor(address)' $SC_ADDR | jq -r .contractAddress)
+cast send $GW 'addRoute(address)' $V5 --private-key $SC_PK --rpc-url $L1_RPC
+cast send $GW 'addRoute(address)' $V6 --private-key $SC_PK --rpc-url $L1_RPC
+</code></pre>
+<p>Deploy the old release with <code>--sp1.verifier-address $GW</code> and start it as above.</p>
+<h3 id="freeze-the-old-route"><a class="header" href="#freeze-the-old-route">Freeze the old route</a></h3>
+<p>Once <code>lastCommittedBatch</code> is at least two ahead of <code>lastVerifiedBatch</code>, freeze the <code>v5.0.0</code> route, as Succinct did:</p>
+<pre><code class="language-bash">cast send $GW 'freezeRoute(bytes4)' 0xa4594c59 --private-key $SC_PK --rpc-url $L1_RPC
+cast call $GW 'routes(bytes4)(address,bool)' 0xa4594c59 --rpc-url $L1_RPC   # $V5 true
+</code></pre>
+<p>From here the old sequencer keeps committing batches, but <code>lastVerifiedBatch</code> stays where it was: every SP1 5 proof is rejected.</p>
+<h3 id="recover"><a class="header" href="#recover">Recover</a></h3>
+<ol>
+<li>
+<p>Stop the old committer and the old prover. Record the last verified and last committed batches.</p>
+<pre><code class="language-bash">curl -sf http://localhost:5555/committer/stop
+V=$(cast call $OCP 'lastVerifiedBatch()(uint256)' --rpc-url $L1_RPC)
+C=$(cast call $OCP 'lastCommittedBatch()(uint256)' --rpc-url $L1_RPC)
+</code></pre>
+</li>
+<li>
+<p>Check that none of the batches to revert published withdrawals. <code>CommonBridge</code> refuses to publish withdrawals twice for one batch number and <code>revertBatch</code> does not clear them, so a batch with a non-zero root cannot be committed again. If any root is non-zero, stop here: there is no way to recover that batch until the contracts clear the roots on revert (#7414).</p>
+<pre><code class="language-bash">for n in $(seq $((V+1)) $C); do cast call $BRIDGE 'batchWithdrawalLogsMerkleRoots(uint256)(bytes32)' $n --rpc-url $L1_RPC; done
+</code></pre>
+</li>
+<li>
+<p>Revert them on L1 and register the new key. <code>revertBatch</code> needs the OnChainProposer paused, and all three calls go through the Timelock.</p>
+<pre><code class="language-bash">timelock $(cast calldata 'pause()')
+timelock $(cast calldata 'revertBatch(uint256)' $((V+1)))
+timelock $(cast calldata 'unpause()')
+timelock $(cast calldata 'upgradeSP1VerificationKey(bytes32,bytes32)' $COMMIT_HASH $VK)
+</code></pre>
+</li>
+<li>
+<p>Case 2, with downtime: stop the old sequencer, revert its rollup store, and restart on the new release with the same data directory. <code>ethrex l2 revert-batch</code> keeps the batch it is given and deletes the later ones, so pass the last verified batch. It also leaves behind the committer’s state snapshots of the reverted batches, which the new committer would take as its own, so delete them too.</p>
+<pre><code class="language-bash">ethrex l2 revert-batch $V $OCP --datadir &lt;L2 datadir&gt;
+find &lt;L2 datadir&gt; -maxdepth 1 -type d \( -name 'checkpoint_batch_*' -o -name 'temp_checkpoint_batch_*' \) | while read -r d; do
+  n=$(basename "$d" | sed -E 's/^(temp_)?checkpoint_batch_([0-9]+).*/\2/'); [ "$n" -gt "$V" ] &amp;&amp; rm -rf "$d"
+done
+</code></pre>
+</li>
+<li>
+<p>Case 3, without downtime: leave the old sequencer running and follow <a href="#handover-without-downtime">the handover</a>. The new sequencer receives the batches the old one sealed and commits them again, generating its own prover input for each.</p>
+</li>
+</ol>
+<p>Expected: the first re-committed batch is proven with SP1 6 and verified through the gateway’s <code>v6.1.0</code> route, <code>SP1_VERIFIER_ADDRESS()</code> still being <code>$GW</code>, and the <a href="#checks">checks</a> pass.</p>
+<h2 id="handover-without-downtime"><a class="header" href="#handover-without-downtime">Handover without downtime</a></h2>
+<ol>
+<li>
+<p>Start the new sequencer next to the old one, with its own data directory, ports and proof coordinator, following the old one over p2p. The L2 RPC only serves <code>admin_nodeInfo</code> when <code>admin</code> is in its <code>--http.api</code>, so take the old sequencer’s enode from its startup log. <code>N</code> is a block far enough ahead for the new sequencer to catch up.</p>
+<pre><code class="language-bash">ENODE=$(grep -m1 -oE 'enode://[0-9a-f]+@[0-9.]+:[0-9]+' &lt;old sequencer log&gt;)
+N=$(( $(cast block-number --rpc-url http://localhost:1729) + 30 ))
+$NEW/target/release/ethrex l2 &lt;the old sequencer's flags&gt; --datadir &lt;new datadir&gt; \
+  --http.port 1730 --authrpc.port 8562 --metrics.port 3703 --p2p.port 30304 --discovery.port 30304 \
+  --admin-server.port 5556 --proof-coordinator.port 3901 \
+  --bootnodes $ENODE --admin.start-at $N --admin.l2-head-check-rpc-url http://localhost:1729
+$NEW/target/release/ethrex l2 prover --backend sp1 --proof-coordinators tcp://127.0.0.1:3901
+</code></pre>
+</li>
+<li>
+<p>Tell the old sequencer to stop at <code>N</code>. It produces block <code>N</code> and switches to following; the new sequencer logs <code>The sequencer is now Sequencing</code> and produces the next block.</p>
+<pre><code class="language-bash">curl -sf -X POST http://localhost:5555/state-updater/stop-at/$N
+</code></pre>
+</li>
+<li>
+<p>The old sequencer stays at block <code>N</code>, so point clients at the new one (<code>http://localhost:1730</code>) and stop the old one.</p>
+</li>
+</ol>
+<h2 id="checks"><a class="header" href="#checks">Checks</a></h2>
+<ul>
+<li>
+<p>The block timestamps around <code>N</code> are as far apart as before: the handover leaves no gap.</p>
+<pre><code class="language-bash">for b in $(seq $((N-3)) $((N+3))); do cast block $b timestamp --rpc-url http://localhost:1730; done
+</code></pre>
+</li>
+<li>
+<p><code>lastVerifiedBatch()</code> passes the batches the old release committed, then keeps up with <code>lastCommittedBatch()</code>.</p>
+</li>
+<li>
+<p>The L2 integration tests pass against the new sequencer:</p>
+<pre><code class="language-bash">cd $NEW &amp;&amp; cp $WORK/cmd/.env cmd/.env
+INTEGRATION_TEST_L1_RPC=$L1_RPC INTEGRATION_TEST_L2_RPC=&lt;new sequencer RPC&gt; \
+ETHREX_DEPLOYER_PRIVATE_KEYS_FILE_PATH=&lt;old checkout&gt;/fixtures/keys/private_keys_l1.txt \
+INTEGRATION_TEST_PRIVATE_KEYS_FILE_PATH=&lt;old checkout&gt;/fixtures/keys/private_keys_l1.txt \
+INTEGRATION_TEST_BRIDGE_OWNER_PRIVATE_KEY=$SC_PK \
+cargo test -p ethrex-test l2::integration_tests --release --features l2 -- --nocapture --test-threads=1
+</code></pre>
+</li>
+</ul>
+<h2 id="last-run"><a class="header" href="#last-run">Last run</a></h2>
+<p>From v25.0.0 to the first build with SP1 6.9.0, on <code>l2-gpu</code> (NVIDIA RTX 4000 Ada, 20 GB), in October 2026:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Case</th><th>Old release when the upgrade started</th><th>Gap at the handover</th><th>First new batch verified</th><th>Integration tests</th><th>Batches verified at the end</th></tr>
+</thead>
+<tbody>
+<tr><td>1. Own verifier, with downtime</td><td>13 committed, 13 verified</td><td>the sequencer stops</td><td>2 minutes after the restart</td><td>passed</td><td>35 of 36</td></tr>
+<tr><td>1. Own verifier, without downtime</td><td>8 committed, 8 verified</td><td>none: blocks 5 s apart</td><td>2.5 minutes after the handover</td><td>passed</td><td>30 of 30</td></tr>
+<tr><td>2. Gateway, with downtime</td><td>6 committed, 1 verified, 5 reverted</td><td>the sequencer stops</td><td>2 minutes after the restart</td><td>passed</td><td>21 of 21</td></tr>
+<tr><td>3. Gateway, without downtime</td><td>6 committed, 1 verified, 5 reverted</td><td>none: blocks 5 s apart</td><td>2 minutes after the handover</td><td>passed</td><td>21 of 22</td></tr>
+</tbody>
+</table>
+</div>
+<p>In case 3 the new sequencer logged <code>Batch 2 was sealed without a prover input for version ..., generating it</code> for each batch the old one had sealed, and the old release’s database was migrated at startup in case 2.</p>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="l2-integration-tests-with-a-sp1-gpu-prover"><a class="header" href="#l2-integration-tests-with-a-sp1-gpu-prover">L2 integration tests with a SP1 GPU prover</a></h1>
 <p>This validates a release’s SP1 <strong>GPU</strong> proving path end to end: bring up an L1 + L2 testnet from the <strong>release binaries</strong> with the SP1 GPU prover, then run the integration test against it. Run it on a host with an NVIDIA GPU (<code>l2-gpu</code>). It is one of the checks in the <a href="#testing-checklist">release testing checklist</a>.</p>
 <blockquote class="blockquote-tag blockquote-tag-note">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
-<p>The standard <a href="#running-integration-tests">integration tests</a> run the prover in <code>exec</code> mode (no real proofs). This variant swaps in the SP1 GPU backend so the release’s proving path is actually exercised. GPU/driver setup (CUDA, <code>nvidia-container-toolkit</code>, the <code>docker</code> group) is covered in <a href="#gpu-mode">Prover § GPU mode</a> and <a href="#run-an-ethrex-l2-sp1-prover">Run an ethrex L2 SP1 prover</a>; the SP1 wrap step runs in a <code>moongate</code> Docker container, so <code>docker run --gpus all</code> must work.</p>
+<p>The standard <a href="#running-integration-tests">integration tests</a> run the prover in <code>exec</code> mode (no real proofs). This variant swaps in the SP1 GPU backend so the release’s proving path is actually exercised. GPU/driver setup (CUDA, <code>nvidia-container-toolkit</code>, the <code>docker</code> group) is covered in <a href="#gpu-mode">Prover § GPU mode</a> and <a href="#run-an-ethrex-l2-sp1-prover">Run an ethrex L2 SP1 prover</a>; SP1 6 proves with a local <code>sp1-gpu-server</code> process, which the SDK downloads into <code>~/.sp1/bin</code> on first use, and wraps Groth16 proofs in the <code>sp1-gnark</code> Docker container, so Docker must work.</p>
 </blockquote>
 <p>Host prerequisites: <code>solc</code> <strong>0.8.31 exactly</strong> (the FeeToken pragmas are pinned), <code>foundry</code> (<code>cast</code>/<code>forge</code>) on <code>PATH</code>, and the Rust toolchain from <code>rust-toolchain.toml</code>.</p>
 <ol>
@@ -11473,7 +11766,7 @@ grep -E "(Timelock|OnChainProposer|CommonBridge|SP1Verifier) deployed" deploy.lo
 <p><code>--no-monitor</code> is mandatory when running headless — otherwise the binary starts the monitor TUI and emits no logs.</p>
 </li>
 <li>
-<p><strong>Start the SP1 GPU prover</strong> (first run pulls the <code>moongate</code> container and loads ~15 GB into VRAM):</p>
+<p><strong>Start the SP1 GPU prover</strong> (first run downloads <code>sp1-gpu-server</code> into <code>~/.sp1/bin</code>):</p>
 <pre><code class="language-bash">nohup ./ethrex-l2 l2 prover --backend sp1 \
   --proof-coordinators tcp://127.0.0.1:3900 --log.level info &gt; prover.log 2&gt;&amp;1 &amp;
 </code></pre>
@@ -11501,11 +11794,11 @@ cargo test -p ethrex-test l2::integration_tests --release --features l2 -- --noc
 <p>Pass criterion: <code>test result: ok. 1 passed; 0 failed</code>, plus the final <code>Total L2 ETH == Bridge locked ETH on L1</code> reconciliation line. Expect a multi-hour run on the GPU backend (proving dominates the wall-clock). See <a href="#i-think-my-tests-are-taking-too-long-how-can-i-debug-this">integration tests § “taking too long”</a> if it appears to stall.</p>
 </li>
 <li>
-<p><strong>Clean up</strong> — the L1, sequencer, and prover were started with <code>nohup</code> and keep running; stop them (and the prover’s GPU container) when you’re done:</p>
+<p><strong>Clean up</strong> — the L1, sequencer, and prover were started with <code>nohup</code> and keep running; stop them (and the prover’s <code>sp1-gpu-server</code>) when you’re done:</p>
 <pre><code class="language-bash">pkill -f 'ethrex-l2 l2 prover'        # prover first
 pkill -f 'ethrex-l2 l2 --no-monitor'  # sequencer
 pkill -f 'ethrex --network l1.json'   # L1
-docker rm -f "$(docker ps -q --filter ancestor=public.ecr.aws/succinct-labs/moongate)" 2&gt;/dev/null || true
+pkill -f sp1-gpu-server
 </code></pre>
 </li>
 </ol>
@@ -11524,7 +11817,7 @@ docker rm -f "$(docker ps -q --filter ancestor=public.ecr.aws/succinct-labs/moon
 <li><a href="https://docs.succinct.xyz/docs/sp1/introduction">SP1</a>
 <ol>
 <li><code>curl -L https://sp1up.succinct.xyz | bash</code></li>
-<li><code>sp1up --version 5.0.8</code></li>
+<li><code>sp1up --version 6.9.0</code></li>
 </ol>
 </li>
 <li><a href="https://docs.soliditylang.org/en/latest/installing-solidity.html">SOLC (v0.8.31)</a></li>
@@ -12393,7 +12686,7 @@ rzup install rust
 </code></pre>
 <h4 id="sp1"><a class="header" href="#sp1"><a href="https://docs.succinct.xyz/docs/sp1/getting-started/install">SP1</a></a></h4>
 <pre><code class="language-sh">curl -L https://sp1up.succinct.xyz | bash
-sp1up --version 5.0.8
+sp1up --version 6.9.0
 </code></pre>
 <h3 id="installation-1"><a class="header" href="#installation-1">Installation</a></h3>
 <h4 id="from-cargo"><a class="header" href="#from-cargo">From Cargo</a></h4>
@@ -13633,7 +13926,7 @@ Prover client options:
           [default: INFO]
 
       --sp1-server &lt;URL&gt;
-          Url to the moongate server to use when using sp1 backend
+          Ignored: SP1 6 proves on the local sp1-gpu-server and has no remote prover server
 
           [env: ETHREX_SP1_SERVER=]
 </code></pre>

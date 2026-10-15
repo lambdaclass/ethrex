@@ -34,10 +34,10 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-31115c3c.js";
+            window.path_to_searchindex_js = "../../searchindex-b4f2640f.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../../toc-f6d73635.js"></script>
+        <script src="../../toc-34260634.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -253,6 +253,84 @@ ADD COLUMN value_per_token BLOB;
   --rpc-url &lt;L1_RPC_URL&gt;
 </code></pre>
 <p>After updating the on-chain value, restart the sequencer for it to take effect. Until the restart, the sequencer continues using the previous gas limit, which may cause a temporary mismatch with the on-chain value.</p>
+<h2 id="from-v29-to-v30"><a class="header" href="#from-v29-to-v30">From v29 to v30</a></h2>
+<h3 id="sp1-6-onchainproposer-and-sp1-verifier"><a class="header" href="#sp1-6-onchainproposer-and-sp1-verifier">SP1 6 (OnChainProposer and SP1 verifier)</a></h3>
+<p>The SP1 prover moves from SP1 5 to SP1 6.9.0. Its proofs need the <code>v6.1.0</code> <code>SP1VerifierGroth16</code>, and the OnChainProposer gains <code>upgradeSP1Verifier(address)</code> to point at it. Deployments that require SP1 proofs need both: the SP1 5 verifier they were deployed with rejects SP1 6 proofs whatever verification key is registered, because SP1 6 wraps its proofs in a different Groth16 circuit. The OnChainProposer has not changed since v25, so deployments from v25 onwards follow the same steps.</p>
+<p>The OnChainProposer reads a single verifier address, so the contract steps go between two points: after every batch committed by the old version is verified, since its proofs only pass the old verifier, and before the new version submits its first proof. The v30 OnChainProposer enforces the first point: the call in step 2 reverts with <code>UnverifiedBatchesPending</code> while a batch is unverified. The nodes can move either without downtime or with a stop.</p>
+<h4 id="contract-steps"><a class="header" href="#contract-steps">Contract steps</a></h4>
+<ol>
+<li>
+<p>Deploy <code>SP1VerifierGroth16</code> from sp1-contracts <code>v6.1.0</code> and the v30 OnChainProposer implementation.</p>
+</li>
+<li>
+<p>Through the Timelock, upgrade the OnChainProposer and point it at the new verifier in a single call, <code>upgradeToAndCall(&lt;new implementation&gt;, &lt;calldata of upgradeSP1Verifier(&lt;new verifier&gt;)&gt;)</code>. Use <code>schedule</code> and <code>execute</code>, or <code>emergencyExecute</code> from the Security Council. For example, with the Security Council key:</p>
+<pre><code class="language-shell">UPGRADE=$(cast calldata 'upgradeToAndCall(address,bytes)' &lt;NEW_IMPLEMENTATION&gt; \
+  $(cast calldata 'upgradeSP1Verifier(address)' &lt;NEW_VERIFIER&gt;))
+cast send &lt;TIMELOCK_ADDRESS&gt; 'emergencyExecute(address,uint256,bytes)' \
+  &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; 0 "$UPGRADE" \
+  --private-key &lt;SECURITY_COUNCIL_PK&gt; --rpc-url &lt;L1_RPC_URL&gt;
+</code></pre>
+</li>
+<li>
+<p>Through the Timelock, call <code>upgradeSP1VerificationKey(bytes32,bytes32)</code> with the keccak of the v30 commit and the <code>ethrex-riscv32im-succinct-zkvm-vk-bn254</code> key from the v30 release. The v30 sequencer cannot commit a batch before its key is registered.</p>
+</li>
+<li>
+<p>Check <code>SP1_VERIFIER_ADDRESS()</code> and <code>verificationKeys(&lt;commit hash&gt;, 1)</code> on the OnChainProposer.</p>
+</li>
+</ol>
+<h4 id="without-downtime"><a class="header" href="#without-downtime">Without downtime</a></h4>
+<p>The v30 sequencer runs next to the old one, follows it over p2p, and takes over block production at a chosen block. Only one prover version can serve a batch, and a sequencer that stops sequencing also stops sending proofs, so the old version’s batches are verified before the handover:</p>
+<ol>
+<li>
+<p>Stop the old sequencer’s committer with <code>GET /committer/stop</code> on its admin server. It keeps producing blocks and sending the old prover’s proofs.</p>
+</li>
+<li>
+<p>Wait until <code>lastVerifiedBatch</code> equals <code>lastCommittedBatch</code>, then stop the old prover.</p>
+</li>
+<li>
+<p>Run the <a href="#contract-steps">contract steps</a>.</p>
+</li>
+<li>
+<p>Start the v30 sequencer with its own data directory, ports and proof coordinator, and:</p>
+<ul>
+<li><code>--bootnodes &lt;enode of the old sequencer&gt;</code>, which the old sequencer logs at startup as <code>Local node initialized enode=...</code> (its RPC only serves <code>admin_nodeInfo</code> when <code>admin</code> is in <code>--http.api</code>);</li>
+<li><code>--admin.start-at &lt;N&gt;</code>, a block far enough ahead for it to catch up;</li>
+<li><code>--admin.l2-head-check-rpc-url &lt;old sequencer RPC&gt;</code>.</li>
+</ul>
+<p>Start the v30 SP1 prover against the v30 sequencer’s proof coordinator.</p>
+</li>
+<li>
+<p>Send <code>POST /state-updater/stop-at/&lt;N&gt;</code> to the old sequencer’s admin server. It produces block <code>N</code> and stops; the v30 sequencer produces the next block.</p>
+</li>
+<li>
+<p>Move RPC traffic to the v30 sequencer, since the old one stays at block <code>N</code>, then stop the old sequencer.</p>
+</li>
+</ol>
+<p>Block production does not pause. No new batch is committed from step 1 until the v30 sequencer commits its first one, which holds the blocks the old sequencer produced after step 1; the batches already committed keep being verified meanwhile.</p>
+<h4 id="with-a-stop"><a class="header" href="#with-a-stop">With a stop</a></h4>
+<ol>
+<li>Stop the committer and wait until <code>lastVerifiedBatch</code> equals <code>lastCommittedBatch</code>, then stop the old sequencer and prover.</li>
+<li>Run the <a href="#contract-steps">contract steps</a>.</li>
+<li>Start the v30 sequencer and prover with the existing data directories; the node migrates its database at startup.</li>
+</ol>
+<h4 id="with-succincts-sp1-verifier-gateway"><a class="header" href="#with-succincts-sp1-verifier-gateway">With Succinct’s SP1 verifier gateway</a></h4>
+<p>If <code>SP1_VERIFIER_ADDRESS()</code> is Succinct’s <a href="https://docs.succinct.xyz/docs/sp1/verification/contract-addresses"><code>SP1VerifierGateway</code></a>, the gateway routes SP1 6 proofs to its <code>v6.1.0</code> verifier, so contract steps 1 and 2 are not needed: register the v30 key (step 3) and move the nodes. The gateway froze its <code>v5.0.0</code> route, though, so batches committed with SP1 5 and not verified before the freeze can no longer be verified. They are reverted and committed again by v30:</p>
+<ol>
+<li>Stop the old committer and the old prover. Note <code>lastVerifiedBatch</code> as <code>V</code> and <code>lastCommittedBatch</code> as <code>C</code>; if they are equal, go to step 4.</li>
+<li>Check that <code>batchWithdrawalLogsMerkleRoots(n)</code> on the CommonBridge is zero for every batch from <code>V + 1</code> to <code>C</code>. <code>CommonBridge</code> refuses to publish withdrawals twice for one batch number and <code>revertBatch</code> does not clear them, so a batch that published withdrawals cannot be committed again. If any root is non-zero, stop here and do not revert: there is no way to recover that batch until the contracts clear the roots on revert (#7414).</li>
+<li>Through the Timelock, call <code>pause()</code>, <code>revertBatch(V + 1)</code> and <code>unpause()</code> on the OnChainProposer.</li>
+<li>Register the v30 key (contract step 3).</li>
+<li>Move the nodes:
+<ul>
+<li>With a stop: stop the old sequencer, run <code>ethrex l2 revert-batch &lt;V&gt; &lt;ON_CHAIN_PROPOSER_ADDRESS&gt; --datadir &lt;L2 datadir&gt;</code>, which keeps the batch it is given and deletes the later ones, delete the <code>checkpoint_batch_&lt;n&gt;</code> directories for <code>n</code> above <code>V</code> in the data directory, and start v30 on it.</li>
+<li>Without downtime: hand over as above, from step 4. The v30 sequencer commits the batches the old one sealed again, generating its own prover input for each.</li>
+</ul>
+</li>
+</ol>
+<p>The <a href="../../developers/l2/sp1-upgrade-test.html">SP1 version upgrade test</a> runs both.</p>
+<h4 id="prover"><a class="header" href="#prover">Prover</a></h4>
+<p>The SP1 GPU prover now runs on a local <code>sp1-gpu-server</code> that the SDK downloads, so <code>--sp1-server</code> is ignored; see the <a href="./prover/sp1.html#troubleshooting">SP1 prover guide</a> for GPU persistence mode and host memory.</p>
+<p>Aligned mode is not available in v30: the Aligned SDK still verifies SP1 5 proofs.</p>
 
                     </main>
 
