@@ -9,8 +9,8 @@ use crate::{
     eth::gas_tip_estimator::GasTipEstimator,
     rpc::{
         AUTHRPC_BODY_READ_TIMEOUT, AUTHRPC_BUDGET_WAIT_TIMEOUT, ClientVersion,
-        DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE, NodeData, RpcApiContext, authrpc_router,
-        handle_http_request, start_api, start_block_executor,
+        DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE, DEFAULT_RPC_GAS_CAP, NodeData, RpcApiContext,
+        authrpc_router, handle_http_request, start_api, start_block_executor,
     },
     utils::RpcNamespace,
 };
@@ -273,6 +273,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             ),
             None,
             DEFAULT_BUILDER_GAS_CEIL,
+            DEFAULT_RPC_GAS_CAP,
             String::new(),
             all_namespaces_for_tests(),
             DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE,
@@ -428,8 +429,10 @@ pub async fn default_context_with_storage(storage: Store) -> TestContext {
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         log_filter_handler: None,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        rpc_gas_cap: DEFAULT_RPC_GAS_CAP,
         block_worker_channel,
         ws: None,
+        log_query_limits: Default::default(),
         allowed_namespaces: Arc::new(all_namespaces_for_tests()),
     };
     TestContext {

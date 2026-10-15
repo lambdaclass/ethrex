@@ -74,6 +74,14 @@ pub struct Environment {
     /// previewing its own transaction. Transaction admission keeps enforcing it: the
     /// mempool rejects such a sender outright, and block execution never sets this flag.
     pub disable_sender_eoa_check: bool,
+    /// When true, the EIP-8037 cap on the execution dimension (Amsterdam+) is lifted: the
+    /// whole gas limit is execution gas and no state-gas reservoir is funded from it, so a
+    /// simulation given more than the per-transaction execution cap can actually spend it.
+    /// Set by `eth_call` and `debug_traceCall` only, as geth does, since nothing they run is
+    /// ever submitted. `eth_estimateGas` and `eth_createAccessList` keep the cap, because
+    /// their answers must hold for a transaction that can be included. Block execution
+    /// never sets it.
+    pub disable_execution_gas_cap: bool,
     /// When true, the tx is a pre-execution system contract call (EIP-2935, EIP-4788,
     /// EIP-7002, EIP-7251 etc.). Skips the block-level gas-allowance check since system
     /// calls are allowed to exceed `block_gas_limit` (their 30M cap is a separate rule).

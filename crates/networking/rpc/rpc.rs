@@ -45,7 +45,7 @@ use crate::eth::{
     },
     gas_price::GasPrice,
     gas_tip_estimator::GasTipEstimator,
-    logs::LogsFilter,
+    logs::{LogQueryLimits, LogsFilter},
     transaction::{
         CallRequest, CreateAccessListRequest, EstimateGasRequest, GetRawTransaction,
         GetRawTransactionByBlockAndIndex, GetTransactionByBlockHashAndIndexRequest,
@@ -259,6 +259,10 @@ impl BlockWorkerChannel {
     }
 }
 
+/// Default `--rpc.gascap`: the gas a simulation RPC may run with. The same value geth
+/// uses, and well above any mainnet block gas limit a single call could be asked to spend.
+pub const DEFAULT_RPC_GAS_CAP: u64 = 50_000_000;
+
 /// This struct contains all the dependencies that RPC handlers need to process requests,
 /// including storage access, blockchain state, P2P networking, and configuration.
 ///
@@ -283,6 +287,12 @@ pub struct RpcApiContext {
     pub log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     /// Maximum gas limit for blocks (used in payload building).
     pub gas_ceil: u64,
+    /// Gas cap for the simulation RPCs (`eth_call`, `eth_estimateGas`,
+    /// `eth_createAccessList`, `debug_traceCall`): a call runs with at most this much gas,
+    /// whatever the request asks for. The memory a call can buy (operand padding, memory
+    /// expansion) grows with its gas, so without a cap a request asking for 2^64 gas can
+    /// make the node attempt an allocation it cannot satisfy. `0` disables the cap.
+    pub rpc_gas_cap: u64,
     /// Channel for sending blocks to the block executor worker thread.
     pub block_worker_channel: BlockWorkerChannel,
     /// WebSocket configuration. `None` when the WS server is disabled.
@@ -293,6 +303,8 @@ pub struct RpcApiContext {
     /// The `engine` namespace is always served via the authenticated RPC port
     /// and is not gated here.
     pub allowed_namespaces: Arc<HashSet<RpcNamespace>>,
+    /// What `eth_getLogs` and log-filter polls may cost, and the work budget they share.
+    pub log_query_limits: LogQueryLimits,
 }
 
 /// Configuration for the WebSocket RPC server.
@@ -491,6 +503,7 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::ProofGenerationUnavailable(_) => "ProofGenerationUnavailable",
         RpcErr::ResourceNotFound(_) => "ResourceNotFound",
         RpcErr::PrunedHistoryUnavailable(_) => "PrunedHistoryUnavailable",
+        RpcErr::LimitExceeded(_) => "LimitExceeded",
     }
 }
 
@@ -648,8 +661,10 @@ pub async fn bind_api(
     client_version: ClientVersion,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: u64,
+    rpc_gas_cap: u64,
     extra_data: String,
     allowed_namespaces: HashSet<RpcNamespace>,
+    log_query_limits: LogQueryLimits,
     authrpc_max_inflight_body_size: usize,
 ) -> Result<BoundRpc, RpcStartupError> {
     // TODO: Refactor how filters are handled,
@@ -673,9 +688,11 @@ pub async fn bind_api(
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         log_filter_handler,
         gas_ceil,
+        rpc_gas_cap,
         block_worker_channel,
         ws: ws.clone(),
         allowed_namespaces: Arc::new(allowed_namespaces),
+        log_query_limits,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -1059,7 +1076,7 @@ impl BoundRpc {
 
 /// Binds and serves the RPC API until shutdown. Compatibility wrapper over [`bind_api`] +
 /// [`BoundRpc::serve`] for embedders; the node itself uses `bind_api` directly so a bind
-/// failure fails fast in the foreground.
+/// failure fails fast in the foreground. Log queries get [`LogQueryLimits::default`].
 ///
 /// # Shutdown
 ///
@@ -1079,6 +1096,7 @@ pub async fn start_api(
     client_version: ClientVersion,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: u64,
+    rpc_gas_cap: u64,
     extra_data: String,
     allowed_namespaces: HashSet<RpcNamespace>,
     authrpc_max_inflight_body_size: usize,
@@ -1098,8 +1116,10 @@ pub async fn start_api(
         client_version,
         log_filter_handler,
         gas_ceil,
+        rpc_gas_cap,
         extra_data,
         allowed_namespaces,
+        LogQueryLimits::default(),
         authrpc_max_inflight_body_size,
     )
     .await?
@@ -1723,7 +1743,13 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_estimateGas" => EstimateGasRequest::call(req, context).await,
         "eth_getLogs" => LogsFilter::call(req, context).await,
         "eth_newFilter" => {
-            NewFilterRequest::stateful_call(req, context.storage, context.active_filters).await
+            NewFilterRequest::stateful_call(
+                req,
+                context.storage,
+                context.active_filters,
+                &context.log_query_limits,
+            )
+            .await
         }
         "eth_newBlockFilter" => {
             NewBlockFilterRequest::stateful_call(req, context.storage, context.active_filters).await
@@ -1732,7 +1758,13 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
             DeleteFilterRequest::stateful_call(req, context.storage, context.active_filters)
         }
         "eth_getFilterChanges" => {
-            FilterChangesRequest::stateful_call(req, context.storage, context.active_filters).await
+            FilterChangesRequest::stateful_call(
+                req,
+                context.storage,
+                context.active_filters,
+                &context.log_query_limits,
+            )
+            .await
         }
         "eth_sendRawTransaction" => SendRawTransactionRequest::call(req, context).await,
         "eth_getProof" => GetProofRequest::call(req, context).await,
@@ -2576,14 +2608,14 @@ mod tests {
                     }
                 },
                 "last": {
-                    "activationTime": 1762955544,
+                    "activationTime": 1793036568,
                     "blobSchedule": {
                         "baseFeeUpdateFraction": 11684671,
                         "max": 21,
                         "target": 14,
                     },
                     "chainId": "0x88bb0",
-                    "forkId": "0x23aa1351",
+                    "forkId": "0x3d068b59",
                     "precompiles": {
                         "BLAKE2F": "0x0000000000000000000000000000000000000009",
                         "BLS12_G1ADD": "0x000000000000000000000000000000000000000b",
@@ -2606,6 +2638,8 @@ mod tests {
                     },
                     "systemContracts": {
                         "BEACON_ROOTS_ADDRESS": "0x000f3df6d732807ef1319fb7b8bb8522d0beac02",
+                        "BUILDER_DEPOSIT_CONTRACT_ADDRESS": "0x0000bff46984e3725691fa540a8c7589300d8282",
+                        "BUILDER_EXIT_CONTRACT_ADDRESS": "0x000064d678505ad48f8ccb093bc65613800e8282",
                         "CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS": "0x0000bbddc7ce488642fb579f8b00f3a590007251",
                         "DEPOSIT_CONTRACT_ADDRESS": "0x00000000219ab540356cbb839cbe05303d7705fa",
                         "HISTORY_STORAGE_ADDRESS": "0x0000f90827f1c53a10cb7a02335b175320002935",

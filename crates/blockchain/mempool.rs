@@ -1896,6 +1896,28 @@ impl Mempool {
         inner.cells.get(&tx_hash).map(|tc| tc.mask()).unwrap_or(0)
     }
 
+    /// Number of blobs behind [`Self::available_cell_mask`] for `tx_hash`: the
+    /// stored bundle's blob count when the full payload is held, otherwise the
+    /// blob count recorded with the sampled cells. `0` when the hash is unknown.
+    ///
+    /// Lets a `GetCells` responder size its reply (`blob count * served
+    /// columns`) from bookkeeping alone, before any cell is expanded.
+    pub fn servable_blob_count(&self, tx_hash: H256) -> usize {
+        let Ok(inner) = self.read() else {
+            return 0;
+        };
+        if let Some(bundle) = inner.blobs_bundle_pool.get(&tx_hash)
+            && !bundle.blobs.is_empty()
+        {
+            return bundle.blobs.len();
+        }
+        inner
+            .cells
+            .get(&tx_hash)
+            .map(|tc| tc.blob_count)
+            .unwrap_or(0)
+    }
+
     /// Return the bitmask of custody columns for which we are still missing cells.
     pub fn missing_custody_columns(&self, tx_hash: H256) -> Result<u128, StoreError> {
         let inner = self.read()?;
