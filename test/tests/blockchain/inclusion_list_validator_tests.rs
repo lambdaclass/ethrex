@@ -519,12 +519,11 @@ fn make_unsigned_tx(nonce: u64, gas_limit: u64) -> Transaction {
     Transaction::EIP1559Transaction(inner)
 }
 
-// NOTE: the former `omitted_blob_il_tx_is_satisfied` test pinned the
-// pre-tests-focil-devnet@v0.2.0 rule that excused every blob transaction.
-// That release's spec fix ("Type-3 transactions were considered
-// not-includable by default") evaluates blob txs like any other type; the
-// replacement coverage lives in `il_omitted_includable_blob_tx_returns_unsatisfied`
-// and `il_omitted_blob_tx_invalid_variants_return_ok` below.
+// NOTE: blob transactions have moved twice. Before tests-focil-devnet@v0.2.0
+// the check excused them; v0.2.0 evaluated them like any other type; from
+// devnets/heze/2 (tests-heze-devnet@v2.0.0, EIPs#12470) the check skips them
+// again. Coverage lives in `il_omitted_blob_tx_is_skipped` and
+// `il_omitted_blob_tx_invalid_variants_return_ok` below.
 
 /// An IL tx whose gas limit is below intrinsic gas can never be validly
 /// appended → satisfied (EELS `validate_transaction` raises).
@@ -615,8 +614,8 @@ fn omitted_below_base_fee_il_tx_is_satisfied() {
 // `validate_transaction` + `check_transaction` for every missing IL tx; the
 // tests below pin the ethrex mirror of the gates that release introduced or
 // changed: wrong chain id, nonce overflow, priority fee above the cap,
-// oversized init code, empty authorization list, contract sender, and the
-// full evaluation of blob transactions (previously excused wholesale).
+// oversized init code, empty authorization list and contract sender. (That
+// release also evaluated blob transactions; devnets/heze/2 skips them.)
 
 /// EIP-1559 tx with every fee/shape knob exposed, sender pre-cached like
 /// [`make_tx`].
@@ -942,13 +941,14 @@ fn il_omitted_from_contract_sender_returns_ok() {
 }
 
 #[test]
-fn il_omitted_includable_blob_tx_returns_unsatisfied() {
+fn il_omitted_blob_tx_is_skipped() {
     let crypto = NativeCrypto;
     let alice = addr(1);
 
-    // Fully includable blob tx (valid hash, fee covers the blob gas price,
-    // budget available): since tests-focil-devnet@v0.2.0 it counts against
-    // the block instead of being excused as a blob tx.
+    // A blob tx that could otherwise be appended (valid hash, fee covers the
+    // blob gas price, budget available): EELS `check_inclusion_list_transactions`
+    // skips blob transactions (devnets/heze/2, EIPs#12470), so leaving it out
+    // never makes the block unsatisfied.
     let il = vec![make_blob_tx(alice, 0, vec![kzg_hash()], U256::from(1))];
     let validator = single_sender_validator(&il, alice, 0);
 
@@ -962,8 +962,8 @@ fn il_omitted_includable_blob_tx_returns_unsatisfied() {
         &crypto,
     );
     assert!(
-        matches!(result, Err(IlUnsatisfied { .. })),
-        "includable blob tx must count against the block, got {result:?}"
+        result.is_ok(),
+        "an omitted blob tx must be skipped, got {result:?}"
     );
 }
 

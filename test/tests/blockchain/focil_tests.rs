@@ -398,25 +398,23 @@ async fn omitted_il_tx_unaffordable_is_valid() {
         .expect("omitted IL tx whose sender cannot afford it must be satisfied");
 }
 
-/// EELS `test_block_with_pending_blob_il_tx_is_valid`: a blob (EIP-4844) tx is
-/// evaluated like any other type. Omitting an appendable one leaves the block
-/// UNSATISFIED — the blanket blob exclusion was a spec bug, removed in
-/// tests-focil-devnet@v0.2.0 ("Type-3 transactions were considered
-/// not-includable by default"), and upstream flipped this scenario's
-/// `expected_inclusion_list_satisfied` to `false` in the same release.
+/// EELS `test_block_with_pending_blob_il_tx_is_valid`: the IL check skips blob
+/// (EIP-4844) transactions (devnets/heze/2, EIPs#12470), so omitting one leaves
+/// the block satisfied even when it could have been appended. This reverses
+/// tests-focil-devnet@v0.2.0, which evaluated blob txs like any other type;
+/// tests-heze-devnet@v2.0.0 expects `inclusionListSatisfied: true` again.
 #[tokio::test]
-async fn omitted_blob_il_tx_is_unsatisfied() {
+async fn omitted_blob_il_tx_is_satisfied() {
     let sk1 = key(TEST_PRIVATE_KEY);
     let s1 = sender_from_key(&sk1);
     let signer1: Signer = LocalSigner::new(sk1).into();
 
     let (store, blockchain, genesis, chain_id) = hegota_chain(&[s1]).await;
 
-    // A signed blob tx from a funded sender at the correct nonce, and fully
+    // A signed blob tx from a funded sender at the correct nonce, and otherwise
     // includable: the versioned hash is KZG-versioned, the blob fee covers the
-    // block's blob gas price, and one blob fits the block's blob budget. So the
-    // only thing that could excuse it is a blob-type exclusion, and there is
-    // none any more.
+    // block's blob gas price, and one blob fits the block's blob budget. Only
+    // its type excuses it.
     let mut blob_hash = [0u8; 32];
     blob_hash[0] = VERSIONED_HASH_VERSION_KZG;
     let mut blob_tx = Transaction::EIP4844Transaction(EIP4844Transaction {
@@ -437,16 +435,9 @@ async fn omitted_blob_il_tx_is_unsatisfied() {
 
     let block = build_block_ignoring_il(&store, &blockchain, &genesis).await;
     let context = BlockValidationContext::with_inclusion_list(il);
-    let err = blockchain
+    blockchain
         .add_block_pipeline_with_il(block, None, &context)
-        .expect_err("appendable blob IL tx must count against the block");
-
-    match err {
-        ChainError::IlUnsatisfied { tx_hash } => {
-            assert_eq!(tx_hash, blob_tx.hash(&NativeCrypto));
-        }
-        other => panic!("expected ChainError::IlUnsatisfied, got {other:?}"),
-    }
+        .expect("an omitted blob IL tx must be skipped");
 }
 
 /// EELS `unsatisfied_with_mixed_valid_and_invalid_pending_il_txs`: an IL with
