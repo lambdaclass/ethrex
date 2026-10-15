@@ -70,6 +70,28 @@ fn bench_bn254(c: &mut Criterion) {
     c.bench_function("bn254_pairing_2", |bench| {
         bench.iter(|| crypto.bn254_pairing_check(black_box(&pairs)).unwrap())
     });
+
+    // Random pairs (k1 * G1, k2 * G2) whose product is not one, as in the
+    // benchmark-suite inputs.
+    let random: Vec<([u8; 64], [u8; 128])> = (0..24u64)
+        .map(|i| {
+            let k1 = ark_bn254::Fr::from(1_000_003 * (i + 1));
+            let k2 = ark_bn254::Fr::from(2_000_029 * (i + 7));
+            (
+                g1_bytes(&(g * k1).into_affine()),
+                g2_bytes(&(h * k2).into_affine()),
+            )
+        })
+        .collect();
+    for n in [1usize, 3, 6, 12, 24] {
+        let pairs: Vec<(&[u8], &[u8])> = random[..n]
+            .iter()
+            .map(|(p, q)| (p.as_slice(), q.as_slice()))
+            .collect();
+        c.bench_function(&format!("bn254_pairing_random_{n}"), |bench| {
+            bench.iter(|| crypto.bn254_pairing_check(black_box(&pairs)).unwrap())
+        });
+    }
 }
 
 fn bench_pairing_parts(c: &mut Criterion) {
