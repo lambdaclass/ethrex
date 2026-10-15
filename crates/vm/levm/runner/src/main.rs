@@ -218,6 +218,9 @@ fn compare_initial_and_current_accounts(
     transaction: &InputTransaction,
 ) {
     info!("\nState Diff:");
+    // `CacheDB` is seeded and walks in a different order every run, so print by address.
+    let mut current_accounts: Vec<_> = current_accounts.into_iter().collect();
+    current_accounts.sort_unstable_by_key(|(addr, _)| *addr);
     for (addr, acc) in current_accounts {
         // Instead of the if-else chain
         let acc_type = match &addr {
@@ -256,7 +259,9 @@ fn compare_initial_and_current_accounts(
                 );
             }
 
-            for (slot, value) in &acc.storage {
+            let mut slots: Vec<_> = acc.storage.iter().collect();
+            slots.sort_unstable_by_key(|(slot, _)| **slot);
+            for (slot, value) in slots {
                 let default_value = U256::default();
                 let prev_value = prev.storage.get(slot).unwrap_or(&default_value);
                 if prev_value != value {

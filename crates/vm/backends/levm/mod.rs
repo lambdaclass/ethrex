@@ -797,8 +797,10 @@ impl LEVM {
                 }
             }
 
-            // Any remaining unread storage_reads are extraneous BAL entries.
-            if let Some((addr, key)) = unread_storage_reads.iter().next() {
+            // Any remaining unread storage_reads are extraneous BAL entries. The set is
+            // seeded and walks in a different order on every run, so name the lowest
+            // leftover: every node then reports the same entry for the same block.
+            if let Some((addr, key)) = unread_storage_reads.iter().min() {
                 let slot = ethrex_common::BigEndianHash::into_uint(key);
                 return Err(EvmError::Custom(format!(
                     "BAL validation failed: storage_read for account {addr:?} slot \
@@ -807,7 +809,8 @@ impl LEVM {
             }
 
             // Any remaining pure-access accounts were never accessed during execution.
-            if let Some(addr) = unaccessed_pure_accounts.iter().next() {
+            // Lowest first, as above.
+            if let Some(addr) = unaccessed_pure_accounts.iter().min() {
                 return Err(EvmError::Custom(format!(
                     "BAL validation failed: account {addr:?} has no mutations \
                      and no storage reads but was never accessed during block execution"
