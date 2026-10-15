@@ -141,3 +141,13 @@ export $(cat cmd/.env | xargs); export COMPILE_CONTRACTS=true;
 ```bash
 curl -X POST http://localhost:5555/state-updater/stop-at/10
 ```
+
+### Handing over to a new version
+
+The flow above runs the same version on both sequencers. When the second sequencer runs a new release:
+
+- Prover inputs are generated at commit time for the committing version, and a proof coordinator only hands a batch to a prover of that version. A sequencer that stops sequencing also stops sending proofs. So before the handover, stop the first sequencer's committer (`GET /committer/stop`), let its prover verify every batch it committed (`lastVerifiedBatch` equals `lastCommittedBatch`), and then stop that prover. The first sequencer keeps producing blocks meanwhile.
+- Register the new release's verification key before the handover, since the second sequencer cannot commit without it. When the release changes the verifier contract, as SP1 6 does, switch it at the same point: after the old batches are verified and before the new release's first proof.
+- Run a prover of the new release against the second sequencer's proof coordinator. It commits the blocks the first sequencer produced after its committer stopped.
+- Take the first sequencer's enode from its startup log (`Local node initialized enode=...`); the L2 RPC only serves `admin_nodeInfo` when `admin` is in its `--http.api`.
+- After the handover the first sequencer stays at block `N`, so move RPC traffic to the second one before stopping the first.
