@@ -25,7 +25,7 @@ use crate::{
 
 use ethrex_common::{
     Address, H256, U256,
-    seeded_hash::SeededState,
+    seeded_hash::{SeededHashSet, SeededState},
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
         BlockNumber, ChainConfig, Code, CodeMetadata, ForkId, Genesis, GenesisAccount, Index,
@@ -5418,7 +5418,7 @@ fn commit_to_disk(
     // "absent at pivot" semantics.
     let extra_writes: Vec<(Vec<u8>, Vec<u8>)> = match &overlay_for_reconciliation {
         Some(overlay) => {
-            let layer_keys: rustc_hash::FxHashSet<&Vec<u8>> = committed_layers
+            let layer_keys: SeededHashSet<&Vec<u8>> = committed_layers
                 .iter()
                 .flat_map(|l| l.nodes.iter().map(|(k, _)| k))
                 .collect();
