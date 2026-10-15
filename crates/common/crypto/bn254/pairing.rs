@@ -8,15 +8,16 @@
 //!   every line of every pair in a vector (`G2Prepared`);
 //! - all pairs share one accumulator. Without the `parallel` feature, arkworks runs
 //!   one Miller loop per group of four pairs and multiplies the results, which
-//!   repeats the 64 squarings of the accumulator for every group.
+//!   repeats the 64 squarings of the accumulator for every group;
+//! - lines are multiplied into the accumulator two at a time.
 
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
-use ark_bn254::{Bn254, Fq, Fq2, Fq12, G1Affine, G2Affine};
+use ark_bn254::{Bn254, Fq, Fq2, Fq6, Fq12, G1Affine, G2Affine};
 use ark_ec::bn::BnConfig;
 use ark_ec::pairing::{MillerLoopOutput, Pairing};
 use ark_ec::short_weierstrass::SWCurveConfig;
-use ark_ff::{AdditiveGroup, Field, One};
+use ark_ff::{AdditiveGroup, Field, Fp6Config, Fp12Config, One};
 
 /// `6 x0 + 2` in NAF, least significant digit first.
 const ATE_LOOP_COUNT: &[i8] = <ark_bn254::Config as BnConfig>::ATE_LOOP_COUNT;
@@ -107,12 +108,68 @@ impl PairState {
         }
     }
 
-    /// Evaluates a line at P and multiplies it into `f` (D-type twist).
-    fn ell(&self, f: &mut Fq12, (mut c0, mut c1, c2): Line) {
+    /// Evaluates a line at P (D-type twist): the sparse element
+    /// `c0 * yP + (c1 * xP + c2 v) w`.
+    fn evaluate(&self, (mut c0, mut c1, c2): Line) -> Line {
         c0.mul_assign_by_fp(&self.p.y);
         c1.mul_assign_by_fp(&self.p.x);
-        f.mul_by_034(&c0, &c1, &c2);
+        (c0, c1, c2)
     }
+}
+
+/// Multiplies evaluated lines into `f` two at a time: the product of two sparse
+/// lines and one multiplication by it cost 23 `Fq2` multiplications, against 26
+/// for two separate sparse multiplications.
+struct LineProduct<'a> {
+    f: &'a mut Fq12,
+    pending: Option<Line>,
+}
+
+impl<'a> LineProduct<'a> {
+    fn new(f: &'a mut Fq12) -> Self {
+        Self { f, pending: None }
+    }
+
+    fn push(&mut self, line: Line) {
+        match self.pending.take() {
+            None => self.pending = Some(line),
+            Some(previous) => mul_by_01234(self.f, &mul_034_by_034(&previous, &line)),
+        }
+    }
+
+    /// Multiplies in a line left without a partner.
+    fn finish(self) {
+        if let Some((c0, c3, c4)) = self.pending {
+            self.f.mul_by_034(&c0, &c3, &c4);
+        }
+    }
+}
+
+/// The product of the lines `c0 + (c3 + c4 v) w` and `d0 + (d3 + d4 v) w`, as the
+/// coefficients of `(z0 + z1 v + z2 v^2) + (z3 + z4 v) w`.
+fn mul_034_by_034(&(c0, c3, c4): &Line, &(d0, d3, d4): &Line) -> [Fq2; 5] {
+    let x0 = c0 * d0;
+    let x3 = c3 * d3;
+    let x4 = c4 * d4;
+    let x04 = (c0 + c4) * (d0 + d4) - x0 - x4;
+    let x03 = (c0 + c3) * (d0 + d3) - x0 - x3;
+    let x34 = (c3 + c4) * (d3 + d4) - x3 - x4;
+    let mut z0 = x4;
+    <ark_bn254::Fq6Config as Fp6Config>::mul_fp2_by_nonresidue_in_place(&mut z0);
+    [z0 + x0, x3, x34, x03, x04]
+}
+
+/// `f * ((z0 + z1 v + z2 v^2) + (z3 + z4 v) w)`, Karatsuba over `Fq6`.
+fn mul_by_01234(f: &mut Fq12, z: &[Fq2; 5]) {
+    let c0 = Fq6::new(z[0], z[1], z[2]);
+    let c1 = Fq6::new(z[3], z[4], Fq2::ZERO);
+    let a = (f.c0 + f.c1) * (c0 + c1);
+    let b = f.c0 * c0;
+    let mut c = f.c1;
+    c.mul_by_01(&z[3], &z[4]);
+    f.c1 = a - b - c;
+    <ark_bn254::Fq12Config as Fp12Config>::mul_fp6_by_nonresidue_in_place(&mut c);
+    f.c0 = c + b;
 }
 
 /// The product of the Miller loops of all pairs, which must hold non-identity
@@ -124,28 +181,33 @@ fn miller_loop(pairs: &[(G1Affine, G2Affine)]) -> Fq12 {
         if i != ATE_LOOP_COUNT.len() - 1 {
             f.square_in_place();
         }
+        // Every line of this step multiplies the same squared accumulator.
+        let mut lines = LineProduct::new(&mut f);
         for state in states.iter_mut() {
             let line = state.r.double_step();
-            state.ell(&mut f, line);
+            lines.push(state.evaluate(line));
         }
         let bit = ATE_LOOP_COUNT[i - 1];
         if bit != 0 {
             for state in states.iter_mut() {
                 let qy = if bit > 0 { state.q.y } else { -state.q.y };
                 let line = state.r.add_step(state.q.x, qy);
-                state.ell(&mut f, line);
+                lines.push(state.evaluate(line));
             }
         }
+        lines.finish();
     }
     // x0 is positive, so no inversion; then add pi(Q) and -pi^2(Q).
+    let mut lines = LineProduct::new(&mut f);
     for state in states.iter_mut() {
         let (q1x, q1y) = mul_by_char(state.q.x, state.q.y);
         let line = state.r.add_step(q1x, q1y);
-        state.ell(&mut f, line);
+        lines.push(state.evaluate(line));
         let (q2x, q2y) = mul_by_char(q1x, q1y);
         let line = state.r.add_step(q2x, -q2y);
-        state.ell(&mut f, line);
+        lines.push(state.evaluate(line));
     }
+    lines.finish();
     f
 }
 
