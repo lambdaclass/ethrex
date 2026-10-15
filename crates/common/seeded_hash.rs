@@ -1,4 +1,4 @@
-//! A seeded hasher for maps whose keys are chosen by contract code or by the block producer.
+//! A seeded hasher for maps whose keys a block can choose.
 //!
 //! rustc-hash 2.x is unseeded and hashes a key of 17 to 32 bytes as
 //! `multiply_mix(SEED2 ^ word(bytes[len - 16..len - 8]), ..) ^ len`, where `SEED2` is a
@@ -11,8 +11,22 @@
 //! spends two, which shows on storage-heavy code; the word path resists the same attacks,
 //! since every multiply still mixes in a seed the key does not know.
 //!
-//! Maps keyed by keccak outputs (code hashes, transaction hashes, created contract addresses,
-//! recovered senders) can stay on FxHash: nobody can steer those keys into a bucket.
+//! A keccak output is no safer as a key than the preimage behind it. Whoever picks the
+//! preimage (a CREATE2 salt, the trailing bytes of deployed code) can grind it until the hash
+//! lands in a chosen bucket, at about one keccak per bucket of the table for each key. What
+//! keeps such a map on FxHash safe is the gas a block pays for each key it adds or looks up.
+//! Code hashes are seeded: a contract deployed once can be called again for 100 gas, and every
+//! call looks its code up by hash. Created and self-destructed accounts stay on FxHash, since
+//! each entry costs the block a CREATE or a SELFDESTRUCT.
+//!
+//! A seeded map iterates in a different order in every process and every map. Whatever carries
+//! that order out of the process (a list another program replays, a report, the offender an
+//! error names) has to be sorted, as the prover's host and the guest sort a block's account
+//! updates before applying them to the state trie.
+//!
+//! Inside a zkVM guest foldhash finds no clock and no address randomization, so its seeds
+//! follow from the guest program and its input. Crafting keys against a guest then takes
+//! replaying it up to the map under attack, which is harder than against FxHash but possible.
 
 use std::hash::{BuildHasher, Hasher};
 
@@ -44,26 +58,17 @@ impl Hasher for SeededHasher {
     /// multiply; every other length takes foldhash's byte path.
     #[inline]
     fn write(&mut self, bytes: &[u8]) {
-        match bytes.len() {
-            32 => {
-                if let Some((lo, rest)) = bytes.split_first_chunk::<16>()
-                    && let Some(hi) = rest.first_chunk::<16>()
-                {
-                    self.0.write_u128(u128::from_ne_bytes(*lo));
-                    self.0.write_u128(u128::from_ne_bytes(*hi));
-                    return;
-                }
+        if let Some((lo, rest)) = bytes.split_first_chunk::<16>() {
+            if let Ok(hi) = <[u8; 16]>::try_from(rest) {
+                self.0.write_u128(u128::from_ne_bytes(*lo));
+                self.0.write_u128(u128::from_ne_bytes(hi));
+                return;
             }
-            20 => {
-                if let Some((lo, rest)) = bytes.split_first_chunk::<16>()
-                    && let Some(hi) = rest.first_chunk::<4>()
-                {
-                    self.0.write_u128(u128::from_ne_bytes(*lo));
-                    self.0.write_u32(u32::from_ne_bytes(*hi));
-                    return;
-                }
+            if let Ok(hi) = <[u8; 4]>::try_from(rest) {
+                self.0.write_u128(u128::from_ne_bytes(*lo));
+                self.0.write_u32(u32::from_ne_bytes(hi));
+                return;
             }
-            _ => {}
         }
         self.0.write(bytes);
     }
@@ -108,78 +113,92 @@ impl Hasher for SeededHasher {
 mod tests {
     use super::*;
     use crate::{Address, H256, U256};
-    use std::{collections::HashSet, hash::Hash};
+    use std::hash::Hash;
 
-    /// `SEED2` in rustc-hash 2.x: the word XORed into a 17- to 32-byte key right before its
-    /// final multiply.
+    /// Keys per test, hashed into as many buckets.
+    const KEYS: u64 = 4096;
+    /// Hashing 4096 keys uniformly into 4096 buckets fills the fullest one to about 6; a
+    /// hasher that ignores the part of the key that varies puts them all in one.
+    const MAX_BUCKET_LOAD: usize = 16;
+    /// The word FxHash 2.x XORs into a 17- to 32-byte key right before a multiply, which
+    /// makes keys carrying it hash alike there. Kept as a hostile key shape; nothing here
+    /// relies on rustc-hash still behaving that way.
     const ZEROING_WORD: u64 = 0x13198a2e03707344;
 
-    fn distinct_hashes<K: Hash>(hasher: &impl BuildHasher, keys: &[K]) -> usize {
-        keys.iter()
-            .map(|key| hasher.hash_one(key))
-            .collect::<HashSet<_>>()
-            .len()
+    /// The load of the fullest bucket once `keys` are spread over `KEYS` buckets by the low
+    /// bits of their hash, as hashbrown picks a key's first bucket.
+    fn fullest_bucket<K: Hash>(keys: impl Iterator<Item = K>) -> usize {
+        let state = SeededState::default();
+        let mut loads = vec![0usize; KEYS as usize];
+        for key in keys {
+            let bucket = state.hash_one(key) % KEYS;
+            if let Some(load) = loads.get_mut(bucket as usize) {
+                *load += 1;
+            }
+        }
+        loads.into_iter().max().unwrap_or_default()
     }
 
-    /// Checks that `keys` share one FxHash, so they are the attack shape, and that the seeded
-    /// state gives each of them its own hash.
-    fn assert_hashed_apart<K: Hash>(keys: &[K]) {
-        assert_eq!(distinct_hashes(&rustc_hash::FxBuildHasher, keys), 1);
-        assert_eq!(distinct_hashes(&SeededState::default(), keys), keys.len());
-    }
-
-    #[test]
-    fn hashes_colliding_h256_keys_apart() {
-        let keys: Vec<H256> = (0..4096u64)
-            .map(|i| H256::from(U256([i, 0, ZEROING_WORD, 0]).to_little_endian()))
-            .collect();
-        assert_hashed_apart(&keys);
-    }
-
-    #[test]
-    fn hashes_colliding_u256_keys_apart() {
-        let keys: Vec<U256> = (0..4096u64)
-            .map(|i| U256([i, 0, ZEROING_WORD, 0]))
-            .collect();
-        assert_hashed_apart(&keys);
+    /// An address whose bytes `at..at + 8` hold `word` and whose bytes 4..12 hold the zeroing
+    /// word, so only one region of the key varies.
+    fn address_with(at: usize, word: u64) -> Address {
+        let mut bytes = [0u8; 20];
+        for (byte, value) in bytes.iter_mut().skip(4).zip(ZEROING_WORD.to_le_bytes()) {
+            *byte = value;
+        }
+        for (byte, value) in bytes.iter_mut().skip(at).zip(word.to_le_bytes()) {
+            *byte = value;
+        }
+        Address::from(bytes)
     }
 
     #[test]
-    fn hashes_colliding_addresses_apart() {
-        let keys: Vec<Address> = (0..4096u64)
-            .map(|i| {
-                let mut bytes = [0u8; 20];
-                for (byte, value) in bytes.iter_mut().skip(4).zip(ZEROING_WORD.to_le_bytes()) {
-                    *byte = value;
-                }
-                for (byte, value) in bytes.iter_mut().skip(12).zip(i.to_le_bytes()) {
-                    *byte = value;
-                }
-                Address::from(bytes)
-            })
-            .collect();
-        assert_hashed_apart(&keys);
+    fn spreads_h256_keys_that_differ_in_either_half() {
+        let low = (0..KEYS).map(|i| H256::from(U256([i, 0, ZEROING_WORD, 0]).to_little_endian()));
+        assert!(fullest_bucket(low) <= MAX_BUCKET_LOAD);
+        let high = (0..KEYS).map(|i| H256::from(U256([0, 0, ZEROING_WORD, i]).to_little_endian()));
+        assert!(fullest_bucket(high) <= MAX_BUCKET_LOAD);
     }
 
     #[test]
-    fn hashes_colliding_byte_strings_apart() {
+    fn spreads_u256_keys_that_differ_in_either_half() {
+        let low = (0..KEYS).map(|i| U256([i, 0, ZEROING_WORD, 0]));
+        assert!(fullest_bucket(low) <= MAX_BUCKET_LOAD);
+        let high = (0..KEYS).map(|i| U256([0, 0, ZEROING_WORD, i]));
+        assert!(fullest_bucket(high) <= MAX_BUCKET_LOAD);
+    }
+
+    #[test]
+    fn spreads_addresses_that_differ_in_either_part() {
+        // Bytes 12..20 straddle the 16-byte word and the 4-byte tail; 16..20 is the tail alone.
+        assert!(fullest_bucket((0..KEYS).map(|i| address_with(12, i))) <= MAX_BUCKET_LOAD);
+        assert!(fullest_bucket((0..KEYS).map(|i| address_with(16, i))) <= MAX_BUCKET_LOAD);
+    }
+
+    #[test]
+    fn spreads_byte_strings_on_both_paths() {
         // 32-byte calldata takes the word path; 40 bytes takes foldhash's byte path.
-        let short: Vec<Vec<u8>> = (0..4096u64)
-            .map(|i| U256([i, 0, ZEROING_WORD, 0]).to_little_endian().to_vec())
-            .collect();
-        assert_hashed_apart(&short);
-        let long: Vec<Vec<u8>> = (0..4096u64)
-            .map(|i| {
-                let mut bytes = [0u8; 40];
-                for (byte, value) in bytes.iter_mut().zip(i.to_le_bytes()) {
-                    *byte = value;
-                }
-                bytes.to_vec()
-            })
-            .collect();
-        // FxHash runs its bulk loop twice on 40 bytes, so the zeroing word is the state the
-        // first round leaves rather than SEED2; only the seeded side is asserted here.
-        assert_eq!(distinct_hashes(&SeededState::default(), &long), long.len());
+        let short = (0..KEYS).map(|i| U256([i, 0, ZEROING_WORD, 0]).to_little_endian().to_vec());
+        assert!(fullest_bucket(short) <= MAX_BUCKET_LOAD);
+        let long = (0..KEYS).map(|i| {
+            let mut bytes = vec![0u8; 40];
+            for (byte, value) in bytes.iter_mut().skip(32).zip(i.to_le_bytes()) {
+                *byte = value;
+            }
+            bytes
+        });
+        assert!(fullest_bucket(long) <= MAX_BUCKET_LOAD);
+    }
+
+    #[test]
+    fn two_maps_hash_the_same_key_apart() {
+        // Each map draws its own seed, so a key crafted against one map's buckets says
+        // nothing about another's.
+        let key = H256::repeat_byte(0x5a);
+        assert_ne!(
+            SeededState::default().hash_one(key),
+            SeededState::default().hash_one(key)
+        );
     }
 
     #[test]

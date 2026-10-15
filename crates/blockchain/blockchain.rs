@@ -69,7 +69,7 @@ use ethrex_common::constants::{
 use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
 use crate::vm::{OverlaidVmDatabase, StateOverride, precompile_moves};
-use ethrex_common::seeded_hash::SeededHashMap;
+use ethrex_common::seeded_hash::{SeededHashMap, SeededHashSet};
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::EIP4844Transaction;
 #[cfg(feature = "c-kzg")]
@@ -2132,7 +2132,7 @@ impl Blockchain {
                     ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
                 })?;
                 let mut seen =
-                    FxHashSet::with_capacity_and_hasher(accessed.len(), Default::default());
+                    SeededHashSet::with_capacity_and_hasher(accessed.len(), Default::default());
                 accessed
                     .iter()
                     .copied()

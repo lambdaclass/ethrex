@@ -217,8 +217,9 @@ pub struct GeneralizedDatabase {
     /// includes system-call effects at idx 0) takes precedence for any address the BAL
     /// covers. Accounts are cloned into `initial_accounts_state` on first access.
     pub shared_base: Option<Arc<CacheDB>>,
-    pub codes: FxHashMap<H256, Code>,
-    pub code_metadata: FxHashMap<H256, CodeMetadata>,
+    /// Seeded: deployed code is called by hash, and its deployer can grind the hash.
+    pub codes: SeededHashMap<H256, Code>,
+    pub code_metadata: SeededHashMap<H256, CodeMetadata>,
     pub tx_backup: Option<CallFrameBackup>,
     /// Optional BAL recorder for EIP-7928 Block Access List recording.
     pub bal_recorder: Option<BlockAccessListRecorder>,
@@ -276,7 +277,7 @@ impl GeneralizedDatabase {
             initial_accounts_state: Default::default(),
             shared_base: Some(shared_base),
             tx_backup: None,
-            codes: FxHashMap::with_capacity_and_hasher(capacity / 4, Default::default()),
+            codes: SeededHashMap::with_capacity_and_hasher(capacity / 4, Default::default()),
             code_metadata: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: true,
@@ -321,7 +322,7 @@ impl GeneralizedDatabase {
         store: Arc<dyn Database>,
         current_accounts_state: FxHashMap<Address, Account>,
     ) -> Self {
-        let mut codes: FxHashMap<H256, Code> = Default::default();
+        let mut codes: SeededHashMap<H256, Code> = Default::default();
         let levm_accounts: CacheDB = current_accounts_state
             .into_iter()
             .map(|(address, account)| {

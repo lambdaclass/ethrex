@@ -2257,7 +2257,7 @@ impl LEVM {
         bal_idx: u32,
         seed_idx: u32,
         current_state: &CacheDB,
-        codes: &FxHashMap<H256, Code>,
+        codes: &SeededHashMap<H256, Code>,
         bal: &BlockAccessList,
         index: &BalAddressIndex,
         system_seed: &CacheDB,

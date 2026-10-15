@@ -11,7 +11,6 @@ use ethrex_common::{
 use ethrex_crypto::keccak::keccak_hash;
 use ethrex_storage::Store;
 use ethrex_vm::{EvmError, PrecompileMoves, VmDatabase};
-use rustc_hash::FxHashMap;
 use std::{
     cmp::Ordering,
     collections::BTreeMap,
@@ -846,7 +845,7 @@ impl VmDatabase for StoreVmDatabase {
             .get_account_codes_batch(&to_read)
             .map_err(|e| EvmError::DB(e.to_string()))?;
 
-        let mut by_hash: FxHashMap<H256, Code> = FxHashMap::default();
+        let mut by_hash: SeededHashMap<H256, Code> = Default::default();
         for (hash, code) in to_read.iter().zip(read.into_iter()) {
             if let Some(code) = code {
                 by_hash.insert(*hash, code);
@@ -1605,49 +1604,25 @@ mod replayed_db_tests {
 mod seeded_cache_tests {
     use super::overlaid_db_tests::MockDb;
     use super::*;
+    use ethrex_storage::EngineType;
     use std::hash::BuildHasher;
 
-    /// rustc-hash 2.x hashes a 20-byte key whose bytes `4..12` are this constant to
-    /// `20`, whatever its other bytes hold.
-    const ZEROING_WORD: u64 = 0x13198a2e03707344;
-
-    fn colliding_addresses() -> Vec<Address> {
-        (0..4096u64)
-            .map(|i| {
-                let mut bytes = [0u8; 20];
-                for (byte, value) in bytes.iter_mut().skip(4).zip(ZEROING_WORD.to_le_bytes()) {
-                    *byte = value;
-                }
-                for (byte, value) in bytes.iter_mut().skip(12).zip(i.to_le_bytes()) {
-                    *byte = value;
-                }
-                Address::from(bytes)
-            })
-            .collect()
+    /// Fails if `state` hashes a key like a fresh instance of its type does, as every
+    /// instance of an unseeded hasher does.
+    #[track_caller]
+    fn assert_seeded<S: BuildHasher + Default>(state: &S) {
+        let key = Address::repeat_byte(0x5a);
+        assert_ne!(state.hash_one(key), S::default().hash_one(key));
     }
 
-    fn distinct_hashes(hasher: &impl BuildHasher, keys: &[Address]) -> usize {
-        keys.iter()
-            .map(|key| hasher.hash_one(key))
-            .collect::<std::collections::HashSet<_>>()
-            .len()
-    }
-
-    /// Executing transactions choose which addresses these caches hold, so crafted
-    /// addresses must not share one bucket.
+    /// Executing transactions choose which addresses these caches hold.
     #[test]
-    fn account_caches_hash_colliding_addresses_apart() {
-        let keys = colliding_addresses();
-        assert_eq!(distinct_hashes(&rustc_hash::FxBuildHasher, &keys), 1);
-
+    fn account_caches_are_seeded() {
         let replayed = ReplayedVmDatabase::new(MockDb::default(), Vec::new());
-        assert_eq!(
-            distinct_hashes(replayed.updates.hasher(), &keys),
-            keys.len()
-        );
-        assert_eq!(
-            distinct_hashes(AccountStateCache::default().hasher(), &keys),
-            keys.len()
-        );
+        assert_seeded(replayed.updates.hasher());
+
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let db = StoreVmDatabase::new_for_test(store);
+        assert_seeded(db.account_state_cache.read().unwrap().hasher());
     }
 }

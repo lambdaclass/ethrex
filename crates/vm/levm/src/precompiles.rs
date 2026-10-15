@@ -1722,32 +1722,19 @@ mod seeded_calldata_tests {
     use super::*;
     use std::hash::BuildHasher;
 
-    /// rustc-hash 2.x hashes a 32-byte key whose bytes `16..24` are this constant to
-    /// `32`, whatever its other bytes hold.
-    const ZEROING_WORD: u64 = 0x13198a2e03707344;
-
-    fn colliding_calldata() -> Vec<Bytes> {
-        (0..4096u64)
-            .map(|i| Bytes::copy_from_slice(&U256([i, 0, ZEROING_WORD, 0]).to_little_endian()))
-            .collect()
+    /// Fails if `state` hashes a key like a fresh instance of its type does, as every
+    /// instance of an unseeded hasher does.
+    #[track_caller]
+    fn assert_seeded<S: BuildHasher + Default>(state: &S) {
+        let calldata = Bytes::from_static(&[0x5a; 32]);
+        assert_ne!(state.hash_one(&calldata), S::default().hash_one(&calldata));
     }
 
-    fn distinct_hashes(hasher: &impl BuildHasher, keys: &[Bytes]) -> usize {
-        keys.iter()
-            .map(|key| hasher.hash_one(key))
-            .collect::<std::collections::HashSet<_>>()
-            .len()
-    }
-
-    /// Calldata is chosen by the calling contract, so the per-precompile result map
-    /// must not let crafted inputs share one bucket.
+    /// Calldata is chosen by the calling contract, so the per-precompile result map must
+    /// not let crafted inputs share one bucket.
     #[test]
-    fn precompile_results_hash_colliding_calldata_apart() {
-        let keys = colliding_calldata();
-        assert_eq!(distinct_hashes(&rustc_hash::FxBuildHasher, &keys), 1);
-
+    fn precompile_results_are_seeded() {
         let mut entries = PrecompileCacheEntries::default();
-        let results = entries.map.entry(Address::zero()).or_default();
-        assert_eq!(distinct_hashes(results.hasher(), &keys), keys.len());
+        assert_seeded(entries.map.entry(Address::zero()).or_default().hasher());
     }
 }

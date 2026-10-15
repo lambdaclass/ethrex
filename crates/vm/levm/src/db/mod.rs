@@ -1,10 +1,9 @@
 use crate::{errors::DatabaseError, precompiles::PrecompileCache};
-use ethrex_common::seeded_hash::SeededHashMap;
+use ethrex_common::seeded_hash::{SeededHashMap, SeededHashSet};
 use ethrex_common::{
     Address, H256, U256,
     types::{AccountState, ChainConfig, Code, CodeMetadata},
 };
-use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::{
     Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
     atomic::{AtomicU64, Ordering},
@@ -20,12 +19,12 @@ pub mod gen_db;
 /// large-state blocks these paths target. Tunable.
 pub const BLOATED_BATCH_THRESHOLD: usize = 16_384;
 
-// Type aliases for cache storage maps. The account and storage caches are seeded like
-// `TransientStorage`: transactions choose which addresses and slots get cached. Code is
-// keyed by its keccak hash, which nobody can steer into a bucket.
+// Type aliases for cache storage maps, all seeded like `TransientStorage`: transactions
+// choose which addresses and slots get cached, and which deployed code, whose hash its
+// deployer can grind (see `ethrex_common::seeded_hash`).
 type AccountCache = SeededHashMap<Address, AccountState>;
 type StorageCache = SeededHashMap<(Address, H256), U256>;
-type CodeCache = FxHashMap<H256, Code>;
+type CodeCache = SeededHashMap<H256, Code>;
 /// Touched-key snapshot returned by [`CachingDatabase::touched_keys_where`].
 pub struct TouchedKeys {
     /// Touched accounts with their storage roots.
@@ -422,7 +421,7 @@ impl Database for CachingDatabase {
     fn prefetch_codes(&self, code_hashes: &[H256]) -> Result<u64, DatabaseError> {
         let missing: Vec<H256> = {
             let cache = self.read_code()?;
-            let mut seen: FxHashSet<H256> = FxHashSet::default();
+            let mut seen: SeededHashSet<H256> = Default::default();
             code_hashes
                 .iter()
                 .copied()
@@ -591,44 +590,14 @@ mod code_bytes_tests {
 #[allow(clippy::expect_used)]
 mod seeded_cache_tests {
     use super::*;
-    use std::hash::{BuildHasher, Hash};
+    use std::hash::BuildHasher;
 
-    /// rustc-hash 2.x hashes a 32-byte key whose bytes `16..24` are this constant to
-    /// `32`, whatever its other bytes hold; a 20-byte key needs it at bytes `4..12`.
-    const ZEROING_WORD: u64 = 0x13198a2e03707344;
-
-    fn colliding_addresses() -> Vec<Address> {
-        (0..4096u64)
-            .map(|i| {
-                let mut bytes = [0u8; 20];
-                for (byte, value) in bytes.iter_mut().skip(4).zip(ZEROING_WORD.to_le_bytes()) {
-                    *byte = value;
-                }
-                for (byte, value) in bytes.iter_mut().skip(12).zip(i.to_le_bytes()) {
-                    *byte = value;
-                }
-                Address::from(bytes)
-            })
-            .collect()
-    }
-
-    fn colliding_slots() -> Vec<(Address, H256)> {
-        let address = Address::from_low_u64_be(0x7777);
-        (0..4096u64)
-            .map(|i| {
-                (
-                    address,
-                    H256::from(U256([i, 0, ZEROING_WORD, 0]).to_little_endian()),
-                )
-            })
-            .collect()
-    }
-
-    fn distinct_hashes<K: Hash>(hasher: &impl BuildHasher, keys: &[K]) -> usize {
-        keys.iter()
-            .map(|key| hasher.hash_one(key))
-            .collect::<std::collections::HashSet<_>>()
-            .len()
+    /// Fails if `state` hashes a key like a fresh instance of its type does, as every
+    /// instance of an unseeded hasher does.
+    #[track_caller]
+    fn assert_seeded<S: BuildHasher + Default>(state: &S) {
+        let key = H256::repeat_byte(0x5a);
+        assert_ne!(state.hash_one(key), S::default().hash_one(key));
     }
 
     struct EmptyStore;
@@ -654,22 +623,13 @@ mod seeded_cache_tests {
         }
     }
 
-    /// Transactions choose which accounts and slots the warming cache holds, so the
-    /// account and storage caches must not let crafted keys share one bucket.
+    /// Transactions choose which accounts and slots the warming cache holds, and which
+    /// deployed code it loads, so none of its maps may hash without a seed.
     #[test]
-    fn warming_caches_hash_colliding_keys_apart() {
-        let addresses = colliding_addresses();
-        let slots = colliding_slots();
-        assert_eq!(distinct_hashes(&rustc_hash::FxBuildHasher, &addresses), 1);
-        assert_eq!(distinct_hashes(&rustc_hash::FxBuildHasher, &slots), 1);
-
+    fn warming_caches_are_seeded() {
         let cache = CachingDatabase::new(Arc::new(EmptyStore), false);
-        let accounts = cache.read_accounts().expect("account cache lock");
-        assert_eq!(
-            distinct_hashes(accounts.hasher(), &addresses),
-            addresses.len()
-        );
-        let storage = cache.read_storage().expect("storage cache lock");
-        assert_eq!(distinct_hashes(storage.hasher(), &slots), slots.len());
+        assert_seeded(cache.read_accounts().expect("account cache lock").hasher());
+        assert_seeded(cache.read_storage().expect("storage cache lock").hasher());
+        assert_seeded(cache.read_code().expect("code cache lock").hasher());
     }
 }

@@ -36,7 +36,6 @@ use ethrex_levm::{
     errors::DatabaseError,
 };
 use ethrex_vm::backends::levm::{BalValidationError, LEVM};
-use rustc_hash::FxHashMap;
 
 /// Minimal `Database` stub. Every scenario below seeds pre-tx values directly
 /// via `system_seed`, so `validate_tx_execution`'s `store` fallback is never
@@ -144,7 +143,7 @@ fn noop_balance_change_rejected() {
         AccountChanges::new(address).with_balance_changes(vec![BalanceChange::new(1, pre_balance)]),
     ]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
     let system_seed_map: CacheDB = system_seed;
 
     let result = LEVM::validate_tx_execution(
@@ -193,7 +192,7 @@ fn noop_nonce_change_rejected() {
         AccountChanges::new(address).with_nonce_changes(vec![NonceChange::new(1, pre_nonce)]),
     ]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -233,7 +232,7 @@ fn noop_code_change_rejected() {
         AccountChanges::new(address).with_code_changes(vec![CodeChange::new(1, code_bytes)]),
     ]);
     let index = bal.build_validation_index();
-    let mut codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let mut codes: SeededHashMap<H256, Code> = Default::default();
     codes.insert(code_hash, code);
 
     let result = LEVM::validate_tx_execution(
@@ -286,7 +285,7 @@ fn noop_storage_change_rejected() {
             )],
         )]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -337,7 +336,7 @@ fn genuine_balance_change_accepted() {
             .with_balance_changes(vec![BalanceChange::new(1, post_balance)]),
     ]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -390,7 +389,7 @@ fn missing_storage_write_rejected() {
     // storage_changes entry nor a storage_reads entry.
     let bal = BlockAccessList::from_accounts(vec![AccountChanges::new(address)]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -440,7 +439,7 @@ fn read_only_slot_not_in_changes_accepted() {
         AccountChanges::new(address).with_storage_reads(vec![slot]),
     ]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -496,7 +495,7 @@ fn written_slot_misdeclared_as_read_rejected() {
         AccountChanges::new(address).with_storage_reads(vec![slot]),
     ]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -545,7 +544,7 @@ fn noop_balance_change_absent_account_rejected() {
         AccountChanges::new(address).with_balance_changes(vec![BalanceChange::new(1, pre_balance)]),
     ]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -585,7 +584,7 @@ fn noop_nonce_change_absent_account_rejected() {
         AccountChanges::new(address).with_nonce_changes(vec![NonceChange::new(1, pre_nonce)]),
     ]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -622,7 +621,7 @@ fn noop_code_change_absent_account_rejected() {
         AccountChanges::new(address).with_code_changes(vec![CodeChange::new(1, code_bytes)]),
     ]);
     let index = bal.build_validation_index();
-    let mut codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let mut codes: SeededHashMap<H256, Code> = Default::default();
     codes.insert(code_hash, code);
 
     let result = LEVM::validate_tx_execution(
@@ -669,7 +668,7 @@ fn noop_storage_change_absent_slot_rejected() {
             )],
         )]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -728,7 +727,7 @@ fn storage_change_omitted_at_this_index_rejected() {
             )],
         )]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -784,7 +783,7 @@ fn storage_read_at_this_index_with_later_change_accepted() {
             )],
         )]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -845,7 +844,7 @@ fn storage_seed_uses_tx_initial_fast_path() {
             )],
         )]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let mut tx_initial: SeededHashMap<(Address, U256), U256> = Default::default();
     tx_initial.insert((address, slot), pre);
@@ -895,7 +894,7 @@ fn storage_noop_detected_via_tx_initial() {
             )],
         )]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     // Start-of-tx value == post value → no-op.
     let mut tx_initial: SeededHashMap<(Address, U256), U256> = Default::default();
