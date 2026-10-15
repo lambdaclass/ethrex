@@ -4,7 +4,7 @@
 //! inclusion would apply. Returns `Err(IlUnsatisfied)` if any IL transaction
 //! is missing AND could still have been validly appended to the block
 //! (mirrors EELS `check_inclusion_list_transactions` + `validate_transaction`
-//! + `check_transaction`, forks/amsterdam, as of tests-focil-devnet@v0.2.0).
+//! + `check_transaction`, forks/bogota as of devnets/heze/2 (tests-heze-devnet@v2.0.0)).
 //!
 //! ## State abstraction
 //!
@@ -31,12 +31,9 @@ use std::collections::HashSet;
 
 use ethrex_common::{
     Address, Bytes, H256, U256,
-    constants::{
-        EMPTY_KECCAK_HASH, GAS_PER_BLOB, TX_MAX_GAS_LIMIT_AMSTERDAM, TX_MAX_TOTAL_GAS_LIMIT,
-    },
+    constants::{EMPTY_KECCAK_HASH, TX_MAX_GAS_LIMIT_AMSTERDAM, TX_MAX_TOTAL_GAS_LIMIT},
     types::{
-        BlockHeader, ChainConfig, GWEI_TO_WEI, MAX_BLOB_COUNT, Transaction, TxType,
-        VERSIONED_HASH_VERSION_KZG, Withdrawal, calculate_base_fee_per_blob_gas,
+        BlockHeader, ChainConfig, GWEI_TO_WEI, Transaction, TxType, Withdrawal,
         is_eip7702_delegation,
     },
 };
@@ -287,8 +284,8 @@ impl InclusionListSatisfactionValidator {
     /// to the end of the block.
     ///
     /// This mirrors EELS `check_inclusion_list_transactions` →
-    /// `validate_transaction` → `check_transaction` (forks/amsterdam, as of
-    /// tests-focil-devnet@v0.2.0): for each missing IL tx it replays exactly
+    /// `validate_transaction` → `check_transaction` (forks/bogota, as of
+    /// devnets/heze/2): for each missing IL tx it replays exactly
     /// the validity gates that block inclusion would apply, and reports the
     /// block as unsatisfied only when every gate passes. Gate order can differ
     /// from EELS (each failing gate raises there); the satisfied/unsatisfied
@@ -315,16 +312,6 @@ impl InclusionListSatisfactionValidator {
         crypto: &dyn Crypto,
     ) -> Result<(), IlUnsatisfied> {
         let base_fee = U256::from(header.base_fee_per_gas.unwrap_or_default());
-        // EELS `check_block_gas_capacity`: the blob dimension has its own
-        // budget, `MAX_BLOB_GAS_PER_BLOCK - block_output.blob_gas_used`. The
-        // per-block maximum comes from the blob schedule in force at the
-        // block's timestamp; a Hegotá chain without one is a config anomaly,
-        // and 0 keeps every blob tx classified as not includable.
-        let blob_gas_left = config
-            .get_fork_blob_schedule(header.timestamp)
-            .map(|schedule| u64::from(schedule.max) * u64::from(GAS_PER_BLOB))
-            .unwrap_or_default()
-            .saturating_sub(header.blob_gas_used.unwrap_or_default());
         // EIP-7954: Amsterdam raises the init-code cap (same selection as
         // mempool admission).
         let max_initcode_size = if config.is_amsterdam_activated(header.timestamp) {
@@ -336,6 +323,14 @@ impl InclusionListSatisfactionValidator {
         for tx_il in il {
             // present in block (anywhere) → satisfied
             if block_txs.contains(&tx_il.hash(crypto)) {
+                continue;
+            }
+
+            // Blob (EIP-4844) transaction → skipped (EELS
+            // `check_inclusion_list_transactions`, devnets/heze/2; EIPs#12470).
+            // Leaving a blob entry out never makes the block unsatisfied, so
+            // none of the blob-specific validity gates apply.
+            if tx_il.tx_type() == TxType::EIP4844 {
                 continue;
             }
 
@@ -376,28 +371,6 @@ impl InclusionListSatisfactionValidator {
                 && max_priority > max_fee
             {
                 continue;
-            }
-
-            // Blob (EIP-4844) txs run through the same gates as any other type
-            // since tests-focil-devnet@v0.2.0 ("Type-3 transactions were
-            // considered not-includable by default" spec fix), plus the
-            // blob-specific ones from EELS `validate_transaction`:
-            // no blob at all, more blobs than a tx may carry, or a versioned
-            // hash that is not KZG-versioned → satisfied. (A blob or set-code
-            // creation, `TransactionTypeContractCreationError` in EELS, cannot
-            // be represented here: `to` is a plain `Address`, so such a tx
-            // already failed the canonical decode and was excused.)
-            if tx_il.tx_type() == TxType::EIP4844 {
-                let blob_hashes = tx_il.blob_versioned_hashes();
-                if blob_hashes.is_empty() || blob_hashes.len() > MAX_BLOB_COUNT {
-                    continue;
-                }
-                if blob_hashes
-                    .iter()
-                    .any(|hash| hash.as_bytes()[0] != VERSIONED_HASH_VERSION_KZG)
-                {
-                    continue;
-                }
             }
 
             // EIP-7702 set-code tx with an empty authorization list →
@@ -456,16 +429,6 @@ impl InclusionListSatisfactionValidator {
                 continue;
             }
 
-            // Blob gas over the block's remaining blob budget → satisfied
-            // (EELS `check_block_gas_capacity`, blob dimension).
-            if tx_il.tx_type() == TxType::EIP4844 {
-                let tx_blob_gas =
-                    tx_il.blob_versioned_hashes().len() as u64 * u64::from(GAS_PER_BLOB);
-                if tx_blob_gas > blob_gas_left {
-                    continue;
-                }
-            }
-
             // below_base_fee → satisfied. Legacy/2930/privileged use
             // `gas_price`; all other types use `max_fee_per_gas`. A typed tx
             // with no recoverable max fee is unpriceable and not includable.
@@ -479,22 +442,6 @@ impl InclusionListSatisfactionValidator {
             };
             if max_price < base_fee {
                 continue;
-            }
-
-            // Blob fee cap below the block's blob gas price → satisfied (EELS
-            // `check_max_fee_per_blob_gas` against the block's own
-            // `excess_blob_gas`).
-            if tx_il.tx_type() == TxType::EIP4844 {
-                let blob_gas_price = calculate_base_fee_per_blob_gas(
-                    header.excess_blob_gas.unwrap_or_default(),
-                    config
-                        .get_fork_blob_schedule(header.timestamp)
-                        .map(|schedule| schedule.base_fee_update_fraction)
-                        .unwrap_or_default(),
-                );
-                if tx_il.max_fee_per_blob_gas().unwrap_or_default() < blob_gas_price {
-                    continue;
-                }
             }
 
             // From here on, classify by tracked sender state.
