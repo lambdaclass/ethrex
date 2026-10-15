@@ -471,3 +471,135 @@ async fn mixed_valid_and_invalid_omitted_il_is_unsatisfied() {
         other => panic!("expected ChainError::IlUnsatisfied, got {other:?}"),
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A block built against an inclusion list must satisfy that same list. The
+// verdict judges every missing IL tx at the state after the block's
+// transactions, so the builder must not leave out an IL tx that a later tx in
+// the block makes valid.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The IL carries a sender's nonce 1 ahead of its nonce 0, which IL ordering
+/// by age and tip, or the union of several lists, can produce. Nonce 1 fails
+/// in IL order until nonce 0 lands, and the sender's later mempool tx must not
+/// be lost to the IL txs already taken either.
+#[tokio::test]
+async fn il_with_out_of_order_nonces_is_satisfied_by_its_own_block() {
+    let sk1 = key(TEST_PRIVATE_KEY);
+    let s1 = sender_from_key(&sk1);
+    let signer1: Signer = LocalSigner::new(sk1).into();
+
+    let (store, blockchain, genesis, chain_id) = hegota_chain(&[s1]).await;
+
+    let nonce0 = make_transfer_tx(chain_id, 0, &signer1).await;
+    let nonce1 = make_transfer_tx(chain_id, 1, &signer1).await;
+    let nonce2 = make_transfer_tx(chain_id, 2, &signer1).await;
+    for tx in [&nonce0, &nonce1, &nonce2] {
+        blockchain
+            .add_transaction_to_pool(tx.clone())
+            .await
+            .expect("tx should enter the pool");
+    }
+
+    let il = vec![nonce1.clone(), nonce0.clone()];
+    let block = build_block_with_il(&store, &blockchain, &genesis, &il).await;
+
+    let included: Vec<H256> = block
+        .body
+        .transactions
+        .iter()
+        .map(|tx| tx.hash(&NativeCrypto))
+        .collect();
+    assert_eq!(
+        included,
+        vec![
+            nonce0.hash(&NativeCrypto),
+            nonce1.hash(&NativeCrypto),
+            nonce2.hash(&NativeCrypto)
+        ],
+        "both IL txs in nonce order, then the sender's remaining mempool tx"
+    );
+
+    let context = BlockValidationContext::with_inclusion_list(il);
+    blockchain
+        .add_block_pipeline_with_il(block, None, &context)
+        .expect("a block built against an IL must satisfy it");
+}
+
+/// A reversed nonce chain that only the IL carries: each sweep of the list can
+/// add one more of the sender's txs, so the list is swept until nothing more
+/// applies rather than once before and once after the mempool fill.
+#[tokio::test]
+async fn il_with_a_reversed_nonce_chain_is_satisfied_by_its_own_block() {
+    let sk1 = key(TEST_PRIVATE_KEY);
+    let s1 = sender_from_key(&sk1);
+    let signer1: Signer = LocalSigner::new(sk1).into();
+
+    let (store, blockchain, genesis, chain_id) = hegota_chain(&[s1]).await;
+
+    let nonce0 = make_transfer_tx(chain_id, 0, &signer1).await;
+    let nonce1 = make_transfer_tx(chain_id, 1, &signer1).await;
+    let nonce2 = make_transfer_tx(chain_id, 2, &signer1).await;
+
+    let il = vec![nonce2.clone(), nonce1.clone(), nonce0.clone()];
+    let block = build_block_with_il(&store, &blockchain, &genesis, &il).await;
+
+    let included: Vec<H256> = block
+        .body
+        .transactions
+        .iter()
+        .map(|tx| tx.hash(&NativeCrypto))
+        .collect();
+    assert_eq!(
+        included,
+        vec![
+            nonce0.hash(&NativeCrypto),
+            nonce1.hash(&NativeCrypto),
+            nonce2.hash(&NativeCrypto)
+        ],
+        "the whole chain, in nonce order"
+    );
+
+    let context = BlockValidationContext::with_inclusion_list(il);
+    blockchain
+        .add_block_pipeline_with_il(block, None, &context)
+        .expect("a block built against an IL must satisfy it");
+}
+
+/// The IL tx (nonce 1) only becomes valid once the sender's nonce 0, which is
+/// in the mempool but not in the IL, lands in the mempool fill phase.
+#[tokio::test]
+async fn il_tx_enabled_by_a_mempool_tx_is_satisfied_by_its_own_block() {
+    let sk1 = key(TEST_PRIVATE_KEY);
+    let s1 = sender_from_key(&sk1);
+    let signer1: Signer = LocalSigner::new(sk1).into();
+
+    let (store, blockchain, genesis, chain_id) = hegota_chain(&[s1]).await;
+
+    let nonce0 = make_transfer_tx(chain_id, 0, &signer1).await;
+    let nonce1 = make_transfer_tx(chain_id, 1, &signer1).await;
+    blockchain
+        .add_transaction_to_pool(nonce0.clone())
+        .await
+        .expect("tx should enter the pool");
+
+    let il = vec![nonce1.clone()];
+    let block = build_block_with_il(&store, &blockchain, &genesis, &il).await;
+
+    let included: Vec<H256> = block
+        .body
+        .transactions
+        .iter()
+        .map(|tx| tx.hash(&NativeCrypto))
+        .collect();
+    assert_eq!(
+        included,
+        vec![nonce0.hash(&NativeCrypto), nonce1.hash(&NativeCrypto)],
+        "the mempool tx, then the IL tx it made valid"
+    );
+
+    let context = BlockValidationContext::with_inclusion_list(il);
+    blockchain
+        .add_block_pipeline_with_il(block, None, &context)
+        .expect("a block built against an IL must satisfy it");
+}

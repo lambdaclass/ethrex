@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
@@ -815,10 +815,27 @@ impl Blockchain {
                 // `insufficient_gas` and counts them as satisfied). When
                 // `inclusion_list` is empty (the non-FOCIL case), the call is a
                 // zero-iteration no-op.
+                let mut included = FxHashSet::default();
                 if !inclusion_list.is_empty() {
-                    self.apply_inclusion_list_transactions(&mut context, inclusion_list)?;
+                    self.apply_inclusion_list_transactions(
+                        &mut context,
+                        inclusion_list,
+                        &mut included,
+                    )?;
                 }
-                self.fill_transactions(&mut context)?
+                self.fill_transactions(&mut context, &mut included)?;
+                // A mempool tx can make an IL tx valid that was not valid
+                // before it: the sender's previous nonce, or a transfer that
+                // funds the sender. The satisfaction check judges every IL tx
+                // missing from the block at the state after the block's
+                // transactions, so the missing ones are retried there.
+                if !inclusion_list.is_empty() {
+                    self.apply_inclusion_list_transactions(
+                        &mut context,
+                        inclusion_list,
+                        &mut included,
+                    )?;
+                }
             }
             Some(transactions) => self.fill_explicit_transactions(&mut context, transactions)?,
         }
@@ -942,126 +959,126 @@ impl Blockchain {
 
     /// Fills the payload with transactions taken from the mempool
     /// Returns the block value
-    /// EIP-7805 (FOCIL) — apply inclusion-list transactions in arrival order
-    /// before the priority-fee-ordered mempool fill phase. Each IL tx is
-    /// re-validated against the accumulating block state; an IL tx that
-    /// fails to apply (gas overflow, invalid nonce against post-prefix state,
-    /// insufficient balance, blob tx) is silently skipped — the spec
-    /// satisfaction algorithm classifies these as `invalid_*` /
-    /// `insufficient_gas` and counts them as satisfied. Per Decision 5 in
-    /// `design.md`, fee maximization is explicitly NOT a goal here; the IL
-    /// list ordering is preserved.
+    /// EIP-7805 (FOCIL) — apply the inclusion-list transactions not yet in
+    /// the payload, in arrival order. Each IL tx is re-validated against the
+    /// accumulating block state; an IL tx that fails to apply (gas overflow,
+    /// invalid nonce against post-prefix state, insufficient balance, blob tx)
+    /// is skipped — the spec satisfaction algorithm classifies these as
+    /// `invalid_*` / `insufficient_gas` and counts them as satisfied. A tx that
+    /// applies can make one skipped earlier valid, as when a list carries a
+    /// sender's nonce n + 1 ahead of nonce n, so the list is swept again until
+    /// a sweep adds nothing. Per Decision 5 in `design.md`, fee maximization
+    /// is explicitly NOT a goal here; the IL list ordering is preserved.
+    ///
+    /// `included` holds the hashes of the txs already in the payload and
+    /// gains the ones this call adds.
     pub fn apply_inclusion_list_transactions(
         &self,
         context: &mut PayloadBuildContext,
         il: &[Transaction],
+        included: &mut FxHashSet<H256>,
     ) -> Result<(), ChainError> {
         use crate::constants::TX_GAS_COST;
-        use ethrex_common::types::{MempoolTransaction, TxKind};
+        use ethrex_common::types::MempoolTransaction;
         use ethrex_crypto::NativeCrypto;
 
         let chain_config = context.chain_config();
         let crypto = NativeCrypto;
 
-        for tx in il {
-            // Spec rule: blob transactions excluded from inclusion lists.
-            if matches!(tx, Transaction::EIP4844Transaction(_)) {
-                continue;
-            }
-            // Defense in depth — L2 privileged txs cannot land via FOCIL.
-            if matches!(tx, Transaction::PrivilegedL2Transaction(_)) {
-                continue;
-            }
-
-            if context.remaining_gas < TX_GAS_COST {
-                break;
-            }
-
-            // Gas reservation (mirrors fill_transactions).
-            let tx_gas_reservation = if context.is_amsterdam {
-                tx.gas_limit().min(TX_MAX_GAS_LIMIT_AMSTERDAM)
-            } else {
-                tx.gas_limit()
-            };
-            if context.remaining_gas < tx_gas_reservation {
-                continue;
-            }
-
-            // Recover sender for the MempoolTransaction wrapper. A bad
-            // signature here is a spec violation by the CL — skip the tx
-            // and let the satisfaction algorithm log it.
-            let sender = match tx.sender(&crypto) {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-
-            // Block-size cap (Osaka+).
-            let canonical = tx.encode_canonical_to_vec();
-            let potential_rlp_block_size = context.payload_size + canonical.len() as u64;
-            if chain_config.is_osaka_activated(context.payload.header.timestamp)
-                && potential_rlp_block_size > MAX_RLP_BLOCK_SIZE
-            {
-                break;
-            }
-
-            // Replay protection — same check as fill_transactions.
-            if tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
-                continue;
-            }
-
-            // BAL index + per-tx checkpoint, then record touched addresses.
-            #[allow(clippy::cast_possible_truncation)]
-            let tx_index = (context.payload.body.transactions.len() + 1) as u32;
-            context.vm.set_bal_index(tx_index);
-            let bal_checkpoint = context
-                .vm
-                .db
-                .bal_recorder
-                .as_ref()
-                .map(|r| r.tx_checkpoint());
-            if let Some(recorder) = context.vm.db.bal_recorder_mut() {
-                recorder.record_touched_address(sender);
-                if let TxKind::Call(to) = tx.to() {
-                    recorder.record_touched_address(to);
-                }
-            }
-
-            // Wrap in HeadTransaction for apply_transaction. Tip is irrelevant
-            // for IL inclusion (only affects block_value accounting); zero is
-            // safe and signals "no tip earned from IL inclusion".
-            let mtx = MempoolTransaction::new(tx.clone(), sender);
-            let head = HeadTransaction {
-                tx: mtx,
-                tip: U256::zero(),
-            };
-
-            match self.apply_transaction(&head, context) {
-                Ok(receipt) => {
-                    context.payload_size = potential_rlp_block_size;
-                    context.payload.body.transactions.push(head.into());
-                    context.receipts.push(receipt);
-                }
-                Err(err) => {
-                    debug!(
-                        tx_hash = %format!("{:#x}", tx.hash(&NativeCrypto)),
-                        sender = %format!("{:#x}", sender),
-                        nonce = tx.nonce(),
-                        error = %err,
-                        "FOCIL IL-first sequencing: apply_transaction failed, skipping IL tx"
-                    );
-                    if let (Some(recorder), Some(checkpoint)) =
-                        (context.vm.db.bal_recorder_mut(), bal_checkpoint)
-                    {
-                        recorder.tx_restore(checkpoint);
-                    }
+        loop {
+            let mut added = false;
+            for tx in il {
+                // Spec rule: blob transactions excluded from inclusion lists.
+                if matches!(tx, Transaction::EIP4844Transaction(_)) {
                     continue;
                 }
+                // Defense in depth — L2 privileged txs cannot land via FOCIL.
+                if matches!(tx, Transaction::PrivilegedL2Transaction(_)) {
+                    continue;
+                }
+                let tx_hash = tx.hash(&crypto);
+                if included.contains(&tx_hash) {
+                    continue;
+                }
+
+                if context.remaining_gas < TX_GAS_COST {
+                    break;
+                }
+
+                // Gas reservation (mirrors fill_transactions).
+                let tx_gas_reservation = if context.is_amsterdam {
+                    tx.gas_limit().min(TX_MAX_GAS_LIMIT_AMSTERDAM)
+                } else {
+                    tx.gas_limit()
+                };
+                if context.remaining_gas < tx_gas_reservation {
+                    continue;
+                }
+
+                // Recover sender for the MempoolTransaction wrapper. A bad
+                // signature here is a spec violation by the CL — skip the tx
+                // and let the satisfaction algorithm log it.
+                let sender = match tx.sender(&crypto) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
+
+                // Block-size cap (Osaka+).
+                let canonical = tx.encode_canonical_to_vec();
+                let potential_rlp_block_size = context.payload_size + canonical.len() as u64;
+                if chain_config.is_osaka_activated(context.payload.header.timestamp)
+                    && potential_rlp_block_size > MAX_RLP_BLOCK_SIZE
+                {
+                    break;
+                }
+
+                // Replay protection — same check as fill_transactions.
+                if tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
+                    continue;
+                }
+
+                // Wrap in HeadTransaction for apply_tx_to_payload. Tip is
+                // irrelevant for IL inclusion (only affects block_value
+                // accounting); zero is safe and signals "no tip earned from IL
+                // inclusion".
+                let head = HeadTransaction {
+                    tx: MempoolTransaction::new(tx.clone(), sender),
+                    tip: U256::zero(),
+                };
+
+                // The same per-tx pipeline as the mempool fill: the EIP-8037
+                // block gas check, which binds once the IL is retried after
+                // the fill, and the EIP-7928 recording.
+                match self.apply_tx_to_payload(head, context) {
+                    Ok(()) => {
+                        context.payload_size = potential_rlp_block_size;
+                        included.insert(tx_hash);
+                        added = true;
+                    }
+                    Err(err) => {
+                        debug!(
+                            tx_hash = %format!("{tx_hash:#x}"),
+                            sender = %format!("{:#x}", sender),
+                            nonce = tx.nonce(),
+                            error = %err,
+                            "FOCIL IL-first sequencing: apply_transaction failed, skipping IL tx"
+                        );
+                    }
+                }
+            }
+            if !added {
+                return Ok(());
             }
         }
-        Ok(())
     }
 
-    pub fn fill_transactions(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
+    /// `included` holds the hashes of the txs already in the payload and
+    /// gains the ones this call adds.
+    pub fn fill_transactions(
+        &self,
+        context: &mut PayloadBuildContext,
+        included: &mut FxHashSet<H256>,
+    ) -> Result<(), ChainError> {
         let chain_config = context.chain_config();
         let max_blob_number_per_block = self.effective_max_blobs(context);
 
@@ -1096,6 +1113,17 @@ impl Blockchain {
                 &mut plain_txs
             };
 
+            // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
+            let tx_hash = head_tx.tx.hash(&NativeCrypto);
+
+            // A tx the inclusion-list pass already put in the payload is still
+            // pooled. Move on to the sender's next tx: applying this one again
+            // fails on its spent nonce, which would drop the sender's later txs.
+            if included.contains(&tx_hash) {
+                txs.shift()?;
+                continue;
+            }
+
             // Check if we have enough gas to run the transaction.
             // EIP-7825/EIP-8037: for Amsterdam, cap at TX_MAX_GAS_LIMIT since
             // remaining_gas tracks regular gas only.
@@ -1128,9 +1156,6 @@ impl Blockchain {
             }
             context.payload_size = potential_rlp_block_size;
 
-            // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
-            let tx_hash = head_tx.tx.hash(&NativeCrypto);
-
             // Check whether the tx is replay-protected
             if head_tx.tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
                 // Ignore replay protected tx & all txs from the sender
@@ -1142,7 +1167,10 @@ impl Blockchain {
             }
 
             match self.apply_tx_to_payload(head_tx, context) {
-                Ok(()) => txs.shift()?,
+                Ok(()) => {
+                    included.insert(tx_hash);
+                    txs.shift()?
+                }
                 Err(e) => {
                     // Txs are kept pooled on failure, since the usual cause is a
                     // transient queue-ordering/nonce/balance artifact that a later
