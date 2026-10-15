@@ -1,5 +1,6 @@
 use bytes::{Buf, Bytes};
 use ethrex_common::H160;
+use ethrex_common::seeded_hash::SeededHashMap;
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
     Address, H256, U256, types::Fork, types::Fork::*, utils::u256_from_big_endian,
@@ -387,7 +388,8 @@ pub const PRECOMPILE_CACHE_MAX_INPUT_BYTES: usize = 4096;
 struct PrecompileCacheEntries {
     /// Results by precompile, then by calldata. Two levels so a lookup can borrow the
     /// caller's calldata as the key: a single `(Address, Bytes)` key needs an owned one.
-    map: FxHashMap<Address, FxHashMap<Bytes, (Bytes, u64)>>,
+    /// The inner map is seeded like `TransientStorage`: contracts choose the calldata.
+    map: FxHashMap<Address, SeededHashMap<Bytes, (Bytes, u64)>>,
     /// Sum of [`PrecompileCache::entry_size`] over `map`.
     used_bytes: usize,
 }
@@ -1840,5 +1842,27 @@ mod tests {
         ));
         // LStar on L1: is a precompile.
         assert!(is_precompile(&execute_addr, Fork::LStar, VMType::L1));
+    }
+}
+
+#[cfg(test)]
+mod seeded_calldata_tests {
+    use super::*;
+    use std::hash::BuildHasher;
+
+    /// Fails if `state` hashes a key like a fresh instance of its type does, as every
+    /// instance of an unseeded hasher does.
+    #[track_caller]
+    fn assert_seeded<S: BuildHasher + Default>(state: &S) {
+        let calldata = Bytes::from_static(&[0x5a; 32]);
+        assert_ne!(state.hash_one(&calldata), S::default().hash_one(&calldata));
+    }
+
+    /// Calldata is chosen by the calling contract, so the per-precompile result map must
+    /// not let crafted inputs share one bucket.
+    #[test]
+    fn precompile_results_are_seeded() {
+        let mut entries = PrecompileCacheEntries::default();
+        assert_seeded(entries.map.entry(Address::zero()).or_default().hasher());
     }
 }
