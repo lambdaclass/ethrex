@@ -34,7 +34,7 @@ use ethrex_common::{
     constants::{EMPTY_KECCAK_HASH, TX_MAX_GAS_LIMIT_AMSTERDAM, TX_MAX_TOTAL_GAS_LIMIT},
     types::{
         BlockHeader, ChainConfig, GWEI_TO_WEI, Transaction, TxType, Withdrawal,
-        is_eip7702_delegation,
+        block_access_list::BlockAccessList, is_eip7702_delegation,
     },
 };
 use ethrex_crypto::Crypto;
@@ -156,6 +156,86 @@ impl std::fmt::Display for IlUnsatisfied {
 
 impl std::error::Error for IlUnsatisfied {}
 
+/// The state EIP-7805 checks inclusion-list transactions against: right after
+/// the block's transactions, before its post-transaction phase. EELS
+/// `apply_body` runs `check_inclusion_list_transactions` after the
+/// pre-transaction system calls and the transactions, and before withdrawals
+/// and the request system calls (EIP-7002, EIP-7251, EIP-8282).
+///
+/// The block access list records every balance, nonce and code change under
+/// the phase that made it: index 0 for the pre-transaction system calls,
+/// `1..=n` for the transactions, `n + 1` for withdrawals and the
+/// post-transaction calls. So that state is the parent state with the changes
+/// at indices up to `n` applied, read without re-executing anything.
+pub struct PostTransactionsState<'a> {
+    pub parent_state: &'a dyn IlStateProvider,
+    pub bal: &'a BlockAccessList,
+    /// `n`, the number of transactions in the block: the last transaction's
+    /// block access index.
+    pub last_transaction_index: u32,
+}
+
+impl PostTransactionsState<'_> {
+    fn changes(
+        &self,
+        address: Address,
+    ) -> Option<&ethrex_common::types::block_access_list::AccountChanges> {
+        self.bal
+            .accounts()
+            .iter()
+            .find(|changes| changes.address == address)
+    }
+}
+
+impl IlStateProvider for PostTransactionsState<'_> {
+    fn get_account(
+        &self,
+        address: Address,
+    ) -> Result<Option<AccountStateView>, IlStateProviderError> {
+        let parent = self.parent_state.get_account(address)?;
+        let Some(changes) = self.changes(address) else {
+            return Ok(parent);
+        };
+        let last = self.last_transaction_index;
+        let balance = changes
+            .balance_changes
+            .iter()
+            .filter(|change| change.block_access_index <= last)
+            .max_by_key(|change| change.block_access_index)
+            .map(|change| change.post_balance);
+        let nonce = changes
+            .nonce_changes
+            .iter()
+            .filter(|change| change.block_access_index <= last)
+            .max_by_key(|change| change.block_access_index)
+            .map(|change| change.post_nonce);
+        if balance.is_none() && nonce.is_none() {
+            return Ok(parent);
+        }
+        let base = parent.unwrap_or_default();
+        Ok(Some(AccountStateView {
+            nonce: nonce.unwrap_or(base.nonce),
+            balance: balance.unwrap_or(base.balance),
+        }))
+    }
+
+    fn get_code(&self, address: Address) -> Result<Option<Bytes>, IlStateProviderError> {
+        let last = self.last_transaction_index;
+        let code_change = self.changes(address).and_then(|changes| {
+            changes
+                .code_changes
+                .iter()
+                .filter(|change| change.block_access_index <= last)
+                .max_by_key(|change| change.block_access_index)
+        });
+        match code_change {
+            Some(change) if change.new_code.is_empty() => Ok(None),
+            Some(change) => Ok(Some(change.new_code.clone())),
+            None => self.parent_state.get_code(address),
+        }
+    }
+}
+
 impl InclusionListSatisfactionValidator {
     /// Build the per-sender tracker from the unique senders in `il`. A read
     /// of `Ok(None)` is treated as an empty account (nonce 0, balance 0) per
@@ -253,6 +333,40 @@ impl InclusionListSatisfactionValidator {
             );
         }
         Ok(())
+    }
+
+    /// Point the tracker at the state the check reads: after the block's
+    /// transactions, before its post-transaction phase (see
+    /// [`PostTransactionsState`]). With the block's access list that state is
+    /// exact. Without one (a pre-Amsterdam block, or a BAL that was not
+    /// stored) it falls back to the post-state with same-block withdrawal
+    /// credits taken back out, which misses what a post-transaction system
+    /// call does to a sender.
+    #[allow(clippy::too_many_arguments)]
+    pub fn refresh_after_transactions(
+        &mut self,
+        parent_state: &dyn IlStateProvider,
+        post_state: &dyn IlStateProvider,
+        bal: Option<&BlockAccessList>,
+        transaction_count: usize,
+        withdrawals: &[Withdrawal],
+        crypto: &dyn Crypto,
+    ) -> Result<(), IlValidatorError> {
+        match bal {
+            Some(bal) => {
+                let state = PostTransactionsState {
+                    parent_state,
+                    bal,
+                    last_transaction_index: u32::try_from(transaction_count).unwrap_or(u32::MAX),
+                };
+                self.refresh_all_from(&state, crypto)
+            }
+            None => {
+                self.refresh_all_from(post_state, crypto)?;
+                self.discount_withdrawals(withdrawals);
+                Ok(())
+            }
+        }
     }
 
     /// Roll tracked balances back to the pre-withdrawals point of the block.

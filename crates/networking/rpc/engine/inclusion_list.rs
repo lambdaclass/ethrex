@@ -116,9 +116,6 @@ pub async fn block_satisfies_inclusion_list(
     let mut validator =
         InclusionListSatisfactionValidator::new(inclusion_list, &pre_state, &crypto)
             .map_err(|e| RpcErr::Internal(format!("IL validator init failed: {e}")))?;
-    validator
-        .refresh_all_from(&post_state, &crypto)
-        .map_err(|e| RpcErr::Internal(format!("IL validator refresh failed: {e}")))?;
 
     let body = context
         .storage
@@ -128,10 +125,23 @@ pub async fn block_satisfies_inclusion_list(
         .ok_or_else(|| {
             RpcErr::Internal("block body missing for IL satisfaction check".to_string())
         })?;
-    // The satisfaction check evaluates senders at the post-transactions,
-    // PRE-withdrawals point (EELS `apply_body` order), so the withdrawals'
-    // credits must be discounted from the post-state balances.
-    validator.discount_withdrawals(body.withdrawals.as_deref().unwrap_or_default());
+    // The check reads senders after the block's transactions and before its
+    // post-transaction phase (EELS `apply_body` order); the stored block access
+    // list gives that state exactly.
+    let bal = context
+        .storage
+        .get_block_access_list(block_hash)
+        .map_err(|e| RpcErr::Internal(e.to_string()))?;
+    validator
+        .refresh_after_transactions(
+            &pre_state,
+            &post_state,
+            bal.as_ref(),
+            body.transactions.len(),
+            body.withdrawals.as_deref().unwrap_or_default(),
+            &crypto,
+        )
+        .map_err(|e| RpcErr::Internal(format!("IL validator refresh failed: {e}")))?;
     let block_tx_hashes: HashSet<H256> = body
         .transactions
         .iter()

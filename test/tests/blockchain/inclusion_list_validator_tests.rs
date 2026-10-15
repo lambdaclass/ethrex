@@ -5,9 +5,10 @@ use ethrex_blockchain::inclusion_list_builder::{
     AccountStateView, IlStateProvider, IlStateProviderError,
 };
 use ethrex_blockchain::inclusion_list_validator::{
-    IlUnsatisfied, InclusionListSatisfactionValidator, TrackedSender,
+    IlUnsatisfied, InclusionListSatisfactionValidator, PostTransactionsState, TrackedSender,
 };
 use ethrex_common::constants::{TX_MAX_GAS_LIMIT_AMSTERDAM, TX_MAX_TOTAL_GAS_LIMIT};
+use ethrex_common::types::block_access_list::{AccountChanges, BalanceChange, BlockAccessList};
 use ethrex_common::types::{
     BlockHeader, ChainConfig, EIP1559Transaction, Transaction, TxKind, Withdrawal,
 };
@@ -1258,4 +1259,76 @@ fn il_tx_above_the_total_gas_limit_cap_is_excused() {
         &crypto,
     );
     assert!(control.is_err());
+}
+
+// ─── Check point: after the transactions, before the post-transaction phase ──
+
+/// A block access list for one account whose balance changes at the given
+/// block access indices.
+fn bal_with_balance_changes(account: Address, changes: &[(u32, U256)]) -> BlockAccessList {
+    let mut account_changes = AccountChanges::new(account);
+    account_changes.balance_changes = changes
+        .iter()
+        .map(|&(index, balance)| BalanceChange::new(index, balance))
+        .collect();
+    BlockAccessList::from_accounts(vec![account_changes])
+}
+
+#[test]
+fn post_transactions_state_leaves_out_the_post_transaction_phase() {
+    // Two transactions take indices 1 and 2; index 3 holds the withdrawals and
+    // the request system calls, which the check runs before.
+    let alice = addr(1);
+    let parent = MockState::with(FxHashMap::from_iter([(alice, account(4, U256::from(10)))]));
+    let bal = bal_with_balance_changes(alice, &[(2, U256::from(20)), (3, U256::from(30))]);
+    let state = PostTransactionsState {
+        parent_state: &parent,
+        bal: &bal,
+        last_transaction_index: 2,
+    };
+    let view = state.get_account(alice).unwrap().unwrap();
+    assert_eq!(view.balance, U256::from(20));
+    // The nonce did not change in the block, so it reads as in the parent.
+    assert_eq!(view.nonce, 4);
+    // Neither does an account the block never touched.
+    assert!(state.get_account(addr(2)).unwrap().is_none());
+}
+
+#[test]
+fn sender_funded_after_the_transactions_cannot_pay_for_its_il_tx() {
+    // EELS `test_pending_il_sender_funded_by_system_call`: a system call made
+    // after the transactions (EIP-7002, EIP-7251, EIP-8282) that funds the IL
+    // sender does not make its transaction appendable, while funding from a
+    // transaction does.
+    let crypto = NativeCrypto;
+    let alice = addr(1);
+    let il = vec![make_tx(alice, 0, 21_000, U256::zero())];
+    let cost = il[0].cost_without_base_fee().unwrap();
+    let parent = MockState::with(FxHashMap::from_iter([(alice, account(0, U256::zero()))]));
+    // The block's final state, where the funding is already in.
+    let post = MockState::with(FxHashMap::from_iter([(alice, account(0, cost))]));
+    let block_txs = HashSet::new();
+    let verdict = |bal: Option<&BlockAccessList>| {
+        let mut validator =
+            InclusionListSatisfactionValidator::new(&il, &parent, &crypto).expect("construct");
+        validator
+            .refresh_after_transactions(&parent, &post, bal, 1, &[], &crypto)
+            .expect("refresh");
+        validator.check(&il, &block_txs, Some((0, 0)), &header(), &config(), &crypto)
+    };
+
+    // One transaction in the block: index 1 is it, index 2 the post-transaction phase.
+    let funded_after = bal_with_balance_changes(alice, &[(2, cost)]);
+    assert!(
+        verdict(Some(&funded_after)).is_ok(),
+        "funded after the transactions, the IL tx is not appendable"
+    );
+    let funded_by_tx = bal_with_balance_changes(alice, &[(1, cost)]);
+    assert!(
+        verdict(Some(&funded_by_tx)).is_err(),
+        "funded by a transaction, the IL tx is appendable"
+    );
+    // Without the access list the final state stands in, and the funding from
+    // after the transactions leaks into the verdict.
+    assert!(verdict(None).is_err());
 }

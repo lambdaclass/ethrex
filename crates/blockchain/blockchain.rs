@@ -2814,10 +2814,11 @@ impl Blockchain {
         // Snapshot the header for the satisfaction check (intrinsic-gas fork +
         // base fee) before `block` is moved into the inner pipeline.
         let header = block.header.clone();
-        // Withdrawals too: the satisfaction check evaluates senders at the
-        // post-transactions, PRE-withdrawals point (EELS `apply_body` order),
-        // so their credits must be discounted from the post-state balances.
+        // Withdrawals and the transaction count too: the satisfaction check
+        // evaluates senders after the transactions and before the
+        // post-transaction phase (EELS `apply_body` order).
         let withdrawals = block.body.withdrawals.clone().unwrap_or_default();
+        let transaction_count = block.body.transactions.len();
 
         let (_, _, result) =
             self.add_block_pipeline_inner(block, bal, false, None, None, BodyCheck::Verify)?;
@@ -2855,13 +2856,20 @@ impl Blockchain {
         )
         .map_err(|e| ChainError::Custom(format!("IL validator init failed: {e}")))?;
 
-        // Initialize tracker from POST-state: equivalent to "observe every
-        // executed tx" since the post-state already reflects all updates.
-        // O(|IL senders|) reads, not O(block_size).
+        // Point the tracker at the post-transactions state, which the stored
+        // block access list gives exactly. O(|IL senders|) reads, not
+        // O(block_size).
+        let stored_bal = self.storage.get_block_access_list(block_hash)?;
         validator
-            .refresh_all_from(&post_state, &crypto)
+            .refresh_after_transactions(
+                &pre_state,
+                &post_state,
+                stored_bal.as_ref(),
+                transaction_count,
+                &withdrawals,
+                &crypto,
+            )
             .map_err(|e| ChainError::Custom(format!("IL validator refresh failed: {e}")))?;
-        validator.discount_withdrawals(&withdrawals);
 
         match validator.check(
             il,
