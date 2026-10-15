@@ -23,7 +23,7 @@ use ethrex_common::H256;
 use ethrex_common::types::{MAX_BYTES_PER_INCLUSION_LIST, Transaction};
 use ethrex_crypto::NativeCrypto;
 use serde_json::Value;
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
@@ -149,16 +149,27 @@ pub async fn block_satisfies_inclusion_list(
         .collect();
     let chain_config = context.storage.get_chain_config();
 
-    Ok(validator
-        .check(
-            inclusion_list,
-            &block_tx_hashes,
-            context.blockchain.block_gas_dimensions(&block_hash),
-            &header,
-            &chain_config,
-            &crypto,
-        )
-        .is_ok())
+    match validator.check(
+        inclusion_list,
+        &block_tx_hashes,
+        context.blockchain.block_gas_dimensions(&block_hash),
+        &header,
+        &chain_config,
+        &crypto,
+    ) {
+        Ok(()) => Ok(true),
+        Err(unsatisfied) => {
+            // The wire verdict is a bare `false`; this names the omitted
+            // transaction that could still have been appended.
+            info!(
+                block_number = header.number,
+                block_hash = %format!("{block_hash:#x}"),
+                tx_hash = %format!("{:#x}", unsatisfied.tx_hash),
+                "Payload does not satisfy its inclusion list"
+            );
+            Ok(false)
+        }
+    }
 }
 
 #[derive(Debug)]
