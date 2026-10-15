@@ -3,7 +3,7 @@
 This validates a release's SP1 **GPU** proving path end to end: bring up an L1 + L2 testnet from the **release binaries** with the SP1 GPU prover, then run the integration test against it. Run it on a host with an NVIDIA GPU (`l2-gpu`). It is one of the checks in the [release testing checklist](../release-process.md#testing-checklist).
 
 > [!NOTE]
-> The standard [integration tests](integration-tests.md) run the prover in `exec` mode (no real proofs). This variant swaps in the SP1 GPU backend so the release's proving path is actually exercised. GPU/driver setup (CUDA, `nvidia-container-toolkit`, the `docker` group) is covered in [Prover § GPU mode](prover.md#gpu-mode) and [Run an ethrex L2 SP1 prover](../../l2/deployment/prover/sp1.md); the SP1 wrap step runs in a `moongate` Docker container, so `docker run --gpus all` must work.
+> The standard [integration tests](integration-tests.md) run the prover in `exec` mode (no real proofs). This variant swaps in the SP1 GPU backend so the release's proving path is actually exercised. GPU/driver setup (CUDA, `nvidia-container-toolkit`, the `docker` group) is covered in [Prover § GPU mode](prover.md#gpu-mode) and [Run an ethrex L2 SP1 prover](../../l2/deployment/prover/sp1.md); SP1 6 proves with a local `sp1-gpu-server` process, which the SDK downloads into `~/.sp1/bin` on first use, and wraps Groth16 proofs in the `sp1-gnark` Docker container, so Docker must work.
 
 Host prerequisites: `solc` **0.8.31 exactly** (the FeeToken pragmas are pinned), `foundry` (`cast`/`forge`) on `PATH`, and the Rust toolchain from `rust-toolchain.toml`.
 
@@ -88,7 +88,7 @@ Host prerequisites: `solc` **0.8.31 exactly** (the FeeToken pragmas are pinned),
 
     `--no-monitor` is mandatory when running headless — otherwise the binary starts the monitor TUI and emits no logs.
 
-5. **Start the SP1 GPU prover** (first run pulls the `moongate` container and loads ~15 GB into VRAM):
+5. **Start the SP1 GPU prover** (first run downloads `sp1-gpu-server` into `~/.sp1/bin`):
 
     ```bash
     nohup ./ethrex-l2 l2 prover --backend sp1 \
@@ -122,11 +122,11 @@ Host prerequisites: `solc` **0.8.31 exactly** (the FeeToken pragmas are pinned),
 
     Pass criterion: `test result: ok. 1 passed; 0 failed`, plus the final `Total L2 ETH == Bridge locked ETH on L1` reconciliation line. Expect a multi-hour run on the GPU backend (proving dominates the wall-clock). See [integration tests § "taking too long"](integration-tests.md#i-think-my-tests-are-taking-too-long-how-can-i-debug-this) if it appears to stall.
 
-8. **Clean up** — the L1, sequencer, and prover were started with `nohup` and keep running; stop them (and the prover's GPU container) when you're done:
+8. **Clean up** — the L1, sequencer, and prover were started with `nohup` and keep running; stop them (and the prover's `sp1-gpu-server`) when you're done:
 
     ```bash
     pkill -f 'ethrex-l2 l2 prover'        # prover first
     pkill -f 'ethrex-l2 l2 --no-monitor'  # sequencer
     pkill -f 'ethrex --network l1.json'   # L1
-    docker rm -f "$(docker ps -q --filter ancestor=public.ecr.aws/succinct-labs/moongate)" 2>/dev/null || true
+    pkill -f sp1-gpu-server
     ```

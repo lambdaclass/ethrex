@@ -41,7 +41,6 @@ substrate-bn = { git = "https://github.com/risc0/paritytech-bn", tag = "v0.6.0-r
 # These precompiles require the "unstable" risc0 feature which is not suited
 # for production environments.
 # tiny-keccak = { git = "https://github.com/risc0/tiny-keccak", tag = "tiny-keccak/v2.0.2-risczero.0" }
-# [patch."https://github.com/lambdaclass/bls12_381"]
 # bls12_381 = { git = "https://github.com/lambdaclass/zkcrypto-bls12_381", branch = "expose-fp-struct" }
 
 [features]

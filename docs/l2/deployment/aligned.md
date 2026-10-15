@@ -11,6 +11,9 @@ It assumes:
 
 > **Important**: Aligned mode only supports **SP1 proofs**. The `sp1` feature must be enabled when building with Aligned mode.
 
+> [!WARNING]
+> Aligned mode is currently unavailable: the SP1 guest is built with SP1 6, while the Aligned SDK still uses SP1 5, so a sequencer started with `--aligned` stops with an error. It will be re-enabled once the Aligned SDK moves to SP1 6.
+
 - Check [How to Run (local devnet)](#how-to-run-local-devnet) for development or testing.
 - Check [How to Run (testnet)](#how-to-run-testnet) for a prod-like environment.
 
