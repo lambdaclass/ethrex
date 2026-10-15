@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use crate::rlpx::{
+    eth::eth72::transactions::encode_elided_canonical,
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress, snappy_decompress_bounded},
 };
@@ -15,6 +16,7 @@ use ethrex_common::types::WrappedEIP4844Transaction;
 use ethrex_common::{H256, types::Transaction};
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{
+    decode::{RLPDecode, decode_rlp_item, get_item_with_prefix},
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
@@ -41,7 +43,7 @@ pub(crate) const MAX_POOLED_TRANSACTIONS_BYTES: usize = 4 * 1024 * 1024;
 /// so what we emit stays well under any peer's inbound decode cap
 /// ([`MAX_POOLED_TRANSACTIONS_BYTES`]). Partial responses are protocol-legal — the requester
 /// re-requests whatever it still needs.
-const MAX_POOLED_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+pub(crate) const MAX_POOLED_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#transactions-0x02
 // Broadcast message
@@ -191,24 +193,87 @@ impl NewPooledTransactionHashes {
     }
 
     /// Extract only the entries for the given `requested` hashes from this announcement.
-    /// Returns a trimmed announcement containing just those hashes with their types and sizes.
+    /// Returns a trimmed announcement containing just those hashes with their types and sizes,
+    /// in announcement order, taking the first entry of a hash announced twice.
     pub fn filter_to(&self, requested: &[H256]) -> NewPooledTransactionHashes {
-        let mut types = Vec::with_capacity(requested.len());
-        let mut sizes = Vec::with_capacity(requested.len());
-        let mut hashes = Vec::with_capacity(requested.len());
-        for &hash in requested {
-            if let Some(pos) = self.transaction_hashes.iter().position(|h| *h == hash) {
-                types.push(self.transaction_types[pos]);
-                sizes.push(self.transaction_sizes[pos]);
-                hashes.push(hash);
-            }
-        }
+        let (types, sizes, hashes) = filter_announced(
+            &self.transaction_types,
+            &self.transaction_sizes,
+            &self.transaction_hashes,
+            requested,
+        );
         NewPooledTransactionHashes {
             transaction_types: types.into(),
             transaction_sizes: sizes,
             transaction_hashes: hashes,
         }
     }
+}
+
+/// The entries of an announcement whose hash is in `requested`, in announcement order and
+/// once per hash. One pass over the announcement, so trimming a large one stays linear.
+pub(crate) fn filter_announced(
+    types: &[u8],
+    sizes: &[usize],
+    hashes: &[H256],
+    requested: &[H256],
+) -> (Vec<u8>, Vec<usize>, Vec<H256>) {
+    let mut wanted: HashSet<H256> = requested.iter().copied().collect();
+    let mut kept_types = Vec::with_capacity(wanted.len());
+    let mut kept_sizes = Vec::with_capacity(wanted.len());
+    let mut kept_hashes = Vec::with_capacity(wanted.len());
+    for ((hash, tx_type), size) in hashes.iter().zip(types).zip(sizes) {
+        if wanted.remove(hash) {
+            kept_types.push(*tx_type);
+            kept_sizes.push(*size);
+            kept_hashes.push(*hash);
+        }
+    }
+    (kept_types, kept_sizes, kept_hashes)
+}
+
+/// Decodes the `types`, `sizes` and `hashes` fields that every `NewPooledTransactionHashes`
+/// version starts with. The three must announce the same number of transactions, and that is
+/// checked from the RLP headers alone, before any of them is decoded, so a malformed
+/// announcement is rejected without building its vectors.
+pub(crate) fn decode_announced_txs(
+    decoder: Decoder<'_>,
+) -> Result<(Bytes, Vec<usize>, Vec<H256>, Decoder<'_>), RLPDecodeError> {
+    let (types, decoder) = decoder.get_encoded_item_ref()?;
+    let (sizes, decoder) = decoder.get_encoded_item_ref()?;
+    let (hashes, decoder) = decoder.get_encoded_item_ref()?;
+
+    let types_count = match decode_rlp_item(types)? {
+        (false, payload, _) => payload.len(),
+        (true, _, _) => return Err(RLPDecodeError::UnexpectedList),
+    };
+    if rlp_list_len(sizes)? != types_count || rlp_list_len(hashes)? != types_count {
+        return Err(RLPDecodeError::Custom(
+            "transaction_hashes, transaction_sizes and transaction_types must have the same length"
+                .to_string(),
+        ));
+    }
+
+    Ok((
+        Bytes::decode(types)?,
+        Vec::<usize>::decode(sizes)?,
+        Vec::<H256>::decode(hashes)?,
+        decoder,
+    ))
+}
+
+/// Number of items in the RLP list `rlp`, walking their headers without decoding them.
+fn rlp_list_len(rlp: &[u8]) -> Result<usize, RLPDecodeError> {
+    let (is_list, mut items, _) = decode_rlp_item(rlp)?;
+    if !is_list {
+        return Err(RLPDecodeError::UnexpectedString);
+    }
+    let mut count = 0;
+    while !items.is_empty() {
+        (_, items) = get_item_with_prefix(items)?;
+        count += 1;
+    }
+    Ok(count)
 }
 
 impl RLPxMessage for NewPooledTransactionHashes {
@@ -229,30 +294,18 @@ impl RLPxMessage for NewPooledTransactionHashes {
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
         let decompressed_data = snappy_decompress(msg_data)?;
         let decoder = Decoder::new(&decompressed_data)?;
-        let (transaction_types, decoder): (Bytes, _) = decoder.decode_field("transactionTypes")?;
-        let (transaction_sizes, decoder): (Vec<usize>, _) =
-            decoder.decode_field("transactionSizes")?;
-        let (transaction_hashes, decoder): (Vec<H256>, _) =
-            decoder.decode_field("transactionHashes")?;
+        let (transaction_types, transaction_sizes, transaction_hashes, decoder) =
+            decode_announced_txs(decoder)?;
         // The announcement is exactly three fields until eth/72 adds `cell_mask`
         // (EIP-8070). Reject a longer list instead of ignoring the extra fields,
         // so a peer encoding a newer shape on this session is caught here.
         decoder.finish()?;
 
-        if transaction_hashes.len() == transaction_sizes.len()
-            && transaction_sizes.len() == transaction_types.len()
-        {
-            Ok(Self {
-                transaction_types,
-                transaction_sizes,
-                transaction_hashes,
-            })
-        } else {
-            Err(RLPDecodeError::Custom(
-                "transaction_hashes, transaction_sizes and transaction_types must have the same length"
-                    .to_string(),
-            ))
-        }
+        Ok(Self {
+            transaction_types,
+            transaction_sizes,
+            transaction_hashes,
+        })
     }
 }
 
@@ -273,7 +326,14 @@ impl GetPooledTransactions {
         }
     }
 
-    pub fn handle(&self, blockchain: &Blockchain) -> Result<PooledTransactions, StoreError> {
+    /// Answers the request from the pool. With `elide_blobs`, blob transactions are measured
+    /// as an eth/72 answer carries them, without their blobs, so the response limit applies to
+    /// what is actually sent.
+    pub fn handle(
+        &self,
+        blockchain: &Blockchain,
+        elide_blobs: bool,
+    ) -> Result<PooledTransactions, StoreError> {
         // TODO(#1615): get transactions in batch instead of iterating over them.
         let mut pooled_transactions = Vec::new();
         let mut seen = HashSet::with_capacity(self.transaction_hashes.len());
@@ -294,7 +354,12 @@ impl GetPooledTransactions {
             // Cap the response size (geth `softResponseLimit`): stop before a tx would push the
             // response over the budget so we never emit more than a peer's inbound cap accepts.
             // Always serve at least one tx so a lone oversized (blob) tx still goes out.
-            let tx_size = tx.encode_canonical_len();
+            let tx_size = match &tx {
+                P2PTransaction::EIP4844TransactionWithBlobs(wrapped) if elide_blobs => {
+                    encode_elided_canonical(wrapped).len()
+                }
+                _ => tx.encode_canonical_len(),
+            };
             if !pooled_transactions.is_empty() && bytes_used + tx_size > MAX_POOLED_RESPONSE_BYTES {
                 break;
             }
@@ -476,7 +541,95 @@ impl RLPxMessage for PooledTransactions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rlpx::eth::eth72::transactions::NewPooledTransactionHashes72;
     use ethrex_common::types::EIP1559Transaction;
+
+    /// A compressed announcement with `types`, `sizes` and `hashes` as given, so the field
+    /// lengths can disagree, plus an empty `cell_mask` when `eth72` is set. Each hash is
+    /// `hash_len` bytes long: a wrong length can only be caught by decoding the item.
+    fn raw_announcement(
+        types: usize,
+        sizes: usize,
+        hashes: usize,
+        hash_len: usize,
+        eth72: bool,
+    ) -> Vec<u8> {
+        let hashes: Vec<Bytes> = (0..hashes)
+            .map(|i| Bytes::from(vec![i as u8 + 1; hash_len]))
+            .collect();
+        let mut encoded = vec![];
+        let encoder = Encoder::new(&mut encoded)
+            .encode_field(&Bytes::from(vec![2u8; types]))
+            .encode_field(&vec![100usize; sizes])
+            .encode_field(&hashes);
+        if eth72 {
+            encoder.encode_field(&Bytes::new()).finish();
+        } else {
+            encoder.finish();
+        }
+        snappy_compress(encoded).unwrap()
+    }
+
+    fn decode_announcement(msg: &[u8], eth72: bool) -> Result<usize, RLPDecodeError> {
+        if eth72 {
+            NewPooledTransactionHashes72::decode(msg).map(|a| a.transaction_hashes.len())
+        } else {
+            NewPooledTransactionHashes::decode(msg).map(|a| a.transaction_hashes.len())
+        }
+    }
+
+    #[test]
+    fn announcements_with_matching_field_lengths_decode() {
+        for eth72 in [false, true] {
+            assert_eq!(
+                decode_announcement(&raw_announcement(3, 3, 3, 32, eth72), eth72),
+                Ok(3)
+            );
+        }
+    }
+
+    #[test]
+    fn announcements_with_mismatched_field_lengths_are_rejected() {
+        let mismatch = || {
+            RLPDecodeError::Custom(
+                "transaction_hashes, transaction_sizes and transaction_types must have the same length"
+                    .to_string(),
+            )
+        };
+        for eth72 in [false, true] {
+            for (types, sizes, hashes) in [(2, 3, 3), (3, 2, 3), (3, 3, 2), (0, 0, 1)] {
+                assert_eq!(
+                    decode_announcement(&raw_announcement(types, sizes, hashes, 32, eth72), eth72),
+                    Err(mismatch()),
+                    "types {types}, sizes {sizes}, hashes {hashes}, eth72 {eth72}"
+                );
+            }
+            // The lengths are compared before any hash is decoded: 31-byte hashes are only
+            // caught by decoding them, so a mismatch must be reported first.
+            assert_eq!(
+                decode_announcement(&raw_announcement(2, 2, 3, 31, eth72), eth72),
+                Err(mismatch())
+            );
+            assert_ne!(
+                decode_announcement(&raw_announcement(3, 3, 3, 31, eth72), eth72),
+                Err(mismatch())
+            );
+        }
+    }
+
+    #[test]
+    fn filter_to_keeps_announcement_order_and_first_entries() {
+        let h = |n| H256::from_low_u64_be(n);
+        let announcement = NewPooledTransactionHashes::from_raw(
+            vec![0u8, 1, 2, 3].into(),
+            vec![10, 11, 12, 13],
+            vec![h(1), h(2), h(3), h(2)],
+        );
+        let trimmed = announcement.filter_to(&[h(3), h(2), h(9)]);
+        assert_eq!(trimmed.transaction_hashes, vec![h(2), h(3)]);
+        assert_eq!(trimmed.transaction_types.as_ref(), &[1, 2]);
+        assert_eq!(trimmed.transaction_sizes, vec![11, 12]);
+    }
 
     fn p2p_tx(nonce: u64) -> P2PTransaction {
         P2PTransaction::EIP1559Transaction(EIP1559Transaction {
