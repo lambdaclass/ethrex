@@ -121,6 +121,20 @@ fn build_zisk_program() {
     // needed to generate proofs and fails inside the GitHub CI environment, so we
     // skip it under the `ci` feature flag.
 
+    // Once a build script names any `rerun-if-changed` input, cargo reruns it only
+    // for those, so list what the guest ELF is made of: the guest crate and this
+    // crate's sources and manifests (the guest links `ethrex-guest-program`).
+    // Without this a guest change ships the previous ELF and verification key.
+    for input in [
+        "bin/zisk/src",
+        "bin/zisk/Cargo.toml",
+        "bin/zisk/Cargo.lock",
+        "src",
+        "Cargo.toml",
+    ] {
+        println!("cargo::rerun-if-changed={input}");
+    }
+
     // Guest ELF path relative to `./bin/zisk` (the command's working directory).
     const GUEST_ELF: &str = "./target/elf/riscv64ima-zisk-zkvm-elf/release/ethrex-guest-zisk";
     // Same ELF relative to this build script's working directory (the crate root).
@@ -138,6 +152,12 @@ fn build_zisk_program() {
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
         .current_dir("./bin/zisk");
+    // Same selection as the SP1 and RISC0 builds: without it the guest is the L1
+    // stateless validator, which accepts any input and commits a failure sentinel,
+    // so an L2 prover would hand out valid proofs with zero public outputs.
+    if cfg!(feature = "l2") {
+        build_command.args(["--features", "l2"]);
+    }
 
     #[cfg(not(feature = "ci"))]
     let mut setup_command = std::process::Command::new("cargo-zisk");
@@ -191,6 +211,85 @@ fn build_zisk_program() {
 
     std::fs::copy(BUILT_ELF, "./bin/zisk/out/riscv64ima-zisk-elf")
         .expect("could not copy Zisk elf to output directory");
+
+    #[cfg(not(feature = "ci"))]
+    write_zisk_vk_file(BUILT_ELF);
+}
+
+/// Writes the program verification key that `cargo-zisk setup` derived for the
+/// ELF, in the form the OnChainProposer stores and `ZiskVerifier.sol` hashes: the
+/// four u64 words packed big-endian into a `bytes32`, hex-encoded.
+///
+/// The setup caches the key as four little-endian u64 words in
+/// `<ZISK_HOME>/cache/<blake3(elf)>_<pilout hash>_<rows>_<hash mode>_<blowup>_<arity>.verkey.bin`.
+/// The setup parameters are not known here, so the file is located by the ELF
+/// hash prefix and the Poseidon1 hash mode, the only one ZisK publishes a PLONK
+/// setup (and therefore an on-chain verifier) for.
+#[cfg(all(not(clippy), feature = "zisk-build-elf", not(feature = "ci")))]
+fn write_zisk_vk_file(elf_path: &str) {
+    use std::path::PathBuf;
+
+    println!("cargo::rerun-if-env-changed=ZISK_HOME");
+    println!("cargo::rerun-if-env-changed=ZISK_CACHE_DIR");
+
+    let elf = std::fs::read(elf_path).expect("could not read the ZisK guest ELF");
+    let elf_hash = blake3::hash(&elf).to_hex().to_string();
+
+    // Mirrors zisk_common::ZiskPaths: ZISK_HOME defaults to $HOME/.zisk and
+    // ZISK_CACHE_DIR to <ZISK_HOME>/cache.
+    let zisk_home = std::env::var_os("ZISK_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").expect("HOME is not set")).join(".zisk")
+        });
+    let cache_dir = std::env::var_os("ZISK_CACHE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| zisk_home.join("cache"));
+
+    // Several ZisK versions may have set up the same ELF (different pilout
+    // hashes in the name); the setup that just ran wrote the newest file.
+    let prefix = format!("{elf_hash}_");
+    let verkey_path = std::fs::read_dir(&cache_dir)
+        .unwrap_or_else(|e| panic!("could not read the ZisK cache {}: {e}", cache_dir.display()))
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry.file_name().to_str().is_some_and(|name| {
+                name.starts_with(&prefix)
+                    && name.ends_with(".verkey.bin")
+                    && name.contains("_poseidon1_")
+            })
+        })
+        .max_by_key(|entry| entry.metadata().and_then(|meta| meta.modified()).ok())
+        .map(|entry| entry.path())
+        .unwrap_or_else(|| {
+            panic!(
+                "no Poseidon1 verkey for ELF {elf_hash} under {}; did `cargo-zisk setup` run?",
+                cache_dir.display()
+            )
+        });
+
+    let words = std::fs::read(&verkey_path)
+        .unwrap_or_else(|e| panic!("could not read {}: {e}", verkey_path.display()));
+    assert_eq!(
+        words.len(),
+        32,
+        "{} should hold four u64 words",
+        verkey_path.display()
+    );
+    let vk: Vec<u8> = words
+        .chunks_exact(8)
+        .flat_map(|word| {
+            let mut le = [0u8; 8];
+            le.copy_from_slice(word);
+            u64::from_le_bytes(le).to_be_bytes()
+        })
+        .collect();
+
+    std::fs::write(
+        "./bin/zisk/out/riscv64ima-zisk-vk",
+        format!("0x{}\n", hex::encode(vk)),
+    )
+    .expect("could not write ZisK vk to file");
 }
 
 #[cfg(all(not(clippy), feature = "openvm-build-elf"))]

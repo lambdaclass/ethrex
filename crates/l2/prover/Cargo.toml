@@ -54,7 +54,8 @@ risc0 = [
     "ethrex-common/risc0",
 ]
 sp1 = ["ethrex-prover/sp1", "ethrex-guest-program/sp1-build-elf"]
-zisk = ["ethrex-prover/zisk", "ethrex-guest-program/zisk-build-elf"]
+# The L2 prover needs the in-process SDK tier (Linux x86-64 with the ZisK bundle).
+zisk = ["ethrex-prover/zisk-sdk", "ethrex-guest-program/zisk-build-elf"]
 openvm = ["ethrex-prover/openvm", "ethrex-guest-program/openvm-build-elf"]
 profiling = ["ethrex-prover/profiling"]
 

@@ -79,7 +79,7 @@ Two separate machines are recommended for running the `Prover` and the `sequence
       - `PROVER_CLIENT_PROVING_TIME_MS`: The amount of time to wait before requesting new data to prove.
    3. To start the `Prover`/`zkvm`, run:
       ```sh
-      make init-prover-<sp1|risc0|exec> # optional: GPU=true
+      make init-prover-<sp1|risc0|zisk|exec> # optional: GPU=true
       ```
 
 2. **`ProofCoordinator`/`sequencer` Setup**

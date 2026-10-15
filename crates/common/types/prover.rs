@@ -9,8 +9,11 @@ pub enum ProverType {
     RISC0,
     SP1,
     TDX,
+    ZisK,
 }
 
+// The numeric ids key stored proofs (rollup store `batch_proofs.prover_type`),
+// so existing variants keep their values and new ones append.
 impl From<ProverType> for u32 {
     fn from(value: ProverType) -> u32 {
         match value {
@@ -18,6 +21,7 @@ impl From<ProverType> for u32 {
             ProverType::RISC0 => 1,
             ProverType::SP1 => 2,
             ProverType::TDX => 3,
+            ProverType::ZisK => 4,
         }
     }
 }
@@ -30,6 +34,7 @@ impl ProverType {
             ProverType::RISC0,
             ProverType::SP1,
             ProverType::TDX,
+            ProverType::ZisK,
         ]
         .into_iter()
     }
@@ -42,6 +47,7 @@ impl Display for ProverType {
             Self::RISC0 => write!(f, "RISC0"),
             Self::SP1 => write!(f, "SP1"),
             Self::TDX => write!(f, "TDX"),
+            Self::ZisK => write!(f, "ZisK"),
         }
     }
 }

@@ -36,7 +36,7 @@ use super::{
     configs::AlignedConfig,
     utils::{
         INVALID_RISC0_PROOF_SELECTOR, INVALID_SP1_PROOF_SELECTOR, INVALID_TDX_PROOF_SELECTOR,
-        random_duration, send_verify_tx,
+        INVALID_ZISK_PROOF_SELECTOR, random_duration, send_verify_tx,
     },
 };
 
@@ -51,7 +51,8 @@ use ethrex_guest_program::ZKVM_SP1_PROGRAM_ELF;
 #[cfg(feature = "sp1")]
 use sp1_sdk::{HashableKey, Prover, SP1ProofWithPublicValues, SP1VerifyingKey};
 
-const VERIFY_BATCHES_FUNCTION_SIGNATURE: &str = "verifyBatches(uint256,bytes[],bytes[],bytes[])";
+const VERIFY_BATCHES_FUNCTION_SIGNATURE: &str =
+    "verifyBatches(uint256,bytes[],bytes[],bytes[],bytes[])";
 
 #[protocol]
 pub trait L1ProofSenderProtocol: Send + Sync {
@@ -523,6 +524,7 @@ impl L1ProofSender {
         let mut risc0_array = Vec::with_capacity(batch_count);
         let mut sp1_array = Vec::with_capacity(batch_count);
         let mut tdx_array = Vec::with_capacity(batch_count);
+        let mut zisk_array = Vec::with_capacity(batch_count);
 
         for (_batch_number, proofs) in batches {
             let proof_to_value = |pt: ProverType| -> Value {
@@ -534,6 +536,7 @@ impl L1ProofSender {
             risc0_array.push(proof_to_value(ProverType::RISC0));
             sp1_array.push(proof_to_value(ProverType::SP1));
             tdx_array.push(proof_to_value(ProverType::TDX));
+            zisk_array.push(proof_to_value(ProverType::ZisK));
         }
 
         let calldata_values = vec![
@@ -541,6 +544,7 @@ impl L1ProofSender {
             Value::Array(risc0_array),
             Value::Array(sp1_array),
             Value::Array(tdx_array),
+            Value::Array(zisk_array),
         ];
 
         let calldata = encode_calldata(VERIFY_BATCHES_FUNCTION_SIGNATURE, &calldata_values)
@@ -558,7 +562,7 @@ impl L1ProofSender {
     /// Returns the prover type whose proof is invalid based on the RPC error data
     /// (custom error selector), or `None` if the data doesn't indicate an invalid proof.
     ///
-    /// These three selectors cover all proof-related errors:
+    /// These four selectors cover all proof-related errors:
     /// `_verifyBatchInternal` wraps each verifier call in try/catch, so any
     /// verifier failure becomes one of these. Other reverts (BatchNotSequential,
     /// etc.) are ordering issues where deleting proofs would be wrong.
@@ -570,6 +574,8 @@ impl L1ProofSender {
             Some(ProverType::RISC0)
         } else if data.starts_with(INVALID_SP1_PROOF_SELECTOR) {
             Some(ProverType::SP1)
+        } else if data.starts_with(INVALID_ZISK_PROOF_SELECTOR) {
+            Some(ProverType::ZisK)
         } else {
             None
         }
