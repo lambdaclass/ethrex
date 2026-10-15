@@ -18,15 +18,28 @@ use alloc::vec::Vec;
 use ark_bn254::{Fq, Fq2, Fq6, Fq12, G1Affine, G2Affine};
 use ark_ec::bn::BnConfig;
 use ark_ec::short_weierstrass::SWCurveConfig;
-use ark_ff::{AdditiveGroup, CyclotomicMultSubgroup, Field, Fp6Config, Fp12Config, One};
+use ark_ff::{
+    AdditiveGroup, BigInteger, CyclotomicMultSubgroup, Field, Fp6Config, Fp12Config, One,
+    PrimeField,
+};
 
 /// `6 x0 + 2` in NAF, least significant digit first.
 const ATE_LOOP_COUNT: &[i8] = <ark_bn254::Config as BnConfig>::ATE_LOOP_COUNT;
 
-/// `1 / 2` in `Fq`.
-const TWO_INV: Fq = ark_ff::MontFp!(
-    "10944121435919637611123202872628637544348155578648911831344518947322613104292"
-);
+/// `x / 2`. Montgomery form is linear, so halving the representative halves the
+/// value: add the (odd) modulus first when the representative is odd. Both are
+/// below 2^255, so the sum fits in four limbs.
+fn halve(x: Fq2) -> Fq2 {
+    let halve_fq = |value: Fq| {
+        let mut repr = value.0;
+        if repr.is_odd() {
+            repr.add_with_carry(&Fq::MODULUS);
+        }
+        repr.div2();
+        Fq::new_unchecked(repr)
+    };
+    Fq2::new(halve_fq(x.c0), halve_fq(x.c1))
+}
 
 /// A line `c0 + (c1 + c2 v) w` before its evaluation at a G1 point.
 type Line = (Fq2, Fq2, Fq2);
@@ -42,14 +55,12 @@ impl G2Projective {
     /// Doubles the point and returns the tangent line (`ark-ec`'s
     /// `G2HomProjective::double_in_place`).
     fn double_step(&mut self) -> Line {
-        let mut a = self.x * self.y;
-        a.mul_assign_by_fp(&TWO_INV);
+        let a = halve(self.x * self.y);
         let b = self.y.square();
         let c = self.z.square();
         let e = <ark_bn254::g2::Config as SWCurveConfig>::COEFF_B * (c.double() + c);
         let f = e.double() + e;
-        let mut g = b + f;
-        g.mul_assign_by_fp(&TWO_INV);
+        let g = halve(b + f);
         let h = (self.y + self.z).square() - (b + c);
         let i = e - b;
         let j = self.x.square();
@@ -331,6 +342,31 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn halve_matches_multiplying_by_one_half() {
+        let two_inv = Fq::from(2u64).inverse().unwrap();
+        for seed in 0..2000u64 {
+            let x = Fq2::new(
+                Fq::from_be_bytes_mod_order(&Sha256::digest(seed.to_le_bytes())),
+                Fq::from_be_bytes_mod_order(&Sha256::digest((seed + 1_000_000).to_le_bytes())),
+            );
+            let mut expected = x;
+            expected.mul_assign_by_fp(&two_inv);
+            assert_eq!(halve(x), expected);
+        }
+        for edge in [
+            Fq::from(0u64),
+            Fq::from(1u64),
+            -Fq::from(1u64),
+            -Fq::from(2u64),
+        ] {
+            let x = Fq2::new(edge, -edge);
+            let mut expected = x;
+            expected.mul_assign_by_fp(&two_inv);
+            assert_eq!(halve(x), expected);
+        }
     }
 
     #[test]
