@@ -901,13 +901,6 @@ impl L1Committer {
                 receipts.push(receipt);
             }
 
-            tx_count += u64::try_from(txs.len())
-                .inspect_err(|_| tracing::error!("Failed to collect metric tx count"))
-                .unwrap_or(0);
-            batch_last_timestamp = Some(potential_batch_block.header.timestamp);
-            metrics!(
-                batch_gas_used += potential_batch_block.header.gas_used;
-            );
             // Get block messages and privileged transactions
             let l1_out_messages = get_block_l1_messages(&receipts);
             let l2_out_messages =
@@ -1034,8 +1027,16 @@ impl L1Committer {
             // Save current blobs_bundle and continue to add more blocks.
             blobs_bundle = bundle;
 
+            // The block is in the batch only from here on: a block that does not
+            // fit the blob is read and then dropped above, so counting it earlier
+            // would attribute its transactions and gas to this batch.
+            tx_count += u64::try_from(txs.len())
+                .inspect_err(|_| tracing::error!("Failed to collect metric tx count"))
+                .unwrap_or(0);
+            batch_last_timestamp = Some(potential_batch_block.header.timestamp);
             metrics!(
                 blob_size = latest_blob_size;
+                batch_gas_used += potential_batch_block.header.gas_used;
             );
 
             l1_in_message_hashes.extend(
