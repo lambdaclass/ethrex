@@ -235,31 +235,31 @@ The block builder fills a blob-sized block in well under a second, so block prod
 
 What the operator pays L1 per transaction is set almost entirely by how many transactions a batch carries. Settling a batch costs a near-fixed amount of execution gas, about 600k on ZisK (a commit of about 185k gas plus a PLONK verification of about 413k) and about 535k on SP1 (its Groth16 verification costs about 349k), plus 131,072 blob gas per blob the batch uses. Nothing in that depends on the transactions inside, so execution gas per transaction falls in proportion to the batch size, and blob gas per transaction falls only when more transactions fit in each blob.
 
-The table below measures that with the batch shape changed through prototypes on the same host and load (ETH transfers and ERC20 transfers, GPU prover, 1,500 transactions per account per round): batches spanning up to six blobs of one commit transaction (a six-blob batch adds only about 2,500 gas for hashing the extra blob hashes), batch data published zstd-compressed, commit transactions pipelined instead of waiting for each receipt, and 1-second blocks. Every prototype row raises the L2 block gas limit to 1 billion so blocks are bounded by blob space for both workloads; the first row is the configuration of the results above and the second row isolates the raised gas limit. SP1 cells are filled for the configurations that change what a batch contains; the others would not change its per-transaction cost. These prototypes are not part of ethrex; the rows show what each change to the batch shape is worth, in gas units and so independent of prices.
+The table below measures that with the batch shape changed through prototypes on the same host and load (ETH transfers and ERC20 transfers, GPU prover, 1,500 transactions per account per round): batches spanning up to six blobs of one commit transaction (a six-blob batch adds only about 2,500 gas for hashing the extra blob hashes), batch data published zstd-compressed, commit transactions pipelined instead of waiting for each receipt, and 1-second blocks. Every prototype row raises the L2 block gas limit to 1 billion so blocks are bounded by blob space for both workloads; the first row is the configuration of the results above and the second row isolates the raised gas limit. SP1 cells are filled for the configurations that change what a batch contains, plus the all-ideas row; the others would not change its per-transaction cost. These prototypes are not part of ethrex; the rows show what each change to the batch shape is worth, in gas units and so independent of prices.
 
 | Configuration | Transactions per batch, ETH / ERC20 | Blobs per batch, ETH / ERC20 | Execution gas per transaction, ZisK ETH / ZisK ERC20 / SP1 ETH / SP1 ERC20 | Blob gas per transaction, ZisK ETH / ZisK ERC20 / SP1 ETH / SP1 ERC20 |
 |---|---|---|---|---|
 | One blob per batch, 30M L2 gas limit (the results above) | 1,075 / 528 | 1.0 / 1.0 | 558 / 1,136 / 496 / 1,037 | 122 / 248 / 121 / 254 |
-| One blob per batch, gas limit raised | 1,079 / 629 | 1.0 / 1.0 | 557 / 939 / 497 / - | 122 / 199 / 122 / - |
+| One blob per batch, gas limit raised | 1,079 / 629 | 1.0 / 1.0 | 557 / 939 / 497 / 825 | 122 / 199 / 122 / 194 |
 | 1 s blocks | 1,079 / 661 | 1.0 / 1.0 | 557 / 899 / - / - | 123 / 194 / - / - |
 | Pipelined commits | 1,079 / 629 | 1.0 / 1.0 | 557 / 937 / - / - | 123 / 197 / - / - |
-| 6-blob batches | 6,488 / 3,392 | 6.0 / 5.8 | 93 / 170 / - / - | 123 / 193 / - / - |
-| Compression | 1,344 / 1,110 | 1.0 / 1.0 | 446 / 526 / 409 / - | 98 / 109 / 100 / - |
+| 6-blob batches | 6,488 / 3,392 | 6.0 / 5.8 | 93 / 170 / 83 / 144 | 123 / 193 / 123 / 192 |
+| Compression | 1,307 / 1,110 | 1.0 / 1.0 | 458 / 526 / 409 / 465 | 100 / 109 / 100 / 107 |
 | 1 s blocks + pipelined commits | 1,079 / 660 | 1.0 / 1.0 | 557 / 900 / - / - | 123 / 193 / - / - |
 | 1 s blocks + 6-blob batches | 6,362 / 3,732 | 6.0 / 5.9 | 95 / 157 / - / - | 124 / 192 / - / - |
-| 1 s blocks + compression | 1,343 / 1,185 | 1.0 / 1.0 | 446 / 501 / - / - | 98 / 107 / - / - |
+| 1 s blocks + compression | 1,308 / 1,184 | 1.0 / 1.0 | 458 / 499 / - / - | 100 / 110 / - / - |
 | Pipelined commits + 6-blob batches | 6,452 / 3,392 | 6.0 / 5.8 | 93 / 170 / - / - | 123 / 193 / - / - |
-| Pipelined commits + compression | 1,344 / 1,112 | 1.0 / 1.0 | 446 / 525 / - / - | 98 / 108 / - / - |
-| 6-blob batches + compression | 8,116 / 6,546 | 6.0 / 5.9 | 74 / 89 / - / - | 97 / 104 / - / - |
+| Pipelined commits + compression | 1,307 / 1,112 | 1.0 / 1.0 | 458 / 525 / - / - | 100 / 108 / - / - |
+| 6-blob batches + compression | 7,875 / 6,546 | 6.0 / 5.9 | 76 / 89 / 68 / 86 | 100 / 104 / 100 / 104 |
 | 1 s blocks + pipelined commits + 6-blob batches | 6,452 / 3,766 | 6.0 / 5.9 | 94 / 156 / - / - | 123 / 192 / - / - |
-| 1 s blocks + pipelined commits + compression | 1,344 / 1,183 | 1.0 / 1.0 | 446 / 502 / - / - | 98 / 107 / - / - |
-| 1 s blocks + 6-blob batches + compression | 8,117 / 7,661 | 5.7 / 6.0 | 76 / 79 / - / - | 98 / 104 / - / - |
-| Pipelined commits + 6-blob batches + compression | 8,114 / 5,736 | 6.0 / 5.8 | 74 / 98 / - / - | 97 / 104 / - / - |
-| 1 s blocks + pipelined commits + 6-blob batches + compression | 7,833 / 6,563 | 5.9 / 5.9 | 76 / 88 / - / - | 97 / 104 / - / - |
+| 1 s blocks + pipelined commits + compression | 1,309 / 1,184 | 1.0 / 1.0 | 458 / 498 / - / - | 100 / 105 / - / - |
+| 1 s blocks + 6-blob batches + compression | 7,758 / 7,661 | 5.9 / 6.0 | 78 / 79 / - / - | 101 / 104 / - / - |
+| Pipelined commits + 6-blob batches + compression | 7,874 / 5,736 | 6.0 / 5.8 | 76 / 98 / - / - | 100 / 104 / - / - |
+| 1 s blocks + pipelined commits + 6-blob batches + compression | 7,875 / 6,563 | 6.0 / 5.9 | 76 / 88 / 70 / 86 | 100 / 104 / 100 / 104 |
 
 How to read it:
 
-- Execution gas per transaction follows the batch size: six-blob batches cut it by six, compression by what it adds to the batch (about 25% more ETH transfers per blob, twice as many ERC20 transfers), and the two together by 7 to 13 times.
+- Execution gas per transaction follows the batch size: six-blob batches cut it by six, compression by what it adds to the batch (about 20% more ETH transfers per blob, twice as many ERC20 transfers), and the two together by 7 to 13 times.
 - Blob gas per transaction only moves with bytes per transaction: compression takes an ETH transfer from 122 to 97 blob gas and an ERC20 transfer from 248 to 104. Raising the gas limit also lowers it for ERC20 transfers, because their blocks then fill the blob instead of stopping at 30M gas.
 - 1-second blocks and pipelined commits leave the cost per transaction unchanged under saturation, since every block still fills a blob. Under light traffic they work against the operator: a block is produced every interval even when nearly empty, every batch still costs its fixed execution gas and a blob, so the floor is about 17,280 batches a day at 5-second commits and 86,400 at 1-second commits, each at the per-batch cost above.
 - The prover's cost per transaction moves the same way: its GPU time per ETH transfer on ZisK falls from 20 ms with one blob per batch to about 9 ms with six-blob batches and compression, because the fixed per-proof cost is spread over more transactions.
