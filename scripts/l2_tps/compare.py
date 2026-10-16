@@ -14,7 +14,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import collect  # noqa: E402
 
 
+import os
 import re
+
+# Example L1 prices for the operator's settlement fee (gwei per gas, gwei per blob gas).
+GAS_PRICE_GWEI = float(os.environ.get("L1_GAS_PRICE_GWEI", "10"))
+BLOB_GAS_PRICE_GWEI = float(os.environ.get("L1_BLOB_GAS_PRICE_GWEI", "1"))
 
 FIELD_RE = re.compile(r"(\w+)=(\d+)")
 
@@ -182,6 +187,24 @@ def figures(run_dir: Path):
             out["gpu_power_mean"] = statistics.mean(float(r["gpu_power_w"]) for r in grows)
         except (ValueError, KeyError):
             pass
+    # Per-transaction L1 cost: what the operator pays to commit and verify, divided
+    # over the batch, with the per-batch averages as the fallback for runs that did
+    # not record every commit receipt.
+    tpb = out.get("txs_per_batch")
+    if tpb:
+        if out.get("commit_gas_per_tx") is None and out.get("l1_commit_gas"):
+            out["commit_gas_per_tx"] = out["l1_commit_gas"] / tpb
+        if out.get("blob_gas_per_tx") is None and out.get("l1_blob_gas"):
+            out["blob_gas_per_tx"] = out["l1_blob_gas"] / tpb
+        if out.get("l1_verify_gas"):
+            out["verify_gas_per_tx"] = out["l1_verify_gas"] / tpb
+    if None not in (out.get("commit_gas_per_tx"), out.get("verify_gas_per_tx")):
+        out["l1_gas_per_tx"] = out["commit_gas_per_tx"] + out["verify_gas_per_tx"]
+        if out.get("blob_gas_per_tx") is not None:
+            gwei = out["l1_gas_per_tx"] * GAS_PRICE_GWEI + out["blob_gas_per_tx"] * BLOB_GAS_PRICE_GWEI
+            out["l1_fee_eth_per_million"] = gwei * 1e6 / 1e9
+    if out.get("settled_tps"):
+        out["gpu_ms_per_tx"] = 1000 / out["settled_tps"]
     return out
 
 
@@ -197,8 +220,10 @@ ROWS = [
     ("Blocks per batch", "blocks_per_batch", "{:.2f}"),
     ("Blobs per batch", "blobs_per_batch", "{:.2f}"),
     ("Compression ratio (raw / published)", "compression", "{:.2f}"),
-    ("L1 commit gas per transaction", "commit_gas_per_tx", "{:.0f}"),
+    ("L1 execution gas per transaction (commit + verify)", "l1_gas_per_tx", "{:,.0f}"),
     ("L1 blob gas per transaction", "blob_gas_per_tx", "{:.0f}"),
+    (f"L1 fee per million transactions (ETH, at {GAS_PRICE_GWEI:g} gwei gas and {BLOB_GAS_PRICE_GWEI:g} gwei blob gas)", "l1_fee_eth_per_million", "{:.2f}"),
+    ("Prover GPU time per transaction (ms, 1 / settled TPS)", "gpu_ms_per_tx", "{:.1f}"),
     ("Transactions per block", "txs_per_block", "{:.0f}"),
     ("Gas per block", "gas_per_block", "{:,.0f}"),
     ("Gas per transaction", "gas_per_tx", "{:,.0f}"),

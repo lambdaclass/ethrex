@@ -33,7 +33,7 @@ A run is sized so that the load always exceeds what the sequencer includes: the 
 `scripts/l2_tps/` automates steps 2 to 6 below and produces the summaries this guide quotes:
 
 - `run.sh <backend> <workload>` runs one measurement from a fresh L1 to a run directory (`tps-runs/<timestamp>-<backend>-<workload>/` by default) holding the node, prover and load-test logs, `metrics.txt`, `blocks.csv` (per block: timestamp, transactions, gas, base fee), `gpu.csv` (GPU memory, utilization and power every 30 s), `l1-progress.csv`, `verifications.csv` (L1 timestamp of every verification) and `summary.md`. It also records `commits.csv` (L1 timestamp, gas and blob gas of every commit transaction). It takes the binaries, window, block time, commit interval, load, L2 block gas limit (`L2_GAS_LIMIT`, applied to the bridge and the L2 genesis), extra sequencer flags (`EXTRA_L2_FLAGS`) and a run label (`TAG`) from environment variables documented at its top; the prover's extra environment (for example the CUDA 12 runtime path for SP1, or the glibc tunable ZisK needs) goes in `PROVER_ENV`.
-- `collect.py <run_dir>` recomputes a run's summary; `compare.py <run_dir>...` prints one table across runs with the rows shown under Results, plus committed TPS on L1, settlement latency (L1 verification time minus the L2 timestamp of the batch's last block), L1 gas and blob gas per transaction and the committer's cycle time when the run recorded them; `dump_blocks.py` is the per-block RPC dump `run.sh` calls at the end.
+- `collect.py <run_dir>` recomputes a run's summary; `compare.py <run_dir>...` prints one table across runs with the rows shown under Results, including the operator's L1 fee per million transactions priced at `L1_GAS_PRICE_GWEI` (default 10) and `L1_BLOB_GAS_PRICE_GWEI` (default 1) from the environment, plus committed TPS on L1, settlement latency (L1 verification time minus the L2 timestamp of the batch's last block), L1 gas and blob gas per transaction and the committer's cycle time when the run recorded them; `dump_blocks.py` is the per-block RPC dump `run.sh` calls at the end.
 
 ```bash
 COMPILE_CONTRACTS=true cargo build --release --features l2,l2-sql,gpu,sp1 --bin ethrex
@@ -191,6 +191,10 @@ Measured on 2026-10-16 on one machine: AMD Ryzen 9 9950X3D (16 cores), 60 GB RAM
 | L1 commit gas per batch | 185,482 | 185,479 | 185,478 | 185,479 |
 | L1 blob gas per batch | 131,072 | 131,072 | 131,072 | 131,072 |
 | L1 verify gas per batch | 413,486 | 413,688 | 349,337 | 349,345 |
+| L1 execution gas per transaction (commit + verify) | 558 | 1,136 | 496 | 1,037 |
+| L1 blob gas per transaction | 122 | 248 | 121 | 254 |
+| L1 fee per million transactions (ETH, at 10 gwei gas and 1 gwei blob gas) | 5.70 | 11.61 | 5.08 | 10.62 |
+| Prover GPU time per transaction (ms, 1 / settled TPS) | 20.1 | 38.6 | 51.4 | 88.4 |
 | GPU memory, max (MiB) | 30,330 | 29,948 | 26,038 | 26,102 |
 | GPU utilization, mean (%) | 61 | 51 | 34 | 37 |
 | GPU power, mean (W) | 398 | 433 | 230 | 211 |
@@ -203,7 +207,8 @@ How to read it:
 - The settled TPS is below the proven TPS by the time the prover spends between proofs (fetching the next batch input, the coordinator round trip, submitting the proof): the GPU sits idle roughly a quarter to a half of the time with one prover per GPU, which the GPU utilization row shows. Running two prover processes per GPU, or pipelining input fetch with proving, would recover most of it.
 - Behind the prover sits the committer, which also falls short of the sequencer. After each commit it waits a full commit interval before the next one, and a commit cycle (L1 reads, batch preparation and witness, sending the transaction and polling its receipt every 2 s) takes about 4 to 6 s, so with one block per batch it publishes one batch every 9 to 11 s at 5-second intervals: 108 ETH transfers per second against the sequencer's 205. A faster prover alone would therefore settle at most about 108 TPS of ETH transfers with these settings.
 - Proving seconds per Mgas is the figure to use for capacity planning; it depends on the workload (ERC20 transfers cost more gas per transaction but prove faster per gas than plain transfers, whose cost is dominated by signature recovery and state writes). Neither backend proves a block within the 5-second block time on this GPU: a full ETH-transfer block takes 3.3 block times on ZisK and 10 on SP1, so settlement is prover-bound and throughput parity would take about four ZisK provers or ten SP1 provers, each on its own GPU; a proof landing before the next block would need one batch split across GPUs, which the ethrex prover does not do.
-- L1 cost per batch is independent of the backend and of the workload: one blob plus a commit transaction of about 185k gas and a verification of about 413k gas.
+- L1 cost per batch is independent of the workload: one blob, a commit transaction of about 185k gas, and a verification of about 413k gas for a ZisK PLONK proof or about 349k gas for an SP1 Groth16 proof.
+- The operator's L1 cost per transaction is the batch's commit and verification execution gas, plus its blob gas, divided by the transactions in the batch. Both are fixed per batch, so the cost per transaction falls as batches hold more transactions: an ERC20 batch holds half as many transfers as an ETH one, so it costs twice as much per transfer. The fee row prices it at 10 gwei per execution gas and 1 gwei per blob gas, which are example prices rather than market data; the cost scales linearly with both, and the scripts take other prices (see Scripts). Execution gas dominates at these prices, so a cheaper proof to verify (SP1's Groth16 against ZisK's PLONK) shows up directly. The prover's cost per transaction is its GPU time, 1 / settled TPS when the GPU proves nonstop; multiply by a GPU-hour price to compare it with the L1 fee.
 
 ### Sensitivity: 1-second blocks
 
@@ -219,6 +224,10 @@ ETH transfers with the block time and the commit interval at 1 second instead of
 | Proving time per batch (s) | 16.5 | 16.5 | 50.2 | 50.7 |
 | Proven TPS | 65.0 | 65.1 | 21.5 | 21.3 |
 | GPU utilization, mean (%) | 61 | 63 | 34 | 35 |
+| L1 execution gas per transaction (commit + verify) | 558 | 557 | 496 | 496 |
+| L1 blob gas per transaction | 122 | 122 | 121 | 121 |
+| L1 fee per million transactions (ETH, at 10 gwei gas and 1 gwei blob gas) | 5.70 | 5.69 | 5.08 | 5.08 |
+| Prover GPU time per transaction (ms, 1 / settled TPS) | 20.1 | 20.0 | 51.4 | 51.4 |
 
 The block builder fills a blob-sized block in well under a second, so block production scales with the block time (about 1,000 ETH transfers per second at 1-second blocks) while the settled figure does not move for either backend: it is set by the prover, which still takes 16.5 s (ZisK) or 50 s (SP1) per blob-sized batch. The runs also show the next cap behind the prover: the committer waits a full commit interval after each commit and its own cycle takes about 6 seconds here, so at 1-second intervals it publishes about 180 ETH transfers per second (177.5 and 152.8 TPS committed), and at 5-second intervals about 100, however many provers there were. Raising sequencer throughput past that needs fewer bytes per transaction in the blob (state diffs or compression) or several blobs per batch, and a committer that pipelines its commit transactions.
 
