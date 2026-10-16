@@ -1,7 +1,8 @@
-//! Import of blocks received over the L2 `based` capability.
+//! Block sync over the L2 `based` capability across reconnects.
 //!
 //! A follower that already has blocks must keep importing new ones on a fresh connection, which
-//! is what it gets whenever the sequencer or the follower restarts.
+//! is what it gets whenever the sequencer or the follower restarts, and the sequencer should only
+//! re-send what the follower is missing.
 
 use std::{
     collections::BTreeMap,
@@ -26,7 +27,9 @@ use ethrex_common::{
     },
 };
 use ethrex_p2p::{
-    rlpx::l2::l2_connection::{L2ConnectedState, QueuedBlock, import_queued_blocks},
+    rlpx::l2::l2_connection::{
+        L2ConnectedState, QueuedBlock, import_queued_blocks, peer_head_on_local_chain,
+    },
     types::Node,
 };
 use ethrex_storage::{EngineType, Store};
@@ -91,6 +94,55 @@ async fn blocks_already_imported_are_skipped() {
         .unwrap();
     assert_eq!(store.get_latest_block_number().unwrap(), 7);
     assert!(l2_state.blocks_on_queue.is_empty());
+}
+
+/// A reconnecting follower that is behind on our chain gets blocks from its head on.
+#[tokio::test]
+async fn broadcast_starts_at_a_peer_head_on_our_chain() {
+    let chain = build_chain(5).await;
+    let (store, _) = follower_with(&chain).await;
+    let peer_head = &chain[2].header;
+
+    assert_eq!(
+        peer_head_on_local_chain(&store, Some(peer_head.number), peer_head.hash()).unwrap(),
+        Some(3)
+    );
+    // eth/68 only advertises the hash.
+    assert_eq!(
+        peer_head_on_local_chain(&store, None, peer_head.hash()).unwrap(),
+        Some(3)
+    );
+}
+
+/// A peer ahead of us already has every block we could send.
+#[tokio::test]
+async fn broadcast_starts_at_a_peer_head_ahead_of_ours() {
+    let chain = build_chain(5).await;
+    let (store, _) = follower_with(&chain[..3]).await;
+    let peer_head = &chain[4].header;
+
+    assert_eq!(
+        peer_head_on_local_chain(&store, Some(peer_head.number), peer_head.hash()).unwrap(),
+        Some(5)
+    );
+}
+
+/// A peer head that isn't on our chain gives no starting point.
+#[tokio::test]
+async fn broadcast_ignores_a_peer_head_off_our_chain() {
+    let chain = build_chain(5).await;
+    let other_chain = build_chain(3).await;
+    let (store, _) = follower_with(&chain).await;
+    let peer_head = &other_chain[2].header;
+
+    assert_eq!(
+        peer_head_on_local_chain(&store, Some(peer_head.number), peer_head.hash()).unwrap(),
+        None
+    );
+    assert_eq!(
+        peer_head_on_local_chain(&store, None, peer_head.hash()).unwrap(),
+        None
+    );
 }
 
 /// Blocks 1..=`length` produced on a separate store, as the sequencer would.
