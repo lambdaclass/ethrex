@@ -174,6 +174,7 @@ pub(crate) async fn perform(
             serve_requests: WindowCounter::new(),
             announced_hashes: WindowCounter::new(),
             short_tx_answer_strikes: 0,
+            registered_in_peer_table: false,
             txs_sent_to_peer: 0,
             received_txs_from_peer: false,
             missed_pongs: 0,

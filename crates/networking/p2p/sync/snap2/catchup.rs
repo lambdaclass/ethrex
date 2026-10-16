@@ -384,14 +384,14 @@ mod tests {
     }
 
     /// A live peer table with every node registered as a connected snap/2 peer.
-    fn table_with(store: &Store, nodes: &[Node]) -> PeerTable {
+    async fn table_with(store: &Store, nodes: &[Node]) -> PeerTable {
         let table = PeerTableServer::spawn_with_filter(
             H256::zero(),
             10,
             EthForkIdFilter::new(store.clone()),
         );
         for node in nodes {
-            table
+            let registered = table
                 .new_connected_peer(
                     node.clone(),
                     PeerConnection::unestablished(),
@@ -400,7 +400,9 @@ mod tests {
                     None,
                     false,
                 )
+                .await
                 .expect("register peer");
+            assert!(registered, "each test node is distinct");
         }
         table
     }
@@ -450,7 +452,7 @@ mod tests {
         let (from, headers, bals) = chain(&store, 3).await;
         let to = headers.last().expect("chain").clone();
         let (empty, full) = (node(1), node(2));
-        let table = table_with(&store, &[empty.clone(), full.clone()]);
+        let table = table_with(&store, &[empty.clone(), full.clone()]).await;
         // The empty peer starts one point ahead, so it is asked first. Once it
         // is charged the two tie, and a tie goes to the later-registered peer.
         table.record_success(empty.node_id()).expect("score");
@@ -515,7 +517,7 @@ mod tests {
         let (from, headers, bals) = chain(&store, 3).await;
         let to = headers.last().expect("chain").clone();
         let empty = node(1);
-        let table = table_with(&store, std::slice::from_ref(&empty));
+        let table = table_with(&store, std::slice::from_ref(&empty)).await;
         let script = HashMap::from([(empty.node_id(), Answer::Unavailable)]);
         let (_dir, flat) = flat_state();
         let (cursor, diagnostics) = (DownloadCursor::new(1), diagnostics());
@@ -567,7 +569,7 @@ mod tests {
         let (from, headers, bals) = chain(&store, 3).await;
         let to = headers.last().expect("chain").clone();
         let (empty, full) = (node(1), node(2));
-        let table = table_with(&store, &[empty.clone(), full.clone()]);
+        let table = table_with(&store, &[empty.clone(), full.clone()]).await;
         // A lead larger than the retry cap: charged once per attempt, the empty
         // peer would still out-rank the full one on every retry.
         let lead = i64::from(BAL_MAX_RETRIES_PER_BLOCK) + 2;
