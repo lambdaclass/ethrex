@@ -373,7 +373,9 @@ pub(crate) fn bls12_381_pairing_check(
 
 /// BLS12-381 map field element to G1 point.
 pub(crate) fn bls12_381_fp_to_g1(fp: &[u8; 48]) -> Result<[u8; 96], CryptoError> {
-    use bls12_381::{Fp, G1Affine, G1Projective, hash_to_curve::MapToCurve};
+    use bls12_381::{G1Affine, G1Projective, hash_to_curve::MapToCurve};
+    // `bls12_381` keeps its field types private; its hash-to-curve API names them.
+    type Fp = <G1Projective as MapToCurve>::Field;
 
     let fp_elem = Fp::from_bytes(fp)
         .into_option()
@@ -385,7 +387,9 @@ pub(crate) fn bls12_381_fp_to_g1(fp: &[u8; 48]) -> Result<[u8; 96], CryptoError>
 
 /// BLS12-381 map field element pair to G2 point.
 pub(crate) fn bls12_381_fp2_to_g2(fp2: ([u8; 48], [u8; 48])) -> Result<[u8; 192], CryptoError> {
-    use bls12_381::{Fp, Fp2, G2Affine, G2Projective, hash_to_curve::MapToCurve};
+    use bls12_381::{G1Projective, G2Affine, G2Projective, hash_to_curve::MapToCurve};
+    type Fp = <G1Projective as MapToCurve>::Field;
+    type Fp2 = <G2Projective as MapToCurve>::Field;
 
     let c0 = Fp::from_bytes(&fp2.0)
         .into_option()
@@ -407,7 +411,8 @@ pub(crate) fn bls12_381_fp2_to_g2(fp2: ([u8; 48], [u8; 48])) -> Result<[u8; 192]
 fn parse_bls12_g1(
     (x_bytes, y_bytes): ([u8; 48], [u8; 48]),
 ) -> Result<bls12_381::G1Affine, CryptoError> {
-    use bls12_381::{Fp, G1Affine};
+    use bls12_381::{G1Affine, G1Projective, hash_to_curve::MapToCurve};
+    type Fp = <G1Projective as MapToCurve>::Field;
 
     let x = Fp::from_bytes(&x_bytes)
         .into_option()
@@ -424,7 +429,15 @@ fn parse_bls12_g1(
         return Ok(G1Affine::identity());
     }
 
-    let affine = G1Affine::new_unchecked(x, y);
+    // Both coordinates are below the modulus, so none of the flag bits of the
+    // uncompressed encoding is set and it decodes to exactly (x, y), with no
+    // curve or subgroup check.
+    let mut uncompressed = [0u8; 96];
+    uncompressed[..48].copy_from_slice(&x_bytes);
+    uncompressed[48..].copy_from_slice(&y_bytes);
+    let affine = G1Affine::from_uncompressed_unchecked(&uncompressed)
+        .into_option()
+        .ok_or(CryptoError::InvalidInput("invalid G1 encoding"))?;
 
     if !bool::from(affine.is_on_curve()) {
         return Err(CryptoError::InvalidPoint("G1 point not on curve"));
@@ -436,20 +449,21 @@ fn parse_bls12_g1(
 /// Parse an unpadded BLS12-381 G2 point from four 48-byte field elements.
 /// EIP-2537 encodes G2 as (x_0, x_1, y_0, y_1) where x = x_0 + x_1*u in Fp2.
 fn parse_bls12_g2(
-    (x0, x1, y0, y1): ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
+    (x0_bytes, x1_bytes, y0_bytes, y1_bytes): ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
 ) -> Result<bls12_381::G2Affine, CryptoError> {
-    use bls12_381::{Fp, Fp2, G2Affine};
+    use bls12_381::{G1Projective, G2Affine, hash_to_curve::MapToCurve};
+    type Fp = <G1Projective as MapToCurve>::Field;
 
-    let x0 = Fp::from_bytes(&x0)
+    let x0 = Fp::from_bytes(&x0_bytes)
         .into_option()
         .ok_or(CryptoError::InvalidInput("G2 x0 >= field modulus"))?;
-    let x1 = Fp::from_bytes(&x1)
+    let x1 = Fp::from_bytes(&x1_bytes)
         .into_option()
         .ok_or(CryptoError::InvalidInput("G2 x1 >= field modulus"))?;
-    let y0 = Fp::from_bytes(&y0)
+    let y0 = Fp::from_bytes(&y0_bytes)
         .into_option()
         .ok_or(CryptoError::InvalidInput("G2 y0 >= field modulus"))?;
-    let y1 = Fp::from_bytes(&y1)
+    let y1 = Fp::from_bytes(&y1_bytes)
         .into_option()
         .ok_or(CryptoError::InvalidInput("G2 y1 >= field modulus"))?;
 
@@ -457,7 +471,16 @@ fn parse_bls12_g2(
         return Ok(G2Affine::identity());
     }
 
-    let affine = G2Affine::new_unchecked(Fp2 { c0: x0, c1: x1 }, Fp2 { c0: y0, c1: y1 });
+    // As for G1, the canonical coordinates leave the flag bits clear. bls12_381
+    // orders each Fp2 as c1 || c0, the reverse of EIP-2537.
+    let mut uncompressed = [0u8; 192];
+    uncompressed[0..48].copy_from_slice(&x1_bytes);
+    uncompressed[48..96].copy_from_slice(&x0_bytes);
+    uncompressed[96..144].copy_from_slice(&y1_bytes);
+    uncompressed[144..192].copy_from_slice(&y0_bytes);
+    let affine = G2Affine::from_uncompressed_unchecked(&uncompressed)
+        .into_option()
+        .ok_or(CryptoError::InvalidInput("invalid G2 encoding"))?;
 
     if !bool::from(affine.is_on_curve()) {
         return Err(CryptoError::InvalidPoint("G2 point not on curve"));

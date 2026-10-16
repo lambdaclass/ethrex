@@ -162,6 +162,10 @@ contract OnChainProposer is
 
         // SP1 constants
         REQUIRE_SP1_PROOF = requireSp1Proof;
+        // In Aligned mode, SP1 proofs are verified through the AlignedProofAggregator,
+        // not through a direct SP1 verifier contract, so we don't require sp1verifier.
+        if (REQUIRE_SP1_PROOF && !aligned && sp1verifier == address(0))
+            revert MissingSp1Verifier();
         SP1_VERIFIER_ADDRESS = sp1verifier;
 
         // TDX constants
@@ -233,6 +237,21 @@ contract OnChainProposer is
         // as we may want to disable the version
         verificationKeys[commit_hash][SP1_VERIFIER_ID] = new_vk;
         emit VerificationKeyUpgraded("SP1", commit_hash, new_vk);
+    }
+
+    /// @inheritdoc IOnChainProposer
+    function upgradeSP1Verifier(address new_verifier) public onlyOwner {
+        // Aligned mode verifies SP1 proofs through the AlignedProofAggregator instead.
+        if (REQUIRE_SP1_PROOF && !ALIGNED_MODE && new_verifier == address(0))
+            revert MissingSp1Verifier();
+        // A mistyped address would only show up when the next proof fails to verify.
+        if (new_verifier != address(0) && new_verifier.code.length == 0)
+            revert Sp1VerifierHasNoCode();
+        // Proofs of batches committed before the swap only verify against the old verifier.
+        if (lastVerifiedBatch != lastCommittedBatch)
+            revert UnverifiedBatchesPending(lastVerifiedBatch, lastCommittedBatch);
+        SP1_VERIFIER_ADDRESS = new_verifier;
+        emit SP1VerifierUpgraded(new_verifier);
     }
 
     /// @inheritdoc IOnChainProposer

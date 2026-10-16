@@ -21,9 +21,6 @@ pub mod zisk;
 #[cfg(feature = "zisk")]
 pub mod zisk_profile;
 
-#[cfg(feature = "openvm")]
-pub mod openvm;
-
 pub use error::BackendError;
 
 // Re-export backend structs
@@ -41,9 +38,6 @@ pub use zisk::ZiskBackend;
 #[cfg(feature = "zisk")]
 pub use zisk_profile::{ZiskAirCost, parse_air_cost};
 
-#[cfg(feature = "openvm")]
-pub use openvm::OpenVmBackend;
-
 /// Enum for selecting which backend to use (for CLI/config).
 #[derive(Default, Debug, Deserialize, Serialize, Copy, Clone, ValueEnum, PartialEq)]
 pub enum BackendType {
@@ -58,8 +52,6 @@ pub enum BackendType {
     #[cfg(feature = "zisk")]
     #[value(name = "zisk")]
     ZisK,
-    #[cfg(feature = "openvm")]
-    OpenVM,
 }
 
 // Needed for Clap
@@ -75,8 +67,6 @@ impl FromStr for BackendType {
             "risc0" => Ok(BackendType::RISC0),
             #[cfg(feature = "zisk")]
             "zisk" => Ok(BackendType::ZisK),
-            #[cfg(feature = "openvm")]
-            "openvm" => Ok(BackendType::OpenVM),
             _ => Err(Self::Err::from("Invalid backend")),
         }
     }
@@ -84,7 +74,7 @@ impl FromStr for BackendType {
 
 /// Trait defining the interface for prover backends.
 ///
-/// All proving backends (SP1, RISC0, ZisK, OpenVM, Exec) implement this trait,
+/// All proving backends (SP1, RISC0, ZisK, Exec) implement this trait,
 /// providing a unified interface for execution, proving, verification, and
 /// batch proof conversion.
 pub trait ProverBackend {

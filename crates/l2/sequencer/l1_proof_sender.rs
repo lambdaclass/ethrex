@@ -47,9 +47,7 @@ use crate::{
 use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 
 #[cfg(feature = "sp1")]
-use ethrex_guest_program::ZKVM_SP1_PROGRAM_ELF;
-#[cfg(feature = "sp1")]
-use sp1_sdk::{HashableKey, Prover, SP1ProofWithPublicValues, SP1VerifyingKey};
+use sp1_sdk::{SP1ProofWithPublicValues, SP1VerifyingKey};
 
 const VERIFY_BATCHES_FUNCTION_SIGNATURE: &str =
     "verifyBatches(uint256,bytes[],bytes[],bytes[],bytes[])";
@@ -148,11 +146,14 @@ impl L1ProofSender {
 
     #[cfg(feature = "sp1")]
     fn init_sp1_vk() -> Result<SP1VerifyingKey, ProofSenderError> {
-        // Setup the prover client to get the verifying key
-        let client = sp1_sdk::CpuProver::new();
-        let (_pk, vk) = client.setup(ZKVM_SP1_PROGRAM_ELF);
-        info!("Initialized SP1 verifying key: {}", vk.bytes32());
-        Ok(vk)
+        // The SP1 guest is built with SP1 6, while the Aligned SDK still uses SP1 5,
+        // whose types and verifier cannot take SP1 6 proofs or programs. Aligned mode
+        // with SP1 is unavailable until the Aligned SDK moves to SP1 6.
+        Err(ProofSenderError::UnexpectedError(
+            "Aligned mode does not support SP1 proofs yet: the SP1 guest is built with SP1 6 \
+             and the Aligned SDK still uses SP1 5"
+                .to_string(),
+        ))
     }
 
     pub async fn spawn(

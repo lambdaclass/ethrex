@@ -29,15 +29,7 @@ ethrex-guest-program = { path = "../guest-program" }
 
 risc0-zkvm = { version = "=3.0.3", optional = true, features = ["getrandom"] }
 
-sp1-sdk = { version = "=5.0.8", optional = true }
-sp1-prover = { version = "=5.0.8", optional = true }
-
-openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", package = "openvm-sdk", optional = true, features = [
-    "evm-prove",
-    "parallel",
-] }
-openvm-continuations = { git = "https://github.com/openvm-org/openvm.git", package = "openvm-continuations", optional = true }
-openvm-stark-sdk = { git = "https://github.com/openvm-org/stark-backend.git", package = "openvm-stark-sdk", tag = "v1.3.0", optional = true }
+sp1-sdk = { version = "=6.9.0", optional = true, features = ["blocking"] }
 
 # In-process ZisK proving. Must match the `ziskos` tag in crates/guest-program and
 # ZISK_VERSION in .github/actions/install-zisk/action.yml: the proving keys the SDK
@@ -52,7 +44,7 @@ path = "src/lib.rs"
 [features]
 default = []
 risc0 = ["ethrex-guest-program/risc0", "dep:risc0-zkvm", "ethrex-common/risc0"]
-sp1 = ["ethrex-guest-program/sp1", "dep:sp1-sdk", "dep:sp1-prover"]
+sp1 = ["ethrex-guest-program/sp1", "dep:sp1-sdk"]
 # `zisk` alone gives the guest, `cargo-zisk execute` and `ziskemu` profiling and
 # builds on every host. `zisk-sdk` adds in-process proving and verification and is
 # Linux x86-64 only (see crates/prover/src/backend/zisk.rs).
@@ -61,15 +53,9 @@ zisk-sdk = ["zisk", "dep:zisk-sdk", "dep:hex"]
 # Forces the CPU build of the SDK's prover library on hosts that have a CUDA
 # toolkit installed (the SDK compiles its CUDA kernels whenever nvcc is found).
 zisk-cpu-only = ["zisk-sdk?/cpu-only"]
-openvm = [
-    "ethrex-guest-program/openvm",
-    "dep:openvm-sdk",
-    "dep:openvm-stark-sdk",
-    "dep:openvm-continuations",
-]
 profiling = ["sp1-sdk?/profiling"]
 
-gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda", "openvm-sdk?/cuda"]
+gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda"]
 l2 = ["ethrex-guest-program/l2"]
 
 # temporary feature until we fix cargo-zisk setup-rom from failing in the CI

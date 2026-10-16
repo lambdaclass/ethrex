@@ -58,6 +58,10 @@ interface IOnChainProposer {
     error CannotRevertVerifiedBatch(); // 0xdb2665e8
     error NoBatchesToRevert(); // 0xcd988645
 
+    // Verifier upgrade errors
+    error UnverifiedBatchesPending(uint256 lastVerified, uint256 lastCommitted); // 0x47c3562a
+    error Sp1VerifierHasNoCode(); // 0x16768ee8
+
     /// @notice The latest committed batch number.
     /// @return The latest committed batch number as a uint256.
     function lastCommittedBatch() external view returns (uint256);
@@ -97,6 +101,20 @@ interface IOnChainProposer {
         bytes32 commit_hash,
         bytes32 new_vk
     ) external;
+
+    /// @notice The SP1 verifier contract has been replaced.
+    /// @dev Event emitted when the SP1 verifier address is upgraded.
+    /// @param newVerifier The address of the new SP1 verifier contract.
+    event SP1VerifierUpgraded(address newVerifier);
+
+    /// @notice Replaces the SP1 verifier contract. A new SP1 version can wrap its proofs
+    /// in a different Groth16 circuit that only a matching verifier accepts, so moving
+    /// the prover to it needs the new verifier as well as the new verification key.
+    /// @dev Reverts with `UnverifiedBatchesPending` unless every committed batch is verified:
+    /// their proofs only verify against the verifier they were proven for.
+    /// Also reverts with `Sp1VerifierHasNoCode` for a non-zero address without code.
+    /// @param new_verifier the address of the new SP1 verifier contract
+    function upgradeSP1Verifier(address new_verifier) external;
 
     /// @notice Upgrades the RISC0 verification key that represents the sequencer's code.
     /// @param new_vk new verification key for RISC0 verifier
