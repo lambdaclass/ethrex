@@ -35,13 +35,13 @@ pub struct Genesis {
     pub difficulty: U256,
     #[serde(default, with = "crate::serde_utils::bytes")]
     pub extra_data: Bytes,
-    #[serde(with = "crate::serde_utils::u64::hex_str")]
+    #[serde(with = "crate::serde_utils::u64::hex_or_dec")]
     pub gas_limit: u64,
-    #[serde(with = "crate::serde_utils::u64::hex_str")]
+    #[serde(with = "crate::serde_utils::u64::hex_or_dec")]
     pub nonce: u64,
     #[serde(alias = "mixHash", alias = "mixhash")]
     pub mix_hash: H256,
-    #[serde(deserialize_with = "crate::serde_utils::u64::deser_hex_or_dec_str")]
+    #[serde(deserialize_with = "crate::serde_utils::u64::hex_or_dec::deserialize")]
     #[serde(serialize_with = "crate::serde_utils::u256::serialize_number")]
     pub timestamp: u64,
     #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
@@ -780,7 +780,7 @@ pub struct GenesisAccount {
     pub storage: BTreeMap<U256, U256>,
     #[serde(deserialize_with = "crate::serde_utils::u256::deser_hex_or_dec_str")]
     pub balance: U256,
-    #[serde(default, with = "crate::serde_utils::u64::hex_str")]
+    #[serde(default, with = "crate::serde_utils::u64::hex_or_dec")]
     pub nonce: u64,
 }
 
@@ -932,6 +932,53 @@ mod tests {
             err.to_string().contains("finite, non-negative"),
             "error should name the sign/finiteness cause, got: {err}"
         );
+    }
+
+    #[test]
+    fn genesis_quantities_accept_numbers_and_hex_or_decimal_strings() {
+        // geth reads these fields as a JSON number, a 0x-hex string or a decimal
+        // string, and genesis files written by other tooling use all three. An
+        // unprefixed string is decimal, so "10" must not be read as 0x10.
+        let fixture: serde_json::Value = serde_json::from_reader(BufReader::new(
+            File::open("../../fixtures/genesis/l1.json").expect("Failed to open genesis file"),
+        ))
+        .expect("Failed to deserialize genesis file");
+        for encoded in [
+            serde_json::json!(10),
+            serde_json::json!("0xa"),
+            serde_json::json!("10"),
+        ] {
+            let account: GenesisAccount =
+                serde_json::from_value(serde_json::json!({"balance": "0", "nonce": encoded}))
+                    .expect("account nonce should parse");
+            assert_eq!(account.nonce, 10, "account nonce {encoded}");
+
+            let mut genesis = fixture.clone();
+            for field in ["gasLimit", "nonce", "timestamp"] {
+                genesis[field] = encoded.clone();
+            }
+            let genesis: Genesis =
+                serde_json::from_value(genesis).expect("genesis header fields should parse");
+            assert_eq!(
+                (genesis.gas_limit, genesis.nonce, genesis.timestamp),
+                (10, 10, 10),
+                "genesis header fields {encoded}"
+            );
+        }
+
+        for invalid in [
+            serde_json::json!(-1),
+            serde_json::json!("0xzz"),
+            serde_json::json!(true),
+        ] {
+            assert!(
+                serde_json::from_value::<GenesisAccount>(
+                    serde_json::json!({"balance": "0", "nonce": invalid})
+                )
+                .is_err(),
+                "account nonce {invalid} must be rejected"
+            );
+        }
     }
 
     #[test]

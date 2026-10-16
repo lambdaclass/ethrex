@@ -223,6 +223,36 @@ pub mod u64 {
             serializer.serialize_str(&format!("{value:#x}"))
         }
     }
+    /// Reads a `u64` the way geth reads genesis quantities: a JSON number, a
+    /// `0x`-prefixed hex string or a decimal string. Writes a `0x` hex string.
+    pub mod hex_or_dec {
+        use super::*;
+
+        pub fn deserialize<'de, D>(d: D) -> Result<u64, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            match serde_json::Value::deserialize(d)? {
+                serde_json::Value::Number(number) => number
+                    .as_u64()
+                    .ok_or_else(|| D::Error::custom("Failed to deserialize u64 value")),
+                serde_json::Value::String(value) => {
+                    super::deser_hex_or_dec_str(value.into_deserializer())
+                }
+                other => Err(D::Error::custom(format!(
+                    "expected a number or a string for a u64 value, got {other}"
+                ))),
+            }
+        }
+
+        pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            super::hex_str::serialize(value, serializer)
+        }
+    }
+
     pub mod hex_str_padding {
         use super::*;
 
