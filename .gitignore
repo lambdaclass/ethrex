@@ -154,3 +154,5 @@ __pycache__/
 
 # Scratch output from .github/scripts/extract-stateless-fixture.sh
 /output
+# L2 TPS measurement runs (scripts/l2_tps)
+tps-runs/
