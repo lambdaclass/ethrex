@@ -24,6 +24,7 @@ tokio = { workspace = true, features = ["full"] }
 datatest-stable = "0.2.9"
 regex = "1.11.1"
 rayon.workspace = true
+tracing.workspace = true
 
 [lib]
 path = "./lib.rs"

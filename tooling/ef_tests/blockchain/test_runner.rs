@@ -9,19 +9,22 @@ use ethrex_blockchain::{
     error::{ChainError, InvalidBlockError},
     fork_choice::apply_fork_choice,
 };
-#[cfg(not(feature = "stateless"))]
-use ethrex_common::types::block_access_list::BlockAccessList;
+use ethrex_common::types::block_access_list::{AccountChanges, BlockAccessList, SlotChange};
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 #[cfg(feature = "stateless")]
 use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
 use ethrex_common::{
+    H256,
     constants::EMPTY_KECCAK_HASH,
     types::{
         Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
         InvalidBlockHeaderError,
     },
+    utils::keccak,
 };
 use ethrex_rlp::decode::RLPDecode;
+use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::structs::Encoder;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmError;
 use regex::Regex;
@@ -187,9 +190,10 @@ async fn run(
         // Won't panic because test has been validated
         let block: CoreBlock = block_fixture.block().unwrap().clone().into();
         let hash = block.hash();
+        let bal = delivered_access_list(block_fixture.block_access_list(), &block);
 
         // Attempt to add the block as the head of the chain
-        let chain_result = blockchain.add_block_pipeline(block.clone(), None);
+        let chain_result = blockchain.add_block_pipeline(block.clone(), bal);
 
         match chain_result {
             Err(error) => {
@@ -229,6 +233,68 @@ async fn run(
     // Final post-state verification
     check_poststate_against_db(test_key, test, store).await;
     Ok(())
+}
+
+/// Tracing target of the event the runner emits when it drops a delivered access
+/// list, so a report can tell a dropped list from none.
+pub const DROPPED_ACCESS_LIST_TARGET: &str = "ef_tests::dropped_access_list";
+
+/// The access list the fixture delivers with `block`, if the header commits to it.
+///
+/// Off the engine path a delivered list is a hint, not part of the block: one that
+/// does not parse, or whose hash as delivered differs from `block_access_list_hash`,
+/// is dropped and the block computes its own, as full sync does with a peer's list.
+/// A list the header does commit to is attached even if it is malformed, and the
+/// block is then judged with it.
+pub fn delivered_access_list(
+    delivered: Result<Option<BlockAccessList>, String>,
+    block: &CoreBlock,
+) -> Option<Arc<BlockAccessList>> {
+    let bal = match delivered {
+        Ok(None) => return None,
+        Ok(Some(bal)) => Some(bal),
+        Err(_) => None,
+    }
+    .filter(|bal| block.header.block_access_list_hash == Some(hash_as_delivered(bal)));
+    if bal.is_none() {
+        tracing::debug!(
+            target: DROPPED_ACCESS_LIST_TARGET,
+            hash = %format_args!("{:#x}", block.hash()),
+            "Dropping the delivered access list"
+        );
+    }
+    bal.map(Arc::new)
+}
+
+/// keccak of the list's RLP in the order given, duplicates and all.
+/// `BlockAccessList`'s own encoding sorts every list, so a misordered list would
+/// hash like the canonical one.
+pub fn hash_as_delivered(bal: &BlockAccessList) -> H256 {
+    struct Slot<'a>(&'a SlotChange);
+    impl RLPEncode for Slot<'_> {
+        fn encode(&self, buf: &mut dyn bytes::BufMut) {
+            Encoder::new(buf)
+                .encode_field(&self.0.slot)
+                .encode_field(&self.0.slot_changes)
+                .finish();
+        }
+    }
+    struct Account<'a>(&'a AccountChanges);
+    impl RLPEncode for Account<'_> {
+        fn encode(&self, buf: &mut dyn bytes::BufMut) {
+            let slots: Vec<Slot> = self.0.storage_changes.iter().map(Slot).collect();
+            Encoder::new(buf)
+                .encode_field(&self.0.address)
+                .encode_field(&slots)
+                .encode_field(&self.0.storage_reads)
+                .encode_field(&self.0.balance_changes)
+                .encode_field(&self.0.nonce_changes)
+                .encode_field(&self.0.code_changes)
+                .finish();
+        }
+    }
+    let accounts: Vec<Account> = bal.accounts().iter().map(Account).collect();
+    keccak(accounts.encode_to_vec())
 }
 
 /// Two-pass parallel execution check for Amsterdam tests.
@@ -1062,5 +1128,133 @@ fn parse_expected_valid_flag(hex: &str) -> Result<bool, String> {
         n => Err(format!(
             "invalid validity byte 0x{n:02x} (expected 0x00 or 0x01)"
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
+    use ethrex_common::{
+        H160, H256,
+        types::{DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Genesis},
+    };
+
+    async fn amsterdam_store() -> Store {
+        let genesis_path = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../fixtures/genesis/l1-bal.json"
+        ));
+        let genesis = Genesis::try_from(genesis_path).expect("Failed to load genesis");
+        let mut store =
+            Store::new("store.db", EngineType::InMemory).expect("Failed to build store");
+        store
+            .add_initial_state(genesis)
+            .await
+            .expect("Failed to add genesis");
+        store
+    }
+
+    /// An empty Amsterdam block on top of genesis and the access list it commits to.
+    async fn amsterdam_block() -> (CoreBlock, BlockAccessList) {
+        let store = amsterdam_store().await;
+        let blockchain = Blockchain::for_test_harness_with_pool(store.clone(), merkle_pool());
+        let genesis_header = store.get_block_header(0).unwrap().unwrap();
+        let args = BuildPayloadArgs {
+            parent: genesis_header.hash(),
+            timestamp: genesis_header.timestamp + 12,
+            fee_recipient: H160::zero(),
+            random: H256::zero(),
+            withdrawals: Some(Vec::new()),
+            beacon_root: Some(H256::zero()),
+            slot_number: Some(1),
+            version: 1,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        };
+        let block_template = create_payload(&args, &store, Bytes::new()).unwrap();
+        let result = blockchain.build_payload(block_template).unwrap();
+        let bal = result
+            .block_access_list
+            .expect("an Amsterdam block records an access list");
+        (result.payload, bal)
+    }
+
+    async fn import(
+        block: &CoreBlock,
+        bal: Option<Arc<BlockAccessList>>,
+        bal_parallel_exec: bool,
+    ) -> Result<(), ChainError> {
+        let mut blockchain =
+            Blockchain::for_test_harness_with_pool(amsterdam_store().await, merkle_pool());
+        blockchain.options.bal_parallel_exec_enabled = bal_parallel_exec;
+        blockchain
+            .add_block_pipeline(block.clone(), bal)
+            .map(|_| ())
+    }
+
+    /// A delivered list the header does not commit to as delivered is dropped, and the
+    /// block imports without it in both modes. One the header does commit to is
+    /// attached, even out of order, and then judged with the block.
+    #[tokio::test]
+    async fn a_mismatched_delivered_list_is_dropped_and_the_block_imports() {
+        let (block, bal) = amsterdam_block().await;
+        // The block-start system calls touch several accounts, so the list can be
+        // both shortened and reordered.
+        assert!(bal.accounts().len() >= 2);
+        let mut dropped = bal.accounts().to_vec();
+        dropped.pop();
+        let dropped = BlockAccessList::from_accounts(dropped);
+        let mut reordered = bal.accounts().to_vec();
+        reordered.reverse();
+        let reordered = BlockAccessList::from_accounts(reordered);
+
+        // For a list in canonical order the hash as delivered is the commitment.
+        assert_eq!(
+            Some(hash_as_delivered(&bal)),
+            block.header.block_access_list_hash
+        );
+        assert!(delivered_access_list(Ok(Some(bal)), &block).is_some());
+        // Attached, the shortened list fails the block on the parallel executor; that
+        // is what dropping it avoids.
+        assert!(
+            import(&block, Some(Arc::new(dropped.clone())), true)
+                .await
+                .is_err()
+        );
+
+        for (name, delivered) in [
+            ("an account dropped", Ok(Some(dropped))),
+            ("accounts reordered", Ok(Some(reordered.clone()))),
+            ("a list that does not parse", Err("unparseable".to_string())),
+        ] {
+            let used = delivered_access_list(delivered, &block);
+            assert!(used.is_none(), "{name}: the list must be dropped");
+            for parallel in [true, false] {
+                let result = import(&block, used.clone(), parallel).await;
+                assert!(
+                    result.is_ok(),
+                    "{name}, parallel={parallel}: the block must import, got {result:?}"
+                );
+            }
+        }
+
+        // A header committing to the reordered bytes gets the reordered list, which
+        // makes the block invalid.
+        let mut committed = block.clone();
+        committed.header.block_access_list_hash = Some(hash_as_delivered(&reordered));
+        let used = delivered_access_list(Ok(Some(reordered)), &committed);
+        assert!(
+            used.is_some(),
+            "a list the header commits to must be attached"
+        );
+        for parallel in [true, false] {
+            let result = import(&committed, used.clone(), parallel).await;
+            assert!(
+                result.is_err(),
+                "parallel={parallel}: a block committing to a misordered list must be rejected"
+            );
+        }
     }
 }

@@ -1,4 +1,8 @@
 use bytes::Bytes;
+use ethrex_common::types::block_access_list::{
+    AccountChanges, BalanceChange, BlockAccessList, CodeChange, NonceChange, SlotChange,
+    StorageChange,
+};
 use ethrex_common::types::{
     Account as ethrexAccount, AccountInfo, Block as CoreBlock, BlockBody, Code, EIP1559Transaction,
     EIP2930Transaction, EIP4844Transaction, EIP7702Transaction, LegacyTransaction,
@@ -342,6 +346,125 @@ impl BlockWithRLP {
             Some(BlockInner::Block(ref block)) => Some(block),
             Some(BlockInner::DecodedRLP(ref decoded)) => Some(&decoded.rlp_decoded),
             None => None,
+        }
+    }
+
+    /// The block access list the fixture delivers with this block: `blockAccessList`,
+    /// or `rlp_decoded.blockAccessList` for a block expected to be invalid.
+    pub fn block_access_list(&self) -> Result<Option<BlockAccessList>, String> {
+        let Some(json) = self.block().and_then(|b| b.block_access_list_data.as_ref()) else {
+            return Ok(None);
+        };
+        let accounts: Vec<FixtureAccountChanges> = serde_json::from_value(json.clone())
+            .map_err(|e| format!("failed to parse the fixture's blockAccessList: {e}"))?;
+        Ok(Some(BlockAccessList::from_accounts(
+            accounts.into_iter().map(Into::into).collect(),
+        )))
+    }
+}
+
+/// One account of a fixture's `blockAccessList`, in the fixture's JSON encoding.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FixtureAccountChanges {
+    address: Address,
+    #[serde(default)]
+    storage_changes: Vec<FixtureSlotChanges>,
+    #[serde(default, with = "ethrex_common::serde_utils::u256::vec")]
+    storage_reads: Vec<U256>,
+    #[serde(default)]
+    balance_changes: Vec<FixtureBalanceChange>,
+    #[serde(default)]
+    nonce_changes: Vec<FixtureNonceChange>,
+    #[serde(default)]
+    code_changes: Vec<FixtureCodeChange>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FixtureSlotChanges {
+    #[serde(deserialize_with = "ethrex_common::serde_utils::u256::deser_hex_str")]
+    slot: U256,
+    slot_changes: Vec<FixtureStorageChange>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FixtureStorageChange {
+    #[serde(with = "ethrex_common::serde_utils::u32::hex_str")]
+    block_access_index: u32,
+    #[serde(deserialize_with = "ethrex_common::serde_utils::u256::deser_hex_str")]
+    post_value: U256,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FixtureBalanceChange {
+    #[serde(with = "ethrex_common::serde_utils::u32::hex_str")]
+    block_access_index: u32,
+    #[serde(deserialize_with = "ethrex_common::serde_utils::u256::deser_hex_str")]
+    post_balance: U256,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FixtureNonceChange {
+    #[serde(with = "ethrex_common::serde_utils::u32::hex_str")]
+    block_access_index: u32,
+    #[serde(with = "ethrex_common::serde_utils::u64::hex_str")]
+    post_nonce: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FixtureCodeChange {
+    #[serde(with = "ethrex_common::serde_utils::u32::hex_str")]
+    block_access_index: u32,
+    #[serde(with = "ethrex_common::serde_utils::bytes")]
+    new_code: Bytes,
+}
+
+impl From<FixtureAccountChanges> for AccountChanges {
+    fn from(account: FixtureAccountChanges) -> Self {
+        AccountChanges {
+            address: account.address,
+            storage_changes: account
+                .storage_changes
+                .into_iter()
+                .map(|slot| SlotChange {
+                    slot: slot.slot,
+                    slot_changes: slot
+                        .slot_changes
+                        .into_iter()
+                        .map(|c| StorageChange::new(c.block_access_index, c.post_value))
+                        .collect(),
+                })
+                .collect(),
+            storage_reads: account.storage_reads,
+            balance_changes: account
+                .balance_changes
+                .into_iter()
+                .map(|c| BalanceChange {
+                    block_access_index: c.block_access_index,
+                    post_balance: c.post_balance,
+                })
+                .collect(),
+            nonce_changes: account
+                .nonce_changes
+                .into_iter()
+                .map(|c| NonceChange {
+                    block_access_index: c.block_access_index,
+                    post_nonce: c.post_nonce,
+                })
+                .collect(),
+            code_changes: account
+                .code_changes
+                .into_iter()
+                .map(|c| CodeChange {
+                    block_access_index: c.block_access_index,
+                    new_code: c.new_code,
+                })
+                .collect(),
         }
     }
 }
