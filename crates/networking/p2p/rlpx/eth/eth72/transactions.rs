@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use crate::rlpx::{
     eth::transactions::{
@@ -16,7 +16,7 @@ use ethrex_common::types::{Fork, P2PTransaction, WrappedEIP4844Transaction};
 use ethrex_common::{H256, types::Transaction};
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{
-    encode::RLPEncode,
+    encode::{RLPEncode, list_length},
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
@@ -296,6 +296,21 @@ pub fn encode_elided_canonical(wrapped: &WrappedEIP4844Transaction) -> Vec<u8> {
     out
 }
 
+/// The length of [`encode_elided_canonical`]'s output, without encoding it.
+pub fn elided_canonical_len(wrapped: &WrappedEIP4844Transaction) -> usize {
+    // An empty `Vec` does not allocate.
+    let empty_blobs: Vec<Vec<u8>> = Vec::new();
+    let payload = wrapped.tx.length()
+        + wrapped
+            .wrapper_version
+            .map_or(0, |version| version.length())
+        + empty_blobs.length()
+        + wrapped.blobs_bundle.commitments.length()
+        + wrapped.blobs_bundle.proofs.length();
+    // The type byte, then the list.
+    1 + list_length(payload)
+}
+
 /// A transaction as it appears in an eth/72 `PooledTransactions`: an RLP byte
 /// string holding the canonical encoding, with the blob payload elided for type 3.
 struct Elided<'a>(&'a P2PTransaction);
@@ -335,18 +350,20 @@ impl PooledTransactions72 {
     /// Validates that received txs match the request.
     /// Size check is skipped for blob txs since announced size reflects full blobs
     /// while eth/72 uses elided encoding.
+    /// Validates that the received TXs match the request, returning each one's hash with its
+    /// size as delivered (blob transactions without their blobs).
     pub fn validate_requested(
         &self,
         requested: &NewPooledTransactionHashes72,
         _fork: Fork,
-    ) -> Result<(), MempoolError> {
+    ) -> Result<HashMap<H256, usize>, MempoolError> {
         // A well-formed response contains each requested tx at most once; reject duplicates
         // before any per-tx work so a peer echoing one tx N times can't balloon the response
         // (mirrors the eth/71 path in `PooledTransactions::validate_requested`).
-        let mut seen = HashSet::with_capacity(self.pooled_transactions.len());
+        let mut delivered = HashMap::with_capacity(self.pooled_transactions.len());
         for tx in &self.pooled_transactions {
             let tx_hash = tx.compute_hash();
-            if !seen.insert(tx_hash) {
+            if delivered.contains_key(&tx_hash) {
                 return Err(MempoolError::DuplicatePooledTx);
             }
             let Some(pos) = requested
@@ -363,9 +380,9 @@ impl PooledTransactions72 {
             }
             // Size validation skipped for blob txs: announced size reflects full-blob
             // encoding while eth/72 elided encoding is smaller.
+            let tx_size = tx.encode_canonical_len();
             if tx.tx_type() as u8 != 3 {
                 let expected_size = requested.transaction_sizes[pos];
-                let tx_size = tx.encode_canonical_len();
                 // Same tolerance as the eth/71 path: geth's tx fetcher allows up to 8 bytes
                 // of skew between the announced and actual size before treating it as a
                 // protocol violation.
@@ -373,8 +390,9 @@ impl PooledTransactions72 {
                     return Err(MempoolError::InvalidPooledTxSize);
                 }
             }
+            delivered.insert(tx_hash, tx_size);
         }
-        Ok(())
+        Ok(delivered)
     }
 
     /// Stores transactions; blob txs are stored with commitments+proofs, blobs elided.
@@ -453,5 +471,41 @@ impl RLPxMessage for PooledTransactions72 {
             decoder.decode_field("pooledTransactions")?;
 
         Ok(Self::new(id, pooled_transactions))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::{BYTES_PER_BLOB, BlobsBundle, EIP4844Transaction};
+
+    #[test]
+    fn elided_length_matches_the_elided_encoding() {
+        let bare = WrappedEIP4844Transaction {
+            tx: EIP4844Transaction::default(),
+            wrapper_version: None,
+            blobs_bundle: BlobsBundle::default(),
+        };
+        // A v1 sidecar: one blob, its commitment and its 128 cell proofs, long enough for every
+        // list to take a multi-byte RLP length.
+        let v1 = WrappedEIP4844Transaction {
+            tx: EIP4844Transaction {
+                blob_versioned_hashes: vec![H256::zero()],
+                ..Default::default()
+            },
+            wrapper_version: Some(1),
+            blobs_bundle: BlobsBundle {
+                blobs: vec![[0; BYTES_PER_BLOB]],
+                commitments: vec![[1; 48]],
+                proofs: vec![[2; 48]; 128],
+                version: 1,
+            },
+        };
+        for wrapped in [bare, v1] {
+            assert_eq!(
+                elided_canonical_len(&wrapped),
+                encode_elided_canonical(&wrapped).len()
+            );
+        }
     }
 }
