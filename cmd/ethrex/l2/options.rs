@@ -1220,7 +1220,7 @@ pub struct ProverClientOptions {
         long,
         value_name = "URL",
         env = "ETHREX_SP1_SERVER",
-        help = "Url to the moongate server to use when using sp1 backend",
+        help = "Ignored: SP1 6 proves on the local sp1-gpu-server and has no remote prover server",
         help_heading = "Prover client options"
     )]
     pub sp1_server: Option<Url>,

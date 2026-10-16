@@ -13,7 +13,8 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::DEFAULT_BUILDER_GAS_CEIL;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_rpc::{
-    ClientVersion, GasTipEstimator, NodeData, RpcApiContext, start_block_executor,
+    ClientVersion, DEFAULT_RPC_GAS_CAP, GasTipEstimator, NodeData, RpcApiContext,
+    start_block_executor,
     test_utils::{all_namespaces_for_tests, dummy_sync_manager, example_shared_local_node},
 };
 use ethrex_storage::Store;
@@ -86,8 +87,10 @@ pub async fn engine_only_context(storage: Store) -> RpcApiContext {
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         log_filter_handler: None,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        rpc_gas_cap: DEFAULT_RPC_GAS_CAP,
         block_worker_channel,
         ws: None,
+        log_query_limits: Default::default(),
         allowed_namespaces: Arc::new(all_namespaces_for_tests()),
     }
 }

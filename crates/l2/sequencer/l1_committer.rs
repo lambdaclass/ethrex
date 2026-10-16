@@ -472,6 +472,9 @@ impl L1Committer {
             .await?
         {
             Some(batch) => {
+                // Do this while the current checkpoint is still the state the batch
+                // starts from: check_current_checkpoint moves it to the batch's end.
+                self.ensure_prover_input(&batch).await?;
                 // If we have the batch already sealed, we need to ensure the checkpoint
                 // is available.
                 self.check_current_checkpoint(&batch).await?;
@@ -1132,6 +1135,34 @@ impl L1Committer {
             last_added_block_number,
             acc_non_privileged_transactions.try_into()?,
         )))
+    }
+
+    /// A batch can be sealed by a different build than the one committing it: the
+    /// one that ran before an upgrade, or the sequencer this node synced it from.
+    /// Its prover input then exists only for that build's version, and provers of
+    /// this version would never get it, so generate and store one for this version.
+    async fn ensure_prover_input(&self, batch: &Batch) -> Result<(), CommitterError> {
+        if self
+            .rollup_store
+            .get_prover_input_by_batch_and_version(batch.number, &self.git_commit_hash)
+            .await?
+            .is_some()
+        {
+            return Ok(());
+        }
+        info!(
+            "Batch {} was sealed without a prover input for version {}, generating it",
+            batch.number, self.git_commit_hash
+        );
+        let prover_input = self.generate_batch_prover_input(batch).await?;
+        self.rollup_store
+            .store_prover_input_by_batch_and_version(
+                batch.number,
+                &self.git_commit_hash,
+                prover_input,
+            )
+            .await?;
+        Ok(())
     }
 
     async fn generate_batch_prover_input(

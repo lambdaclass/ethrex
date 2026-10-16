@@ -1,7 +1,10 @@
 pub mod db;
 mod tracing;
 
-use super::{BlockExecutionResult, FrameValidationOutcome, TxGasBreakdown, compute_burned_fees};
+use super::{
+    BlockExecutionResult, ExecutionGasCap, FrameValidationOutcome, TxGasBreakdown,
+    compute_burned_fees,
+};
 use crate::system_contracts::{
     AMSTERDAM_REQUEST_PREDEPLOYS, BEACON_ROOTS_ADDRESS, BUILDER_DEPOSIT_CONTRACT_ADDRESS,
     BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
@@ -13,7 +16,6 @@ use bytes::Bytes;
 use ethrex_common::H256;
 #[cfg(feature = "rayon")]
 use ethrex_common::constants::EMPTY_KECCAK_HASH;
-use ethrex_common::types::Code;
 #[cfg(feature = "rayon")]
 use ethrex_common::types::TxType;
 use ethrex_common::types::block_access_list::BlockAccessList;
@@ -25,6 +27,7 @@ use ethrex_common::types::block_access_list::{
 };
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
+use ethrex_common::types::{Code, InitcodeBuffer};
 #[cfg(feature = "rayon")]
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
@@ -361,9 +364,11 @@ impl LEVM {
         let chain_id = chain_config.chain_id;
         let base_blob_fee_per_gas =
             get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_config)?;
-        // Stack/memory buffer pools reused across txs (each tx draws one and reclaims it).
+        // Stack, memory and initcode buffer pools reused across txs (each tx draws from them and
+        // reclaims into them).
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
         let mut shared_memory_pool = Vec::with_capacity(1);
+        let mut shared_initcode_pool = Vec::new();
 
         let n_txs = block.body.transactions.len();
         let mut receipts = Vec::with_capacity(n_txs);
@@ -426,6 +431,7 @@ impl LEVM {
                 base_blob_fee_per_gas,
                 &mut shared_stack_pool,
                 &mut shared_memory_pool,
+                &mut shared_initcode_pool,
                 false,
                 crypto,
                 evm_config,
@@ -863,6 +869,8 @@ impl LEVM {
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
         // Holds at most one root memory buffer at a time (each tx pops one and reclaims one).
         let mut shared_memory_pool = Vec::with_capacity(1);
+        // CREATE initcode buffers, reused across txs like the stacks.
+        let mut shared_initcode_pool = Vec::new();
 
         let n_txs = block.body.transactions.len();
         let mut receipts = Vec::with_capacity(n_txs);
@@ -921,6 +929,7 @@ impl LEVM {
                 base_blob_fee_per_gas,
                 &mut shared_stack_pool,
                 &mut shared_memory_pool,
+                &mut shared_initcode_pool,
                 false,
                 crypto,
                 evm_config,
@@ -1635,6 +1644,8 @@ impl LEVM {
                 let mut stack_pool = Vec::with_capacity(8);
                 // Holds at most one root memory buffer (popped + reclaimed per tx).
                 let mut memory_pool = Vec::with_capacity(1);
+                // Per-tx like the pools above: buffers are reused only within this tx.
+                let mut initcode_pool = Vec::new();
 
                 // Enable accessed_accounts tracker (coarse) for `unaccessed_pure_accounts`
                 // diagnostics. Safe to over-report: used only to REMOVE entries from a
@@ -1665,6 +1676,7 @@ impl LEVM {
                     base_blob_fee_per_gas,
                     &mut stack_pool,
                     &mut memory_pool,
+                    &mut initcode_pool,
                     false,
                     crypto,
                     evm_config,
@@ -3255,6 +3267,8 @@ impl LEVM {
                 // init; keep it local to this group's run, where it still amortizes the buffer
                 // alloc across the group's txs.
                 let mut memory_pool = Vec::with_capacity(1);
+                // Local to the group like `memory_pool`, reused across the group's txs.
+                let mut initcode_pool = Vec::new();
                 // Each sender group gets its own db instance for state propagation
                 let mut group_db = GeneralizedDatabase::new(store.clone());
                 for tx in txs {
@@ -3270,6 +3284,7 @@ impl LEVM {
                         base_blob_fee_per_gas,
                         stack_pool,
                         &mut memory_pool,
+                        &mut initcode_pool,
                         true,
                         crypto,
                         evm_config,
@@ -3436,6 +3451,7 @@ impl LEVM {
             disable_nonce_check: false,
             disable_gas_allowance_check: false,
             disable_sender_eoa_check: false,
+            disable_execution_gas_cap: false,
             is_system_call: false,
         };
 
@@ -3468,7 +3484,8 @@ impl LEVM {
         vm.execute().map_err(VMError::into)
     }
 
-    // Like execute_tx but allows reusing the stack pool. Takes the block-invariant
+    // Like execute_tx but reuses the caller's pools of stacks, memory and initcode buffers,
+    // which the block executors keep across their txs. Takes the block-invariant
     // `config`/`chain_id` precomputed once per block (see `setup_env_with_config`).
     #[allow(clippy::too_many_arguments)]
     fn execute_tx_in_block(
@@ -3483,6 +3500,7 @@ impl LEVM {
         base_blob_fee_per_gas: U256,
         stack_pool: &mut Vec<Stack>,
         memory_pool: &mut Vec<Memory>,
+        initcode_pool: &mut Vec<InitcodeBuffer>,
         disable_balance_check: bool,
         crypto: &dyn Crypto,
         config: EVMConfig,
@@ -3500,8 +3518,9 @@ impl LEVM {
         )?;
         env.disable_balance_check = disable_balance_check;
         // Draw the root frame's stack and memory buffer from the shared pools (and adopt the
-        // stacks for sub-frames), then return them afterwards so the next tx reuses them instead
-        // of allocating + zeroing a fresh 32 KB stack and a fresh memory buffer per transaction.
+        // stacks and the initcode buffers for sub-frames), then return them
+        // afterwards so the next tx reuses them instead of allocating + zeroing a fresh 32 KB
+        // stack and a fresh memory buffer per transaction.
         let mut vm = VM::new_pooled(
             env,
             db,
@@ -3512,10 +3531,11 @@ impl LEVM {
             stateless_validator,
             stack_pool,
             memory_pool,
+            initcode_pool,
         )?;
         let result = vm.execute().map_err(VMError::into);
         // Runs on both success and error paths (execute borrowed `vm` mutably but left it intact).
-        vm.reclaim_into(stack_pool, memory_pool);
+        vm.reclaim_into(stack_pool, memory_pool, initcode_pool);
         result
     }
 
@@ -3533,12 +3553,14 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
         stateless_validator: Option<&dyn StatelessValidator>,
+        execution_gas_cap: ExecutionGasCap,
     ) -> Result<ExecutionResult, EvmError> {
         // `env_from_generic` already relaxes the admission-only validations for every
         // simulation RPC, the gas allowance included. `block_gas_limit` keeps the block's
         // real value there: the GASLIMIT opcode reads it, so overwriting it would make
         // 0x45 return a number that appears nowhere on chain.
         let mut env = env_from_generic(tx, block_header, db, vm_type)?;
+        env.disable_execution_gas_cap = execution_gas_cap == ExecutionGasCap::Lifted;
 
         adjust_disabled_base_fee(&mut env);
 
@@ -4365,6 +4387,10 @@ pub(crate) fn env_from_generic(
         // Same reasoning: a simulated call carries no signature, so EIP-3607 has nothing
         // to protect, and a contract as `from` is a normal thing to simulate.
         disable_sender_eoa_check: true,
+        // Lifted per caller: `eth_call` and `debug_traceCall` may spend their whole gas
+        // limit on execution after Amsterdam, `eth_estimateGas` and `eth_createAccessList`
+        // keep the transaction rule so their answers hold for a real transaction.
+        disable_execution_gas_cap: false,
         is_system_call: false,
     })
 }
