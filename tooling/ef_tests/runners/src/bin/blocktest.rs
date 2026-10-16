@@ -51,13 +51,14 @@ fn main() -> ExitCode {
         check_exception_names: false,
     };
     let outcome = run_files(&files, cli.runner.workers, |file| {
-        run_file(file, &options, &rt)
+        run_file(file, &cli.runner, &options, &rt)
     });
     report(&outcome, cli.runner.json, started)
 }
 
 fn run_file(
     file: &Path,
+    args: &RunnerArgs,
     options: &RunOptions,
     rt: &tokio::runtime::Runtime,
 ) -> Result<Vec<FixtureResult>, String> {
@@ -68,7 +69,9 @@ fn run_file(
     tests.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(tests
         .into_iter()
-        .filter(|(name, test)| skip_reason(name, test, Some(SKIPPED_TESTS)).is_none())
+        .filter(|(name, test)| {
+            args.selects(name) && skip_reason(name, test, Some(SKIPPED_TESTS)).is_none()
+        })
         .map(|(name, test)| {
             let mut rejections = Vec::new();
             let outcome = catch_unwind(AssertUnwindSafe(|| {

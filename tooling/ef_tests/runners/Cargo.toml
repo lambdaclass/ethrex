@@ -12,6 +12,7 @@ ef_tests-engine = { path = "../engine" }
 ethrex-vm.workspace = true
 
 clap.workspace = true
+regex = "1.11.1"
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["full"] }

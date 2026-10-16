@@ -28,7 +28,7 @@ fn fixture(name: &str) -> PathBuf {
 /// every fixture passed.
 fn bal_report(bin: &str, fixture: &Path, extra_args: &[&str]) -> Vec<Map<String, Value>> {
     let output = Command::new(bin)
-        .args(["--json", "--bal-report"])
+        .args(["--json", "--bal-report", "--path"])
         .arg(fixture)
         .args(extra_args)
         .output()

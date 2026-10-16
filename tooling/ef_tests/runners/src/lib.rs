@@ -10,8 +10,10 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Instant;
 
+use clap::ArgAction;
 use ef_tests_blockchain::test_runner::{DROPPED_ACCESS_LIST_TARGET, WITHHELD_ACCESS_LIST_TARGET};
 use ethrex_vm::backends::levm::BAL_EXECUTION_TARGET;
+use regex::Regex;
 use serde::Serialize;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
@@ -25,12 +27,20 @@ use tracing_subscriber::util::SubscriberInitExt;
 #[derive(clap::Args, Debug)]
 pub struct RunnerArgs {
     /// Fixture files or directories (searched recursively), all run in one process.
-    #[arg(value_name = "PATH", required = true)]
+    #[arg(value_name = "PATH", required_unless_present = "path")]
     pub paths: Vec<PathBuf>,
+
+    /// A fixture file or directory, run together with any PATH; may repeat.
+    #[arg(short, long, value_name = "PATH", action = ArgAction::Append)]
+    pub path: Vec<PathBuf>,
 
     /// Number of fixture files to run at once.
     #[arg(short, long, default_value_t = 1)]
     pub workers: usize,
+
+    /// Only run fixtures whose name matches this regex.
+    #[arg(long, value_name = "REGEX")]
+    pub run: Option<Regex>,
 
     /// Print the results to stdout as a JSON array.
     #[arg(long)]
@@ -51,9 +61,13 @@ pub struct RunnerArgs {
 }
 
 impl RunnerArgs {
-    /// Every fixture path given.
+    /// Every fixture path given, by `--path` or as an argument.
     pub fn fixture_paths(&self) -> impl Iterator<Item = &Path> {
-        self.paths.iter().map(PathBuf::as_path)
+        self.path.iter().chain(&self.paths).map(PathBuf::as_path)
+    }
+
+    pub fn selects(&self, fixture_name: &str) -> bool {
+        self.run.as_ref().is_none_or(|re| re.is_match(fixture_name))
     }
 }
 
@@ -456,8 +470,8 @@ mod tests {
     /// The report the runner prints, given its arguments, for these events of one
     /// block.
     fn report_for(args: &[&str], events: &[Event]) -> String {
-        let cli =
-            Cli::try_parse_from([&["runner", "fixtures"], args].concat()).expect("valid arguments");
+        let cli = Cli::try_parse_from([&["runner", "--path", "fixtures"], args].concat())
+            .expect("valid arguments");
         let buffer = Buffer::default();
         let subscriber =
             tracing_subscriber::registry().with(bal_report_layer(&cli.runner, buffer.clone()));
@@ -570,9 +584,10 @@ mod tests {
     #[test]
     fn takes_any_number_of_fixture_paths() {
         assert_eq!(
-            paths(&["a.json", "dir", "b"]).unwrap(),
-            ["a.json", "dir", "b"].map(PathBuf::from)
+            paths(&["a.json", "dir", "-p", "b", "--path", "c"]).unwrap(),
+            ["b", "c", "a.json", "dir"].map(PathBuf::from)
         );
+        assert_eq!(paths(&["--path", "dir"]).unwrap(), [PathBuf::from("dir")]);
         assert!(paths(&["--json"]).is_err());
     }
 

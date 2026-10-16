@@ -2949,6 +2949,7 @@ dependencies = [
  "ef_tests-blockchain",
  "ef_tests-engine",
  "ethrex-vm",
+ "regex",
  "serde",
  "serde_json",
  "tokio",
