@@ -1,7 +1,7 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::rlpx::{
-    eth::eth72::transactions::encode_elided_canonical,
+    eth::eth72::transactions::elided_canonical_len,
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress, snappy_decompress_bounded},
 };
@@ -356,7 +356,7 @@ impl GetPooledTransactions {
             // Always serve at least one tx so a lone oversized (blob) tx still goes out.
             let tx_size = match &tx {
                 P2PTransaction::EIP4844TransactionWithBlobs(wrapped) if elide_blobs => {
-                    encode_elided_canonical(wrapped).len()
+                    elided_canonical_len(wrapped)
                 }
                 _ => tx.encode_canonical_len(),
             };
@@ -415,22 +415,23 @@ impl PooledTransactions {
         }
     }
 
-    /// validates if the received TXs match the request
+    /// Validates that the received TXs match the request, returning each one's hash with its
+    /// size as delivered.
     pub fn validate_requested(
         &self,
         requested: &NewPooledTransactionHashes,
         fork: Fork,
-    ) -> Result<(), MempoolError> {
+    ) -> Result<HashMap<H256, usize>, MempoolError> {
         // A well-formed response contains each requested tx at most once. Track seen hashes so
         // a peer can't send duplicates (or more txs than requested) — each would otherwise pass
         // the per-tx checks below, letting a response balloon to the frame cap regardless of
         // how little we asked for.
-        let mut seen = HashSet::with_capacity(self.pooled_transactions.len());
+        let mut delivered = HashMap::with_capacity(self.pooled_transactions.len());
         for tx in &self.pooled_transactions {
             // Reject duplicates before any per-tx work (blob validation, hash lookup) so a peer
             // echoing the same tx N times can't force N rounds of that work — fail fast.
             let tx_hash = tx.compute_hash();
-            if !seen.insert(tx_hash) {
+            if delivered.contains_key(&tx_hash) {
                 return Err(MempoolError::DuplicatePooledTx);
             }
             if let P2PTransaction::EIP4844TransactionWithBlobs(itx) = tx {
@@ -459,8 +460,9 @@ impl PooledTransactions {
             if tx_size.abs_diff(expected_size) > POOLED_TX_SIZE_TOLERANCE {
                 return Err(MempoolError::InvalidPooledTxSize);
             }
+            delivered.insert(tx_hash, tx_size);
         }
-        Ok(())
+        Ok(delivered)
     }
 
     /// Saves every incoming pooled transaction to the mempool.
@@ -653,11 +655,17 @@ mod tests {
     fn validate_requested_accepts_each_requested_tx_once() {
         let txs = vec![p2p_tx(0), p2p_tx(1)];
         let announced = announcement_for(&txs);
+        let delivered: HashMap<H256, usize> = txs
+            .iter()
+            .map(|tx| (tx.compute_hash(), tx.encode_canonical_len()))
+            .collect();
         let response = PooledTransactions::new(0, txs);
-        assert!(
+        assert_eq!(
             response
                 .validate_requested(&announced, Fork::Cancun)
-                .is_ok()
+                .unwrap(),
+            delivered,
+            "each delivered tx with its size as delivered"
         );
     }
 

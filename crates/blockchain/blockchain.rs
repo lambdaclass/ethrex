@@ -3488,12 +3488,19 @@ impl Blockchain {
         self.mempool.remove_transaction(hash)
     }
 
-    /// Remove all transactions in the executed block from the pool (if we have them)
+    /// Remove all transactions in the executed block from the pool (if we have them), and note
+    /// them as included so peers that announced them are not expected to still serve them.
     pub fn remove_block_transactions_from_pool(&self, block: &Block) -> Result<(), StoreError> {
-        for tx in &block.body.transactions {
-            self.mempool.remove_transaction(&tx.hash(&NativeCrypto))?;
+        let hashes: Vec<H256> = block
+            .body
+            .transactions
+            .iter()
+            .map(|tx| tx.hash(&NativeCrypto))
+            .collect();
+        for hash in &hashes {
+            self.mempool.remove_transaction(hash)?;
         }
-        Ok(())
+        self.mempool.note_included_txs(hashes)
     }
 
     /// Drop blob txs with nonce below the sender's on-chain nonce at `head_hash`.

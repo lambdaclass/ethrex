@@ -76,7 +76,7 @@ use spawned_concurrency::{
 };
 use spawned_rt::tasks::BroadcastStream;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     net::SocketAddr,
     sync::{Arc, RwLock},
     time::{Duration, Instant},
@@ -300,6 +300,40 @@ pub(crate) enum BlobFetchRole {
     Sampler,
 }
 
+/// A per-connection rate-limit counter over a fixed (tumbling) window of
+/// `SERVE_REQUEST_WINDOW`: hits are counted until the window is over, then a new one starts.
+#[derive(Debug)]
+pub(crate) struct WindowCounter {
+    start: Instant,
+    count: u64,
+}
+
+impl WindowCounter {
+    pub(crate) fn new() -> Self {
+        Self {
+            start: Instant::now(),
+            count: 0,
+        }
+    }
+
+    /// Counts `hits` in the current window, starting a new one first if it is over, and returns
+    /// whether the window's count is still within `limit`.
+    fn hit(&mut self, hits: u64, limit: u64) -> bool {
+        let now = Instant::now();
+        if now.duration_since(self.start) >= SERVE_REQUEST_WINDOW {
+            self.start = now;
+            self.count = 0;
+        }
+        self.count = self.count.saturating_add(hits);
+        self.count <= limit
+    }
+
+    /// The hits counted in the current window.
+    fn count(&self) -> u64 {
+        self.count
+    }
+}
+
 #[derive(Debug)]
 pub struct Established {
     pub(crate) signer: SecretKey,
@@ -375,14 +409,10 @@ pub struct Established {
     pub(crate) disconnect_reason: Option<DisconnectReason>,
     // Indicates if the peer has been validated (ie. the connection was established successfully)
     pub(crate) is_validated: bool,
-    // Rate limiting: start of the current incoming-request window
-    pub(crate) serve_request_window_start: Instant,
-    // Rate limiting: number of data-serving requests received in the current window
-    pub(crate) serve_requests_in_window: u64,
-    // Rate limiting: start of the current transaction-announcement window
-    pub(crate) announcement_window_start: Instant,
+    // Rate limiting: data-serving requests received in the current window
+    pub(crate) serve_requests: WindowCounter,
     // Rate limiting: transaction hashes announced in the current window
-    pub(crate) announced_hashes_in_window: u64,
+    pub(crate) announced_hashes: WindowCounter,
     // Under-delivery: net count of short answers to our GetPooledTransactions requests
     pub(crate) short_tx_answer_strikes: u32,
     // Leech detection: total transactions sent to this peer via GetPooledTransactions responses
@@ -446,11 +476,14 @@ impl Established {
         }
         // Release what the peer holds of its announced-hash budget as a fallback announcer
         // and blob provider, so a reconnect starts from what its new session reserves. A
-        // second session of the same node id, if any, registers again as it announces.
-        if let Err(e) = self
-            .blockchain
-            .mempool
-            .forget_peer_announcements(self.node.node_id())
+        // session that never started announced nothing: what its node id holds belongs to
+        // another session of the same node, which keeps it. A second started session of the
+        // same node id, if any, registers again as it announces.
+        if self.is_validated
+            && let Err(e) = self
+                .blockchain
+                .mempool
+                .forget_peer_announcements(self.node.node_id())
         {
             warn!(error = %e, "forget_peer_announcements failed during teardown");
         }
@@ -849,22 +882,7 @@ impl PeerConnectionServer {
         _ctx: &Context<Self>,
     ) {
         if let ConnectionState::Established(ref mut state) = self.state {
-            // Re-reserve in-flight against this peer. If any hashes are already
-            // in-flight (race), drop them; we don't want duplicate requests.
-            let to_request: Vec<H256> = match state.blockchain.mempool.reserve_unknown_hashes(
-                &msg.announcement.transaction_hashes,
-                &msg.announcement.transaction_types,
-                &msg.announcement.transaction_sizes,
-                state.node.node_id(),
-            ) {
-                Ok(unknown) => unknown,
-                Err(_) => return,
-            };
-            if to_request.is_empty() {
-                return;
-            }
-            let trimmed = msg.announcement.filter_to(&to_request);
-            state.pending_tx_requests.push((trimmed, to_request));
+            queue_retried_request(state, &msg.announcement);
         }
     }
 
@@ -1515,33 +1533,6 @@ where
     stream.next().await
 }
 
-/// Returns true if the peer is within its rate limit for data-serving requests, false if exceeded.
-/// Resets the window counter when the window duration has elapsed.
-fn check_serve_request_rate(state: &mut Established) -> bool {
-    let now = Instant::now();
-    if now.duration_since(state.serve_request_window_start) >= SERVE_REQUEST_WINDOW {
-        state.serve_request_window_start = now;
-        state.serve_requests_in_window = 0;
-    }
-    state.serve_requests_in_window += 1;
-    state.serve_requests_in_window <= MAX_SERVE_REQUESTS_PER_WINDOW
-}
-
-/// Returns true if the peer is within its rate limit for announced transaction hashes, false if
-/// exceeded. An announcement counts as the hashes it carries, and at least one, so a flood of
-/// empty announcements is limited too. Uses the same fixed window as `check_serve_request_rate`.
-fn check_announcement_rate(state: &mut Established, hashes: usize) -> bool {
-    let now = Instant::now();
-    if now.duration_since(state.announcement_window_start) >= SERVE_REQUEST_WINDOW {
-        state.announcement_window_start = now;
-        state.announced_hashes_in_window = 0;
-    }
-    state.announced_hashes_in_window = state
-        .announced_hashes_in_window
-        .saturating_add(hashes.max(1) as u64);
-    state.announced_hashes_in_window <= MAX_ANNOUNCED_HASHES_PER_WINDOW
-}
-
 /// Whether an answer to `GetPooledTransactions` delivered too little of what was asked. devp2p
 /// lets a peer skip transactions it no longer holds and stop at its own response limit
 /// (go-ethereum stops past 2 MiB, we stop just before it, and one blob transaction can take up
@@ -1564,14 +1555,6 @@ fn is_short_tx_answer(requested_hashes: &[H256], delivered: &HashMap<H256, usize
     delivered_count * 4 < requested_hashes.len() && delivered_bytes < MAX_POOLED_RESPONSE_BYTES / 4
 }
 
-/// The hashes of the transactions in a `PooledTransactions` answer, each with its size as
-/// delivered.
-fn delivered_sizes(txs: &[P2PTransaction]) -> HashMap<H256, usize> {
-    txs.iter()
-        .map(|tx| (tx.compute_hash(), tx.encode_canonical_len()))
-        .collect()
-}
-
 /// Drops the alternate announcers of transactions this peer delivered for one of our requests;
 /// see `Mempool::forget_alternates`.
 fn forget_delivered_alternates(state: &Established, delivered: HashMap<H256, usize>) {
@@ -1581,13 +1564,16 @@ fn forget_delivered_alternates(state: &Established, delivered: HashMap<H256, usi
     }
 }
 
-/// Scores how much of one `GetPooledTransactions` request a peer's answer delivered. A short
-/// answer lowers the peer's score, as an empty block-header response does for the block
-/// fetchers, adds a strike, and has what it left out requested from other announcers, so a
-/// peer withholding what it announced does not keep those transactions from us; any other
-/// answer takes a strike off. At `MAX_SHORT_TX_ANSWER_STRIKES` every requested hash is retried
-/// on other announcers, since the delivered ones are not processed either, and the peer is
-/// disconnected.
+/// Scores how much of one `GetPooledTransactions` request a peer's answer delivered. What it
+/// left out that is settled since (see `Mempool::settled_txs`: in the pool, or included in a
+/// recent block, which an honest peer drops as well) is not counted, and its fallback
+/// announcers are forgotten rather than asked. A short answer adds a strike and has the rest of
+/// what it left out requested from other announcers, so a peer withholding what it announced
+/// does not keep those transactions from us; any other answer takes a strike off. At
+/// `MAX_SHORT_TX_ANSWER_STRIKES` every requested hash still wanted is retried on other
+/// announcers, since the delivered ones are not processed either, and the peer is disconnected.
+/// The peer's score is left alone: it ranks peers for sync, which transaction gossip says
+/// nothing about.
 async fn account_tx_answer(
     state: &mut Established,
     requested_hashes: &[H256],
@@ -1597,17 +1583,37 @@ async fn account_tx_answer(
         state.short_tx_answer_strikes = state.short_tx_answer_strikes.saturating_sub(1);
         return Ok(());
     }
-    state.short_tx_answer_strikes += 1;
-    if let Err(e) = state.peer_table.record_failure(state.node.node_id()) {
-        debug!(error = %e, "Failed to record a short transaction answer");
+    let undelivered: Vec<H256> = requested_hashes
+        .iter()
+        .filter(|hash| !delivered.contains_key(*hash))
+        .copied()
+        .collect();
+    let settled: HashSet<H256> = state
+        .blockchain
+        .mempool
+        .settled_txs(&undelivered)?
+        .into_iter()
+        .collect();
+    if !settled.is_empty() {
+        let settled: Vec<H256> = settled.iter().copied().collect();
+        state.blockchain.mempool.forget_alternates(&settled)?;
     }
+    let wanted: Vec<H256> = requested_hashes
+        .iter()
+        .filter(|hash| !settled.contains(*hash))
+        .copied()
+        .collect();
+    if !is_short_tx_answer(&wanted, delivered) {
+        state.short_tx_answer_strikes = state.short_tx_answer_strikes.saturating_sub(1);
+        return Ok(());
+    }
+    state.short_tx_answer_strikes += 1;
     if state.short_tx_answer_strikes < MAX_SHORT_TX_ANSWER_STRIKES {
-        let undelivered: Vec<H256> = requested_hashes
-            .iter()
-            .filter(|hash| !delivered.contains_key(*hash))
-            .copied()
+        let withheld: Vec<H256> = undelivered
+            .into_iter()
+            .filter(|hash| !settled.contains(hash))
             .collect();
-        retry_on_alternates(&state.blockchain, &state.peer_table, &undelivered).await;
+        retry_on_alternates(&state.blockchain, &state.peer_table, &withheld).await;
         return Ok(());
     }
     debug!(
@@ -1615,7 +1621,7 @@ async fn account_tx_answer(
         strikes = state.short_tx_answer_strikes,
         "Disconnecting peer: keeps answering transaction requests with little of what it announced",
     );
-    retry_on_alternates(&state.blockchain, &state.peer_table, requested_hashes).await;
+    retry_on_alternates(&state.blockchain, &state.peer_table, &wanted).await;
     send_disconnect_message(state, Some(DisconnectReason::UselessPeer)).await;
     Err(PeerConnectionError::DisconnectSent(
         DisconnectReason::UselessPeer,
@@ -1649,10 +1655,10 @@ async fn handle_incoming_message(
             | Message::Snap2GetBlockAccessLists(_)
             | Message::GetCells(_)
     );
-    if is_data_request && !check_serve_request_rate(state) {
+    if is_data_request && !state.serve_requests.hit(1, MAX_SERVE_REQUESTS_PER_WINDOW) {
         debug!(
             peer = %state.node,
-            window_requests = state.serve_requests_in_window,
+            window_requests = state.serve_requests.count(),
             "Disconnecting peer: exceeded incoming request rate limit",
         );
         send_disconnect_message(state, Some(DisconnectReason::UselessPeer)).await;
@@ -1662,7 +1668,8 @@ async fn handle_incoming_message(
     }
 
     // Rate-limit transaction announcements by the hashes they carry: each one costs a pass over
-    // its hashes under the mempool lock, even when every hash is already known.
+    // its hashes under the mempool lock, even when every hash is already known. One counts at
+    // least one hash, so a flood of empty announcements is limited too.
     let announced_hashes = match &message {
         Message::NewPooledTransactionHashes(announcement) => {
             Some(announcement.transaction_hashes.len())
@@ -1673,11 +1680,13 @@ async fn handle_incoming_message(
         _ => None,
     };
     if let Some(hashes) = announced_hashes
-        && !check_announcement_rate(state, hashes)
+        && !state
+            .announced_hashes
+            .hit(hashes.max(1) as u64, MAX_ANNOUNCED_HASHES_PER_WINDOW)
     {
         debug!(
             peer = %state.node,
-            window_hashes = state.announced_hashes_in_window,
+            window_hashes = state.announced_hashes.count(),
             "Disconnecting peer: exceeded transaction announcement rate limit",
         );
         send_disconnect_message(state, Some(DisconnectReason::UselessPeer)).await;
@@ -1955,138 +1964,14 @@ async fn handle_incoming_message(
 
                 let hashes =
                     announcement.get_transactions_to_request(&state.blockchain, peer_id)?;
-
-                if !hashes.is_empty() {
-                    if !state.blockchain.mempool.blob_sampling_enabled {
-                        // Sampling disabled: always provider — request everything.
-                        // Trim to the truly-requested subset so the flush does not
-                        // re-request hashes already in-flight from another peer.
-                        state.pending_tx_requests_72.push((
-                            announcement.filter_to(&hashes),
-                            hashes,
-                            BlobFetchRole::Provider,
-                        ));
-                    } else {
-                        // Sampling enabled: decide per-hash whether we are provider or sampler.
-                        let epoch_seed = match state.storage.get_latest_block_number() {
-                            Ok(n) => n / 32,
-                            Err(e) => {
-                                warn!(error = %e, "eth/72: head block unavailable; using epoch 0 for role split");
-                                0
-                            }
-                        };
-
-                        // Compute the local node id once per announcement (per-node entropy).
-                        let local_pubkey = public_key_from_signing_key(&state.signer);
-                        let local_node_id = node_id(&local_pubkey);
-                        let eager = state.blockchain.mempool.is_eager_provider();
-
-                        let mut provider_hashes: Vec<H256> = Vec::new();
-                        let mut sampler_hashes: Vec<H256> = Vec::new();
-
-                        for &hash in &hashes {
-                            // Check if this is a blob tx (has a bit in cell_mask or
-                            // was in a type-3 announcement). We use cell_mask presence
-                            // as the signal — non-blob txs always go through provider flow.
-                            let is_blob = announcement.cell_mask.is_some()
-                                && announcement
-                                    .transaction_types
-                                    .iter()
-                                    .zip(announcement.transaction_hashes.iter())
-                                    .any(|(&ty, &h)| h == hash && ty == 3);
-
-                            // provider path only when is_provider_role AND peer advertised
-                            // full availability (all-ones mask). Otherwise sampler path.
-                            let peer_is_full_provider = announcement.cell_mask == Some(u128::MAX);
-                            if !is_blob
-                                || (peer_is_full_provider
-                                    && is_provider_role(local_node_id, hash, epoch_seed, eager))
-                            {
-                                provider_hashes.push(hash);
-                            } else {
-                                sampler_hashes.push(hash);
-                            }
-                        }
-
-                        // Provider hashes: request full tx (and cells at u128::MAX).
-                        if !provider_hashes.is_empty() {
-                            let trimmed = announcement.filter_to(&provider_hashes);
-                            // For provider role, request cells with all-ones mask.
-                            let provider_ann = NewPooledTransactionHashes72::from_raw(
-                                trimmed.transaction_types.clone(),
-                                trimmed.transaction_sizes.clone(),
-                                trimmed.transaction_hashes,
-                                Some(u128::MAX),
-                            );
-                            state.pending_tx_requests_72.push((
-                                provider_ann,
-                                provider_hashes,
-                                BlobFetchRole::Provider,
-                            ));
-                        }
-
-                        // Sampler hashes: record the announcing peer as a provider
-                        // ONLY if it signaled full availability (all-ones mask);
-                        // a partially-available peer is not a provider observation.
-                        // if recording this provider hits the threshold and we already
-                        // have the tx body, retrigger cell-fetch immediately rather than
-                        // waiting for the tx-body response path.
-                        if announcement.cell_mask == Some(u128::MAX) {
-                            let mempool = &state.blockchain.mempool;
-                            for &hash in &sampler_hashes {
-                                let count = match mempool
-                                    .record_provider_announcement(hash, peer_id)
-                                {
-                                    Ok(n) => n,
-                                    Err(e) => {
-                                        warn!(error = %e, "record_provider_announcement failed");
-                                        continue;
-                                    }
-                                };
-                                // retrigger: threshold just reached and tx body already known.
-                                if count
-                                    == ethrex_blockchain::mempool::MIN_PROVIDERS_BEFORE_SAMPLING
-                                    && mempool.contains_tx(hash).unwrap_or(false)
-                                {
-                                    let custody = match mempool.get_custody_columns() {
-                                        Ok(c) => c,
-                                        Err(e) => {
-                                            warn!(error = %e, "get_custody_columns failed (D6b)");
-                                            continue;
-                                        }
-                                    };
-                                    // only add C_extra when this peer is a provider.
-                                    let mut target = custody;
-                                    if let Some(extra_col) =
-                                        pick_random_extra_column(custody, local_node_id, hash)
-                                    {
-                                        target |= 1u128 << extra_col;
-                                    }
-                                    // A provider holds every column, so the whole
-                                    // target can be requested from it.
-                                    if target != 0 {
-                                        state.pending_cell_requests.push((vec![hash], target));
-                                    }
-                                }
-                            }
-                        }
-                        if !sampler_hashes.is_empty() {
-                            // Request the tx body (no cells) from this peer.
-                            let trimmed = announcement.filter_to(&sampler_hashes);
-                            // No cell_mask: a sampler request carries no availability claim.
-                            let sampler_ann = NewPooledTransactionHashes72::from_raw(
-                                trimmed.transaction_types,
-                                trimmed.transaction_sizes,
-                                trimmed.transaction_hashes,
-                                None,
-                            );
-                            state.pending_tx_requests_72.push((
-                                sampler_ann,
-                                sampler_hashes,
-                                BlobFetchRole::Sampler,
-                            ));
-                        }
+                let records_providers = state.blockchain.mempool.blob_sampling_enabled
+                    && announcement.cell_mask == Some(u128::MAX);
+                if !hashes.is_empty() || records_providers {
+                    let roles = BlobRoles::new(state);
+                    if records_providers {
+                        record_blob_providers(state, &roles, &announcement, &hashes);
                     }
+                    queue_requests_72(state, &roles, &announcement, hashes);
                 }
             }
         }
@@ -2171,24 +2056,35 @@ async fn handle_incoming_message(
                 }
             }
             if state.blockchain.is_synced() {
-                let delivered = delivered_sizes(&msg.pooled_transactions);
+                let mut delivered = None;
                 if let Some((announced, requested_hashes, _)) = &removed_request {
                     let fork = state.blockchain.current_fork()?;
-                    if let Err(error) = msg.validate_requested(announced, fork) {
-                        debug!(
-                            peer=%state.node,
-                            reason=%error,
-                            "Disconnecting peer: invalid pooled transactions response",
-                        );
-                        retry_on_alternates(&state.blockchain, &state.peer_table, requested_hashes)
+                    let sizes = match msg.validate_requested(announced, fork) {
+                        Ok(sizes) => sizes,
+                        Err(error) => {
+                            debug!(
+                                peer=%state.node,
+                                reason=%error,
+                                "Disconnecting peer: invalid pooled transactions response",
+                            );
+                            retry_on_alternates(
+                                &state.blockchain,
+                                &state.peer_table,
+                                requested_hashes,
+                            )
                             .await;
-                        send_disconnect_message(state, Some(DisconnectReason::SubprotocolError))
+                            send_disconnect_message(
+                                state,
+                                Some(DisconnectReason::SubprotocolError),
+                            )
                             .await;
-                        return Err(PeerConnectionError::DisconnectSent(
-                            DisconnectReason::SubprotocolError,
-                        ));
-                    }
-                    account_tx_answer(state, &announced.transaction_hashes, &delivered).await?;
+                            return Err(PeerConnectionError::DisconnectSent(
+                                DisconnectReason::SubprotocolError,
+                            ));
+                        }
+                    };
+                    account_tx_answer(state, &announced.transaction_hashes, &sizes).await?;
+                    delivered = Some(sizes);
                 }
                 #[cfg(feature = "l2")]
                 let is_l2_mode = state.l2_state.is_supported();
@@ -2221,7 +2117,7 @@ async fn handle_incoming_message(
                     }
                     return Err(error.into());
                 }
-                if removed_request.is_some() {
+                if let Some(delivered) = delivered {
                     forget_delivered_alternates(state, delivered);
                 }
             }
@@ -2240,24 +2136,35 @@ async fn handle_incoming_message(
                     .clear_in_flight_txs(requested_hashes)?;
             }
             if state.blockchain.is_synced() {
-                let delivered = delivered_sizes(&msg.pooled_transactions);
+                let mut delivered = None;
                 if let Some((announced, requested_hashes, _, _)) = &removed_request {
                     let fork = state.blockchain.current_fork()?;
-                    if let Err(error) = msg.validate_requested(announced, fork) {
-                        warn!(
-                            peer=%state.node,
-                            reason=%error,
-                            "disconnected from peer (eth/72 PooledTransactions72)",
-                        );
-                        retry_on_alternates(&state.blockchain, &state.peer_table, requested_hashes)
+                    let sizes = match msg.validate_requested(announced, fork) {
+                        Ok(sizes) => sizes,
+                        Err(error) => {
+                            warn!(
+                                peer=%state.node,
+                                reason=%error,
+                                "disconnected from peer (eth/72 PooledTransactions72)",
+                            );
+                            retry_on_alternates(
+                                &state.blockchain,
+                                &state.peer_table,
+                                requested_hashes,
+                            )
                             .await;
-                        send_disconnect_message(state, Some(DisconnectReason::SubprotocolError))
+                            send_disconnect_message(
+                                state,
+                                Some(DisconnectReason::SubprotocolError),
+                            )
                             .await;
-                        return Err(PeerConnectionError::DisconnectSent(
-                            DisconnectReason::SubprotocolError,
-                        ));
-                    }
-                    account_tx_answer(state, &announced.transaction_hashes, &delivered).await?;
+                            return Err(PeerConnectionError::DisconnectSent(
+                                DisconnectReason::SubprotocolError,
+                            ));
+                        }
+                    };
+                    account_tx_answer(state, &announced.transaction_hashes, &sizes).await?;
+                    delivered = Some(sizes);
                 }
                 #[cfg(feature = "l2")]
                 let is_l2_mode = state.l2_state.is_supported();
@@ -2289,7 +2196,7 @@ async fn handle_incoming_message(
                     }
                     return Err(error.into());
                 }
-                if removed_request.is_some() {
+                if let Some(delivered) = delivered {
                     forget_delivered_alternates(state, delivered);
                 }
                 // EIP-8070 sampler: after tx validation, check if we have enough provider
@@ -2761,6 +2668,222 @@ async fn handle_block_range_update(state: &mut Established) -> Result<(), PeerCo
     }
 }
 
+/// What this node takes on for each transaction announced over eth/72 (EIP-8070). With blob
+/// sampling off, every transaction is fetched whole. With it on, a blob transaction is fetched
+/// whole, with all its cells, only from a peer claiming every column and when this node is a
+/// provider for it; otherwise only its body is fetched and its cells are sampled.
+struct BlobRoles {
+    sampling: bool,
+    local_node_id: H256,
+    epoch_seed: u64,
+    eager: bool,
+}
+
+impl BlobRoles {
+    fn new(state: &Established) -> Self {
+        let sampling = state.blockchain.mempool.blob_sampling_enabled;
+        let epoch_seed = if sampling {
+            match state.storage.get_latest_block_number() {
+                Ok(n) => n / 32,
+                Err(e) => {
+                    warn!(error = %e, "eth/72: head block unavailable; using epoch 0 for role split");
+                    0
+                }
+            }
+        } else {
+            0
+        };
+        Self {
+            sampling,
+            // Per-node entropy for the provider decision.
+            local_node_id: node_id(&public_key_from_signing_key(&state.signer)),
+            epoch_seed,
+            eager: state.blockchain.mempool.is_eager_provider(),
+        }
+    }
+
+    /// The role for `hash`, announced as `tx_type` by a peer claiming `cell_mask`. Only a
+    /// type-3 transaction announced with a mask counts as a blob transaction.
+    fn role(&self, hash: H256, tx_type: u8, cell_mask: Option<u128>) -> BlobFetchRole {
+        let is_blob = cell_mask.is_some() && tx_type == 3;
+        if !self.sampling
+            || !is_blob
+            || (cell_mask == Some(u128::MAX)
+                && is_provider_role(self.local_node_id, hash, self.epoch_seed, self.eager))
+        {
+            BlobFetchRole::Provider
+        } else {
+            BlobFetchRole::Sampler
+        }
+    }
+
+    /// The availability a request in `role` is queued with: with sampling on, a provider
+    /// request asks for every column and a sampler request claims none; with it off, the
+    /// announcer's own.
+    fn request_mask(&self, role: BlobFetchRole, announced: Option<u128>) -> Option<u128> {
+        match (self.sampling, role) {
+            (false, _) => announced,
+            (true, BlobFetchRole::Provider) => Some(u128::MAX),
+            (true, BlobFetchRole::Sampler) => None,
+        }
+    }
+}
+
+/// Queues the eth/72 requests for `hashes`, those reserved from `announcement`, one per role
+/// (see `BlobRoles`), keeping each hash's announced type and size. Walks the announcement once.
+fn queue_requests_72(
+    state: &mut Established,
+    roles: &BlobRoles,
+    announcement: &NewPooledTransactionHashes72,
+    hashes: Vec<H256>,
+) {
+    if hashes.is_empty() {
+        return;
+    }
+    /// The announced entries going into one role's request.
+    #[derive(Default)]
+    struct Entries {
+        types: Vec<u8>,
+        sizes: Vec<usize>,
+        hashes: Vec<H256>,
+    }
+    let mut reserved: HashSet<H256> = hashes.into_iter().collect();
+    let (mut provider, mut sampler) = (Entries::default(), Entries::default());
+    for ((&tx_type, &size), &hash) in announcement
+        .transaction_types
+        .iter()
+        .zip(&announcement.transaction_sizes)
+        .zip(&announcement.transaction_hashes)
+    {
+        // Removing it also skips a hash announced twice, keeping its first entry.
+        if !reserved.remove(&hash) {
+            continue;
+        }
+        let entries = match roles.role(hash, tx_type, announcement.cell_mask) {
+            BlobFetchRole::Provider => &mut provider,
+            BlobFetchRole::Sampler => &mut sampler,
+        };
+        entries.types.push(tx_type);
+        entries.sizes.push(size);
+        entries.hashes.push(hash);
+    }
+    for (role, entries) in [
+        (BlobFetchRole::Provider, provider),
+        (BlobFetchRole::Sampler, sampler),
+    ] {
+        if entries.hashes.is_empty() {
+            continue;
+        }
+        let request = NewPooledTransactionHashes72::from_raw(
+            entries.types.into(),
+            entries.sizes,
+            entries.hashes.clone(),
+            roles.request_mask(role, announcement.cell_mask),
+        );
+        state
+            .pending_tx_requests_72
+            .push((request, entries.hashes, role));
+    }
+}
+
+/// Records the announcer of `announcement`, which claims every column, as a provider of each
+/// blob transaction it announces, except those fetched whole from it (`reserved` from it with a
+/// provider role): the sampler path waits for `MIN_PROVIDERS_BEFORE_SAMPLING` of them, however
+/// many announced the transaction after it was first requested or pooled. When the threshold is
+/// reached for a transaction already in the pool, its cells are requested from this peer.
+fn record_blob_providers(
+    state: &mut Established,
+    roles: &BlobRoles,
+    announcement: &NewPooledTransactionHashes72,
+    reserved: &[H256],
+) {
+    let peer_id = state.node.node_id();
+    let reserved: HashSet<&H256> = reserved.iter().collect();
+    let mut seen = HashSet::new();
+    let mempool = &state.blockchain.mempool;
+    for (&tx_type, &hash) in announcement
+        .transaction_types
+        .iter()
+        .zip(&announcement.transaction_hashes)
+    {
+        if tx_type != 3 || !seen.insert(hash) {
+            continue;
+        }
+        if reserved.contains(&hash)
+            && roles.role(hash, tx_type, announcement.cell_mask) == BlobFetchRole::Provider
+        {
+            continue;
+        }
+        let count = match mempool.record_provider_announcement(hash, peer_id) {
+            Ok(n) => n,
+            Err(e) => {
+                warn!(error = %e, "record_provider_announcement failed");
+                continue;
+            }
+        };
+        // retrigger: threshold just reached and tx body already known.
+        if count == ethrex_blockchain::mempool::MIN_PROVIDERS_BEFORE_SAMPLING
+            && mempool.contains_tx(hash).unwrap_or(false)
+        {
+            let custody = match mempool.get_custody_columns() {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!(error = %e, "get_custody_columns failed (D6b)");
+                    continue;
+                }
+            };
+            // only add C_extra when this peer is a provider.
+            let mut target = custody;
+            if let Some(extra_col) = pick_random_extra_column(custody, roles.local_node_id, hash) {
+                target |= 1u128 << extra_col;
+            }
+            // A provider holds every column, so the whole target can be requested from it.
+            if target != 0 {
+                state.pending_cell_requests.push((vec![hash], target));
+            }
+        }
+    }
+}
+
+/// Queues a request to this peer for transactions another announcer did not deliver, built by
+/// `retry_on_alternates` from this peer's own announcement of them. On an eth/72 session it goes
+/// to the eth/72 queue, as the peer answers with `PooledTransactions72`, with each hash's role
+/// taken from the cell availability the peer last announced.
+fn queue_retried_request(state: &mut Established, announcement: &NewPooledTransactionHashes) {
+    // Re-reserve in-flight against this peer. If any hashes are already
+    // in-flight (race), drop them; we don't want duplicate requests.
+    let to_request: Vec<H256> = match state.blockchain.mempool.reserve_unknown_hashes(
+        &announcement.transaction_hashes,
+        &announcement.transaction_types,
+        &announcement.transaction_sizes,
+        state.node.node_id(),
+    ) {
+        Ok(unknown) => unknown,
+        Err(_) => return,
+    };
+    if to_request.is_empty() {
+        return;
+    }
+    if !supports_eth72(state) {
+        let trimmed = announcement.filter_to(&to_request);
+        state.pending_tx_requests.push((trimmed, to_request));
+        return;
+    }
+    let cell_mask = state
+        .blockchain
+        .mempool
+        .peer_cell_mask(state.node.node_id())
+        .unwrap_or(None);
+    let announcement72 = NewPooledTransactionHashes72::from_raw(
+        announcement.transaction_types.clone(),
+        announcement.transaction_sizes.clone(),
+        announcement.transaction_hashes.clone(),
+        cell_mask,
+    );
+    let roles = BlobRoles::new(state);
+    queue_requests_72(state, &roles, &announcement72, to_request);
+}
+
 /// Drains the pending transaction request buffer and sends batched
 /// GetPooledTransactions requests, respecting the 256-hash-per-request
 /// limit from the devp2p ETH spec.
@@ -2771,17 +2894,16 @@ async fn flush_pending_tx_requests(state: &mut Established) -> Result<(), PeerCo
 
     let pending = std::mem::take(&mut state.pending_tx_requests);
 
-    // Build a trimmed announcement containing only the hashes we're actually requesting,
-    // with their original types and sizes for response validation.
+    // Queued announcements already hold only the hashes we're requesting, with their original
+    // types and sizes for response validation.
     let mut all_hashes: Vec<H256> = Vec::new();
     let mut all_types: Vec<u8> = Vec::new();
     let mut all_sizes: Vec<usize> = Vec::new();
 
-    for (announcement, hashes) in &pending {
-        let trimmed = announcement.filter_to(hashes);
-        all_hashes.extend_from_slice(&trimmed.transaction_hashes);
-        all_types.extend_from_slice(&trimmed.transaction_types);
-        all_sizes.extend(trimmed.transaction_sizes);
+    for (announcement, _hashes) in pending {
+        all_hashes.extend(announcement.transaction_hashes);
+        all_types.extend_from_slice(&announcement.transaction_types);
+        all_sizes.extend(announcement.transaction_sizes);
     }
 
     // Send in chunks of MAX_HASHES_PER_REQUEST per the devp2p spec.
@@ -3064,7 +3186,10 @@ mod tx_announcement_tests {
     use super::*;
     use crate::{peer_table::PeerTableServer, rlpx::eth::transactions::PooledTransactions};
     use bytes::Bytes;
-    use ethrex_blockchain::mempool::MAX_ANNOUNCED_HASHES_PER_PEER;
+    use ethrex_blockchain::{
+        BlockchainOptions,
+        mempool::{MAX_ANNOUNCED_HASHES_PER_PEER, MIN_PROVIDERS_BEFORE_SAMPLING},
+    };
     use ethrex_common::types::{
         BlobsBundle, EIP1559Transaction, EIP4844Transaction, WrappedEIP4844Transaction,
     };
@@ -3119,10 +3244,8 @@ mod tx_announcement_tests {
             current_requests: HashMap::new(),
             disconnect_reason: None,
             is_validated: true,
-            serve_request_window_start: Instant::now(),
-            serve_requests_in_window: 0,
-            announcement_window_start: Instant::now(),
-            announced_hashes_in_window: 0,
+            serve_requests: WindowCounter::new(),
+            announced_hashes: WindowCounter::new(),
             short_tx_answer_strikes: 0,
             txs_sent_to_peer: 0,
             received_txs_from_peer: false,
@@ -3284,6 +3407,26 @@ mod tx_announcement_tests {
     }
 
     #[tokio::test]
+    async fn a_session_that_never_started_leaves_its_node_announcements_alone() {
+        let (mut state, _outbound) = session(68);
+        // A second dial of a connected node that failed before the session started (too many
+        // peers, a failed hello): it announced nothing, so what the node holds is the other
+        // session's.
+        state.is_validated = false;
+        let mempool = &state.blockchain.mempool;
+        let hash = H256::from_low_u64_be(0xabc);
+        mempool
+            .reserve_unknown_hashes(&[hash], &[2], &[100], H256::from_low_u64_be(1))
+            .unwrap();
+        mempool
+            .reserve_unknown_hashes(&[hash], &[2], &[100], state.node.node_id())
+            .unwrap();
+
+        state.teardown().await;
+        assert_eq!(tracked(&state), 1);
+    }
+
+    #[tokio::test]
     async fn repeated_empty_answers_disconnect_the_peer() {
         for eth_version in [68, 72] {
             let (mut state, mut outbound) = session(eth_version);
@@ -3387,6 +3530,171 @@ mod tx_announcement_tests {
         }
     }
 
+    /// `session(72)` with blob sampling on, as on a node that offers eth/72.
+    fn sampling_session() -> (Established, mpsc::Receiver<Message>) {
+        let (mut state, outbound) = session(72);
+        let blockchain = Blockchain::new(
+            state.storage.clone(),
+            BlockchainOptions {
+                blob_sampling_enabled: true,
+                mempool_prewarm_enabled: false,
+                ..BlockchainOptions::default()
+            },
+        );
+        blockchain.set_synced();
+        state.blockchain = Arc::new(blockchain);
+        (state, outbound)
+    }
+
+    #[tokio::test]
+    async fn every_peer_claiming_all_columns_counts_as_a_provider() {
+        let (mut state, _outbound) = sampling_session();
+        let roles = BlobRoles::new(&state);
+        // A blob transaction this node samples rather than fetches whole.
+        let blob_tx = (0..)
+            .map(H256::from_low_u64_be)
+            .find(|hash| roles.role(*hash, 3, Some(u128::MAX)) == BlobFetchRole::Sampler)
+            .expect("most blob transactions are sampled");
+        // Another peer claiming every column announced it first: it is requested from that
+        // peer, which is recorded as its first provider.
+        let first = H256::from_low_u64_be(0xf1);
+        let mempool = &state.blockchain.mempool;
+        mempool
+            .reserve_unknown_hashes(&[blob_tx], &[3], &[131_072], first)
+            .unwrap();
+        mempool
+            .record_provider_announcement(blob_tx, first)
+            .unwrap();
+
+        let announcement =
+            Message::NewPooledTransactionHashes72(NewPooledTransactionHashes72::from_raw(
+                vec![3u8].into(),
+                vec![131_072],
+                vec![blob_tx],
+                Some(u128::MAX),
+            ));
+        handle_incoming_message(&mut state, announcement)
+            .await
+            .unwrap();
+        assert_eq!(
+            state
+                .blockchain
+                .mempool
+                .provider_announcer_count(blob_tx)
+                .unwrap(),
+            MIN_PROVIDERS_BEFORE_SAMPLING
+        );
+    }
+
+    #[tokio::test]
+    async fn a_retry_is_matched_with_its_answer() {
+        for eth_version in [68, 72] {
+            let (mut state, mut outbound) = session(eth_version);
+            let retried = txs(0, 2);
+            // As `retry_on_alternates` builds it, whatever the peer's eth version.
+            let Message::NewPooledTransactionHashes(retry) = announcement(68, &retried) else {
+                unreachable!()
+            };
+            queue_retried_request(&mut state, &retry);
+            let (id, _) = flush_requests(&mut state, &mut outbound).await[0];
+
+            handle_incoming_message(&mut state, answer(eth_version, id, retried))
+                .await
+                .unwrap();
+            assert!(state.requested_pooled_txs.is_empty(), "eth/{eth_version}");
+            assert!(
+                state.requested_pooled_txs_72.is_empty(),
+                "eth/{eth_version}"
+            );
+            assert_eq!(tracked(&state), 0, "eth/{eth_version}");
+        }
+    }
+
+    #[tokio::test]
+    async fn short_answers_leave_the_peer_score_alone() {
+        for eth_version in [68, 72] {
+            let (mut state, mut outbound) = session(eth_version);
+            let peer = state.node.node_id();
+            state
+                .peer_table
+                .new_connected_peer(
+                    state.node.clone(),
+                    PeerConnection::unestablished(),
+                    vec![],
+                    vec![],
+                    None,
+                    true,
+                )
+                .expect("register peer");
+            handle_incoming_message(&mut state, announcement(eth_version, &txs(0, 1)))
+                .await
+                .unwrap();
+            let (id, _) = flush_requests(&mut state, &mut outbound).await[0];
+            handle_incoming_message(&mut state, answer(eth_version, id, vec![]))
+                .await
+                .unwrap();
+
+            // The strike is what judges the peer; the score, which picks peers for sync, is
+            // not lowered by transaction gossip.
+            assert_eq!(state.short_tx_answer_strikes, 1, "eth/{eth_version}");
+            assert_eq!(
+                state.peer_table.get_score(peer).await.unwrap(),
+                0,
+                "eth/{eth_version}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn transactions_included_meanwhile_are_not_held_against_the_peer() {
+        for eth_version in [68, 72] {
+            let (mut state, mut outbound) = session(eth_version);
+            let announced = txs(0, 4);
+            let hashes: Vec<H256> = announced.iter().map(|tx| tx.compute_hash()).collect();
+            handle_incoming_message(&mut state, announcement(eth_version, &announced))
+                .await
+                .unwrap();
+            let fallback = H256::from_low_u64_be(0xfa11);
+            state
+                .blockchain
+                .mempool
+                .reserve_unknown_hashes(&hashes, &[2; 4], &[100; 4], fallback)
+                .unwrap();
+            let (id, _) = flush_requests(&mut state, &mut outbound).await[0];
+
+            // A block included them before the peer answered, so it no longer holds them.
+            state
+                .blockchain
+                .mempool
+                .note_included_txs(hashes.clone())
+                .unwrap();
+            handle_incoming_message(&mut state, answer(eth_version, id, vec![]))
+                .await
+                .unwrap();
+            assert_eq!(state.short_tx_answer_strikes, 0, "eth/{eth_version}");
+            // Nobody is asked for them again, and their fallbacks hold no budget.
+            assert_eq!(
+                state
+                    .blockchain
+                    .mempool
+                    .announced_hashes_tracked_for(fallback)
+                    .unwrap(),
+                0,
+                "eth/{eth_version}"
+            );
+            for hash in &hashes {
+                assert!(
+                    state
+                        .blockchain
+                        .mempool
+                        .pop_alternate(*hash)
+                        .unwrap()
+                        .is_none()
+                );
+            }
+        }
+    }
+
     #[test]
     fn short_answers_are_judged_by_count_and_delivered_size() {
         let hashes: Vec<H256> = (0..8).map(H256::from_low_u64_be).collect();
@@ -3434,6 +3742,17 @@ mod tx_announcement_tests {
 
         let _ = handle_incoming_message(&mut state, answer(72, id, vec![blob_tx])).await;
         assert_eq!(state.short_tx_answer_strikes, 1);
+    }
+
+    #[test]
+    fn a_window_counter_admits_hits_up_to_its_limit() {
+        let mut counter = WindowCounter::new();
+        assert!(counter.hit(3, 4));
+        assert!(counter.hit(1, 4));
+        assert!(!counter.hit(1, 4));
+        assert_eq!(counter.count(), 5);
+        // Within one window, every later hit is past the limit too.
+        assert!(!counter.hit(0, 4));
     }
 
     #[tokio::test]
