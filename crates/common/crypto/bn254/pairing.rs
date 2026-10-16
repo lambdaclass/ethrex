@@ -21,7 +21,7 @@ use ark_bn254::{G1Affine, G2Affine};
 use ark_ec::bn::BnConfig;
 use ark_ec::short_weierstrass::SWCurveConfig;
 
-use super::fields::{Fe, Fe2, Fe6, Fe12};
+use super::fields::{Fe, Fe2, Fe6, Fe12, adx_supported};
 
 /// `6 x0 + 2` in NAF, least significant digit first.
 const ATE_LOOP_COUNT: &[i8] = <ark_bn254::Config as BnConfig>::ATE_LOOP_COUNT;
@@ -294,11 +294,11 @@ fn check<const ADX: bool>(pairs: &[(G1Affine, G2Affine)]) -> bool {
 /// non-identity points already checked to be on their curves and in their
 /// subgroups.
 pub(super) fn pairing_is_one(pairs: &[(G1Affine, G2Affine)]) -> bool {
-    #[cfg(all(target_arch = "x86_64", feature = "std"))]
-    if std::is_x86_feature_detected!("bmi2") && std::is_x86_feature_detected!("adx") {
-        return check::<true>(pairs);
+    if adx_supported() {
+        check::<true>(pairs)
+    } else {
+        check::<false>(pairs)
     }
-    check::<false>(pairs)
 }
 
 #[cfg(test)]
@@ -325,17 +325,6 @@ mod tests {
             .collect()
     }
 
-    fn adx_available() -> bool {
-        #[cfg(all(target_arch = "x86_64", feature = "std"))]
-        {
-            std::is_x86_feature_detected!("bmi2") && std::is_x86_feature_detected!("adx")
-        }
-        #[cfg(not(all(target_arch = "x86_64", feature = "std")))]
-        {
-            false
-        }
-    }
-
     fn miller_loop_matches<const ADX: bool>() {
         // Up to nine pairs, across arkworks' groups of four.
         for n in 1..=9 {
@@ -356,7 +345,7 @@ mod tests {
     #[test]
     fn miller_loop_matches_arkworks() {
         miller_loop_matches::<false>();
-        if adx_available() {
+        if adx_supported() {
             miller_loop_matches::<true>();
         }
     }
@@ -390,7 +379,7 @@ mod tests {
     #[test]
     fn final_exponentiation_matches_arkworks() {
         final_exponentiation_matches::<false>();
-        if adx_available() {
+        if adx_supported() {
             final_exponentiation_matches::<true>();
         }
     }
@@ -423,7 +412,7 @@ mod tests {
     #[test]
     fn balanced_products_are_one() {
         balanced_products::<false>();
-        if adx_available() {
+        if adx_supported() {
             balanced_products::<true>();
         }
     }

@@ -519,6 +519,18 @@ mod x86 {
     }
 }
 
+/// `true` when the CPU can run the `ADX = true` backend (BMI2 and ADX).
+pub(super) fn adx_supported() -> bool {
+    #[cfg(all(target_arch = "x86_64", feature = "std"))]
+    {
+        std::is_x86_feature_detected!("bmi2") && std::is_x86_feature_detected!("adx")
+    }
+    #[cfg(not(all(target_arch = "x86_64", feature = "std")))]
+    {
+        false
+    }
+}
+
 /// An element of `Fq` in Montgomery form.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct Fe<const ADX: bool>(pub(super) [u64; 4]);
@@ -1140,8 +1152,7 @@ mod tests {
 
     #[test]
     fn tower_matches_arkworks_adx() {
-        #[cfg(all(target_arch = "x86_64", feature = "std"))]
-        if std::is_x86_feature_detected!("bmi2") && std::is_x86_feature_detected!("adx") {
+        if adx_supported() {
             tower_matches::<true>();
         }
     }

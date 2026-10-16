@@ -11,11 +11,12 @@ mod pairing;
 
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
-use ark_bn254::{Fq, Fq2, Fr, G1Affine, G2Affine, G2Projective};
+use ark_bn254::{Fq, Fq2, Fr, G1Affine, G2Affine};
 use ark_ec::AffineRepr;
 use ark_ff::{AdditiveGroup, BigInt, BigInteger, Field, PrimeField, Zero};
 
 use crate::CryptoError;
+use fields::Fe2;
 
 /// An affine G1 point; `None` is the point at infinity, encoded as `(0, 0)`.
 type G1 = Option<(Fq, Fq)>;
@@ -182,16 +183,124 @@ const PSI_Y: Fq2 = Fq2::new(
     ark_ff::MontFp!("3505843767911556378687030309984248845540243509899259641013678093033130930403"),
 );
 
-/// psi(x, y) = (conj(x) * PSI_X, conj(y) * PSI_Y), applied to Jacobian
-/// coordinates (conjugation is a field automorphism, so Z is conjugated too).
-fn psi(point: &G2Projective) -> G2Projective {
-    let mut result = *point;
-    result.x.conjugate_in_place();
-    result.x *= PSI_X;
-    result.y.conjugate_in_place();
-    result.y *= PSI_Y;
-    result.z.conjugate_in_place();
-    result
+/// A point of the twist E'(Fq2) in Jacobian coordinates `(X/Z^2, Y/Z^3)` on the
+/// field tower of `fields`; `Z = 0` is the identity. The formulas and their
+/// special cases are those of `ark-ec`'s short Weierstrass `Projective`.
+#[derive(Clone, Copy)]
+struct G2Jacobian<const ADX: bool> {
+    x: Fe2<ADX>,
+    y: Fe2<ADX>,
+    z: Fe2<ADX>,
+}
+
+impl<const ADX: bool> G2Jacobian<ADX> {
+    const IDENTITY: Self = Self {
+        x: Fe2::ONE,
+        y: Fe2::ONE,
+        z: Fe2::ZERO,
+    };
+
+    fn is_identity(&self) -> bool {
+        self.z == Fe2::ZERO
+    }
+
+    /// `2 * self` (dbl-2009-l with a = 0). The identity doubles to itself, since
+    /// `Z3 = 2 Y1 Z1`.
+    fn double(&self) -> Self {
+        let a = self.x.square();
+        let b = self.y.square();
+        let c = b.square();
+        let d = ((self.x + b).square() - a - c).double();
+        let e = a.double() + a;
+        let x = e.square() - d.double();
+        let y = e * (d - x) - c.double().double().double();
+        let z = (self.y * self.z).double();
+        Self { x, y, z }
+    }
+
+    /// `self + (x2, y2)` for an affine point other than the identity
+    /// (madd-2007-bl).
+    fn add_affine(&self, x2: Fe2<ADX>, y2: Fe2<ADX>) -> Self {
+        if self.is_identity() {
+            return Self {
+                x: x2,
+                y: y2,
+                z: Fe2::ONE,
+            };
+        }
+        let z1z1 = self.z.square();
+        let u2 = x2 * z1z1;
+        let s2 = y2 * self.z * z1z1;
+        if self.x == u2 {
+            // The same point (double it) or its negation (the sum is the identity).
+            return if self.y == s2 {
+                self.double()
+            } else {
+                Self::IDENTITY
+            };
+        }
+        let h = u2 - self.x;
+        let i = h.square().double().double();
+        let j = h * i;
+        let r = (s2 - self.y).double();
+        let v = self.x * i;
+        let x = r.square() - j - v.double();
+        let y = r * (v - x) - (self.y * j).double();
+        let z = (self.z * h).double();
+        Self { x, y, z }
+    }
+
+    /// `self + other` (add-2007-bl).
+    fn add(&self, other: &Self) -> Self {
+        if self.is_identity() {
+            return *other;
+        }
+        if other.is_identity() {
+            return *self;
+        }
+        let z1z1 = self.z.square();
+        let z2z2 = other.z.square();
+        let u1 = self.x * z2z2;
+        let u2 = other.x * z1z1;
+        let s1 = self.y * other.z * z2z2;
+        let s2 = other.y * self.z * z1z1;
+        if u1 == u2 {
+            return if s1 == s2 {
+                self.double()
+            } else {
+                Self::IDENTITY
+            };
+        }
+        let h = u2 - u1;
+        let i = h.double().square();
+        let j = h * i;
+        let r = (s2 - s1).double();
+        let v = u1 * i;
+        let x = r.square() - j - v.double();
+        let y = r * (v - x) - (s1 * j).double();
+        let z = ((self.z + other.z).square() - z1z1 - z2z2) * h;
+        Self { x, y, z }
+    }
+
+    /// Whether both coordinates represent the same point.
+    fn same_point(&self, other: &Self) -> bool {
+        if self.is_identity() || other.is_identity() {
+            return self.is_identity() && other.is_identity();
+        }
+        let z1z1 = self.z.square();
+        let z2z2 = other.z.square();
+        self.x * z2z2 == other.x * z1z1 && self.y * (other.z * z2z2) == other.y * (self.z * z1z1)
+    }
+
+    /// psi(x, y) = (conj(x) * PSI_X, conj(y) * PSI_Y), applied to Jacobian
+    /// coordinates (conjugation is a field automorphism, so Z is conjugated too).
+    fn psi(&self) -> Self {
+        Self {
+            x: self.x.conjugate() * Fe2::from_ark(PSI_X),
+            y: self.y.conjugate() * Fe2::from_ark(PSI_Y),
+            z: self.z.conjugate(),
+        }
+    }
 }
 
 /// G2 membership for a point already on the twist, using
@@ -200,13 +309,25 @@ fn psi(point: &G2Projective) -> G2Projective {
 /// Zhao and Zhou, 2022, section 5.1). It needs one 63-bit scalar
 /// multiplication instead of the 127-bit `[6 x0^2]P` of the generic check.
 fn g2_in_subgroup(point: &G2Affine) -> bool {
-    let p = point.into_group();
-    let x0_p = mul_by_seed(point);
-    let psi_x0_p = psi(&x0_p);
-    let psi2_x0_p = psi(&psi_x0_p);
-    let lhs = x0_p + p + psi_x0_p + psi2_x0_p;
-    let rhs = psi(&psi2_x0_p).double();
-    lhs == rhs
+    if fields::adx_supported() {
+        g2_in_subgroup_on::<true>(point)
+    } else {
+        g2_in_subgroup_on::<false>(point)
+    }
+}
+
+fn g2_in_subgroup_on<const ADX: bool>(point: &G2Affine) -> bool {
+    let p = G2Jacobian {
+        x: Fe2::from_ark(point.x),
+        y: Fe2::from_ark(point.y),
+        z: Fe2::ONE,
+    };
+    let x0_p = mul_by_seed::<ADX>(point);
+    let psi_x0_p = x0_p.psi();
+    let psi2_x0_p = psi_x0_p.psi();
+    let lhs = x0_p.add(&p).add(&psi_x0_p).add(&psi2_x0_p);
+    let rhs = psi2_x0_p.psi().double();
+    lhs.same_point(&rhs)
 }
 
 /// `x0` in non-adjacent form, most significant digit first (24 non-zero digits
@@ -241,15 +362,17 @@ const fn seed_naf() -> [i8; 64] {
     digits
 }
 
-/// `[x0]P` with signed digits and mixed additions of the affine `P` or `-P`.
-fn mul_by_seed(point: &G2Affine) -> G2Projective {
-    let negated = -*point;
-    let mut acc = G2Projective::zero();
+/// `[x0]P` for a point other than the identity, with signed digits and mixed
+/// additions of the affine `P` or `-P`.
+fn mul_by_seed<const ADX: bool>(point: &G2Affine) -> G2Jacobian<ADX> {
+    let (x, y) = (Fe2::from_ark(point.x), Fe2::from_ark(point.y));
+    let negated_y = -y;
+    let mut acc = G2Jacobian::IDENTITY;
     for digit in SEED_NAF {
-        acc.double_in_place();
+        acc = acc.double();
         match digit {
-            1 => acc += point,
-            -1 => acc += &negated,
+            1 => acc = acc.add_affine(x, y),
+            -1 => acc = acc.add_affine(x, negated_y),
             _ => {}
         }
     }
@@ -900,6 +1023,7 @@ mod safegcd {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ark_bn254::G2Projective;
     use ark_ec::{AffineRepr, CurveGroup, PrimeGroup};
     use ark_ff::BigInteger;
     use sha2::{Digest, Sha256};
@@ -1072,27 +1196,172 @@ mod tests {
         for seed in 0..200u64 {
             let k = Fr::from_be_bytes_mod_order(&random_bytes(seed + 6_000_000));
             let q = (G2Affine::generator() * k).into_affine();
-            assert_eq!(mul_by_seed(&q), q.into_group().mul_bigint([SEED]));
+            let expected = q.into_group().mul_bigint([SEED]);
+            assert_eq!(to_ark(&mul_by_seed::<false>(&q)), expected);
+            if fields::adx_supported() {
+                assert_eq!(to_ark(&mul_by_seed::<true>(&q)), expected);
+            }
+        }
+    }
+
+    fn to_ark<const ADX: bool>(point: &G2Jacobian<ADX>) -> G2Projective {
+        G2Projective::new_unchecked(point.x.to_ark(), point.y.to_ark(), point.z.to_ark())
+    }
+
+    fn from_ark<const ADX: bool>(point: &G2Projective) -> G2Jacobian<ADX> {
+        G2Jacobian {
+            x: Fe2::from_ark(point.x),
+            y: Fe2::from_ark(point.y),
+            z: Fe2::from_ark(point.z),
+        }
+    }
+
+    /// Points on the twist from random x: almost never in the subgroup.
+    fn twist_point(seed: u64) -> G2Affine {
+        let mut seed = seed;
+        loop {
+            let x = Fq2::new(random_fq(seed + 8_000_000), random_fq(seed + 9_000_000));
+            if let Some(point) = G2Affine::get_point_from_x_unchecked(x, seed.is_multiple_of(2)) {
+                return point;
+            }
+            seed += 1_000;
+        }
+    }
+
+    /// `r * h / q` for the prime factors `q = 10069` and `q = 5864401` of the G2
+    /// cofactor `h = 2p - r`: multiplying a twist point by it leaves a point of order
+    /// `q` (or the identity).
+    const TORSION_SCALARS: [(u64, [u64; 8]); 2] = [
+        (
+            10069,
+            [
+                0x1dbb_fa43_015f_1659,
+                0x88a0_ba93_34d5_d06e,
+                0xc616_fa58_e5b7_2d72,
+                0x8ec1_2d22_f654_1370,
+                0x85dd_3e29_9a8f_ab26,
+                0xf2ec_8020_adba_71a1,
+                0xb0cf_b56a_567e_a5a2,
+                0x0000_3b89_d84c_6eaa,
+            ],
+        ),
+        (
+            5_864_401,
+            [
+                0xac3b_8251_8671_0dfd,
+                0x9cc4_40ec_f042_4dfa,
+                0x2306_6c21_490c_32db,
+                0x7ab5_0d66_e032_2103,
+                0xfe02_6954_6e82_65a2,
+                0xa406_f5bb_d101_9d45,
+                0x3511_a2a9_daae_b99c,
+                0x0000_001a_2b77_49d0,
+            ],
+        ),
+    ];
+
+    fn subgroup_check_matches<const ADX: bool>() {
+        let h = G2Affine::generator();
+        for seed in 0..200u64 {
+            let k = Fr::from_be_bytes_mod_order(&random_bytes(seed + 7_000_000));
+            let in_group = (h * k).into_affine();
+            assert!(g2_in_subgroup_on::<ADX>(&in_group), "subgroup point {seed}");
+            let off = twist_point(seed);
+            assert_eq!(
+                g2_in_subgroup_on::<ADX>(&off),
+                off.is_in_correct_subgroup_assuming_on_curve(),
+                "twist point {seed}"
+            );
+            // Points with a component of small order, alone and added to a
+            // subgroup point.
+            for (order, scalar) in TORSION_SCALARS {
+                let torsion = off.mul_bigint(scalar);
+                if torsion.is_zero() {
+                    continue;
+                }
+                assert!(torsion.mul_bigint([order]).is_zero());
+                for point in [torsion, torsion + in_group, torsion.double() - in_group] {
+                    let point = point.into_affine();
+                    assert_eq!(
+                        g2_in_subgroup_on::<ADX>(&point),
+                        point.is_in_correct_subgroup_assuming_on_curve(),
+                        "order {order} component, seed {seed}"
+                    );
+                    assert!(!g2_in_subgroup_on::<ADX>(&point));
+                }
+            }
         }
     }
 
     #[test]
     fn g2_subgroup_check_matches_reference() {
+        subgroup_check_matches::<false>();
+        if fields::adx_supported() {
+            subgroup_check_matches::<true>();
+        }
+    }
+
+    /// The Jacobian formulas against arkworks, with scaled coordinates and the
+    /// special cases (identity, equal points, opposite points).
+    fn jacobian_matches<const ADX: bool>() {
         let h = G2Affine::generator();
-        for seed in 0..200u64 {
-            let k = Fr::from_be_bytes_mod_order(&random_bytes(seed + 7_000_000));
-            let in_group = (h * k).into_affine();
-            assert!(g2_in_subgroup(&in_group), "subgroup point {seed}");
-            // Points on the twist taken from random x are almost never in the
-            // subgroup (the cofactor is about 2^254).
-            let x = Fq2::new(random_fq(seed + 8_000_000), random_fq(seed + 9_000_000));
-            if let Some(off) = G2Affine::get_point_from_x_unchecked(x, seed % 2 == 0) {
-                assert_eq!(
-                    g2_in_subgroup(&off),
-                    off.is_in_correct_subgroup_assuming_on_curve(),
-                    "twist point {seed}"
-                );
-            }
+        for seed in 0..100u64 {
+            let p_affine = if seed % 2 == 0 {
+                (h * Fr::from_be_bytes_mod_order(&random_bytes(seed + 12_000_000))).into_affine()
+            } else {
+                twist_point(seed + 13_000_000)
+            };
+            let q_affine = twist_point(seed + 14_000_000);
+            // Scale P by a random Z to leave Z = 1.
+            let z = Fq2::new(random_fq(seed + 15_000_000), random_fq(seed + 16_000_000));
+            let (z2, z3) = (z.square(), z.square() * z);
+            let p = G2Projective::new_unchecked(p_affine.x * z2, p_affine.y * z3, z);
+            let q = q_affine.into_group();
+            let identity = G2Projective::zero();
+            let (ours_p, ours_q) = (from_ark::<ADX>(&p), from_ark::<ADX>(&q));
+            let ours_identity = G2Jacobian::<ADX>::IDENTITY;
+            let ours_neg_p = from_ark::<ADX>(&-p);
+
+            assert_eq!(to_ark(&ours_p.double()), p.double());
+            assert_eq!(to_ark(&ours_identity.double()), identity);
+            assert_eq!(to_ark(&ours_p.add(&ours_q)), p + q);
+            assert_eq!(to_ark(&ours_p.add(&ours_p)), p.double());
+            assert_eq!(to_ark(&ours_p.add(&ours_neg_p)), identity);
+            assert_eq!(to_ark(&ours_identity.add(&ours_p)), p);
+            assert_eq!(to_ark(&ours_p.add(&ours_identity)), p);
+
+            let (qx, qy) = (Fe2::from_ark(q_affine.x), Fe2::from_ark(q_affine.y));
+            let (px, py) = (Fe2::from_ark(p_affine.x), Fe2::from_ark(p_affine.y));
+            assert_eq!(to_ark(&ours_p.add_affine(qx, qy)), p + q_affine);
+            assert_eq!(to_ark(&ours_p.add_affine(px, py)), p.double());
+            assert_eq!(to_ark(&ours_p.add_affine(px, -py)), identity);
+            assert_eq!(to_ark(&ours_identity.add_affine(qx, qy)), q);
+
+            assert!(ours_p.same_point(&from_ark(&p_affine.into_group())));
+            assert!(!ours_p.same_point(&ours_q));
+            assert!(!ours_p.same_point(&ours_neg_p));
+            assert!(!ours_p.same_point(&ours_identity));
+            assert!(ours_identity.same_point(&ours_identity));
+            assert_eq!(to_ark(&ours_p.psi()), psi_reference(&p));
+        }
+    }
+
+    /// psi on arkworks' Jacobian coordinates, as the subgroup check used before.
+    fn psi_reference(point: &G2Projective) -> G2Projective {
+        let mut result = *point;
+        result.x.conjugate_in_place();
+        result.x *= PSI_X;
+        result.y.conjugate_in_place();
+        result.y *= PSI_Y;
+        result.z.conjugate_in_place();
+        result
+    }
+
+    #[test]
+    fn g2_jacobian_matches_arkworks() {
+        jacobian_matches::<false>();
+        if fields::adx_supported() {
+            jacobian_matches::<true>();
         }
     }
 
