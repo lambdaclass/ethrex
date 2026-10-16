@@ -37,14 +37,17 @@ pub fn b16_to_u128(b: [u8; 16]) -> u128 {
     u128::from_le_bytes(b)
 }
 
-/// Encode `cell_mask: Option<u128>` as RLP bytes:
-/// - None  → empty bytes (RLP nil, 0x80)
-/// - Some  → 16-byte little-endian (B_16, geth CustodyBitmap layout)
+/// Encode `cell_mask` as the wire's 16-byte little-endian `B_16` (geth
+/// `CustodyBitmap` layout).
+///
+/// `None` encodes to an all-zero mask, not to RLP nil. devp2p `caps/eth.md` types
+/// the field `cells: B_16` and says only that it "can be ignored when no blob
+/// transactions are announced" — the element itself is always 16 bytes wide. geth
+/// decodes it into `types.CustodyBitmap [16]byte`, which rejects anything shorter
+/// with "input string too short", so a nil mask makes every announcement without a
+/// blob tx undecodable to the rest of the network.
 fn cell_mask_to_bytes(mask: Option<u128>) -> Bytes {
-    match mask {
-        None => Bytes::new(),
-        Some(v) => Bytes::from(u128_to_b16(v).to_vec()),
-    }
+    Bytes::from(u128_to_b16(mask.unwrap_or(0)).to_vec())
 }
 
 /// Decode RLP bytes back to `cell_mask`:
@@ -73,8 +76,11 @@ pub struct NewPooledTransactionHashes72 {
     pub transaction_sizes: Vec<usize>,
     pub transaction_hashes: Vec<H256>,
     /// 128-bit bitmask indicating which cells are held for blob txs.
-    /// None encodes to RLP nil (0x80) and MUST be nil when no type-3 tx is
-    /// announced.
+    ///
+    /// `None` means "no blob tx in this announcement, so nothing to advertise";
+    /// it still goes on the wire as an all-zero `B_16` (see
+    /// [`cell_mask_to_bytes`]). Receivers ignore the mask unless
+    /// [`Self::announces_blob_tx`] holds.
     pub cell_mask: Option<u128>,
 }
 
@@ -96,20 +102,21 @@ impl NewPooledTransactionHashes72 {
                 Transaction::EIP4844Transaction(eip4844_tx) => {
                     // See `NewPooledTransactionHashes::new`: a blob tx whose bundle is no
                     // longer in the pool cannot be served, so it must not be announced.
-                    // An empty bundle would announce ~162 bytes for a ~137 KB transaction.
+                    // Without commitments and proofs the announced size would match no
+                    // delivery.
                     let Some(tx_blobs_bundle) =
                         blockchain.mempool.get_blobs_bundle(transaction_hash)?
                     else {
                         continue;
                     };
-                    let p2p_tx =
-                        P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
+                    eth72_size(&P2PTransaction::EIP4844TransactionWithBlobs(
+                        WrappedEIP4844Transaction {
                             tx: eip4844_tx,
                             wrapper_version: (tx_blobs_bundle.version != 0)
                                 .then_some(tx_blobs_bundle.version),
                             blobs_bundle: tx_blobs_bundle,
-                        });
-                    p2p_tx.encode_canonical_len()
+                        },
+                    ))
                 }
                 _ => transaction.encode_canonical_len(),
             };
@@ -121,8 +128,9 @@ impl NewPooledTransactionHashes72 {
             transaction_sizes.push(transaction_size);
         }
 
-        // cell_mask MUST be nil when no type-3 tx is announced (EIP-8070, devp2p
-        // changes to `NewPooledTransactionHashes`).
+        // With no type-3 tx announced the mask carries no information — devp2p
+        // `caps/eth.md` says it "can be ignored" in that case — so leave it unset
+        // and let the encoder put an all-zero `B_16` on the wire.
         // When blob txs are present, compute the AND of available_cell_mask over
         // every type-3 hash: this is the set of columns available for ALL of them,
         // so receivers know we can serve every requested column for the whole batch.
@@ -309,6 +317,23 @@ pub fn encode_elided_canonical(wrapped: &WrappedEIP4844Transaction) -> Vec<u8> {
     out
 }
 
+/// Size of `tx` as eth/72 announces it: the length of its `PooledTransactions`
+/// encoding, so the blob payload is left out of type-3 transactions.
+///
+/// An eth/72 peer never sends the blobs with the transaction, so it can only check an
+/// announced size against what does arrive. go-ethereum announces blob transactions
+/// to eth/72 peers without the blob payload and disconnects a peer whose delivery
+/// differs from its announcement by more than 8 bytes; both sides of our eth/72
+/// session (announcing and validating) have to measure the same thing.
+pub fn eth72_size(tx: &P2PTransaction) -> usize {
+    match tx {
+        P2PTransaction::EIP4844TransactionWithBlobs(wrapped) => {
+            encode_elided_canonical(wrapped).len()
+        }
+        other => other.encode_canonical_len(),
+    }
+}
+
 /// A transaction as it appears in an eth/72 `PooledTransactions`: an RLP byte
 /// string holding the canonical encoding, with the blob payload elided for type 3.
 struct Elided<'a>(&'a P2PTransaction);
@@ -346,8 +371,9 @@ impl PooledTransactions72 {
     }
 
     /// Validates that received txs match the request.
-    /// Size check is skipped for blob txs since announced size reflects full blobs
-    /// while eth/72 uses elided encoding.
+    ///
+    /// Sizes are compared on the eth/72 wire encoding, which elides blob payloads:
+    /// see [`eth72_size`].
     pub fn validate_requested(
         &self,
         requested: &NewPooledTransactionHashes72,
@@ -367,27 +393,37 @@ impl PooledTransactions72 {
                 .iter()
                 .position(|&hash| hash == tx_hash)
             else {
-                return Err(MempoolError::RequestedPooledTxNotFound);
+                // Not part of this request: ignore the transaction rather than
+                // dropping the peer. `requested` is the announcement trimmed to the
+                // hashes this request asked for, so a peer that answers the whole
+                // announcement it originally sent — which devp2p allows, and which
+                // go-ethereum does — lands here through no fault of its own.
+                // `retain_requested` drops them before they reach the pool.
+                continue;
             };
 
             let expected_type = requested.transaction_types[pos];
             if tx.tx_type() as u8 != expected_type {
                 return Err(MempoolError::InvalidPooledTxType(expected_type));
             }
-            // Size validation skipped for blob txs: announced size reflects full-blob
-            // encoding while eth/72 elided encoding is smaller.
-            if tx.tx_type() as u8 != 3 {
-                let expected_size = requested.transaction_sizes[pos];
-                let tx_size = tx.encode_canonical_len();
-                // Same tolerance as the eth/71 path: geth's tx fetcher allows up to 8 bytes
-                // of skew between the announced and actual size before treating it as a
-                // protocol violation.
-                if tx_size.abs_diff(expected_size) > POOLED_TX_SIZE_TOLERANCE {
-                    return Err(MempoolError::InvalidPooledTxSize);
-                }
+            let expected_size = requested.transaction_sizes[pos];
+            // Same tolerance as the eth/71 path: geth's tx fetcher allows up to 8 bytes
+            // of skew between the announced and actual size before treating it as a
+            // protocol violation.
+            if eth72_size(tx).abs_diff(expected_size) > POOLED_TX_SIZE_TOLERANCE {
+                return Err(MempoolError::InvalidPooledTxSize);
             }
         }
         Ok(())
+    }
+
+    /// Drop transactions that were not part of `requested`.
+    ///
+    /// Pairs with [`Self::validate_requested`], which tolerates unsolicited entries
+    /// instead of dropping the peer: tolerated, but never stored.
+    pub fn retain_requested(&mut self, requested: &NewPooledTransactionHashes72) {
+        self.pooled_transactions
+            .retain(|tx| requested.transaction_hashes.contains(&tx.compute_hash()));
     }
 
     /// Stores transactions; blob txs are stored with commitments+proofs, blobs elided.
@@ -406,13 +442,21 @@ impl PooledTransactions72 {
                     );
                     continue;
                 }
+                // A type-3 transaction declaring no blob versioned hashes is invalid
+                // on its own terms (EIP-4844 requires at least one), and an empty
+                // sidecar is consistent with it. That is a bad transaction, not a peer
+                // misrepresenting one, so it is dropped like any other invalid tx
+                // instead of costing the connection. A sidecar that disagrees with the
+                // transaction still does.
+                let consistently_blobless = itx.tx.blob_versioned_hashes.is_empty()
+                    && itx.blobs_bundle.commitments.is_empty();
                 // Blobs are elided in eth/72; store commitments+proofs.
                 // Full KZG validation deferred until blobs are fetched via GetCells.
                 if let Err(e) = blockchain
                     .add_blob_transaction_to_pool(itx.tx, itx.blobs_bundle)
                     .await
                 {
-                    if matches!(e, MempoolError::BlobsBundleError(_)) {
+                    if matches!(e, MempoolError::BlobsBundleError(_)) && !consistently_blobless {
                         return Err(e);
                     }
                     debug!(
