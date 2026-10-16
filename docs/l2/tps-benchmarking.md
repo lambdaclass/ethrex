@@ -2,7 +2,7 @@
 
 How to measure the transactions per second (TPS) an ethrex L2 settles under a synthetic load. The headline figure is the settled TPS: transactions whose batch has been proved and verified on L1, per second of wall time, so it accounts for the whole settlement path (block production, batch sealing and commitment, proving, L1 verification) and is bounded by its slowest stage. The per-stage figures are measured alongside to show which stage that is. The procedure was written for a single machine with one GPU and two proving backends (SP1 and ZisK), but every step works for any backend the prover supports.
 
-For proving time alone, without the sequencer side, see the [Prover Benchmarking Guide](./prover-benchmarking.md).
+For proving time alone, without the sequencer side, see the [Prover Benchmarking Guide](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/prover-benchmarking.md).
 
 ## What is measured
 
@@ -231,7 +231,7 @@ The block builder fills a blob-sized block in well under a second, so block prod
 
 ## References
 
-- [Prover Benchmarking Guide](./prover-benchmarking.md) and the [agent workflow](../workflows/prover_benchmarking.md) it comes from, which this guide extends with the sequencer and L1 stages.
+- [Prover Benchmarking Guide](https://github.com/lambdaclass/ethrex/blob/main/docs/l2/prover-benchmarking.md) and the [agent workflow](https://github.com/lambdaclass/ethrex/blob/main/docs/workflows/prover_benchmarking.md) it comes from, which this guide extends with the sequencer and L1 stages.
 - [Load test tool](https://github.com/lambdaclass/ethrex/tree/main/tooling/load_test) (`tooling/load_test/README.md`).
 - [`scripts/bench_metrics.sh`](https://github.com/lambdaclass/ethrex/blob/main/scripts/bench_metrics.sh), which tabulates proving times with the batch gauges.
 - [SP1 prover guide](./deployment/prover/sp1.md) and [SP1 upgrade notes](../developers/l2/sp1-upgrade-test.md) for the backend prerequisites; the ZisK guide ships with the ZisK L2 backend pull request.
