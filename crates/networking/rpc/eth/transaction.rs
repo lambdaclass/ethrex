@@ -743,7 +743,12 @@ impl RpcHandler for EstimateGasRequest {
             ExecutionGasCap::Enforced,
         )?;
 
-        let gas_used = result.gas_used();
+        // After Amsterdam `gas_used` is the block-accounting sum of the floored
+        // execution dimension and the state dimension. That sum can exceed the
+        // search cap. Simulation skips the block gas-limit check, so a retry at
+        // the raw sum succeeds and would be returned as a gas limit the mempool
+        // rejects. The cap is a limit this run already succeeded at.
+        let gas_used = result.gas_used().min(highest_gas_limit);
         let gas_refunded = result.gas_refunded();
 
         // Most transactions execute identically at their own `gas_used` as they do with
