@@ -1,10 +1,12 @@
 //! BN254 (alt_bn128) arithmetic behind the ECADD, ECMUL and ECPAIRING precompiles.
 //!
-//! Field arithmetic and the final exponentiation come from `ark-bn254`. This module
-//! replaces the parts that dominate a single precompile call: decoding the inputs,
-//! the field inversion needed to return an affine point, the scalar
-//! multiplication, the G2 subgroup check, and the Miller loop (`pairing`).
+//! Field arithmetic comes from `ark-bn254`, except in the pairing on x86-64 with
+//! BMI2 and ADX, which runs on the branch-free assembly tower of `fields`. This
+//! module replaces the parts that dominate a single precompile call: decoding the
+//! inputs, the field inversion needed to return an affine point, the scalar
+//! multiplication, the G2 subgroup check, and the pairing (`pairing`).
 
+mod fields;
 mod pairing;
 
 #[cfg(not(feature = "std"))]
