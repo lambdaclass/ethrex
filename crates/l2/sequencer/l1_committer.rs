@@ -832,12 +832,18 @@ impl L1Committer {
         let mut current_blocks = vec![];
         let mut current_fee_configs = vec![];
 
-        #[cfg(feature = "metrics")]
         let mut tx_count = 0_u64;
         #[cfg(feature = "metrics")]
         let mut blob_size = 0_usize;
         #[cfg(feature = "metrics")]
         let mut batch_gas_used = 0_u64;
+        // The batch's wall-clock span runs from the parent of its first block to
+        // its last block, so it covers every block interval in the batch.
+        let batch_parent_timestamp = self
+            .store
+            .get_block_header(last_added_block_number)?
+            .map(|header| header.timestamp);
+        let mut batch_last_timestamp = None;
 
         info!("Preparing batch from block {first_block_of_batch}, {batch_number}");
 
@@ -890,12 +896,11 @@ impl L1Committer {
                 receipts.push(receipt);
             }
 
+            tx_count += u64::try_from(txs.len())
+                .inspect_err(|_| tracing::error!("Failed to collect metric tx count"))
+                .unwrap_or(0);
+            batch_last_timestamp = Some(potential_batch_block.header.timestamp);
             metrics!(
-                tx_count += txs
-                    .len()
-                    .try_into()
-                    .inspect_err(|_| tracing::error!("Failed to collect metric tx count"))
-                    .unwrap_or(0);
                 batch_gas_used += potential_batch_block.header.gas_used;
             );
             // Get block messages and privileged transactions
@@ -1094,6 +1099,23 @@ impl L1Committer {
             METRICS.set_batch_size(batch_number, batch_size)?;
             METRICS.set_batch_tx_count(batch_number, tx_count)?;
         );
+
+        // Block timestamps have second resolution, so this is the sustained rate
+        // over the batch, not a per-block figure.
+        let batch_span_seconds = batch_last_timestamp
+            .zip(batch_parent_timestamp)
+            .map(|(last, parent)| last.saturating_sub(parent))
+            .filter(|seconds| *seconds > 0);
+        #[allow(clippy::as_conversions)]
+        let batch_tps = batch_span_seconds.map(|seconds| tx_count as f64 / seconds as f64);
+        match batch_span_seconds.zip(batch_tps) {
+            Some((seconds, tps)) => info!(
+                "Batch {batch_number} holds blocks {first_block_of_batch}..={last_added_block_number}: {tx_count} transactions in {seconds} s, tps {tps:.1}"
+            ),
+            None => info!(
+                "Batch {batch_number} holds blocks {first_block_of_batch}..={last_added_block_number}: {tx_count} transactions"
+            ),
+        }
 
         info!(
             "Added {} privileged to the batch",
