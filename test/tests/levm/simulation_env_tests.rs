@@ -22,6 +22,7 @@ use ethrex_crypto::NativeCrypto;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::vm::VMType;
 use ethrex_storage::{EngineType, Store};
+use ethrex_vm::backends::ExecutionGasCap;
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::{DynVmDatabase, ExecutionResult};
 use rustc_hash::FxHashMap;
@@ -130,6 +131,7 @@ fn simulated_slot_number(slot_number: Option<u64>) -> U256 {
         VMType::L1,
         &NativeCrypto,
         None,
+        ExecutionGasCap::Enforced,
     )
     .expect("simulation must not error");
     match result {
@@ -171,9 +173,16 @@ fn simulated_block_gas_limit(gas: Option<u64>) -> U256 {
         gas,
         ..Default::default()
     };
-    let result =
-        LEVM::simulate_tx_from_generic(&tx, &header, &mut db, VMType::L1, &NativeCrypto, None)
-            .expect("simulation must not error");
+    let result = LEVM::simulate_tx_from_generic(
+        &tx,
+        &header,
+        &mut db,
+        VMType::L1,
+        &NativeCrypto,
+        None,
+        ExecutionGasCap::Enforced,
+    )
+    .expect("simulation must not error");
     match result {
         ExecutionResult::Success { output, .. } => U256::from_big_endian(&output),
         other => panic!("expected GASLIMIT call to succeed, got {other:?}"),
@@ -233,6 +242,7 @@ fn simulation_allows_a_contract_as_the_sender() {
         VMType::L1,
         &NativeCrypto,
         None,
+        ExecutionGasCap::Enforced,
     )
     .expect("a sender holding code must not be rejected under simulation");
     assert!(
@@ -301,9 +311,16 @@ fn simulation_allows_a_zero_blob_fee_cap() {
         blob_versioned_hashes: vec![H256(versioned_hash)],
         ..Default::default()
     };
-    let result =
-        LEVM::simulate_tx_from_generic(&tx, &header, &mut db, VMType::L1, &NativeCrypto, None)
-            .expect("a zero blob fee cap must not be rejected under simulation");
+    let result = LEVM::simulate_tx_from_generic(
+        &tx,
+        &header,
+        &mut db,
+        VMType::L1,
+        &NativeCrypto,
+        None,
+        ExecutionGasCap::Enforced,
+    )
+    .expect("a zero blob fee cap must not be rejected under simulation");
     assert!(
         matches!(result, ExecutionResult::Success { .. }),
         "expected the call to run, got {result:?}"

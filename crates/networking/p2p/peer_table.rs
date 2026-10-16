@@ -38,7 +38,7 @@ use std::{
 const MAX_SCORE: i64 = 50;
 const MIN_SCORE: i64 = -50;
 /// Score assigned to peers who are acting maliciously (e.g., returning a node with wrong hash)
-const MIN_SCORE_CRITICAL: i64 = MIN_SCORE * 3;
+pub(crate) const MIN_SCORE_CRITICAL: i64 = MIN_SCORE * 3;
 /// Score weight for the load balancing function.
 const SCORE_WEIGHT: i64 = 1;
 /// Weight for amount of requests being handled by the peer for the load balancing function.

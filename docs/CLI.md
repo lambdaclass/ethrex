@@ -273,6 +273,12 @@ RPC options:
           [env: ETHREX_HTTP_API=]
           [default: eth,net,web3]
 
+      --rpc.gascap <GAS>
+          Upper bound on the gas a simulation RPC (eth_call, eth_estimateGas, eth_createAccessList, debug_traceCall) runs with, whatever the request asks for. The memory a call can use grows with its gas, so the cap bounds what one request can make the node allocate. 0 disables the cap.
+          
+          [env: ETHREX_RPC_GAS_CAP=]
+          [default: 50000000]
+
       --ws.enabled
           Enable websocket rpc server. Disabled by default.
           
@@ -287,6 +293,30 @@ RPC options:
           Listening port for the WebSocket JSON-RPC server. When unset it inherits `--http.port`, so an enabled WebSocket shares the HTTP listener unless a different port is given.
           
           [env: ETHREX_WS_PORT=]
+
+      --rpc.max-blocks-per-filter <BLOCKS>
+          Maximum block range (toBlock - fromBlock) of an eth_getLogs query or log filter poll. A wider query fails with error -32602 before any block is read; a wider poll reports the first part of its range and leaves the rest to the next poll. 0 means no limit.
+          
+          [env: ETHREX_RPC_MAX_BLOCKS_PER_FILTER=]
+          [default: 100000]
+
+      --rpc.max-logs-per-response <LOGS>
+          Maximum logs returned by an eth_getLogs query or log filter poll. A query that matches more fails with error -32602 naming the range to retry with; a poll that matches more reports the blocks before the one that goes over and leaves the rest to the next poll. Queries for a single block, and the first block of a poll, are exempt. 0 means no limit.
+          
+          [env: ETHREX_RPC_MAX_LOGS_PER_RESPONSE=]
+          [default: 20000]
+
+      --rpc.max-log-query-work <UNITS>
+          Maximum scan work of an eth_getLogs query or log filter poll, estimated as the blocks in its range x the addresses in its filter x the alternatives in its largest topic OR-set, each at least 1. A query with no address and no topic filter reads every block in full and counts 100 per block. A query over it fails with error -32005 before any block is read; a poll over it reports the first part of its range that fits and leaves the rest to the next poll. 0 means no limit.
+          
+          [env: ETHREX_RPC_MAX_LOG_QUERY_WORK=]
+          [default: 10000000]
+
+      --rpc.log-query-work-budget <UNITS>
+          Total scan work (see --rpc.max-log-query-work) of the eth_getLogs queries and log filter polls running at once. A query that does not fit fails at once with error -32005. Queries of at most 10000 units do not count against it.
+          
+          [env: ETHREX_RPC_LOG_QUERY_WORK_BUDGET=]
+          [default: 40000000]
 
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
@@ -305,6 +335,12 @@ RPC options:
           
           [env: ETHREX_AUTHRPC_JWTSECRET_PATH=]
           [default: jwt.hex]
+
+      --authrpc.max-inflight-body-size <BYTES>
+          Maximum request body bytes the authenticated rpc server holds at once, across all connections. It counts body bytes, not all the memory a request takes: parsing one uses about as much again. A request whose Content-Length does not fit waits up to 8 seconds for other requests to finish, and is then rejected with HTTP 503 before its body is read. A chunked body is counted as its chunks arrive, and gets the same 503 if a chunk finds no room within 8 seconds. Each request body is also capped at 128 MiB, and a larger one is rejected with HTTP 413. Must be at least that cap, 134217728.
+          
+          [env: ETHREX_AUTHRPC_MAX_INFLIGHT_BODY_SIZE=]
+          [default: 536870912]
 
 Block building options:
       --builder.extra-data <EXTRA_DATA>
@@ -487,6 +523,12 @@ RPC options:
           [env: ETHREX_HTTP_API=]
           [default: eth,net,web3]
 
+      --rpc.gascap <GAS>
+          Upper bound on the gas a simulation RPC (eth_call, eth_estimateGas, eth_createAccessList, debug_traceCall) runs with, whatever the request asks for. The memory a call can use grows with its gas, so the cap bounds what one request can make the node allocate. 0 disables the cap.
+          
+          [env: ETHREX_RPC_GAS_CAP=]
+          [default: 50000000]
+
       --ws.enabled
           Enable websocket rpc server. Disabled by default.
 
@@ -501,6 +543,30 @@ RPC options:
           Listening port for the WebSocket JSON-RPC server. When unset it inherits `--http.port`, so an enabled WebSocket shares the HTTP listener unless a different port is given.
 
           [env: ETHREX_WS_PORT=]
+
+      --rpc.max-blocks-per-filter <BLOCKS>
+          Maximum block range (toBlock - fromBlock) of an eth_getLogs query or log filter poll. A wider query fails with error -32602 before any block is read; a wider poll reports the first part of its range and leaves the rest to the next poll. 0 means no limit.
+
+          [env: ETHREX_RPC_MAX_BLOCKS_PER_FILTER=]
+          [default: 100000]
+
+      --rpc.max-logs-per-response <LOGS>
+          Maximum logs returned by an eth_getLogs query or log filter poll. A query that matches more fails with error -32602 naming the range to retry with; a poll that matches more reports the blocks before the one that goes over and leaves the rest to the next poll. Queries for a single block, and the first block of a poll, are exempt. 0 means no limit.
+
+          [env: ETHREX_RPC_MAX_LOGS_PER_RESPONSE=]
+          [default: 20000]
+
+      --rpc.max-log-query-work <UNITS>
+          Maximum scan work of an eth_getLogs query or log filter poll, estimated as the blocks in its range x the addresses in its filter x the alternatives in its largest topic OR-set, each at least 1. A query with no address and no topic filter reads every block in full and counts 100 per block. A query over it fails with error -32005 before any block is read; a poll over it reports the first part of its range that fits and leaves the rest to the next poll. 0 means no limit.
+
+          [env: ETHREX_RPC_MAX_LOG_QUERY_WORK=]
+          [default: 10000000]
+
+      --rpc.log-query-work-budget <UNITS>
+          Total scan work (see --rpc.max-log-query-work) of the eth_getLogs queries and log filter polls running at once. A query that does not fit fails at once with error -32005. Queries of at most 10000 units do not count against it.
+
+          [env: ETHREX_RPC_LOG_QUERY_WORK_BUDGET=]
+          [default: 40000000]
 
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
@@ -519,6 +585,12 @@ RPC options:
 
           [env: ETHREX_AUTHRPC_JWTSECRET_PATH=]
           [default: jwt.hex]
+
+      --authrpc.max-inflight-body-size <BYTES>
+          Maximum request body bytes the authenticated rpc server holds at once, across all connections. It counts body bytes, not all the memory a request takes: parsing one uses about as much again. A request whose Content-Length does not fit waits up to 8 seconds for other requests to finish, and is then rejected with HTTP 503 before its body is read. A chunked body is counted as its chunks arrive, and gets the same 503 if a chunk finds no room within 8 seconds. Each request body is also capped at 128 MiB, and a larger one is rejected with HTTP 413. Must be at least that cap, 134217728.
+
+          [env: ETHREX_AUTHRPC_MAX_INFLIGHT_BODY_SIZE=]
+          [default: 536870912]
 
 Block building options:
       --builder.extra-data <EXTRA_DATA>
@@ -830,7 +902,7 @@ Prover client options:
           [default: INFO]
 
       --sp1-server <URL>
-          Url to the moongate server to use when using sp1 backend
+          Ignored: SP1 6 proves on the local sp1-gpu-server and has no remote prover server
 
           [env: ETHREX_SP1_SERVER=]
 ```
