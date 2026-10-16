@@ -14,10 +14,35 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import collect  # noqa: E402
 
 
+import re
+
+FIELD_RE = re.compile(r"(\w+)=(\d+)")
+
+
+def fields(line):
+    return {k: int(v) for k, v in FIELD_RE.findall(line)}
+
+
+def split_name(name):
+    """<timestamp>-<backend>-<workload>[-<tag>]"""
+    rest = name.split("-", 1)[1]
+    backend, rest = rest.split("-", 1)
+    for workload in ("eth-transfers", "erc20", "fibonacci", "io-heavy"):
+        if rest == workload:
+            return backend, workload, ""
+        if rest.startswith(workload + "-"):
+            return backend, workload, rest[len(workload) + 1:]
+    return backend, rest, ""
+
+
+def pct(values, q):
+    values = sorted(values)
+    return values[min(len(values) - 1, int(len(values) * q))]
+
+
 def figures(run_dir: Path):
     name = run_dir.name
-    parts = name.split("-", 1)[1] if "-" in name else name
-    backend, workload = parts.split("-", 1)
+    backend, workload, tag = split_name(name)
     blocks, batches, proved, metrics = [], {}, {}, {}
     for line in (run_dir / "l2.log").read_text(errors="replace").splitlines():
         m = collect.BLOCK_RE.match(line)
@@ -41,12 +66,38 @@ def figures(run_dir: Path):
     def batch_txs(n):
         return metrics.get(n, {}).get("batch_tx_count", batches.get(n, {}).get("txs", 0))
 
-    out = dict(backend=backend, workload=workload)
+    out = dict(backend=backend, workload=workload, tag=tag or "control")
+    cycles, witness, blobdata = [], [], {}
+    for line in (run_dir / "l2.log").read_text(errors="replace").splitlines():
+        if "Committer cycle" in line:
+            f = fields(line)
+            if "total_ms" in f:
+                cycles.append([f.get("l1_reads_ms", 0), f.get("prepare_ms", 0), f.get("send_ms", 0), f["total_ms"]])
+        elif "Batch witness generated" in line:
+            f = fields(line)
+            if "witness_ms" in f:
+                witness.append(f["witness_ms"])
+        elif "Batch blob data" in line:
+            f = fields(line)
+            if "batch" in f and "published_bytes" in f:
+                blobdata[f["batch"]] = [f["blocks"], f["raw_bytes"], f["published_bytes"], f["blobs"]]
+    if len(cycles) > 4:
+        steady = cycles[2:]
+        out["cycle_ms"] = statistics.median(c[3] for c in steady)
+        out["cycle_send_ms"] = statistics.median(c[2] for c in steady)
+    if len(witness) > 4:
+        out["witness_ms"] = statistics.median(witness[2:])
+    if blobdata:
+        rows = [v for n, v in blobdata.items() if n > 1]
+        if rows:
+            out["blocks_per_batch"] = statistics.mean(r[0] for r in rows)
+            out["blobs_per_batch"] = statistics.mean(r[3] for r in rows)
+            out["compression"] = sum(r[1] for r in rows) / sum(r[2] for r in rows)
     busy = [b for b in blocks if b[1] > 0 and b[2] is not None]
     if len(busy) > 4:
         steady = busy[2:-2]
         span = (steady[-1][0] - steady[0][0]).total_seconds()
-        out["seq_tps"] = sum(b[1] for b in steady) / span if span > 0 else None
+        out["seq_tps"] = sum(b[1] for b in steady[1:]) / span if span > 0 else None  # transactions after the window opens
         out["txs_per_block"] = statistics.mean(b[1] for b in steady)
     bpath = run_dir / "blocks.csv"
     if bpath.exists():
@@ -82,6 +133,10 @@ def figures(run_dir: Path):
             out["l1_verify_gas"] = statistics.mean(vgas)
         if bgas:
             out["l1_blob_gas"] = statistics.mean(bgas)
+    block_ts = {}
+    bpath2 = run_dir / "blocks.csv"
+    if bpath2.exists():
+        block_ts = {int(r["number"]): int(r["timestamp"]) for r in csv.DictReader(bpath2.open())}
     vpath = run_dir / "verifications.csv"
     if vpath.exists():
         vrows = sorted((int(r["l1_timestamp"]), int(r["first_batch"]), int(r["last_batch"])) for r in csv.DictReader(vpath.open()))
@@ -91,6 +146,33 @@ def figures(run_dir: Path):
             if t1 > t0:
                 out["settled_tps"] = settled / (t1 - t0)
                 out["window_s"] = t1 - t0
+        # Latency: L1 verification time minus the L2 timestamp of the batch's last block.
+        lat = []
+        for ts, fb, lb in vrows:
+            for n in range(fb, lb + 1):
+                last_block = batches.get(n, {}).get("last")
+                if n > 1 and last_block in block_ts:
+                    lat.append(ts - block_ts[last_block])
+        if len(lat) >= 3:
+            out["latency_p50"] = statistics.median(lat)
+            out["latency_p90"] = pct(lat, 0.9)
+            # With the prover behind, latency grows with the backlog and so with the
+            # window; the shortest one is a batch that did not queue.
+            out["latency_min"] = min(lat)
+    cpath = run_dir / "commits.csv"
+    if cpath.exists():
+        crow = sorted((int(r["l1_timestamp"]), int(r["batch"]), int(r["gas_used"]), int(r["blob_gas_used"])) for r in csv.DictReader(cpath.open()))
+        crow = [r for r in crow if r[1] > 1]
+        if len(crow) >= 3:
+            t0, t1 = crow[0][0], crow[-1][0]
+            if t1 > t0:
+                out["committed_tps"] = sum(batch_txs(r[1]) for r in crow[1:]) / (t1 - t0)
+            txs = sum(batch_txs(r[1]) for r in crow)
+            out["l1_commit_gas"] = statistics.mean(r[2] for r in crow)
+            out["l1_blob_gas"] = statistics.mean(r[3] for r in crow)
+            if txs:
+                out["commit_gas_per_tx"] = sum(r[2] for r in crow) / txs
+                out["blob_gas_per_tx"] = sum(r[3] for r in crow) / txs
     gpath = run_dir / "gpu.csv"
     if gpath.exists():
         grows = list(csv.DictReader(gpath.open()))
@@ -106,7 +188,17 @@ def figures(run_dir: Path):
 ROWS = [
     ("Settled TPS on L1 (headline)", "settled_tps", "{:.1f}"),
     ("Settlement window (s)", "window_s", "{:.0f}"),
+    ("Committed TPS on L1", "committed_tps", "{:.1f}"),
     ("Sequencer TPS (steady window)", "seq_tps", "{:.1f}"),
+    ("Settlement latency p50 / p90 (s)", "latency", "{}"),
+    ("Settlement latency without backlog (s)", "latency_min", "{:.0f}"),
+    ("Committer cycle p50 (ms)", "cycle_ms", "{:.0f}"),
+    ("Witness generation p50 (ms)", "witness_ms", "{:.0f}"),
+    ("Blocks per batch", "blocks_per_batch", "{:.2f}"),
+    ("Blobs per batch", "blobs_per_batch", "{:.2f}"),
+    ("Compression ratio (raw / published)", "compression", "{:.2f}"),
+    ("L1 commit gas per transaction", "commit_gas_per_tx", "{:.0f}"),
+    ("L1 blob gas per transaction", "blob_gas_per_tx", "{:.0f}"),
     ("Transactions per block", "txs_per_block", "{:.0f}"),
     ("Gas per block", "gas_per_block", "{:,.0f}"),
     ("Gas per transaction", "gas_per_tx", "{:,.0f}"),
@@ -125,7 +217,10 @@ ROWS = [
 
 if __name__ == "__main__":
     runs = [figures(Path(d)) for d in sys.argv[1:]]
-    header = "| Metric | " + " | ".join(f"{r['backend']} {r['workload']}" for r in runs) + " |"
+    for r in runs:
+        if "latency_p50" in r:
+            r["latency"] = f"{r['latency_p50']:.0f} / {r['latency_p90']:.0f}"
+    header = "| Metric | " + " | ".join(f"{r['backend']} {r['workload']} {r['tag']}" for r in runs) + " |"
     print(header)
     print("|---|" + "---|" * len(runs))
     for label, key, fmt in ROWS:

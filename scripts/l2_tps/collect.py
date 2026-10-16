@@ -55,6 +55,8 @@ def summarize(run_dir: Path):
         tps_values = [b[2] for b in steady]
         tx_total = sum(b[1] for b in steady)
         span = (steady[-1][0] - steady[0][0]).total_seconds()
+        # The window opens at the first block, so its transactions are not inside it.
+        tx_in_window = tx_total - steady[0][1]
         out.append("### Sequencer")
         out.append("")
         out.append("| Metric | Value |")
@@ -63,7 +65,7 @@ def summarize(run_dir: Path):
         out.append(f"| Transactions per block, mean | {tx_total / len(steady):.0f} |")
         out.append(f"| Per-block TPS, mean / median / max | {statistics.mean(tps_values):.1f} / {statistics.median(tps_values):.1f} / {max(tps_values):.1f} |")
         if span > 0:
-            out.append(f"| Aggregate TPS over the window ({span:.0f} s) | {tx_total / span:.1f} |")
+            out.append(f"| Aggregate TPS over the window ({span:.0f} s) | {tx_in_window / span:.1f} |")
         out.append("")
     if batches:
         out.append("### Batches sealed by the committer")

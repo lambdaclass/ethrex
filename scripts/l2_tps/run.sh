@@ -16,6 +16,10 @@
 #   TX_PER_ACCOUNT   transactions per account and round (default 300)
 #   BLOCK_TIME_MS    L2 block time (default 5000)
 #   COMMIT_TIME_MS   committer interval (default = block time, so every block is batched at once)
+#   L2_GAS_LIMIT     L2 block gas limit stored in the bridge at deployment and used as the
+#                    L2 genesis gas limit (default: the deployer's 30M and the genesis file's)
+#   EXTRA_L2_FLAGS   extra flags for the sequencer
+#   TAG              label appended to the run directory name
 #   ZISK_VERIFIER    for zisk: an already deployed ZiskVerifier address; otherwise
 #                    `make deploy-zisk-verifier` deploys one
 #   PROVER_ENV       extra environment for the prover, e.g. GLIBC_TUNABLES=... or
@@ -33,7 +37,10 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 BIN=${ETHREX_BIN:-$ROOT/target/release/ethrex}
 LOAD_TEST=${LOAD_TEST_BIN:-$ROOT/tooling/target/release/load_test}
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-RUN_DIR=${TPS_RUNS_DIR:-$ROOT/tps-runs}/$(date -u +%Y%m%dT%H%M%SZ)-$BACKEND-$WORKLOAD
+TAG=${TAG:-}
+EXTRA_L2_FLAGS=${EXTRA_L2_FLAGS:-}
+L2_GAS_LIMIT=${L2_GAS_LIMIT:-}
+RUN_DIR=${TPS_RUNS_DIR:-$ROOT/tps-runs}/$(date -u +%Y%m%dT%H%M%SZ)-$BACKEND-$WORKLOAD${TAG:+-$TAG}
 mkdir -p "$RUN_DIR"
 for v in $(env | grep -o '^ETHREX_[A-Z0-9_]*' | grep -v '^ETHREX_BIN$' || true); do unset "$v"; done
 
@@ -58,7 +65,14 @@ stop_all() {
 }
 
 cd "$ROOT/crates/l2"
-log "run $BACKEND/$WORKLOAD: duration ${DURATION_MIN} min, ${TX_PER_ACCOUNT} tx/account/round, block time ${BLOCK_TIME_MS} ms, commit time ${COMMIT_TIME_MS} ms"
+log "run $BACKEND/$WORKLOAD${TAG:+ [$TAG]}: duration ${DURATION_MIN} min, ${TX_PER_ACCOUNT} tx/account/round, block time ${BLOCK_TIME_MS} ms, commit time ${COMMIT_TIME_MS} ms, L2 gas limit ${L2_GAS_LIMIT:-default}, extra flags: ${EXTRA_L2_FLAGS:-none}"
+L2_GENESIS=../../fixtures/genesis/l2.json
+GAS_FLAGS=()
+if [ -n "$L2_GAS_LIMIT" ]; then
+  L2_GENESIS=$RUN_DIR/l2-genesis.json
+  python3 -c "import json; g=json.load(open('$ROOT/fixtures/genesis/l2.json')); g['gasLimit']=hex($L2_GAS_LIMIT); json.dump(g,open('$L2_GENESIS','w'),indent=2)"
+  GAS_FLAGS=(--l2-gas-limit "$L2_GAS_LIMIT")
+fi
 log "ethrex $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown), $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || echo "no GPU")"
 log "stopping leftovers and wiping datadirs"
 stop_all
@@ -95,8 +109,8 @@ log "deploying the L1 contracts requiring $BACKEND proofs"
   --on-chain-proposer-owner "$L2_OWNER_ADDRESS" --bridge-owner "$L2_OWNER_ADDRESS" \
   --bridge-owner-pk "$BRIDGE_OWNER_PRIVATE_KEY" --deposit-rich \
   --private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
-  --genesis-l1-path ../../fixtures/genesis/l1.json --genesis-l2-path ../../fixtures/genesis/l2.json \
-  > "$RUN_DIR/deploy.log" 2>&1
+  --genesis-l1-path ../../fixtures/genesis/l1.json --genesis-l2-path "$L2_GENESIS" \
+  "${GAS_FLAGS[@]}" > "$RUN_DIR/deploy.log" 2>&1
 set -a
 # shellcheck disable=SC1091
 . "$ROOT/cmd/.env"
@@ -106,7 +120,7 @@ log "bridge=$ETHREX_WATCHER_BRIDGE_ADDRESS on_chain_proposer=$OCP"
 
 log "starting the L2 sequencer"
 ETHREX_NO_MONITOR=true nohup "$BIN" l2 \
-  --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json \
+  --watcher.block-delay 0 --network "$L2_GENESIS" \
   --http.port 1729 --http.addr 0.0.0.0 --metrics --metrics.port 3702 --datadir dev_ethrex_l2 \
   --mempool.maxsize 1000000 \
   --l1.bridge-address "$ETHREX_WATCHER_BRIDGE_ADDRESS" --l1.on-chain-proposer-address "$OCP" \
@@ -118,7 +132,7 @@ ETHREX_NO_MONITOR=true nohup "$BIN" l2 \
   --block-producer.block-time "$BLOCK_TIME_MS" --committer.commit-time "$COMMIT_TIME_MS" \
   --committer.l1-private-key "$L1_PRIVATE_KEY" \
   --proof-coordinator.l1-private-key "$PROOF_SENDER_PRIVATE_KEY" --proof-coordinator.addr 127.0.0.1 \
-  > "$RUN_DIR/l2.log" 2>&1 &
+  $EXTRA_L2_FLAGS > "$RUN_DIR/l2.log" 2>&1 &
 for _ in $(seq 1 60); do
   rpc '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' "$L2_RPC_URL" | grep -q result && break
   sleep 1
@@ -131,9 +145,20 @@ LOAD_TEST_RPC_URL=$L2_RPC_URL LOAD_TEST_TX_AMOUNT=$TX_PER_ACCOUNT LOAD_TEST_ENDL
 cd "$ROOT/crates/l2"
 
 log "starting the $BACKEND prover"
-# shellcheck disable=SC2086
-env RUST_LOG=info,ethrex_prover=debug ${PROVER_ENV:-} nohup "$BIN" l2 prover --backend "$BACKEND" \
-  --proof-coordinators tcp://127.0.0.1:3900 --timed > "$RUN_DIR/prover.log" 2>&1 &
+# The prover is restarted if it dies (it reconnects and proves the batch again);
+# every restart is recorded in prover-restarts.csv.
+(
+  while true; do
+    # shellcheck disable=SC2086
+    env RUST_LOG=info,ethrex_prover=debug ${PROVER_ENV:-} "$BIN" l2 prover --backend "$BACKEND" \
+      --proof-coordinators tcp://127.0.0.1:3900 --timed >> "$RUN_DIR/prover.log" 2>&1
+    code=$?
+    echo "$(date -u +%FT%TZ),$code" >> "$RUN_DIR/prover-restarts.csv"
+    echo "== $(date -u +%FT%TZ) prover exited with $code, restarting" >> "$RUN_DIR/prover.log"
+    sleep 3
+  done
+) &
+PROVER_LOOP=$!
 
 log "sampling the OnChainProposer and the GPU every 30 s for ${DURATION_MIN} min"
 echo "utc,committed,verified" > "$RUN_DIR/l1-progress.csv"
@@ -168,6 +193,34 @@ grep -a "Sent batch verification transaction" "$RUN_DIR/l2.log" | while read -r 
     | python3 -c "import sys,json; print(int(json.load(sys.stdin)[\"result\"][\"timestamp\"],16))")
   [ "$st" = "0x1" ] && echo "$fb,$lb,$tx,$((bn)),$ts" >> "$RUN_DIR/verifications.csv"
 done
+# L1 inclusion of every commit transaction: timestamp, gas and blob gas.
+python3 - "$RUN_DIR" "$L1_RPC_URL" <<'PYEOF' >> "$RUN_DIR/run.log" 2>&1 || true
+import json, re, sys, urllib.request
+run_dir, url = sys.argv[1], sys.argv[2]
+def rpc(method, params):
+    body = json.dumps({"jsonrpc": "2.0", "method": method, "params": params, "id": 1}).encode()
+    req = urllib.request.Request(url, data=body, headers={"content-type": "application/json"})
+    return json.load(urllib.request.urlopen(req, timeout=10)).get("result")
+sent = re.compile(r"Commitment sent for batch (\d+), with tx hash (0x[0-9a-f]+)")
+rows, blocks = [], {}
+for line in open(f"{run_dir}/l2.log", errors="replace"):
+    m = sent.search(line)
+    if not m:
+        continue
+    receipt = rpc("eth_getTransactionReceipt", [m.group(2)])
+    if not receipt or receipt.get("status") != "0x1":
+        continue
+    bn = receipt["blockNumber"]
+    if bn not in blocks:
+        blocks[bn] = int(rpc("eth_getBlockByNumber", [bn, False])["timestamp"], 16)
+    rows.append((int(m.group(1)), m.group(2), int(bn, 16), blocks[bn], int(receipt["gasUsed"], 16), int(receipt.get("blobGasUsed") or "0x0", 16)))
+with open(f"{run_dir}/commits.csv", "w") as f:
+    f.write("batch,commit_tx,l1_block,l1_timestamp,gas_used,blob_gas_used\n")
+    for r in sorted(rows):
+        f.write(",".join(str(x) for x in r) + "\n")
+print(f"commits recorded: {len(rows)}")
+PYEOF
+kill "$PROVER_LOOP" 2>/dev/null || true
 pkill -f "$BIN l2 prover" || true
 pkill -x sp1-gpu-server || true
 python3 "$HERE/collect.py" "$RUN_DIR" > "$RUN_DIR/summary.md" 2>&1 || true

@@ -11,7 +11,7 @@ An L2 transaction goes through four stages, and each one has its own throughput:
 | Stage | Component | Where the figure comes from | Meaning |
 |---|---|---|---|
 | Block production | Block producer | `Stored new block …, transaction_count N, tps T` log line and the `transactions_per_second` gauge | Transactions included per second of real block interval. This is the execution ceiling of the sequencer for the workload. |
-| Batch sealing | Committer | `Batch B holds blocks F..=L: N transactions in S s, tps T` log line, plus the `batch_tx_count`, `batch_size` and `batch_gas_used` gauges | Sustained rate over a whole batch, from block timestamps. Batches are also capped by what fits in one blob, so this shows the batch size the prover will see. |
+| Batch sealing | Committer | `Batch B holds blocks F..=L: N transactions in S s, tps T` log line, plus the `batch_tx_count`, `batch_size` and `batch_gas_used` gauges | Sustained rate over a whole batch, from block timestamps. Batches are also capped by what fits in one blob, so this shows the batch size the prover will see. Blocks are capped by the blob or by the L2 block gas limit, whichever binds first. |
 | Proving | Prover (`--timed`) | `Proved payload #B … proving_time_ms=M` log line | Proven TPS of a batch is its transaction count divided by its proving time. The aggregate over a run (sum of transactions divided by sum of proving times) is the throughput one GPU can prove. |
 | L1 verification (headline) | OnChainProposer | L1 block timestamps of the `verifyBatches` transactions (the sequencer logs each `verify_tx_hash`), plus the per-batch transaction counts | Settled TPS: transactions in the batches verified between the first and the last verification of the run, divided by the wall time between those two L1 timestamps. It is the end-to-end rate the whole pipeline sustains; with one GPU it is set by proving, and it includes the proof coordinator queue and the L1 transactions. |
 
@@ -32,8 +32,8 @@ A run is sized so that the load always exceeds what the sequencer includes: the 
 
 `scripts/l2_tps/` automates steps 2 to 6 below and produces the summaries this guide quotes:
 
-- `run.sh <backend> <workload>` runs one measurement from a fresh L1 to a run directory (`tps-runs/<timestamp>-<backend>-<workload>/` by default) holding the node, prover and load-test logs, `metrics.txt`, `blocks.csv` (per block: timestamp, transactions, gas, base fee), `gpu.csv` (GPU memory, utilization and power every 30 s), `l1-progress.csv`, `verifications.csv` (L1 timestamp of every verification) and `summary.md`. It takes the binaries, window, block time, commit interval and load from environment variables documented at its top; the prover's extra environment (for example the CUDA 12 runtime path for SP1, or the glibc tunable ZisK needs) goes in `PROVER_ENV`.
-- `collect.py <run_dir>` recomputes a run's summary; `compare.py <run_dir>...` prints one table across runs with the rows shown under Results; `dump_blocks.py` is the per-block RPC dump `run.sh` calls at the end.
+- `run.sh <backend> <workload>` runs one measurement from a fresh L1 to a run directory (`tps-runs/<timestamp>-<backend>-<workload>/` by default) holding the node, prover and load-test logs, `metrics.txt`, `blocks.csv` (per block: timestamp, transactions, gas, base fee), `gpu.csv` (GPU memory, utilization and power every 30 s), `l1-progress.csv`, `verifications.csv` (L1 timestamp of every verification) and `summary.md`. It also records `commits.csv` (L1 timestamp, gas and blob gas of every commit transaction). It takes the binaries, window, block time, commit interval, load, L2 block gas limit (`L2_GAS_LIMIT`, applied to the bridge and the L2 genesis), extra sequencer flags (`EXTRA_L2_FLAGS`) and a run label (`TAG`) from environment variables documented at its top; the prover's extra environment (for example the CUDA 12 runtime path for SP1, or the glibc tunable ZisK needs) goes in `PROVER_ENV`.
+- `collect.py <run_dir>` recomputes a run's summary; `compare.py <run_dir>...` prints one table across runs with the rows shown under Results, plus committed TPS on L1, settlement latency (L1 verification time minus the L2 timestamp of the batch's last block), L1 gas and blob gas per transaction and the committer's cycle time when the run recorded them; `dump_blocks.py` is the per-block RPC dump `run.sh` calls at the end.
 
 ```bash
 COMPILE_CONTRACTS=true cargo build --release --features l2,l2-sql,gpu,sp1 --bin ethrex
@@ -178,7 +178,8 @@ Measured on 2026-10-16 on one machine: AMD Ryzen 9 9950X3D (16 cores), 60 GB RAM
 |---|---|---|---|---|
 | Settled TPS on L1 (headline) | 49.7 | 25.9 | 19.5 | 11.3 |
 | Settlement window (s) | 864 | 854 | 832 | 821 |
-| Sequencer TPS (steady window) | 206.2 | 106.2 | 200.1 | 106.1 |
+| Committed TPS on L1 | 108.4 | 55.7 | 96.4 | 49.6 |
+| Sequencer TPS (steady window) | 204.9 | 105.6 | 198.9 | 105.5 |
 | Transactions per block | 1,055 | 533 | 1,061 | 533 |
 | Gas per block | 22,139,741 | 27,688,118 | 22,287,831 | 27,688,114 |
 | Gas per transaction | 21,000 | 52,114 | 21,000 | 52,114 |
@@ -190,34 +191,36 @@ Measured on 2026-10-16 on one machine: AMD Ryzen 9 9950X3D (16 cores), 60 GB RAM
 | L1 commit gas per batch | 185,482 | 185,479 | 185,478 | 185,479 |
 | L1 blob gas per batch | 131,072 | 131,072 | 131,072 | 131,072 |
 | L1 verify gas per batch | 413,486 | 413,688 | 349,337 | 349,345 |
-| GPU memory, max (MiB) | not sampled | 29,948 | 26,038 | 26,102 |
-| GPU utilization, mean (%) | not sampled | 51 | 34 | 37 |
-| GPU power, mean (W) | not sampled | 433 | 230 | 211 |
+| GPU memory, max (MiB) | 30,330 | 29,948 | 26,038 | 26,102 |
+| GPU utilization, mean (%) | 61 | 51 | 34 | 37 |
+| GPU power, mean (W) | 398 | 433 | 230 | 211 |
 
-GPU sampling was added after the first run had started, hence the missing cells; its proving times and settlement come from the same logs as the others.
+GPU sampling was added after the first ZisK run had started, so ZisK with ETH transfers was measured a second time with every sample in place; the GPU rows of that column come from the repeat. The repeat reproduced the first run within noise: settled TPS 49.7 in both, sequencer 205.2 against 204.9 TPS, proving 16.5 s per batch in both, the same 40 batches proved in the window.
 
 How to read it:
 
-- Blocks and batches are full by bytes, not gas: every batch is one block that fills the blob (about 1,080 ETH transfers or 530 ERC20 transfers), so the sequencer figures are the blob capacity per block time, and the proving figures are per full blob.
+- Every batch is one full block, but the two workloads fill it differently. ETH-transfer blocks are full by bytes: about 1,060 transfers of 117 bytes fill the blob that publishes the batch, at 22.3M gas. ERC20-transfer blocks are full by gas: the deployer stores a 30M L2 block gas limit by default (`--l2-gas-limit`) and the load test gives every transaction a 2.1M gas limit, so the builder stops at 27.9M gas, 536 transfers and about 99 KB, which leaves no room for a second block in the batch's blob. The sequencer figures are therefore the blob capacity per block time for ETH transfers and the gas limit per block time for ERC20 transfers.
 - The settled TPS is below the proven TPS by the time the prover spends between proofs (fetching the next batch input, the coordinator round trip, submitting the proof): the GPU sits idle roughly a quarter to a half of the time with one prover per GPU, which the GPU utilization row shows. Running two prover processes per GPU, or pipelining input fetch with proving, would recover most of it.
+- Behind the prover sits the committer, which also falls short of the sequencer. After each commit it waits a full commit interval before the next one, and a commit cycle (L1 reads, batch preparation and witness, sending the transaction and polling its receipt every 2 s) takes about 4 to 6 s, so with one block per batch it publishes one batch every 9 to 11 s at 5-second intervals: 108 ETH transfers per second against the sequencer's 205. A faster prover alone would therefore settle at most about 108 TPS of ETH transfers with these settings.
 - Proving seconds per Mgas is the figure to use for capacity planning; it depends on the workload (ERC20 transfers cost more gas per transaction but prove faster per gas than plain transfers, whose cost is dominated by signature recovery and state writes). Neither backend proves a block within the 5-second block time on this GPU: a full ETH-transfer block takes 3.3 block times on ZisK and 10 on SP1, so settlement is prover-bound and throughput parity would take about four ZisK provers or ten SP1 provers, each on its own GPU; a proof landing before the next block would need one batch split across GPUs, which the ethrex prover does not do.
 - L1 cost per batch is independent of the backend and of the workload: one blob plus a commit transaction of about 185k gas and a verification of about 413k gas.
 
 ### Sensitivity: 1-second blocks
 
-One extra run, ZisK with ETH transfers, with the block time and the commit interval at 1 second instead of 5 (12-minute window, everything else equal):
+ETH transfers with the block time and the commit interval at 1 second instead of 5 (12-minute windows, everything else equal), for both backends:
 
-| Metric | 5 s blocks | 1 s blocks |
-|---|---|---|
-| Settled TPS on L1 | 49.7 | 50.0 |
-| Sequencer TPS (steady window) | 206.2 | 991.4 |
-| Transactions per block | 1,055 | 1,062 |
-| Transactions per batch | 1,075 | 1,076 |
-| Proving time per batch (s) | 16.5 | 16.5 |
-| Proven TPS | 65.0 | 65.1 |
-| GPU utilization, mean (%) | not sampled | 63 |
+| Metric | ZisK, 5 s blocks | ZisK, 1 s blocks | SP1, 5 s blocks | SP1, 1 s blocks |
+|---|---|---|---|---|
+| Settled TPS on L1 | 49.7 | 50.0 | 19.5 | 19.5 |
+| Committed TPS on L1 | 108.4 | 177.5 | 96.4 | 152.8 |
+| Sequencer TPS (steady window) | 204.9 | 989.9 | 198.9 | 968.0 |
+| Transactions per block | 1,055 | 1,062 | 1,061 | 1,062 |
+| Transactions per batch | 1,075 | 1,076 | 1,079 | 1,079 |
+| Proving time per batch (s) | 16.5 | 16.5 | 50.2 | 50.7 |
+| Proven TPS | 65.0 | 65.1 | 21.5 | 21.3 |
+| GPU utilization, mean (%) | 61 | 63 | 34 | 35 |
 
-The block builder fills a blob-sized block in well under a second, so block production scales with the block time (about 1,000 ETH transfers per second at 1-second blocks) while the settled figure does not move: it is set by the prover, which still takes 16.5 s per blob-sized batch. The run also exposed the next cap behind the prover: the committer prepares a batch, sends its commit transaction and only then starts the next, about 6 seconds per batch on this host, so with one block per blob it would commit at most about 180 ETH transfers per second however many provers there were. Raising sequencer throughput past that needs fewer bytes per transaction in the blob (state diffs or compression) or several blobs per batch, and a committer that pipelines its commit transactions.
+The block builder fills a blob-sized block in well under a second, so block production scales with the block time (about 1,000 ETH transfers per second at 1-second blocks) while the settled figure does not move for either backend: it is set by the prover, which still takes 16.5 s (ZisK) or 50 s (SP1) per blob-sized batch. The runs also show the next cap behind the prover: the committer waits a full commit interval after each commit and its own cycle takes about 6 seconds here, so at 1-second intervals it publishes about 180 ETH transfers per second (177.5 and 152.8 TPS committed), and at 5-second intervals about 100, however many provers there were. Raising sequencer throughput past that needs fewer bytes per transaction in the blob (state diffs or compression) or several blobs per batch, and a committer that pipelines its commit transactions.
 
 ## Design notes
 
@@ -225,7 +228,7 @@ The block builder fills a blob-sized block in well under a second, so block prod
 - **Batch TPS uses block timestamps**, from the parent of the first block to the last block of the batch, which covers every block interval the batch spans. It is a sustained figure with one-second resolution.
 - **Settled TPS is the headline** because it is the only figure that accounts for the whole settlement path; the others locate the bottleneck. Proven TPS divides by proving time only: witness generation, queueing in the proof coordinator and the L1 transactions are not in it, but they are in the settled TPS.
 - **The commit interval is a settlement cap of its own.** The committer seals at most one batch per interval; the default 60 s would bound settlement at one batch per minute whatever the prover does, so the runs use one block interval.
-- **The blob caps the block, and so the sequencer.** The block builder stops adding transactions when the block's encoding would exceed `SAFE_BYTES_PER_BLOB`, because a batch is published as one blob holding its blocks in full, and the committer stops adding blocks to a batch for the same reason. A block of plain ETH transfers tops out around 1,080 transactions, so with 5-second blocks the sequencer cannot settle more than about 215 TPS of them whatever the prover does; ERC20 transfers carry calldata and pack fewer per block. Shorter blocks raise that cap, bigger blobs or compressed batch data would too.
+- **The blob caps the block, and so the sequencer.** The block builder stops adding transactions when the block's encoding would exceed `SAFE_BYTES_PER_BLOB`, because a batch is published as one blob holding its blocks in full, and the committer stops adding blocks to a batch for the same reason. A block of plain ETH transfers tops out around 1,080 transactions, so with 5-second blocks the sequencer cannot settle more than about 215 TPS of them whatever the prover does. ERC20 transfers hit the L2 block gas limit first (30M by default, set at deployment), at 536 transfers and about 99 KB; raising that limit lets them fill the blob too, at about 680 transfers. Shorter blocks raise both caps, bigger blobs or compressed batch data would raise the blob one.
 - **Two defects found by the first runs are fixed alongside this guide.** The block builder's blob-space check ignored the framing the committer adds around a block in the batch blob (the 8-byte block count, the RLP list prefixes that grow as the block fills, the header's `gas_used`), so under sustained load a block landed a few bytes over the blob within the first twenty-odd blocks and the committer, which cannot split a block, stopped committing for good; the builder now reserves that margin. The committer also counted a block's transactions and gas toward a batch before checking whether the block fit, so every batch closed by a block that did not fit reported twice its transactions in the `batch_tx_count` gauge; the counters now move with the block's acceptance. Older figures derived from that gauge should be treated as suspect.
 - **Why a fresh L1 per run.** Contract addresses, batch numbers and the L1 block timeline are then comparable across runs, and no batch from a previous run is left for the new prover.
 
