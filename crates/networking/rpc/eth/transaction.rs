@@ -425,11 +425,7 @@ impl RpcHandler for CreateAccessListRequest {
             .clone()
             .unwrap_or(BlockIdentifierOrHash::Identifier(BlockIdentifier::default()));
         debug!("Requested access list creation for tx on block: {}", block);
-        let block_number = match block.resolve_block_number(&context.storage).await? {
-            Some(block_number) => block_number,
-            _ => return Ok(Value::Null),
-        };
-        let header = match context.storage.get_block_header(block_number)? {
+        let header = match block.resolve_block_header(&context.storage).await? {
             Some(header) => header,
             // Block not found
             _ => return Ok(Value::Null),
