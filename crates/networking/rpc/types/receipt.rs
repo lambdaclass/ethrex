@@ -37,25 +37,48 @@ pub struct RpcFrameReceipt {
     /// (atomic-batch failure). Serialized as a hex-encoded byte.
     #[serde(with = "serde_utils::u8::hex_str")]
     pub status: u8,
-    /// `gas_used.execution` of the consensus frame receipt.
+    /// `executionGasUsed + stateGasUsed`, as the execution-apis frame receipt
+    /// schema defines it.
     #[serde(with = "serde_utils::u64::hex_str")]
     pub gas_used: u64,
+    /// `gas_used.execution` of the consensus frame receipt.
+    #[serde(with = "serde_utils::u64::hex_str")]
+    pub execution_gas_used: u64,
     /// `gas_used.state` of the consensus frame receipt: the frame's final
     /// state-gas attribution. Omitting it made the receipt look as if state gas
     /// were charged at transaction level, when the consensus encoding attributes
     /// it per frame.
     #[serde(with = "serde_utils::u64::hex_str")]
     pub state_gas_used: u64,
-    pub logs: Vec<RpcLogInfo>,
+    /// Full log objects, each with its block-global `logIndex`, as in the
+    /// receipt's own `logs`.
+    pub logs: Vec<RpcLog>,
 }
 
-impl From<FrameReceipt> for RpcFrameReceipt {
-    fn from(fr: FrameReceipt) -> Self {
+impl RpcFrameReceipt {
+    /// `first_log_index` is the block-global index of this frame's first log.
+    fn new(
+        frame_receipt: FrameReceipt,
+        first_log_index: u64,
+        tx_info: &RpcReceiptTxInfo,
+        block_info: &RpcReceiptBlockInfo,
+        block_timestamp: u64,
+    ) -> Self {
         Self {
-            status: fr.status,
-            gas_used: fr.gas_used,
-            state_gas_used: fr.state_gas_used,
-            logs: fr.logs.into_iter().map(RpcLogInfo::from).collect(),
+            status: frame_receipt.status,
+            gas_used: frame_receipt
+                .gas_used
+                .saturating_add(frame_receipt.state_gas_used),
+            execution_gas_used: frame_receipt.gas_used,
+            state_gas_used: frame_receipt.state_gas_used,
+            logs: frame_receipt
+                .logs
+                .into_iter()
+                .zip(first_log_index..)
+                .map(|(log, log_index)| {
+                    RpcLog::new(log, log_index, tx_info, block_info, block_timestamp)
+                })
+                .collect(),
         }
     }
 }
@@ -81,10 +104,26 @@ impl RpcReceipt {
             log_index += 1;
         }
         let payer = receipt.payer;
-        let frame_receipts = receipt
-            .frame_receipts
-            .clone()
-            .map(|frs| frs.into_iter().map(RpcFrameReceipt::from).collect());
+        // A frame transaction's logs are its frames' logs in frame order, so each
+        // frame's logs continue the index from where the previous frame's ended.
+        let frame_receipts = receipt.frame_receipts.clone().map(|frame_receipts| {
+            let mut first_log_index = init_log_index;
+            frame_receipts
+                .into_iter()
+                .map(|frame_receipt| {
+                    let frame_log_count = frame_receipt.logs.len() as u64;
+                    let frame_receipt = RpcFrameReceipt::new(
+                        frame_receipt,
+                        first_log_index,
+                        &tx_info,
+                        &block_info,
+                        block_timestamp,
+                    );
+                    first_log_index += frame_log_count;
+                    frame_receipt
+                })
+                .collect()
+        });
         Self {
             receipt: receipt.into(),
             logs,
@@ -247,12 +286,14 @@ impl RpcReceiptTxInfo {
             )?)
             .map_err(|_| RpcErr::Internal("effective gas price overflows u64".into()))?;
         let transaction_index = index;
-        let (blob_gas_price, blob_gas_used) = match &transaction {
-            Transaction::EIP4844Transaction(tx) => (
+        // EIP-4844 transactions and EIP-8141 frame transactions that carry blobs.
+        let (blob_gas_price, blob_gas_used) = if transaction.is_blob_carrying() {
+            (
                 Some(block_blob_gas_price),
-                Some(tx.blob_versioned_hashes.len() as u64 * GAS_PER_BLOB as u64),
-            ),
-            _ => (None, None),
+                Some(transaction.blob_versioned_hashes().len() as u64 * GAS_PER_BLOB as u64),
+            )
+        } else {
+            (None, None)
         };
         let (contract_address, to) = match &transaction {
             // EIP-8141: a frame transaction carries no `to` field and creates nothing at the top
@@ -399,5 +440,128 @@ mod tests {
         assert_eq!(info.from, sender);
         assert_eq!(info.to, None);
         assert_eq!(info.contract_address, None);
+    }
+
+    // The execution-apis frame receipt: `gasUsed` is execution plus state gas, both parts are
+    // reported, and each frame's logs are full log objects whose indexes continue the block-global
+    // sequence across frames, as in the receipt's own `logs`.
+    #[test]
+    fn frame_receipts_follow_the_execution_apis_schema() {
+        let log = |byte: u8| Log {
+            address: Address::repeat_byte(byte),
+            topics: vec![],
+            data: Bytes::new(),
+        };
+        let receipt = RpcReceipt::new(
+            Receipt {
+                tx_type: TxType::Frame,
+                succeeded: true,
+                cumulative_gas_used: 100_000,
+                logs: vec![log(1), log(2), log(3)],
+                payer: Some(Address::repeat_byte(9)),
+                frame_receipts: Some(vec![
+                    FrameReceipt {
+                        status: 1,
+                        gas_used: 0x100,
+                        state_gas_used: 0,
+                        logs: vec![log(1)],
+                    },
+                    FrameReceipt {
+                        status: 1,
+                        gas_used: 0x100,
+                        state_gas_used: 0x200,
+                        logs: vec![],
+                    },
+                    FrameReceipt {
+                        status: 1,
+                        gas_used: 0x100,
+                        state_gas_used: 0,
+                        logs: vec![log(2), log(3)],
+                    },
+                ]),
+            },
+            RpcReceiptTxInfo {
+                transaction_hash: H256::repeat_byte(7),
+                transaction_index: 1,
+                from: Address::zero(),
+                to: None,
+                contract_address: None,
+                gas_used: 100_000,
+                effective_gas_price: 1,
+                blob_gas_price: None,
+                blob_gas_used: None,
+            },
+            RpcReceiptBlockInfo {
+                block_hash: BlockHash::repeat_byte(8),
+                block_number: 3,
+            },
+            4,
+            1786901200,
+        );
+
+        let json = serde_json::to_value(&receipt).expect("serialize");
+        let frames = json["frameReceipts"].as_array().expect("frame receipts");
+        let second = frames[1].as_object().expect("frame receipt is an object");
+        let mut keys: Vec<_> = second.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "executionGasUsed",
+                "gasUsed",
+                "logs",
+                "stateGasUsed",
+                "status"
+            ]
+        );
+        assert_eq!(second["gasUsed"], "0x300");
+        assert_eq!(second["executionGasUsed"], "0x100");
+        assert_eq!(second["stateGasUsed"], "0x200");
+
+        let frame_log_indexes: Vec<_> = frames
+            .iter()
+            .flat_map(|frame| frame["logs"].as_array().expect("frame logs").clone())
+            .map(|log| log["logIndex"].clone())
+            .collect();
+        let receipt_log_indexes: Vec<_> = json["logs"]
+            .as_array()
+            .expect("receipt logs")
+            .iter()
+            .map(|log| log["logIndex"].clone())
+            .collect();
+        assert_eq!(frame_log_indexes, ["0x4", "0x5", "0x6"]);
+        assert_eq!(frame_log_indexes, receipt_log_indexes);
+        assert_eq!(frames[2]["logs"][1], json["logs"][2]);
+    }
+
+    // A frame transaction that carries blobs pays for blob gas like an EIP-4844 one, so its receipt
+    // reports `blobGasUsed` and `blobGasPrice`. One without blobs reports neither.
+    #[test]
+    fn blob_carrying_frame_transaction_receipt_reports_blob_gas() {
+        let frame_tx = |blob_versioned_hashes: Vec<H256>| {
+            Transaction::FrameTransaction(FrameTransaction {
+                max_fee_per_gas: ethrex_common::U256::one(),
+                max_priority_fee_per_gas: ethrex_common::U256::one(),
+                max_fee_per_blob_gas: ethrex_common::U256::one(),
+                blob_versioned_hashes,
+                ..Default::default()
+            })
+        };
+
+        let with_blobs = RpcReceiptTxInfo::from_transaction(
+            frame_tx(vec![H256::repeat_byte(1), H256::repeat_byte(2)]),
+            0,
+            21_000,
+            3,
+            Some(0),
+        )
+        .unwrap();
+        assert_eq!(with_blobs.blob_gas_used, Some(2 * GAS_PER_BLOB as u64));
+        assert_eq!(with_blobs.blob_gas_price, Some(3));
+
+        let without_blobs =
+            RpcReceiptTxInfo::from_transaction(frame_tx(vec![]), 0, 21_000, 3, Some(0)).unwrap();
+        assert_eq!(without_blobs.blob_gas_used, None);
+        assert_eq!(without_blobs.blob_gas_price, None);
     }
 }

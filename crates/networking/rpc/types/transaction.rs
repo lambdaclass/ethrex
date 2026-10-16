@@ -120,3 +120,49 @@ impl SendRawTransactionRequest {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::{Bytes, U256, types::Frame};
+
+    // The execution-apis frame transaction schema names the frame fields `target`, `executionGas`
+    // and `stateGas`, and carries the sender as `from`, like every other transaction type. A
+    // `sender` key would repeat `from` under a name the schema does not define.
+    #[test]
+    fn frame_transaction_json_follows_the_execution_apis_schema() {
+        let sender = Address::repeat_byte(0x11);
+        let target = Address::repeat_byte(0x22);
+        let tx = Transaction::FrameTransaction(FrameTransaction {
+            sender,
+            frames: vec![Frame {
+                mode: 2,
+                flags: 0,
+                target: Some(target),
+                gas_limit: 0x5208,
+                state_gas_limit: 0x100,
+                value: U256::one(),
+                data: Bytes::from_static(&[0xab]),
+            }],
+            ..Default::default()
+        });
+
+        let json = serde_json::to_value(RpcTransaction::build(tx, None, None, None).unwrap())
+            .expect("serialize");
+
+        assert_eq!(json["from"], format!("{sender:#x}"));
+        assert!(json.get("sender").is_none(), "the sender is `from` only");
+        assert_eq!(
+            json["frames"][0],
+            serde_json::json!({
+                "mode": "0x2",
+                "flags": "0x0",
+                "target": format!("{target:#x}"),
+                "executionGas": "0x5208",
+                "stateGas": "0x100",
+                "value": "0x1",
+                "data": "0xab",
+            })
+        );
+    }
+}

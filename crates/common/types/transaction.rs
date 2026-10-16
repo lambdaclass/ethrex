@@ -3671,6 +3671,8 @@ mod serde_impl {
         }
     }
 
+    /// JSON shape of an EIP-8141 frame, named as in the execution-apis frame
+    /// transaction schema.
     #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
     #[serde(rename_all = "camelCase")]
     pub struct FrameEntry {
@@ -3678,11 +3680,11 @@ mod serde_impl {
         pub mode: u64,
         #[serde(with = "crate::serde_utils::u64::hex_str")]
         pub flags: u64,
-        pub to: Option<Address>,
+        pub target: Option<Address>,
         #[serde(with = "crate::serde_utils::u64::hex_str")]
-        pub gas_limit: u64,
+        pub execution_gas: u64,
         #[serde(default, with = "crate::serde_utils::u64::hex_str")]
-        pub state_gas_limit: u64,
+        pub state_gas: u64,
         #[serde(
             default,
             serialize_with = "serialize_u256_hex",
@@ -3726,9 +3728,9 @@ mod serde_impl {
             FrameEntry {
                 mode: value.mode as u64,
                 flags: value.flags as u64,
-                to: value.target,
-                gas_limit: value.gas_limit,
-                state_gas_limit: value.state_gas_limit,
+                target: value.target,
+                execution_gas: value.gas_limit,
+                state_gas: value.state_gas_limit,
                 value: value.value,
                 data: value.data.clone(),
             }
@@ -3740,9 +3742,9 @@ mod serde_impl {
             Frame {
                 mode: entry.mode as u8,
                 flags: entry.flags as u8,
-                target: entry.to,
-                gas_limit: entry.gas_limit,
-                state_gas_limit: entry.state_gas_limit,
+                target: entry.target,
+                gas_limit: entry.execution_gas,
+                state_gas_limit: entry.state_gas,
                 value: entry.value,
                 data: entry.data,
             }
@@ -4029,7 +4031,8 @@ mod serde_impl {
                     .map(|key| format!("{key:#x}"))
                     .collect::<Vec<_>>(),
             )?;
-            s.serialize_field("sender", &format!("{:#x}", self.sender))?;
+            // The sender is not serialized here: the RPC transaction object
+            // carries it as `from`, as for every other transaction type.
             s.serialize_field(
                 "frames",
                 &self.frames.iter().map(FrameEntry::from).collect::<Vec<_>>(),
