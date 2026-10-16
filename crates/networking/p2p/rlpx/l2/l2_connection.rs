@@ -1,12 +1,8 @@
 use crate::rlpx::connection::server::send;
 use crate::rlpx::l2::messages::{BatchSealed, L2Message, NewBlock};
 use crate::rlpx::{connection::server::Established, error::PeerConnectionError, message::Message};
-use crate::types::Node;
 use ethereum_types::Address;
 use ethereum_types::Signature;
-use ethrex_blockchain::Blockchain;
-use ethrex_blockchain::error::ChainError;
-use ethrex_blockchain::fork_choice::apply_fork_choice;
 use ethrex_common::H256;
 use ethrex_common::types::Block;
 use ethrex_common::types::batch::Batch;
@@ -19,6 +15,7 @@ use std::sync::Arc;
 use tokio::time::Instant;
 use tracing::{debug, error, info, warn};
 
+use super::block_importer::L2BlockImporter;
 use super::messages::batch_hash;
 use super::{PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL};
 
@@ -30,24 +27,20 @@ const MAX_BATCHES_PER_BROADCAST: usize = 16;
 pub struct L2ConnectedState {
     pub latest_block_sent: u64,
     pub latest_batch_sent: u64,
-    pub blocks_on_queue: BTreeMap<u64, QueuedBlock>,
     pub batches_on_queue: BTreeMap<u64, Arc<Batch>>,
     pub store_rollup: StoreRollup,
     pub committer_key: Arc<SecretKey>,
     pub next_block_broadcast: Instant,
     pub next_batch_broadcast: Instant,
-}
-
-#[derive(Debug, Clone)]
-pub struct QueuedBlock {
-    pub block: Arc<Block>,
-    pub fee_config: ethrex_common::types::fee_config::FeeConfig,
+    pub block_importer: L2BlockImporter,
 }
 
 #[derive(Debug, Clone)]
 pub struct P2PBasedContext {
     pub store_rollup: StoreRollup,
     pub committer_key: Arc<SecretKey>,
+    /// Shared by every connection of the node, which hand it the blocks they receive.
+    pub block_importer: L2BlockImporter,
 }
 
 #[derive(Debug, Clone)]
@@ -109,13 +102,13 @@ impl L2ConnState {
             Self::Disconnected(ctxt) => {
                 let state = L2ConnectedState {
                     latest_block_sent: 0,
-                    blocks_on_queue: BTreeMap::new(),
                     batches_on_queue: BTreeMap::new(),
                     latest_batch_sent: 0,
                     store_rollup: ctxt.store_rollup.clone(),
                     committer_key: ctxt.committer_key.clone(),
                     next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
                     next_batch_broadcast: Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL,
+                    block_importer: ctxt.block_importer.clone(),
                 };
                 *self = L2ConnState::Connected(state);
                 Ok(())
@@ -200,19 +193,15 @@ pub(crate) async fn handle_based_capability_message(
             process_batches_on_queue(established).await?;
         }
         L2Message::NewBlock(ref new_block_msg) => {
-            if should_process_new_block(established, new_block_msg).await? {
-                established
+            if should_process_new_block(established, new_block_msg).await?
+                && established
                     .l2_state
-                    .connection_state_mut()?
-                    .blocks_on_queue
-                    .entry(new_block_msg.block.header.number)
-                    .or_insert_with(|| QueuedBlock {
-                        block: new_block_msg.block.clone(),
-                        fee_config: new_block_msg.fee_config,
-                    });
+                    .connection_state()?
+                    .block_importer
+                    .submit(new_block_msg.block.clone(), new_block_msg.fee_config)
+            {
                 broadcast_message(established, msg.into())?;
             }
-            process_blocks_on_queue(established).await?;
         }
     }
     Ok(())
@@ -394,10 +383,7 @@ async fn should_process_new_block(
         );
         return Ok(false);
     }
-    if l2_state
-        .blocks_on_queue
-        .contains_key(&msg.block.header.number)
-    {
+    if l2_state.block_importer.is_queued(msg.block.header.number) {
         debug!(
             "Block {} received by peer already queued, ignoring it",
             msg.block.header.number
@@ -473,99 +459,6 @@ async fn should_process_batch_sealed(
         .store_signature_by_batch(msg.batch.number, msg.signature)
         .await?;
     Ok(true)
-}
-
-pub async fn process_blocks_on_queue(
-    established: &mut Established,
-) -> Result<(), PeerConnectionError> {
-    let l2_state = established.l2_state.connection_state_mut()?;
-    import_queued_blocks(
-        &established.storage,
-        &established.blockchain,
-        l2_state,
-        &established.node,
-    )
-    .await
-}
-
-/// Imports, in order, the queued blocks that extend the local chain.
-///
-/// The next block to import is derived from the store's head, which every connection shares,
-/// and not from per-connection state: a new connection (e.g. after either node restarts) would
-/// otherwise wait for blocks the node already has, which are never queued, and stall forever.
-pub async fn import_queued_blocks(
-    storage: &Store,
-    blockchain: &Blockchain,
-    l2_state: &mut L2ConnectedState,
-    peer: &Node,
-) -> Result<(), PeerConnectionError> {
-    let mut next_block_to_add = storage.get_latest_block_number()? + 1;
-    filter_potential_old_blocks(l2_state, next_block_to_add);
-
-    while let Some(queued) = l2_state.blocks_on_queue.remove(&next_block_to_add) {
-        let QueuedBlock { block, fee_config } = queued;
-        // This check is necessary if a connection to another peer applied the block after we
-        // read the head.
-        if let Ok(Some(_)) = storage.get_block_body(next_block_to_add).await {
-            next_block_to_add += 1;
-            continue;
-        }
-        let block_hash = block.hash();
-        let block_number = block.header.number;
-        let block = Arc::unwrap_or_clone(block);
-        blockchain
-            .add_block_pipeline(block, None)
-            .inspect_err(|e| {
-                error!(
-                    peer=%peer,
-                    error=%e,
-                    block_number,
-                    ?block_hash,
-                    "Error adding new block",
-                );
-            })?;
-
-        apply_fork_choice(storage, block_hash, block_hash, block_hash, None)
-            .await
-            .map_err(|e| {
-                PeerConnectionError::BlockchainError(ChainError::Custom(format!(
-                    "Error adding new block {} with hash {:?}, error: {e}",
-                    block_number, block_hash
-                )))
-            })?;
-
-        l2_state
-            .store_rollup
-            .store_fee_config_by_block(block_number, fee_config)
-            .await?;
-        info!(
-            "Added new block {} with hash {:?}",
-            next_block_to_add, block_hash
-        );
-        next_block_to_add += 1;
-    }
-    Ok(())
-}
-
-fn filter_potential_old_blocks(l2_state: &mut L2ConnectedState, next_block_to_add: u64) {
-    let keys_to_remove = if let Some(block_entry) = l2_state.blocks_on_queue.first_entry()
-        && block_entry.key() < &next_block_to_add
-    {
-        let mut keys = vec![];
-        for key in l2_state.blocks_on_queue.keys() {
-            if *key < next_block_to_add {
-                keys.push(*key);
-            } else {
-                break;
-            }
-        }
-        keys
-    } else {
-        vec![]
-    };
-    for key in keys_to_remove {
-        l2_state.blocks_on_queue.remove(&key);
-    }
 }
 
 /// Sends the batches the peer hasn't been sent yet, a few per tick: every connection starts from
