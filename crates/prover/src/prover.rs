@@ -270,7 +270,15 @@ where
         #[cfg(feature = "zisk")]
         BackendType::ZisK => {
             use crate::backend::ZiskBackend;
-            let prover: Prover<ZiskBackend, I> = Prover::new(ZiskBackend::new(), config);
+            let backend = ZiskBackend::new();
+            // Builds the in-process prover and runs the program setup up front, so a
+            // missing proving key or an unsupported host fails here instead of on
+            // the first assigned batch.
+            if let Err(e) = backend.warm_up() {
+                error!("Failed to initialize the ZisK prover: {e}");
+                return;
+            }
+            let prover: Prover<ZiskBackend, I> = Prover::new(backend, config);
             let actor_ref = prover.start_with_backend(Backend::Blocking);
             let _ = actor_ref.send(prover_protocol::Poll);
             actor_ref.join().await;

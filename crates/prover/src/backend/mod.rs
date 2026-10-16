@@ -47,7 +47,10 @@ pub enum BackendType {
     SP1,
     #[cfg(feature = "risc0")]
     RISC0,
+    // clap would derive `zis-k` from the variant name; the CLI value is `zisk`,
+    // matching `sp1` and `risc0`.
     #[cfg(feature = "zisk")]
+    #[value(name = "zisk")]
     ZisK,
 }
 

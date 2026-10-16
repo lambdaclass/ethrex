@@ -4,7 +4,7 @@ use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     Block, Commitment, Proof, blob_from_bytes, kzg_commitment_to_versioned_hash,
 };
-use ethrex_crypto::kzg::verify_blob_kzg_proof;
+use ethrex_crypto::Crypto;
 use ethrex_rlp::encode::RLPEncode;
 
 use crate::l2::L2ExecutionError;
@@ -12,11 +12,16 @@ use crate::l2::L2ExecutionError;
 /// Verify the KZG blob proof and return the versioned hash.
 ///
 /// Returns `H256::zero()` for validium mode (when commitment and proof are all zeros).
+///
+/// The verification goes through the `Crypto` provider so each zkVM can bring
+/// its own KZG backend: the defaults use the crate's `kzg-rs`/`c-kzg` build, and
+/// ZisK combines its point-evaluation accelerator with portable field arithmetic.
 pub fn verify_blob(
     blocks: &[Block],
     fee_configs: &[FeeConfig],
     commitment: Commitment,
     proof: Proof,
+    crypto: &dyn Crypto,
 ) -> Result<H256, L2ExecutionError> {
     // Check for validium mode (no blob data)
     let validium = (commitment, &proof) == ([0; 48], &[0; 48]);
@@ -39,7 +44,10 @@ pub fn verify_blob(
 
     let blob_data = blob_from_bytes(Bytes::from(blob_data))?;
 
-    if !verify_blob_kzg_proof(blob_data, commitment, proof)? {
+    let valid = crypto
+        .verify_blob_kzg_proof(&blob_data, &commitment, &proof)
+        .map_err(|e| L2ExecutionError::Internal(format!("blob KZG verification: {e}")))?;
+    if !valid {
         return Err(L2ExecutionError::InvalidBlobProof);
     }
 
