@@ -11,16 +11,27 @@ use crate::harness::{Backend, EngineApiHarness};
 #[derive(Debug)]
 pub struct RunOptions {
     pub backend: Backend,
+    /// Check an `INVALID` payload's `validationError` against the fixture's, as
+    /// the cargo engine harness does: a mismatch is warned about, or fails the
+    /// fixture with `strict_exceptions`. Without it a fixture's verdict depends
+    /// only on which payloads it expects to be rejected (and the JSON-RPC error
+    /// code it expects).
+    pub check_exception_names: bool,
     pub strict_exceptions: bool,
+    /// Run blocks that carry an access list on the BAL-driven parallel executor,
+    /// as a node does unless started with `--no-bal-parallel-exec`.
+    pub bal_parallel_exec: bool,
 }
 
 impl RunOptions {
     pub fn from_env() -> Self {
         Self {
             backend: parse_backend_env(),
+            check_exception_names: true,
             strict_exceptions: std::env::var("ETHREX_ENGINE_STRICT_EXCEPTIONS")
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                 .unwrap_or(false),
+            bal_parallel_exec: true,
         }
     }
 }
@@ -39,6 +50,18 @@ fn parse_backend_env() -> Backend {
             }
         ),
     }
+}
+
+/// A payload the client rejected, with an `INVALID` status or a JSON-RPC error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rejection {
+    /// The payload's position in the fixture's `engineNewPayloads`, from 0.
+    pub index: usize,
+    /// The payload's `blockHash`, for an `INVALID` status.
+    pub hash: Option<H256>,
+    /// The `validationError`, or for a JSON-RPC error `<code>: <message>` and,
+    /// when the error carries data, `: <data>`.
+    pub error: String,
 }
 
 #[derive(Debug)]
@@ -102,6 +125,11 @@ pub enum FixtureFailure {
     FollowupFcu {
         index: usize,
         msg: String,
+    },
+    HeadRpc(String),
+    LastBlockHashMismatch {
+        expected: H256,
+        got: H256,
     },
 }
 
@@ -183,16 +211,26 @@ impl fmt::Display for FixtureFailure {
             FixtureFailure::FollowupFcu { index, msg } => {
                 write!(f, "followup_fcu[{index}]  error={msg}")
             }
+            FixtureFailure::HeadRpc(e) => write!(f, "head_rpc  error={e}"),
+            FixtureFailure::LastBlockHashMismatch { expected, got } => {
+                write!(
+                    f,
+                    "lastblockhash_mismatch  expected={expected:#x}  got={got:#x}"
+                )
+            }
         }
     }
 }
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
+/// Run one fixture, adding each payload the client rejects to `rejections` as it
+/// happens, so they are there even when the fixture then fails.
 pub async fn run_fixture(
     name: &str,
     fix: &EngineFixture,
     opts: &RunOptions,
+    rejections: &mut Vec<Rejection>,
 ) -> Result<(), FixtureFailure> {
     // 1. Pre-Paris skip
     let fork = fix
@@ -206,9 +244,13 @@ pub async fn run_fixture(
     let genesis = fix
         .build_genesis()
         .map_err(|e| FixtureFailure::FixtureParse(e.to_string()))?;
-    let harness = Box::pin(EngineApiHarness::from_genesis(genesis, opts.backend))
-        .await
-        .map_err(|e| FixtureFailure::HarnessSetup(e.to_string()))?;
+    let harness = Box::pin(EngineApiHarness::from_genesis(
+        genesis,
+        opts.backend,
+        opts.bal_parallel_exec,
+    ))
+    .await
+    .map_err(|e| FixtureFailure::HarnessSetup(e.to_string()))?;
 
     // 3. Initial FCU to genesis (mirrors test_via_engine.py:80–105)
     let first = fix
@@ -255,7 +297,19 @@ pub async fn run_fixture(
             index: i,
             msg: e.to_string(),
         })?;
-        check_payload_response(&resp, payload, i, opts.strict_exceptions, name)?;
+        if let Some(error) = rejection_error(&resp) {
+            let hash = if resp.get("error").is_some() {
+                None
+            } else {
+                payload.head_block_hash().ok()
+            };
+            rejections.push(Rejection {
+                index: i,
+                hash,
+                error,
+            });
+        }
+        check_payload_response(&resp, payload, i, opts, name)?;
         if with_witness && payload.valid() {
             check_witness_response(&resp, payload, i, name)?;
         }
@@ -275,6 +329,18 @@ pub async fn run_fixture(
             assert_fcu_valid(&fcu_resp)
                 .map_err(|e| FixtureFailure::FollowupFcu { index: i, msg: e })?;
         }
+    }
+
+    // 6. The head the payloads and forkchoice updates left must be `lastblockhash`.
+    let block = Box::pin(harness.get_latest_block())
+        .await
+        .map_err(|e| FixtureFailure::HeadRpc(e.to_string()))?;
+    let head = parse_block_hash(&block).map_err(FixtureFailure::HeadRpc)?;
+    if head != fix.lastblockhash {
+        return Err(FixtureFailure::LastBlockHashMismatch {
+            expected: fix.lastblockhash,
+            got: head,
+        });
     }
 
     Ok(())
@@ -410,11 +476,35 @@ fn witness_diff_detail(section: &str, got: &[Vec<u8>], exp: &[Vec<u8>]) -> Strin
     }
 }
 
+/// The client's error for a `newPayload` response that rejects the payload: its
+/// `validationError` for an `INVALID` status, or the JSON-RPC error as
+/// `<code>: <message>`, plus `: <data>` when the error carries data (a string as
+/// is, anything else as compact JSON).
+fn rejection_error(resp: &Value) -> Option<String> {
+    if let Some(err) = resp.get("error") {
+        let code = err.get("code").map(Value::to_string).unwrap_or_default();
+        let message = err.get("message").and_then(Value::as_str).unwrap_or("");
+        let mut error = format!("{code}: {message}");
+        match err.get("data") {
+            None | Some(Value::Null) => {}
+            Some(Value::String(data)) => error.push_str(&format!(": {data}")),
+            Some(data) => error.push_str(&format!(": {data}")),
+        }
+        return Some(error);
+    }
+    let result = resp.get("result")?;
+    if result.get("status").and_then(Value::as_str) != Some("INVALID") {
+        return None;
+    }
+    let validation_error = result.get("validationError").and_then(Value::as_str);
+    Some(validation_error.unwrap_or_default().to_string())
+}
+
 fn check_payload_response(
     resp: &Value,
     payload: &FixturePayload,
     index: usize,
-    strict: bool,
+    opts: &RunOptions,
     name: &str,
 ) -> Result<(), FixtureFailure> {
     // JSON-RPC error path
@@ -481,7 +571,7 @@ fn check_payload_response(
     }
 
     // INVALID payloads: check validationError only when the fixture expects one
-    if status == "INVALID" {
+    if status == "INVALID" && opts.check_exception_names {
         let got_ve = result
             .get("validationError")
             .and_then(|v| v.as_str())
@@ -505,9 +595,9 @@ fn check_payload_response(
                         index,
                         expected: candidates.iter().map(|s| s.to_string()).collect(),
                         got,
-                        strict,
+                        strict: opts.strict_exceptions,
                     };
-                    if strict {
+                    if opts.strict_exceptions {
                         return Err(f);
                     } else {
                         eprintln!("warn [{name}]: {f}");
@@ -563,8 +653,37 @@ mod tests {
     fn inmem_opts() -> RunOptions {
         RunOptions {
             backend: Backend::InMemory,
+            check_exception_names: true,
             strict_exceptions: false,
+            bal_parallel_exec: true,
         }
+    }
+
+    #[test]
+    fn rejection_error_is_the_clients_error() {
+        let error = |resp: Value| rejection_error(&resp);
+        assert_eq!(
+            error(serde_json::json!({"result": {"status": "INVALID", "validationError": "bad"}})),
+            Some("bad".to_string())
+        );
+        assert_eq!(
+            error(serde_json::json!({"result": {"status": "VALID", "validationError": null}})),
+            None
+        );
+        assert_eq!(
+            error(serde_json::json!({"error": {"code": -38005, "message": "Unsupported fork"}})),
+            Some("-38005: Unsupported fork".to_string())
+        );
+        assert_eq!(
+            error(serde_json::json!({"error": {"code": -32602, "message": "m", "data": "d"}})),
+            Some("-32602: m: d".to_string())
+        );
+        assert_eq!(
+            error(
+                serde_json::json!({"error": {"code": -32602, "message": "m", "data": {"err": "e"}}})
+            ),
+            Some(r#"-32602: m: {"err":"e"}"#.to_string())
+        );
     }
 
     /// Pre-Paris fixtures must return SkippedPreParis (is_skip() == true).
@@ -598,7 +717,7 @@ mod tests {
         let fixtures: EngineFixtureFile = serde_json::from_str(&raw).unwrap();
         let opts = inmem_opts();
         let (name, fixture) = fixtures.iter().next().unwrap();
-        let err = run_fixture(name, fixture, &opts)
+        let err = run_fixture(name, fixture, &opts, &mut Vec::new())
             .await
             .expect_err("London fixture must be skipped");
         assert!(err.is_skip(), "expected SkippedPreParis, got: {err}");

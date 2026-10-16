@@ -53,15 +53,17 @@ fn thread_local_merkle_pool() -> Arc<rayon::ThreadPool> {
 /// touch it (confirmed by the `rg` invariants above).
 /// `syncer` is `Some(shared)` with `SyncMode::Full`, satisfying the engine handler
 /// requirements in `engine_forkchoiceUpdated*` and `engine_newPayload*`.
-pub async fn engine_only_context(storage: Store) -> RpcApiContext {
+/// `bal_parallel_exec: false` is the node's `--no-bal-parallel-exec`; nothing
+/// else about the `Blockchain` changes.
+pub async fn engine_only_context(storage: Store, bal_parallel_exec: bool) -> RpcApiContext {
     let shared_syncer = SHARED_SYNCER
         .get_or_init(|| async { Arc::new(dummy_sync_manager().await) })
         .await
         .clone();
-    let blockchain = Arc::new(Blockchain::for_test_harness_with_pool(
-        storage.clone(),
-        thread_local_merkle_pool(),
-    ));
+    let mut blockchain =
+        Blockchain::for_test_harness_with_pool(storage.clone(), thread_local_merkle_pool());
+    blockchain.options.bal_parallel_exec_enabled = bal_parallel_exec;
+    let blockchain = Arc::new(blockchain);
     // The runner owns this context for its whole lifetime, so the executor thread
     // is left detached.
     let (block_worker_channel, _executor) = start_block_executor(blockchain.clone());

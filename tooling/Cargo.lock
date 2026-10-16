@@ -2942,6 +2942,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ef_tests-runners"
+version = "4.0.0"
+dependencies = [
+ "clap 4.6.0",
+ "ef_tests-blockchain",
+ "ef_tests-engine",
+ "ethrex-vm",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.23",
+]
+
+[[package]]
 name = "ef_tests-state"
 version = "0.1.0"
 dependencies = [
