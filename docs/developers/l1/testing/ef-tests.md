@@ -48,7 +48,7 @@ make test-levm
 `blocktest` and `enginetest` run fixtures from any directory and print one result per fixture, which is how EELS `consume direct` calls them. From `tooling/`:
 
 ```sh
-cargo run --profile release-fast -p ef_tests-runners --bin blocktest -- <path>... [--workers N] [--json] [--bal-sequential] [--bal-withhold] [--bal-report]
+cargo run --profile release-fast -p ef_tests-runners --bin blocktest -- <path>... [--workers N] [--json] [--bal-sequential] [--bal-withhold] [--no-precompile-cache] [--bal-report]
 cargo run --profile release-fast -p ef_tests-runners --bin enginetest -- <path>... [same flags]
 ```
 
@@ -59,5 +59,6 @@ cargo run --profile release-fast -p ef_tests-runners --bin enginetest -- <path>.
 - ethrex's `statetest` is `ef_tests-statev2 statetest` (see `tooling/ef_tests/state_v2`).
 - `--version` prints one line naming the client and the tool, `ethrex-blocktest <version>` or `ethrex-enginetest <version>`, where the version is the tooling workspace's; harnesses identify a runner by it.
 - `--bal-sequential` runs every block on the sequential executor, like the node's `--no-bal-parallel-exec`.
+- `--no-precompile-cache` (or `ETHREX_NO_PRECOMPILE_CACHE`) runs every block without the per-block precompile result cache, like the node flag of the same name.
 - `blocktest --bal-withhold` never delivers the fixture's access list, so every block runs without one and ethrex checks the list it builds against the header, as for a block received without its list.
 - With `--bal-report`, `blocktest` and `enginetest` print the executor chosen for each block as one JSON line on stderr, for example `{"event":"balExecution","block":1,"hash":"0x…","path":"sequential","reason":"disabled"}`. `reason` is `bad-access-list` when the runner dropped the block's delivered list and `withheld` when `--bal-withhold` kept back the list the block has, whatever ran the block; a block without a list keeps its own reason under `--bal-withhold`. Otherwise it is empty for `parallel`, and for `sequential` the first condition that ruled parallel out: `no-access-list`, `pre-amsterdam`, `disabled` or `no-rayon`. A list over the EIP-7928 item cap shows as `no-access-list`, because the node drops it before the executor. Without the flag these lines are off. stdout carries only the results.

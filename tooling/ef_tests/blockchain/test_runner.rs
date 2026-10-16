@@ -66,6 +66,9 @@ pub struct RunOptions {
     /// Import every block without the access list its fixture delivers, so the client
     /// executes it without one and checks the list it builds against the header.
     pub withhold_access_lists: bool,
+    /// Cache precompile results within a block, as a node does unless started with
+    /// `--no-precompile-cache`.
+    pub precompile_cache: bool,
     /// Check ethrex's errors against the fixture's expected exceptions, as the
     /// ef_tests suite does: a block that fails to decode must expect a decoding
     /// exception, and an import error other than the expected one is warned about.
@@ -79,9 +82,18 @@ impl Default for RunOptions {
         Self {
             bal_parallel_exec: true,
             withhold_access_lists: false,
+            precompile_cache: true,
             check_exception_names: true,
         }
     }
+}
+
+/// The `Blockchain` a fixture's blocks are imported with, set up as `options` say.
+pub fn fixture_blockchain(store: Store, options: &RunOptions) -> Blockchain {
+    let mut blockchain = Blockchain::for_test_harness_with_pool(store, merkle_pool());
+    blockchain.options.bal_parallel_exec_enabled = options.bal_parallel_exec;
+    blockchain.options.precompile_cache_enabled = options.precompile_cache;
+    blockchain
 }
 
 /// A block the client rejected.
@@ -205,8 +217,7 @@ pub async fn run_ef_test(
     check_prestate_against_db(test_key, test, &store);
 
     // Blockchain EF tests are meant for L1.
-    let mut blockchain = Blockchain::for_test_harness_with_pool(store.clone(), merkle_pool());
-    blockchain.options.bal_parallel_exec_enabled = options.bal_parallel_exec;
+    let blockchain = fixture_blockchain(store.clone(), options);
 
     // Early return if the exception is in the rlp decoding of the block
     if options.check_exception_names {
@@ -243,7 +254,7 @@ pub async fn run_ef_test(
     #[cfg(not(feature = "stateless"))]
     if test.network == Fork::Amsterdam && options.bal_parallel_exec && !delivers_access_lists(test)
     {
-        run_two_pass_parallel(test_key, test).await?;
+        run_two_pass_parallel(test_key, test, options).await?;
     }
 
     // Run stateless if backend was specified for this.
@@ -452,12 +463,17 @@ fn delivers_access_lists(test: &TestUnit) -> bool {
 /// Pass 1 (sequential): runs every block with `add_block_pipeline_bal` to collect the
 /// BAL that each block produces.  Pass 2 (parallel): creates a fresh chain and re-runs every
 /// block passing the corresponding BAL so the BAL-warmed parallel path is exercised.  The final
-/// post-state of pass 2 must match the expected post-state.
+/// post-state of pass 2 must match the expected post-state. Both chains run with
+/// `options`, like the one `run` imports with.
 #[cfg(not(feature = "stateless"))]
-async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), String> {
+async fn run_two_pass_parallel(
+    test_key: &str,
+    test: &TestUnit,
+    options: &RunOptions,
+) -> Result<(), String> {
     // ---- Pass 1: sequential, collect BALs ----
     let store1 = build_store_for_test(test).await;
-    let blockchain1 = Blockchain::for_test_harness_with_pool(store1.clone(), merkle_pool());
+    let blockchain1 = fixture_blockchain(store1.clone(), options);
 
     let mut bals: Vec<Arc<BlockAccessList>> = Vec::with_capacity(test.blocks.len());
 
@@ -489,7 +505,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
 
     // ---- Pass 2: parallel (BAL-driven), verify post-state ----
     let store2 = build_store_for_test(test).await;
-    let blockchain2 = Blockchain::for_test_harness_with_pool(store2.clone(), merkle_pool());
+    let blockchain2 = fixture_blockchain(store2.clone(), options);
 
     for (block_fixture, bal) in test.blocks.iter().zip(bals.iter()) {
         let block: CoreBlock = block_fixture.block().unwrap().clone().into();

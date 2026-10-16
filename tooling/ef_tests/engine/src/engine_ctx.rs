@@ -20,6 +20,8 @@ use ethrex_rpc::{
 use ethrex_storage::Store;
 use tokio::sync::{Mutex as TokioMutex, OnceCell};
 
+use crate::RunOptions;
+
 /// Shared SyncManager for `engine_only_context`. Allocated once per process so the
 /// RLPxInitiator OS thread (spawned by `dummy_actor::spawn_on_thread`) is created
 /// exactly once regardless of how many harnesses are built.
@@ -53,16 +55,18 @@ fn thread_local_merkle_pool() -> Arc<rayon::ThreadPool> {
 /// touch it (confirmed by the `rg` invariants above).
 /// `syncer` is `Some(shared)` with `SyncMode::Full`, satisfying the engine handler
 /// requirements in `engine_forkchoiceUpdated*` and `engine_newPayload*`.
-/// `bal_parallel_exec: false` is the node's `--no-bal-parallel-exec`; nothing
-/// else about the `Blockchain` changes.
-pub async fn engine_only_context(storage: Store, bal_parallel_exec: bool) -> RpcApiContext {
+/// The `Blockchain` takes `bal_parallel_exec` and `precompile_cache` from `opts`
+/// (false is the node's `--no-bal-parallel-exec` or `--no-precompile-cache`);
+/// nothing else about it changes.
+pub async fn engine_only_context(storage: Store, opts: &RunOptions) -> RpcApiContext {
     let shared_syncer = SHARED_SYNCER
         .get_or_init(|| async { Arc::new(dummy_sync_manager().await) })
         .await
         .clone();
     let mut blockchain =
         Blockchain::for_test_harness_with_pool(storage.clone(), thread_local_merkle_pool());
-    blockchain.options.bal_parallel_exec_enabled = bal_parallel_exec;
+    blockchain.options.bal_parallel_exec_enabled = opts.bal_parallel_exec;
+    blockchain.options.precompile_cache_enabled = opts.precompile_cache;
     let blockchain = Arc::new(blockchain);
     // The runner owns this context for its whole lifetime, so the executor thread
     // is left detached.

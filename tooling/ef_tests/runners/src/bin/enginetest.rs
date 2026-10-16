@@ -55,6 +55,7 @@ fn run_file(
         .and_then(|s| serde_json::from_str(&s).map_err(|e| e.to_string()))?;
     let opts = RunOptions {
         bal_parallel_exec: !args.bal_sequential,
+        precompile_cache: !args.no_precompile_cache,
         check_exception_names: false,
         ..RunOptions::from_env()
     };

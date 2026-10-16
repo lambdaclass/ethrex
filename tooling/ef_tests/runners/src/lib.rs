@@ -40,6 +40,11 @@ pub struct RunnerArgs {
     #[arg(long)]
     pub bal_sequential: bool,
 
+    /// Run without the per-block precompile result cache, as the node flag of the same
+    /// name does.
+    #[arg(long, env = "ETHREX_NO_PRECOMPILE_CACHE")]
+    pub no_precompile_cache: bool,
+
     /// Print the executor chosen for each block as one JSON line on stderr.
     #[arg(long)]
     pub bal_report: bool,
