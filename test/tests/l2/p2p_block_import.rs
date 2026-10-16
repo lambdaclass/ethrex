@@ -1,16 +1,15 @@
-//! Block sync over the L2 `based` capability across reconnects.
+//! Block sync over the L2 `based` capability.
 //!
-//! A follower that already has blocks must keep importing new ones on a fresh connection, which
-//! is what it gets whenever the sequencer or the follower restarts, and the sequencer should only
-//! re-send what the follower is missing.
+//! A follower must keep importing new blocks whatever connections deliver them: after the
+//! sequencer or the follower restarts, and when it holds several connections at once. The
+//! sequencer should only re-send what the follower is missing.
 
 use std::{
-    collections::BTreeMap,
     fs::File,
     io::BufReader,
-    net::{IpAddr, Ipv4Addr},
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 
 use bytes::Bytes;
@@ -20,51 +19,38 @@ use ethrex_blockchain::{
     payload::{BuildPayloadArgs, create_payload},
 };
 use ethrex_common::{
-    H160, H256, H512,
+    H160, H256,
     types::{
-        Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, batch::Batch,
-        fee_config::FeeConfig,
+        Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, fee_config::FeeConfig,
     },
 };
-use ethrex_p2p::{
-    rlpx::l2::l2_connection::{
-        L2ConnectedState, QueuedBlock, import_queued_blocks, peer_head_on_local_chain,
-    },
-    types::Node,
+use ethrex_p2p::rlpx::l2::{
+    block_importer::L2BlockImporter, l2_connection::peer_head_on_local_chain,
 };
 use ethrex_storage::{EngineType, Store};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
-use secp256k1::SecretKey;
-use tokio::time::Instant;
 
-/// The follower has blocks 1..=5 and a sealed batch that only covers 1..=2, as when the sequencer
-/// restarts between commits. On the new connection it must import 6 and 7 anyway.
+/// The follower already has blocks 1..=5, as after the sequencer or the follower restarts. It
+/// imports 6 and 7 as they arrive, whatever the order.
 #[tokio::test]
-async fn new_connection_imports_blocks_past_the_local_head() {
+async fn importer_extends_the_local_head() {
     let sequencer_chain = build_chain(7).await;
     let (store, blockchain) = follower_with(&sequencer_chain[..5]).await;
-    let mut l2_state = new_connection_state().await;
-    l2_state
-        .store_rollup
-        .seal_batch(Batch {
-            number: 1,
-            first_block: 1,
-            last_block: 2,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
+    let store_rollup = rollup_store();
+    let importer = L2BlockImporter::default();
 
     // Block 7 arrives first: it has to wait for 6.
-    queue(&mut l2_state, &sequencer_chain[6]);
-    import_queued_blocks(&store, &blockchain, &mut l2_state, &peer())
+    assert!(submit(&importer, &sequencer_chain[6]));
+    importer
+        .import_ready_blocks(&store, &blockchain, &store_rollup)
         .await
         .unwrap();
     assert_eq!(store.get_latest_block_number().unwrap(), 5);
-    assert!(l2_state.blocks_on_queue.contains_key(&7));
+    assert!(importer.is_queued(7));
 
-    queue(&mut l2_state, &sequencer_chain[5]);
-    import_queued_blocks(&store, &blockchain, &mut l2_state, &peer())
+    assert!(submit(&importer, &sequencer_chain[5]));
+    importer
+        .import_ready_blocks(&store, &blockchain, &store_rollup)
         .await
         .unwrap();
     assert_eq!(store.get_latest_block_number().unwrap(), 7);
@@ -72,28 +58,66 @@ async fn new_connection_imports_blocks_past_the_local_head() {
         store.get_block_header(7).unwrap().unwrap().hash(),
         sequencer_chain[6].hash()
     );
-    assert!(l2_state.blocks_on_queue.is_empty());
+    assert!(!importer.is_queued(7));
 }
 
-/// Blocks at or below the head (e.g. imported through another connection after they were queued
-/// here) are dropped instead of blocking the queue.
+/// Blocks at or below the head, e.g. stored some other way since they were queued, are dropped
+/// instead of blocking the queue.
 #[tokio::test]
-async fn blocks_already_imported_are_skipped() {
+async fn blocks_at_or_below_the_head_are_dropped() {
     let sequencer_chain = build_chain(7).await;
     let (store, blockchain) = follower_with(&sequencer_chain[..5]).await;
-    let mut l2_state = new_connection_state().await;
+    let importer = L2BlockImporter::default();
 
-    queue(&mut l2_state, &sequencer_chain[2]);
-    queue(&mut l2_state, &sequencer_chain[5]);
-    queue(&mut l2_state, &sequencer_chain[6]);
-    // Another connection imports block 6 before this one gets to it.
+    for block in &sequencer_chain[2..] {
+        submit(&importer, block);
+    }
     import_block(&blockchain, &store, sequencer_chain[5].clone()).await;
 
-    import_queued_blocks(&store, &blockchain, &mut l2_state, &peer())
+    importer
+        .import_ready_blocks(&store, &blockchain, &rollup_store())
         .await
         .unwrap();
     assert_eq!(store.get_latest_block_number().unwrap(), 7);
-    assert!(l2_state.blocks_on_queue.is_empty());
+    assert!((3..=7).all(|number| !importer.is_queued(number)));
+}
+
+/// A block delivered again while it's still queued, e.g. by another connection, isn't queued
+/// twice, so the connection that got the duplicate doesn't re-broadcast it.
+#[tokio::test]
+async fn a_queued_block_is_not_queued_again() {
+    let sequencer_chain = build_chain(1).await;
+    let importer = L2BlockImporter::default();
+
+    assert!(submit(&importer, &sequencer_chain[0]));
+    assert!(!submit(&importer, &sequencer_chain[0]));
+}
+
+/// Several connections delivering the same blocks at once, as when the node holds more than one
+/// connection to the sequencer. The blocks get imported without overlapping imports, which would
+/// deadlock on the merkleization pool.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn blocks_from_several_connections_are_imported() {
+    let sequencer_chain = build_chain(10).await;
+    let (store, blockchain) = follower_with(&[]).await;
+    let importer = L2BlockImporter::spawn(store.clone(), blockchain, rollup_store());
+
+    for _ in 0..4 {
+        let (importer, blocks) = (importer.clone(), sequencer_chain.clone());
+        tokio::spawn(async move {
+            for block in &blocks {
+                submit(&importer, block);
+                tokio::task::yield_now().await;
+            }
+        });
+    }
+    tokio::time::timeout(Duration::from_secs(60), async {
+        while store.get_latest_block_number().unwrap() < 10 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("blocks were not imported");
 }
 
 /// A reconnecting follower that is behind on our chain gets blocks from its head on.
@@ -160,9 +184,9 @@ async fn build_chain(length: u64) -> Vec<Block> {
     chain
 }
 
-async fn follower_with(blocks: &[Block]) -> (Store, Blockchain) {
+async fn follower_with(blocks: &[Block]) -> (Store, Arc<Blockchain>) {
     let store = test_store().await;
-    let blockchain = Blockchain::default_with_store(store.clone());
+    let blockchain = Arc::new(Blockchain::default_with_store(store.clone()));
     for block in blocks {
         import_block(&blockchain, &store, block.clone()).await;
     }
@@ -177,32 +201,12 @@ async fn import_block(blockchain: &Blockchain, store: &Store, block: Block) {
         .unwrap();
 }
 
-/// The state a connection starts with right after the `based` capability is negotiated.
-async fn new_connection_state() -> L2ConnectedState {
-    L2ConnectedState {
-        latest_block_sent: 0,
-        latest_batch_sent: 0,
-        blocks_on_queue: BTreeMap::new(),
-        batches_on_queue: BTreeMap::new(),
-        store_rollup: StoreRollup::new(Path::new(""), EngineTypeRollup::InMemory).unwrap(),
-        committer_key: Arc::new(SecretKey::from_slice(&[1; 32]).unwrap()),
-        next_block_broadcast: Instant::now(),
-        next_batch_broadcast: Instant::now(),
-    }
+fn submit(importer: &L2BlockImporter, block: &Block) -> bool {
+    importer.submit(Arc::new(block.clone()), FeeConfig::default())
 }
 
-fn queue(l2_state: &mut L2ConnectedState, block: &Block) {
-    l2_state.blocks_on_queue.insert(
-        block.header.number,
-        QueuedBlock {
-            block: Arc::new(block.clone()),
-            fee_config: FeeConfig::default(),
-        },
-    );
-}
-
-fn peer() -> Node {
-    Node::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 30303, 30303, H512::zero())
+fn rollup_store() -> StoreRollup {
+    StoreRollup::new(Path::new(""), EngineTypeRollup::InMemory).unwrap()
 }
 
 fn new_block(store: &Store, parent: &BlockHeader) -> Block {
