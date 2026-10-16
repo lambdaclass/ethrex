@@ -349,6 +349,10 @@ pub struct Established {
     pub(crate) disconnect_reason: Option<DisconnectReason>,
     // Indicates if the peer has been validated (ie. the connection was established successfully)
     pub(crate) is_validated: bool,
+    // Whether this connection owns the node's peer-table entry. A node keeps only the
+    // connection that registered first, so a duplicate one must not remove that entry
+    // when it closes.
+    pub(crate) registered_in_peer_table: bool,
     // Rate limiting: start of the current incoming-request window
     pub(crate) serve_request_window_start: Instant,
     // Rate limiting: number of data-serving requests received in the current window
@@ -543,19 +547,24 @@ impl PeerConnectionServer {
                         )
                         .await;
                 }
-                if let Err(e) = established_state
-                    .peer_table
-                    .remove_peer(established_state.node.node_id())
-                {
-                    debug!("Failed to remove peer from table: {e}");
-                }
-                // Free the peer's tx-broadcaster index (and clear its bit across known txs) so
-                // the broadcaster's per-peer index map / PeerMask widths stay bounded to live peers.
-                if let Err(e) = established_state
-                    .tx_broadcaster
-                    .remove_peer(established_state.node.node_id())
-                {
-                    debug!("Failed to remove peer from tx broadcaster: {e}");
+                // Only the connection that registered the node may remove it: a duplicate
+                // connection to an already-connected node must leave the live one listed.
+                if established_state.registered_in_peer_table {
+                    if let Err(e) = established_state
+                        .peer_table
+                        .remove_peer(established_state.node.node_id())
+                    {
+                        debug!("Failed to remove peer from table: {e}");
+                    }
+                    // Free the peer's tx-broadcaster index (and clear its bit across known txs)
+                    // so the broadcaster's per-peer index map / PeerMask widths stay bounded to
+                    // live peers.
+                    if let Err(e) = established_state
+                        .tx_broadcaster
+                        .remove_peer(established_state.node.node_id())
+                    {
+                        debug!("Failed to remove peer from tx broadcaster: {e}");
+                    }
                 }
                 established_state.teardown().await;
             }
@@ -994,14 +1003,21 @@ where
         .cloned()
         .collect();
 
-    state.peer_table.new_connected_peer(
-        state.node.clone(),
-        connection.clone(),
-        state.capabilities.clone(),
-        negotiated_capabilities,
-        state.negotiated_eth_capability.clone(),
-        state.is_inbound,
-    )?;
+    let registered = state
+        .peer_table
+        .new_connected_peer(
+            state.node.clone(),
+            connection.clone(),
+            state.capabilities.clone(),
+            negotiated_capabilities,
+            state.negotiated_eth_capability.clone(),
+            state.is_inbound,
+        )
+        .await?;
+    if !registered {
+        return Err(PeerConnectionError::AlreadyConnected);
+    }
+    state.registered_in_peer_table = true;
 
     trace!(peer=%state.node, "Peer connection initialized.");
 
@@ -1231,7 +1247,8 @@ async fn connection_failed(state: &mut Established, error_text: &str, error: &Pe
     // Discard peer from kademlia table in some cases
     match error {
         // already connected, don't discard it
-        PeerConnectionError::DisconnectReceived(DisconnectReason::AlreadyConnected)
+        PeerConnectionError::AlreadyConnected
+        | PeerConnectionError::DisconnectReceived(DisconnectReason::AlreadyConnected)
         | PeerConnectionError::DisconnectSent(DisconnectReason::AlreadyConnected) => {
             debug!(
                 peer=%state.node,
@@ -1258,6 +1275,7 @@ fn match_disconnect_reason(error: &PeerConnectionError) -> Option<DisconnectReas
         PeerConnectionError::DisconnectReceived(reason) => Some(*reason),
         PeerConnectionError::RLPDecodeError(_) => Some(DisconnectReason::NetworkError),
         PeerConnectionError::TooManyPeers => Some(DisconnectReason::TooManyPeers),
+        PeerConnectionError::AlreadyConnected => Some(DisconnectReason::AlreadyConnected),
         // TODO build a proper matching between error types and disconnection reasons
         _ => None,
     }

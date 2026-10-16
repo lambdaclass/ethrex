@@ -1,0 +1,142 @@
+//! A second RLPx connection to a node that is already connected must not take the
+//! live connection out of the peer table when it closes. Otherwise the node stays
+//! connected while `net_peerCount`, `admin_peers`, peer selection and the
+//! transaction broadcaster no longer see it.
+
+use std::{
+    fs::File,
+    io::BufReader,
+    net::{IpAddr, Ipv4Addr, TcpListener},
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
+use ethrex_blockchain::Blockchain;
+use ethrex_common::types::Genesis;
+use ethrex_p2p::{
+    network::P2PContext,
+    peer_table::{PeerTable, PeerTableServer, PeerTableServerProtocol as _},
+    rlpx::initiator::{RLPxInitiator, RlpxInitiatorProtocol},
+    test_utils::serve_p2p_requests,
+    types::{NetworkConfig, Node},
+    utils::public_key_from_signing_key,
+};
+use ethrex_storage::{EngineType, Store};
+use secp256k1::SecretKey;
+use tokio_util::task::TaskTracker;
+
+struct TestNode<I: RlpxInitiatorProtocol> {
+    node: Node,
+    table: PeerTable,
+    initiator: I,
+}
+
+fn free_port() -> u16 {
+    TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .and_then(|listener| listener.local_addr())
+        .expect("bind an ephemeral port")
+        .port()
+}
+
+fn genesis() -> Genesis {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/genesis/l1.json");
+    serde_json::from_reader(BufReader::new(File::open(path).expect("open l1 genesis")))
+        .expect("parse l1 genesis")
+}
+
+/// A node that accepts inbound RLPx connections on localhost and can dial others,
+/// with no discovery, keeping at most `target_peers` peers.
+async fn spawn_node(key_byte: u8, target_peers: usize) -> TestNode<impl RlpxInitiatorProtocol> {
+    let signer = SecretKey::from_byte_array(&[key_byte; 32]).expect("valid secret key");
+    let port = free_port();
+    let node = Node::new(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        port,
+        port,
+        public_key_from_signing_key(&signer),
+    );
+    let mut store = Store::new("", EngineType::InMemory).expect("in-memory store");
+    store
+        .add_initial_state(genesis())
+        .await
+        .expect("add genesis state");
+    let table = PeerTableServer::spawn(node.node_id(), target_peers, store.clone());
+    let context = P2PContext::new(
+        node.clone(),
+        NetworkConfig::from_node(&node),
+        TaskTracker::new(),
+        signer,
+        table.clone(),
+        store.clone(),
+        Arc::new(Blockchain::default_with_store(store)),
+        "ethrex/test".to_string(),
+        None,
+        1000,
+        100.0,
+    )
+    .expect("p2p context");
+    tokio::spawn(serve_p2p_requests(context.clone()));
+    let initiator = RLPxInitiator::spawn(context);
+    TestNode {
+        node,
+        table,
+        initiator,
+    }
+}
+
+async fn peer_count(table: &PeerTable) -> usize {
+    table.peer_count().await.expect("peer count")
+}
+
+/// Waits up to `timeout` for `table` to hold `expected` peers.
+async fn wait_for_peer_count(table: &PeerTable, expected: usize, timeout: Duration) -> usize {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let count = peer_count(table).await;
+        if count == expected || Instant::now() >= deadline {
+            return count;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// The node is connected to B, then dials B again. B, which accepts a single peer,
+/// refuses the second connection the way any client refuses one it does not want
+/// (geth answers a duplicate with `AlreadyConnected`). When that refused connection
+/// closes, A must still list B: the first connection is still up.
+#[tokio::test]
+async fn a_refused_duplicate_connection_keeps_the_live_peer_listed() {
+    let a = spawn_node(0x11, 10).await;
+    let b = spawn_node(0x22, 1).await;
+
+    a.initiator
+        .initiate(b.node.clone())
+        .expect("dial B the first time");
+    assert_eq!(
+        wait_for_peer_count(&a.table, 1, Duration::from_secs(10)).await,
+        1,
+        "A must connect to B"
+    );
+    assert_eq!(
+        wait_for_peer_count(&b.table, 1, Duration::from_secs(10)).await,
+        1,
+        "B must list A"
+    );
+
+    a.initiator
+        .initiate(b.node.clone())
+        .expect("dial B a second time");
+    // The refusal and teardown of the second connection take milliseconds; give them
+    // ample time, and fail as soon as A drops B.
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline {
+        assert_eq!(
+            peer_count(&a.table).await,
+            1,
+            "closing the refused duplicate must not remove B from A's table"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(peer_count(&b.table).await, 1, "B still lists A");
+}

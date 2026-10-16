@@ -426,15 +426,6 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn new_contacts(&self, nodes: Vec<Node>, protocol: DiscoveryProtocol)
     -> Result<(), ActorError>;
     fn new_contact_records(&self, node_records: Vec<NodeRecord>) -> Result<(), ActorError>;
-    fn new_connected_peer(
-        &self,
-        node: Node,
-        connection: PeerConnection,
-        capabilities: Vec<Capability>,
-        negotiated_capabilities: Vec<Capability>,
-        negotiated_eth: Option<Capability>,
-        is_inbound: bool,
-    ) -> Result<(), ActorError>;
     fn set_session_info(&self, node_id: H256, session: Session) -> Result<(), ActorError>;
     fn remove_peer(&self, node_id: H256) -> Result<(), ActorError>;
     fn dec_requests(&self, node_id: H256) -> Result<(), ActorError>;
@@ -457,6 +448,18 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn shutdown(&self) -> Result<(), ActorError>;
 
     // Request (call) methods
+    /// Registers an established connection to `node`, unless the node already has
+    /// one. Returns whether this connection was registered: a node keeps the
+    /// connection that registered first, and a second one must be closed.
+    fn new_connected_peer(
+        &self,
+        node: Node,
+        connection: PeerConnection,
+        capabilities: Vec<Capability>,
+        negotiated_capabilities: Vec<Capability>,
+        negotiated_eth: Option<Capability>,
+        is_inbound: bool,
+    ) -> Response<bool>;
     fn peer_count(&self) -> Response<usize>;
     fn peer_count_by_capabilities(&self, capabilities: Vec<Capability>) -> Response<usize>;
     fn target_reached(&self) -> Response<bool>;
@@ -605,13 +608,16 @@ impl PeerTableServer {
         self.do_new_contact_records(msg.node_records).await;
     }
 
-    #[send_handler]
+    #[request_handler]
     async fn handle_new_connected_peer(
         &mut self,
         msg: peer_table_server_protocol::NewConnectedPeer,
         _ctx: &Context<Self>,
-    ) {
+    ) -> bool {
         let new_peer_id = msg.node.node_id();
+        if self.peers.contains_key(&new_peer_id) {
+            return false;
+        }
         let mut new_peer = PeerData::new(
             msg.node,
             None,
@@ -622,6 +628,7 @@ impl PeerTableServer {
         new_peer.negotiated_capabilities = msg.negotiated_capabilities;
         new_peer.is_connection_inbound = msg.is_inbound;
         self.peers.insert(new_peer_id, new_peer);
+        true
     }
 
     #[send_handler]
@@ -1758,6 +1765,40 @@ mod tests {
 
     fn table_with(filter: impl PeerFilter + 'static) -> PeerTableServer {
         PeerTableServer::new(H256::zero(), 10, Box::new(filter))
+    }
+
+    /// A node keeps the connection that registered first. A second connection to
+    /// the same node is refused, so closing it cannot take the live entry away.
+    #[tokio::test]
+    async fn a_second_connection_to_a_connected_node_is_not_registered() {
+        let table = PeerTableServer::spawn_with_filter(H256::zero(), 10, FixedAnswer(true));
+        let (_, contact) = dummy_contact(1);
+        let register = |is_inbound| {
+            table.new_connected_peer(
+                contact.node.clone(),
+                PeerConnection::unestablished(),
+                vec![Capability::eth(69)],
+                vec![Capability::eth(69)],
+                Some(Capability::eth(69)),
+                is_inbound,
+            )
+        };
+
+        assert!(
+            register(false).await.unwrap(),
+            "the first connection registers"
+        );
+        assert!(
+            !register(true).await.unwrap(),
+            "the second connection is refused"
+        );
+
+        let peers = table.get_peers_data().await.unwrap();
+        assert_eq!(peers.len(), 1);
+        assert!(
+            !peers[0].is_connection_inbound,
+            "the first connection's entry is kept"
+        );
     }
 
     /// A signed record for `seed`'s node at sequence number `seq`.
