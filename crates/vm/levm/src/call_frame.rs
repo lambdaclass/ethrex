@@ -7,9 +7,9 @@ use crate::{
     vm::VM,
 };
 use bytes::Bytes;
+use ethrex_common::seeded_hash::SeededHashMap;
 use ethrex_common::types::block_access_list::BlockAccessListCheckpoint;
 use ethrex_common::{Address, H256, U256, types::Code};
-use rustc_hash::FxHashMap;
 use std::{
     fmt,
     hash::{Hash, Hasher},
@@ -341,8 +341,10 @@ pub struct CallFrame {
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct CallFrameBackup {
-    pub original_accounts_info: FxHashMap<Address, LevmAccount>,
-    pub original_account_storage_slots: FxHashMap<Address, FxHashMap<H256, U256>>,
+    /// Both maps are seeded: the
+    /// accounts and slots a frame touches are chosen by contract code.
+    pub original_accounts_info: SeededHashMap<Address, LevmAccount>,
+    pub original_account_storage_slots: SeededHashMap<Address, SeededHashMap<H256, U256>>,
     /// BAL checkpoint for EIP-7928 - used to restore state changes on revert
     /// while preserving touched_addresses.
     pub bal_checkpoint: Option<BlockAccessListCheckpoint>,

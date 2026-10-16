@@ -25,6 +25,7 @@ use crate::{
 
 use ethrex_common::{
     Address, H256, U256,
+    seeded_hash::{SeededHashSet, SeededState},
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
         BlockNumber, ChainConfig, Code, CodeMetadata, ForkId, Genesis, GenesisAccount, Index,
@@ -44,7 +45,6 @@ use ethrex_trie::{Node, NodeRLP};
 use indexmap::IndexMap;
 use lru::LruCache;
 use rayon::prelude::*;
-use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, HashSet, hash_map::Entry},
@@ -337,8 +337,11 @@ const CODE_CACHE_ENTRY_OVERHEAD: u64 = 160;
 /// use, so the hit rate collapses to zero. A random victim has no such pathology: with
 /// a set 1.25x the budget about 62% of the reads still hit, and the hit rate shrinks
 /// gradually as the set grows instead of falling off a cliff.
+///
+/// Seeded: entries outlive the block that loaded them, and a deployer can grind its code
+/// hash into a chosen bucket (see `ethrex_common::seeded_hash`).
 struct CodeCache {
-    entries: IndexMap<H256, Code, FxBuildHasher>,
+    entries: IndexMap<H256, Code, SeededState>,
     cache_size: u64,
     max_size: u64,
     /// xorshift64* state; seeded per process so the victims cannot be predicted.
@@ -466,8 +469,9 @@ pub struct Store {
     ///
     /// Bounded: `EXTCODESIZE` reads this on the execution path, so an unbounded map
     /// would grow by one entry per distinct contract ever asked for a length and never
-    /// give the memory back. See [`CODE_METADATA_CACHE_MAX_ENTRIES`].
-    code_metadata_cache: Arc<Mutex<LruCache<H256, CodeMetadata, FxBuildHasher>>>,
+    /// give the memory back. See [`CODE_METADATA_CACHE_MAX_ENTRIES`]. Seeded, like
+    /// [`CodeCache`].
+    code_metadata_cache: Arc<Mutex<LruCache<H256, CodeMetadata, SeededState>>>,
 
     /// Serializes concurrent `forkchoice_update` callers so that the cache
     /// update and the DB write transaction remain mutually ordered.
@@ -2511,7 +2515,7 @@ impl Store {
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(LruCache::with_hasher(
                 NonZeroUsize::new(CODE_METADATA_CACHE_MAX_ENTRIES).unwrap_or(NonZeroUsize::MIN),
-                FxBuildHasher,
+                SeededState::default(),
             ))),
             fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
             safe_commit_root,
@@ -2903,7 +2907,14 @@ impl Store {
 
         let state_root = state_trie.hash_no_commit(&NativeCrypto);
 
-        for update in account_updates.iter() {
+        // Apply in address order. The guest replays these same updates on the nodes recorded
+        // here, and the nodes a removal reads depend on what was inserted before it: a branch
+        // left with one child loads that child. Both lists are built from seeded maps, so
+        // only a sort keeps the two sides touching the same nodes.
+        let mut ordered: Vec<&AccountUpdate> = account_updates.iter().collect();
+        ordered.sort_unstable_by_key(|update| update.address);
+
+        for update in ordered {
             let hashed_address = hash_address(&update.address);
 
             if update.removed {
@@ -5407,7 +5418,7 @@ fn commit_to_disk(
     // "absent at pivot" semantics.
     let extra_writes: Vec<(Vec<u8>, Vec<u8>)> = match &overlay_for_reconciliation {
         Some(overlay) => {
-            let layer_keys: rustc_hash::FxHashSet<&Vec<u8>> = committed_layers
+            let layer_keys: SeededHashSet<&Vec<u8>> = committed_layers
                 .iter()
                 .flat_map(|l| l.nodes.iter().map(|(k, _)| k))
                 .collect();
