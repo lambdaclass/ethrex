@@ -244,7 +244,7 @@ The table below measures that with the batch shape changed through prototypes on
 | 1 s blocks | 1,079 / 661 | 1.0 / 1.0 | 557 / 899 / - / - | 123 / 194 / - / - |
 | Pipelined commits | 1,079 / 629 | 1.0 / 1.0 | 557 / 937 / - / - | 123 / 197 / - / - |
 | 6-blob batches | 6,488 / 3,392 | 6.0 / 5.8 | 93 / 170 / 83 / 144 | 123 / 193 / 123 / 192 |
-| Compression | 1,307 / 1,110 | 1.0 / 1.0 | 458 / 526 / 409 / 465 | 100 / 109 / 100 / 107 |
+| Compression | 1,307 / 1,110 | 1.0 / 1.0 | 458 / 526 / 409 / 464 | 100 / 109 / 100 / 106 |
 | 1 s blocks + pipelined commits | 1,079 / 660 | 1.0 / 1.0 | 557 / 900 / - / - | 123 / 193 / - / - |
 | 1 s blocks + 6-blob batches | 6,362 / 3,732 | 6.0 / 5.9 | 95 / 157 / - / - | 124 / 192 / - / - |
 | 1 s blocks + compression | 1,308 / 1,184 | 1.0 / 1.0 | 458 / 499 / - / - | 100 / 110 / - / - |
