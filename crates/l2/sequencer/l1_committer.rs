@@ -838,11 +838,16 @@ impl L1Committer {
         #[cfg(feature = "metrics")]
         let mut batch_gas_used = 0_u64;
         // The batch's wall-clock span runs from the parent of its first block to
-        // its last block, so it covers every block interval in the batch.
-        let batch_parent_timestamp = self
-            .store
-            .get_block_header(last_added_block_number)?
-            .map(|header| header.timestamp);
+        // its last block, so it covers every block interval in the batch. The
+        // genesis timestamp says nothing about when block 1 was built, so the
+        // first batch of a chain reports no span.
+        let batch_parent_timestamp = if last_added_block_number == 0 {
+            None
+        } else {
+            self.store
+                .get_block_header(last_added_block_number)?
+                .map(|header| header.timestamp)
+        };
         let mut batch_last_timestamp = None;
 
         info!("Preparing batch from block {first_block_of_batch}, {batch_number}");

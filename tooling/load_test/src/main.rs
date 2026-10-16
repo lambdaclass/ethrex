@@ -94,6 +94,15 @@ pub enum TestType {
 
 const RETRIES: u64 = 1000;
 const ETH_TRANSFER_VALUE: u64 = 1000;
+// The mempool admits a transaction only while the sender's cumulative pending
+// cost (gas limit x fee cap, summed over its pending transactions) fits its
+// balance, so an unbounded fee cap caps how many transactions an account can
+// have in flight and starves the block producer. One million gwei leaves room
+// for a long base fee climb under full blocks while hundreds of transactions
+// per account stay admissible.
+const MAX_FEE_PER_GAS: u64 = 1_000_000_000_000_000;
+// Pause between rounds that failed, so a persistent error does not hammer the node.
+const FAILED_ROUND_BACKOFF: Duration = Duration::from_secs(2);
 
 // Private key for the rich account after making the initial deposits on the L2.
 const RICH_ACCOUNT: &str = "0xbcdf20249abf0ed6d944c0288fad489e33f66b3960d9e6229c1cd214ed3bbe31";
@@ -249,7 +258,7 @@ async fn load_test(
                         chain_id: Some(chain_id),
                         value,
                         nonce: Some(nonce + i),
-                        max_fee_per_gas: Some(i64::MAX as u64),
+                        max_fee_per_gas: Some(MAX_FEE_PER_GAS),
                         max_priority_fee_per_gas: Some(10_u64),
                         gas_limit: Some(TX_GAS_COST * 100),
                         ..Default::default()
@@ -420,6 +429,7 @@ async fn main() {
             .await
             {
                 eprintln!("Round {round} failed: {e}");
+                sleep(FAILED_ROUND_BACKOFF).await;
             }
             round += 1;
         }
