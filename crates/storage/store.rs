@@ -4337,6 +4337,7 @@ impl Store {
             self.gated_snapshot(state_root)?,
             Box::new(BackendTrieDB::new_for_storages(
                 self.backend.clone(),
+                None,
                 self.last_written()?,
             )?),
             Some(account_hash),
@@ -4383,6 +4384,7 @@ impl Store {
             Box::new(BackendTrieDB::new_for_storages_with_view(
                 self.backend.clone(),
                 read_view,
+                None,
                 last_written,
             )?),
             Some(account_hash),
@@ -4398,9 +4400,9 @@ impl Store {
         storage_root: H256,
     ) -> Result<Trie, StoreError> {
         Ok(Trie::open(
-            Box::new(BackendTrieDB::new_for_account_storage(
+            Box::new(BackendTrieDB::new_for_storages(
                 self.backend.clone(),
-                account_hash,
+                Some(account_hash),
                 self.last_written()?,
             )?),
             storage_root,
@@ -5786,10 +5788,10 @@ fn flatkeyvalue_generator(
             }
 
             let mut iter_inner = Trie::open(
-                Box::new(BackendTrieDB::new_for_account_storage_with_view(
+                Box::new(BackendTrieDB::new_for_storages_with_view(
                     backend.clone(),
                     read_tx.clone(),
-                    account_hash,
+                    Some(account_hash),
                     path.as_ref().to_vec(),
                 )?),
                 account_state.storage_root,
