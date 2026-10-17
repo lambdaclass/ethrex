@@ -233,6 +233,11 @@ P2P options:
           [env: ETHREX_P2P_LOOKUP_INTERVAL=]
           [default: 100]
 
+      --p2p.netrestrict <CIDR_LIST>...
+          Comma separated IP networks in CIDR notation, e.g. 10.0.0.0/8,172.16.0.0/12. Nodes discovered outside these networks are ignored, bootnodes outside are dropped, and inbound TCP and UDP from outside is discarded. Meant for private devnets and other closed networks. Unrestricted when not set.
+          
+          [env: ETHREX_P2P_NETRESTRICT=]
+
       --blob-sampling
           Enable EIP-8070 PeerDAS blob sampling (sampler/provider state machine). Disabled by default; when off the node always acts as provider (p=1.0).
 

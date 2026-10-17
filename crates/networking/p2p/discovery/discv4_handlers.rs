@@ -129,11 +129,39 @@ impl DiscoveryServer {
         }
 
         // Remove finished lookups
+        let had_active = self
+            .discv4
+            .as_ref()
+            .is_some_and(|s| !s.active_lookups.is_empty());
         self.discv4
             .as_mut()
             .expect("discv4 state must exist")
             .active_lookups
             .retain(|(l, _)| !l.is_finished());
+        let just_finished = had_active
+            && self
+                .discv4
+                .as_ref()
+                .is_some_and(|s| s.active_lookups.is_empty());
+
+        // A lookup just ended. If it added nothing to the peer table, the
+        // network is saturated: rather than start the next one on this same
+        // tick, let the backoff in `get_lookup_interval` space them out.
+        if just_finished {
+            let count = self.peer_table.discovered_count().await?;
+            let discv4 = self.discv4.as_mut().expect("discv4 state must exist");
+            if count > discv4.lookup_started_at_count {
+                discv4.empty_lookups_in_a_row = 0;
+            } else {
+                discv4.empty_lookups_in_a_row = discv4.empty_lookups_in_a_row.saturating_add(1);
+                trace!(
+                    protocol = "discv4",
+                    empty_in_a_row = discv4.empty_lookups_in_a_row,
+                    "Lookup found nothing new, backing off"
+                );
+                return Ok(());
+            }
+        }
 
         // If a lookup is already active, advance it instead of starting a new
         // one. Lookups are timer-driven: each tick sends the next alpha queries.
@@ -180,7 +208,9 @@ impl DiscoveryServer {
         let mut buf = BytesMut::new();
         msg.encode_with_header(&mut buf, &self.signer);
 
+        let started_at_count = self.peer_table.discovered_count().await?;
         let discv4 = self.discv4.as_mut().expect("discv4 state must exist");
+        discv4.lookup_started_at_count = started_at_count;
         discv4.active_lookups.push((lookup, buf));
 
         // Fire the initial queries for the new lookup
@@ -338,18 +368,15 @@ impl DiscoveryServer {
         {
             self.discv4_send_ping(&node).await?;
         } else {
+            // A contact we hold no record for counts as seq 0, as on the discv5
+            // side. Otherwise a discv4 node's ENR, and with it the fork-id verdict
+            // that keeps it from being dialed on the wrong chain, would only ever
+            // be fetched by the slow random ENR lookup.
             let node_id = node_id(&sender_public_key);
-            let stored_enr_seq = self
-                .peer_table
-                .get_contact(node_id)
-                .await?
-                .and_then(|c| c.record)
-                .map(|r| r.seq);
-
-            let received_enr_seq = ping_message.enr_seq;
-
-            if let (Some(received), Some(stored)) = (received_enr_seq, stored_enr_seq)
-                && received > stored
+            if let Some(contact) = self.peer_table.get_contact(node_id).await?
+                && contact.was_validated()
+                && let Some(received) = ping_message.enr_seq
+                && received > contact.record.as_ref().map_or(0, |r| r.seq)
             {
                 self.discv4_send_enr_request(&node).await?;
             }
@@ -369,10 +396,10 @@ impl DiscoveryServer {
         let ping_id = Bytes::copy_from_slice(message.ping_hash.as_bytes());
         self.peer_table.record_pong_received(node_id, ping_id)?;
 
-        let stored_enr_seq = contact.record.map(|r| r.seq);
-        let received_enr_seq = message.enr_seq;
-        if let (Some(received), Some(stored)) = (received_enr_seq, stored_enr_seq)
-            && received > stored
+        // No record yet counts as seq 0 (see `discv4_handle_ping`).
+        let stored_enr_seq = contact.record.as_ref().map_or(0, |r| r.seq);
+        if let Some(received) = message.enr_seq
+            && received > stored_enr_seq
         {
             self.discv4_send_enr_request(&contact.node).await?;
         }
