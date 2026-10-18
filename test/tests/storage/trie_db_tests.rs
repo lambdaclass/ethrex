@@ -21,12 +21,12 @@ fn test_trie_db_basic_operations() {
     // Create a fresh TrieDB to read back (read view is a snapshot from construction time)
     let trie_db = BackendTrieDB::new_for_accounts(backend, vec![]).unwrap();
 
-    let retrieved_data = trie_db.get(node_hash).unwrap().unwrap();
+    let retrieved_data = trie_db.get(node_hash.as_ref()).unwrap().unwrap();
     assert_eq!(retrieved_data, node_data);
 
     // Test get nonexistent
     let nonexistent_hash = Nibbles::from_hex(vec![2]);
-    assert!(trie_db.get(nonexistent_hash).unwrap().is_none());
+    assert!(trie_db.get(nonexistent_hash.as_ref()).unwrap().is_none());
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn test_trie_db_with_address_prefix() {
     // Create a fresh TrieDB to read back
     let trie_db = BackendTrieDB::new_for_account_storage(backend, address, vec![]).unwrap();
 
-    let retrieved_data = trie_db.get(node_hash).unwrap().unwrap();
+    let retrieved_data = trie_db.get(node_hash.as_ref()).unwrap().unwrap();
     assert_eq!(retrieved_data, node_data);
 }
 
@@ -71,7 +71,7 @@ fn test_trie_db_batch_operations() {
     let trie_db = BackendTrieDB::new_for_accounts(backend, vec![]).unwrap();
 
     for (node_hash, expected_data) in batch_data {
-        let retrieved_data = trie_db.get(node_hash).unwrap().unwrap();
+        let retrieved_data = trie_db.get(node_hash.as_ref()).unwrap().unwrap();
         assert_eq!(retrieved_data, expected_data);
     }
 }
