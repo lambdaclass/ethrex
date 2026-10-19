@@ -247,6 +247,21 @@ impl PeerConnection {
     }
 }
 
+#[cfg(test)]
+impl PeerConnection {
+    /// A handle whose actor never completes a handshake. Enough for the peer
+    /// table to register and rank the peer, never for sending it anything.
+    pub(crate) fn unestablished() -> PeerConnection {
+        let connection = PeerConnectionServer {
+            state: ConnectionState::HandshakeFailed,
+            _admission_permit: None,
+        };
+        Self {
+            handle: connection.start(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Initiator {
     pub(crate) context: P2PContext,
