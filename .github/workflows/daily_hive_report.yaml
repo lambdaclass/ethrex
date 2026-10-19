@@ -122,21 +122,19 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v6
 
-      # Set custom args defined in Dockerfile to pin execution-spec-tests versions
-      # See: https://github.com/ethereum/hive/blob/c2dab60f898b94afe8eeac505f60dcde59205e77/simulators/ethereum/eest/consume-rlp/Dockerfile#L4-L8
+      # Pin the EELS simulator image tags, see
+      # https://github.com/ethereum/hive/blob/master/simulators/ethereum/eels/README.md
       - name: Load Amsterdam config
         id: amsterdam-config
         shell: bash
         run: |
-          echo "fixtures=$(yq -r '.fixtures' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
-          echo "eels_commit=$(yq -r '.eels_commit' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
+          echo "tag=$(yq -r '.tag' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
 
       - name: Load mainnet config
         id: mainnet-config
         shell: bash
         run: |
-          echo "fixtures=$(yq -r '.fixtures' .github/config/hive/mainnet.yaml)" >> "$GITHUB_OUTPUT"
-          echo "eels_commit=$(yq -r '.eels_commit' .github/config/hive/mainnet.yaml)" >> "$GITHUB_OUTPUT"
+          echo "tag=$(yq -r '.tag' .github/config/hive/mainnet.yaml)" >> "$GITHUB_OUTPUT"
 
       - name: Determine hive flags
         id: hive-flags
@@ -145,10 +143,8 @@ jobs:
           SIMULATION: ${{ matrix.test.simulation }}
           SIM_LIMIT: ${{ matrix.test.limit || '' }}
           AMSTERDAM: ${{ matrix.test.amsterdam || 'false' }}
-          AMSTERDAM_FIXTURES: ${{ steps.amsterdam-config.outputs.fixtures }}
-          AMSTERDAM_EELS_COMMIT: ${{ steps.amsterdam-config.outputs.eels_commit }}
-          MAINNET_FIXTURES: ${{ steps.mainnet-config.outputs.fixtures }}
-          MAINNET_EELS_COMMIT: ${{ steps.mainnet-config.outputs.eels_commit }}
+          AMSTERDAM_TAG: ${{ steps.amsterdam-config.outputs.tag }}
+          MAINNET_TAG: ${{ steps.mainnet-config.outputs.tag }}
         run: |
           FLAGS="--sim.parallelism ${{ matrix.test.parallelism || 4 }} --sim.loglevel 1"
           if [[ "$SIMULATION" == "ethereum/eels/consume-engine" || "$SIMULATION" == "ethereum/eels/consume-rlp" ]]; then
@@ -158,30 +154,22 @@ jobs:
             # bundle, which carries no Amsterdam fixtures at all.
             if [[ "$AMSTERDAM" == "true" ]]; then
               # Amsterdam config loaded from .github/config/hive/amsterdam.yaml
-              FLAGS+=" --sim.buildarg fixtures=$AMSTERDAM_FIXTURES"
-              FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
+              FLAGS+=" --sim.buildarg tag=$AMSTERDAM_TAG"
             else
               # All other forks (Prague, Osaka, Cancun, Shanghai, Paris) use the
               # mainnet bundle, which includes comprehensive coverage including
               # ported static tests.
               # Config loaded from .github/config/hive/mainnet.yaml
-              FLAGS+=" --sim.buildarg fixtures=$MAINNET_FIXTURES"
-              FLAGS+=" --sim.buildarg branch=$MAINNET_EELS_COMMIT"
+              FLAGS+=" --sim.buildarg tag=$MAINNET_TAG"
             fi
             FLAGS+=" --client.checktimelimit=180s"
           fi
 
           # The execute simulators drive a live client over RPC instead of consuming
-          # fixtures, so they take `fork` where the consume ones take `fixtures`, and
-          # fall back to Osaka when it is not given. Left unpinned the image also
-          # clones whatever execution-specs default branch happens to be; that has
-          # drifted far enough that collection aborts with "No spec type format found
-          # in the test item" and the job uploads zero suites while still reporting
-          # success. Both fork runs share the Amsterdam EELS pin because it carries
-          # every fork and collects cleanly, whereas the mainnet pin (tests@v20.0.1)
-          # aborts collection here inside its own fork-filter plugin.
+          # fixtures, so they take `fork` and fall back to Osaka when it is not
+          # given. Both fork runs share the Amsterdam image, which carries every fork.
           if [[ "$SIMULATION" == "ethereum/eels/execute-blobs" ]]; then
-            FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
+            FLAGS+=" --sim.buildarg tag=$AMSTERDAM_TAG"
             if [[ "$AMSTERDAM" == "true" ]]; then
               FLAGS+=" --sim.buildarg fork=Amsterdam"
             else
@@ -223,8 +211,9 @@ jobs:
           # restored the mainnet deposit contract address as the fallback (the
           # zero-address default made every eip6110 deposit / eip7685 request
           # test fail). Also gives the daily report a reproducible hive version
-          # instead of floating on the action's default.
-          hive_version: 7c4c99ebb79955f23e1952fb0282a0dadcb6e181
+          # instead of floating on the action's default. It also runs the eels
+          # simulators from published images.
+          hive_version: 20a5677651c4ccb021be272587a7333078e68a48
           extra_flags: ${{ steps.hive-flags.outputs.flags }}
           workflow_artifact_upload: true
           workflow_artifact_prefix: ${{ matrix.test.file_name }}_daily

@@ -378,8 +378,7 @@ jobs:
         id: amsterdam-config
         shell: bash
         run: |
-          echo "fixtures=$(yq -r '.fixtures' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
-          echo "eels_commit=$(yq -r '.eels_commit' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
+          echo "tag=$(yq -r '.tag' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
 
       - name: Determine hive flags
         id: hive-flags
@@ -388,8 +387,7 @@ jobs:
           SIM_LIMIT: ${{ matrix.limit }}
           SIM_BUILDARG: ${{ matrix.buildarg }}
           AMSTERDAM: ${{ matrix.amsterdam || 'false' }}
-          AMSTERDAM_FIXTURES: ${{ steps.amsterdam-config.outputs.fixtures }}
-          AMSTERDAM_EELS_COMMIT: ${{ steps.amsterdam-config.outputs.eels_commit }}
+          AMSTERDAM_TAG: ${{ steps.amsterdam-config.outputs.tag }}
         run: |
           FLAGS='--sim.parallelism 4 --sim.loglevel 3'
           if [[ -n "$SIM_LIMIT" ]]; then
@@ -397,8 +395,7 @@ jobs:
             FLAGS+=" --sim.limit '$escaped_limit'"
           fi
           if [[ "$AMSTERDAM" == "true" ]]; then
-            FLAGS+=" --sim.buildarg fixtures=$AMSTERDAM_FIXTURES"
-            FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
+            FLAGS+=" --sim.buildarg tag=$AMSTERDAM_TAG"
           else
             for arg in $SIM_BUILDARG; do
               FLAGS+=" --sim.buildarg $arg"
@@ -418,8 +415,9 @@ jobs:
         uses: ethpandaops/hive-github-action@v0.5.0
         with:
           hive_repository: ethereum/hive
-          # ethereum/hive#1530 merge (deposit contract address mapper fix)
-          hive_version: 7c4c99ebb79955f23e1952fb0282a0dadcb6e181
+          # eels simulators from published images, after ethereum/hive#1530
+          # (deposit contract address mapper fix)
+          hive_version: 20a5677651c4ccb021be272587a7333078e68a48
           simulator: ${{ matrix.simulation }}
           client: ethrex
           client_config: ${{ steps.client-config.outputs.config }}
