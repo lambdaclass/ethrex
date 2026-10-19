@@ -26,6 +26,19 @@ To allow proofs from a new sequencer/prover build, register its verification key
    ```
    `1` is the SP1 verifier ID, `2` is RISC0.
 
+## Replacing the SP1 verifier
+
+A new verification key is enough while the prover stays on the same SP1 version. A new SP1 version can also change the Groth16 circuit its proofs are wrapped in, and an `SP1VerifierGroth16` contract only accepts proofs from its own circuit: it checks the first four bytes of the proof against its `VERIFIER_HASH` and reverts with `WrongVerifierSelector` otherwise. Moving from SP1 5 to SP1 6 is such a change.
+
+The OnChainProposer reads the verifier from `SP1_VERIFIER_ADDRESS`, the same for every batch. If that is Succinct's [`SP1VerifierGateway`](https://docs.succinct.xyz/docs/sp1/verification/contract-addresses), it routes each proof to the verifier of its SP1 version and there is nothing to replace. If it is a verifier of its own, which is what the deployer creates by default, replace it:
+
+1. Let every batch committed by the old version be verified first, with the old prover: once the verifier is replaced, their proofs no longer verify. `upgradeSP1Verifier` enforces it, reverting with `UnverifiedBatchesPending` while `lastVerifiedBatch` is below `lastCommittedBatch`.
+2. Deploy the new `SP1VerifierGroth16` from [sp1-contracts](https://github.com/succinctlabs/sp1-contracts), at the version that matches the prover's SP1 release (for example `v5.0.0` for SP1 5 and `v6.1.0` for SP1 6).
+3. From the OnChainProposer owner, which is the Timelock on deployments since v9, call `upgradeSP1Verifier(address)` with the new verifier's address, and register the new version's verification key as described above.
+4. Start the new sequencer and prover.
+
+A deployment whose OnChainProposer predates `upgradeSP1Verifier` upgrades its implementation first, and can set the verifier in the same Timelock call: `upgradeToAndCall(<new implementation>, <calldata of upgradeSP1Verifier(<new verifier>)>)`. The same check applies, so the whole call reverts if a batch is still unverified.
+
 ### Verification key artifacts
 
 The verification key that goes on-chain is obtained when you build the prover.
@@ -128,3 +141,13 @@ export $(cat cmd/.env | xargs); export COMPILE_CONTRACTS=true;
 ```bash
 curl -X POST http://localhost:5555/state-updater/stop-at/10
 ```
+
+### Handing over to a new version
+
+The flow above runs the same version on both sequencers. When the second sequencer runs a new release:
+
+- Prover inputs are generated at commit time for the committing version, and a proof coordinator only hands a batch to a prover of that version. A sequencer that stops sequencing also stops sending proofs. So before the handover, stop the first sequencer's committer (`GET /committer/stop`), let its prover verify every batch it committed (`lastVerifiedBatch` equals `lastCommittedBatch`), and then stop that prover. The first sequencer keeps producing blocks meanwhile.
+- Register the new release's verification key before the handover, since the second sequencer cannot commit without it. When the release changes the verifier contract, as SP1 6 does, switch it at the same point: after the old batches are verified and before the new release's first proof.
+- Run a prover of the new release against the second sequencer's proof coordinator. It commits the blocks the first sequencer produced after its committer stopped.
+- Take the first sequencer's enode from its startup log (`Local node initialized enode=...`); the L2 RPC only serves `admin_nodeInfo` when `admin` is in its `--http.api`.
+- After the handover the first sequencer stays at block `N`, so move RPC traffic to the second one before stopping the first.

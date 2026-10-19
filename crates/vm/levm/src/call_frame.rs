@@ -2,14 +2,14 @@ use crate::{
     account::LevmAccount,
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
-    memory::Memory,
+    memory::{CallData, Memory},
     utils::restore_cache_state,
     vm::VM,
 };
 use bytes::Bytes;
+use ethrex_common::seeded_hash::SeededHashMap;
 use ethrex_common::types::block_access_list::BlockAccessListCheckpoint;
 use ethrex_common::{Address, H256, U256, types::Code};
-use rustc_hash::FxHashMap;
 use std::{
     fmt,
     hash::{Hash, Hasher},
@@ -336,7 +336,7 @@ pub struct CallFrame {
     pub stack: Stack,
     pub memory: Memory,
     /// Data sent along the transaction. Empty in CREATE transactions.
-    pub calldata: Bytes,
+    pub calldata: CallData,
     /// Return data of the CURRENT CONTEXT (see docs for more details)
     pub output: Bytes,
     /// Return data of the SUB-CONTEXT (see docs for more details)
@@ -374,8 +374,10 @@ pub struct CallFrame {
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct CallFrameBackup {
-    pub original_accounts_info: FxHashMap<Address, LevmAccount>,
-    pub original_account_storage_slots: FxHashMap<Address, FxHashMap<H256, U256>>,
+    /// Both maps are seeded: the
+    /// accounts and slots a frame touches are chosen by contract code.
+    pub original_accounts_info: SeededHashMap<Address, LevmAccount>,
+    pub original_account_storage_slots: SeededHashMap<Address, SeededHashMap<H256, U256>>,
     /// BAL checkpoint for EIP-7928 - used to restore state changes on revert
     /// while preserving touched_addresses.
     pub bal_checkpoint: Option<BlockAccessListCheckpoint>,
@@ -472,7 +474,7 @@ impl CallFrame {
         code_address: Address,
         bytecode: Code,
         msg_value: U256,
-        calldata: Bytes,
+        calldata: CallData,
         is_static: bool,
         gas_limit: u64,
         depth: usize,

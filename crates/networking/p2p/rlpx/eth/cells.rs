@@ -12,6 +12,7 @@ use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
+use rustc_hash::FxHashSet;
 
 use super::eth72::transactions::{b16_to_u128, u128_to_b16};
 
@@ -297,16 +298,69 @@ impl GetCells {
     ///
     /// The response is capped at [`MAX_CELLS_SERVED`] cells: an unbounded reply would
     /// let a peer pull `MAX_CELL_REQUEST_HASHES * MAX_CELLS_PER_TX` cells (~384 MiB)
-    /// per request. Trailing hashes that no longer fit are dropped from the response
+    /// per request. Each distinct hash is served once, in first-seen order; the first
+    /// hash that would not fit and every hash after it are dropped from the response
     /// entirely, which EIP-8070 permits ("the responder MAY truncate its `Cells`
     /// response depending on its current capacity") and which a requester sizing its
     /// batch with [`cells_per_hash`] never triggers.
+    ///
+    /// Expanding a blob into cells is CPU-bound KZG work, so what gets expanded is
+    /// settled first by [`Self::plan`] from mempool bookkeeping alone; a request is cut
+    /// to the budget before any cell is computed.
     pub fn handle(&self, mempool: &Mempool) -> Cells {
+        self.handle_with(mempool, get_cells_for_tx)
+    }
+
+    /// [`Self::handle`] with the per-hash cell expansion injected. The expansion
+    /// is the only KZG work in this path, so a caller can count how often it
+    /// runs: once per served hash, never for a hash the plan dropped.
+    fn handle_with(
+        &self,
+        mempool: &Mempool,
+        mut expand: impl FnMut(&Mempool, H256, u128) -> Vec<Cell>,
+    ) -> Cells {
+        let plan = self.plan(mempool);
+        let mut served_hashes: Vec<H256> = Vec::with_capacity(plan.hashes.len());
+        let mut all_cells: Vec<Vec<Cell>> = Vec::with_capacity(plan.hashes.len());
+        let mut budget = MAX_CELLS_SERVED;
+        for tx_hash in plan.hashes {
+            let cells = expand(mempool, tx_hash, plan.served_mask);
+            // The plan sized this hash from its blob count; re-check the expanded
+            // size so the response never exceeds the budget even if the pool
+            // changed underneath us.
+            if cells.len() > budget {
+                break;
+            }
+            budget -= cells.len();
+            served_hashes.push(tx_hash);
+            all_cells.push(cells);
+        }
+        Cells::new(self.id, served_hashes, all_cells, plan.served_mask)
+    }
+
+    /// Decide which hashes and columns [`Self::handle`] will serve, without
+    /// expanding any cell.
+    ///
+    /// Hashes are deduplicated (first occurrence wins) so a request repeating one
+    /// hash costs one expansion, not one per repeat. The served column set is the
+    /// intersection described on [`Self::handle`]. The cells a hash would add are
+    /// `blob count * served columns`, read from the pool's bookkeeping; hashes are
+    /// admitted in order until one would exceed [`MAX_CELLS_SERVED`], which drops
+    /// that hash and every later one.
+    pub(crate) fn plan(&self, mempool: &Mempool) -> ServePlan {
+        let mut seen = FxHashSet::default();
+        let distinct: Vec<H256> = self
+            .transaction_hashes
+            .iter()
+            .copied()
+            .filter(|hash| seen.insert(*hash))
+            .collect();
+
         // Use available_cell_mask (real availability) for the intersection, so a
         // full-payload provider with u128::MAX availability actually serves all
         // requested columns.
         let mut served = self.cell_mask;
-        for &tx_hash in &self.transaction_hashes {
+        for &tx_hash in &distinct {
             // A private tx never propagates, so its blob data is treated as
             // unavailable here, exactly like an unknown hash.
             if mempool.is_private(tx_hash).unwrap_or(true) {
@@ -315,20 +369,33 @@ impl GetCells {
             }
             served &= mempool.available_cell_mask(tx_hash);
         }
-        let mut served_hashes: Vec<H256> = Vec::with_capacity(self.transaction_hashes.len());
-        let mut all_cells: Vec<Vec<Cell>> = Vec::with_capacity(self.transaction_hashes.len());
+
+        let columns = served.count_ones() as usize;
         let mut budget = MAX_CELLS_SERVED;
-        for &tx_hash in &self.transaction_hashes {
-            let cells = get_cells_for_tx(mempool, tx_hash, served);
-            if cells.len() > budget {
+        let mut hashes = Vec::with_capacity(distinct.len());
+        for tx_hash in distinct {
+            let cells = mempool.servable_blob_count(tx_hash).saturating_mul(columns);
+            if cells > budget {
                 break;
             }
-            budget -= cells.len();
-            served_hashes.push(tx_hash);
-            all_cells.push(cells);
+            budget -= cells;
+            hashes.push(tx_hash);
         }
-        Cells::new(self.id, served_hashes, all_cells, served)
+        ServePlan {
+            served_mask: served,
+            hashes,
+        }
     }
+}
+
+/// What a `GetCells` request will be answered with, settled by [`GetCells::plan`]
+/// from mempool bookkeeping alone: the distinct hashes to serve, in first-seen
+/// order and cut to the [`MAX_CELLS_SERVED`] budget, and the column set served
+/// for each. Building it expands no cell.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ServePlan {
+    pub served_mask: u128,
+    pub hashes: Vec<H256>,
 }
 
 /// Retrieve cells for `tx_hash` and the given `served_mask`.
@@ -362,4 +429,176 @@ fn get_cells_for_tx(mempool: &Mempool, tx_hash: H256, served_mask: u128) -> Vec<
     }
     // Fall back to stored sampled cells.
     mempool.get_tx_cells_for_mask(tx_hash, served_mask)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::{BYTES_PER_BLOB, BlobsBundle};
+
+    /// A full-payload bundle of `blob_count` blobs. Every field element keeps a
+    /// zero top byte, so each blob is a valid KZG input; commitments and proofs
+    /// are not needed to serve cells.
+    fn full_bundle(blob_count: usize, seed: u8) -> BlobsBundle {
+        let mut blob = [0u8; BYTES_PER_BLOB];
+        for (i, element) in blob.chunks_exact_mut(32).enumerate() {
+            element[30] = (i % 251) as u8;
+            element[31] = seed;
+        }
+        BlobsBundle {
+            blobs: vec![blob; blob_count],
+            commitments: vec![],
+            proofs: vec![],
+            version: 1,
+        }
+    }
+
+    fn mempool_with(bundles: &[(H256, BlobsBundle)]) -> Mempool {
+        let mempool = Mempool::new(100);
+        for (hash, bundle) in bundles {
+            mempool
+                .add_blobs_bundle(*hash, bundle.clone())
+                .expect("add blobs bundle");
+        }
+        mempool
+    }
+
+    #[test]
+    fn plan_serves_each_distinct_hash_once_in_first_seen_order() {
+        let a = H256::from_low_u64_be(1);
+        let b = H256::from_low_u64_be(2);
+        let mempool = mempool_with(&[(a, full_bundle(1, 1)), (b, full_bundle(1, 2))]);
+        let mask = (1u128 << 3) | (1u128 << 70);
+
+        let repeated = GetCells::new(1, vec![a; MAX_CELL_REQUEST_HASHES], mask);
+        assert_eq!(
+            repeated.plan(&mempool),
+            ServePlan {
+                served_mask: mask,
+                hashes: vec![a]
+            }
+        );
+
+        let interleaved = GetCells::new(2, vec![b, a, b, a, b], mask);
+        assert_eq!(
+            interleaved.plan(&mempool),
+            ServePlan {
+                served_mask: mask,
+                hashes: vec![b, a]
+            }
+        );
+    }
+
+    #[test]
+    fn plan_cuts_over_budget_hashes_from_blob_counts_alone() {
+        // A max-blob tx at all 128 columns: one fits the budget, two do not.
+        let per_tx = MAX_BLOB_COUNT * CELLS_PER_EXT_BLOB;
+        assert!(per_tx <= MAX_CELLS_SERVED && 2 * per_tx > MAX_CELLS_SERVED);
+        let a = H256::from_low_u64_be(1);
+        let b = H256::from_low_u64_be(2);
+        let mempool = mempool_with(&[
+            (a, full_bundle(MAX_BLOB_COUNT, 1)),
+            (b, full_bundle(MAX_BLOB_COUNT, 2)),
+        ]);
+        let request = GetCells::new(1, vec![a, b, a], u128::MAX);
+        assert_eq!(
+            request.plan(&mempool),
+            ServePlan {
+                served_mask: u128::MAX,
+                hashes: vec![a]
+            }
+        );
+
+        // A first hash that alone exceeds the budget yields an empty plan: nothing
+        // is expanded for it.
+        let big = H256::from_low_u64_be(3);
+        let too_many_blobs = MAX_CELLS_SERVED / CELLS_PER_EXT_BLOB + 1;
+        let mempool = mempool_with(&[(big, full_bundle(too_many_blobs, 3))]);
+        let request = GetCells::new(2, vec![big], u128::MAX);
+        assert_eq!(
+            request.plan(&mempool),
+            ServePlan {
+                served_mask: u128::MAX,
+                hashes: vec![]
+            }
+        );
+        // The rejection happens before any expansion: serving the request never
+        // reaches the KZG step.
+        let response = request.handle_with(&mempool, |_, hash, _| {
+            panic!("expanded {hash:?} after the budget rejected it")
+        });
+        assert_eq!(response.cell_mask, u128::MAX);
+        assert!(response.transaction_hashes.is_empty());
+        assert!(response.cells.is_empty());
+    }
+
+    #[test]
+    fn plan_collapses_to_no_columns_on_an_unknown_hash() {
+        let known = H256::from_low_u64_be(1);
+        let unknown = H256::from_low_u64_be(9);
+        let mempool = mempool_with(&[(known, full_bundle(1, 1))]);
+        let request = GetCells::new(1, vec![known, unknown, known], u128::MAX);
+        // Every distinct hash is listed, with no columns served for any of them.
+        assert_eq!(
+            request.plan(&mempool),
+            ServePlan {
+                served_mask: 0,
+                hashes: vec![known, unknown]
+            }
+        );
+    }
+
+    #[cfg(feature = "c-kzg")]
+    #[test]
+    fn repeated_hash_is_served_once_with_its_cells() {
+        let hash = H256::from_low_u64_be(1);
+        let bundle = full_bundle(1, 7);
+        let mempool = mempool_with(&[(hash, bundle.clone())]);
+        let mask = (1u128 << 3) | (1u128 << 70);
+
+        let mut expansions = 0;
+        let response = GetCells::new(5, vec![hash; MAX_CELL_REQUEST_HASHES], mask).handle_with(
+            &mempool,
+            |mempool, hash, mask| {
+                expansions += 1;
+                get_cells_for_tx(mempool, hash, mask)
+            },
+        );
+
+        // 256 occurrences of one hash cost exactly one KZG expansion.
+        assert_eq!(expansions, 1);
+        assert_eq!(response.id, 5);
+        assert_eq!(response.cell_mask, mask);
+        assert_eq!(response.transaction_hashes, vec![hash]);
+        // One blob, so the index-major wire order is that blob's cells by
+        // ascending column.
+        let expected = bundle.cells_for_columns(mask).expect("compute cells");
+        assert_eq!(response.cells, vec![expected[0].clone()]);
+    }
+
+    #[cfg(feature = "c-kzg")]
+    #[test]
+    fn response_follows_the_plan_within_budget() {
+        let a = H256::from_low_u64_be(1);
+        let b = H256::from_low_u64_be(2);
+        let mempool = mempool_with(&[
+            (a, full_bundle(MAX_BLOB_COUNT, 1)),
+            (b, full_bundle(MAX_BLOB_COUNT, 2)),
+        ]);
+        let mut expanded = Vec::new();
+        let response = GetCells::new(1, vec![a, b, a], u128::MAX).handle_with(
+            &mempool,
+            |mempool, hash, mask| {
+                expanded.push(hash);
+                get_cells_for_tx(mempool, hash, mask)
+            },
+        );
+        // Only the hash that fits the budget is ever expanded; `b` is cut by
+        // the plan and costs no KZG work.
+        assert_eq!(expanded, vec![a]);
+        assert_eq!(response.cell_mask, u128::MAX);
+        assert_eq!(response.transaction_hashes, vec![a]);
+        assert_eq!(response.cells.len(), 1);
+        assert_eq!(response.cells[0].len(), MAX_BLOB_COUNT * CELLS_PER_EXT_BLOB);
+    }
 }

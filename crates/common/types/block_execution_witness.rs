@@ -621,7 +621,12 @@ impl GuestProgramState {
         account_updates: &[AccountUpdate],
         crypto: &dyn Crypto,
     ) -> Result<(), GuestProgramStateError> {
-        for update in account_updates.iter() {
+        // Apply in address order, as the host does while recording the witness. A removal
+        // that leaves a branch with one child reads that child, so the order decides which
+        // nodes the witness must hold; the list comes from a seeded map, so it is not sorted.
+        let mut ordered: Vec<&AccountUpdate> = account_updates.iter().collect();
+        ordered.sort_unstable_by_key(|update| update.address);
+        for update in ordered {
             let hashed_address = *self
                 .account_hashes_by_address
                 .entry(update.address)

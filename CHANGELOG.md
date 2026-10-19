@@ -12,9 +12,13 @@
 
 ## Perf
 
-### 2026-10-13
+### 2026-10-19
 
 - Swap EVM stack slots through AVX registers instead of a round trip through a stack temporary (SWAP1-16, SWAPN, EXCHANGE): SWAP loops −32..−35% on AMD Zen 5 and −15..−18% on Intel (Emerald Rapids), and the 176 `test_swap` tests of the benchmarkoor compute-repricing suite 10.6 → 8.4 s [#7399](https://github.com/lambdaclass/ethrex/pull/7399)
+
+### 2026-10-14
+
+- Commit trie layers that are already final without a `STATE_HISTORY` journal entry and without the pre-image read per trie node that entry needs: on an L2 and on a finalizing L1 the journal stays empty and finality pruning writes no range deletes, where before every commit wrote an entry only for the next finality advance to range-delete it [#7377](https://github.com/lambdaclass/ethrex/pull/7377)
 
 ### 2026-09-30
 

@@ -18,7 +18,7 @@ use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode, error::RLPDecodeError};
 use ethrex_storage::Store;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use std::sync::Arc;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
@@ -43,7 +43,7 @@ pub struct NewPayloadV1Request {
 }
 
 impl RpcHandler for NewPayloadV1Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         Ok(NewPayloadV1Request {
             payload: parse_execution_payload(params)?,
         })
@@ -70,7 +70,7 @@ pub struct NewPayloadV2Request {
 }
 
 impl RpcHandler for NewPayloadV2Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         Ok(NewPayloadV2Request {
             payload: parse_execution_payload(params)?,
         })
@@ -106,20 +106,19 @@ pub struct NewPayloadV3Request {
 
 impl From<NewPayloadV3Request> for RpcRequest {
     fn from(val: NewPayloadV3Request) -> Self {
-        RpcRequest {
-            method: "engine_newPayloadV3".to_string(),
-            params: Some(vec![
+        RpcRequest::new(
+            "engine_newPayloadV3",
+            Some(vec![
                 serde_json::json!(val.payload),
                 serde_json::json!(val.expected_blob_versioned_hashes),
                 serde_json::json!(val.parent_beacon_block_root),
             ]),
-            ..Default::default()
-        }
+        )
     }
 }
 
 impl RpcHandler for NewPayloadV3Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -127,11 +126,11 @@ impl RpcHandler for NewPayloadV3Request {
             return Err(RpcErr::BadParams("Expected 3 params".to_owned()));
         }
         Ok(NewPayloadV3Request {
-            payload: serde_json::from_value(params[0].clone())
+            payload: serde_json::from_str(params[0].get())
                 .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
-            expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
+            expected_blob_versioned_hashes: serde_json::from_str(params[1].get())
                 .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
-            parent_beacon_block_root: serde_json::from_value(params[2].clone())
+            parent_beacon_block_root: serde_json::from_str(params[2].get())
                 .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
         })
     }
@@ -174,21 +173,20 @@ pub struct NewPayloadV4Request {
 
 impl From<NewPayloadV4Request> for RpcRequest {
     fn from(val: NewPayloadV4Request) -> Self {
-        RpcRequest {
-            method: "engine_newPayloadV4".to_string(),
-            params: Some(vec![
+        RpcRequest::new(
+            "engine_newPayloadV4",
+            Some(vec![
                 serde_json::json!(val.payload),
                 serde_json::json!(val.expected_blob_versioned_hashes),
                 serde_json::json!(val.parent_beacon_block_root),
                 serde_json::json!(val.execution_requests),
             ]),
-            ..Default::default()
-        }
+        )
     }
 }
 
 impl RpcHandler for NewPayloadV4Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -196,13 +194,13 @@ impl RpcHandler for NewPayloadV4Request {
             return Err(RpcErr::BadParams("Expected 4 params".to_owned()));
         }
         Ok(NewPayloadV4Request {
-            payload: serde_json::from_value(params[0].clone())
+            payload: serde_json::from_str(params[0].get())
                 .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
-            expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
+            expected_blob_versioned_hashes: serde_json::from_str(params[1].get())
                 .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
-            parent_beacon_block_root: serde_json::from_value(params[2].clone())
+            parent_beacon_block_root: serde_json::from_str(params[2].get())
                 .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
-            execution_requests: serde_json::from_value(params[3].clone())
+            execution_requests: serde_json::from_str(params[3].get())
                 .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
         })
     }
@@ -301,27 +299,46 @@ pub struct NewPayloadWithWitnessV4Request(pub NewPayloadV4Request);
 
 impl From<NewPayloadWithWitnessV4Request> for RpcRequest {
     fn from(val: NewPayloadWithWitnessV4Request) -> Self {
-        RpcRequest {
-            method: "engine_newPayloadWithWitnessV4".to_string(),
-            params: Some(vec![
+        RpcRequest::new(
+            "engine_newPayloadWithWitnessV4",
+            Some(vec![
                 serde_json::json!(val.0.payload),
                 serde_json::json!(val.0.expected_blob_versioned_hashes),
                 serde_json::json!(val.0.parent_beacon_block_root),
                 serde_json::json!(val.0.execution_requests),
             ]),
-            ..Default::default()
-        }
+        )
     }
 }
 
 impl RpcHandler for NewPayloadWithWitnessV4Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         NewPayloadV4Request::parse(params).map(Self)
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         self.0.handle_with_witness(context, true).await
     }
+}
+
+/// The `blockAccessList` member of a payload object, borrowed from the raw param text.
+/// A member that is present but `null` stays `Some`, so it is rejected like any other
+/// non-string value instead of being read as absent.
+#[derive(Deserialize)]
+struct PayloadBlockAccessListField<'a> {
+    #[serde(
+        rename = "blockAccessList",
+        borrow,
+        default,
+        deserialize_with = "deserialize_present"
+    )]
+    block_access_list: Option<&'a RawValue>,
+}
+
+fn deserialize_present<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<&'de RawValue>, D::Error> {
+    <&RawValue>::deserialize(deserializer).map(Some)
 }
 
 pub struct NewPayloadV5Request {
@@ -342,21 +359,20 @@ pub struct NewPayloadV5Request {
 
 impl From<NewPayloadV5Request> for RpcRequest {
     fn from(val: NewPayloadV5Request) -> Self {
-        RpcRequest {
-            method: "engine_newPayloadV5".to_string(),
-            params: Some(vec![
+        RpcRequest::new(
+            "engine_newPayloadV5",
+            Some(vec![
                 serde_json::json!(val.payload),
                 serde_json::json!(val.expected_blob_versioned_hashes),
                 serde_json::json!(val.parent_beacon_block_root),
                 serde_json::json!(val.execution_requests),
             ]),
-            ..Default::default()
-        }
+        )
     }
 }
 
 impl RpcHandler for NewPayloadV5Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -372,57 +388,63 @@ impl RpcHandler for NewPayloadV5Request {
         // The header's `block_access_list_hash` commits to the BAL exactly as it came
         // over the wire, so it is hashed from the raw bytes rather than from a
         // re-encoding of the decoded list.
-        let raw_bal = payload_value
-            .get("blockAccessList")
+        // A payload that is not even an object is left for the full deserialization below
+        // to reject.
+        let raw_bal = serde_json::from_str::<PayloadBlockAccessListField>(payload_value.get())
+            .ok()
+            .and_then(|field| field.block_access_list)
             .map(|v| {
-                let hex_body = v
-                    .as_str()
-                    .and_then(|s| s.strip_prefix("0x"))
+                let hex_str = serde_json::from_str::<String>(v.get())
+                    .map_err(|_| RpcErr::WrongParam("blockAccessList".to_string()))?;
+                let hex_body = hex_str
+                    .strip_prefix("0x")
                     .ok_or(RpcErr::WrongParam("blockAccessList".to_string()))?;
                 hex::decode(hex_body).map_err(|_| RpcErr::WrongParam("blockAccessList".to_string()))
             })
             .transpose()?;
         let raw_bal_hash = raw_bal.as_deref().map(ethrex_common::utils::keccak);
 
-        // Deserialize straight from the borrowed value. The payload is the bulk of the
+        // Deserialize straight from the raw param text. The payload is the bulk of the
         // request — tens of kilobytes of transactions on a busy chain — and this runs
-        // for every block, so it is walked once: the BAL is RLP-decoded inside serde
-        // and nowhere else.
-        let (payload, undecodable_bal) = match ExecutionPayload::deserialize(payload_value) {
-            // Serde's BAL deserializer reads an empty `"0x"` as absent, while the
-            // strict decoder that governs the header hash rejects empty input. Keep
-            // the strict verdict: a BAL that is present but empty is undecodable,
-            // not missing, so the payload is answered INVALID rather than rejected
-            // as malformed params.
-            Ok(payload) => (payload, raw_bal.as_deref().is_some_and(<[u8]>::is_empty)),
-            Err(_) => {
-                // The one failure tolerated here is a BAL that does not RLP-decode: the
-                // block must still be rebuilt so it can be answered INVALID under its
-                // own hash instead of being rejected as a malformed request. Anything
-                // else is a malformed payload. This is the rare path, so it may afford
-                // a copy.
-                let bal_undecodable = raw_bal
-                    .as_deref()
-                    .is_some_and(|bytes| BlockAccessList::decode(bytes).is_err());
-                if !bal_undecodable {
-                    return Err(RpcErr::WrongParam("payload".to_string()));
+        // for every block, so it is never built into a `Value`: the BAL is RLP-decoded
+        // inside serde and nowhere else.
+        let (payload, undecodable_bal) =
+            match serde_json::from_str::<ExecutionPayload>(payload_value.get()) {
+                // Serde's BAL deserializer reads an empty `"0x"` as absent, while the
+                // strict decoder that governs the header hash rejects empty input. Keep
+                // the strict verdict: a BAL that is present but empty is undecodable,
+                // not missing, so the payload is answered INVALID rather than rejected
+                // as malformed params.
+                Ok(payload) => (payload, raw_bal.as_deref().is_some_and(<[u8]>::is_empty)),
+                Err(_) => {
+                    // The one failure tolerated here is a BAL that does not RLP-decode: the
+                    // block must still be rebuilt so it can be answered INVALID under its
+                    // own hash instead of being rejected as a malformed request. Anything
+                    // else is a malformed payload. This is the rare path, so it may afford
+                    // a copy.
+                    let bal_undecodable = raw_bal
+                        .as_deref()
+                        .is_some_and(|bytes| BlockAccessList::decode(bytes).is_err());
+                    if !bal_undecodable {
+                        return Err(RpcErr::WrongParam("payload".to_string()));
+                    }
+                    let mut stripped: Value = serde_json::from_str(payload_value.get())
+                        .map_err(|_| RpcErr::WrongParam("payload".to_string()))?;
+                    if let Some(obj) = stripped.as_object_mut() {
+                        obj.remove("blockAccessList");
+                    }
+                    let payload = serde_json::from_value(stripped)
+                        .map_err(|_| RpcErr::WrongParam("payload".to_string()))?;
+                    (payload, true)
                 }
-                let mut stripped = payload_value.clone();
-                if let Some(obj) = stripped.as_object_mut() {
-                    obj.remove("blockAccessList");
-                }
-                let payload = serde_json::from_value(stripped)
-                    .map_err(|_| RpcErr::WrongParam("payload".to_string()))?;
-                (payload, true)
-            }
-        };
+            };
         Ok(Self {
             payload,
-            expected_blob_versioned_hashes: Deserialize::deserialize(&params[1])
+            expected_blob_versioned_hashes: serde_json::from_str(params[1].get())
                 .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
-            parent_beacon_block_root: Deserialize::deserialize(&params[2])
+            parent_beacon_block_root: serde_json::from_str(params[2].get())
                 .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
-            execution_requests: Deserialize::deserialize(&params[3])
+            execution_requests: serde_json::from_str(params[3].get())
                 .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
             raw_bal_hash,
             undecodable_bal,
@@ -531,21 +553,20 @@ pub struct NewPayloadWithWitnessV5Request(pub NewPayloadV5Request);
 
 impl From<NewPayloadWithWitnessV5Request> for RpcRequest {
     fn from(val: NewPayloadWithWitnessV5Request) -> Self {
-        RpcRequest {
-            method: "engine_newPayloadWithWitnessV5".to_string(),
-            params: Some(vec![
+        RpcRequest::new(
+            "engine_newPayloadWithWitnessV5",
+            Some(vec![
                 serde_json::json!(val.0.payload),
                 serde_json::json!(val.0.expected_blob_versioned_hashes),
                 serde_json::json!(val.0.parent_beacon_block_root),
                 serde_json::json!(val.0.execution_requests),
             ]),
-            ..Default::default()
-        }
+        )
     }
 }
 
 impl RpcHandler for NewPayloadWithWitnessV5Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         NewPayloadV5Request::parse(params).map(Self)
     }
 
@@ -560,7 +581,7 @@ pub struct GetPayloadV1Request {
 }
 
 impl RpcHandler for GetPayloadV1Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let payload_id = parse_get_payload_request(params)?;
         Ok(Self { payload_id })
     }
@@ -583,7 +604,7 @@ pub struct GetPayloadV2Request {
 }
 
 impl RpcHandler for GetPayloadV2Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let payload_id = parse_get_payload_request(params)?;
         Ok(Self { payload_id })
     }
@@ -611,16 +632,15 @@ pub struct GetPayloadV3Request {
 
 impl From<GetPayloadV3Request> for RpcRequest {
     fn from(val: GetPayloadV3Request) -> Self {
-        RpcRequest {
-            method: "engine_getPayloadV3".to_string(),
-            params: Some(vec![serde_json::json!(U256::from(val.payload_id))]),
-            ..Default::default()
-        }
+        RpcRequest::new(
+            "engine_getPayloadV3",
+            Some(vec![serde_json::json!(U256::from(val.payload_id))]),
+        )
     }
 }
 
 impl RpcHandler for GetPayloadV3Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let payload_id = parse_get_payload_request(params)?;
         Ok(Self { payload_id })
     }
@@ -648,16 +668,15 @@ pub struct GetPayloadV4Request {
 
 impl From<GetPayloadV4Request> for RpcRequest {
     fn from(val: GetPayloadV4Request) -> Self {
-        RpcRequest {
-            method: "engine_getPayloadV4".to_string(),
-            params: Some(vec![serde_json::json!(U256::from(val.payload_id))]),
-            ..Default::default()
-        }
+        RpcRequest::new(
+            "engine_getPayloadV4",
+            Some(vec![serde_json::json!(U256::from(val.payload_id))]),
+        )
     }
 }
 
 impl RpcHandler for GetPayloadV4Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let payload_id = parse_get_payload_request(params)?;
         Ok(Self { payload_id })
     }
@@ -701,16 +720,15 @@ pub struct GetPayloadV5Request {
 
 impl From<GetPayloadV5Request> for RpcRequest {
     fn from(val: GetPayloadV5Request) -> Self {
-        RpcRequest {
-            method: "engine_getPayloadV5".to_string(),
-            params: Some(vec![serde_json::json!(U256::from(val.payload_id))]),
-            ..Default::default()
-        }
+        RpcRequest::new(
+            "engine_getPayloadV5",
+            Some(vec![serde_json::json!(U256::from(val.payload_id))]),
+        )
     }
 }
 
 impl RpcHandler for GetPayloadV5Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let payload_id = parse_get_payload_request(params)?;
         Ok(Self { payload_id })
     }
@@ -756,16 +774,15 @@ pub struct GetPayloadV6Request {
 
 impl From<GetPayloadV6Request> for RpcRequest {
     fn from(val: GetPayloadV6Request) -> Self {
-        RpcRequest {
-            method: "engine_getPayloadV6".to_string(),
-            params: Some(vec![serde_json::json!(U256::from(val.payload_id))]),
-            ..Default::default()
-        }
+        RpcRequest::new(
+            "engine_getPayloadV6",
+            Some(vec![serde_json::json!(U256::from(val.payload_id))]),
+        )
     }
 }
 
 impl RpcHandler for GetPayloadV6Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let payload_id = parse_get_payload_request(params)?;
         Ok(Self { payload_id })
     }
@@ -808,7 +825,7 @@ pub struct GetPayloadBodiesByHashV1Request {
 }
 
 impl RpcHandler for GetPayloadBodiesByHashV1Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -817,7 +834,7 @@ impl RpcHandler for GetPayloadBodiesByHashV1Request {
         };
 
         Ok(GetPayloadBodiesByHashV1Request {
-            hashes: serde_json::from_value(params[0].clone())?,
+            hashes: serde_json::from_str(params[0].get())?,
         })
     }
 
@@ -839,7 +856,7 @@ pub struct GetPayloadBodiesByRangeV1Request {
 }
 
 impl RpcHandler for GetPayloadBodiesByRangeV1Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -932,7 +949,7 @@ pub struct GetPayloadBodiesByHashV2Request {
 }
 
 impl RpcHandler for GetPayloadBodiesByHashV2Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -941,7 +958,7 @@ impl RpcHandler for GetPayloadBodiesByHashV2Request {
         };
 
         Ok(GetPayloadBodiesByHashV2Request {
-            hashes: serde_json::from_value(params[0].clone())?,
+            hashes: serde_json::from_str(params[0].get())?,
         })
     }
 
@@ -973,7 +990,7 @@ pub struct GetPayloadBodiesByRangeV2Request {
 }
 
 impl RpcHandler for GetPayloadBodiesByRangeV2Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -1032,14 +1049,16 @@ impl RpcHandler for GetPayloadBodiesByRangeV2Request {
     }
 }
 
-fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPayload, RpcErr> {
+fn parse_execution_payload(
+    params: &Option<Vec<Box<RawValue>>>,
+) -> Result<ExecutionPayload, RpcErr> {
     let params = params
         .as_ref()
         .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
     if params.len() != 1 {
         return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
     }
-    serde_json::from_value(params[0].clone()).map_err(|_| RpcErr::WrongParam("payload".to_string()))
+    serde_json::from_str(params[0].get()).map_err(|_| RpcErr::WrongParam("payload".to_string()))
 }
 
 /// The Amsterdam payload fields (EIP-7928 block access list, EIP-7843 slot number) must be
@@ -1748,14 +1767,14 @@ fn encode_rpc_witness_for_engine_rpc(rpc_witness: RpcExecutionWitness) -> Result
     Ok(Bytes::from(ext_witness.encode_to_vec()))
 }
 
-fn parse_get_payload_request(params: &Option<Vec<Value>>) -> Result<u64, RpcErr> {
+fn parse_get_payload_request(params: &Option<Vec<Box<RawValue>>>) -> Result<u64, RpcErr> {
     let params = params
         .as_ref()
         .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
     if params.len() != 1 {
         return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
     };
-    let Ok(hex_str) = serde_json::from_value::<String>(params[0].clone()) else {
+    let Ok(hex_str) = serde_json::from_str::<String>(params[0].get()) else {
         return Err(RpcErr::BadParams(
             "Expected param to be a string".to_owned(),
         ));
@@ -1828,7 +1847,7 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{TestContext, default_context_with_storage};
+    use crate::test_utils::{TestContext, default_context_with_storage, raw_params};
     use ethrex_common::types::ChainConfig;
     use ethrex_rlp::encode::RLPEncode;
     use ethrex_storage::{EngineType, Store};
@@ -1883,7 +1902,7 @@ mod tests {
             serde_json::json!(Vec::<EncodedRequests>::new()),
         ]);
 
-        let request = NewPayloadWithWitnessV4Request::parse(&params).unwrap();
+        let request = NewPayloadWithWitnessV4Request::parse(&raw_params(&params)).unwrap();
 
         assert_eq!(request.0.payload.block_access_list, None);
         assert_eq!(request.0.execution_requests.len(), 0);
@@ -1948,7 +1967,7 @@ mod tests {
         let params = v4_params_for(&block);
         let ctx = default_context_with_storage(store).await;
 
-        let response = NewPayloadWithWitnessV4Request::parse(&params)
+        let response = NewPayloadWithWitnessV4Request::parse(&raw_params(&params))
             .expect("parse")
             .handle(ctx.clone())
             .await
@@ -1976,7 +1995,7 @@ mod tests {
 
         // Same block through plain V4: identical status, and no witness field at
         // all rather than an empty one (the field is skipped when absent).
-        let plain = NewPayloadV4Request::parse(&params)
+        let plain = NewPayloadV4Request::parse(&raw_params(&params))
             .expect("parse")
             .handle(ctx.clone())
             .await
@@ -2009,7 +2028,7 @@ mod tests {
         store.add_initial_state(genesis).await.expect("genesis");
         let ctx = default_context_with_storage(store).await;
 
-        let err = NewPayloadWithWitnessV4Request::parse(&params)
+        let err = NewPayloadWithWitnessV4Request::parse(&raw_params(&params))
             .expect("parse")
             .handle(ctx.clone())
             .await
@@ -2026,7 +2045,7 @@ mod tests {
             serde_json::json!(Vec::<EncodedRequests>::new()),
         ]);
 
-        let request = NewPayloadWithWitnessV5Request::parse(&params).unwrap();
+        let request = NewPayloadWithWitnessV5Request::parse(&raw_params(&params)).unwrap();
 
         assert_eq!(request.0.payload.slot_number, Some(0));
         assert!(request.0.raw_bal_hash.is_some());
@@ -2045,7 +2064,8 @@ mod tests {
             serde_json::json!(Vec::<EncodedRequests>::new()),
         ]);
 
-        let parsed = NewPayloadV5Request::parse(&params).expect("an empty BAL must still parse");
+        let parsed = NewPayloadV5Request::parse(&raw_params(&params))
+            .expect("an empty BAL must still parse");
 
         assert!(
             parsed.undecodable_bal,

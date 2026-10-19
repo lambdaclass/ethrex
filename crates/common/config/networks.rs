@@ -244,6 +244,17 @@ mod tests {
     }
 
     #[test]
+    fn test_hoodi_amsterdam_activation() {
+        // Epoch 132352, 2026-10-26 17:42:48 UTC. Proposed in ethereum/pm#2263; the
+        // client configuration is eth-clients/hoodi#31 (`metadata/genesis.json`,
+        // `amsterdamTime`). 1742213400 + 132352 * 32 * 12 = 1793036568.
+        let genesis = Network::PublicNetwork(PublicNetwork::Hoodi)
+            .get_genesis()
+            .unwrap();
+        assert_eq!(genesis.config.amsterdam_time, Some(1_793_036_568));
+    }
+
+    #[test]
     fn test_mainnet_genesis_block_hash() {
         // Values taken from the geth codebase:
         // https://github.com/ethereum/go-ethereum/blob/a327ffe9b35289719ac3c484b7332584985b598a/params/config.go#L30-L35
