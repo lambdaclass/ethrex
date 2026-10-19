@@ -3637,7 +3637,7 @@ mod tx_announcement_tests {
         for eth_version in [68, 72] {
             let (mut state, mut outbound) = session(eth_version);
             let peer = state.node.node_id();
-            state
+            let registered = state
                 .peer_table
                 .new_connected_peer(
                     state.node.clone(),
@@ -3647,7 +3647,9 @@ mod tx_announcement_tests {
                     None,
                     true,
                 )
+                .await
                 .expect("register peer");
+            assert!(registered, "each session starts with an empty table");
             handle_incoming_message(&mut state, announcement(eth_version, &txs(0, 1)))
                 .await
                 .unwrap();
