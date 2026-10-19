@@ -133,10 +133,15 @@ pub(crate) fn pairing_check(pairs: &[(&[u8], &[u8])]) -> Result<bool, CryptoErro
         }
         points.push((G1Affine::new_unchecked(x, y), g2));
     }
-    if points.is_empty() {
-        return Ok(true);
+    match points.len() {
+        0 => Ok(true),
+        // One pair of non-identity points never pairs to one: the pairing is
+        // bilinear and non-degenerate on groups of prime order r, so with P = aG and
+        // Q = bH for generators G and H, e(P, Q) = e(G, H)^(ab) != 1 when a and b are
+        // nonzero mod r. Both points were validated above.
+        1 => Ok(false),
+        _ => Ok(pairing::pairing_is_one(&points)),
     }
-    Ok(pairing::pairing_is_one(&points))
 }
 
 /// Decodes a 128-byte G2 point and checks that it lies on the twist and in the
@@ -1362,6 +1367,30 @@ mod tests {
         jacobian_matches::<false>();
         if fields::adx_supported() {
             jacobian_matches::<true>();
+        }
+    }
+
+    #[test]
+    fn single_pairs_are_not_one() {
+        let g = ark_bn254::G1Affine::generator();
+        let h = G2Affine::generator();
+        for seed in 0..30u64 {
+            let p =
+                (g * Fr::from_be_bytes_mod_order(&random_bytes(seed + 20_000_000))).into_affine();
+            let q =
+                (h * Fr::from_be_bytes_mod_order(&random_bytes(seed + 21_000_000))).into_affine();
+            assert_ne!(
+                <ark_bn254::Bn254 as ark_ec::pairing::Pairing>::multi_pairing([p], [q]).0,
+                ark_bn254::Fq12::ONE
+            );
+            let (e1, f1) = (ark_encode(&p), g2_encode(&q));
+            assert!(!pairing_check(&[(&e1, &f1)]).unwrap());
+            // Identity pairs around it do not change the answer.
+            assert!(!pairing_check(&[(&[0u8; 64], &f1), (&e1, &f1), (&e1, &[0u8; 128])]).unwrap());
+            // The other pairs are still validated.
+            let mut bad = f1;
+            bad[127] ^= 1;
+            assert!(pairing_check(&[(&e1, &f1), (&[0u8; 64], &bad)]).is_err());
         }
     }
 
