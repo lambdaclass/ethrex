@@ -29,6 +29,7 @@ use tokio_util::task::TaskTracker;
 struct TestNode<I: RlpxInitiatorProtocol> {
     node: Node,
     table: PeerTable,
+    blockchain: Arc<Blockchain>,
     initiator: I,
 }
 
@@ -62,6 +63,7 @@ async fn spawn_node(key_byte: u8, target_peers: usize) -> TestNode<impl RlpxInit
         .await
         .expect("add genesis state");
     let table = PeerTableServer::spawn(node.node_id(), target_peers, store.clone());
+    let blockchain = Arc::new(Blockchain::default_with_store(store.clone()));
     let context = P2PContext::new(
         node.clone(),
         NetworkConfig::from_node(&node),
@@ -69,7 +71,7 @@ async fn spawn_node(key_byte: u8, target_peers: usize) -> TestNode<impl RlpxInit
         signer,
         table.clone(),
         store.clone(),
-        Arc::new(Blockchain::default_with_store(store)),
+        blockchain.clone(),
         "ethrex/test".to_string(),
         None,
         1000,
@@ -81,6 +83,7 @@ async fn spawn_node(key_byte: u8, target_peers: usize) -> TestNode<impl RlpxInit
     TestNode {
         node,
         table,
+        blockchain,
         initiator,
     }
 }
@@ -104,7 +107,8 @@ async fn wait_for_peer_count(table: &PeerTable, expected: usize, timeout: Durati
 /// The node is connected to B, then dials B again. B, which accepts a single peer,
 /// refuses the second connection the way any client refuses one it does not want
 /// (geth answers a duplicate with `AlreadyConnected`). When that refused connection
-/// closes, A must still list B: the first connection is still up.
+/// closes, A must still list B and keep what B's live connection told it, here the
+/// EIP-8070 cell availability B advertised: the first connection is still up.
 #[tokio::test]
 async fn a_refused_duplicate_connection_keeps_the_live_peer_listed() {
     let a = spawn_node(0x11, 10).await;
@@ -123,6 +127,12 @@ async fn a_refused_duplicate_connection_keeps_the_live_peer_listed() {
         1,
         "B must list A"
     );
+    // Stands in for a cell mask B announced over the live connection.
+    let b_cell_mask = 0b1011;
+    a.blockchain
+        .mempool
+        .record_peer_cell_availability(b.node.node_id(), b_cell_mask)
+        .expect("record B's cell availability");
 
     a.initiator
         .initiate(b.node.clone())
@@ -139,4 +149,12 @@ async fn a_refused_duplicate_connection_keeps_the_live_peer_listed() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert_eq!(peer_count(&b.table).await, 1, "B still lists A");
+    assert_eq!(
+        a.blockchain
+            .mempool
+            .peer_cell_mask(b.node.node_id())
+            .expect("read B's cell availability"),
+        Some(b_cell_mask),
+        "closing the refused duplicate must not forget the cells B advertised"
+    );
 }
