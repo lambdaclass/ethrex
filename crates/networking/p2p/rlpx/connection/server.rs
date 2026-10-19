@@ -470,11 +470,14 @@ impl Established {
             retry_on_alternates(&self.blockchain, &self.peer_table, &pending_hashes).await;
         }
         // EIP-8070: forget this peer's advertised cell availability so the map
-        // does not grow unbounded across reconnects.
-        if let Err(e) = self
-            .blockchain
-            .mempool
-            .clear_peer_cell_availability(self.node.node_id())
+        // does not grow unbounded across reconnects. A session that never started
+        // recorded none: what its node id holds belongs to another session of the
+        // same node, which keeps it.
+        if self.is_validated
+            && let Err(e) = self
+                .blockchain
+                .mempool
+                .clear_peer_cell_availability(self.node.node_id())
         {
             warn!(error = %e, "clear_peer_cell_availability failed during teardown");
         }
