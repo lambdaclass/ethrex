@@ -109,6 +109,7 @@ pub fn run(args: T8nArgs) -> Result<(), T8nError> {
             bpo4: Some(schedule),
             bpo5: Some(schedule),
             amsterdam: Some(schedule),
+            hegota: Some(schedule),
         };
     }
     let env = &inputs.env;

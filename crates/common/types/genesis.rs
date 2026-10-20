@@ -154,6 +154,16 @@ pub struct BlobSchedule {
     pub bpo5: Option<ForkBlobSchedule>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub amsterdam: Option<ForkBlobSchedule>,
+    /// Hegotá's entry, under any of the names `hegota_time` accepts. Like every
+    /// other fork's, its values come from the genesis only: a genesis that gives
+    /// none leaves Hegotá on the schedule in force before it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "heze",
+        alias = "bogota"
+    )]
+    pub hegota: Option<ForkBlobSchedule>,
 }
 
 impl Default for BlobSchedule {
@@ -168,6 +178,7 @@ impl Default for BlobSchedule {
             bpo4: None,
             bpo5: None,
             amsterdam: None,
+            hegota: None,
         }
     }
 }
@@ -505,6 +516,14 @@ impl ChainConfig {
     }
 
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
+        // A genesis that pins a Hegotá entry has it apply from Hegotá on (LStar
+        // included, being later). Without one, Hegotá resolves like the other named
+        // forks below.
+        if (self.is_lstar_activated(block_timestamp) || self.is_hegota_activated(block_timestamp))
+            && let Some(schedule) = self.blob_schedule.hegota
+        {
+            return Some(schedule);
+        }
         // EIP-7892: from Prague onward the blob schedule only changes at BPO forks.
         // Named forks (Osaka, Amsterdam, Hegotá, LStar) carry no blob params of their own
         // and inherit the highest activated BPO entry, so resolution falls through the BPO
@@ -1544,5 +1563,59 @@ mod tests {
         };
         config.blob_schedule.amsterdam = Some(pinned);
         assert_eq!(config.get_fork_blob_schedule(100), Some(pinned));
+    }
+
+    #[test]
+    fn hegota_blob_schedule_comes_from_the_genesis_only() {
+        // Without a Hegotá entry in the genesis, Hegotá keeps the schedule in force
+        // before it.
+        let config = ChainConfig {
+            osaka_time: Some(0),
+            bpo1_time: Some(0),
+            bpo2_time: Some(0),
+            amsterdam_time: Some(0),
+            hegota_time: Some(100),
+            ..Default::default()
+        };
+        assert_eq!(
+            config.get_fork_blob_schedule(100),
+            Some(default_bpo2_schedule())
+        );
+
+        // A pinned entry applies from Hegotá on, under any of the names the Hegotá
+        // fork time accepts.
+        for key in ["hegota", "heze", "bogota"] {
+            let config: ChainConfig = serde_json::from_str(&format!(
+                r#"{{
+                    "chainId": 1,
+                    "depositContractAddress": "0x00000000219ab540356cbb839cbe05303d7705fa",
+                    "osakaTime": 0,
+                    "amsterdamTime": 0,
+                    "bogotaTime": 100,
+                    "blobSchedule": {{
+                        "{key}": {{"target": 12, "max": 18, "baseFeeUpdateFraction": 12018519}}
+                    }}
+                }}"#
+            ))
+            .expect("genesis should parse");
+            assert_eq!(
+                config.get_fork_blob_schedule(99),
+                Some(config.blob_schedule.osaka),
+                "blobSchedule.{key} must not apply before Hegotá",
+            );
+            assert_eq!(
+                config.get_fork_blob_schedule(100),
+                Some(ForkBlobSchedule {
+                    target: 12,
+                    max: 18,
+                    base_fee_update_fraction: 12018519,
+                }),
+                "blobSchedule.{key} must set Hegotá's blob params",
+            );
+            assert_eq!(
+                config.get_blob_schedule_for_fork(Fork::Hegota),
+                config.get_fork_blob_schedule(100),
+            );
+        }
     }
 }
