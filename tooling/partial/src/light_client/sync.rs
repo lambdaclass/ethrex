@@ -367,9 +367,12 @@ impl LightClientStore {
         }
         if let Some(finalized) = &update.finalized_header {
             let finalized_root = if finalized.beacon.slot == 0 {
-                if finalized.execution.is_some() || finalized.execution_block_hash.is_some() {
-                    return Err(SyncError::InvalidHeader { slot: 0 });
-                }
+                // `GENESIS_SLOT`: nothing is finalized and the leaf is the zero
+                // root. The specification has the update carry the empty
+                // `LightClientHeader()` here; Lighthouse carries the genesis
+                // block header instead. Neither is ever applied, since slot 0
+                // is never past the bootstrap, so the header's content is not
+                // judged: its finality branch is.
                 H256::zero()
             } else {
                 if !spec.is_valid_light_client_header(finalized) {
@@ -566,7 +569,6 @@ fn committee_root(committee: &SyncCommittee) -> Result<H256, SyncError> {
     })
 }
 
-/// `is_better_update`.
 fn is_better_update(new: &LightClientUpdate, old: &LightClientUpdate) -> bool {
     let max_participants = SYNC_COMMITTEE_SIZE;
     let new_participants = new.sync_aggregate.participants();
@@ -621,7 +623,7 @@ pub(crate) mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use crate::light_client::types::Versioned;
+    use crate::light_client::types::{BeaconBlockHeader, Versioned};
     use serde::Deserialize;
 
     fn load<T: for<'de> Deserialize<'de>>(name: &str) -> T {
@@ -724,6 +726,47 @@ pub(crate) mod tests {
             updates[0].next_sync_committee.as_ref().unwrap(),
             &bootstrap.current_sync_committee
         );
+    }
+
+    /// Early in a network's life the finalized checkpoint is still genesis and the
+    /// finalized root is zero. The specification has the update carry the empty
+    /// `LightClientHeader()` (on Gloas with a zeroed `execution_block_hash`, not an
+    /// absent one); Lighthouse carries the genesis block header instead. Neither
+    /// may be refused as an invalid header: the finality branch decides.
+    #[test]
+    fn a_genesis_finalized_header_is_judged_by_its_branch_not_its_content() {
+        let spec = sepolia();
+        let (root, bootstrap) = bootstrap();
+        let store = LightClientStore::initialize(&spec, root, bootstrap).unwrap();
+        let mut update = updates().remove(1);
+        let current_slot = update.signature_slot + 1;
+        let empty = LightClientHeader {
+            beacon: BeaconBlockHeader::default(),
+            execution: None,
+            execution_block_hash: Some([0u8; 32]),
+            execution_branch: vec![[0u8; 32]; 4],
+        };
+        let genesis_block = LightClientHeader {
+            beacon: BeaconBlockHeader {
+                slot: 0,
+                proposer_index: 0,
+                parent_root: [0u8; 32],
+                state_root: [6u8; 32],
+                body_root: [0x62u8; 32],
+            },
+            execution: None,
+            execution_block_hash: Some([0x71u8; 32]),
+            execution_branch: vec![[0xb4u8; 32]; 11],
+        };
+        for finalized in [empty, genesis_block] {
+            update.finalized_header = Some(finalized);
+            // Past the header check; this Sepolia update's finality branch proves a
+            // real finalized root, not the zero one, so the branch is what fails.
+            assert!(matches!(
+                store.validate(&spec, &update, current_slot),
+                Err(SyncError::FinalityBranch { .. })
+            ));
+        }
     }
 
     #[test]
