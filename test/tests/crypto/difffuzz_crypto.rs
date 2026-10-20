@@ -5,7 +5,10 @@
 //!   modulus length, zero for a zero modulus). Operands are shaped around the edges the
 //!   implementations branch on: zero, all-ones, powers of two and their neighbours, leading zero
 //!   bytes, odd and even moduli of 0 to 192 bytes with the 64-bit limb boundaries favored, and
-//!   bases at or around multiples of the modulus.
+//!   bases at or around multiples of the modulus. One case in eight is a modular inversion
+//!   written as an exponentiation, `base^(p - 2) mod p` for a well-known 256-bit prime `p` (the
+//!   BN254, secp256k1, P-256 and BLS12-381 fields and group orders), with near-miss exponents,
+//!   bases at multiples of `p` and zero-padded operands.
 //! - keccak: the one-shot `keccak_hash` and the streaming `Keccak256`, fed in random splits that
 //!   favor cuts at and around the 136-byte rate, both against `tiny-keccak`.
 //!
@@ -116,7 +119,60 @@ fn shaped(r: &mut Rng, len: usize) -> Vec<u8> {
     v
 }
 
+/// Well-known 256-bit primes, big-endian hex: the BN254 scalar and base fields, the secp256k1 and
+/// P-256 base fields and group orders, and the BLS12-381 scalar field.
+const KNOWN_PRIMES: [&str; 7] = [
+    "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001",
+    "30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47",
+    "fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f",
+    "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141",
+    "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff",
+    "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551",
+    "73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001",
+];
+
+/// A modular inversion written as an exponentiation, `base^(p - 2) mod p` for one of
+/// [`KNOWN_PRIMES`], or a near miss of one: exponents `p - 1`, `p - 3` or `p - 2` with one bit
+/// flipped, bases at or next to multiples of `p`, and zero-padded operands.
+fn known_prime_case(r: &mut Rng) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let hex = KNOWN_PRIMES[r.below(KNOWN_PRIMES.len() as u64) as usize];
+    let p = BigUint::parse_bytes(hex.as_bytes(), 16).expect("valid hex");
+    let mut exp = match r.below(8) {
+        0 => (&p - 1u8).to_bytes_be(),
+        1 => (&p - 3u8).to_bytes_be(),
+        _ => (&p - 2u8).to_bytes_be(),
+    };
+    if r.below(8) == 0 {
+        let bit = r.below(8 * exp.len() as u64) as usize;
+        exp[bit / 8] ^= 1 << (bit % 8);
+    }
+    let base = match r.below(6) {
+        0 => (&p * BigUint::from(r.below(8))).to_bytes_be(),
+        1 => (&p * BigUint::from(r.below(8)) + BigUint::from(1 + r.below(2))).to_bytes_be(),
+        2 => vec![0xff; 32],
+        3 => {
+            let len = r.below(41) as usize;
+            shaped(r, len)
+        }
+        _ => r.bytes(32),
+    };
+    let pad = |v: Vec<u8>, r: &mut Rng| {
+        if r.below(4) == 0 {
+            [vec![0u8; r.below(40) as usize], v].concat()
+        } else {
+            v
+        }
+    };
+    let base = pad(base, r);
+    let exp = pad(exp, r);
+    let modulus = pad(p.to_bytes_be(), r);
+    (base, exp, modulus)
+}
+
 fn modexp_case(r: &mut Rng) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    if r.below(8) == 0 {
+        return known_prime_case(r);
+    }
     // Moduli of up to 128 bytes (16 limbs), mostly odd, most of the time.
     let mlen = match r.below(10) {
         0 => 0,
