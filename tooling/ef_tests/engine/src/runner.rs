@@ -289,6 +289,10 @@ pub async fn run_fixture(
                 })?;
             assert_fcu_valid(&fcu_resp)
                 .map_err(|e| FixtureFailure::FollowupFcu { index: i, msg: e })?;
+            if let Some(expected) = payload.inclusion_list_satisfied {
+                assert_fcu_il_satisfied(&fcu_resp, expected)
+                    .map_err(|e| FixtureFailure::FollowupFcu { index: i, msg: e })?;
+            }
         }
     }
 
@@ -577,6 +581,26 @@ fn assert_fcu_valid(resp: &Value) -> Result<(), String> {
         .unwrap_or("<missing>");
     if status != "VALID" {
         return Err(format!("FCU status expected=VALID  got={status}"));
+    }
+    Ok(())
+}
+
+/// A VALID forkchoice head that carried an inclusion list must report the
+/// same `inclusionListSatisfied` verdict as its `engine_newPayloadV6` call: the
+/// client evaluates the retained list again when the head is set. Mirrors
+/// EEST's `test_via_engine.py` (execution-specs#3410), which hive `consume`
+/// runs from tests-heze-devnet@v2.0.0.
+fn assert_fcu_il_satisfied(resp: &Value, expected: bool) -> Result<(), String> {
+    let got = resp
+        .get("result")
+        .and_then(|r| r.get("payloadStatus"))
+        .and_then(|ps| ps.get("inclusionListSatisfied"))
+        .and_then(Value::as_bool)
+        .ok_or_else(|| "expected `inclusionListSatisfied` in forkchoice response".to_string())?;
+    if got != expected {
+        return Err(format!(
+            "unexpected inclusionListSatisfied in forkchoice response: want {expected}, got {got}"
+        ));
     }
     Ok(())
 }
