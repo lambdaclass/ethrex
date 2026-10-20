@@ -35,6 +35,7 @@ the light client's head and a peer serving state (snap) is connected.
 | `--proof-mode off\|observe\|require` | How EIP-8440 chain proofs are used (see below). |
 | `--proof-engine.url URL` | The proof engine that verifies chain proofs. |
 | `--proof-engine.mock` | Accept mock proofs without verification. Devnets and tests only. |
+| `--proofs.url URL` | Beacon REST API to read proofs from when it is not the light client's node, such as one that serves proofs but no light client data. Defaults to `--beacon.url`. |
 | `--min-eth-peers N` | Peers speaking eth to wait for before anchoring (default 3), so header requests have somewhere else to go when one peer cannot serve them. |
 | `--network`, `--datadir`, `--p2p.*`, `--bootnodes`, `--log.level`, `--http.*` | Shared with a full node. |
 

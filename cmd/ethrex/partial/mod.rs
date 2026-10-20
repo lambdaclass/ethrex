@@ -112,6 +112,16 @@ pub struct PartialOptions {
     #[arg(long = "proof-engine.mock", action = ArgAction::SetTrue, help_heading = "Partial node options")]
     pub proof_engine_mock: bool,
 
+    /// Beacon REST API to read EIP-8440 proofs from
+    /// (`GET /eth/v1/beacon/execution_proofs/{block_id}`) when it is not the light client's
+    /// node: one that serves proofs but no light client data, say. Defaults to `--beacon.url`.
+    #[arg(
+        long = "proofs.url",
+        value_name = "URL",
+        help_heading = "Partial node options"
+    )]
+    pub proofs_url: Option<Url>,
+
     /// Peers tried before the node gives up waiting for one that serves state, in seconds.
     #[arg(
         long = "peer-wait",
@@ -274,7 +284,11 @@ impl PartialCommand {
                 ))
             }
         };
-        let beacon_for_proofs = (partial.proof_mode != ProofMode::Off).then(|| beacon.clone());
+        let proofs_api = match &partial.proofs_url {
+            Some(url) => BeaconApi::new(url.clone(), Duration::from_secs(30))?,
+            None => beacon.clone(),
+        };
+        let beacon_for_proofs = (partial.proof_mode != ProofMode::Off).then_some(proofs_api);
         let persist_path = keys_path.clone();
         let follower = Follower::new(shared, heads_rx, proofs, beacon_for_proofs, cancel.clone())
             .with_persist(Box::new(move |state: &State| {
