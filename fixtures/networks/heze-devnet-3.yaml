@@ -1,0 +1,46 @@
+# heze-devnet-3 — the official devnet config.
+#
+# Mirrors https://notes.ethereum.org/@ethpandaops/heze-devnet-3. Scope is the Heze
+# fork: everything on heze-devnet-2 (EIP-7805 FOCIL, plus EIP-8015 and EIP-8365 on
+# the consensus layer only) and EIP-8198 quick slots, which takes slots from 12s to
+# 10s at the Heze fork. On the execution layer EIP-8198 lowers the maximum per-block
+# base fee change to 5/48 and moves Hegotá's blob schedule to target 12, max 18,
+# update fraction 12018519 (provisional). ethrex takes those values from the
+# genesis's `bogota` blob schedule entry, which has to match the consensus layer's
+# BLOB_SCHEDULE. The slot duration itself never reaches the execution layer.
+#
+# Run with:
+#   KURTOSIS_CONFIG_FILE=./fixtures/networks/heze-devnet-3.yaml make localnet
+
+participants_matrix:
+  el:
+    - el_type: ethrex
+      el_image: ethpandaops/ethrex:heze-devnet-3
+    - el_type: besu
+      el_image: ethpandaops/besu:heze-devnet-3
+    - el_type: nethermind
+      el_image: ethpandaops/nethermind:heze-devnet-3
+    - el_type: reth
+      el_image: ethpandaops/reth:heze-devnet-3
+  cl:
+    - cl_type: lighthouse
+      cl_image: ethpandaops/lighthouse:heze-devnet-3
+      supernode: true
+    - cl_type: lodestar
+      cl_image: ethpandaops/lodestar:heze-devnet-3
+    - cl_type: teku
+      cl_image: ethpandaops/teku:heze-devnet-3
+
+network_params:
+  gloas_fork_epoch: 0
+  heze_fork_epoch: 1
+  slot_duration_ms_heze: 10000
+
+additional_services:
+  - spamoor
+  - dora
+
+global_log_level: debug
+
+dora_params:
+  image: ethpandaops/dora:master
