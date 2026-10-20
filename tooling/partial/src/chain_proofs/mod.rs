@@ -266,7 +266,10 @@ mod tests {
         let proof = SignedExecutionProof::try_from(response.data[0].clone()).unwrap();
         assert_eq!(proof.validator_index, 4);
         assert_eq!(proof.message.proof_type, 1);
-        assert!(proof.message.is_origin(), "the first proof starts a recursion");
+        assert!(
+            proof.message.is_origin(),
+            "the first proof starts a recursion"
+        );
 
         // The mock proof's public values are the public input this node computes.
         let engine = MockProofEngine;
