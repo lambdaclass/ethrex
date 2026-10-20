@@ -18,7 +18,7 @@
 
 ### 2026-10-13
 
-- Faster BN254 precompiles: ECADD in affine form with a safegcd inversion, ECMUL with GLV and wNAF (double-and-add for scalars of at most 16 bits), ECPAIRING with a 63-bit G2 subgroup check, and coordinates decoded straight into Montgomery form: ECADD 1.93 → 0.79 µs, full-width ECMUL 41.5 → 18.2 µs, a 2-pair pairing 503 → 434 µs, and the 220 BN254 tests of the benchmarkoor compute-repricing suite 125.2 → 88.1 s [#7397](https://github.com/lambdaclass/ethrex/pull/7397)
+- Faster BN254 precompiles: ECADD in affine form with a safegcd inversion, ECMUL with GLV and wNAF (double-and-add for scalars of at most 16 bits), ECPAIRING with a 63-bit G2 subgroup check, its own Miller loop and final exponentiation, and a branch-free field tower on x86-64 CPUs with BMI2 and ADX: ECADD 2.13 → 0.84 µs, full-width ECMUL 47.9 → 20.8 µs, two random pairs 688 → 382 µs, and the 220 BN254 tests of the benchmarkoor compute-repricing suite 125.3 → 57.4 s [#7397](https://github.com/lambdaclass/ethrex/pull/7397)
 
 ### 2026-09-30
 
