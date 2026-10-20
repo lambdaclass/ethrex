@@ -14,7 +14,7 @@ use ethrex_crypto::Crypto;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::structs::{Decoder, Encoder};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{EMPTY_TRIE_HASH, FxHashMap, Nibbles, Node, NodeRef, Trie, TrieError};
+use ethrex_trie::{EMPTY_TRIE_HASH, FxHashMap, Nibbles, Node, NodeHash, NodeRef, Trie, TrieError};
 use rkyv::with::{Identity, MapKV};
 use serde::{Deserialize, Serialize};
 
@@ -235,6 +235,9 @@ impl RpcExecutionWitness {
         } else {
             None
         };
+        if let Some(root) = &state_trie_root {
+            validate_secured_trie_paths(root, SECURED_TRIE_KEY_NIBBLES)?;
+        }
 
         // Walk the state trie to discover accounts and their storage roots,
         // instead of relying on the keys field which is being removed from the RPC spec.
@@ -262,6 +265,7 @@ impl RpcExecutionWitness {
                         "execution witness does not contain non-empty storage trie".to_string(),
                     ));
                 };
+                validate_secured_trie_paths(&node, SECURED_TRIE_KEY_NIBBLES)?;
                 storage_trie_roots.insert(hashed_address, (*node).clone());
             }
         }
@@ -369,6 +373,9 @@ where
     } else {
         None
     };
+    if let Some(root) = &state_trie_root {
+        validate_secured_trie_paths(root, SECURED_TRIE_KEY_NIBBLES)?;
+    }
 
     // Walk the state trie to discover accounts and their storage roots,
     // instead of relying on the keys field which is being removed from the
@@ -386,6 +393,7 @@ where
                     "execution witness does not contain non-empty storage trie".to_string(),
                 ));
             };
+            validate_secured_trie_paths(&node, SECURED_TRIE_KEY_NIBBLES)?;
             storage_trie_roots.insert(hashed_address, (*node).clone());
         }
     }
@@ -516,10 +524,75 @@ fn collect_accounts_from_trie(
     }
 }
 
+/// Nibbles in a secured trie key: the keccak of an address or of a storage slot.
+const SECURED_TRIE_KEY_NIBBLES: usize = 64;
+
+/// Rejects a secured trie whose nodes do not fit its 64-nibble keys: a leaf has to
+/// end exactly at the key length, an extension has to stop short of it, and a
+/// branch cannot sit on it. Such a trie still hashes like any other, so a witness
+/// built around one, under a header whose state root matches, would otherwise
+/// validate. Only the nodes the witness carries are walked; a hash reference is
+/// left alone, as in the spec's `_validate_secured_trie_paths`.
+fn validate_secured_trie_paths(
+    node: &Node,
+    remaining_nibbles: usize,
+) -> Result<(), GuestProgramStateError> {
+    match node {
+        Node::Leaf(leaf) => {
+            // The partial path keeps the leaf flag as a trailing nibble.
+            let partial = leaf.partial.len() - usize::from(leaf.partial.is_leaf());
+            if partial != remaining_nibbles {
+                return Err(GuestProgramStateError::SecuredTriePath(
+                    "a leaf does not end at the key length",
+                ));
+            }
+        }
+        Node::Extension(extension) => {
+            if extension.prefix.len() >= remaining_nibbles {
+                return Err(GuestProgramStateError::SecuredTriePath(
+                    "an extension reaches the key length",
+                ));
+            }
+            validate_secured_child_paths(
+                &extension.child,
+                remaining_nibbles - extension.prefix.len(),
+            )?;
+        }
+        Node::Branch(branch) => {
+            if remaining_nibbles == 0 {
+                return Err(GuestProgramStateError::SecuredTriePath(
+                    "a branch sits at the key length",
+                ));
+            }
+            for child in &branch.choices {
+                validate_secured_child_paths(child, remaining_nibbles - 1)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_secured_child_paths(
+    child: &NodeRef,
+    remaining_nibbles: usize,
+) -> Result<(), GuestProgramStateError> {
+    match child {
+        NodeRef::Node(node, _) => validate_secured_trie_paths(node, remaining_nibbles),
+        // A node under 32 bytes is embedded in its parent instead of hashed, so it is
+        // part of the witness too and the spec decodes it like any other node.
+        NodeRef::Hash(hash @ NodeHash::Inline(_)) if hash.is_valid() => {
+            validate_secured_trie_paths(&Node::decode(hash.as_ref())?, remaining_nibbles)
+        }
+        NodeRef::Hash(_) => Ok(()),
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum GuestProgramStateError {
     #[error("Failed to rebuild tries: {0}")]
     RebuildTrie(String),
+    #[error("Witness trie path does not fit the secured key: {0}")]
+    SecuredTriePath(&'static str),
     #[error("Failed to apply account updates {0}")]
     ApplyAccountUpdates(String),
     #[error("DB error: {0}")]
@@ -1269,5 +1342,82 @@ mod storage_leaf_decoding_tests {
                 hex::encode(leaf)
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod secured_trie_path_tests {
+    use super::*;
+    use ethrex_crypto::NativeCrypto;
+
+    /// Builds a trie mapping every key to an empty account and returns its root plus
+    /// the nodes on the keys' paths, which is what a witness carries for them.
+    fn trie_over(keys: &[Vec<u8>]) -> (H256, BTreeSet<Vec<u8>>) {
+        let mut trie = Trie::new_temp();
+        for key in keys {
+            trie.insert(key.clone(), AccountState::default().encode_to_vec())
+                .expect("insert");
+        }
+        let mut nodes = BTreeSet::new();
+        for key in keys {
+            nodes.extend(trie.get_proof(key).expect("proof"));
+        }
+        (trie.hash_no_commit(&NativeCrypto), nodes)
+    }
+
+    fn rebuild(root: H256, nodes: BTreeSet<Vec<u8>>) -> Result<(), GuestProgramStateError> {
+        rebuild_state_and_storage_tries(nodes, root, &NativeCrypto).map(|_| ())
+    }
+
+    fn assert_rejected(result: Result<(), GuestProgramStateError>) {
+        assert!(
+            matches!(result, Err(GuestProgramStateError::SecuredTriePath(_))),
+            "expected the secured-path check to reject the trie, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_a_trie_keyed_by_hashes() {
+        let (root, nodes) = trie_over(&[vec![0x11; 32], vec![0x22; 32]]);
+        rebuild(root, nodes).expect("64-nibble keys are the secured key length");
+    }
+
+    #[test]
+    fn rejects_a_leaf_past_the_key_length() {
+        // One key, so the root itself is a 66-nibble leaf.
+        let (root, nodes) = trie_over(&[vec![0x11; 33]]);
+        assert_rejected(rebuild(root, nodes));
+    }
+
+    #[test]
+    fn rejects_leaves_that_run_past_the_key_length_below_a_branch() {
+        // The keys split at the first nibble, so a branch holds two 65-nibble leaves
+        // that each end one nibble past the key.
+        let (root, nodes) = trie_over(&[vec![0x11; 33], vec![0x22; 33]]);
+        assert_rejected(rebuild(root, nodes));
+    }
+
+    #[test]
+    fn rejects_a_leaf_short_of_the_key_length() {
+        let (root, nodes) = trie_over(&[vec![0x11; 31]]);
+        assert_rejected(rebuild(root, nodes));
+    }
+
+    #[test]
+    fn rejects_an_overlength_storage_trie() {
+        let crypto = &NativeCrypto;
+        let (storage_root, storage_nodes) = trie_over(&[vec![0x33; 33]]);
+        let mut state_trie = Trie::new_temp();
+        let hashed_address = vec![0x44; 32];
+        let account = AccountState {
+            storage_root,
+            ..Default::default()
+        };
+        state_trie
+            .insert(hashed_address.clone(), account.encode_to_vec())
+            .expect("insert account");
+        let mut nodes = storage_nodes;
+        nodes.extend(state_trie.get_proof(&hashed_address).expect("proof"));
+        assert_rejected(rebuild(state_trie.hash_no_commit(crypto), nodes));
     }
 }
