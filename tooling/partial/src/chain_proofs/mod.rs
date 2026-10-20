@@ -11,6 +11,7 @@ pub mod engine;
 pub mod tracker;
 pub mod types;
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use ethrex_common::H256;
@@ -75,6 +76,9 @@ pub struct ChainProofs {
     engine: Arc<dyn ProofEngine>,
     tracker: ProofTracker,
     chain_id: u64,
+    /// Proof origins after the checkpoint already warned about, so a prover that started
+    /// late is named once, not once per slot.
+    warned_origins: HashSet<H256>,
 }
 
 impl ChainProofs {
@@ -84,6 +88,7 @@ impl ChainProofs {
             engine,
             tracker,
             chain_id,
+            warned_origins: HashSet::new(),
         }
     }
 
@@ -165,6 +170,23 @@ impl ChainProofs {
                 };
                 match self.submit(&proof, origin_slot).await {
                     Ok(_) => accepted += 1,
+                    Err(ProofError::Rejected(ProofRejected::OriginTooRecent {
+                        origin_slot,
+                        checkpoint_slot,
+                    })) => {
+                        // Every proof from this prover will say the same, and in `require`
+                        // mode the anchor then never leaves the checkpoint: say so once.
+                        if self.warned_origins.insert(origin) {
+                            warn!(
+                                %origin,
+                                origin_slot,
+                                checkpoint_slot,
+                                "chain proofs from this source start after the checkpoint, so none \
+                                 covers the gap since it; restart with a checkpoint at or after \
+                                 the origin to use them"
+                            );
+                        }
+                    }
                     Err(err) => debug!(%err, %head, "proof not taken"),
                 }
             }
