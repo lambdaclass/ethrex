@@ -13,10 +13,14 @@
 //! pairs, G2 points on the twist outside the subgroup or outside it only by a small-order
 //! component, swapped Fq2 halves, bit flips and truncated or extended inputs.
 //!
-//! `difffuzz_bn254_quick` runs a fixed seed as part of the regular suite (smaller pools and fewer
-//! cases in unoptimized builds), then checks every class of G2 encoding directly. The ignored
-//! `difffuzz_bn254_long` generates cases until a deadline, configured through `DIFFFUZZ_SECS`
-//! (default 60), `DIFFFUZZ_SEED` (default 1) and `DIFFFUZZ_THREADS` (default 1):
+//! `difffuzz_bn254_quick` runs a fixed seed as part of the regular suite, then checks every class
+//! of G2 encoding directly, paired with G1 at infinity. In the dev profile (`debug_assertions`
+//! on), where the CI runs it, a true pairing input costs about a quarter of a second, so it runs
+//! 170 cases instead of 6000 on smaller pools: every G1, scalar and G2 class appears, but only a
+//! handful of true pairings and not every pair count. The release quick run and the ignored
+//! `difffuzz_bn254_long` cover the rest. The long test generates cases until a deadline,
+//! configured through `DIFFFUZZ_SECS` (default 60), `DIFFFUZZ_SEED` (default 1) and
+//! `DIFFFUZZ_THREADS` (default 1):
 //!
 //! ```text
 //! DIFFFUZZ_SECS=3600 DIFFFUZZ_THREADS=16 \

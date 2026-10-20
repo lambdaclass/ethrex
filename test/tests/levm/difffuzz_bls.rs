@@ -5,11 +5,14 @@
 //! EIP-2537. The input generators and the model live in `crypto::difffuzz_bls_crypto`, which
 //! checks the same pairing code one layer down, through the `Crypto` API.
 //!
-//! `difffuzz_bls_quick` runs a fixed seed as part of the regular suite (fewer cases in
-//! unoptimized builds), plus a few of each kind of input the generators produce too rarely for
-//! that count. The ignored `difffuzz_bls_long` generates cases until a deadline, configured
-//! through `DIFFFUZZ_SECS` (default 60), `DIFFFUZZ_SEED` (default 1) and `DIFFFUZZ_THREADS`
-//! (default 1):
+//! `difffuzz_bls_quick` runs a fixed seed as part of the regular suite, plus a few of each kind of
+//! input the generators produce too rarely for that count (empty, truncated, overlong and
+//! non-zero padding inputs, and pairs with one side at infinity). In the dev profile
+//! (`debug_assertions` on), where the CI runs it, it generates 48 inputs instead of 600: every
+//! class still appears, but only a few times each. The release quick run and the ignored
+//! `difffuzz_bls_long` cover the rest. The long test generates cases until a deadline,
+//! configured through `DIFFFUZZ_SECS` (default 60), `DIFFFUZZ_SEED` (default 1) and
+//! `DIFFFUZZ_THREADS` (default 1):
 //!
 //! ```text
 //! DIFFFUZZ_SECS=3600 DIFFFUZZ_THREADS=16 \
