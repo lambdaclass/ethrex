@@ -19,9 +19,9 @@ use clap::Args;
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::constants::DEFAULT_OMMERS_HASH;
 use ethrex_common::types::{
-    BlobSchedule, Block, BlockBody, BlockHeader, ELASTICITY_MULTIPLIER, ForkBlobSchedule, Genesis,
-    Transaction, calc_excess_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
-    compute_transactions_root, compute_withdrawals_root,
+    BlobSchedule, Block, BlockBody, BlockHeader, BlockSpacing, ELASTICITY_MULTIPLIER,
+    ForkBlobSchedule, Genesis, Transaction, calc_excess_blob_gas, calculate_base_fee_per_gas,
+    compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
 };
 use ethrex_common::validation::validate_block_access_list_size;
 use ethrex_common::{Bloom, H256, U256};
@@ -189,6 +189,7 @@ pub fn run(args: T8nArgs) -> Result<(), T8nError> {
             env.parent_base_fee.unwrap_or_default(),
             ELASTICITY_MULTIPLIER,
             config.fork(timestamp),
+            BlockSpacing::from_parent(&parent_header, timestamp, env.slot_number),
         )
     });
     let excess_blob_gas = env.current_excess_blob_gas.or_else(|| {

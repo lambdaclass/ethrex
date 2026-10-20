@@ -9,9 +9,9 @@ use std::collections::BTreeMap;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::constants::DEFAULT_OMMERS_HASH;
 use ethrex_common::types::{
-    Block, BlockBody, BlockHeader, ChainConfig, ELASTICITY_MULTIPLIER, Genesis, GenesisAccount,
-    PrivilegedL2Transaction, Receipt, Transaction, TxKind, TxType, calculate_base_fee_per_gas,
-    compute_receipts_root, compute_transactions_root,
+    Block, BlockBody, BlockHeader, BlockSpacing, ChainConfig, ELASTICITY_MULTIPLIER, Genesis,
+    GenesisAccount, PrivilegedL2Transaction, Receipt, Transaction, TxKind, TxType,
+    calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
 };
 use ethrex_common::{Address, Bloom, Bytes, H256, U256};
 use ethrex_crypto::NativeCrypto;
@@ -125,6 +125,7 @@ async fn l1_rejects_privileged_l2_transaction_block() {
         parent.base_fee_per_gas.unwrap_or_default(),
         ELASTICITY_MULTIPLIER,
         store.get_chain_config().fork(parent.timestamp + 1),
+        BlockSpacing::from_parent(&parent, parent.timestamp + 1, None),
     )
     .expect("calculate child base fee");
     let receipts = [Receipt::new(TxType::Privileged, true, 21_000, Vec::new())];

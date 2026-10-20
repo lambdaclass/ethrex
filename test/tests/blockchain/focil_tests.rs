@@ -125,7 +125,8 @@ async fn build_block_with_il(
         random: H256::zero(),
         withdrawals: Some(Vec::new()),
         beacon_root: Some(H256::zero()),
-        slot_number: None,
+        // EIP-8198: a Hegotá block's slot number must exceed its parent's.
+        slot_number: Some(parent.slot_number.unwrap_or(0) + 1),
         version: 5,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
@@ -149,7 +150,8 @@ async fn build_block_ignoring_il(
         random: H256::zero(),
         withdrawals: Some(Vec::new()),
         beacon_root: Some(H256::zero()),
-        slot_number: None,
+        // EIP-8198: a Hegotá block's slot number must exceed its parent's.
+        slot_number: Some(parent.slot_number.unwrap_or(0) + 1),
         version: 5,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
@@ -172,6 +174,8 @@ async fn locally_built_block_with_il_satisfies_on_import() {
     let (mut store, chain_id) = setup_store(&[s1, s2]).await;
     let mut config = store.get_chain_config();
     // Activate Hegotá at genesis so the satisfaction check engages.
+    config.osaka_time = Some(0);
+    config.amsterdam_time = Some(0);
     config.hegota_time = Some(0);
     store.set_chain_config(&config).await.unwrap();
 
@@ -220,6 +224,8 @@ async fn externally_built_block_omitting_il_tx_fails_on_import() {
 
     let (mut store, chain_id) = setup_store(&[s1, s2]).await;
     let mut config = store.get_chain_config();
+    config.osaka_time = Some(0);
+    config.amsterdam_time = Some(0);
     config.hegota_time = Some(0);
     store.set_chain_config(&config).await.unwrap();
 
@@ -269,6 +275,8 @@ async fn il_first_ordering_with_mempool_competition() {
 
     let (mut store, chain_id) = setup_store(&[s1, s2]).await;
     let mut config = store.get_chain_config();
+    config.osaka_time = Some(0);
+    config.amsterdam_time = Some(0);
     config.hegota_time = Some(0);
     store.set_chain_config(&config).await.unwrap();
 
@@ -327,6 +335,8 @@ async fn il_first_ordering_with_mempool_competition() {
 async fn hegota_chain(senders: &[Address]) -> (Store, Blockchain, BlockHeader, u64) {
     let (mut store, chain_id) = setup_store(senders).await;
     let mut config = store.get_chain_config();
+    config.osaka_time = Some(0);
+    config.amsterdam_time = Some(0);
     config.hegota_time = Some(0);
     store.set_chain_config(&config).await.unwrap();
     let blockchain = Blockchain::default_with_store(store.clone());

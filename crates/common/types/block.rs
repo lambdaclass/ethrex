@@ -1,7 +1,6 @@
 use super::{
-    BASE_FEE_MAX_CHANGE_DENOMINATOR, BASE_FEE_MAX_CHANGE_DENOMINATOR_HEGOTA,
-    BASE_FEE_MAX_CHANGE_NUMERATOR_HEGOTA, ChainConfig, Fork, ForkBlobSchedule,
-    GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
+    BASE_FEE_MAX_CHANGE_DENOMINATOR, BASE_FEE_REFERENCE_SLOT_SECONDS, ChainConfig, Fork,
+    ForkBlobSchedule, GAS_LIMIT_ADJUSTMENT_FACTOR, GAS_LIMIT_MINIMUM, INITIAL_BASE_FEE,
 };
 use crate::{
     Address, H256, U256,
@@ -596,22 +595,76 @@ pub enum FakeExponentialError {
     CheckedAdd,
 }
 
-/// Largest fraction `(numerator, denominator)` by which the base fee of a block of
-/// `fork` can change from its parent's: 1/8 (EIP-1559), 5/48 from Hegota (EIP-8198).
-pub fn base_fee_max_change(fork: Fork) -> (u128, u128) {
-    if fork >= Fork::Hegota {
-        (
-            BASE_FEE_MAX_CHANGE_NUMERATOR_HEGOTA,
-            BASE_FEE_MAX_CHANGE_DENOMINATOR_HEGOTA,
-        )
-    } else {
-        (1, BASE_FEE_MAX_CHANGE_DENOMINATOR)
+/// How far a block is from its parent: the seconds and the slots (EIP-7843) elapsed
+/// between them. From Hegota (EIP-8198) the base fee's largest per-block change is
+/// derived from it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlockSpacing {
+    pub seconds_elapsed: u64,
+    pub slots_elapsed: u64,
+}
+
+impl BlockSpacing {
+    /// One slot of the reference duration, for a caller predicting a block nobody has
+    /// built yet that has no spacing to read.
+    pub const REFERENCE_SLOT: Self = Self {
+        seconds_elapsed: BASE_FEE_REFERENCE_SLOT_SECONDS,
+        slots_elapsed: 1,
+    };
+
+    /// The spacing between `header` and its `parent`.
+    pub fn between(header: &BlockHeader, parent: &BlockHeader) -> Self {
+        Self::from_parent(parent, header.timestamp, header.slot_number)
+    }
+
+    /// The spacing a block built on `parent` is predicted to have: `parent`'s own from
+    /// `grandparent`, which reads the slot duration in force, or one reference slot when
+    /// there is none to read.
+    pub fn predicted_after(parent: &BlockHeader, grandparent: Option<&BlockHeader>) -> Self {
+        grandparent
+            .map(|grandparent| Self::between(parent, grandparent))
+            .filter(|spacing| spacing.slots_elapsed > 0)
+            .unwrap_or(Self::REFERENCE_SLOT)
+    }
+
+    /// The spacing from `parent` of a block at `timestamp` and `slot_number`. A slot
+    /// number either block lacks counts as zero, and one that does not increase leaves
+    /// no slot elapsed.
+    pub fn from_parent(parent: &BlockHeader, timestamp: u64, slot_number: Option<u64>) -> Self {
+        Self {
+            seconds_elapsed: timestamp.saturating_sub(parent.timestamp),
+            slots_elapsed: slot_number
+                .unwrap_or(0)
+                .saturating_sub(parent.slot_number.unwrap_or(0)),
+        }
     }
 }
 
+/// Largest fraction `(numerator, denominator)` by which the base fee of a block of
+/// `fork` can change from its parent's. Before Hegota it is 1/8 (EIP-1559). From
+/// Hegota (EIP-8198) it is derived from the block's `spacing`: the slot duration over
+/// 96, as `min(seconds, 96 * slots) / (96 * slots)`, so 1/8 at twelve-second slots
+/// and 5/48 at ten-second ones. Capping the seconds bounds the change at the whole
+/// base fee. `None` when no slot elapsed, which leaves no slot duration to read.
+pub fn base_fee_max_change(fork: Fork, spacing: BlockSpacing) -> Option<(u128, u128)> {
+    if fork < Fork::Hegota {
+        return Some((1, BASE_FEE_MAX_CHANGE_DENOMINATOR));
+    }
+    if spacing.slots_elapsed == 0 {
+        return None;
+    }
+    let denominator = BASE_FEE_MAX_CHANGE_DENOMINATOR
+        * u128::from(BASE_FEE_REFERENCE_SLOT_SECONDS)
+        * u128::from(spacing.slots_elapsed);
+    let numerator = u128::from(spacing.seconds_elapsed).min(denominator);
+    Some((numerator, denominator))
+}
+
 // Calculates the base fee for the current block based on its gas_limit and parent's gas and fee
-// Returns None if the block gas limit is not valid in relation to its parent's gas limit
-// `fork` is the fork of the block whose base fee is computed, which picks the max change.
+// Returns None if the block gas limit is not valid in relation to its parent's gas limit, or,
+// from Hegota, if no slot elapsed since the parent.
+// `fork` is the fork of the block whose base fee is computed and `spacing` its distance from
+// the parent, which together pick the max change.
 pub fn calculate_base_fee_per_gas(
     block_gas_limit: u64,
     parent_gas_limit: u64,
@@ -619,6 +672,7 @@ pub fn calculate_base_fee_per_gas(
     parent_base_fee_per_gas: u64,
     elasticity_multiplier: u64,
     fork: Fork,
+    spacing: BlockSpacing,
 ) -> Option<u64> {
     // Check gas limit, if the check passes we can also rest assured that none of the
     // following divisions will have zero as a divider
@@ -627,7 +681,7 @@ pub fn calculate_base_fee_per_gas(
     }
 
     let parent_gas_target = parent_gas_limit / elasticity_multiplier;
-    let (max_change_numerator, max_change_denominator) = base_fee_max_change(fork);
+    let (max_change_numerator, max_change_denominator) = base_fee_max_change(fork, spacing)?;
 
     match parent_gas_used.cmp(&parent_gas_target) {
         Ordering::Equal => Some(parent_base_fee_per_gas),
@@ -715,6 +769,8 @@ pub enum InvalidBlockHeaderError {
     SlotNumberNotPresent,
     #[error("Slot number is present")]
     SlotNumberPresent,
+    #[error("Slot number is not greater than parent slot number")]
+    SlotNumberNotGreaterThanParent,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -738,6 +794,17 @@ pub fn validate_block_header(
         return Err(InvalidBlockHeaderError::GasUsedGreaterThanGasLimit);
     }
 
+    // EIP-8198: from Hegota a block's slot number must exceed its parent's, which keeps
+    // the slots elapsed that the base fee is derived from positive.
+    let spacing = BlockSpacing::between(header, parent_header);
+    if fork >= Fork::Hegota && spacing.slots_elapsed == 0 {
+        return Err(if header.slot_number.is_none() {
+            InvalidBlockHeaderError::SlotNumberNotPresent
+        } else {
+            InvalidBlockHeaderError::SlotNumberNotGreaterThanParent
+        });
+    }
+
     let expected_base_fee_per_gas = if let Some(base_fee) = calculate_base_fee_per_gas(
         header.gas_limit,
         parent_header.gas_limit,
@@ -745,6 +812,7 @@ pub fn validate_block_header(
         parent_header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
         elasticity_multiplier,
         fork,
+        spacing,
     ) {
         base_fee
     } else {
@@ -1160,17 +1228,23 @@ mod test {
             parent_base_fee_per_gas,
             ELASTICITY_MULTIPLIER,
             Fork::Cancun,
+            BlockSpacing::REFERENCE_SLOT,
         );
         assert_eq!(calc_base_fee, expected_base_fee)
     }
 
     #[test]
-    fn hegota_lowers_the_max_base_fee_change_to_5_over_48() {
-        // EIP-8198: from Hegotá the base fee moves by at most 5/48 per block instead of
-        // 1/8, computed as target_fee_gas_delta * 5 // 48 (multiply first).
+    fn hegota_derives_the_max_base_fee_change_from_block_spacing() {
+        // EIP-8198: from Hegota the base fee moves by at most the slot duration over 96
+        // per block, read from the block's spacing, computed as
+        // target_fee_gas_delta * min(seconds, 96 * slots) // (96 * slots).
         let gas_limit = 30_000_000;
         let target = gas_limit / ELASTICITY_MULTIPLIER;
-        let base_fee = |parent_gas_used, parent_base_fee, fork| {
+        let spacing = |seconds_elapsed, slots_elapsed| BlockSpacing {
+            seconds_elapsed,
+            slots_elapsed,
+        };
+        let base_fee = |parent_gas_used, parent_base_fee, fork, spacing| {
             calculate_base_fee_per_gas(
                 gas_limit,
                 gas_limit,
@@ -1178,34 +1252,105 @@ mod test {
                 parent_base_fee,
                 ELASTICITY_MULTIPLIER,
                 fork,
+                spacing,
             )
         };
-        // Full parent: +1/8 before, +5/48 from Hegotá (5e9 / 48 truncates to 104166666).
+        // Twelve-second slots keep the EIP-1559 1/8, ten-second ones get 5/48
+        // (5e9 / 48 truncates to 104166666).
+        let twelve = spacing(12, 1);
+        let ten = spacing(10, 1);
         assert_eq!(
-            base_fee(gas_limit, 1_000_000_000, Fork::Amsterdam),
+            base_fee(gas_limit, 1_000_000_000, Fork::Amsterdam, ten),
             Some(1_125_000_000)
         );
         assert_eq!(
-            base_fee(gas_limit, 1_000_000_000, Fork::Hegota),
+            base_fee(gas_limit, 1_000_000_000, Fork::Hegota, twelve),
+            Some(1_125_000_000)
+        );
+        assert_eq!(
+            base_fee(gas_limit, 1_000_000_000, Fork::Hegota, ten),
             Some(1_104_166_666)
         );
-        // Empty parent: -1/8 before, -5/48 from Hegotá.
         assert_eq!(
-            base_fee(0, 1_000_000_000, Fork::Amsterdam),
+            base_fee(0, 1_000_000_000, Fork::Hegota, twelve),
             Some(875_000_000)
         );
-        assert_eq!(base_fee(0, 1_000_000_000, Fork::Hegota), Some(895_833_334));
-        // Multiplying first matters at small values: 48 * 5 // 48 = 5, not 48 // 48 * 5.
-        assert_eq!(base_fee(gas_limit, 48, Fork::Amsterdam), Some(54));
-        assert_eq!(base_fee(gas_limit, 48, Fork::Hegota), Some(53));
-        // An increase is still at least 1 wei, and a parent at target keeps its fee.
-        assert_eq!(base_fee(target + 1, 7, Fork::Hegota), Some(8));
-        assert_eq!(base_fee(target, 7, Fork::Hegota), Some(7));
-        // Later forks keep the Hegotá rule.
         assert_eq!(
-            base_fee(gas_limit, 1_000_000_000, Fork::LStar),
+            base_fee(0, 1_000_000_000, Fork::Hegota, ten),
+            Some(895_833_334)
+        );
+        // Missed slots add to both deltas, so the rate stays the slot duration's.
+        assert_eq!(
+            base_fee(gas_limit, 1_000_000_000, Fork::Hegota, spacing(30, 3)),
             Some(1_104_166_666)
         );
+        // The seconds are capped at 96 per slot: the change never exceeds the whole
+        // base fee, so a long gap doubles it at most and an empty parent zeroes it.
+        assert_eq!(
+            base_fee(gas_limit, 1_000_000_000, Fork::Hegota, spacing(1_000, 1)),
+            Some(2_000_000_000)
+        );
+        assert_eq!(
+            base_fee(0, 1_000_000_000, Fork::Hegota, spacing(1_000, 1)),
+            Some(0)
+        );
+        // No slot elapsed leaves no slot duration to read.
+        assert_eq!(
+            base_fee(gas_limit, 1_000_000_000, Fork::Hegota, spacing(10, 0)),
+            None
+        );
+        // Multiplying first matters at small values: 48 * 10 // 96 = 5.
+        assert_eq!(base_fee(gas_limit, 48, Fork::Hegota, ten), Some(53));
+        // An increase is still at least 1 wei, and a parent at target keeps its fee.
+        assert_eq!(base_fee(target + 1, 7, Fork::Hegota, ten), Some(8));
+        assert_eq!(base_fee(target, 7, Fork::Hegota, ten), Some(7));
+        // Later forks keep the Hegota rule.
+        assert_eq!(
+            base_fee(gas_limit, 1_000_000_000, Fork::LStar, ten),
+            Some(1_104_166_666)
+        );
+    }
+
+    #[test]
+    fn hegota_requires_an_increasing_slot_number() {
+        let parent = BlockHeader {
+            gas_limit: 30_000_000,
+            timestamp: 100,
+            slot_number: Some(5),
+            ..Default::default()
+        };
+        let child = |slot_number| BlockHeader {
+            gas_limit: 30_000_000,
+            timestamp: 110,
+            slot_number,
+            ..Default::default()
+        };
+        for slot_number in [5, 4] {
+            assert!(matches!(
+                validate_block_header(
+                    &child(Some(slot_number)),
+                    &parent,
+                    ELASTICITY_MULTIPLIER,
+                    Fork::Hegota
+                ),
+                Err(InvalidBlockHeaderError::SlotNumberNotGreaterThanParent)
+            ));
+        }
+        assert!(matches!(
+            validate_block_header(&child(None), &parent, ELASTICITY_MULTIPLIER, Fork::Hegota),
+            Err(InvalidBlockHeaderError::SlotNumberNotPresent)
+        ));
+        // Before Hegota the slot number is not compared, so validation moves on to the
+        // base fee.
+        assert!(matches!(
+            validate_block_header(
+                &child(Some(5)),
+                &parent,
+                ELASTICITY_MULTIPLIER,
+                Fork::Amsterdam
+            ),
+            Err(InvalidBlockHeaderError::BaseFeePerGasIncorrect)
+        ));
     }
 
     #[test]

@@ -16,7 +16,8 @@ use ethrex_common::{
     },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal,
+        BlockSpacing, ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, TxType,
+        Withdrawal,
         block_access_list::BlockAccessList,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
         calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
@@ -196,6 +197,7 @@ pub fn create_payload(
             parent_block.base_fee_per_gas.unwrap_or_default(),
             args.elasticity_multiplier,
             fork,
+            BlockSpacing::from_parent(&parent_block, args.timestamp, args.slot_number),
         ),
         withdrawals_root: chain_config
             .is_shanghai_activated(args.timestamp)

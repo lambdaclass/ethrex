@@ -284,7 +284,7 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
     use crate::mempool::PendingTxFilter;
     use crate::vm::StoreVmDatabase;
     use ethrex_common::types::{
-        ELASTICITY_MULTIPLIER, calc_excess_blob_gas, calculate_base_fee_per_gas,
+        BlockSpacing, ELASTICITY_MULTIPLIER, calc_excess_blob_gas, calculate_base_fee_per_gas,
     };
     use ethrex_vm::backends::CachingDatabase;
     use ethrex_vm::backends::VMType;
@@ -312,6 +312,15 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
         parent.base_fee_per_gas.unwrap_or_default(),
         ELASTICITY_MULTIPLIER,
         config.fork(child_timestamp),
+        BlockSpacing::predicted_after(
+            parent,
+            blockchain
+                .storage
+                .get_block_header_by_hash(parent.parent_hash)
+                .ok()
+                .flatten()
+                .as_ref(),
+        ),
     );
 
     // Mempool snapshot filter. blob_fee: None on purpose — blob txs are

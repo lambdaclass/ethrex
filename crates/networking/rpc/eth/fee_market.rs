@@ -3,8 +3,9 @@ use ethrex_common::{
     U256,
     constants::GAS_PER_BLOB,
     types::{
-        Block, BlockHeader, ELASTICITY_MULTIPLIER, Fork, ForkBlobSchedule, Transaction,
-        calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
+        Block, BlockHeader, BlockSpacing, ELASTICITY_MULTIPLIER, Fork, ForkBlobSchedule,
+        Transaction, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
+        calculate_base_fee_per_gas,
     },
 };
 use serde::Serialize;
@@ -147,9 +148,15 @@ impl RpcHandler for FeeHistoryRequest {
             blob_gas_used_ratio[idx] = blob_gas_used_r;
 
             if block_number == end_block {
+                let parent = context
+                    .storage
+                    .get_block_header_by_hash(header.parent_hash)
+                    .ok()
+                    .flatten();
                 (base_fee_per_gas[idx + 1], base_fee_per_blob_gas[idx + 1]) =
                     project_next_block_base_fee_values(
                         &header,
+                        BlockSpacing::predicted_after(&header, parent.as_ref()),
                         blob_schedule,
                         fork,
                         context.gas_ceil,
@@ -186,6 +193,7 @@ impl RpcHandler for FeeHistoryRequest {
 // Project base_fee_per_gas and base_fee_per_blob_gas of next block, from provided block
 fn project_next_block_base_fee_values(
     header: &BlockHeader,
+    spacing: BlockSpacing,
     schedule: ForkBlobSchedule,
     fork: Fork,
     gas_ceil: u64,
@@ -202,6 +210,7 @@ fn project_next_block_base_fee_values(
         header.base_fee_per_gas.unwrap_or_default(),
         ELASTICITY_MULTIPLIER,
         fork,
+        spacing,
     )
     .unwrap_or_default();
     let next_excess_blob_gas = calc_excess_blob_gas(header, schedule, fork);
