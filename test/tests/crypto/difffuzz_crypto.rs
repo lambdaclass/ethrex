@@ -9,10 +9,11 @@
 //! - keccak: the one-shot `keccak_hash` and the streaming `Keccak256`, fed in random splits that
 //!   favor cuts at and around the 136-byte rate, both against `tiny-keccak`.
 //!
-//! The `*_quick` tests run a fixed seed as part of the regular suite (fewer MODEXP cases in
-//! unoptimized builds). The ignored `*_long` tests generate cases until a deadline, configured
-//! through `DIFFFUZZ_SECS` (default 60), `DIFFFUZZ_SEED` (default 1) and `DIFFFUZZ_THREADS`
-//! (default 1):
+//! The `*_quick` tests run a fixed seed as part of the regular suite. In the dev profile
+//! (`debug_assertions` on), where the CI runs them, MODEXP checks 1200 cases instead of 6000 and
+//! keccak runs in full; the release quick run and the ignored `*_long` tests cover the rest. The
+//! long tests generate cases until a deadline, configured through `DIFFFUZZ_SECS` (default 60),
+//! `DIFFFUZZ_SEED` (default 1) and `DIFFFUZZ_THREADS` (default 1):
 //!
 //! ```text
 //! DIFFFUZZ_SECS=3600 DIFFFUZZ_THREADS=16 \

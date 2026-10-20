@@ -9,10 +9,13 @@
 //! `n = q * d + r` with extreme quotient digits and signs, shifts and BYTE/SIGNEXTEND favor small
 //! first operands, and EXP favors structured bases.
 //!
-//! `difffuzz_ops_quick` runs every opcode on the cross product of the edge values (half of it in
-//! unoptimized builds) plus a fixed seed of random cases, as part of the regular suite. The
-//! ignored `difffuzz_ops_long` generates random cases until a deadline, configured through
-//! `DIFFFUZZ_SECS` (default 60), `DIFFFUZZ_SEED` (default 1) and `DIFFFUZZ_THREADS` (default 1):
+//! `difffuzz_ops_quick` runs every opcode on the cross product of the edge values plus a fixed
+//! seed of random cases, as part of the regular suite. In the dev profile (`debug_assertions`
+//! on), where the CI runs it, it checks half of the cross product (the tuples whose index sum is
+//! even, so every edge value still appears in every position) and 4 random batches instead of
+//! 40; the release quick run and the ignored `difffuzz_ops_long` cover the rest. The long test
+//! generates random cases until a deadline, configured through `DIFFFUZZ_SECS` (default 60),
+//! `DIFFFUZZ_SEED` (default 1) and `DIFFFUZZ_THREADS` (default 1):
 //!
 //! ```text
 //! DIFFFUZZ_SECS=3600 DIFFFUZZ_THREADS=16 \

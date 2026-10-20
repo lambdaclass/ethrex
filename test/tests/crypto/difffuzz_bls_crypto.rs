@@ -13,11 +13,13 @@
 //! same inputs through the EIP-2537 precompile, padding included, and reuses this module's input
 //! generators and model.
 //!
-//! `difffuzz_bls_crypto_quick` runs a fixed seed as part of the regular suite (fewer cases in
-//! unoptimized builds), plus a few of each kind of input the generators produce too rarely for
-//! that count. The ignored `difffuzz_bls_crypto_long` generates cases until a deadline,
-//! configured through `DIFFFUZZ_SECS` (default 60), `DIFFFUZZ_SEED` (default 1) and
-//! `DIFFFUZZ_THREADS` (default 1):
+//! `difffuzz_bls_crypto_quick` runs a fixed seed as part of the regular suite, plus a few of each
+//! kind of input the generators produce too rarely for that count (`rare_inputs`). In the dev
+//! profile (`debug_assertions` on), where the CI runs it, the arkworks pairings are slow, so it
+//! generates 48 inputs instead of 700: every point and corruption class still appears, but only a
+//! few times each. The release quick run and the ignored `difffuzz_bls_crypto_long` cover the
+//! rest. The long test generates cases until a deadline, configured through `DIFFFUZZ_SECS`
+//! (default 60), `DIFFFUZZ_SEED` (default 1) and `DIFFFUZZ_THREADS` (default 1):
 //!
 //! ```text
 //! DIFFFUZZ_SECS=3600 DIFFFUZZ_THREADS=16 \
