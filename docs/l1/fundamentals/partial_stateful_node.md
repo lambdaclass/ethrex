@@ -1,14 +1,140 @@
 # Partial stateful node
 
-`ethrex partial-stateful-node` (alias `ethrex psn`) runs ethrex as a **partial stateful node**: a node that holds only the
-accounts and storage its users read, proves every value it serves, and follows the chain
-without executing blocks. It is built for wallets: a local JSON-RPC endpoint that is ready
-in minutes, keeps kilobytes on disk, and trusts no RPC provider. The design follows
-[chibi](https://github.com/weiihann/chibi), with [EIP-8440 execution chain proofs](https://github.com/ethereum/EIPs/pull/12464)
-layered on top.
+## What it is
 
-The mode is optional: build with `--features partial`. The implementation is the `ethrex-partial`
+`ethrex partial-stateful-node` (alias `ethrex psn`) runs ethrex as a **partial stateful
+node**: an execution-layer node that holds only the accounts and storage its users read, proves
+every value it serves against headers a light client verified, and follows the chain by applying
+EIP-7928 block access lists to the keys it holds instead of executing blocks. It is built for
+wallets: a local JSON-RPC endpoint that is ready in minutes, keeps kilobytes on disk, runs in
+tens of megabytes of memory, and trusts no RPC provider. The design follows [chibi](https://github.com/weiihann/chibi), with
+[EIP-8440 execution chain proofs](https://github.com/ethereum/EIPs/pull/12464) layered on top.
+It is optional: build with `--features partial`; the implementation is the `ethrex-partial`
 crate in `tooling/partial`.
+
+### Where it sits
+
+| | Full node | Partial stateful node | Wallet on an RPC provider |
+|---|---|---|---|
+| State held | all of it | the keys its users touch, each one proven | none |
+| Follows the chain by | executing every block | applying block access lists to held keys | asking the provider |
+| Trusts | genesis and its own execution | a checkpoint and the sync committee, plus chain proofs when they exist | the provider |
+| Ready in | hours to days | minutes, waiting for a peer | at once |
+| Disk, memory | hundreds of GB, gigabytes | kilobytes, tens of megabytes | none |
+| Serves | every JSON-RPC method | the wallet subset: balance, nonce, code, storage, call, estimate, fees, send, its own receipts | whatever the provider serves |
+
+### What it is not
+
+- **Not a consensus client.** It embeds a light client, the verifying part of one, and reads a
+  beacon node's REST API for the sync committee data that light client checks. It follows no
+  beacon gossip and runs no validator duties. A beacon node is a requirement, a consensus client
+  process on the same machine is not; see [What it needs](#what-it-needs).
+- **Not an indexer or an archive.** It holds no logs, filters, history or full blocks, and
+  serves state at the anchor and the eight blocks before it.
+- **Not a substitute for validating the chain yourself.** It trusts the sync committee, and
+  chain proofs when a network has them, instead of executing. A full node is still what you
+  run when that trust is not acceptable.
+
+### Trust in one sentence
+
+Every value it serves descends from a header the sync committee signed: snap proofs against
+that header's state root, access lists committed to by its hash, bodies and receipts committed
+to by its roots, and, when present, an EIP-8440 proof that the execution up to it was valid. A
+lying peer or beacon node can stall the node; it cannot make it serve a wrong value.
+
+## What it needs
+
+Four things from outside the node, and very little hardware.
+
+### A beacon node, not a consensus client
+
+Consensus clients expose a standard REST interface, the
+[Beacon API](https://ethereum.github.io/beacon-APIs/): headers, blocks, the chain's
+configuration, an event stream, and the light client endpoints. The partial node reads the last
+group: `light_client/bootstrap` once at the checkpoint, `light_client/updates` once per sync
+committee period, and `light_client/finality_update` and `light_client/optimistic_update` every
+slot, plus `headers`, `genesis` and `config/spec`. That is what `--beacon.url` points at.
+
+It does not run a consensus client itself, and does not need one on the same machine. It embeds
+a light client, the verifying part of one: every header it takes is checked against the sync
+committee's aggregate BLS signature, every committee change against its Merkle branch from the
+state the previous committee signed. The beacon node can censor or stall the light client; it
+cannot make it accept a header the committee did not sign. Any beacon node that serves light
+client data works, local or remote. Lighthouse, Nimbus, Lodestar and Teku serve it; a node that
+does not serve it at all answers `404` on every light client route, which the log reports.
+
+### Execution peers
+
+Ordinary execution clients over devp2p, found through the network's bootnodes or `--bootnodes`.
+Headers, bodies, receipts and block access lists come over `eth/71`; the state proofs come over
+`snap`, as single-key account and storage range requests, and block access lists over `snap/2`
+where a peer offers it. ethrex and geth both serve what is needed. The first anchor waits for one
+peer that serves state and a few that speak `eth` (`--min-eth-peers`), and then for one of them
+to answer the first header request; on Sepolia today that is where the minutes go.
+
+### A network past Glamsterdam
+
+Two pieces of the design are Glamsterdam features:
+
+- **EIP-7928 block access lists (Amsterdam)** are how the node advances without executing. A
+  header before Amsterdam carries no access-list hash, so on such a network every step falls back
+  to reanchoring: the pins are re-proven each block and the learned keys are dropped. Correct,
+  but slow, and `eth_call` warmth resets every slot.
+- **Gloas light client headers** carry the hash of the execution block the beacon chain applied,
+  which is what the follower anchors on, and the EIP-8440 proof machinery is defined on Gloas
+  payload envelopes.
+
+Sepolia activated Glamsterdam in October 2026 and is where the node is exercised. Mainnet has
+no Amsterdam activation scheduled yet; nothing in the node is network-specific, so
+`--network mainnet` with a mainnet beacon node becomes the target the moment it forks. Pre-Gloas
+light client headers are handled, so the light client itself bootstraps on any network since
+Altair.
+
+### A checkpoint you trust
+
+`--checkpoint` is a finalized beacon block root: the weak-subjectivity checkpoint, the one
+thing the light client takes on faith. Without it the node asks the beacon node for its
+finalized block and says so in the log, which makes that node the trust anchor; fine for a
+test, not for a wallet. Any block explorer or beacon node you trust gives you the root.
+
+The beacon node must hold light client data for that root. Lighthouse keeps it only for
+finalized checkpoint roots whose block sits at an epoch boundary; when the boundary slot was
+skipped, the checkpoint root is an earlier block and `light_client/bootstrap` answers `404`
+for it. The node retries for half a minute and then exits with the route and the status; pick
+the previous finalized checkpoint, or wait an epoch.
+
+### Hardware
+
+Anything that runs the ethrex binary. The node holds no database, executes no blocks, and
+keeps a bounded working set, so its footprint is that of the networking stack and the light
+client. Measured on Sepolia in `off` mode on 2026-10-20, over six and a half minutes of
+following the chain with one watched account:
+
+| | Measured | Why it stays there |
+|---|---|---|
+| Memory | 29 to 34 MB resident | the working set is capped at 1024 keys and eight recent states; headers are kept for 256 blocks; a chain proof is at most 4 MiB and is dropped once verified |
+| CPU | 3% of one core on average, brief peaks under 10% | one BLS aggregate check per slot, a few Merkle and trie proofs per block, levm only for `eth_call` and `eth_estimateGas` |
+| Disk | 8 KB in the data directory, plus the 40 MB binary | only the node key and its ENR are written; state is never persisted |
+| Network | a few kilobytes per second each way | headers and access lists over devp2p, light client updates over HTTPS; a reanchor adds one snap proof per held key |
+| Time to serve | light client bootstrapped in 5 s; peers connected in 25 s; first anchor at 4 min | the wait is for a peer that answers the first header request, and Sepolia has few that serve this node |
+
+The two cache lines the startup log prints, a RocksDB block cache in the gigabytes and a
+bytecode cache of 2 GiB, are the full node's store sizing itself; the partial node's store
+is in memory and headers-only, and neither cache is allocated to that size, as the resident
+memory above shows.
+
+A single core and 128 MB of memory leave headroom; a Raspberry Pi, a NAS or a phone-class
+board is enough. Bandwidth matters more than compute: the node is idle between slots and
+busy for a fraction of a second at each one.
+
+### Optionally, a source of EIP-8440 proofs
+
+With `--proof-mode observe` or `require` the node also reads execution chain proofs from
+`GET /eth/v1/beacon/execution_proofs/{block_id}` on `--proofs.url`, which defaults to the
+light client's node. The two can differ: an ethlambda node serves verified proofs but no light
+client data today, so it pairs with a Lighthouse or Nimbus for the latter. No public network
+produces chain proofs yet, which is why the default mode is `off`; see
+[EIP-8440 execution chain proofs](#eip-8440-execution-chain-proofs).
 
 ## Running
 
@@ -147,6 +273,12 @@ against `hash_tree_root(PublicInput{origin, head, chain_id, schema_id})`.
 | `observe` | Proofs are fetched and verified; `partial_status` reports how many execution blocks are proven and whether the anchor is. The anchor is the light client's head. |
 | `require` | The anchor starts at the checkpoint's execution block, the trust root, and only moves to execution blocks with a verified chain proof whose origin is at or before the checkpoint. Reads at `latest` are served there. |
 
+In `require` mode the checkpoint and the prover's origin have to agree: a proof whose origin is
+after the checkpoint says nothing about the gap between the two and is refused, so with a
+prover that started recently the anchor never moves and `partial_status` reports `verified`
+at zero. The node warns once per such origin, naming both slots; the fix is a checkpoint at or
+after the origin.
+
 The proof engine is reached over HTTP as `POST /v1/execution_proof_verifications` with the
 proof bytes as the body and the public input fields as query parameters
 (`origin_block_root`, `head_block_root`, `chain_id`, `schema_id`, `proof_type`), the contract
@@ -162,30 +294,67 @@ signed it.
 **Where consensus clients are (2026-10-20).** Prysm (OffchainLabs/prysm#17690) and the eth-act
 Lighthouse branch `optional-proofs` implement EIP-8025, single-payload proofs, with the ERE
 zkVM verifiers embedded in the client and the ethrex stateless-validator guests as proof types
-1 to 3; upstream Lighthouse verifies through the external HTTP sidecar above. No client produces
-or consumes EIP-8440 chain proofs: the recursive chain guest does not exist yet, so `observe`
-and `require` can only be exercised against the mock engine until it does. Covering the gap
-with one EIP-8025 proof per payload is possible (ethrex already has the `NewPayloadRequest`
-SSZ container) but is not implemented.
+1 to 3; upstream Lighthouse verifies through the external HTTP sidecar above. ethlambda takes
+EIP-8440 proofs from gossip and its Beacon API, verifies them through a proof engine (today a
+mock), keeps them until finality and serves them on the `GET` route above; its validator client
+can sign a mock chain proof per slot for devnets, which is what this node was run against (see
+[Live run](#live-run)). No client produces real EIP-8440 chain proofs: the recursive chain guest
+does not exist yet, so `observe` and `require` can only be exercised against the mock engine
+until it does. Covering the gap with one EIP-8025 proof per payload is possible (ethrex already
+has the `NewPayloadRequest` SSZ container) but is not implemented.
+
+## What is ethrex's and what is new
+
+The crate is larger than the idea suggests because the pieces ethrex already has were built
+for a node that holds the whole state, and three of the five layers below needed a version
+that does not. Everything reused is linked, not copied; everything new is listed with the
+reason it could not be reused and, where there is one, the refactor that would let it be.
+
+| Layer | From ethrex | New here | Why |
+|---|---|---|---|
+| Networking | the whole devp2p stack: discovery, `PeerTable`, `PeerHandler`, the `eth` and `snap` message types, header, body, receipt and access list requests | `p2p_adapter.rs`, `fetch.rs`, `peers.rs`: a `Peers` trait over it, single-key snap requests, per-anchor retries | the full node's snap client asks for ranges to fill a trie; this node asks for one key at a time, at a specific header |
+| Verification | `ethrex-trie` nodes and hashing, header, body, receipt and access list hashing, RLP | `verify.rs`: proof-node walks for one key, the pin and absence rules, the anchor chain | `verify_range` trusts the requester to have chosen the range's bounds; here the peer chooses them, and a withheld left-bound leaf would prove a false absence, so the proof is walked from the root to the key instead |
+| State | the account, storage and code types; the EIP-7928 access list types and hash | `state.rs`, `working.rs`: the pinned store, access list application, reanchoring, retention of the last eight blocks | ethrex's store is a complete state trie with a root; this one is a set of proven keys with the block each was proven at |
+| Execution | levm, whole, through its `VmDatabase` trait; the gas cap and fee rules | `exec.rs`: a database that records the keys levm reads and misses, and the round loop that proves them and runs again | levm needed no change; the loop around it is the partial part |
+| JSON-RPC | request and batch parsing, the response and error shapes, the block, transaction and receipt JSON types | `rpc.rs`: the `eth_*` dispatch over the pinned state, `partial_status` | ethrex's handlers take the full node's context (its store, blockchain and sync state); a handler that takes a state-provider trait would let both nodes share them |
+| Light client | nothing: ethrex has no consensus-layer code | `light_client/`: the beacon containers, the sync protocol, Merkle branches, BLS over `blst`, the Beacon API client | see below |
+| Chain proofs | the stateless-input schema id and SSZ helpers the ethrex guests use | `chain_proofs/`: the EIP-8440 containers, the proof source client, the mock and HTTP engines, the tracker | ethrex produces proofs; nothing in it consumed one |
+
+Tests are a third of the crate, and `testing.rs` is most of that: an in-process peer that
+answers snap, `eth` and access list requests from a real `ethrex-blockchain` and
+`ethrex-storage` store, so the follower, the verifier and the executor are tested against the
+same code a full node serves with.
+
+### Why the light client is in-house
+
+The beacon containers, `compute_domain`, `compute_signing_root` and the BLS checks mirror
+ethlambda's `beacon::containers`, `beacon::signing` and `bls.rs`. They are spelled out here
+instead of linked because ethlambda pins `libssz` to a git revision that differs from the
+release ethrex builds on, which would put two copies of the SSZ library in one binary, and
+because `ethlambda-crypto` carries the leanVM post-quantum stack. Neither client had the light
+client containers or the sync protocol, which is about a thousand lines and is tested against
+Sepolia data captured on 2026-10-19 (`tooling/partial/testdata/sepolia`): the bootstrap's
+committee branch, two consecutive period updates, a finality update and an optimistic update,
+with their BLS signatures verified against the committee the previous period's update
+announced. The ethlambda fixture in `tooling/partial/testdata/ethlambda` pins the EIP-8440
+proof shape both clients agree on.
+
+### Refactors this points at
+
+Each would shrink this crate and give the full node something too:
+
+1. **Generic `eth_*` handlers in `ethrex-rpc`** over a trait that provides headers, accounts,
+   storage, code and execution. The full node implements it with its store; this node with
+   its pinned state; `rpc.rs` disappears.
+2. **A single-key proof verifier in `ethrex-trie`**, the walk from `verify.rs`, next to
+   `verify_range`. It is also what a full node needs to check an `eth_getProof` answer from
+   someone else, and what the snap client should use when a peer picks the bounds.
+3. **A beacon types crate shared with ethlambda** (containers, domains, signing roots, BLS),
+   once the two clients build on the same `libssz`. The light client's `types.rs`, `merkle.rs`
+   and `bls.rs` move there; `sync.rs` stays.
 
 ## Design notes
 
-- **Reused from ethrex.** The trie and its proof nodes, the EIP-7928 access list types and
-  hash, header and receipt root computation, the devp2p stack (raw snap requests, eth/71
-  and snap/2 access list fetches, header and body requests), levm through `VmDatabase`, and
-  the RPC crate's request, response, error and JSON types.
-- **ethlambda.** The beacon containers (`BeaconBlockHeader`, `SyncCommittee`, `SyncAggregate`),
-  `compute_domain`, `compute_signing_root` and the BLS checks mirror ethlambda's
-  `beacon::containers`, `beacon::signing` and `bls.rs`. They are spelled out here instead of
-  linked because ethlambda pins `libssz` to a git revision that differs from the release
-  ethrex builds on, which would put two copies of the SSZ library in one binary, and because
-  `ethlambda-crypto` carries the leanVM post-quantum stack. Neither client has light client
-  containers; extracting a shared crate is the natural follow-up.
-- **In-house light client.** The sync protocol is about a thousand lines and is tested against
-  Sepolia data captured on 2026-10-19 (`tooling/partial/testdata/sepolia`): the bootstrap's
-  committee branch, two consecutive period updates, a finality update and an optimistic
-  update, with their BLS signatures verified against the committee the previous period's
-  update announced.
 - **Not held.** Storage roots (stale under access lists), bodies and receipts (except the
   node's own transactions), logs, and state older than the eight retained blocks.
 - **Limits.** `MAX_BAL_GAP = 32` blocks before reanchoring; `HEADER_WINDOW = 256` for
@@ -199,7 +368,7 @@ client bootstrapped from the node's finalized checkpoint, the node anchored and 
 the chain one block per slot through block access lists, `eth_blockNumber` advanced from
 11952372 to 11952409 over ten minutes, the watched account was proven at every head, and
 `partial_status` reported the light client heads, finality and peer counts. Peers on Sepolia
-that serve snap are few, so the first anchoring can wait a minute for one.
+that serve snap are few, so the first anchoring waits minutes for one.
 
 `require` mode was run the same day against Sepolia's light client data with `--proofs.url`
 pointing at a local stand-in that answered every head with a mock proof in the shape
@@ -208,6 +377,18 @@ real chain proofs yet). The node anchored at the checkpoint's execution block, v
 per slot with the mock engine, mapped each to its payload once the next header arrived, and
 moved the anchor only onto proven payloads, 121 blocks in eight minutes with `anchorProven`
 true throughout.
+
+`require` mode was then run against a beacon node that really serves EIP-8440 proofs: an
+ethlambda node from its `feat/beacon-execution-chain-proofs` branch on a local kurtosis devnet
+(two Lighthouse nodes for light client data and finality, ethlambda for the proofs with its
+validator client signing a mock chain proof per slot, ethrex as every execution layer, six
+second slots). Over ten minutes from a checkpoint at slot 544 the node verified 94 proofs,
+mapped 92 of them to payloads once the next header arrived, and moved its anchor from
+execution block 409 to 563, always onto a proven payload and never more than one slot behind
+the light client's optimistic head, with `anchorProven` true throughout and no warning but the
+mock engine's. Two things that run taught are now in this page: a Lighthouse bootstrap exists
+only for epoch-boundary checkpoints, and the prover's origin has to be at or before the
+checkpoint.
 
 ## Testing
 
