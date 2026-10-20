@@ -4230,6 +4230,10 @@ version = "30.0.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
+ "ark-bls12-381",
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
  "bytes",
  "cita_trie",
  "ethereum-types",
@@ -4260,6 +4264,7 @@ dependencies = [
  "libssz",
  "libssz-merkle",
  "libssz-types",
+ "num-bigint 0.4.6",
  "once_cell",
  "p256",
  "proptest",
@@ -4270,7 +4275,9 @@ dependencies = [
  "secp256k1 0.30.0",
  "serde_json",
  "serial_test",
+ "substrate-bn",
  "tempfile",
+ "tiny-keccak",
  "tokio",
  "tokio-util",
 ]
