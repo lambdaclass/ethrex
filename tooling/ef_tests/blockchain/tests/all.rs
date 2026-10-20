@@ -24,7 +24,11 @@ const SKIPPED_BASE: &[&str] = &[
 ];
 
 // Do not re-add a skip without recording why in docs/known_issues.md.
-const EXTRA_SKIPS: &[&str] = &[];
+const EXTRA_SKIPS: &[&str] = &[
+    // Bogota fixtures predate the EIP-8198 rule this branch implements (EIPs #12552).
+    "fork_Bogota",
+    "fork_AmsterdamToBogotaAtTime15k",
+];
 
 fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
     let skips: Vec<&'static str> = SKIPPED_BASE
