@@ -14,6 +14,7 @@
 
 ### 2026-10-20
 
+- Warm block access list accounts on a dedicated I/O pool that keeps more reads in flight: on the stateful repricing benchmarks, cold accesses to existing accounts −78% and the 9 account-access tests 47.8 → 16.4 s [#7451](https://github.com/lambdaclass/ethrex/pull/7451)
 - Skip rehashing the last touched address in the block access list recorder: SELFBALANCE −29% and IDENTITY calls −16% in loops [#7450](https://github.com/lambdaclass/ethrex/pull/7450)
 - Look an already-loaded account up once in `load_account`: a SELFBALANCE loop 21.1 → 17.1 ms (−19%) [#7449](https://github.com/lambdaclass/ethrex/pull/7449)
 - Move a precompile's output into the caller's return-data buffer instead of cloning it: IDENTITY calls returning 256 B to 1 KiB −8% to −14% [#7448](https://github.com/lambdaclass/ethrex/pull/7448)
