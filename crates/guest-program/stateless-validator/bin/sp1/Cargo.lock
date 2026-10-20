@@ -874,7 +874,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "29.0.1"
+version = "30.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -882,6 +882,7 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-rlp",
  "ethrex-trie",
+ "foldhash 0.2.0",
  "hex",
  "hex-literal",
  "hex-simd",
@@ -905,7 +906,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "29.0.1"
+version = "30.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -924,7 +925,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "29.0.1"
+version = "30.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -946,7 +947,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "29.0.1"
+version = "30.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -963,14 +964,13 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "29.0.1"
+version = "30.0.0"
 dependencies = [
  "bytes",
  "derive_more",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
- "foldhash 0.2.0",
  "libssz",
  "malachite",
  "rustc-hash",
@@ -981,7 +981,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "29.0.1"
+version = "30.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1005,7 +1005,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "29.0.1"
+version = "30.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1024,7 +1024,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "29.0.1"
+version = "30.0.0"
 dependencies = [
  "bytes",
  "derive_more",

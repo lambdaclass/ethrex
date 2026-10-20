@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-10-14
+
+- Commit trie layers that are already final without a `STATE_HISTORY` journal entry and without the pre-image read per trie node that entry needs: on an L2 and on a finalizing L1 the journal stays empty and finality pruning writes no range deletes, where before every commit wrote an entry only for the next finality advance to range-delete it [#7377](https://github.com/lambdaclass/ethrex/pull/7377)
+
 ### 2026-10-13
 
 - Faster BN254 precompiles: ECADD in affine form with a safegcd inversion, ECMUL with GLV and wNAF (double-and-add for scalars of at most 16 bits), ECPAIRING with a 63-bit G2 subgroup check, and coordinates decoded straight into Montgomery form: ECADD 1.93 → 0.79 µs, full-width ECMUL 41.5 → 18.2 µs, a 2-pair pairing 503 → 434 µs, and the 220 BN254 tests of the benchmarkoor compute-repricing suite 125.2 → 88.1 s [#7397](https://github.com/lambdaclass/ethrex/pull/7397)

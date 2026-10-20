@@ -1,5 +1,5 @@
 [package]
-version = "29.0.1"
+version = "30.0.0"
 name = "ethrex-guest-openvm"
 edition = "2024"
 license = "MIT OR Apache-2.0"

@@ -332,6 +332,7 @@ pub fn prepare_vm_for_tx<'a>(
             disable_nonce_check: false,
             disable_gas_allowance_check: false,
             disable_sender_eoa_check: false,
+            disable_execution_gas_cap: false,
             is_system_call: false,
         },
         db,

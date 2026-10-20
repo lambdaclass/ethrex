@@ -1,6 +1,6 @@
 use ethrex_common::{H256, serde_utils};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use tracing::{debug, warn};
 
 use crate::{
@@ -36,14 +36,14 @@ impl std::fmt::Display for ExchangeTransitionConfigV1Req {
 }
 
 impl RpcHandler for ExchangeTransitionConfigV1Req {
-    fn parse(params: &Option<Vec<Value>>) -> Result<ExchangeTransitionConfigV1Req, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<ExchangeTransitionConfigV1Req, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 1 {
             return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
         };
-        let payload: ExchangeTransitionConfigPayload = serde_json::from_value(params[0].clone())?;
+        let payload: ExchangeTransitionConfigPayload = serde_json::from_str(params[0].get())?;
         Ok(ExchangeTransitionConfigV1Req { payload })
     }
 
