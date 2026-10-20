@@ -3801,11 +3801,20 @@ impl LEVM {
         withdrawals: &[Withdrawal],
     ) -> Result<(), EvmError> {
         // For every withdrawal we increment the target account's balance
-        for (address, increment) in withdrawals
-            .iter()
-            .filter(|withdrawal| withdrawal.amount > 0)
-            .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
-        {
+        for withdrawal in withdrawals {
+            let address = withdrawal.address;
+            // A zero withdrawal changes nothing, but the spec still reads its recipient
+            // (`create_ether`), so a stateless witness has to carry that account's
+            // proof. Reading it here is what makes a witness that leaves the proof out
+            // fail, as `validation_state_unchanged_account_read` requires; without the
+            // read the block validates against an incomplete witness.
+            if withdrawal.amount == 0 {
+                db.get_account(address).map_err(|_| {
+                    EvmError::DB(format!("Withdrawal account {address} could not be read"))
+                })?;
+                continue;
+            }
+            let increment = u128::from(withdrawal.amount) * u128::from(GWEI_TO_WEI);
             let account = db
                 .get_account_mut(address)
                 .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
