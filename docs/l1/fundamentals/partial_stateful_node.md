@@ -220,8 +220,7 @@ Sepolia vectors and mock proofs.
   (consensus-specs PR #5725, not merged).
 - [EIP-8025: Optional Execution Proofs](https://eips.ethereum.org/EIPS/eip-8025), its
   [consensus specs](https://github.com/ethereum/consensus-specs/tree/master/specs/_features/eip8025),
-  [ethrex's EIP-8025 notes](../../eip-8025.md), and the client work this node's proof plumbing
-  follows: [Lighthouse's proof-engine sidecar client](https://github.com/sigp/lighthouse/tree/unstable/beacon_node/proof_engine),
+  and the client work this node's proof plumbing follows: [Lighthouse's proof-engine sidecar client](https://github.com/sigp/lighthouse/tree/unstable/beacon_node/proof_engine),
   [eth-act Lighthouse `optional-proofs`](https://github.com/eth-act/lighthouse/tree/optional-proofs/beacon_node/proof_engine)
   and [Prysm #17690](https://github.com/OffchainLabs/prysm/pull/17690).
 - [EIP-7928: Block-Level Access Lists](https://eips.ethereum.org/EIPS/eip-7928) and
