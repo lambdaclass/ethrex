@@ -285,7 +285,15 @@ pub fn eip7702_peek_delegation(
     address: Address,
     fork: Fork,
 ) -> Result<(Code, Option<(Address, u64)>), VMError> {
-    let bytecode = db.get_account_code(address)?.clone();
+    let account = db.get_account(address)?;
+    // An account without code (an EOA or a precompile) cannot carry a delegation
+    // designation. Calls to precompiles take this path every time, so skip the
+    // code-cache lookup and the clone of its entry.
+    if !account.has_code() {
+        return Ok((Code::default(), None));
+    }
+    let code_hash = account.info.code_hash;
+    let bytecode = db.get_code(code_hash)?.clone();
     if !code_has_delegation(bytecode.code())? {
         return Ok((bytecode, None));
     }
