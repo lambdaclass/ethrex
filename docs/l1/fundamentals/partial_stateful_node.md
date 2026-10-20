@@ -201,6 +201,14 @@ the chain one block per slot through block access lists, `eth_blockNumber` advan
 `partial_status` reported the light client heads, finality and peer counts. Peers on Sepolia
 that serve snap are few, so the first anchoring can wait a minute for one.
 
+`require` mode was run the same day against Sepolia's light client data with `--proofs.url`
+pointing at a local stand-in that answered every head with a mock proof in the shape
+ethlambda's `GET /eth/v1/beacon/execution_proofs/{block_id}` serves (no network produces
+real chain proofs yet). The node anchored at the checkpoint's execution block, verified a proof
+per slot with the mock engine, mapped each to its payload once the next header arrived, and
+moved the anchor only onto proven payloads, 121 blocks in eight minutes with `anchorProven`
+true throughout.
+
 ## Testing
 
 ```sh
