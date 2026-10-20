@@ -156,6 +156,47 @@ async fn ask_peer_head_number(
     }
 }
 
+/// Asks `peers` in order for the block number of the sync head, stopping at the
+/// first one that knows it, and returns that number (0 if none does).
+///
+/// Every peer that fails to answer is handed to `on_miss`, which demotes it the
+/// way a failed header-range request does. The peers asked are the best-scored
+/// ones, and a peer stuck behind the head (for example on the old side of a fork
+/// it never upgraded for) keeps earning score by serving old headers; if missing
+/// the head cost it nothing it would stay a top pick on every retry and the sync
+/// head would never resolve.
+async fn ask_peers_for_head_number<P, Fut>(
+    peers: impl IntoIterator<Item = (H256, P)>,
+    mut ask: impl FnMut(H256, P) -> Fut,
+    mut on_miss: impl FnMut(H256) -> Result<(), PeerHandlerError>,
+) -> Result<u64, PeerHandlerError>
+where
+    Fut: std::future::Future<Output = Result<u64, PeerHandlerError>>,
+{
+    for (peer_id, peer) in peers {
+        match ask(peer_id, peer).await {
+            Ok(number) if number != 0 => {
+                #[cfg(feature = "metrics")]
+                ethrex_metrics::sync::METRICS_SYNC.inc_header_resolution("found");
+                return Ok(number);
+            }
+            Ok(_) => {
+                #[cfg(feature = "metrics")]
+                ethrex_metrics::sync::METRICS_SYNC.inc_header_resolution("unknown");
+            }
+            Err(err) => {
+                #[cfg(feature = "metrics")]
+                ethrex_metrics::sync::METRICS_SYNC.inc_header_resolution("timeout");
+                debug!(
+                    "Sync Log 13: Failed to retrieve sync head block number from peer {peer_id}: {err}"
+                );
+                on_miss(peer_id)?;
+            }
+        }
+    }
+    Ok(0)
+}
+
 impl PeerHandler {
     pub fn new(peer_table: PeerTable, initiator: ActorRef<RLPxInitiator>) -> PeerHandler {
         Self {
@@ -234,29 +275,17 @@ impl PeerHandler {
                 peers_selected = ?selected_peers,
                 "request_block_headers: resolving sync head with peers"
             );
-            for (peer_id, mut connection, permit) in peers {
-                match ask_peer_head_number(peer_id, &mut connection, permit, sync_head, retries)
-                    .await
-                {
-                    Ok(number) => {
-                        sync_head_number = number;
-                        if number != 0 {
-                            #[cfg(feature = "metrics")]
-                            ethrex_metrics::sync::METRICS_SYNC.inc_header_resolution("found");
-                            break;
-                        }
-                        #[cfg(feature = "metrics")]
-                        ethrex_metrics::sync::METRICS_SYNC.inc_header_resolution("unknown");
-                    }
-                    Err(err) => {
-                        #[cfg(feature = "metrics")]
-                        ethrex_metrics::sync::METRICS_SYNC.inc_header_resolution("timeout");
-                        debug!(
-                            "Sync Log 13: Failed to retrieve sync head block number from peer {peer_id}: {err}"
-                        );
-                    }
-                }
-            }
+            let peer_table = &self.peer_table;
+            sync_head_number = ask_peers_for_head_number(
+                peers
+                    .into_iter()
+                    .map(|(peer_id, connection, permit)| (peer_id, (connection, permit))),
+                |peer_id, (mut connection, permit)| async move {
+                    ask_peer_head_number(peer_id, &mut connection, permit, sync_head, retries).await
+                },
+                |peer_id| Ok(peer_table.record_failure(peer_id)?),
+            )
+            .await?;
 
             retries += 1;
         }
@@ -1352,5 +1381,63 @@ mod tests {
         ];
         assert!(drop_mismatched_block_access_lists(&mut response, &headers));
         assert_eq!(response, vec![Some(bal(1)), None, None, None, None]);
+    }
+
+    /// Answers the sync-head lookup the way peers stuck behind the head do (an
+    /// empty response or a timeout), and the way a peer at the head does.
+    fn head_answer(peer_id: H256) -> Result<u64, PeerHandlerError> {
+        match peer_id.as_bytes()[0] {
+            1 => Err(PeerHandlerError::EmptyResponseFromPeer(peer_id)),
+            2 => Err(PeerHandlerError::ReceiveMessageFromPeerTimeout(peer_id)),
+            _ => Ok(11_957_502),
+        }
+    }
+
+    #[tokio::test]
+    async fn peers_missing_the_sync_head_are_demoted_until_one_knows_it() {
+        let empty = H256::repeat_byte(1);
+        let timed_out = H256::repeat_byte(2);
+        let at_head = H256::repeat_byte(3);
+        let not_asked = H256::repeat_byte(4);
+        let mut asked = Vec::new();
+        let mut demoted = Vec::new();
+
+        let number = ask_peers_for_head_number(
+            [empty, timed_out, at_head, not_asked].map(|id| (id, ())),
+            |peer_id, ()| {
+                asked.push(peer_id);
+                std::future::ready(head_answer(peer_id))
+            },
+            |peer_id| {
+                demoted.push(peer_id);
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(number, 11_957_502);
+        assert_eq!(asked, vec![empty, timed_out, at_head]);
+        assert_eq!(demoted, vec![empty, timed_out]);
+    }
+
+    #[tokio::test]
+    async fn every_peer_is_demoted_when_none_knows_the_sync_head() {
+        let peers = [H256::repeat_byte(1), H256::repeat_byte(2)];
+        let mut demoted = Vec::new();
+
+        let number = ask_peers_for_head_number(
+            peers.map(|id| (id, ())),
+            |peer_id, ()| std::future::ready(head_answer(peer_id)),
+            |peer_id| {
+                demoted.push(peer_id);
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(number, 0);
+        assert_eq!(demoted, peers.to_vec());
     }
 }
