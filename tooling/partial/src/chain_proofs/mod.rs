@@ -248,6 +248,56 @@ mod tests {
         assert_eq!(proofs.tracker().proof_count(), 1);
     }
 
+    /// What ethlambda's beacon node serves on `GET /eth/v1/beacon/execution_proofs/{root}`
+    /// for a mock proof its validator client produced, captured from ethlambda's own
+    /// wire test (`the_validator_client_can_prove_the_head_with_a_mock_proof`). The two
+    /// implementations share no code, so this pins that the containers, the JSON, the
+    /// public input and the mock proof bytes agree end to end.
+    #[tokio::test]
+    async fn a_proof_served_by_ethlambda_is_accepted() {
+        const DEPOSIT_CHAIN_ID: u64 = 1;
+        let path = format!(
+            "{}/testdata/ethlambda/execution_proofs.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let response: super::types::ExecutionProofsResponse =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(response.data.len(), 1);
+        let proof = SignedExecutionProof::try_from(response.data[0].clone()).unwrap();
+        assert_eq!(proof.validator_index, 4);
+        assert_eq!(proof.message.proof_type, 1);
+        assert!(proof.message.is_origin(), "the first proof starts a recursion");
+
+        // The mock proof's public values are the public input this node computes.
+        let engine = MockProofEngine;
+        let input = proof.message.public_input(DEPOSIT_CHAIN_ID);
+        assert_eq!(
+            engine.verify(&proof.message, &input).await.unwrap(),
+            super::engine::Verdict::Valid
+        );
+        let other_chain = proof.message.public_input(DEPOSIT_CHAIN_ID + 1);
+        assert_eq!(
+            engine.verify(&proof.message, &other_chain).await.unwrap(),
+            super::engine::Verdict::Invalid
+        );
+
+        // A node whose checkpoint is the proof's origin takes it.
+        let origin = H256(proof.message.origin_block_root);
+        let checkpoint = LcHead {
+            slot: 32,
+            beacon_root: origin,
+            parent_root: H256::repeat_byte(0x10),
+            execution_block_hash: H256::repeat_byte(0xa0),
+        };
+        let mut proofs = ChainProofs::new(
+            Arc::new(MockProofEngine),
+            ProofTracker::new(checkpoint),
+            DEPOSIT_CHAIN_ID,
+        );
+        proofs.submit(&proof, None).await.unwrap();
+        assert_eq!(proofs.tracker().proof_count(), 1);
+    }
+
     #[test]
     fn proof_mode_parses() {
         assert_eq!("off".parse::<ProofMode>().unwrap(), ProofMode::Off);
