@@ -28,8 +28,8 @@ AMSTERDAM_STAMP := $(SPECTEST_VECTORS_DIR)/.amsterdam_overlay
 # transition, for_amsterdamtobogotaattime15k/. The datatest harness walks
 # vectors/eest/ recursively, so they're discovered wherever they land in the tree.
 #
-# The pinned release, tests-heze-devnet@v2.0.0, is filled from execution-specs
-# devnets/heze/2 (forks/bogota through execution-specs#3828), whose Amsterdam
+# The pinned release, tests-heze-devnet@v3.0.0, is filled from execution-specs
+# devnets/heze/3 (forks/bogota through execution-specs#3880), whose Amsterdam
 # base is newer than the glamsterdam-devnet-8 one this branch implements. The
 # one rule the bundle depends on that entered forks/amsterdam after devnet-8,
 # the TX_MAX_TOTAL_GAS_LIMIT cap (execution-specs#3582), is therefore enforced
@@ -43,7 +43,7 @@ AMSTERDAM_STAMP := $(SPECTEST_VECTORS_DIR)/.amsterdam_overlay
 #
 # Fixtures whose expected verdict contradicts the EELS spec at the same tag
 # are enumerated, with the exact failure signature the harness enforces, in
-# tests/upstream_broken_fixtures.txt (empty at v2.0.0).
+# tests/upstream_broken_fixtures.txt (empty at v3.0.0).
 HEZE_FIXTURES_FILE := ../.fixtures_url_heze
 HEZE_ARTIFACT := heze-tests.tar.gz
 HEZE_URL := $(shell cat $(HEZE_FIXTURES_FILE))

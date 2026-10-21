@@ -65,11 +65,7 @@ fn print_fixture_summary() {
 
 // Path patterns: if any pattern is contained in the file path, the file is skipped
 // entirely. Entries are filled in once real failures are classified (Task 4.8).
-//
-// The Bogota subtrees predate the EIP-8198 rule this branch implements (EIPs
-// #12552): every fixture's first block reuses the genesis slot number. See
-// docs/known_issues.md.
-const SKIP_PATTERNS: &[&str] = &["for_bogota/", "for_amsterdamtobogotaattime15k/"];
+const SKIP_PATTERNS: &[&str] = &[];
 
 /// Fixtures the pinned release ships with expectations the EELS spec at the
 /// same tag rejects — see `upstream_broken_fixtures.txt` for the per-class

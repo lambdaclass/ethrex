@@ -93,25 +93,3 @@ fixed in the tree. Recommended:
 
 Until then, the compromise of that key is silent and durable: signatures would still verify
 against the committed `.github/minisign.pub`.
-
-### Bogota fixtures skipped on heze-devnet-3
-
-**Where:** `SKIP_PATTERNS` in `tooling/ef_tests/engine/tests/all.rs` (`for_bogota/`,
-`for_amsterdamtobogotaattime15k/`) and `EXTRA_SKIPS` in `tooling/ef_tests/blockchain/tests/all.rs`
-(`fork_Bogota`, `fork_AmsterdamToBogotaAtTime15k`).
-
-**Why:** heze-devnet-3 implements EIP-8198 as amended by EIPs #12552 (at `79ceee1390`): from
-Hegotá the maximum base fee change is derived from a block's spacing to its parent, and a block
-whose slot number does not exceed its parent's is invalid. The pinned `tests-heze-devnet@v2.0.0`
-was filled from an EELS that still uses the fixed 5/48 change and no slot rule, and it gives the
-first block of every fixture the genesis slot number 0, with blocks 1,000 to 10,000 seconds
-apart. Every Bogota fixture therefore fails at its first block (26,558 of the 26,719 engine
-fixtures and 3,157 blockchain test files). The fixtures are right for the spec they were filled
-from; this branch replaced that rule.
-
-**Until:** a fixture release filled from an EELS that implements #12552. Re-pin and drop both
-skips then.
-
-**Coverage:** `hegota_derives_the_max_base_fee_change_from_block_spacing` and
-`hegota_requires_an_increasing_slot_number` in `crates/common/types/block.rs` pin the rule, and
-`test/tests/blockchain/focil_tests.rs` and `inclusion_list_validator_tests.rs` keep FOCIL covered.

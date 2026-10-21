@@ -4,7 +4,7 @@
 # if one passes (stale entry -- remove it) or fails any other way (real
 # regression). Document the defect and its signature above each group.
 #
-# Empty at tests-heze-devnet@v2.0.0, as at tests-focil-devnet@v0.3.0.
+# Empty at tests-heze-devnet@v3.0.0, as at tests-focil-devnet@v0.3.0.
 # The 127 entries carried for tests-focil-devnet@v0.2.0
 # (126 test_blob_txs.py inclusion-list variants with a stale `blobGasUsed`,
 # and one test_tx_gas_limit variant whose 21k gas limit left no room for the
