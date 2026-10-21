@@ -100,7 +100,7 @@ against the committed `.github/minisign.pub`.
 `for_amsterdamtobogotaattime15k/`) and `EXTRA_SKIPS` in `tooling/ef_tests/blockchain/tests/all.rs`
 (`fork_Bogota`, `fork_AmsterdamToBogotaAtTime15k`).
 
-**Why:** heze-devnet-3 implements EIP-8198 as amended by EIPs #12552 (at `12b789e61e`): from
+**Why:** heze-devnet-3 implements EIP-8198 as amended by EIPs #12552 (at `79ceee1390`): from
 Hegotá the maximum base fee change is derived from a block's spacing to its parent, and a block
 whose slot number does not exceed its parent's is invalid. The pinned `tests-heze-devnet@v2.0.0`
 was filled from an EELS that still uses the fixed 5/48 change and no slot rule, and it gives the

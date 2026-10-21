@@ -6,7 +6,8 @@ pub const BASE_FEE_MAX_CHANGE_DENOMINATOR: u128 = 8;
 /// scales with the slot duration read from the spacing between a block and its
 /// parent, so blocks arriving more often under shorter slots keep the base fee's
 /// reaction per unit of wall-clock time; the execution layer never configures the
-/// slot duration.
+/// slot duration. Spacing beyond it per slot is ignored, so no block changes the
+/// base fee by more than 1/BASE_FEE_MAX_CHANGE_DENOMINATOR.
 pub const BASE_FEE_REFERENCE_SLOT_SECONDS: u64 = 12;
 pub const GAS_LIMIT_ADJUSTMENT_FACTOR: u64 = 1024;
 pub const GAS_LIMIT_MINIMUM: u64 = 5000;

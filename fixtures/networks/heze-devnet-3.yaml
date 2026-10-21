@@ -5,7 +5,8 @@
 # the consensus layer only) and EIP-8198 quick slots, which takes slots from 12s to
 # 10s at the Heze fork. On the execution layer EIP-8198 (with EIPs #12552) derives
 # the maximum per-block base fee change from a block's spacing to its parent, the
-# slot duration over 96 (5/48 at 10s slots), and requires increasing slot numbers.
+# slot duration over 96 (5/48 at 10s slots, never more than 1/8), and requires
+# increasing slot numbers.
 # The blob schedule moves to target 12, max 18, update fraction 12018519
 # (provisional); ethrex takes those values from the genesis's `bogota` blob schedule
 # entry, which has to match the consensus layer's BLOB_SCHEDULE. The slot duration

@@ -643,9 +643,10 @@ impl BlockSpacing {
 /// Largest fraction `(numerator, denominator)` by which the base fee of a block of
 /// `fork` can change from its parent's. Before Hegota it is 1/8 (EIP-1559). From
 /// Hegota (EIP-8198) it is derived from the block's `spacing`: the slot duration over
-/// 96, as `min(seconds, 96 * slots) / (96 * slots)`, so 1/8 at twelve-second slots
-/// and 5/48 at ten-second ones. Capping the seconds bounds the change at the whole
-/// base fee. `None` when no slot elapsed, which leaves no slot duration to read.
+/// 96, as `min(seconds, 12 * slots) / (96 * slots)`, so 1/8 at twelve-second slots
+/// and 5/48 at ten-second ones. Capping the seconds at twelve per slot keeps the
+/// change within 1/8 whatever the spacing. `None` when no slot elapsed, which leaves
+/// no slot duration to read.
 pub fn base_fee_max_change(fork: Fork, spacing: BlockSpacing) -> Option<(u128, u128)> {
     if fork < Fork::Hegota {
         return Some((1, BASE_FEE_MAX_CHANGE_DENOMINATOR));
@@ -656,7 +657,8 @@ pub fn base_fee_max_change(fork: Fork, spacing: BlockSpacing) -> Option<(u128, u
     let denominator = BASE_FEE_MAX_CHANGE_DENOMINATOR
         * u128::from(BASE_FEE_REFERENCE_SLOT_SECONDS)
         * u128::from(spacing.slots_elapsed);
-    let numerator = u128::from(spacing.seconds_elapsed).min(denominator);
+    let numerator = u128::from(spacing.seconds_elapsed)
+        .min(u128::from(BASE_FEE_REFERENCE_SLOT_SECONDS) * u128::from(spacing.slots_elapsed));
     Some((numerator, denominator))
 }
 
@@ -682,6 +684,15 @@ pub fn calculate_base_fee_per_gas(
 
     let parent_gas_target = parent_gas_limit / elasticity_multiplier;
     let (max_change_numerator, max_change_denominator) = base_fee_max_change(fork, spacing)?;
+    // Multiply before dividing, as the spec does, in 256 bits: the spec's integers are
+    // unbounded and EIP-8198 forbids letting the product overflow. The quotient never
+    // exceeds `target_fee_gas_delta`, as the numerator is at most an eighth of the
+    // denominator, so it fits back in 128 bits.
+    let scale = |target_fee_gas_delta: u128| {
+        (U256::from(target_fee_gas_delta) * U256::from(max_change_numerator)
+            / U256::from(max_change_denominator))
+        .low_u128()
+    };
 
     match parent_gas_used.cmp(&parent_gas_target) {
         Ordering::Equal => Some(parent_base_fee_per_gas),
@@ -692,11 +703,7 @@ pub fn calculate_base_fee_per_gas(
                 u128::from(parent_base_fee_per_gas) * u128::from(gas_used_delta);
             let target_fee_gas_delta = parent_fee_gas_delta / u128::from(parent_gas_target);
 
-            // Multiply before dividing, as the spec does.
-            let base_fee_per_gas_delta = max(
-                target_fee_gas_delta.saturating_mul(max_change_numerator) / max_change_denominator,
-                1,
-            );
+            let base_fee_per_gas_delta = max(scale(target_fee_gas_delta), 1);
 
             (u128::from(parent_base_fee_per_gas) + base_fee_per_gas_delta)
                 .try_into()
@@ -709,8 +716,7 @@ pub fn calculate_base_fee_per_gas(
                 u128::from(parent_base_fee_per_gas) * u128::from(gas_used_delta);
             let target_fee_gas_delta = parent_fee_gas_delta / u128::from(parent_gas_target);
 
-            let base_fee_per_gas_delta =
-                target_fee_gas_delta.saturating_mul(max_change_numerator) / max_change_denominator;
+            let base_fee_per_gas_delta = scale(target_fee_gas_delta);
 
             (u128::from(parent_base_fee_per_gas) - base_fee_per_gas_delta)
                 .try_into()
@@ -795,7 +801,11 @@ pub fn validate_block_header(
     }
 
     // EIP-8198: from Hegota a block's slot number must exceed its parent's, which keeps
-    // the slots elapsed that the base fee is derived from positive.
+    // the slots elapsed that the base fee is derived from positive. Checked after the
+    // timestamp and before the base fee, in the spec's order.
+    if fork >= Fork::Hegota && header.timestamp <= parent_header.timestamp {
+        return Err(InvalidBlockHeaderError::TimestampNotGreaterThanParent);
+    }
     let spacing = BlockSpacing::between(header, parent_header);
     if fork >= Fork::Hegota && spacing.slots_elapsed == 0 {
         return Err(if header.slot_number.is_none() {
@@ -1237,7 +1247,7 @@ mod test {
     fn hegota_derives_the_max_base_fee_change_from_block_spacing() {
         // EIP-8198: from Hegota the base fee moves by at most the slot duration over 96
         // per block, read from the block's spacing, computed as
-        // target_fee_gas_delta * min(seconds, 96 * slots) // (96 * slots).
+        // target_fee_gas_delta * min(seconds, 12 * slots) // (96 * slots).
         let gas_limit = 30_000_000;
         let target = gas_limit / ELASTICITY_MULTIPLIER;
         let spacing = |seconds_elapsed, slots_elapsed| BlockSpacing {
@@ -1284,15 +1294,38 @@ mod test {
             base_fee(gas_limit, 1_000_000_000, Fork::Hegota, spacing(30, 3)),
             Some(1_104_166_666)
         );
-        // The seconds are capped at 96 per slot: the change never exceeds the whole
-        // base fee, so a long gap doubles it at most and an empty parent zeroes it.
+        // The seconds are capped at twelve per slot, so no spacing moves the base fee
+        // by more than 1/8: not thirteen seconds, not a gap of 2^32 seconds.
+        for long in [spacing(13, 1), spacing(26, 2), spacing(1 << 32, 1)] {
+            assert_eq!(
+                base_fee(gas_limit, 1_000_000_000, Fork::Hegota, long),
+                Some(1_125_000_000)
+            );
+            assert_eq!(
+                base_fee(0, 1_000_000_000, Fork::Hegota, long),
+                Some(875_000_000)
+            );
+        }
+        // A slot gap whose 96 * slots exceeds 64 bits still computes: the change is
+        // under a wei, so a full parent gains the 1-wei floor and an empty one nothing.
+        let gap_beyond_64_bits = u64::MAX / 96 + 1;
         assert_eq!(
-            base_fee(gas_limit, 1_000_000_000, Fork::Hegota, spacing(1_000, 1)),
-            Some(2_000_000_000)
+            base_fee(
+                gas_limit,
+                1_000_000_000,
+                Fork::Hegota,
+                spacing(12, gap_beyond_64_bits)
+            ),
+            Some(1_000_000_001)
         );
         assert_eq!(
-            base_fee(0, 1_000_000_000, Fork::Hegota, spacing(1_000, 1)),
-            Some(0)
+            base_fee(
+                0,
+                1_000_000_000,
+                Fork::Hegota,
+                spacing(12, gap_beyond_64_bits)
+            ),
+            Some(1_000_000_000)
         );
         // No slot elapsed leaves no slot duration to read.
         assert_eq!(
@@ -1308,6 +1341,32 @@ mod test {
         assert_eq!(
             base_fee(gas_limit, 1_000_000_000, Fork::LStar, ten),
             Some(1_104_166_666)
+        );
+    }
+
+    #[test]
+    fn hegota_base_fee_change_does_not_overflow() {
+        // EIP-8198's integers are unbounded. With an elasticity of 4 a full parent's
+        // target_fee_gas_delta is three times its base fee, and times twelve seconds
+        // per slot over u64::MAX / 12 slots the product passes 128 bits. The change
+        // is still exactly 1/8 of that delta.
+        let base_fee = u64::MAX / 2;
+        let slots = u64::MAX / 12;
+        let target_fee_gas_delta = u128::from(base_fee) * 3;
+        assert_eq!(
+            calculate_base_fee_per_gas(
+                4_000_000,
+                4_000_000,
+                4_000_000,
+                base_fee,
+                4,
+                Fork::Hegota,
+                BlockSpacing {
+                    seconds_elapsed: u64::MAX,
+                    slots_elapsed: slots,
+                },
+            ),
+            u64::try_from(u128::from(base_fee) + target_fee_gas_delta / 8).ok()
         );
     }
 
@@ -1339,6 +1398,15 @@ mod test {
         assert!(matches!(
             validate_block_header(&child(None), &parent, ELASTICITY_MULTIPLIER, Fork::Hegota),
             Err(InvalidBlockHeaderError::SlotNumberNotPresent)
+        ));
+        // The timestamp is checked first, as the spec does.
+        let stale = BlockHeader {
+            timestamp: parent.timestamp,
+            ..child(Some(5))
+        };
+        assert!(matches!(
+            validate_block_header(&stale, &parent, ELASTICITY_MULTIPLIER, Fork::Hegota),
+            Err(InvalidBlockHeaderError::TimestampNotGreaterThanParent)
         ));
         // Before Hegota the slot number is not compared, so validation moves on to the
         // base fee.
