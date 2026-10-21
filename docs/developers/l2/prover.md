@@ -11,7 +11,7 @@ Before you begin, ensure you have the following dependencies installed:
   2. `rzup install`
 - [SP1](https://docs.succinct.xyz/docs/sp1/introduction)
   1. `curl -L https://sp1up.succinct.xyz | bash`
-  2. `sp1up --version 5.0.8`
+  2. `sp1up --version 6.9.0`
 - [SOLC (v0.8.31)](https://docs.soliditylang.org/en/latest/installing-solidity.html)
 
 After installing the toolchains, a quick test can be performed to check if we have everything installed correctly.

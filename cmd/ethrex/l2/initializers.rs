@@ -92,9 +92,11 @@ async fn init_rpc_api(
         rollup_store,
         log_filter_handler,
         l2_gas_limit,
+        opts.rpc_gas_cap,
         l2_opts.sponsored_gas_limit,
         allowed_namespaces,
         ethrex_namespace_allowed,
+        initializers::get_log_query_limits(opts),
     )
     .await?;
 

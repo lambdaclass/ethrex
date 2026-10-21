@@ -6,7 +6,7 @@ use super::{
 use crate::rlpx::l2::l2_connection::L2ConnState;
 use crate::{
     rlpx::{
-        connection::server::{ConnectionState, Established},
+        connection::server::{ConnectionState, Established, WindowCounter},
         error::PeerConnectionError,
         message::{EthCapVersion, SnapCapVersion},
         utils::{compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, sha256, sha256_hmac},
@@ -173,8 +173,9 @@ pub(crate) async fn perform(
             disconnect_reason: None,
             is_validated: false,
             registered: false,
-            serve_request_window_start: std::time::Instant::now(),
-            serve_requests_in_window: 0,
+            serve_requests: WindowCounter::new(),
+            announced_hashes: WindowCounter::new(),
+            short_tx_answer_strikes: 0,
             txs_sent_to_peer: 0,
             received_txs_from_peer: false,
             missed_pongs: 0,

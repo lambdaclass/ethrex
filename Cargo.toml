@@ -40,7 +40,7 @@ resolver = "2"
 default-members = ["cmd/ethrex"]
 
 [workspace.package]
-version = "29.0.1"
+version = "30.0.0"
 edition = "2024"
 authors = ["LambdaClass"]
 documentation = "https://docs.ethrex.xyz"
@@ -78,27 +78,27 @@ debug-assertions = true
 overflow-checks = true
 
 [workspace.dependencies]
-ethrex-blockchain = { path = "./crates/blockchain", version = "29.0.1", default-features = false }
-ethrex-common = { path = "./crates/common", version = "29.0.1", default-features = false }
+ethrex-blockchain = { path = "./crates/blockchain", version = "30.0.0", default-features = false }
+ethrex-common = { path = "./crates/common", version = "30.0.0", default-features = false }
 ethrex-config = { path = "./crates/common/config" }
-ethrex-p2p = { path = "./crates/networking/p2p", version = "29.0.1" }
-ethrex-rpc = { path = "./crates/networking/rpc", version = "29.0.1" }
-ethrex-storage = { path = "./crates/storage", version = "29.0.1" }
-ethrex-vm = { path = "./crates/vm", version = "29.0.1", default-features = false }
-ethrex-levm = { path = "./crates/vm/levm", version = "29.0.1" }
-ethrex-trie = { path = "./crates/common/trie", version = "29.0.1" }
-ethrex-rlp = { path = "./crates/common/rlp", version = "29.0.1" }
-ethrex-crypto = { path = "./crates/common/crypto", version = "29.0.1", default-features = false }
-ethrex-metrics = { path = "./crates/blockchain/metrics", version = "29.0.1" }
+ethrex-p2p = { path = "./crates/networking/p2p", version = "30.0.0" }
+ethrex-rpc = { path = "./crates/networking/rpc", version = "30.0.0" }
+ethrex-storage = { path = "./crates/storage", version = "30.0.0" }
+ethrex-vm = { path = "./crates/vm", version = "30.0.0", default-features = false }
+ethrex-levm = { path = "./crates/vm/levm", version = "30.0.0" }
+ethrex-trie = { path = "./crates/common/trie", version = "30.0.0" }
+ethrex-rlp = { path = "./crates/common/rlp", version = "30.0.0" }
+ethrex-crypto = { path = "./crates/common/crypto", version = "30.0.0", default-features = false }
+ethrex-metrics = { path = "./crates/blockchain/metrics", version = "30.0.0" }
 ethrex-l2 = { path = "./crates/l2" }
-ethrex-l2-common = { path = "./crates/l2/common", version = "29.0.1" }
-ethrex-sdk = { path = "./crates/l2/sdk", version = "29.0.1" }
+ethrex-l2-common = { path = "./crates/l2/common", version = "30.0.0" }
+ethrex-sdk = { path = "./crates/l2/sdk", version = "30.0.0" }
 ethrex-l2-prover = { path = "./crates/l2/prover" }
 ethrex-prover = { path = "./crates/prover", default-features = false }
 ethrex-guest-program = { path = "./crates/guest-program", default-features = false }
-ethrex-storage-rollup = { path = "./crates/l2/storage", version = "29.0.1" }
+ethrex-storage-rollup = { path = "./crates/l2/storage", version = "30.0.0" }
 ethrex = { path = "./cmd/ethrex" }
-ethrex-l2-rpc = { path = "./crates/l2/networking/rpc", version = "29.0.1" }
+ethrex-l2-rpc = { path = "./crates/l2/networking/rpc", version = "30.0.0" }
 ethrex-monitor = { path = "./tooling/monitor" }
 ethrex-repl = { path = "./tooling/repl" }
 
@@ -109,7 +109,7 @@ async-trait = "0.1.88"
 ethereum-types = { version = "0.15.1", features = ["serialize"] }
 serde = { version = "1.0.203", features = ["derive", "rc"] }
 serde_with = "3.11.0"
-serde_json = "1.0.117"
+serde_json = { version = "1.0.117", features = ["raw_value"] }
 bytes = { version = "1.6.0", features = ["serde"] }
 tokio = { version = "1.41.1", default-features = false }
 thiserror = "2.0.9"

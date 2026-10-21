@@ -1,7 +1,10 @@
 pub mod db;
 mod tracing;
 
-use super::{BlockExecutionResult, FrameValidationOutcome, TxGasBreakdown, compute_burned_fees};
+use super::{
+    BlockExecutionResult, ExecutionGasCap, FrameValidationOutcome, TxGasBreakdown,
+    compute_burned_fees,
+};
 use crate::system_contracts::{
     AMSTERDAM_REQUEST_PREDEPLOYS, BEACON_ROOTS_ADDRESS, BUILDER_DEPOSIT_CONTRACT_ADDRESS,
     BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
@@ -13,7 +16,8 @@ use bytes::Bytes;
 use ethrex_common::H256;
 #[cfg(feature = "rayon")]
 use ethrex_common::constants::EMPTY_KECCAK_HASH;
-use ethrex_common::types::Code;
+#[cfg(feature = "rayon")]
+use ethrex_common::seeded_hash::{SeededHashMap, SeededHashSet};
 #[cfg(feature = "rayon")]
 use ethrex_common::types::TxType;
 use ethrex_common::types::block_access_list::BlockAccessList;
@@ -25,6 +29,7 @@ use ethrex_common::types::block_access_list::{
 };
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
+use ethrex_common::types::{Code, InitcodeBuffer};
 #[cfg(feature = "rayon")]
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
@@ -44,7 +49,7 @@ use ethrex_crypto::Crypto;
 use ethrex_levm::EVMConfig;
 use ethrex_levm::StatelessValidator;
 #[cfg(feature = "rayon")]
-use ethrex_levm::account::{AccountStatus, LevmAccount};
+use ethrex_levm::account::AccountStatus;
 use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_MAX_GAS_LIMIT_AMSTERDAM,
@@ -75,7 +80,7 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 #[cfg(feature = "rayon")]
 use rayon::slice::ParallelSlice;
 #[cfg(feature = "rayon")]
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::cmp::min;
 use std::sync::Arc;
 #[cfg(feature = "rayon")]
@@ -319,6 +324,31 @@ pub enum BalValidationError {
     Database(String),
 }
 
+/// Runs `check` on every entry of `map` and returns the failure of the lowest key.
+///
+/// A seeded map walks in a different order on every node and every run, so stopping at the
+/// first failure the walk meets would name a different offender for the same invalid block.
+/// A map that passes is walked once, in its own order; only a failure pays for sorting the
+/// keys and walking again. `check` only reads, so the second walk sees what the first did.
+#[cfg(feature = "rayon")]
+fn first_failure_by_key<K: Ord, V, S, E>(
+    map: &std::collections::HashMap<K, V, S>,
+    mut check: impl FnMut(&K, &V) -> Result<(), E>,
+) -> Result<(), E> {
+    if map
+        .iter()
+        .try_for_each(|(key, value)| check(key, value))
+        .is_ok()
+    {
+        return Ok(());
+    }
+    let mut entries: Vec<(&K, &V)> = map.iter().collect();
+    entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
+    entries
+        .into_iter()
+        .try_for_each(|(key, value)| check(key, value))
+}
+
 impl LEVM {
     /// Execute a block and return the execution result.
     ///
@@ -361,9 +391,11 @@ impl LEVM {
         let chain_id = chain_config.chain_id;
         let base_blob_fee_per_gas =
             get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_config)?;
-        // Stack/memory buffer pools reused across txs (each tx draws one and reclaims it).
+        // Stack, memory and initcode buffer pools reused across txs (each tx draws from them and
+        // reclaims into them).
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
         let mut shared_memory_pool = Vec::with_capacity(1);
+        let mut shared_initcode_pool = Vec::new();
 
         let n_txs = block.body.transactions.len();
         let mut receipts = Vec::with_capacity(n_txs);
@@ -426,6 +458,7 @@ impl LEVM {
                 base_blob_fee_per_gas,
                 &mut shared_stack_pool,
                 &mut shared_memory_pool,
+                &mut shared_initcode_pool,
                 false,
                 crypto,
                 evm_config,
@@ -792,8 +825,10 @@ impl LEVM {
                 }
             }
 
-            // Any remaining unread storage_reads are extraneous BAL entries.
-            if let Some((addr, key)) = unread_storage_reads.iter().next() {
+            // Any remaining unread storage_reads are extraneous BAL entries. The set is
+            // seeded and walks in a different order on every run, so name the lowest
+            // leftover: every node then reports the same entry for the same block.
+            if let Some((addr, key)) = unread_storage_reads.iter().min() {
                 let slot = ethrex_common::BigEndianHash::into_uint(key);
                 return Err(EvmError::Custom(format!(
                     "BAL validation failed: storage_read for account {addr:?} slot \
@@ -802,7 +837,8 @@ impl LEVM {
             }
 
             // Any remaining pure-access accounts were never accessed during execution.
-            if let Some(addr) = unaccessed_pure_accounts.iter().next() {
+            // Lowest first, as above.
+            if let Some(addr) = unaccessed_pure_accounts.iter().min() {
                 return Err(EvmError::Custom(format!(
                     "BAL validation failed: account {addr:?} has no mutations \
                      and no storage reads but was never accessed during block execution"
@@ -863,6 +899,8 @@ impl LEVM {
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
         // Holds at most one root memory buffer at a time (each tx pops one and reclaims one).
         let mut shared_memory_pool = Vec::with_capacity(1);
+        // CREATE initcode buffers, reused across txs like the stacks.
+        let mut shared_initcode_pool = Vec::new();
 
         let n_txs = block.body.transactions.len();
         let mut receipts = Vec::with_capacity(n_txs);
@@ -921,6 +959,7 @@ impl LEVM {
                 base_blob_fee_per_gas,
                 &mut shared_stack_pool,
                 &mut shared_memory_pool,
+                &mut shared_initcode_pool,
                 false,
                 crypto,
                 evm_config,
@@ -1129,7 +1168,7 @@ impl LEVM {
             };
 
             // Storage: per slot, last entry (highest index)
-            let mut added_storage = FxHashMap::with_capacity_and_hasher(
+            let mut added_storage = SeededHashMap::with_capacity_and_hasher(
                 acct_changes.storage_changes.len(),
                 Default::default(),
             );
@@ -1305,7 +1344,7 @@ impl LEVM {
 
         // Nothing extra at the phase's own index: a no-op change there matches the
         // cache, so `validate_bal_withdrawal_index` alone accepts it.
-        let canonical: FxHashMap<Address, &AccountChanges> = phase_bal
+        let canonical: SeededHashMap<Address, &AccountChanges> = phase_bal
             .accounts()
             .iter()
             .map(|a| (a.address, a))
@@ -1364,10 +1403,11 @@ impl LEVM {
             }
         }
 
-        // Backstop from the cache, independent of the recorder.
-        for (addr, acct) in cache {
+        // Backstop from the cache, independent of the recorder. The cache is seeded, so a
+        // rejection names the lowest offending account and slot.
+        first_failure_by_key(cache, |addr, acct| {
             if *addr == SYSTEM_ADDRESS {
-                continue;
+                return Ok(());
             }
             let supplied = match index
                 .addr_to_idx
@@ -1382,7 +1422,7 @@ impl LEVM {
                          but is missing from BAL"
                     )));
                 }
-                None => continue,
+                None => return Ok(()),
             };
             // storage_reads is strictly ascending, as at the per-tx check; binary
             // search fails closed on an unsorted list, so release stays sound.
@@ -1390,7 +1430,7 @@ impl LEVM {
                 supplied.storage_reads.windows(2).all(|w| w[0] < w[1]),
                 "storage_reads must be strictly ascending for binary_search"
             );
-            for key in acct.storage.keys() {
+            first_failure_by_key(&acct.storage, |key, _| {
                 let slot = ethrex_common::BigEndianHash::into_uint(key);
                 if supplied.storage_reads.binary_search(&slot).is_err()
                     && supplied
@@ -1403,9 +1443,9 @@ impl LEVM {
                          read during {phase} but is missing from BAL"
                     )));
                 }
-            }
-        }
-        Ok(())
+                Ok(())
+            })
+        })
     }
 
     /// Eager BAL prefix seed — used only by the outer DB path (parallel-execution
@@ -1492,8 +1532,8 @@ impl LEVM {
         (
             Vec<Receipt>,
             u64,
-            FxHashSet<(Address, H256)>,
-            FxHashSet<Address>,
+            SeededHashSet<(Address, H256)>,
+            SeededHashSet<Address>,
             Vec<TxGasBreakdown>,
         ),
         EvmError,
@@ -1531,10 +1571,10 @@ impl LEVM {
 
         // Build a checklist of all BAL storage_reads. Entries are removed as they
         // are actually read during execution phases. Anything left over is extraneous.
-        let mut unread_storage_reads: FxHashSet<(Address, H256)> = FxHashSet::default();
+        let mut unread_storage_reads: SeededHashSet<(Address, H256)> = Default::default();
         // Build a checklist of BAL "pure-access" accounts: entries with no mutations
         // and no storage reads. These must be accessed via load_account during execution.
-        let mut unaccessed_pure_accounts: FxHashSet<Address> = FxHashSet::default();
+        let mut unaccessed_pure_accounts: SeededHashSet<Address> = Default::default();
         for acct in bal.accounts() {
             for &slot in &acct.storage_reads {
                 let key = ethrex_common::utils::u256_to_h256(slot);
@@ -1591,10 +1631,10 @@ impl LEVM {
             usize,
             TxType,
             ExecutionReport,
-            FxHashSet<Address>,   // accessed_accounts tracker (coarse)
-            Vec<(Address, H256)>, // reads_satisfied: (addr, slot) loaded during this tx
-            Vec<Address>,         // destroyed: accounts selfdestructed during this tx
-            Option<EvmError>,     // deferred BAL validation error
+            SeededHashSet<Address>, // accessed_accounts tracker (coarse)
+            Vec<(Address, H256)>,   // reads_satisfied: (addr, slot) loaded during this tx
+            Vec<Address>,           // destroyed: accounts selfdestructed during this tx
+            Option<EvmError>,       // deferred BAL validation error
         );
 
         // Ordered gas admission (step 3 below) can only reject a block once every
@@ -1635,12 +1675,16 @@ impl LEVM {
                 let mut stack_pool = Vec::with_capacity(8);
                 // Holds at most one root memory buffer (popped + reclaimed per tx).
                 let mut memory_pool = Vec::with_capacity(1);
+                // Per-tx like the pools above: buffers are reused only within this tx.
+                let mut initcode_pool = Vec::new();
 
                 // Enable accessed_accounts tracker (coarse) for `unaccessed_pure_accounts`
                 // diagnostics. Safe to over-report: used only to REMOVE entries from a
                 // extraneous-entry checklist.
-                tx_db.accessed_accounts =
-                    Some(FxHashSet::with_capacity_and_hasher(16, Default::default()));
+                tx_db.accessed_accounts = Some(SeededHashSet::with_capacity_and_hasher(
+                    16,
+                    Default::default(),
+                ));
 
                 // Enable a shadow BAL recorder on this per-tx db. The recorder is gated
                 // at the same gas-check points as the builder path, giving us an exact
@@ -1665,6 +1709,7 @@ impl LEVM {
                     base_blob_fee_per_gas,
                     &mut stack_pool,
                     &mut memory_pool,
+                    &mut initcode_pool,
                     false,
                     crypto,
                     evm_config,
@@ -1692,7 +1737,7 @@ impl LEVM {
                 // value (see `take_tx_initial_storage`). It serves the storage checks two
                 // ways: its keys are the written slots, and its values are the seeded
                 // pre-state the validator would otherwise re-read from the store. The
-                // recorder already stores it as an `FxHashMap`, so it is moved out here
+                // recorder already stores it as a map of this type, so it is moved out here
                 // (no per-tx rebuild).
                 let (shadow_touched, shadow_reads, tx_initial) = tx_db
                     .bal_recorder
@@ -1713,7 +1758,7 @@ impl LEVM {
                 // read and its BAL entry skipped. The execution->BAL check skips the
                 // DB-backed seeded lookup for genuine reads: a read never diverges from
                 // its pre-tx value, so there is nothing to validate.
-                let pure_reads: FxHashSet<(Address, U256)> = shadow_reads
+                let pure_reads: SeededHashSet<(Address, U256)> = shadow_reads
                     .iter()
                     .copied()
                     .filter(|k| !tx_initial.contains_key(k))
@@ -2146,7 +2191,7 @@ impl LEVM {
         slot: U256,
         system_seed: &CacheDB,
         store: &Arc<dyn Database>,
-        tx_initial: &FxHashMap<(Address, U256), U256>,
+        tx_initial: &SeededHashMap<(Address, U256), U256>,
     ) -> Result<U256, BalValidationError> {
         if let Some(v) = tx_initial.get(&(addr, slot)) {
             return Ok(*v);
@@ -2193,7 +2238,7 @@ impl LEVM {
         key: H256,
         system_seed: &CacheDB,
         store: &Arc<dyn Database>,
-        tx_initial: &FxHashMap<(Address, U256), U256>,
+        tx_initial: &SeededHashMap<(Address, U256), U256>,
     ) -> Result<U256, BalValidationError> {
         if let Some(v) = tx_initial.get(&(addr, sc.slot)) {
             return Ok(*v);
@@ -2240,14 +2285,14 @@ impl LEVM {
     pub fn validate_tx_execution(
         bal_idx: u32,
         seed_idx: u32,
-        current_state: &FxHashMap<Address, LevmAccount>,
-        codes: &FxHashMap<H256, Code>,
+        current_state: &CacheDB,
+        codes: &SeededHashMap<H256, Code>,
         bal: &BlockAccessList,
         index: &BalAddressIndex,
         system_seed: &CacheDB,
         store: &Arc<dyn Database>,
-        pure_reads: &FxHashSet<(Address, U256)>,
-        tx_initial: &FxHashMap<(Address, U256), U256>,
+        pure_reads: &SeededHashSet<(Address, U256)>,
+        tx_initial: &SeededHashMap<(Address, U256), U256>,
     ) -> Result<(), BalValidationError> {
         // BAL -> execution: for each BAL account with changes at bal_idx,
         // verify execution produced the matching post-state (and that no
@@ -2536,10 +2581,11 @@ impl LEVM {
         }
 
         // execution -> BAL: for each account modified by execution, verify every
-        // mutation it produced is claimed by the BAL (no unrecorded change).
-        for (addr, account) in current_state {
+        // mutation it produced is claimed by the BAL (no unrecorded change). The state is
+        // seeded, so a rejection names the lowest offending account and slot.
+        first_failure_by_key(current_state, |addr, account| {
             if account.is_unmodified() {
-                continue;
+                return Ok(());
             }
 
             let Some(&bal_acct_idx) = index.addr_to_idx.get(addr) else {
@@ -2566,7 +2612,7 @@ impl LEVM {
                         "account {addr:?} was modified by execution but is absent from BAL"
                     )));
                 }
-                continue;
+                return Ok(());
             };
 
             let acct = &bal.accounts()[bal_acct_idx];
@@ -2609,7 +2655,7 @@ impl LEVM {
             }
 
             // Storage: for each slot in execution state, check it's expected
-            for (key_h256, &value) in &account.storage {
+            first_failure_by_key(&account.storage, |key_h256, &value| {
                 let slot_u256 = u256_from_big_endian_const(key_h256.0);
                 // EIP-7928 requires storage_changes sorted by slot, so use binary search.
                 let pos = acct
@@ -2675,10 +2721,9 @@ impl LEVM {
                         )));
                     }
                 }
-            }
-        }
-
-        Ok(())
+                Ok(())
+            })
+        })
     }
 
     /// Validates BAL entries at the withdrawal index against actual post-withdrawal state.
@@ -2794,10 +2839,11 @@ impl LEVM {
         }
 
         // DB -> BAL: For each account modified during the withdrawal/request phase,
-        //         verify it has a corresponding BAL entry claiming the change.
-        for (addr, account) in &db.current_accounts_state {
+        //         verify it has a corresponding BAL entry claiming the change. The state
+        //         is seeded, so a rejection names the lowest offending account and slot.
+        first_failure_by_key(&db.current_accounts_state, |addr, account| {
             if account.is_unmodified() {
-                continue;
+                return Ok(());
             }
 
             let Some(&bal_acct_idx) = index.addr_to_idx.get(addr) else {
@@ -2824,7 +2870,7 @@ impl LEVM {
                 }
                 // Also check storage: if any slot differs from pre-state,
                 // the account should have been in the BAL.
-                for (key_h256, &value) in &account.storage {
+                return first_failure_by_key(&account.storage, |key_h256, &value| {
                     let pre_value = db.store.get_storage_value(*addr, *key_h256).map_err(|e| {
                         EvmError::Custom(format!(
                             "BAL validation failed for withdrawal: db error reading \
@@ -2840,8 +2886,8 @@ impl LEVM {
                             u256_from_big_endian_const(key_h256.0)
                         )));
                     }
-                }
-                continue;
+                    Ok(())
+                });
             };
 
             let acct = &bal.accounts()[bal_acct_idx];
@@ -2929,7 +2975,7 @@ impl LEVM {
 
             // Storage: for each slot in the withdrawal/request-phase state,
             // verify the BAL has a corresponding entry or the value is unchanged.
-            for (key_h256, &value) in &account.storage {
+            first_failure_by_key(&account.storage, |key_h256, &value| {
                 let slot_u256 = u256_from_big_endian_const(key_h256.0);
                 let pos = acct
                     .storage_changes
@@ -2975,10 +3021,9 @@ impl LEVM {
                         )));
                     }
                 }
-            }
-        }
-
-        Ok(())
+                Ok(())
+            })
+        })
     }
 
     /// Validates supplied-BAL entries at the pre-execution index (0) on the
@@ -3255,6 +3300,8 @@ impl LEVM {
                 // init; keep it local to this group's run, where it still amortizes the buffer
                 // alloc across the group's txs.
                 let mut memory_pool = Vec::with_capacity(1);
+                // Local to the group like `memory_pool`, reused across the group's txs.
+                let mut initcode_pool = Vec::new();
                 // Each sender group gets its own db instance for state propagation
                 let mut group_db = GeneralizedDatabase::new(store.clone());
                 for tx in txs {
@@ -3270,6 +3317,7 @@ impl LEVM {
                         base_blob_fee_per_gas,
                         stack_pool,
                         &mut memory_pool,
+                        &mut initcode_pool,
                         true,
                         crypto,
                         evm_config,
@@ -3436,6 +3484,7 @@ impl LEVM {
             disable_nonce_check: false,
             disable_gas_allowance_check: false,
             disable_sender_eoa_check: false,
+            disable_execution_gas_cap: false,
             is_system_call: false,
         };
 
@@ -3468,7 +3517,8 @@ impl LEVM {
         vm.execute().map_err(VMError::into)
     }
 
-    // Like execute_tx but allows reusing the stack pool. Takes the block-invariant
+    // Like execute_tx but reuses the caller's pools of stacks, memory and initcode buffers,
+    // which the block executors keep across their txs. Takes the block-invariant
     // `config`/`chain_id` precomputed once per block (see `setup_env_with_config`).
     #[allow(clippy::too_many_arguments)]
     fn execute_tx_in_block(
@@ -3483,6 +3533,7 @@ impl LEVM {
         base_blob_fee_per_gas: U256,
         stack_pool: &mut Vec<Stack>,
         memory_pool: &mut Vec<Memory>,
+        initcode_pool: &mut Vec<InitcodeBuffer>,
         disable_balance_check: bool,
         crypto: &dyn Crypto,
         config: EVMConfig,
@@ -3500,8 +3551,9 @@ impl LEVM {
         )?;
         env.disable_balance_check = disable_balance_check;
         // Draw the root frame's stack and memory buffer from the shared pools (and adopt the
-        // stacks for sub-frames), then return them afterwards so the next tx reuses them instead
-        // of allocating + zeroing a fresh 32 KB stack and a fresh memory buffer per transaction.
+        // stacks and the initcode buffers for sub-frames), then return them
+        // afterwards so the next tx reuses them instead of allocating + zeroing a fresh 32 KB
+        // stack and a fresh memory buffer per transaction.
         let mut vm = VM::new_pooled(
             env,
             db,
@@ -3512,10 +3564,11 @@ impl LEVM {
             stateless_validator,
             stack_pool,
             memory_pool,
+            initcode_pool,
         )?;
         let result = vm.execute().map_err(VMError::into);
         // Runs on both success and error paths (execute borrowed `vm` mutably but left it intact).
-        vm.reclaim_into(stack_pool, memory_pool);
+        vm.reclaim_into(stack_pool, memory_pool, initcode_pool);
         result
     }
 
@@ -3533,12 +3586,14 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
         stateless_validator: Option<&dyn StatelessValidator>,
+        execution_gas_cap: ExecutionGasCap,
     ) -> Result<ExecutionResult, EvmError> {
         // `env_from_generic` already relaxes the admission-only validations for every
         // simulation RPC, the gas allowance included. `block_gas_limit` keeps the block's
         // real value there: the GASLIMIT opcode reads it, so overwriting it would make
         // 0x45 return a number that appears nowhere on chain.
         let mut env = env_from_generic(tx, block_header, db, vm_type)?;
+        env.disable_execution_gas_cap = execution_gas_cap == ExecutionGasCap::Lifted;
 
         adjust_disabled_base_fee(&mut env);
 
@@ -3746,11 +3801,20 @@ impl LEVM {
         withdrawals: &[Withdrawal],
     ) -> Result<(), EvmError> {
         // For every withdrawal we increment the target account's balance
-        for (address, increment) in withdrawals
-            .iter()
-            .filter(|withdrawal| withdrawal.amount > 0)
-            .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
-        {
+        for withdrawal in withdrawals {
+            let address = withdrawal.address;
+            // A zero withdrawal changes nothing, but the spec still reads its recipient
+            // (`create_ether`), so a stateless witness has to carry that account's
+            // proof. Reading it here is what makes a witness that leaves the proof out
+            // fail, as `validation_state_unchanged_account_read` requires; without the
+            // read the block validates against an incomplete witness.
+            if withdrawal.amount == 0 {
+                db.get_account(address).map_err(|_| {
+                    EvmError::DB(format!("Withdrawal account {address} could not be read"))
+                })?;
+                continue;
+            }
+            let increment = u128::from(withdrawal.amount) * u128::from(GWEI_TO_WEI);
             let account = db
                 .get_account_mut(address)
                 .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
@@ -4365,6 +4429,10 @@ pub(crate) fn env_from_generic(
         // Same reasoning: a simulated call carries no signature, so EIP-3607 has nothing
         // to protect, and a contract as `from` is a normal thing to simulate.
         disable_sender_eoa_check: true,
+        // Lifted per caller: `eth_call` and `debug_traceCall` may spend their whole gas
+        // limit on execution after Amsterdam, `eth_estimateGas` and `eth_createAccessList`
+        // keep the transaction rule so their answers hold for a real transaction.
+        disable_execution_gas_cap: false,
         is_system_call: false,
     })
 }
@@ -5509,5 +5577,56 @@ mod simulated_tx_encoding_tests {
                 data.len(),
             );
         }
+    }
+}
+
+#[cfg(all(test, feature = "rayon"))]
+mod first_failure_by_key_tests {
+    use super::first_failure_by_key;
+    use ethrex_common::seeded_hash::SeededHashMap;
+
+    /// Entries that fail per map. Naming whichever one a seeded map walks to first would
+    /// name the lowest with probability 1/256.
+    const FAILING: u64 = 256;
+
+    #[test]
+    fn names_the_lowest_failing_key() {
+        // Even keys pass, odd keys fail: the lowest failure is 1, behind a passing 0.
+        let map: SeededHashMap<u64, ()> = (0..2 * FAILING).map(|key| (key, ())).collect();
+        let result = first_failure_by_key(&map, |key, _| match key % 2 {
+            0 => Ok(()),
+            _ => Err(*key),
+        });
+        assert_eq!(result, Err(1));
+    }
+
+    #[test]
+    fn walks_a_passing_map_once() {
+        let map: SeededHashMap<u64, ()> = (0..FAILING).map(|key| (key, ())).collect();
+        let mut checked = 0;
+        let result: Result<(), ()> = first_failure_by_key(&map, |_, _| {
+            checked += 1;
+            Ok(())
+        });
+        assert_eq!(result, Ok(()));
+        assert_eq!(checked, FAILING);
+    }
+
+    #[test]
+    fn names_the_lowest_failure_of_a_nested_map() {
+        // The lowest failing outer key whose inner map fails, then the lowest inner key.
+        let map: SeededHashMap<u64, SeededHashMap<u64, ()>> = (0..FAILING)
+            .map(|outer| {
+                let inner = (0..FAILING).map(|key| (key, ())).collect();
+                (outer, inner)
+            })
+            .collect();
+        let result = first_failure_by_key(&map, |outer, inner| {
+            first_failure_by_key(inner, |key, _| match (*outer >= 7, *key >= 3) {
+                (true, true) => Err((*outer, *key)),
+                _ => Ok(()),
+            })
+        });
+        assert_eq!(result, Err((7, 3)));
     }
 }
