@@ -65,6 +65,8 @@ const PATTERNS: &[Entry] = &[
         text: "Blob gas used doesn't match value in header" },
     Entry { canonical: "BlockException.INVALID_BASEFEE_PER_GAS", kind: Kind::Sub,
         text: "Base fee per gas is incorrect" },
+    Entry { canonical: "BlockException.INVALID_SLOT_NUMBER", kind: Kind::Sub,
+        text: "Slot number is not greater than parent slot number" },
 
     // ─── mapping_regex ────────────────────────────────────────────────────────────
     Entry { canonical: "TransactionException.INVALID_SIGNATURE_VRS", kind: Kind::Re,
