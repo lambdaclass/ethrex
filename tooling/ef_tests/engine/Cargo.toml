@@ -42,6 +42,10 @@ path = "src/lib.rs"
 name = "all"
 harness = false
 
+[[test]]
+name = "enginex"
+harness = false
+
 [features]
 default = ["c-kzg"]
 c-kzg = ["ethrex-blockchain/c-kzg"]

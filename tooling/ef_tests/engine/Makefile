@@ -1,4 +1,4 @@
-.PHONY: download-test-vectors clean-vectors test test-rocksdb test-strict frames-vectors help
+.PHONY: download-test-vectors clean-vectors test test-rocksdb test-strict frames-vectors enginex-vectors help
 
 VECTORS_ROOT := vectors
 FIXTURES_FILE := ../.fixtures_url
@@ -21,6 +21,13 @@ FRAMES_URL := $(shell cat $(FRAMES_FIXTURES_FILE))
 FRAMES_SUBTREES := for_bogota for_amsterdamtobogotaattime15k
 FRAMES_STAMP := $(SPECTEST_VECTORS_DIR)/.frames_overlay
 VECTORS_TARGETS := $(SPECTEST_VECTORS_DIR)
+
+# The same subtrees in `blockchain_test_engine_x` form, with the pre-allocation
+# groups they reference (`pre_alloc/<preHash>.json`), for the `enginex` target.
+ENGINEX_VECTORS_ROOT := vectors_x
+ENGINEX_VECTORS_DIR := $(ENGINEX_VECTORS_ROOT)/eest
+ENGINEX_SUBTREES := $(FRAMES_SUBTREES) pre_alloc
+ENGINEX_STAMP := $(ENGINEX_VECTORS_DIR)/.frames_overlay
 
 $(SPECTEST_ARTIFACT): $(FIXTURES_FILE)
 	$(MAKE) clean-vectors
@@ -53,17 +60,37 @@ frames-vectors: | $(SPECTEST_VECTORS_DIR) ## 📥 Overlay the frames-devnet engi
 		echo "$(FRAMES_URL)" > $(FRAMES_STAMP); \
 	fi
 
-download-test-vectors: $(VECTORS_TARGETS) frames-vectors ## 📥 Download engine-format test vectors
+# Keyed on the release URL like frames-vectors, and extracted from the bundle it
+# downloaded (fetched again only if that download is gone).
+enginex-vectors: frames-vectors ## 📥 Extract the frames-devnet engine_x fixtures and their pre-allocation groups
+	@have=$$(cat $(ENGINEX_STAMP) 2>/dev/null); \
+	for subtree in $(ENGINEX_SUBTREES); do \
+		[ -d $(ENGINEX_VECTORS_DIR)/$$subtree ] || have=; \
+	done; \
+	if [ "$$have" = "$(FRAMES_URL)" ]; then \
+		echo "Engine X fixtures already extracted from $(FRAMES_URL)"; \
+	else \
+		{ [ -f $(FRAMES_ARTIFACT) ] || \
+			{ curl -fL -o $(FRAMES_ARTIFACT).part $(FRAMES_URL) && \
+			mv $(FRAMES_ARTIFACT).part $(FRAMES_ARTIFACT); }; } && \
+		rm -rf $(ENGINEX_VECTORS_DIR) && \
+		mkdir -p $(ENGINEX_VECTORS_DIR) && \
+		tar -xzf $(FRAMES_ARTIFACT) --strip-components=2 -C $(ENGINEX_VECTORS_DIR) \
+			$(addprefix fixtures/blockchain_tests_engine_x/,$(ENGINEX_SUBTREES)) && \
+		echo "$(FRAMES_URL)" > $(ENGINEX_STAMP); \
+	fi
+
+download-test-vectors: $(VECTORS_TARGETS) frames-vectors enginex-vectors ## 📥 Download engine-format test vectors
 
 clean-vectors: ## 🗑️  Clean test vectors
-	rm -rf $(VECTORS_ROOT)
+	rm -rf $(VECTORS_ROOT) $(ENGINEX_VECTORS_ROOT)
 	rm -f $(SPECTEST_ARTIFACT) $(FRAMES_ARTIFACT) $(FRAMES_ARTIFACT).part
 
-test: $(VECTORS_TARGETS) frames-vectors ## 🧪 Run engine-format fixture suite (InMemory, release)
+test: $(VECTORS_TARGETS) frames-vectors enginex-vectors ## 🧪 Run engine-format fixture suite (InMemory, release)
 	cargo test -p ef_tests-engine --release
 
-test-rocksdb: $(VECTORS_TARGETS) frames-vectors ## 🧪 Run with RocksDB backend
+test-rocksdb: $(VECTORS_TARGETS) frames-vectors enginex-vectors ## 🧪 Run with RocksDB backend
 	cargo test -p ef_tests-engine --release --features rocksdb
 
-test-strict: $(VECTORS_TARGETS) frames-vectors ## 🧪 Run with strict validationError checking
+test-strict: $(VECTORS_TARGETS) frames-vectors enginex-vectors ## 🧪 Run with strict validationError checking
 	ETHREX_ENGINE_STRICT_EXCEPTIONS=1 cargo test -p ef_tests-engine --release

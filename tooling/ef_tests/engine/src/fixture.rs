@@ -21,6 +21,32 @@ pub struct EngineFixture {
     pub lastblockhash: H256,
 }
 
+/// One JSON file of `blockchain_test_engine_x` fixtures, keyed by test name.
+pub type EngineXFixtureFile = BTreeMap<String, EngineXFixture>;
+
+/// EEST BlockchainEngineXFixture: an engine fixture without a genesis of its own.
+/// Its genesis header and pre-state are those of the pre-allocation group named by
+/// `preHash`, and every fixture of a group runs on the same client.
+#[derive(Debug, Deserialize)]
+pub struct EngineXFixture {
+    pub network: String,
+    pub config: Value,
+    #[serde(rename = "preHash")]
+    pub pre_hash: String,
+    #[serde(rename = "engineNewPayloads")]
+    pub engine_new_payloads: Vec<FixturePayload>,
+    pub lastblockhash: H256,
+}
+
+/// A pre-allocation group (`pre_alloc/<preHash>.json`): the genesis header and the
+/// state shared by every `blockchain_test_engine_x` fixture that names it.
+#[derive(Debug, Deserialize)]
+pub struct PreAllocGroup {
+    pub network: String,
+    pub genesis: FixtureHeader,
+    pub pre: Value,
+}
+
 /// Genesis block header as represented in EEST engine fixtures.
 /// Captures all fields required for genesis construction and block identification.
 #[derive(Debug, Deserialize)]
@@ -132,25 +158,53 @@ impl EngineFixture {
     /// Mirrors what `hive/clients/ethrex/mapper.jq` does: assembles a Geth-style genesis
     /// JSON (alloc, config with fork activations, header fields) and deserializes it.
     pub fn build_genesis(&self) -> anyhow::Result<Genesis> {
-        let chain_id = parse_chain_id(&self.config)?;
-        let (genesis_fork, transition) = self.schedule()?;
-        let mut config_json = build_chain_config_json(genesis_fork, transition, chain_id);
-        // EEST fixtures carry their own per-fork blobSchedule (Cancun/Prague/Osaka/BPO*/Amsterdam)
-        // with fork-name keys and hex-string values. Convert and inject; otherwise post-Cancun
-        // payloads that rely on non-default blob params get rejected.
-        if let Some(eest_schedule) = self.config.get("blobSchedule") {
-            let converted = convert_blob_schedule(eest_schedule);
-            config_json
-                .as_object_mut()
-                .expect("config_json is an object")
-                .insert("blobSchedule".into(), converted);
-        }
-        let genesis_json = build_genesis_json(&self.genesis_block_header, &self.pre, config_json);
-        serde_json::from_value::<Genesis>(genesis_json).context("Failed to deserialize Genesis")
+        build_genesis(
+            &self.network,
+            &self.config,
+            &self.genesis_block_header,
+            &self.pre,
+        )
+    }
+}
+
+impl EngineXFixture {
+    /// The "active" fork for skip checks, as for [`EngineFixture::fork`].
+    pub fn fork(&self) -> anyhow::Result<ethrex_common::types::Fork> {
+        let (genesis_fork, transition) = parse_network(&self.network)?;
+        Ok(transition.map(|(to, _)| to).unwrap_or(genesis_fork))
+    }
+
+    /// Build the `Genesis` of `group` under this fixture's chain config. Every
+    /// fixture of a group shares its network, so any of them configures it.
+    pub fn build_genesis(&self, group: &PreAllocGroup) -> anyhow::Result<Genesis> {
+        build_genesis(&self.network, &self.config, &group.genesis, &group.pre)
     }
 }
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
+
+fn build_genesis(
+    network: &str,
+    config: &Value,
+    header: &FixtureHeader,
+    pre: &Value,
+) -> anyhow::Result<Genesis> {
+    let chain_id = parse_chain_id(config)?;
+    let (genesis_fork, transition) = parse_network(network)?;
+    let mut config_json = build_chain_config_json(genesis_fork, transition, chain_id);
+    // EEST fixtures carry their own per-fork blobSchedule (Cancun/Prague/Osaka/BPO*/Amsterdam)
+    // with fork-name keys and hex-string values. Convert and inject; otherwise post-Cancun
+    // payloads that rely on non-default blob params get rejected.
+    if let Some(eest_schedule) = config.get("blobSchedule") {
+        let converted = convert_blob_schedule(eest_schedule);
+        config_json
+            .as_object_mut()
+            .expect("config_json is an object")
+            .insert("blobSchedule".into(), converted);
+    }
+    let genesis_json = build_genesis_json(header, pre, config_json);
+    serde_json::from_value::<Genesis>(genesis_json).context("Failed to deserialize Genesis")
+}
 
 /// Deserialize a `u8` from either a JSON number or a string (e.g. `"1"`).
 /// EEST fixtures encode version fields as strings.

@@ -1,9 +1,12 @@
+use std::collections::HashMap;
 use std::fmt;
 
 use ethrex_common::H256;
 use serde_json::Value;
 
-use crate::fixture::{EngineFixture, FixturePayload, ValidationError, is_pre_paris};
+use crate::fixture::{
+    EngineFixture, EngineXFixture, FixturePayload, PreAllocGroup, ValidationError, is_pre_paris,
+};
 use crate::harness::{Backend, EngineApiHarness};
 
 // ─── Public types ─────────────────────────────────────────────────────────────
@@ -210,33 +213,148 @@ pub async fn run_fixture(
         .await
         .map_err(|e| FixtureFailure::HarnessSetup(e.to_string()))?;
 
-    // 3. Initial FCU to genesis (mirrors test_via_engine.py:80–105)
-    let first = fix
-        .engine_new_payloads
-        .first()
-        .ok_or(FixtureFailure::EmptyPayloads)?;
-    let resp = Box::pin(harness.fcu(
-        first.forkchoice_updated_version,
-        fix.genesis_block_header.block_hash,
+    let genesis_hash = fix.genesis_block_header.block_hash;
+    // 3. Initial FCU to genesis
+    Box::pin(fcu_to_genesis(
+        &harness,
+        &fix.engine_new_payloads,
+        genesis_hash,
+    ))
+    .await?;
+    // 4. Genesis hash check
+    Box::pin(verify_genesis_block(&harness, genesis_hash)).await?;
+    // 5. Per-payload loop. A fresh client has rejected no block yet.
+    Box::pin(replay_payloads(
+        &harness,
+        &fix.engine_new_payloads,
+        name,
+        opts,
+        &mut HashMap::new(),
     ))
     .await
-    .map_err(|e| FixtureFailure::InitialFcu(e.to_string()))?;
-    assert_fcu_valid(&resp).map_err(FixtureFailure::InitialFcu)?;
+}
 
-    // 4. Genesis hash check (mirrors test_via_engine.py:107–122)
+/// The client shared by every `blockchain_test_engine_x` fixture of one
+/// pre-allocation group, as in hive's enginex simulator.
+pub struct EngineXGroup {
+    harness: EngineApiHarness,
+    genesis_hash: H256,
+    network: String,
+    genesis_verified: bool,
+    /// First validation error per rejected block. The client keeps its bad-block
+    /// cache across the group's fixtures, so a block rejected by an earlier
+    /// fixture may be answered from it with a generic error the next time.
+    first_rejections: HashMap<H256, String>,
+}
+
+impl EngineXGroup {
+    /// Start the group's client from `group`'s genesis, configured by `first`, any
+    /// fixture of the group.
+    pub async fn new(
+        group: &PreAllocGroup,
+        first: &EngineXFixture,
+        opts: &RunOptions,
+    ) -> Result<Self, FixtureFailure> {
+        let genesis = first
+            .build_genesis(group)
+            .map_err(|e| FixtureFailure::FixtureParse(e.to_string()))?;
+        let harness = Box::pin(EngineApiHarness::from_genesis(genesis, opts.backend))
+            .await
+            .map_err(|e| FixtureFailure::HarnessSetup(e.to_string()))?;
+        Ok(Self {
+            harness,
+            genesis_hash: group.genesis.block_hash,
+            network: group.network.clone(),
+            genesis_verified: false,
+            first_rejections: HashMap::new(),
+        })
+    }
+}
+
+/// Run one `blockchain_test_engine_x` fixture on its group's client: a forkchoice
+/// update back to the group's genesis, then the fixture's payloads, so each fixture
+/// builds its chain as a new branch off the genesis the earlier ones also built on.
+/// Mirrors test_via_engine.py in enginex mode, which checks the genesis block once
+/// per client.
+pub async fn run_engine_x_fixture(
+    name: &str,
+    fix: &EngineXFixture,
+    group: &mut EngineXGroup,
+    opts: &RunOptions,
+) -> Result<(), FixtureFailure> {
+    let fork = fix
+        .fork()
+        .map_err(|e| FixtureFailure::FixtureParse(e.to_string()))?;
+    if is_pre_paris(fork) {
+        return Err(FixtureFailure::SkippedPreParis);
+    }
+    if fix.network != group.network {
+        return Err(FixtureFailure::FixtureParse(format!(
+            "network {} differs from its pre-allocation group's {}",
+            fix.network, group.network
+        )));
+    }
+    Box::pin(fcu_to_genesis(
+        &group.harness,
+        &fix.engine_new_payloads,
+        group.genesis_hash,
+    ))
+    .await?;
+    if !group.genesis_verified {
+        Box::pin(verify_genesis_block(&group.harness, group.genesis_hash)).await?;
+        group.genesis_verified = true;
+    }
+    Box::pin(replay_payloads(
+        &group.harness,
+        &fix.engine_new_payloads,
+        name,
+        opts,
+        &mut group.first_rejections,
+    ))
+    .await
+}
+
+/// Initial FCU to genesis (mirrors test_via_engine.py:80–105).
+async fn fcu_to_genesis(
+    harness: &EngineApiHarness,
+    payloads: &[FixturePayload],
+    genesis_hash: H256,
+) -> Result<(), FixtureFailure> {
+    let first = payloads.first().ok_or(FixtureFailure::EmptyPayloads)?;
+    let resp = Box::pin(harness.fcu(first.forkchoice_updated_version, genesis_hash))
+        .await
+        .map_err(|e| FixtureFailure::InitialFcu(e.to_string()))?;
+    assert_fcu_valid(&resp).map_err(FixtureFailure::InitialFcu)
+}
+
+/// Genesis hash check (mirrors test_via_engine.py:107–122).
+async fn verify_genesis_block(
+    harness: &EngineApiHarness,
+    genesis_hash: H256,
+) -> Result<(), FixtureFailure> {
     let block = Box::pin(harness.get_block_by_number_zero())
         .await
         .map_err(|e| FixtureFailure::GenesisRpc(e.to_string()))?;
     let got_hash = parse_block_hash(&block).map_err(FixtureFailure::GenesisRpc)?;
-    if got_hash != fix.genesis_block_header.block_hash {
+    if got_hash != genesis_hash {
         return Err(FixtureFailure::GenesisMismatch {
-            expected: fix.genesis_block_header.block_hash,
+            expected: genesis_hash,
             got: got_hash,
         });
     }
+    Ok(())
+}
 
-    // 5. Per-payload loop (mirrors test_via_engine.py:124–240)
-    for (i, payload) in fix.engine_new_payloads.iter().enumerate() {
+/// Per-payload loop (mirrors test_via_engine.py:124–240). `first_rejections`
+/// holds the client's first validation error per block it has rejected.
+async fn replay_payloads(
+    harness: &EngineApiHarness,
+    payloads: &[FixturePayload],
+    name: &str,
+    opts: &RunOptions,
+    first_rejections: &mut HashMap<H256, String>,
+) -> Result<(), FixtureFailure> {
+    for (i, payload) in payloads.iter().enumerate() {
         // zkevm fixtures carry an expected witness per payload: route those
         // through `engine_newPayloadWithWitnessV{4,5}` (same params, same status
         // semantics as the plain call) so the engine-side witness generation is
@@ -255,7 +373,23 @@ pub async fn run_fixture(
             index: i,
             msg: e.to_string(),
         })?;
-        check_payload_response(&resp, payload, i, opts.strict_exceptions, name)?;
+        let first_rejection = match (rejection_error(&resp), payload.head_block_hash().ok()) {
+            (Some(error), Some(block_hash)) => Some(
+                first_rejections
+                    .entry(block_hash)
+                    .or_insert_with(|| error.to_string())
+                    .clone(),
+            ),
+            _ => None,
+        };
+        check_payload_response(
+            &resp,
+            payload,
+            i,
+            opts.strict_exceptions,
+            name,
+            first_rejection.as_deref(),
+        )?;
         if with_witness && payload.valid() {
             check_witness_response(&resp, payload, i, name)?;
         }
@@ -410,12 +544,27 @@ fn witness_diff_detail(section: &str, got: &[Vec<u8>], exp: &[Vec<u8>]) -> Strin
     }
 }
 
+/// The `validationError` of an `INVALID` newPayload response, if any.
+fn rejection_error(resp: &Value) -> Option<&str> {
+    let result = resp.get("result")?;
+    if result.get("status").and_then(Value::as_str) != Some("INVALID") {
+        return None;
+    }
+    result.get("validationError").and_then(Value::as_str)
+}
+
+/// `first_rejection` is the client's first validation error for this payload's
+/// block (`None` if the client did not reject it). A client that reuses its
+/// bad-block cache can answer a resubmitted block with a generic error; that
+/// answer is accepted when the first rejection matched the expected exception,
+/// as hive's enginex simulator does. The first rejection itself is always checked.
 fn check_payload_response(
     resp: &Value,
     payload: &FixturePayload,
     index: usize,
     strict: bool,
     name: &str,
+    first_rejection: Option<&str>,
 ) -> Result<(), FixtureFailure> {
     // JSON-RPC error path
     if let Some(err) = resp.get("error") {
@@ -497,9 +646,13 @@ fn check_payload_response(
                 // Use the ported EthrexExceptionMapper: try the canonical-exception lookup
                 // first; fall back to literal substring for forward-compatibility with
                 // exceptions the mapper hasn't been taught yet.
-                let matches = candidates
-                    .iter()
-                    .any(|c| crate::exception_mapper::matches(c, &got) || got.contains(c));
+                let matches_expected = |error: &str| {
+                    candidates
+                        .iter()
+                        .any(|c| crate::exception_mapper::matches(c, error) || error.contains(c))
+                };
+                let matches = matches_expected(&got)
+                    || first_rejection.is_some_and(|first| first != got && matches_expected(first));
                 if !matches {
                     let f = FixtureFailure::ValidationErrorMismatch {
                         index,
@@ -602,5 +755,48 @@ mod tests {
             .await
             .expect_err("London fixture must be skipped");
         assert!(err.is_skip(), "expected SkippedPreParis, got: {err}");
+    }
+
+    const EXPECTED_EXCEPTION: &str = "TransactionException.INSUFFICIENT_ACCOUNT_FUNDS";
+
+    fn invalid_payload() -> FixturePayload {
+        serde_json::from_value(serde_json::json!({
+            "params": [{}],
+            "newPayloadVersion": "4",
+            "forkchoiceUpdatedVersion": "3",
+            "validationError": EXPECTED_EXCEPTION,
+        }))
+        .unwrap()
+    }
+
+    fn invalid_response(validation_error: &str) -> Value {
+        serde_json::json!({
+            "result": { "status": "INVALID", "validationError": validation_error }
+        })
+    }
+
+    /// In an enginex group a block an earlier fixture got rejected can come back
+    /// with the client's cached, generic error. That answer passes, even strictly,
+    /// when the block's first rejection carried the expected exception.
+    #[test]
+    fn a_cached_rejection_passes_when_the_first_one_matched() {
+        let first = format!("{EXPECTED_EXCEPTION}: sender balance too low");
+        let resp = invalid_response("block links to a previously rejected block");
+        check_payload_response(&resp, &invalid_payload(), 0, true, "t", Some(&first))
+            .expect("the first rejection carried the expected exception");
+    }
+
+    /// A first rejection is checked on its own error: a wrong one fails strictly,
+    /// with no earlier rejection to fall back on.
+    #[test]
+    fn a_first_rejection_with_the_wrong_error_fails() {
+        let error = "TransactionException.NONCE_MISMATCH_TOO_LOW";
+        let resp = invalid_response(error);
+        let err = check_payload_response(&resp, &invalid_payload(), 0, true, "t", Some(error))
+            .expect_err("the error does not carry the expected exception");
+        assert!(
+            matches!(err, FixtureFailure::ValidationErrorMismatch { .. }),
+            "expected a validation error mismatch, got: {err}"
+        );
     }
 }
