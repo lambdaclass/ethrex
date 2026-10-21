@@ -153,7 +153,7 @@ async fn build_local_node_record(
 /// so the record always carries the `snap` entry, listing the served versions
 /// (ethereum/devp2p#286). DNS discovery lists such as the EIP-1459 `snap.*` trees
 /// select snap servers by this entry.
-fn local_node_record(
+pub(crate) fn local_node_record(
     node: &Node,
     fork_id: Option<ForkId>,
     signer: &SecretKey,
@@ -926,58 +926,4 @@ fn spawn_fork_id_publisher(
         }
     });
     rx
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::utils::public_key_from_signing_key;
-    use ethrex_common::H32;
-    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-    use std::net::{IpAddr, Ipv4Addr};
-
-    fn signer() -> SecretKey {
-        SecretKey::from_slice(&[7; 32]).unwrap()
-    }
-
-    fn local_node(signer: &SecretKey) -> Node {
-        Node::new(
-            IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)),
-            30303,
-            30303,
-            public_key_from_signing_key(signer),
-        )
-    }
-
-    #[test]
-    fn local_record_lists_served_snap_versions() {
-        let signer = signer();
-        let fork_id = ForkId {
-            fork_hash: H32::from_low_u64_be(0xdead_beef),
-            fork_next: 42,
-        };
-
-        let record =
-            local_node_record(&local_node(&signer), Some(fork_id.clone()), &signer).unwrap();
-
-        // The key followed by the list [1, 2].
-        let snap_entry = [0x84, b's', b'n', b'a', b'p', 0xc2, 0x01, 0x02];
-        let encoded = record.encode_to_vec();
-        assert!(encoded.windows(snap_entry.len()).any(|w| w == snap_entry));
-
-        let decoded = NodeRecord::decode(&encoded).unwrap();
-        assert!(decoded.verify_signature());
-        assert_eq!(decoded.pairs().snap, Some(vec![1, 2]));
-        assert_eq!(decoded.pairs().eth, Some(fork_id));
-    }
-
-    #[test]
-    fn local_record_advertises_snap_without_a_fork_id() {
-        let signer = signer();
-
-        let record = local_node_record(&local_node(&signer), None, &signer).unwrap();
-
-        assert_eq!(record.pairs().snap, Some(vec![1, 2]));
-        assert_eq!(record.pairs().eth, None);
-    }
 }
