@@ -87,7 +87,7 @@ fn get_pooled_transactions_handle_dedups_requested_hashes() {
     let h2 = add_mempool_tx(&bc, 1, 0);
 
     let req = GetPooledTransactions::new(7, vec![h1, h1, h2, h1, h2]);
-    let resp = req.handle(&bc).expect("handle");
+    let resp = req.handle(&bc, false).expect("handle");
 
     assert_eq!(resp.id, 7);
     assert_eq!(
@@ -106,7 +106,7 @@ fn get_pooled_transactions_handle_caps_response_bytes() {
     let hashes: Vec<H256> = (0..5).map(|n| add_mempool_tx(&bc, n, 700 * 1024)).collect();
 
     let req = GetPooledTransactions::new(1, hashes.clone());
-    let resp = req.handle(&bc).expect("handle");
+    let resp = req.handle(&bc, false).expect("handle");
 
     assert!(
         !resp.pooled_transactions.is_empty(),
@@ -118,6 +118,22 @@ fn get_pooled_transactions_handle_caps_response_bytes() {
         hashes.len(),
         resp.pooled_transactions.len()
     );
+}
+
+/// An eth/72 answer carries blob transactions without their blobs, so the response limit is
+/// applied to that size: twenty 1-blob transactions (~2.6 MiB with blobs) fit when elided.
+#[test]
+fn get_pooled_transactions_handle_measures_eth72_answers_as_sent() {
+    let bc = test_blockchain();
+    let hashes: Vec<H256> = (0..20)
+        .map(|nonce| add_blob_tx_with_bundle(&bc, nonce, Some(full_bundle())).hash(&NativeCrypto))
+        .collect();
+    let req = GetPooledTransactions::new(1, hashes.clone());
+
+    let with_blobs = req.handle(&bc, false).expect("handle");
+    assert!(with_blobs.pooled_transactions.len() < hashes.len());
+    let elided = req.handle(&bc, true).expect("handle");
+    assert_eq!(elided.pooled_transactions.len(), hashes.len());
 }
 
 /// Adds a 1-blob EIP-4844 tx to the mempool with the given bundle (or none, mimicking the

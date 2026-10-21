@@ -27,6 +27,7 @@ use crate::{
     validation_observer::ValidationObserver,
 };
 use bytes::Bytes;
+use ethrex_common::seeded_hash::{SeededHashMap, SeededHashSet};
 use ethrex_common::{
     Address, BigEndianHash, H256, U256,
     tracing::CallType,
@@ -46,6 +47,13 @@ use std::{
 
 /// Storage mapping from slot key to value.
 pub type Storage = FxHashMap<U256, H256>;
+
+/// Addresses accessed by a transaction (EIP-2929). Seeded: contracts choose which
+/// addresses they touch.
+pub type AccessedAddresses = SeededHashSet<Address>;
+/// Storage slots accessed by a transaction, per address (EIP-2929). Seeded: contracts
+/// choose the slot keys.
+pub type AccessedStorageSlots = SeededHashMap<Address, SeededHashSet<H256>>;
 
 /// Specifies whether the VM operates in L1 or L2 mode.
 #[derive(Debug, Clone, Copy, Default)]
@@ -88,9 +96,9 @@ pub struct Substate {
     selfdestruct_set: FxHashSet<Address>,
     /// Addresses accessed during execution (for EIP-2929 warm/cold gas costs).
     /// Precompiles are NOT stored here; they are warm by construction (see `is_warm_precompile`).
-    accessed_addresses: FxHashSet<Address>,
+    accessed_addresses: AccessedAddresses,
     /// Storage slots accessed per address (for EIP-2929 warm/cold gas costs).
-    accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
+    accessed_storage_slots: AccessedStorageSlots,
     /// Accounts created during this transaction.
     created_accounts: FxHashSet<Address>,
     /// Accumulated gas refund (e.g., from storage clears).
@@ -104,8 +112,8 @@ pub struct Substate {
 impl Substate {
     pub fn from_accesses(
         fork: Fork,
-        accessed_addresses: FxHashSet<Address>,
-        accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
+        accessed_addresses: AccessedAddresses,
+        accessed_storage_slots: AccessedStorageSlots,
     ) -> Self {
         Self {
             parent: None,
@@ -561,9 +569,9 @@ impl FrameTxContext {
 #[derive(Debug, Default)]
 pub struct PrepareRegionBackupMarker {
     /// Addresses already backed up in `original_accounts_info` before the region.
-    accounts: FxHashSet<Address>,
+    accounts: SeededHashSet<Address>,
     /// Addresses already backed up in `original_account_storage_slots` before the region.
-    storage: FxHashSet<Address>,
+    storage: SeededHashSet<Address>,
     /// Length of `inserted_code_hashes` before the region.
     code_hashes_len: usize,
     /// Region-entry state of every account already backed up before the region
@@ -573,7 +581,7 @@ pub struct PrepareRegionBackupMarker {
     /// authorization on the sender) leaves no new backup entry. `fail_prepare_region`
     /// restores these to the captured state, reverting the in-region write while
     /// keeping the pre-region nonce bump / fee deduction.
-    entry_state: FxHashMap<Address, LevmAccount>,
+    entry_state: SeededHashMap<Address, LevmAccount>,
     /// BAL recorder checkpoint at region entry, so an applied-then-reverted
     /// delegation's code/nonce changes are discarded (demoted to an access-only
     /// touch) rather than leaking into the block access list.
@@ -611,7 +619,8 @@ pub struct VM<'a> {
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
     /// Original storage values before transaction (for SSTORE gas calculation),
     /// keyed first by account to avoid hashing the full tuple on each access.
-    pub storage_original_values: FxHashMap<Address, FxHashMap<H256, U256>>,
+    /// Seeded: contracts choose the keys at both levels.
+    pub storage_original_values: SeededHashMap<Address, SeededHashMap<H256, U256>>,
     /// Call tracer for execution tracing.
     pub tracer: LevmCallTracer,
     /// Opcode (EIP-3155) tracer.  Disabled by default; zero overhead when inactive.
@@ -1074,7 +1083,7 @@ impl<'a> VM<'a> {
             db,
             tx,
             hooks,
-            storage_original_values: FxHashMap::default(),
+            storage_original_values: Default::default(),
             tracer,
             opcode_tracer: LevmOpcodeTracer::disabled(),
             validation_observer: ValidationObserver::disabled(),
@@ -1398,8 +1407,9 @@ impl<'a> VM<'a> {
         self.prep_baseline_reservoir = self.state_gas_reservoir;
         self.prep_baseline_state_gas_spill = self.state_gas_spill;
         let backup = &self.current_call_frame.call_frame_backup;
-        let accounts: FxHashSet<Address> = backup.original_accounts_info.keys().copied().collect();
-        let storage: FxHashSet<Address> = backup
+        let accounts: SeededHashSet<Address> =
+            backup.original_accounts_info.keys().copied().collect();
+        let storage: SeededHashSet<Address> = backup
             .original_account_storage_slots
             .keys()
             .copied()
@@ -1409,7 +1419,7 @@ impl<'a> VM<'a> {
         // self-sponsored EIP-7702 authorization (or any in-region write to a
         // pre-region-touched account) can be reverted without disturbing its
         // pre-region nonce/fee writes. See `PrepareRegionBackupMarker::entry_state`.
-        let entry_state: FxHashMap<Address, LevmAccount> = accounts
+        let entry_state: SeededHashMap<Address, LevmAccount> = accounts
             .iter()
             .filter_map(|address| {
                 self.db
@@ -3460,11 +3470,10 @@ impl Substate {
         // remaining working set is small (sender + coinbase + recipient + access-list/touched
         // addresses; real p99 ~7), so a capacity of 8 covers most txs with little waste.
         let mut initial_accessed_addresses =
-            FxHashSet::with_capacity_and_hasher(8, Default::default());
+            AccessedAddresses::with_capacity_and_hasher(8, Default::default());
         // Storage slots are ~98% empty (p95 0, p99 4), so `default()` (alloc-free until first
         // insert) beats pre-sizing, which would tax the common empty case.
-        let mut initial_accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>> =
-            FxHashMap::default();
+        let mut initial_accessed_storage_slots = AccessedStorageSlots::default();
 
         // Add Tx sender to accessed accounts
         initial_accessed_addresses.insert(env.origin);
@@ -3552,7 +3561,7 @@ impl<'a> VM<'a> {
             db,
             tx,
             hooks: Vec::new(),
-            storage_original_values: FxHashMap::default(),
+            storage_original_values: Default::default(),
             tracer: LevmCallTracer::disabled(),
             opcode_tracer: LevmOpcodeTracer::disabled(),
             debug_mode: DebugMode::disabled(),

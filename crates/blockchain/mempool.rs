@@ -21,7 +21,7 @@ use ethrex_common::{
 use ethrex_crypto::NativeCrypto;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::{intrinsic_gas_dimensions, intrinsic_gas_floor};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 // ────────────────────────────────────────────────────────────────────
 // EIP-8070 / PeerDAS sampling constants
@@ -88,6 +88,20 @@ impl TxCells {
 /// conservative; high-fan-in benchmarks and Hive adversarial-mempool scenarios
 /// might want to raise it. FIFO eviction keeps the cap safe regardless.
 pub const MAX_ALTERNATES_PER_HASH: usize = 8;
+
+/// Maximum number of announced transaction hashes the mempool tracks for one
+/// peer at a time: hashes reserved to be requested from it, hashes it is a
+/// fallback announcer for, and blob transactions it claimed to fully hold.
+/// Keyed by node id, so every session from the same peer shares it. Hashes
+/// announced past it are dropped, as go-ethereum's tx fetcher does with
+/// `maxTxAnnounces` (also 4096, the devp2p soft limit of one announcement).
+pub const MAX_ANNOUNCED_HASHES_PER_PEER: usize = 4096;
+
+/// How long the transactions of a new head block are remembered as included. A peer that
+/// announced one of them before the block may no longer hold it when we ask, which devp2p
+/// allows, so this lets the requester tell that apart from a peer withholding what it
+/// announced. It covers a request's 30-second timeout and one retry on another announcer.
+pub const RECENTLY_INCLUDED_TTL: Duration = Duration::from_secs(60);
 
 /// Maximum number of blob (EIP-4844) transactions retained in the mempool,
 /// independent of `max_mempool_size`. Blob txs live in a dedicated sub-pool so a
@@ -212,9 +226,10 @@ struct MempoolInner {
     transaction_pool: FxHashMap<H256, MempoolTransaction>,
     blobs_bundle_pool: FxHashMap<H256, BlobsBundle>,
     /// Transaction hashes that have been requested via GetPooledTransactions
-    /// but whose responses haven't arrived yet. Used to avoid sending duplicate
-    /// requests when multiple peers announce the same transaction.
-    in_flight_txs: FxHashSet<H256>,
+    /// but whose responses haven't arrived yet, each with the peer it is
+    /// requested from. Used to avoid sending duplicate requests when multiple
+    /// peers announce the same transaction.
+    in_flight_txs: FxHashMap<H256, H256>,
     /// Hashes of transactions admitted with `--mempool.private` set: they
     /// MUST NOT be propagated to peers via any P2P path (broadcast,
     /// new-peer pooled-hash dump, or `GetPooledTransactions` responses).
@@ -248,6 +263,14 @@ struct MempoolInner {
     /// For each blob tx hash, the set of peer IDs that have announced it
     /// via NewPooledTransactionHashes72 (sampler role tracking).
     provider_announcers: FxHashMap<H256, FxHashSet<H256>>,
+    /// How many hashes each peer holds in `in_flight_txs` (as the peer they are
+    /// requested from), `alternates` and `provider_announcers` together, checked
+    /// against `MAX_ANNOUNCED_HASHES_PER_PEER`. Every insertion into those maps
+    /// charges the peer and every removal releases it; peers at zero are dropped.
+    announced_per_peer: FxHashMap<H256, usize>,
+    /// Transactions of recent head blocks, each with when its block was noted; entries older
+    /// than `RECENTLY_INCLUDED_TTL` are dropped as the next block is noted.
+    recently_included: FxHashMap<H256, Instant>,
     /// Last announced cell_mask per peer (peer_id -> mask).
     /// Used to check which peers can serve a given column set.
     peer_cell_availability: FxHashMap<H256, u128>,
@@ -274,6 +297,28 @@ struct MempoolInner {
     frame_tx_paymaster: FxHashMap<H256, FramePaymasterReservation>,
 }
 
+/// Charges `peer` one announced hash against `MAX_ANNOUNCED_HASHES_PER_PEER`.
+fn charge_announcer(announced_per_peer: &mut FxHashMap<H256, usize>, peer: H256) {
+    *announced_per_peer.entry(peer).or_default() += 1;
+}
+
+/// Releases one announced hash charged to `peer`, forgetting the peer once it
+/// holds none. Every release must match a charge; a mismatch fails debug builds.
+fn release_announcer(announced_per_peer: &mut FxHashMap<H256, usize>, peer: H256) {
+    let Entry::Occupied(mut entry) = announced_per_peer.entry(peer) else {
+        debug_assert!(
+            false,
+            "peer {peer:#x} released an announced hash it was not charged for"
+        );
+        return;
+    };
+    let held = entry.get_mut();
+    *held -= 1;
+    if *held == 0 {
+        entry.remove();
+    }
+}
+
 impl MempoolInner {
     fn new(max_mempool_size: usize) -> Self {
         MempoolInner {
@@ -289,6 +334,16 @@ impl MempoolInner {
         }
     }
 
+    /// Drops every alternate announcer recorded for `hash`, releasing what each
+    /// was charged against its announcement budget.
+    fn remove_alternates(&mut self, hash: &H256) {
+        if let Some((alternates, _)) = self.alternates.remove(hash) {
+            for alternate in alternates {
+                release_announcer(&mut self.announced_per_peer, alternate.peer_id);
+            }
+        }
+    }
+
     /// Remove a transaction from the pool with the transaction pool lock already taken
     fn remove_transaction_with_lock(&mut self, hash: &H256) -> Result<(), StoreError> {
         let Some(tx) = self.transaction_pool.remove(hash) else {
@@ -298,7 +353,11 @@ impl MempoolInner {
             self.remove_blob_bundle(hash);
             // EIP-8070: prune cell data and provider tracking for this tx.
             self.cells.remove(hash);
-            self.provider_announcers.remove(hash);
+            if let Some(announcers) = self.provider_announcers.remove(hash) {
+                for peer in announcers {
+                    release_announcer(&mut self.announced_per_peer, peer);
+                }
+            }
         }
 
         self.txs_by_sender_nonce.remove(&(tx.sender(), tx.nonce()));
@@ -981,7 +1040,7 @@ impl Mempool {
         } else {
             inner.private_pool.insert(hash);
         }
-        inner.alternates.remove(&hash);
+        inner.remove_alternates(&hash);
 
         // Track per-sender pending frame tx for EIP-8141 admission gating.
         // Storing the nonce alongside the hash keeps the conflict check O(1).
@@ -1318,6 +1377,10 @@ impl Mempool {
     /// own (type, size) metadata as an alternate, so a later retry can validate
     /// the response against this announcer's announcement.
     ///
+    /// Each reservation and each alternate registration is charged to
+    /// `announcer`; once it holds `MAX_ANNOUNCED_HASHES_PER_PEER`, the rest of
+    /// the announcement is dropped. Hashes already in the pool cost nothing.
+    ///
     /// `hashes`, `types`, and `sizes` must be the same length (one entry per
     /// announced hash).
     pub fn reserve_unknown_hashes(
@@ -1330,52 +1393,70 @@ impl Mempool {
         debug_assert_eq!(hashes.len(), types.len());
         debug_assert_eq!(hashes.len(), sizes.len());
 
-        let mut inner = self.write()?;
+        let mut guard = self.write()?;
+        let inner = &mut *guard;
+        let mut room = MAX_ANNOUNCED_HASHES_PER_PEER.saturating_sub(
+            inner
+                .announced_per_peer
+                .get(&announcer)
+                .copied()
+                .unwrap_or(0),
+        );
 
-        // `seen` dedups within this announcement: `in_flight_txs` isn't updated until after the
-        // filter runs, so a duplicated hash (e.g. `[h, h]`) would otherwise be returned twice and
-        // requested twice — an honest responder then echoes the tx twice, which the response-side
-        // duplicate guard (`PooledTransactions::validate_requested`) would wrongly treat as a fault.
+        // `seen` dedups within this announcement: a duplicated hash (e.g. `[h, h]`) would
+        // otherwise be requested twice — an honest responder then echoes the tx twice, which the
+        // response-side duplicate guard (`PooledTransactions::validate_requested`) would wrongly
+        // treat as a fault.
         let mut seen = FxHashSet::default();
-        let unknown: Vec<H256> = hashes
-            .iter()
-            .filter(|hash| {
-                seen.insert(**hash)
-                    && !inner.in_flight_txs.contains(hash)
-                    && !inner.transaction_pool.contains_key(hash)
-            })
-            .copied()
-            .collect();
-
-        inner.in_flight_txs.extend(unknown.iter().copied());
-
-        // Register alternates only for hashes the caller will *not* request
-        // (i.e. those already in-flight from someone else). Skip pool hits
-        // and skip hashes we just reserved for this peer.
-        if hashes.len() > unknown.len() {
-            let unknown_set: FxHashSet<H256> = unknown.iter().copied().collect();
-            let now = Instant::now();
-            for (i, hash) in hashes.iter().enumerate() {
-                if unknown_set.contains(hash) || inner.transaction_pool.contains_key(hash) {
-                    continue;
-                }
-                let alt = Alternate {
-                    peer_id: announcer,
-                    tx_type: types[i],
-                    tx_size: sizes[i],
-                };
-                let entry = inner
-                    .alternates
-                    .entry(*hash)
-                    .or_insert_with(|| (VecDeque::new(), now));
-                entry.1 = now;
-                if !entry.0.iter().any(|a| a.peer_id == announcer) {
-                    if entry.0.len() >= MAX_ALTERNATES_PER_HASH {
-                        entry.0.pop_front();
-                    }
-                    entry.0.push_back(alt);
-                }
+        let mut unknown = Vec::new();
+        let now = Instant::now();
+        for (i, hash) in hashes.iter().enumerate() {
+            if !seen.insert(*hash) || inner.transaction_pool.contains_key(hash) {
+                continue;
             }
+            // Already requested from this announcer: it cannot also be its own fallback.
+            if inner.in_flight_txs.get(hash) == Some(&announcer) {
+                continue;
+            }
+            // Already a fallback for this hash: only refresh the entry.
+            if inner.in_flight_txs.contains_key(hash)
+                && let Some((alternates, last_seen)) = inner.alternates.get_mut(hash)
+                && alternates.iter().any(|a| a.peer_id == announcer)
+            {
+                *last_seen = now;
+                continue;
+            }
+            if room == 0 {
+                debug!(
+                    peer = %format!("{announcer:#x}"),
+                    unprocessed = hashes.len() - i,
+                    "Peer reached its announced-hash budget, ignoring the rest of its announcement"
+                );
+                break;
+            }
+            room -= 1;
+            charge_announcer(&mut inner.announced_per_peer, announcer);
+            if !inner.in_flight_txs.contains_key(hash) {
+                inner.in_flight_txs.insert(*hash, announcer);
+                unknown.push(*hash);
+                continue;
+            }
+            // In flight from someone else: register this announcer as a fallback.
+            let (alternates, last_seen) = inner
+                .alternates
+                .entry(*hash)
+                .or_insert_with(|| (VecDeque::new(), now));
+            *last_seen = now;
+            if alternates.len() >= MAX_ALTERNATES_PER_HASH
+                && let Some(evicted) = alternates.pop_front()
+            {
+                release_announcer(&mut inner.announced_per_peer, evicted.peer_id);
+            }
+            alternates.push_back(Alternate {
+                peer_id: announcer,
+                tx_type: types[i],
+                tx_size: sizes[i],
+            });
         }
 
         Ok(unknown)
@@ -1384,9 +1465,24 @@ impl Mempool {
     /// Removes transaction hashes from the in-flight set, typically called
     /// when the GetPooledTransactions response arrives (or the connection drops).
     pub fn clear_in_flight_txs(&self, hashes: &[H256]) -> Result<(), StoreError> {
+        let mut guard = self.write()?;
+        let inner = &mut *guard;
+        for hash in hashes {
+            if let Some(peer) = inner.in_flight_txs.remove(hash) {
+                release_announcer(&mut inner.announced_per_peer, peer);
+            }
+        }
+        Ok(())
+    }
+
+    /// Forgets the alternate announcers of transactions a peer has delivered,
+    /// whether or not the pool kept them. They exist to retry a request that
+    /// fails, and a delivered transaction is not requested again unless it is
+    /// announced again, so keeping them only holds the announcers' budgets.
+    pub fn forget_alternates(&self, hashes: &[H256]) -> Result<(), StoreError> {
         let mut inner = self.write()?;
         for hash in hashes {
-            inner.in_flight_txs.remove(hash);
+            inner.remove_alternates(hash);
         }
         Ok(())
     }
@@ -1396,13 +1492,17 @@ impl Mempool {
     /// `Alternate` to look up the peer connection and build a retry request
     /// against that peer's own announcement metadata.
     pub fn pop_alternate(&self, hash: H256) -> Result<Option<Alternate>, StoreError> {
-        let mut inner = self.write()?;
-        let Some(entry) = inner.alternates.get_mut(&hash) else {
+        let mut guard = self.write()?;
+        let inner = &mut *guard;
+        let Some((alternates, _)) = inner.alternates.get_mut(&hash) else {
             return Ok(None);
         };
-        let popped = entry.0.pop_front();
-        if entry.0.is_empty() {
+        let popped = alternates.pop_front();
+        if alternates.is_empty() {
             inner.alternates.remove(&hash);
+        }
+        if let Some(alternate) = &popped {
+            release_announcer(&mut inner.announced_per_peer, alternate.peer_id);
         }
         Ok(popped)
     }
@@ -1411,12 +1511,100 @@ impl Mempool {
     /// Called periodically to bound the size of the alternates map when
     /// announced txs never make it into the pool.
     pub fn prune_alternates(&self, ttl: Duration) -> Result<(), StoreError> {
+        let mut guard = self.write()?;
+        let MempoolInner {
+            alternates,
+            announced_per_peer,
+            ..
+        } = &mut *guard;
+        let now = Instant::now();
+        alternates.retain(|_, (entries, last_seen)| {
+            let keep = now.saturating_duration_since(*last_seen) < ttl;
+            if !keep {
+                for alternate in entries.iter() {
+                    release_announcer(announced_per_peer, alternate.peer_id);
+                }
+            }
+            keep
+        });
+        Ok(())
+    }
+
+    /// Drops `peer` as a fallback announcer and as a blob provider everywhere, releasing what
+    /// it was charged for both. Called when its session ends: a disconnected peer can serve
+    /// neither a retry nor cells. Hashes reserved to be requested from it are released by the
+    /// session itself as it clears its requests.
+    pub fn forget_peer_announcements(&self, peer: H256) -> Result<(), StoreError> {
+        let mut guard = self.write()?;
+        // A peer charged for nothing has nothing recorded: skip the walk over every entry.
+        if !guard.announced_per_peer.contains_key(&peer) {
+            return Ok(());
+        }
+        let MempoolInner {
+            alternates,
+            provider_announcers,
+            announced_per_peer,
+            ..
+        } = &mut *guard;
+        alternates.retain(|_, (entries, _)| {
+            entries.retain(|alternate| {
+                let keep = alternate.peer_id != peer;
+                if !keep {
+                    release_announcer(announced_per_peer, peer);
+                }
+                keep
+            });
+            !entries.is_empty()
+        });
+        provider_announcers.retain(|_, announcers| {
+            if announcers.remove(&peer) {
+                release_announcer(announced_per_peer, peer);
+            }
+            !announcers.is_empty()
+        });
+        Ok(())
+    }
+
+    /// Notes `hashes`, the transactions of a new head block, as included, and forgets those
+    /// noted more than `RECENTLY_INCLUDED_TTL` ago.
+    pub fn note_included_txs(
+        &self,
+        hashes: impl IntoIterator<Item = H256>,
+    ) -> Result<(), StoreError> {
         let mut inner = self.write()?;
         let now = Instant::now();
         inner
-            .alternates
-            .retain(|_, (_, last_seen)| now.saturating_duration_since(*last_seen) < ttl);
+            .recently_included
+            .retain(|_, noted| now.saturating_duration_since(*noted) < RECENTLY_INCLUDED_TTL);
+        inner
+            .recently_included
+            .extend(hashes.into_iter().map(|hash| (hash, now)));
         Ok(())
+    }
+
+    /// The transactions of `hashes` no longer wanted from peers, in their order: those in the
+    /// pool and those a recent head block included (see `note_included_txs`).
+    pub fn settled_txs(&self, hashes: &[H256]) -> Result<Vec<H256>, StoreError> {
+        let inner = self.read()?;
+        Ok(hashes
+            .iter()
+            .filter(|hash| {
+                inner.transaction_pool.contains_key(*hash)
+                    || inner.recently_included.contains_key(*hash)
+            })
+            .copied()
+            .collect())
+    }
+
+    /// How many announced hashes the mempool currently tracks for `peer`,
+    /// out of `MAX_ANNOUNCED_HASHES_PER_PEER`.
+    pub fn announced_hashes_tracked_for(&self, peer: H256) -> Result<usize, StoreError> {
+        Ok(self
+            .read()?
+            .announced_per_peer
+            .get(&peer)
+            .copied()
+            .unwrap_or(0))
     }
 
     pub fn get_transaction_by_hash(
@@ -1660,15 +1848,34 @@ impl Mempool {
 
     /// Record that `peer_id` has announced `tx_hash` via NewPooledTransactionHashes72.
     /// Returns the number of distinct announcers seen so far for this hash.
+    ///
+    /// The record is charged to `peer_id`'s announced-hash budget until the tx
+    /// leaves the pool or `prune_cells` drops it; a peer with no budget left is
+    /// not recorded.
     pub fn record_provider_announcement(
         &self,
         tx_hash: H256,
         peer_id: H256,
     ) -> Result<usize, StoreError> {
-        let mut inner = self.write()?;
-        let entry = inner.provider_announcers.entry(tx_hash).or_default();
-        entry.insert(peer_id);
-        Ok(entry.len())
+        let mut guard = self.write()?;
+        let inner = &mut *guard;
+        let held = inner.announced_per_peer.get(&peer_id).copied().unwrap_or(0);
+        let recorded = inner
+            .provider_announcers
+            .get(&tx_hash)
+            .is_some_and(|announcers| announcers.contains(&peer_id));
+        if !recorded && held < MAX_ANNOUNCED_HASHES_PER_PEER {
+            inner
+                .provider_announcers
+                .entry(tx_hash)
+                .or_default()
+                .insert(peer_id);
+            charge_announcer(&mut inner.announced_per_peer, peer_id);
+        }
+        Ok(inner
+            .provider_announcers
+            .get(&tx_hash)
+            .map_or(0, |announcers| announcers.len()))
     }
 
     /// Record the cell mask advertised by a peer in a NewPooledTransactionHashes72 message.
@@ -1778,6 +1985,7 @@ impl Mempool {
         let MempoolInner {
             cells,
             provider_announcers,
+            announced_per_peer,
             transaction_pool,
             ..
         } = &mut *inner;
@@ -1785,7 +1993,15 @@ impl Mempool {
         // Announcer tracking follows the same lifetime as the cells: without this
         // the map keeps a key (and a per-peer set) for every blob tx that ever
         // passed through the pool.
-        provider_announcers.retain(|hash, _| transaction_pool.contains_key(hash));
+        provider_announcers.retain(|hash, announcers| {
+            let keep = transaction_pool.contains_key(hash);
+            if !keep {
+                for peer in announcers.iter() {
+                    release_announcer(announced_per_peer, *peer);
+                }
+            }
+            keep
+        });
         Ok(())
     }
 
@@ -2626,6 +2842,223 @@ mod tests {
             vec![h],
             "duplicate announced hash must be reserved once"
         );
+    }
+
+    fn distinct_hashes(from: u64, count: usize) -> Vec<H256> {
+        (from..from + count as u64)
+            .map(H256::from_low_u64_be)
+            .collect()
+    }
+
+    fn reserve_all(pool: &Mempool, hashes: &[H256], announcer: H256) -> Vec<H256> {
+        pool.reserve_unknown_hashes(
+            hashes,
+            &vec![2; hashes.len()],
+            &vec![100; hashes.len()],
+            announcer,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn announcements_past_the_peer_budget_are_dropped() {
+        let pool = Mempool::new(64);
+        let peer = H256::from_low_u64_be(1);
+        let announced = distinct_hashes(1_000, MAX_ANNOUNCED_HASHES_PER_PEER + 100);
+
+        let reserved = reserve_all(&pool, &announced, peer);
+        assert_eq!(reserved, announced[..MAX_ANNOUNCED_HASHES_PER_PEER]);
+        assert_eq!(
+            pool.announced_hashes_tracked_for(peer).unwrap(),
+            MAX_ANNOUNCED_HASHES_PER_PEER
+        );
+
+        // The budget is the peer's, not the session's: a second session of the same node id
+        // announcing other hashes gets nothing reserved and is not registered as a fallback.
+        let from_second_session = reserve_all(&pool, &distinct_hashes(50_000, 10), peer);
+        assert!(from_second_session.is_empty());
+        let in_flight_elsewhere = announced[0];
+        assert!(reserve_all(&pool, &[in_flight_elsewhere], H256::from_low_u64_be(2)).is_empty());
+        assert_eq!(
+            pool.pop_alternate(in_flight_elsewhere)
+                .unwrap()
+                .map(|alt| alt.peer_id),
+            Some(H256::from_low_u64_be(2)),
+            "another peer has its own budget"
+        );
+    }
+
+    #[test]
+    fn released_reservations_free_the_peer_budget() {
+        let pool = Mempool::new(64);
+        let peer = H256::from_low_u64_be(1);
+        let announced = distinct_hashes(1_000, MAX_ANNOUNCED_HASHES_PER_PEER);
+        reserve_all(&pool, &announced, peer);
+
+        pool.clear_in_flight_txs(&announced[..10]).unwrap();
+        assert_eq!(
+            pool.announced_hashes_tracked_for(peer).unwrap(),
+            MAX_ANNOUNCED_HASHES_PER_PEER - 10
+        );
+        let more = distinct_hashes(50_000, 20);
+        assert_eq!(reserve_all(&pool, &more, peer), more[..10]);
+
+        pool.clear_in_flight_txs(&announced).unwrap();
+        pool.clear_in_flight_txs(&more).unwrap();
+        assert_eq!(pool.announced_hashes_tracked_for(peer).unwrap(), 0);
+    }
+
+    #[test]
+    fn alternate_registrations_are_charged_until_released() {
+        let pool = Mempool::new(64);
+        let primary = H256::from_low_u64_be(1);
+        let fallback = H256::from_low_u64_be(2);
+        let hashes = distinct_hashes(1_000, 4);
+        reserve_all(&pool, &hashes, primary);
+        assert!(reserve_all(&pool, &hashes, fallback).is_empty());
+        assert_eq!(pool.announced_hashes_tracked_for(fallback).unwrap(), 4);
+
+        // Re-announcing what it is already a fallback for costs nothing more.
+        reserve_all(&pool, &hashes, fallback);
+        assert_eq!(pool.announced_hashes_tracked_for(fallback).unwrap(), 4);
+
+        // Popped for a retry, forgotten once delivered, pruned when stale.
+        pool.pop_alternate(hashes[0]).unwrap();
+        pool.forget_alternates(&hashes[1..2]).unwrap();
+        assert_eq!(pool.announced_hashes_tracked_for(fallback).unwrap(), 2);
+        pool.prune_alternates(Duration::ZERO).unwrap();
+        assert_eq!(pool.announced_hashes_tracked_for(fallback).unwrap(), 0);
+    }
+
+    #[test]
+    fn settled_transactions_are_those_pooled_or_recently_included() {
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        let mtx = MempoolTransaction::new(build_tx(0), sender);
+        let pooled = mtx.hash(&NativeCrypto);
+        pool.add_transaction(pooled, sender, mtx, None, None)
+            .unwrap();
+        let included = H256::from_low_u64_be(1);
+        let unknown = H256::from_low_u64_be(2);
+        pool.note_included_txs([included]).unwrap();
+
+        assert_eq!(
+            pool.settled_txs(&[pooled, included, unknown]).unwrap(),
+            [pooled, included]
+        );
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "released an announced hash it was not charged for")]
+    fn releasing_more_than_a_peer_was_charged_is_caught() {
+        let mut announced_per_peer = FxHashMap::default();
+        let peer = H256::from_low_u64_be(1);
+        charge_announcer(&mut announced_per_peer, peer);
+        release_announcer(&mut announced_per_peer, peer);
+        release_announcer(&mut announced_per_peer, peer);
+    }
+
+    #[test]
+    fn re_announcing_a_hash_requested_from_the_announcer_costs_nothing() {
+        let pool = Mempool::new(64);
+        let peer = H256::from_low_u64_be(1);
+        let hash = H256::from_low_u64_be(0xabc);
+        assert_eq!(reserve_all(&pool, &[hash], peer), [hash]);
+
+        // The peer is not its own fallback: a retry must go to someone else.
+        assert!(reserve_all(&pool, &[hash], peer).is_empty());
+        assert_eq!(pool.announced_hashes_tracked_for(peer).unwrap(), 1);
+        assert!(pool.pop_alternate(hash).unwrap().is_none());
+    }
+
+    #[test]
+    fn an_alternate_evicted_from_a_full_queue_is_released() {
+        let pool = Mempool::new(64);
+        let hash = H256::from_low_u64_be(0xabc);
+        reserve_all(&pool, &[hash], H256::from_low_u64_be(100));
+        let fallbacks = distinct_hashes(1, MAX_ALTERNATES_PER_HASH + 1);
+        for peer in &fallbacks {
+            reserve_all(&pool, &[hash], *peer);
+        }
+        assert_eq!(pool.announced_hashes_tracked_for(fallbacks[0]).unwrap(), 0);
+        assert_eq!(pool.announced_hashes_tracked_for(fallbacks[1]).unwrap(), 1);
+    }
+
+    #[test]
+    fn admitting_a_transaction_releases_its_alternates() {
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        let mtx = MempoolTransaction::new(build_tx(0), sender);
+        let hash = mtx.hash(&NativeCrypto);
+        let fallback = H256::from_low_u64_be(2);
+        reserve_all(&pool, &[hash], H256::from_low_u64_be(1));
+        reserve_all(&pool, &[hash], fallback);
+        assert_eq!(pool.announced_hashes_tracked_for(fallback).unwrap(), 1);
+
+        pool.add_transaction(hash, sender, mtx, None, None).unwrap();
+        assert_eq!(pool.announced_hashes_tracked_for(fallback).unwrap(), 0);
+    }
+
+    #[test]
+    fn provider_announcements_are_charged_and_capped() {
+        let pool = Mempool::new(64);
+        let peer = H256::from_low_u64_be(1);
+        let blob_tx = H256::from_low_u64_be(0xb10b);
+        assert_eq!(pool.record_provider_announcement(blob_tx, peer).unwrap(), 1);
+        assert_eq!(pool.record_provider_announcement(blob_tx, peer).unwrap(), 1);
+        assert_eq!(pool.announced_hashes_tracked_for(peer).unwrap(), 1);
+
+        // The blob tx never reached the pool, so the record is pruned and released.
+        pool.prune_cells().unwrap();
+        assert_eq!(pool.announced_hashes_tracked_for(peer).unwrap(), 0);
+
+        // A peer with no budget left is not recorded as a provider.
+        reserve_all(
+            &pool,
+            &distinct_hashes(1_000, MAX_ANNOUNCED_HASHES_PER_PEER),
+            peer,
+        );
+        assert_eq!(pool.record_provider_announcement(blob_tx, peer).unwrap(), 0);
+        assert!(
+            !pool
+                .read()
+                .unwrap()
+                .provider_announcers
+                .contains_key(&blob_tx)
+        );
+    }
+
+    #[test]
+    fn a_peers_announcements_are_forgotten_with_its_session() {
+        let pool = Mempool::new(64);
+        let (primary, leaving, staying) = (
+            H256::from_low_u64_be(1),
+            H256::from_low_u64_be(2),
+            H256::from_low_u64_be(3),
+        );
+        let hashes = distinct_hashes(1_000, 3);
+        let blob_tx = H256::from_low_u64_be(0xb10b);
+        reserve_all(&pool, &hashes, primary);
+        reserve_all(&pool, &hashes, leaving);
+        reserve_all(&pool, &hashes[..1], staying);
+        pool.record_provider_announcement(blob_tx, leaving).unwrap();
+        pool.record_provider_announcement(blob_tx, staying).unwrap();
+        assert_eq!(pool.announced_hashes_tracked_for(leaving).unwrap(), 4);
+
+        pool.forget_peer_announcements(leaving).unwrap();
+        assert_eq!(pool.announced_hashes_tracked_for(leaving).unwrap(), 0);
+        assert_eq!(pool.announced_hashes_tracked_for(staying).unwrap(), 2);
+        assert_eq!(pool.provider_announcer_count(blob_tx).unwrap(), 1);
+        assert_eq!(
+            pool.pop_alternate(hashes[0])
+                .unwrap()
+                .map(|alt| alt.peer_id),
+            Some(staying)
+        );
+        assert!(pool.pop_alternate(hashes[1]).unwrap().is_none());
+        // Reservations are the session's to release, not this call's.
+        assert_eq!(pool.announced_hashes_tracked_for(primary).unwrap(), 3);
     }
 
     // --- RBF price-bump helpers --------------------------------------------
