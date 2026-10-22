@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-10-22
+
+- Answer MODEXP inversions modulo well-known 256-bit primes (base^(p − 2) mod p for the BN254, secp256k1, P-256 and BLS12-381 fields and group orders) with a safegcd inversion, and build the Montgomery constants with 8 squarings instead of 512 doublings: the dominant mainnet MODEXP call 4.09 → 0.73 µs [#7456](https://github.com/lambdaclass/ethrex/pull/7456)
+
 ### 2026-10-20
 
 - Warm block access list accounts on a dedicated I/O pool that keeps more reads in flight: on the stateful repricing benchmarks, cold accesses to existing accounts −78% and the 9 account-access tests 47.8 → 16.4 s [#7451](https://github.com/lambdaclass/ethrex/pull/7451)
