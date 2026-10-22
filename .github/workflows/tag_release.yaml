@@ -266,7 +266,10 @@ jobs:
       # `/twirp/api.ZkvmService/Execute`, served while it runs in server mode.
       - name: Start ere-server
         run: |
+          # ZisK executes on its ASM emulator, which takes up to 1.7 GiB of
+          # /dev/shm per service, far over Docker's 64 MiB default.
           docker run -d --name ere-server \
+            --shm-size 4g \
             -e RUST_LOG=info \
             -p 3000:3000 \
             -v $PWD/output:/output \
