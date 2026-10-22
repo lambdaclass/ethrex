@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-fa45e484.js";
+            window.path_to_searchindex_js = "searchindex-100abdef.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-34260634.js"></script>
+        <script src="toc-ce2f25ba.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -2551,6 +2551,396 @@ receipts after snap sync completes, so the node can serve those queries.</p>
 <p>See <a href="#historical-chain-backfill-1">Historical chain backfill</a> for the flags, how it
 works, durability across restarts, and its limitations.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<h1 id="partial-stateful-node"><a class="header" href="#partial-stateful-node">Partial stateful node</a></h1>
+<h2 id="what-it-is"><a class="header" href="#what-it-is">What it is</a></h2>
+<p><code>ethrex partial-stateful-node</code> (alias <code>ethrex psn</code>) runs ethrex as a <strong>partial stateful
+node</strong>: an execution-layer node that holds only the accounts and storage its users read, proves
+every value it serves against headers a light client verified, and follows the chain by applying
+EIP-7928 block access lists to the keys it holds instead of executing blocks. It is built for
+wallets: a local JSON-RPC endpoint that is ready in minutes, keeps kilobytes on disk, runs in
+tens of megabytes of memory, and trusts no RPC provider. The design follows <a href="https://github.com/weiihann/chibi">chibi</a>, with
+<a href="https://github.com/ethereum/EIPs/pull/12464">EIP-8440 execution chain proofs</a> layered on top.
+It is optional: build with <code>--features partial</code>; the implementation is the <code>ethrex-partial</code>
+crate in <code>tooling/partial</code>.</p>
+<h3 id="where-it-sits"><a class="header" href="#where-it-sits">Where it sits</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>Full node</th><th>Partial stateful node</th><th>Wallet on an RPC provider</th></tr>
+</thead>
+<tbody>
+<tr><td>State held</td><td>all of it</td><td>the keys its users touch, each one proven</td><td>none</td></tr>
+<tr><td>Follows the chain by</td><td>executing every block</td><td>applying block access lists to held keys</td><td>asking the provider</td></tr>
+<tr><td>Trusts</td><td>genesis and its own execution</td><td>a checkpoint and the sync committee, plus chain proofs when they exist</td><td>the provider</td></tr>
+<tr><td>Ready in</td><td>hours to days</td><td>minutes, waiting for a peer</td><td>at once</td></tr>
+<tr><td>Disk, memory</td><td>hundreds of GB, gigabytes</td><td>kilobytes, tens of megabytes</td><td>none</td></tr>
+<tr><td>Serves</td><td>every JSON-RPC method</td><td>the wallet subset: balance, nonce, code, storage, call, estimate, fees, send, its own receipts</td><td>whatever the provider serves</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="what-it-is-not"><a class="header" href="#what-it-is-not">What it is not</a></h3>
+<ul>
+<li><strong>Not a consensus client.</strong> It embeds a light client, the verifying part of one, and reads a
+beacon node’s REST API for the sync committee data that light client checks. It follows no
+beacon gossip and runs no validator duties. A beacon node is a requirement, a consensus client
+process on the same machine is not; see <a href="#what-it-needs">What it needs</a>.</li>
+<li><strong>Not an indexer or an archive.</strong> It holds no logs, filters, history or full blocks, and
+serves state at the anchor and the eight blocks before it.</li>
+<li><strong>Not a substitute for validating the chain yourself.</strong> It trusts the sync committee, and
+chain proofs when a network has them, instead of executing. A full node is still what you
+run when that trust is not acceptable.</li>
+</ul>
+<h3 id="trust-in-one-sentence"><a class="header" href="#trust-in-one-sentence">Trust in one sentence</a></h3>
+<p>Every value it serves descends from a header the sync committee signed: snap proofs against
+that header’s state root, access lists committed to by its hash, bodies and receipts committed
+to by its roots, and, when present, an EIP-8440 proof that the execution up to it was valid. A
+lying peer or beacon node can stall the node; it cannot make it serve a wrong value.</p>
+<h2 id="what-it-needs"><a class="header" href="#what-it-needs">What it needs</a></h2>
+<p>Four things from outside the node, and very little hardware.</p>
+<h3 id="a-beacon-node-not-a-consensus-client"><a class="header" href="#a-beacon-node-not-a-consensus-client">A beacon node, not a consensus client</a></h3>
+<p>Consensus clients expose a standard REST interface, the
+<a href="https://ethereum.github.io/beacon-APIs/">Beacon API</a>: headers, blocks, the chain’s
+configuration, an event stream, and the light client endpoints. The partial node reads the last
+group: <code>light_client/bootstrap</code> once at the checkpoint, <code>light_client/updates</code> once per sync
+committee period, and <code>light_client/finality_update</code> and <code>light_client/optimistic_update</code> every
+slot, plus <code>headers</code>, <code>genesis</code> and <code>config/spec</code>. That is what <code>--beacon.url</code> points at.</p>
+<p>It does not run a consensus client itself, and does not need one on the same machine. It embeds
+a light client, the verifying part of one: every header it takes is checked against the sync
+committee’s aggregate BLS signature, every committee change against its Merkle branch from the
+state the previous committee signed. The beacon node can censor or stall the light client; it
+cannot make it accept a header the committee did not sign. Any beacon node that serves light
+client data works, local or remote. Lighthouse, Nimbus, Lodestar and Teku serve it; a node that
+does not serve it at all answers <code>404</code> on every light client route, which the log reports.</p>
+<h3 id="execution-peers"><a class="header" href="#execution-peers">Execution peers</a></h3>
+<p>Ordinary execution clients over devp2p, found through the network’s bootnodes or <code>--bootnodes</code>.
+Headers, bodies, receipts and block access lists come over <code>eth/71</code>; the state proofs come over
+<code>snap</code>, as single-key account and storage range requests, and block access lists over <code>snap/2</code>
+where a peer offers it. ethrex and geth both serve what is needed. The first anchor waits for one
+peer that serves state and a few that speak <code>eth</code> (<code>--min-eth-peers</code>), and then for one of them
+to answer the first header request; on Sepolia today that is where the minutes go.</p>
+<h3 id="a-network-past-glamsterdam"><a class="header" href="#a-network-past-glamsterdam">A network past Glamsterdam</a></h3>
+<p>Two pieces of the design are Glamsterdam features:</p>
+<ul>
+<li><strong>EIP-7928 block access lists (Amsterdam)</strong> are how the node advances without executing. A
+header before Amsterdam carries no access-list hash, so on such a network every step falls back
+to reanchoring: the pins are re-proven each block and the learned keys are dropped. Correct,
+but slow, and <code>eth_call</code> warmth resets every slot.</li>
+<li><strong>Gloas light client headers</strong> carry the hash of the execution block the beacon chain applied,
+which is what the follower anchors on, and the EIP-8440 proof machinery is defined on Gloas
+payload envelopes.</li>
+</ul>
+<p>Sepolia activated Glamsterdam in October 2026 and is where the node is exercised. Mainnet has
+no Amsterdam activation scheduled yet; nothing in the node is network-specific, so
+<code>--network mainnet</code> with a mainnet beacon node becomes the target the moment it forks. Pre-Gloas
+light client headers are handled, so the light client itself bootstraps on any network since
+Altair.</p>
+<h3 id="a-checkpoint-you-trust"><a class="header" href="#a-checkpoint-you-trust">A checkpoint you trust</a></h3>
+<p><code>--checkpoint</code> is a finalized beacon block root: the weak-subjectivity checkpoint, the one
+thing the light client takes on faith. Without it the node asks the beacon node for its
+finalized block and says so in the log, which makes that node the trust anchor; fine for a
+test, not for a wallet. Any block explorer or beacon node you trust gives you the root.</p>
+<p>The beacon node must hold light client data for that root. Lighthouse keeps it only for
+finalized checkpoint roots whose block sits at an epoch boundary; when the boundary slot was
+skipped, the checkpoint root is an earlier block and <code>light_client/bootstrap</code> answers <code>404</code>
+for it. The node retries for half a minute and then exits with the route and the status; pick
+the previous finalized checkpoint, or wait an epoch.</p>
+<h3 id="hardware"><a class="header" href="#hardware">Hardware</a></h3>
+<p>Anything that runs the ethrex binary. The node holds no database, executes no blocks, and
+keeps a bounded working set, so its footprint is that of the networking stack and the light
+client. Measured on Sepolia in <code>off</code> mode on 2026-10-20, over six and a half minutes of
+following the chain with one watched account:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th></th><th>Measured</th><th>Why it stays there</th></tr>
+</thead>
+<tbody>
+<tr><td>Memory</td><td>29 to 34 MB resident</td><td>the working set is capped at 1024 keys and eight recent states; headers are kept for 256 blocks; a chain proof is at most 4 MiB and is dropped once verified</td></tr>
+<tr><td>CPU</td><td>3% of one core on average, brief peaks under 10%</td><td>one BLS aggregate check per slot, a few Merkle and trie proofs per block, levm only for <code>eth_call</code> and <code>eth_estimateGas</code></td></tr>
+<tr><td>Disk</td><td>8 KB in the data directory, plus the 40 MB binary</td><td>only the node key and its ENR are written; state is never persisted</td></tr>
+<tr><td>Network</td><td>a few kilobytes per second each way</td><td>headers and access lists over devp2p, light client updates over HTTPS; a reanchor adds one snap proof per held key</td></tr>
+<tr><td>Time to serve</td><td>light client bootstrapped in 5 s; peers connected in 25 s; first anchor at 4 min</td><td>the wait is for a peer that answers the first header request, and Sepolia has few that serve this node</td></tr>
+</tbody>
+</table>
+</div>
+<p>The two cache lines the startup log prints, a RocksDB block cache in the gigabytes and a
+bytecode cache of 2 GiB, are the full node’s store sizing itself; the partial node’s store
+is in memory and headers-only, and neither cache is allocated to that size, as the resident
+memory above shows.</p>
+<p>A single core and 128 MB of memory leave headroom; a Raspberry Pi, a NAS or a phone-class
+board is enough. Bandwidth matters more than compute: the node is idle between slots and
+busy for a fraction of a second at each one.</p>
+<h3 id="optionally-a-source-of-eip-8440-proofs"><a class="header" href="#optionally-a-source-of-eip-8440-proofs">Optionally, a source of EIP-8440 proofs</a></h3>
+<p>With <code>--proof-mode observe</code> or <code>require</code> the node also reads execution chain proofs from
+<code>GET /eth/v1/beacon/execution_proofs/{block_id}</code> on <code>--proofs.url</code>, which defaults to the
+light client’s node. The two can differ: an ethlambda node serves verified proofs but no light
+client data today, so it pairs with a Lighthouse or Nimbus for the latter. No public network
+produces chain proofs yet, which is why the default mode is <code>off</code>; see
+<a href="#eip-8440-execution-chain-proofs">EIP-8440 execution chain proofs</a>.</p>
+<h2 id="running"><a class="header" href="#running">Running</a></h2>
+<pre><code class="language-sh">cargo build --release --features partial --bin ethrex
+
+./target/release/ethrex partial-stateful-node \
+  --network sepolia \
+  --beacon.url https://beacon.sepolia.ethpandaops.io/nimbus \
+  --checkpoint 0xa8d991bb5d16328401a8b10568b85dcb60bddf62053547069929bab00346a8a7 \
+  --watch 0xYourAddress,0xAnotherAddress \
+  --http.port 8545
+</code></pre>
+<p>Point a wallet at <code>http://127.0.0.1:8545</code>. The node serves JSON-RPC once it is anchored at
+the light client’s head and a peer serving state (snap) is connected.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--beacon.url URL</code></td><td>Beacon REST API the light client reads sync committee data from. It can stall the node but cannot make it accept an unsigned header.</td></tr>
+<tr><td><code>--checkpoint ROOT</code></td><td>Weak subjectivity checkpoint: a finalized beacon block root you trust. Without it the beacon node’s finalized block is trusted as the starting point, and the node says so in its log. Beacon nodes publish light client data for a fresh checkpoint a little after finalizing it, so a missing bootstrap is retried; a node-chosen checkpoint also falls back to the previous epoch’s.</td></tr>
+<tr><td><code>--watch ADDR,...</code></td><td>Accounts kept proven at every head (pins). Everything else is learned from use.</td></tr>
+<tr><td><code>--working-set-cap N</code></td><td>Most keys kept proven, pins included (default 1024, LRU eviction).</td></tr>
+<tr><td><code>--proof-mode off|observe|require</code></td><td>How EIP-8440 chain proofs are used (see below).</td></tr>
+<tr><td><code>--proof-engine.url URL</code></td><td>The proof engine that verifies chain proofs.</td></tr>
+<tr><td><code>--proof-engine.mock</code></td><td>Accept mock proofs without verification. Devnets and tests only.</td></tr>
+<tr><td><code>--proofs.url URL</code></td><td>Beacon REST API to read proofs from when it is not the light client’s node, such as one that serves proofs but no light client data. Defaults to <code>--beacon.url</code>.</td></tr>
+<tr><td><code>--min-eth-peers N</code></td><td>Peers speaking eth to wait for before anchoring (default 3), so header requests have somewhere else to go when one peer cannot serve them.</td></tr>
+<tr><td><code>--network</code>, <code>--datadir</code>, <code>--p2p.*</code>, <code>--bootnodes</code>, <code>--log.level</code>, <code>--http.*</code></td><td>Shared with a full node.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The data directory holds the node key and the learned keys (<code>partial/keys.json</code>). Proven
+state lives in memory and is re-proven on restart.</p>
+<h3 id="example-1"><a class="header" href="#example-1">Example</a></h3>
+<pre><code>$ curl -s -X POST localhost:8545 -H 'content-type: application/json' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"eth_getBalance","params":["0xYourAddress","latest"]}'
+{"jsonrpc":"2.0","id":1,"result":"0x…"}
+
+$ curl -s -X POST localhost:8545 -H 'content-type: application/json' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"partial_status","params":[]}'
+{"jsonrpc":"2.0","id":1,"result":{"anchor":{"number":11875419,"hash":"0x…","timestamp":1760900000},
+ "chainProofs":{"mode":"observe","verified":12,"provenPayloads":12,"anchorProven":true},
+ "held":{"accounts":41,"slots":117,"pins":3,"learned":155},"peers":{"state":2,"eth":9}, …}}
+</code></pre>
+<h3 id="json-rpc-served"><a class="header" href="#json-rpc-served">JSON-RPC served</a></h3>
+<p><code>web3_clientVersion</code>, <code>net_version</code>, <code>eth_chainId</code>, <code>eth_blockNumber</code>, <code>eth_syncing</code>,
+<code>eth_getBlockByNumber</code>, <code>eth_getBlockByHash</code> (headers only; no transactions), <code>eth_getBalance</code>,
+<code>eth_getTransactionCount</code> (<code>pending</code> counts submitted transactions), <code>eth_getCode</code>,
+<code>eth_getStorageAt</code>, <code>eth_call</code>, <code>eth_estimateGas</code>, <code>eth_gasPrice</code>, <code>eth_maxPriorityFeePerGas</code>,
+<code>eth_feeHistory</code>, <code>eth_sendRawTransaction</code>, <code>eth_getTransactionReceipt</code> and
+<code>eth_getTransactionByHash</code> (transactions this node submitted), and <code>partial_status</code>.</p>
+<p>State is served at <code>latest</code>/<code>pending</code> (the anchor) and at the eight blocks before it. Logs and
+filters are not served: the node holds no bodies or receipts except for its own transactions.</p>
+<h2 id="how-it-works"><a class="header" href="#how-it-works">How it works</a></h2>
+<pre><code> beacon API ──► light client ──► TrustedHash(execution block) ──► header (devp2p, hash-checked)
+                     │                                                   │
+                     │  beacon roots                                     ▼
+                     ▼                                     ┌─────────────────────────────┐
+             EIP-8440 chain proofs ──► proof engine ──►    │  Follower                   │
+             (origin ≤ checkpoint)      VALID/INVALID      │  extend: BALs (eth/71, snap/2)│
+                                                           │  reanchor: snap proofs (pins)│
+                                                           └──────────────┬──────────────┘
+                                                                          ▼
+   wallet ──► JSON-RPC ──► Node ──► pinned Store ──► levm (PartialDb) ──► misses ──► snap proofs
+</code></pre>
+<h3 id="trust-model"><a class="header" href="#trust-model">Trust model</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Layer</th><th>Trust source</th><th>What it establishes</th></tr>
+</thead>
+<tbody>
+<tr><td>Light client</td><td>the weak-subjectivity checkpoint root and an honest sync committee</td><td>which beacon block is head or finalized, and its applied execution block hash (Gloas light client header)</td></tr>
+<tr><td>EIP-8440 chain proof</td><td>the proof system and the proof engine; the origin is at or before the checkpoint</td><td>every payload from the origin to the head executed validly and is bound to the beacon chain</td></tr>
+<tr><td>snap proofs</td><td>the state root of a verified header</td><td>an account, a slot, or its absence, at the anchor</td></tr>
+<tr><td>block access list</td><td><code>block_access_list_hash</code> in a verified header</td><td>post-values of held keys for the next block</td></tr>
+<tr><td>bodies and receipts</td><td>the header’s roots and logs bloom</td><td>inclusion and receipts of the node’s own transactions</td></tr>
+</tbody>
+</table>
+</div>
+<p>Every value the node serves descends from one of these. A key never fetched is a miss, never
+a zero; only a key proven absent reads as zero. A lying peer can stall the node but cannot
+make it serve a wrong value.</p>
+<h3 id="following-the-chain"><a class="header" href="#following-the-chain">Following the chain</a></h3>
+<p>The light client (<code>light_client/</code>) runs the Altair sync protocol with the Electra and Gloas
+generalized indices: it bootstraps from the checkpoint root, follows sync committee periods,
+and polls the finality and optimistic updates once per slot. Each verified header carries the
+execution block hash the beacon block applied, which becomes the node’s <code>TrustedHash</code>.</p>
+<p>The follower (<code>follow.rs</code>) fetches that header from devp2p peers and checks its hash. To move
+the anchor from block <code>N</code> to <code>N+k</code> (<code>k ≤ 32</code>) it fetches the block access lists of the
+<code>k</code> blocks (snap/2 <code>GetBlockAccessLists</code>, then eth/71), checks each against its header’s
+<code>block_access_list_hash</code>, and applies the post-values to the keys it holds. Nothing is
+executed. A longer gap, a reorg, or a withheld access list makes it <strong>reanchor</strong>: prove the
+pins at the new head with snap proofs, drop learned keys, and warm them back afterwards.</p>
+<h3 id="proving-state"><a class="header" href="#proving-state">Proving state</a></h3>
+<p>Proofs are single-key snap range requests (<code>GetAccountRange</code> and <code>GetStorageRanges</code> with
+origin and limit equal to the key), verified by rebuilding the proof nodes into an
+authenticated trie and walking the key (<code>verify.rs</code>). A walk that ends at a leaf proves
+presence, one that ends short proves absence, and a proof that carries a leaf the reply left
+out is a lie and costs the peer its standing. Storage roots are never held because access
+lists would leave them stale, so every slot proof re-proves its account in the same round.</p>
+<p><code>eth_call</code> and <code>eth_estimateGas</code> run levm over the pinned store through a database that
+records what it lacks. A missing value reads as empty for that run only and the result is
+withheld; the node proves the misses at the same anchor and runs again. Round trips scale
+with dependency depth, not key count. Every key read is learned, so it stays warm at later
+heads.</p>
+<h3 id="eip-8440-execution-chain-proofs"><a class="header" href="#eip-8440-execution-chain-proofs">EIP-8440 execution chain proofs</a></h3>
+<p>An execution chain proof attests that every payload from its origin beacon block to its head
+beacon block executed validly. A node that starts from a checkpoint and sees a verified proof
+whose origin is at or before that checkpoint has established valid execution up to the proof’s
+head, without executing anything. This is what lifts the node’s trust in the state it serves
+from “the sync committee signed this header” to “this header’s execution is proven”.</p>
+<p>The node maps proofs to execution blocks with the Gloas light client headers: for consecutive
+headers <code>N</code> and <code>N'</code>, <code>N'.execution_block_hash != N.execution_block_hash</code> means <code>N</code> was full
+and committed the payload <code>N'.execution_block_hash</code>, so a proof with <code>head_block_root = root(N)</code>
+proves that execution block (<code>chain_proofs/tracker.rs</code>). Proofs are fetched from the beacon
+node (<code>GET /eth/v1/beacon/execution_proofs/{block_root}</code>) and verified through a proof engine
+against <code>hash_tree_root(PublicInput{origin, head, chain_id, schema_id})</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Mode</th><th>Behaviour</th></tr>
+</thead>
+<tbody>
+<tr><td><code>off</code></td><td>Chain proofs are not used. The anchor is the light client’s head.</td></tr>
+<tr><td><code>observe</code></td><td>Proofs are fetched and verified; <code>partial_status</code> reports how many execution blocks are proven and whether the anchor is. The anchor is the light client’s head.</td></tr>
+<tr><td><code>require</code></td><td>The anchor starts at the checkpoint’s execution block, the trust root, and only moves to execution blocks with a verified chain proof whose origin is at or before the checkpoint. Reads at <code>latest</code> are served there.</td></tr>
+</tbody>
+</table>
+</div>
+<p>In <code>require</code> mode the checkpoint and the prover’s origin have to agree: a proof whose origin is
+after the checkpoint says nothing about the gap between the two and is refused, so with a
+prover that started recently the anchor never moves and <code>partial_status</code> reports <code>verified</code>
+at zero. The node warns once per such origin, naming both slots; the fix is a checkpoint at or
+after the origin.</p>
+<p>The proof engine is reached over HTTP as <code>POST /v1/execution_proof_verifications</code> with the
+proof bytes as the body and the public input fields as query parameters
+(<code>origin_block_root</code>, <code>head_block_root</code>, <code>chain_id</code>, <code>schema_id</code>, <code>proof_type</code>), the contract
+of Lighthouse’s EIP-8025 proof-engine sidecar client with the EIP-8440 fields in place of the
+EIP-8025 ones. No EIP-8440 engine exists yet; the parameter names are this node’s assumption
+and live in one place (<code>chain_proofs/engine.rs</code>). Proofs are read from the beacon node’s
+<code>GET /eth/v1/beacon/execution_proofs/{block_id}</code>, the route the eth-act Lighthouse branch
+serves for EIP-8025 proofs; Prysm publishes received proofs on its event stream instead
+(<code>/eth/v1/events?topics=execution_proof</code>), which this node does not read yet. The prover’s
+signature is not checked: it only gates gossip, and a proof’s validity does not depend on who
+signed it.</p>
+<p><strong>Where consensus clients are (2026-10-20).</strong> Prysm (OffchainLabs/prysm#17690) and the eth-act
+Lighthouse branch <code>optional-proofs</code> implement EIP-8025, single-payload proofs, with the ERE
+zkVM verifiers embedded in the client and the ethrex stateless-validator guests as proof types
+1 to 3; upstream Lighthouse verifies through the external HTTP sidecar above. ethlambda takes
+EIP-8440 proofs from gossip and its Beacon API, verifies them through a proof engine (today a
+mock), keeps them until finality and serves them on the <code>GET</code> route above; its validator client
+can sign a mock chain proof per slot for devnets, which is what this node was run against (see
+<a href="#live-run">Live run</a>). No client produces real EIP-8440 chain proofs: the recursive chain guest
+does not exist yet, so <code>observe</code> and <code>require</code> can only be exercised against the mock engine
+until it does. Covering the gap with one EIP-8025 proof per payload is possible (ethrex already
+has the <code>NewPayloadRequest</code> SSZ container) but is not implemented.</p>
+<h2 id="what-is-ethrexs-and-what-is-new"><a class="header" href="#what-is-ethrexs-and-what-is-new">What is ethrex’s and what is new</a></h2>
+<p>The crate is larger than the idea suggests because the pieces ethrex already has were built
+for a node that holds the whole state, and three of the five layers below needed a version
+that does not. Everything reused is linked, not copied; everything new is listed with the
+reason it could not be reused and, where there is one, the refactor that would let it be.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Layer</th><th>From ethrex</th><th>New here</th><th>Why</th></tr>
+</thead>
+<tbody>
+<tr><td>Networking</td><td>the whole devp2p stack: discovery, <code>PeerTable</code>, <code>PeerHandler</code>, the <code>eth</code> and <code>snap</code> message types, header, body, receipt and access list requests</td><td><code>p2p_adapter.rs</code>, <code>fetch.rs</code>, <code>peers.rs</code>: a <code>Peers</code> trait over it, single-key snap requests, per-anchor retries</td><td>the full node’s snap client asks for ranges to fill a trie; this node asks for one key at a time, at a specific header</td></tr>
+<tr><td>Verification</td><td><code>ethrex-trie</code> nodes and hashing, header, body, receipt and access list hashing, RLP</td><td><code>verify.rs</code>: proof-node walks for one key, the pin and absence rules, the anchor chain</td><td><code>verify_range</code> trusts the requester to have chosen the range’s bounds; here the peer chooses them, and a withheld left-bound leaf would prove a false absence, so the proof is walked from the root to the key instead</td></tr>
+<tr><td>State</td><td>the account, storage and code types; the EIP-7928 access list types and hash</td><td><code>state.rs</code>, <code>working.rs</code>: the pinned store, access list application, reanchoring, retention of the last eight blocks</td><td>ethrex’s store is a complete state trie with a root; this one is a set of proven keys with the block each was proven at</td></tr>
+<tr><td>Execution</td><td>levm, whole, through its <code>VmDatabase</code> trait; the gas cap and fee rules</td><td><code>exec.rs</code>: a database that records the keys levm reads and misses, and the round loop that proves them and runs again</td><td>levm needed no change; the loop around it is the partial part</td></tr>
+<tr><td>JSON-RPC</td><td>request and batch parsing, the response and error shapes, the block, transaction and receipt JSON types</td><td><code>rpc.rs</code>: the <code>eth_*</code> dispatch over the pinned state, <code>partial_status</code></td><td>ethrex’s handlers take the full node’s context (its store, blockchain and sync state); a handler that takes a state-provider trait would let both nodes share them</td></tr>
+<tr><td>Light client</td><td>nothing: ethrex has no consensus-layer code</td><td><code>light_client/</code>: the beacon containers, the sync protocol, Merkle branches, BLS over <code>blst</code>, the Beacon API client</td><td>see below</td></tr>
+<tr><td>Chain proofs</td><td>the stateless-input schema id and SSZ helpers the ethrex guests use</td><td><code>chain_proofs/</code>: the EIP-8440 containers, the proof source client, the mock and HTTP engines, the tracker</td><td>ethrex produces proofs; nothing in it consumed one</td></tr>
+</tbody>
+</table>
+</div>
+<p>Tests are a third of the crate, and <code>testing.rs</code> is most of that: an in-process peer that
+answers snap, <code>eth</code> and access list requests from a real <code>ethrex-blockchain</code> and
+<code>ethrex-storage</code> store, so the follower, the verifier and the executor are tested against the
+same code a full node serves with.</p>
+<h3 id="why-the-light-client-is-in-house"><a class="header" href="#why-the-light-client-is-in-house">Why the light client is in-house</a></h3>
+<p>The beacon containers, <code>compute_domain</code>, <code>compute_signing_root</code> and the BLS checks mirror
+ethlambda’s <code>beacon::containers</code>, <code>beacon::signing</code> and <code>bls.rs</code>. They are spelled out here
+instead of linked because ethlambda pins <code>libssz</code> to a git revision that differs from the
+release ethrex builds on, which would put two copies of the SSZ library in one binary, and
+because <code>ethlambda-crypto</code> carries the leanVM post-quantum stack. Neither client had the light
+client containers or the sync protocol, which is about a thousand lines and is tested against
+Sepolia data captured on 2026-10-19 (<code>tooling/partial/testdata/sepolia</code>): the bootstrap’s
+committee branch, two consecutive period updates, a finality update and an optimistic update,
+with their BLS signatures verified against the committee the previous period’s update
+announced. The ethlambda fixture in <code>tooling/partial/testdata/ethlambda</code> pins the EIP-8440
+proof shape both clients agree on.</p>
+<h3 id="refactors-this-points-at"><a class="header" href="#refactors-this-points-at">Refactors this points at</a></h3>
+<p>Each would shrink this crate and give the full node something too:</p>
+<ol>
+<li><strong>Generic <code>eth_*</code> handlers in <code>ethrex-rpc</code></strong> over a trait that provides headers, accounts,
+storage, code and execution. The full node implements it with its store; this node with
+its pinned state; <code>rpc.rs</code> disappears.</li>
+<li><strong>A single-key proof verifier in <code>ethrex-trie</code></strong>, the walk from <code>verify.rs</code>, next to
+<code>verify_range</code>. It is also what a full node needs to check an <code>eth_getProof</code> answer from
+someone else, and what the snap client should use when a peer picks the bounds.</li>
+<li><strong>A beacon types crate shared with ethlambda</strong> (containers, domains, signing roots, BLS),
+once the two clients build on the same <code>libssz</code>. The light client’s <code>types.rs</code>, <code>merkle.rs</code>
+and <code>bls.rs</code> move there; <code>sync.rs</code> stays.</li>
+</ol>
+<h2 id="design-notes"><a class="header" href="#design-notes">Design notes</a></h2>
+<ul>
+<li><strong>Not held.</strong> Storage roots (stale under access lists), bodies and receipts (except the
+node’s own transactions), logs, and state older than the eight retained blocks.</li>
+<li><strong>Limits.</strong> <code>MAX_BAL_GAP = 32</code> blocks before reanchoring; <code>HEADER_WINDOW = 256</code> for
+<code>BLOCKHASH</code>; <code>RECENT_STATES = 8</code> retained stores; <code>MISS_ROUNDS = 64</code> fetch rounds per call;
+<code>WORKING_SET_CAP = 1024</code> keys.</li>
+</ul>
+<h2 id="live-run"><a class="header" href="#live-run">Live run</a></h2>
+<p>Checked on Sepolia on 2026-10-20 against the public ethpandaops Nimbus beacon API: the light
+client bootstrapped from the node’s finalized checkpoint, the node anchored and then followed
+the chain one block per slot through block access lists, <code>eth_blockNumber</code> advanced from
+11952372 to 11952409 over ten minutes, the watched account was proven at every head, and
+<code>partial_status</code> reported the light client heads, finality and peer counts. Peers on Sepolia
+that serve snap are few, so the first anchoring waits minutes for one.</p>
+<p><code>require</code> mode was run the same day against Sepolia’s light client data with <code>--proofs.url</code>
+pointing at a local stand-in that answered every head with a mock proof in the shape
+ethlambda’s <code>GET /eth/v1/beacon/execution_proofs/{block_id}</code> serves (no network produces
+real chain proofs yet). The node anchored at the checkpoint’s execution block, verified a proof
+per slot with the mock engine, mapped each to its payload once the next header arrived, and
+moved the anchor only onto proven payloads, 121 blocks in eight minutes with <code>anchorProven</code>
+true throughout.</p>
+<p><code>require</code> mode was then run against a beacon node that really serves EIP-8440 proofs: an
+ethlambda node from its <code>feat/beacon-execution-chain-proofs</code> branch on a local kurtosis devnet
+(two Lighthouse nodes for light client data and finality, ethlambda for the proofs with its
+validator client signing a mock chain proof per slot, ethrex as every execution layer, six
+second slots). Over ten minutes from a checkpoint at slot 544 the node verified 94 proofs,
+mapped 92 of them to payloads once the next header arrived, and moved its anchor from
+execution block 409 to 563, always onto a proven payload and never more than one slot behind
+the light client’s optimistic head, with <code>anchorProven</code> true throughout and no warning but the
+mock engine’s. Two things that run taught are now in this page: a Lighthouse bootstrap exists
+only for epoch-boundary checkpoints, and the prover’s origin has to be at or before the
+checkpoint.</p>
+<h2 id="testing"><a class="header" href="#testing">Testing</a></h2>
+<pre><code class="language-sh">cargo test -p ethrex-partial --release
+</code></pre>
+<p>The suite builds a real Amsterdam chain with ethrex’s own payload builder (<code>testing.rs</code>) and
+answers snap requests from it, so proofs, access lists, receipts and the fetch-and-rerun loop
+are exercised end to end with faults (dropped proof nodes, withheld leaves and access lists,
+lying peers, reorgs, long gaps), and the light client and EIP-8440 modules against captured
+Sepolia vectors and mock proofs.</p>
+<h2 id="references"><a class="header" href="#references">References</a></h2>
+<ul>
+<li><a href="https://github.com/weiihann/chibi">chibi</a>: the partial stateful node this follows.</li>
+<li><a href="https://github.com/ethereum/EIPs/pull/12464">EIP-8440: Execution Chain Proofs</a> and its
+<a href="https://github.com/ethereum/consensus-specs/tree/ca292a5c5d42cf8f094aaf60778fc95a4db05d33/specs/_features/eip8440">consensus specs</a>
+(consensus-specs PR #5725, not merged).</li>
+<li><a href="https://eips.ethereum.org/EIPS/eip-8025">EIP-8025: Optional Execution Proofs</a>, its
+<a href="https://github.com/ethereum/consensus-specs/tree/master/specs/_features/eip8025">consensus specs</a>,
+and the client work this node’s proof plumbing follows: <a href="https://github.com/sigp/lighthouse/tree/unstable/beacon_node/proof_engine">Lighthouse’s proof-engine sidecar client</a>,
+<a href="https://github.com/eth-act/lighthouse/tree/optional-proofs/beacon_node/proof_engine">eth-act Lighthouse <code>optional-proofs</code></a>
+and <a href="https://github.com/OffchainLabs/prysm/pull/17690">Prysm #17690</a>.</li>
+<li><a href="https://eips.ethereum.org/EIPS/eip-7928">EIP-7928: Block-Level Access Lists</a> and
+<a href="#snap2-eip-8189-internals">snap/2 (EIP-8189) internals</a>.</li>
+<li><a href="https://github.com/ethereum/consensus-specs/blob/ca292a5c5d42cf8f094aaf60778fc95a4db05d33/specs/gloas/light-client/sync-protocol.md">Gloas light client sync protocol</a>.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="historical-chain-backfill-1"><a class="header" href="#historical-chain-backfill-1">Historical chain backfill</a></h1>
 <p>A snap-synced node backfills only block <strong>headers</strong> below the sync pivot; it does
 not download the block bodies or receipts for pre-pivot blocks. As a result,
@@ -2606,7 +2996,7 @@ pivot are indexed unconditionally by normal block import, so an <code>N</code> s
 <code>head - pivot</code> has no effect on the range where the index is actually large. And
 the window is pinned to the head at task start rather than tracking the live head,
 so the boundary stays put over a run that can take weeks.</p>
-<h3 id="example-1"><a class="header" href="#example-1">Example</a></h3>
+<h3 id="example-2"><a class="header" href="#example-2">Example</a></h3>
 <p>Run a node that serves post-merge history, keeping the transaction index for the
 whole backfilled range:</p>
 <pre><code class="language-sh">ethrex \
@@ -2639,7 +3029,7 @@ already holds all history.</p>
 left at <code>--history.chain off</code> keeps the stale <code>earliest_block_number</code>, so the
 <code>earliest</code> block tag still reports genesis even though pre-pivot bodies are
 absent. Enabling backfill (or a fresh snap sync) sets it correctly.</p>
-<h2 id="how-it-works"><a class="header" href="#how-it-works">How it works</a></h2>
+<h2 id="how-it-works-1"><a class="header" href="#how-it-works-1">How it works</a></h2>
 <p>Backfill fills in reverse — from the pivot downward toward a floor — one bounded
 batch (64 blocks) at a time. It runs at lower priority than following the chain
 head: it fills only while the node is synced to the tip, sleeps between batches,
@@ -2795,7 +3185,7 @@ background; it is rate-limited and yields to chain-head following, so it does no
 slow down block processing.</p>
 <p>State size is unaffected: backfill adds chain history only, and does not change
 how much state the node keeps.</p>
-<h2 id="references"><a class="header" href="#references">References</a></h2>
+<h2 id="references-1"><a class="header" href="#references-1">References</a></h2>
 <ul>
 <li><a href="#sync-modes-2">Sync modes</a> — full vs. snap sync and where backfill fits.</li>
 <li><a href="#snap-sync-2">Snap sync internals</a> — why a snap-synced node is headers-only below the pivot.</li>
@@ -3436,7 +3826,7 @@ and retires nothing.</p>
 root reconstruction reproduced. Use it, not <code>current_phase</code>, to decide which
 path a sync took: the phase fields describe the sync only while it runs, and a
 small state downloads between two polls.</p>
-<h2 id="testing"><a class="header" href="#testing">Testing</a></h2>
+<h2 id="testing-1"><a class="header" href="#testing-1">Testing</a></h2>
 <p>Unit and integration coverage lives in <code>test/tests/p2p/</code>: codec round-trips,
 server responses, <code>apply_bal</code>, the cursor predicates, flat state, and
 reconstruction. Hive covers the serving side.</p>
@@ -4933,7 +5323,7 @@ cargo run --release -- deposit \
 </table>
 </div>
 <hr>
-<h2 id="references-1"><a class="header" href="#references-1">References</a></h2>
+<h2 id="references-2"><a class="header" href="#references-2">References</a></h2>
 <ul>
 <li><a href="#ethrex-l2-integration-with-aligned-layer">Aligned Layer Integration</a></li>
 <li><a href="#running-ethrex-in-aligned-mode">Running Ethrex in Aligned Mode</a></li>
@@ -5891,7 +6281,7 @@ cd ethrex/metrics
 </tbody>
 </table>
 </div>
-<h2 id="references-2"><a class="header" href="#references-2">References</a></h2>
+<h2 id="references-3"><a class="header" href="#references-3">References</a></h2>
 <h3 id="l2beat-resources"><a class="header" href="#l2beat-resources">L2Beat Resources</a></h3>
 <ul>
 <li><a href="https://l2beat.com/stages">L2Beat Stages Framework</a></li>
@@ -6168,7 +6558,7 @@ In this section we talk a bit about them, first going through the more specific 
 </tbody>
 </table>
 </div>
-<h2 id="references-3"><a class="header" href="#references-3">References</a></h2>
+<h2 id="references-4"><a class="header" href="#references-4">References</a></h2>
 <p>For running the prover, see <a href="#deploying-an-ethrex-l2">Deploy an L2</a>.
 For developer-focused setup and run instructions, see <a href="#running-the-prover">Running the Prover</a>.
 For comprehensive details on the internals of the prover, see <a href="#ethrex-prover-1">ethrex-prover</a>.</p>
@@ -6179,7 +6569,7 @@ For comprehensive details on the internals of the prover, see <a href="#ethrex-p
 <blockquote class="blockquote-tag blockquote-tag-note">
 <p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
 <ul>
-<li>Running the following without an L2 running will continuously throw the error: <code>Error sending quote: Failed to get ProverSetupAck: Connection refused (os error 111)</code>. If you want to run this in a proper setup go to the <a href="#running">Running</a> section.</li>
+<li>Running the following without an L2 running will continuously throw the error: <code>Error sending quote: Failed to get ProverSetupAck: Connection refused (os error 111)</code>. If you want to run this in a proper setup go to the <a href="#running-1">Running</a> section.</li>
 <li>The quote generator runs in a QEMU, to quit it press <code>CTRL+A X</code>.</li>
 </ul>
 </blockquote>
@@ -6212,7 +6602,7 @@ This is analogous to <a href="https://uapi-group.org/specifications/specs/linux_
 <p>This contains the quote-gen service. Its hash changes every time a non-gitignored file changes.</p>
 <h3 id="imagenix"><a class="header" href="#imagenix">image.nix</a></h3>
 <p>Exports an image that uses <a href="https://uapi-group.org/specifications/specs/unified_kernel_image/">UKI</a> and <a href="https://source.android.com/docs/security/features/verifiedboot/dm-verity?hl=en">dm-verity</a> to generate an image where changing any component changes the hash of the bootloader (the UKI image), which is measured by the BIOS.</p>
-<h2 id="running"><a class="header" href="#running">Running</a></h2>
+<h2 id="running-1"><a class="header" href="#running-1">Running</a></h2>
 <p>You can enable the prover by setting <code>ETHREX_L2_TDX=true</code>.</p>
 <p>For development purposes, you can use the flag <code>ETHREX_TDX_DEV_MODE=true</code> to disable quote verification. This allows you to run the quote generator even without having TDX-capable hardware.</p>
 <p>Ensure the proof coordinator is reachable at 172.17.0.1. You can bring up the network by first starting the L2 components:</p>
@@ -9709,7 +10099,7 @@ INFO ethrex_l2::sequencer::l1_proof_sender: Submitted proof to Aligned prover_ty
 INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainProposer, with transaction hash 0x...
 </code></pre>
 <hr>
-<h2 id="references-4"><a class="header" href="#references-4">References</a></h2>
+<h2 id="references-5"><a class="header" href="#references-5">References</a></h2>
 <ul>
 <li><a href="https://docs.alignedlayer.com/">Aligned Layer Documentation</a></li>
 <li><a href="https://docs.alignedlayer.com/proof-aggregation-layer/guides/4_sdk#api-reference">Aligned SDK API Reference</a></li>
@@ -10371,7 +10761,7 @@ block cache, compaction counters) via <code>Store::rocksdb_stats()</code> and th
 frontier via <code>earliest_block_number</code>, then updates the <code>ethrex_db_*</code> gauges. The
 gauges register into the Prometheus default registry, so the existing metrics API
 exposes them with no further changes.</p>
-<h2 id="references-5"><a class="header" href="#references-5">References</a></h2>
+<h2 id="references-6"><a class="header" href="#references-6">References</a></h2>
 <ul>
 <li><a href="#monitoring-and-metrics">Monitoring and metrics</a> — enabling metrics and the Docker monitoring stack.</li>
 <li><a href="#metrics-1">Metrics</a> and <a href="#ethrex-l1-performance-dashboard-dec-2025">Dashboards</a> — the rest of ethrex’s metrics and Grafana dashboards.</li>
@@ -10509,7 +10899,7 @@ This eliminates code duplication and makes adding new database backends trivial.
 <li>Locked views <code>StorageLockedView</code>: read-only views of a point in time (snapshots), right now it’s only used during snap-sync.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
-<h1 id="testing-1"><a class="header" href="#testing-1">Testing</a></h1>
+<h1 id="testing-2"><a class="header" href="#testing-2">Testing</a></h1>
 <p>The ethrex project runs several suites of tests to ensure proper protocol implementation</p>
 <h2 id="table-of-contents-3"><a class="header" href="#table-of-contents-3">Table of contents</a></h2>
 <ul>
