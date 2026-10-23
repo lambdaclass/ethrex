@@ -2081,7 +2081,8 @@ mod tests {
     }
 
     /// eth_getHeaderBy* returns the header with its hash and no size or body
-    /// fields, and null for unknown blocks and the pending tag.
+    /// fields, and null for unknown blocks, the pending tag, and safe or
+    /// finalized tags that no forkchoice update has set yet.
     #[tokio::test]
     async fn eth_get_header_by_number_and_hash() {
         let storage = crate::test_utils::setup_store().await;
@@ -2110,6 +2111,8 @@ mod tests {
         for (method, param) in [
             ("eth_getHeaderByNumber", r#""0x3e8""#),
             ("eth_getHeaderByNumber", r#""pending""#),
+            ("eth_getHeaderByNumber", r#""safe""#),
+            ("eth_getHeaderByNumber", r#""finalized""#),
             (
                 "eth_getHeaderByHash",
                 r#""0x0000000000000000000000000000000000000000000000000000000000000000""#,
