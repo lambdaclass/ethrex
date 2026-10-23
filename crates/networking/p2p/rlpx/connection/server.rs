@@ -922,8 +922,7 @@ impl PeerConnectionServer {
                         res.and(l2_connection::process_batches_on_queue(established_state).await)
                     }
                     L2Cast::BlockBroadcast => {
-                        let res = l2_connection::send_new_block(established_state).await;
-                        res.and(l2_connection::process_blocks_on_queue(established_state).await)
+                        l2_connection::send_new_block(established_state).await
                     }
                 }
             } else {
