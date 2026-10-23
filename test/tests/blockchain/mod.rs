@@ -1,6 +1,7 @@
 mod bal_code_size_tests;
 mod bal_content_validation_tests;
 mod bal_hash_parallel_skip;
+mod bal_item_cap_tests;
 mod bal_system_phase_under_declaration;
 mod bal_validate_tx_execution_tests;
 mod batch_tests;
@@ -27,4 +28,6 @@ mod storage_sharding_tests;
 mod trace_call_log_index_tests;
 mod trace_call_replay_tests;
 mod typed_zero_transaction_tests;
+mod withdrawals_before_requests_tests;
+mod witness_update_order_tests;
 mod wrong_chain_id_tests;

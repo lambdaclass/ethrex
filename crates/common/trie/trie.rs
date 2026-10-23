@@ -498,11 +498,22 @@ impl Trie {
 
     /// Gets node with embedded references to child nodes, all in just one `Node`.
     ///
+    /// Every key in the trie must be `key_nibbles` long, as in the state and
+    /// storage tries, whose keys are 64-nibble keccak256 hashes. A decoded node
+    /// whose path cannot end at that length is rejected, as EELS
+    /// `_validate_secured_trie_paths` does (execution-specs #3193): a leaf path
+    /// must end exactly there, an extension must stop short of it and a branch
+    /// must sit above it. A child referenced only by hash is not in `all_nodes`,
+    /// so it has no decoded path to check. The check runs while embedding
+    /// because a separate walk over every child slot cost the zkVM guest about
+    /// eight times as much.
+    ///
     /// Note that this method caches the hash of each node, so it assumes the provided `all_nodes` are well-formed.
     pub fn get_embedded_root_committed(
         all_nodes: &FxHashMap<H256, Node>,
         root_hash: H256,
         crypto: &dyn Crypto,
+        key_nibbles: usize,
     ) -> Result<NodeRef, TrieError> {
         // If the root hash is of the empty trie then we can get away by setting the NodeRef to default
         if root_hash == EMPTY_TRIE_HASH {
@@ -523,13 +534,61 @@ impl Trie {
             NodeRef::Node(Arc::new(node), OnceLock::from(hash))
         }
 
+        /// Key nibbles a leaf spells. A decoded leaf path ends with the 16
+        /// terminator, which is not a key nibble.
+        fn leaf_path_len(leaf: &LeafNode) -> usize {
+            leaf.partial.len() - usize::from(leaf.partial.is_leaf())
+        }
+
+        /// Checks the paths of a child stored inline. A node under 32 bytes is
+        /// part of its parent's encoding rather than referenced by hash, so it
+        /// is never in `all_nodes` and embedding leaves it encoded. Its own
+        /// children are inline too, since a hash reference alone takes 33 bytes.
+        #[cold]
+        fn check_inline_paths(encoded: &NodeHash, remaining: usize) -> Result<(), TrieError> {
+            match Node::decode(encoded.as_ref())? {
+                Node::Leaf(leaf) => {
+                    if leaf_path_len(&leaf) != remaining {
+                        return Err(TrieError::KeyLengthMismatch);
+                    }
+                }
+                Node::Extension(ext) => {
+                    if ext.prefix.len() >= remaining {
+                        return Err(TrieError::KeyLengthMismatch);
+                    }
+                    if let NodeRef::Hash(child @ NodeHash::Inline(_)) = ext.child
+                        && child.is_valid()
+                    {
+                        check_inline_paths(&child, remaining - ext.prefix.len())?;
+                    }
+                }
+                Node::Branch(branch) => {
+                    if remaining == 0 {
+                        return Err(TrieError::KeyLengthMismatch);
+                    }
+                    for choice in &branch.choices {
+                        if let NodeRef::Hash(child @ NodeHash::Inline(_)) = *choice
+                            && child.is_valid()
+                        {
+                            check_inline_paths(&child, remaining - 1)?;
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+
         fn get_embedded_node_committed(
             all_nodes: &FxHashMap<H256, Node>,
             cur_node: &Node,
+            remaining: usize,
             crypto: &dyn Crypto,
         ) -> Result<Node, TrieError> {
             Ok(match cur_node.clone() {
                 Node::Branch(mut node) => {
+                    if remaining == 0 {
+                        return Err(TrieError::KeyLengthMismatch);
+                    }
                     for choice in &mut node.choices {
                         let NodeRef::Hash(hash) = *choice else {
                             continue;
@@ -538,10 +597,22 @@ impl Trie {
                         if hash.is_valid() {
                             *choice = match all_nodes.get(&hash.finalize(crypto)) {
                                 Some(node) => node_with_hash(
-                                    get_embedded_node_committed(all_nodes, node, crypto)?,
+                                    get_embedded_node_committed(
+                                        all_nodes,
+                                        node,
+                                        remaining - 1,
+                                        crypto,
+                                    )?,
                                     hash,
                                 ),
-                                None => hash.into(),
+                                None => {
+                                    // Testing the variant first keeps the common
+                                    // case, a sibling outside the witness, to a compare.
+                                    if let NodeHash::Inline(_) = hash {
+                                        check_inline_paths(&hash, remaining - 1)?;
+                                    }
+                                    hash.into()
+                                }
                             };
                         }
                     }
@@ -549,25 +620,41 @@ impl Trie {
                     (*node).into()
                 }
                 Node::Extension(mut node) => {
+                    if node.prefix.len() >= remaining {
+                        return Err(TrieError::KeyLengthMismatch);
+                    }
+                    let remaining = remaining - node.prefix.len();
                     let NodeRef::Hash(hash) = node.child else {
                         return Ok(node.into());
                     };
 
                     node.child = match all_nodes.get(&hash.finalize(crypto)) {
                         Some(node) => node_with_hash(
-                            get_embedded_node_committed(all_nodes, node, crypto)?,
+                            get_embedded_node_committed(all_nodes, node, remaining, crypto)?,
                             hash,
                         ),
-                        None => hash.into(),
+                        None => {
+                            if let NodeHash::Inline(_) = hash
+                                && hash.is_valid()
+                            {
+                                check_inline_paths(&hash, remaining)?;
+                            }
+                            hash.into()
+                        }
                     };
 
                     node.into()
                 }
-                Node::Leaf(node) => node.into(),
+                Node::Leaf(node) => {
+                    if leaf_path_len(&node) != remaining {
+                        return Err(TrieError::KeyLengthMismatch);
+                    }
+                    node.into()
+                }
             })
         }
 
-        let root = get_embedded_node_committed(all_nodes, root_rlp, crypto)?;
+        let root = get_embedded_node_committed(all_nodes, root_rlp, key_nibbles, crypto)?;
         Ok(node_with_hash(root, NodeHash::Hashed(root_hash)))
     }
 
@@ -1099,5 +1186,107 @@ mod tests {
     #[test]
     fn empty_trie_hash_matches_keccak() {
         assert_eq!(EMPTY_TRIE_HASH, H256(keccak_hash([RLP_NULL])));
+    }
+
+    mod embedded_key_length {
+        use super::*;
+        use crate::node::{BranchNode, ExtensionNode};
+
+        /// A leaf spelling `path_nibbles` key nibbles. A 32-byte value keeps
+        /// the encoding at 32 bytes or more, so a parent references it by hash;
+        /// a 1-byte value keeps a short leaf under 32 bytes, so a parent stores
+        /// it inline.
+        fn leaf(path_nibbles: usize, value_len: usize) -> Node {
+            let mut partial = vec![0; path_nibbles];
+            partial.push(16);
+            LeafNode {
+                partial: Nibbles::from_hex(partial),
+                value: vec![1; value_len],
+            }
+            .into()
+        }
+
+        fn branch_over(child: &Node) -> Node {
+            let mut choices: [NodeRef; 16] = Default::default();
+            choices[0] = child.compute_hash(&NativeCrypto).into();
+            BranchNode {
+                choices,
+                value: vec![],
+            }
+            .into()
+        }
+
+        fn extension_over(prefix_nibbles: usize, child: &Node) -> Node {
+            ExtensionNode {
+                prefix: Nibbles::from_hex(vec![0; prefix_nibbles]),
+                child: child.compute_hash(&NativeCrypto).into(),
+            }
+            .into()
+        }
+
+        /// Embeds `root` out of a witness-style map holding it and `rest`, each
+        /// decoded from its encoding and keyed by the hash of that encoding.
+        fn embed(root: &Node, rest: &[&Node], key_nibbles: usize) -> Result<NodeRef, TrieError> {
+            let mut nodes = FxHashMap::default();
+            for node in core::iter::once(root).chain(rest.iter().copied()) {
+                let encoded = node.encode_to_vec();
+                nodes.insert(
+                    H256(keccak_hash(&encoded)),
+                    Node::decode(&encoded).expect("node decodes"),
+                );
+            }
+            let root_hash = H256(keccak_hash(root.encode_to_vec()));
+            Trie::get_embedded_root_committed(&nodes, root_hash, &NativeCrypto, key_nibbles)
+        }
+
+        #[test]
+        fn leaf_paths_must_end_at_the_key_length() {
+            assert!(embed(&leaf(64, 32), &[], 64).is_ok());
+            assert!(embed(&leaf(63, 32), &[], 64).is_err());
+            assert!(embed(&leaf(67, 32), &[], 64).is_err());
+        }
+
+        #[test]
+        fn branches_and_extensions_consume_key_nibbles() {
+            let fits = leaf(63, 32);
+            assert!(embed(&branch_over(&fits), &[&fits], 64).is_ok());
+            let too_long = leaf(64, 32);
+            assert!(embed(&branch_over(&too_long), &[&too_long], 64).is_err());
+
+            let fits = leaf(61, 32);
+            assert!(embed(&extension_over(3, &fits), &[&fits], 64).is_ok());
+            let too_long = leaf(62, 32);
+            assert!(embed(&extension_over(3, &too_long), &[&too_long], 64).is_err());
+            let empty = leaf(0, 32);
+            assert!(embed(&extension_over(64, &empty), &[&empty], 64).is_err());
+
+            // With 1-nibble keys the inner branch has no nibble left to branch on.
+            let bottom = leaf(0, 32);
+            let inner = branch_over(&bottom);
+            assert!(embed(&branch_over(&inner), &[&inner, &bottom], 1).is_err());
+        }
+
+        /// Inline children never appear in the witness on their own, so they
+        /// take a separate path through the check.
+        #[test]
+        fn inline_children_are_checked() {
+            let root = branch_over(&leaf(3, 1));
+            let embedded = embed(&root, &[], 4).expect("a 4-nibble path fits");
+            let NodeRef::Node(node, _) = embedded else {
+                panic!("root was not embedded");
+            };
+            let Node::Branch(branch) = &*node else {
+                panic!("root is not a branch");
+            };
+            assert!(
+                matches!(branch.choices[0], NodeRef::Hash(NodeHash::Inline(_))),
+                "the test needs the leaf stored inline"
+            );
+            assert!(embed(&branch_over(&leaf(4, 1)), &[], 4).is_err());
+
+            // An inline branch holding an inline leaf.
+            assert!(embed(&branch_over(&branch_over(&leaf(2, 1))), &[], 4).is_ok());
+            assert!(embed(&branch_over(&branch_over(&leaf(3, 1))), &[], 4).is_err());
+        }
     }
 }

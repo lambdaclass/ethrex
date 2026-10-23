@@ -548,7 +548,35 @@ impl Blockchain {
             }
         }
 
+        self.log_glamsterdam_banner_if_first_amsterdam_block(&res.payload.header);
+
         Ok(res)
+    }
+
+    /// Logs the Glamsterdam banner when `header`, a block this node just built, is the
+    /// chain's first Amsterdam block. The parent is only read while the banner is still
+    /// pending and Amsterdam applies to the block.
+    fn log_glamsterdam_banner_if_first_amsterdam_block(&self, header: &BlockHeader) {
+        if !matches!(self.options.r#type, BlockchainType::L1) || crate::glamsterdam::shown() {
+            return;
+        }
+        let config = self.storage.get_chain_config();
+        if !config.is_amsterdam_activated(header.timestamp) {
+            return;
+        }
+        match self.storage.get_block_header_by_hash(header.parent_hash) {
+            Ok(Some(parent)) => {
+                if crate::glamsterdam::is_first_amsterdam_block(
+                    &config,
+                    parent.timestamp,
+                    header.timestamp,
+                ) {
+                    crate::glamsterdam::log_once(header.number, header.hash());
+                }
+            }
+            Ok(None) => {}
+            Err(err) => debug!(%err, "Could not read the parent of a built payload"),
+        }
     }
 
     /// Completes the payload building process, return the block value.
@@ -687,8 +715,9 @@ impl Blockchain {
             }
         }
 
-        // EIP-7928: Post-tx phase uses index n+1 for both requests and withdrawals.
-        // Order must match geth: requests (system calls) BEFORE withdrawals.
+        // EIP-7928: Post-tx phase uses index n+1 for both withdrawals and requests.
+        // Withdrawals precede the request system calls, as on block import; see the
+        // ordering note in `LEVM::execute_block`.
         if !state_test
             && context
                 .chain_config()
@@ -710,6 +739,7 @@ impl Blockchain {
         // set matching EELS, and reports the failure as a block exception.
         let mut block_exception = None;
         if !state_test {
+            self.apply_withdrawals(&mut context)?;
             if let Err(error) = self.extract_requests(&mut context) {
                 block_exception = Some(error.to_string());
                 context.requests = context
@@ -717,7 +747,6 @@ impl Blockchain {
                     .is_prague_activated(context.payload.header.timestamp)
                     .then_some(Vec::new());
             }
-            self.apply_withdrawals(&mut context)?;
         }
         self.finalize_payload(&mut context)?;
 
@@ -746,8 +775,9 @@ impl Blockchain {
             None => self.fill_transactions(&mut context)?,
             Some(transactions) => self.fill_explicit_transactions(&mut context, transactions)?,
         }
-        // EIP-7928: Post-tx phase uses index n+1 for both requests and withdrawals.
-        // Order must match geth: requests (system calls) BEFORE withdrawals.
+        // EIP-7928: Post-tx phase uses index n+1 for both withdrawals and requests.
+        // Withdrawals precede the request system calls, as on block import; see the
+        // ordering note in `LEVM::execute_block`.
         if context
             .chain_config()
             .is_amsterdam_activated(context.payload.header.timestamp)
@@ -762,8 +792,8 @@ impl Blockchain {
                 recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
             }
         }
-        self.extract_requests(&mut context)?;
         self.apply_withdrawals(&mut context)?;
+        self.extract_requests(&mut context)?;
         self.finalize_payload(&mut context)?;
 
         let interval = Instant::now().duration_since(since).as_millis();

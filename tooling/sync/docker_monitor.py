@@ -146,7 +146,7 @@ class DiagnosticsTracker:
 
         # Check eligible peers
         if snapshot.get("peer_scores") and isinstance(snapshot["peer_scores"], dict):
-            summary = snapshot["peer_scores"].get("summary", {})
+            summary = snapshot["peer_scores"].get("summary") or {}
             eligible = summary.get("eligible_peers", 999)
             if eligible < DEGRADATION_ELIGIBLE_PEERS_THRESHOLD:
                 reasons.append(f"eligible_peers={eligible}")
@@ -187,8 +187,8 @@ class DiagnosticsTracker:
                     "network": name,
                     "event_type": "watched_phase_start" if only_watched else "degradation_start",
                     "reasons": reasons,
-                    "eligible_peers": snapshot.get("peer_scores", {}).get("summary", {}).get("eligible_peers"),
-                    "phase": snapshot.get("sync_status", {}).get("current_phase"),
+                    "eligible_peers": ((snapshot.get("peer_scores") or {}).get("summary") or {}).get("eligible_peers"),
+                    "phase": (snapshot.get("sync_status") or {}).get("current_phase"),
                 }
                 self.events.append(event)
                 if only_watched:
@@ -207,7 +207,7 @@ class DiagnosticsTracker:
                     "network": name,
                     "event_type": "reasons_changed",
                     "reasons": reasons,
-                    "phase": snapshot.get("sync_status", {}).get("current_phase"),
+                    "phase": (snapshot.get("sync_status") or {}).get("current_phase"),
                 }
                 self.events.append(event)
                 print(f"🔄 [{name}] Monitor reasons changed: {', '.join(reasons)}")
