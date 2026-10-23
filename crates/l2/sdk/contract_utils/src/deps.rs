@@ -157,11 +157,19 @@ pub fn git_clone(
             git_clone_cmd.arg("--recurse-submodules");
         }
 
-        git_clone_cmd
+        let status = git_clone_cmd
             .arg(outdir)
             .spawn()
             .map_err(|err| GitError::DependencyError(format!("Failed to spawn git: {err}")))?
             .wait()
-            .map_err(|err| GitError::DependencyError(format!("Failed to wait for git: {err}")))
+            .map_err(|err| GitError::DependencyError(format!("Failed to wait for git: {err}")))?;
+
+        if !status.success() {
+            return Err(GitError::DependencyError(format!(
+                "git clone failed with status {status}"
+            )));
+        }
+
+        Ok(status)
     }
 }
