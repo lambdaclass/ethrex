@@ -17,6 +17,7 @@ use rocksdb::{
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use tracing::{info, warn};
 
 use crate::store::tx_locations_merge;
@@ -25,6 +26,21 @@ use crate::store::tx_locations_merge;
 /// `num_levels` is 7 and we don't override it; a larger configured value would
 /// otherwise be silently undercounted.
 const ROCKSDB_NUM_LEVELS: usize = 7;
+
+/// Committed range deletes a column family may accumulate before it is flushed.
+///
+/// RocksDB keeps a memtable's range tombstones in their original form and fragments
+/// them against each other on reads, on flush and on WAL replay; overlapping ones
+/// fragment in quadratic time and memory. A column family that receives range deletes
+/// but few other writes never fills its write buffer, so nothing else flushes it, and
+/// the tombstones pile up until one of those passes runs out of memory. Replaying
+/// 2 000 overlapping range deletes from the WAL takes ~0.8 s and peaks at ~240 MB,
+/// quadrupling with every doubling; this many disjoint ones cost nothing noticeable.
+///
+/// RocksDB's own `memtable_max_range_deletions` would do this, but the Rust bindings
+/// cannot set it before open, and a memtable reads it only when it is created, so
+/// setting it afterwards never reaches a memtable that never fills.
+const MAX_RANGE_DELETES_BEFORE_FLUSH: u32 = 1_000;
 
 /// Adapter wrapping `tx_locations_merge` to match RocksDB's expected signature.
 fn tx_locations_merge_op(
@@ -42,7 +58,13 @@ pub struct RocksDBBackend {
     /// Retained DB `Options` when RocksDB statistics are enabled, so block-cache
     /// hit/miss tickers can be read for observability. `None` when disabled.
     db_opts: Option<std::sync::Mutex<Options>>,
+    /// Range deletes committed per table since that table was last flushed by
+    /// [`MAX_RANGE_DELETES_BEFORE_FLUSH`].
+    range_deletes: Arc<RangeDeleteCounts>,
 }
+
+/// Committed range deletes per table, keyed by table name.
+type RangeDeleteCounts = std::collections::HashMap<&'static str, AtomicU32>;
 
 // `rocksdb::Options` does not implement `Debug`, so we derive it manually and
 // skip that field.
@@ -335,9 +357,17 @@ impl RocksDBBackend {
         )
         .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB with all CFs: {}", e)))?;
 
+        // Opening replays the WAL into fresh SST files, so every memtable starts empty
+        // and every count starts at zero.
+        let range_deletes = TABLES
+            .iter()
+            .map(|&table| (table, AtomicU32::new(0)))
+            .collect();
+
         Ok(Self {
             db: Arc::new(db),
             db_opts: stats_enabled.then(|| std::sync::Mutex::new(opts)),
+            range_deletes: Arc::new(range_deletes),
         })
     }
 
@@ -464,6 +494,8 @@ impl StorageBackend for RocksDBBackend {
         Ok(Box::new(RocksDBWriteTx {
             db: self.db.clone(),
             batch,
+            range_deletes: self.range_deletes.clone(),
+            range_deleted_tables: Vec::new(),
         }))
     }
 
@@ -599,6 +631,36 @@ pub struct RocksDBWriteTx {
     db: Arc<DBWithThreadMode<MultiThreaded>>,
     /// Write batch for accumulating changes
     batch: WriteBatch,
+    /// The backend's per-table range-delete counts.
+    range_deletes: Arc<RangeDeleteCounts>,
+    /// Tables of the range deletes staged in `batch`, one element per delete.
+    range_deleted_tables: Vec<&'static str>,
+}
+
+impl RocksDBWriteTx {
+    /// Adds the batch's range deletes to the per-table counts and starts a flush of
+    /// every table that reached [`MAX_RANGE_DELETES_BEFORE_FLUSH`]. The flush does not
+    /// wait: the batch is already durable in the WAL, and a failed or late flush is
+    /// retried on the next range delete to that table.
+    fn count_range_deletes(&mut self) {
+        for table in self.range_deleted_tables.drain(..) {
+            let Some(count) = self.range_deletes.get(table) else {
+                continue;
+            };
+            if count.fetch_add(1, Ordering::Relaxed) + 1 < MAX_RANGE_DELETES_BEFORE_FLUSH {
+                continue;
+            }
+            let Some(cf) = self.db.cf_handle(table) else {
+                continue;
+            };
+            let mut flush_opts = rocksdb::FlushOptions::default();
+            flush_opts.set_wait(false);
+            match self.db.flush_cf_opt(&cf, &flush_opts) {
+                Ok(()) => count.store(0, Ordering::Relaxed),
+                Err(e) => warn!("Failed to flush {table} after range deletes: {e}"),
+            }
+        }
+    }
 }
 
 impl StorageWriteBatch for RocksDBWriteTx {
@@ -650,6 +712,7 @@ impl StorageWriteBatch for RocksDBWriteTx {
             .cf_handle(table)
             .ok_or_else(|| StoreError::Custom(format!("Table {table:?} not found")))?;
         self.batch.delete_range_cf(&cf, start, end);
+        self.range_deleted_tables.push(table);
         Ok(())
     }
 
@@ -677,7 +740,9 @@ impl StorageWriteBatch for RocksDBWriteTx {
         let batch = std::mem::take(&mut self.batch);
         self.db
             .write(batch)
-            .map_err(|e| StoreError::Custom(format!("Failed to commit batch: {}", e)))
+            .map_err(|e| StoreError::Custom(format!("Failed to commit batch: {}", e)))?;
+        self.count_range_deletes();
+        Ok(())
     }
 }
 
@@ -718,6 +783,46 @@ mod tests {
     use ethrex_common::H256;
     use ethrex_common::types::{BlockHash, BlockNumber, Index};
     use ethrex_rlp::decode::RLPDecode;
+
+    /// A column family that receives only range deletes SHALL be flushed once its
+    /// memtable holds `MAX_RANGE_DELETES_BEFORE_FLUSH` of them. Without the limit
+    /// nothing else would flush it: the deletes are far too small to fill the
+    /// write buffer, so they would pile up in the memtable and the WAL.
+    #[test]
+    fn range_deletes_alone_trigger_a_flush() {
+        use crate::api::tables::STATE_HISTORY;
+
+        let dir = tempfile::tempdir().unwrap();
+        let backend =
+            RocksDBBackend::open(dir.path(), crate::store::MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES)
+                .unwrap();
+        let cf = backend.db.cf_handle(STATE_HISTORY).unwrap();
+        let sst_bytes = || {
+            backend
+                .db
+                .property_int_value_cf(&cf, "rocksdb.live-sst-files-size")
+                .unwrap()
+                .unwrap_or(0)
+        };
+        assert_eq!(sst_bytes(), 0);
+
+        for end in 1..=u64::from(MAX_RANGE_DELETES_BEFORE_FLUSH) {
+            let mut tx = backend.begin_write().unwrap();
+            tx.delete_range(STATE_HISTORY, &0u64.to_be_bytes(), &end.to_be_bytes())
+                .unwrap();
+            tx.commit().unwrap();
+        }
+
+        // The flush runs in the background once the memtable is marked for it.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while sst_bytes() == 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "range deletes never triggered a flush"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
 
     /// End-to-end guard for the associative merge operator at the real RocksDB
     /// layer: write many operands for the same key, each flushed into its own

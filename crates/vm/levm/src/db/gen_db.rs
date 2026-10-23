@@ -23,11 +23,14 @@ use crate::precompiles::PrecompileMoves;
 use crate::utils::account_to_levm_account;
 use crate::utils::restore_cache_state;
 use crate::vm::VM;
+use ethrex_common::seeded_hash::{SeededHashMap, SeededHashSet};
 pub use ethrex_common::types::AccountUpdate;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 
-pub type CacheDB = FxHashMap<Address, LevmAccount>;
+/// Accounts touched by execution, by address. Seeded: contracts choose which addresses
+/// they touch (see [`SeededHashMap`]).
+pub type CacheDB = SeededHashMap<Address, LevmAccount>;
 
 /// Per-tx BAL cursor for lazy on-read prefix materialization.
 /// `bal_index = tx_idx + 1`; cursor's effective max_idx is `bal_index - 1`,
@@ -115,7 +118,7 @@ pub fn seed_one_address_info_from_bal(
             .entry(addr)
             .or_insert_with(|| LevmAccount {
                 info: AccountInfo::default(),
-                storage: FxHashMap::default(),
+                storage: Default::default(),
                 has_storage: false,
                 status: AccountStatus::Modified,
                 exists: true,
@@ -214,8 +217,9 @@ pub struct GeneralizedDatabase {
     /// includes system-call effects at idx 0) takes precedence for any address the BAL
     /// covers. Accounts are cloned into `initial_accounts_state` on first access.
     pub shared_base: Option<Arc<CacheDB>>,
-    pub codes: FxHashMap<H256, Code>,
-    pub code_metadata: FxHashMap<H256, CodeMetadata>,
+    /// Seeded: deployed code is called by hash, and its deployer can grind the hash.
+    pub codes: SeededHashMap<H256, Code>,
+    pub code_metadata: SeededHashMap<H256, CodeMetadata>,
     pub tx_backup: Option<CallFrameBackup>,
     /// Optional BAL recorder for EIP-7928 Block Access List recording.
     pub bal_recorder: Option<BlockAccessListRecorder>,
@@ -225,7 +229,7 @@ pub struct GeneralizedDatabase {
     skip_initial_tracking: bool,
     /// Optional tracker for BAL validation: records addresses accessed via load_account.
     /// Enabled only during parallel execution to detect extraneous BAL pure-access entries.
-    pub accessed_accounts: Option<FxHashSet<Address>>,
+    pub accessed_accounts: Option<SeededHashSet<Address>>,
     /// Optional BAL cursor for lazy per-read prefix materialization.
     /// When set, account loads and storage reads consult the BAL before hitting the store.
     pub lazy_bal: Option<LazyBalCursor>,
@@ -269,14 +273,11 @@ impl GeneralizedDatabase {
     ) -> Self {
         Self {
             store,
-            current_accounts_state: FxHashMap::with_capacity_and_hasher(
-                capacity,
-                Default::default(),
-            ),
+            current_accounts_state: CacheDB::with_capacity_and_hasher(capacity, Default::default()),
             initial_accounts_state: Default::default(),
             shared_base: Some(shared_base),
             tx_backup: None,
-            codes: FxHashMap::with_capacity_and_hasher(capacity / 4, Default::default()),
+            codes: SeededHashMap::with_capacity_and_hasher(capacity / 4, Default::default()),
             code_metadata: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: true,
@@ -321,8 +322,8 @@ impl GeneralizedDatabase {
         store: Arc<dyn Database>,
         current_accounts_state: FxHashMap<Address, Account>,
     ) -> Self {
-        let mut codes: FxHashMap<H256, Code> = Default::default();
-        let levm_accounts: FxHashMap<Address, LevmAccount> = current_accounts_state
+        let mut codes: SeededHashMap<H256, Code> = Default::default();
+        let levm_accounts: CacheDB = current_accounts_state
             .into_iter()
             .map(|(address, account)| {
                 let (levm_account, code) = account_to_levm_account(account);
@@ -630,7 +631,7 @@ impl GeneralizedDatabase {
             let removed_storage = was_destroyed && initial_state_account.has_storage;
 
             // 2. Storage has been updated if the current value is different from the one before execution.
-            let mut added_storage: FxHashMap<_, _> = Default::default();
+            let mut added_storage: SeededHashMap<_, _> = Default::default();
 
             for (key, new_value) in &new_state_account.storage {
                 let old_value = if !was_destroyed {
@@ -738,7 +739,7 @@ impl GeneralizedDatabase {
             let removed_storage = was_destroyed && initial_state_account.has_storage;
 
             // 2. Storage has been updated if the current value is different from the one before execution.
-            let mut added_storage: FxHashMap<_, _> = Default::default();
+            let mut added_storage: SeededHashMap<_, _> = Default::default();
 
             for (key, new_value) in &new_state_account.storage {
                 let old_value = if !was_destroyed {

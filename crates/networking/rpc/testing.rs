@@ -3,7 +3,8 @@ use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, Transaction};
 use ethrex_common::{Bytes, H256};
 use ethrex_rlp::error::RLPDecodeError;
-use serde_json::Value;
+use serde::Deserialize;
+use serde_json::{Value, value::RawValue};
 
 use crate::types::fork_choice::PayloadAttributesV3;
 use crate::types::payload::{ExecutionPayload, ExecutionPayloadResponse};
@@ -31,9 +32,8 @@ pub struct BuildBlockV1Request {
     pub target_gas_limit: Option<u64>,
 }
 
-/// Decodes a `0x`-prefixed hex string JSON value into raw bytes.
-fn decode_hex_value(value: &Value) -> Result<Bytes, RpcErr> {
-    let str_data = serde_json::from_value::<String>(value.clone())?;
+/// Decodes a `0x`-prefixed hex string into raw bytes.
+fn decode_hex_value(str_data: &str) -> Result<Bytes, RpcErr> {
     let str_data = str_data
         .strip_prefix("0x")
         .ok_or_else(|| RpcErr::BadParams("hex value is not 0x-prefixed".to_owned()))?;
@@ -42,21 +42,20 @@ fn decode_hex_value(value: &Value) -> Result<Bytes, RpcErr> {
         .map_err(|err| RpcErr::BadParams(err.to_string()))
 }
 
-/// Decodes a `0x`-prefixed hex string JSON value into a `u64`.
-fn decode_hex_u64(value: &Value, field: &str) -> Result<u64, RpcErr> {
-    let str_data = serde_json::from_value::<String>(value.clone())?;
-    let str_data = str_data.strip_prefix("0x").unwrap_or(&str_data);
+/// Decodes a `0x`-prefixed hex string into a `u64`.
+fn decode_hex_u64(str_data: &str, field: &str) -> Result<u64, RpcErr> {
+    let str_data = str_data.strip_prefix("0x").unwrap_or(str_data);
     u64::from_str_radix(str_data, 16)
         .map_err(|err| RpcErr::BadParams(format!("invalid {field}: {err}")))
 }
 
-fn decode_transactions(value: &Value) -> Result<Option<Vec<Transaction>>, RpcErr> {
-    if value.is_null() {
+fn decode_transactions(param: &RawValue) -> Result<Option<Vec<Transaction>>, RpcErr> {
+    let Some(raw_txs) = serde_json::from_str::<Option<Vec<String>>>(param.get()).map_err(|_| {
+        RpcErr::BadParams("transactions must be an array of hex strings or null".to_owned())
+    })?
+    else {
         return Ok(None);
-    }
-    let raw_txs = value
-        .as_array()
-        .ok_or_else(|| RpcErr::BadParams("transactions must be an array or null".to_owned()))?;
+    };
     let txs = raw_txs
         .iter()
         .map(|raw| {
@@ -70,7 +69,7 @@ fn decode_transactions(value: &Value) -> Result<Option<Vec<Transaction>>, RpcErr
 }
 
 impl RpcHandler for BuildBlockV1Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -81,12 +80,15 @@ impl RpcHandler for BuildBlockV1Request {
             )));
         }
 
-        let parent_block_hash: H256 = serde_json::from_value(params[0].clone())?;
-        let attributes: PayloadAttributesV3 = serde_json::from_value(params[1].clone())?;
+        let parent_block_hash: H256 = serde_json::from_str(params[0].get())?;
+        let attributes: PayloadAttributesV3 = serde_json::from_str(params[1].get())?;
         let transactions = decode_transactions(&params[2])?;
         let extra_data = match params.get(3) {
-            Some(value) if !value.is_null() => decode_hex_value(value)?,
-            _ => Bytes::new(),
+            Some(value) => match serde_json::from_str::<Option<String>>(value.get())? {
+                Some(hex_str) => decode_hex_value(&hex_str)?,
+                None => Bytes::new(),
+            },
+            None => Bytes::new(),
         };
         // Block validation rejects headers with `extra_data` longer than 32 bytes
         // (crates/common/types/block.rs); reject it here so the method never
@@ -99,14 +101,21 @@ impl RpcHandler for BuildBlockV1Request {
         }
         // `PayloadAttributesV3` has no `slotNumber` or `targetGasLimit`, so read
         // them from the raw attributes object (present from Amsterdam onwards).
-        let slot_number = match params[1].get("slotNumber") {
-            Some(value) if !value.is_null() => Some(decode_hex_u64(value, "slotNumber")?),
-            _ => None,
-        };
-        let target_gas_limit = match params[1].get("targetGasLimit") {
-            Some(value) if !value.is_null() => Some(decode_hex_u64(value, "targetGasLimit")?),
-            _ => None,
-        };
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct AmsterdamAttributeFields {
+            slot_number: Option<String>,
+            target_gas_limit: Option<String>,
+        }
+        let amsterdam_fields = serde_json::from_str::<AmsterdamAttributeFields>(params[1].get())?;
+        let slot_number = amsterdam_fields
+            .slot_number
+            .map(|hex_str| decode_hex_u64(&hex_str, "slotNumber"))
+            .transpose()?;
+        let target_gas_limit = amsterdam_fields
+            .target_gas_limit
+            .map(|hex_str| decode_hex_u64(&hex_str, "targetGasLimit"))
+            .transpose()?;
 
         Ok(Self {
             parent_block_hash,
@@ -221,7 +230,7 @@ impl RpcHandler for BuildBlockV1Request {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{default_context_with_storage, setup_store};
+    use crate::test_utils::{default_context_with_storage, raw_params, setup_store};
     use ethrex_blockchain::payload::calc_gas_limit;
     use ethrex_common::types::Genesis;
     use ethrex_storage::{EngineType, Store};
@@ -268,10 +277,13 @@ mod tests {
     fn parse_accepts_null_and_array_transactions() {
         let parent = H256::zero();
         let null_req =
-            BuildBlockV1Request::parse(&build_params(parent, 0x10, Value::Null)).unwrap();
+            BuildBlockV1Request::parse(&raw_params(&build_params(parent, 0x10, Value::Null)))
+                .unwrap();
         assert!(null_req.transactions.is_none());
 
-        let empty_req = BuildBlockV1Request::parse(&build_params(parent, 0x10, json!([]))).unwrap();
+        let empty_req =
+            BuildBlockV1Request::parse(&raw_params(&build_params(parent, 0x10, json!([]))))
+                .unwrap();
         assert_eq!(empty_req.transactions.as_ref().unwrap().len(), 0);
         assert!(empty_req.extra_data.is_empty());
         assert!(empty_req.slot_number.is_none());
@@ -282,7 +294,7 @@ mod tests {
     fn parse_reads_slot_number_from_attributes() {
         let mut params = build_params(H256::zero(), 0x10, json!([])).unwrap();
         params[1]["slotNumber"] = json!("0x2a");
-        let req = BuildBlockV1Request::parse(&Some(params)).unwrap();
+        let req = BuildBlockV1Request::parse(&raw_params(&Some(params))).unwrap();
         assert_eq!(req.slot_number, Some(0x2a));
     }
 
@@ -290,7 +302,7 @@ mod tests {
     fn parse_reads_target_gas_limit_from_attributes() {
         let mut params = build_params(H256::zero(), 0x10, json!([])).unwrap();
         params[1]["targetGasLimit"] = json!("0x1c9c380");
-        let req = BuildBlockV1Request::parse(&Some(params)).unwrap();
+        let req = BuildBlockV1Request::parse(&raw_params(&Some(params))).unwrap();
         assert_eq!(req.target_gas_limit, Some(0x1c9c380));
     }
 
@@ -301,7 +313,7 @@ mod tests {
         let (_, timestamp) = head_hash_and_timestamp(&context).await;
 
         let params = build_params(H256::from_low_u64_be(1234), timestamp + 12, json!([]));
-        let err = BuildBlockV1Request::parse(&params)
+        let err = BuildBlockV1Request::parse(&raw_params(&params))
             .unwrap()
             .handle(context.clone())
             .await
@@ -316,7 +328,7 @@ mod tests {
         let (head, timestamp) = head_hash_and_timestamp(&context).await;
 
         let params = build_params(head, timestamp + 12, json!([]));
-        let response = BuildBlockV1Request::parse(&params)
+        let response = BuildBlockV1Request::parse(&raw_params(&params))
             .unwrap()
             .handle(context.clone())
             .await
@@ -343,9 +355,9 @@ mod tests {
 
         let mut params = build_params(head, timestamp + 12, json!([])).unwrap();
         params[1]["targetGasLimit"] = json!(format!("{parent_gas_limit:#x}"));
-        let response = BuildBlockV1Request::parse(&Some(params))
+        let response = BuildBlockV1Request::parse(&raw_params(&Some(params)))
             .unwrap()
-            .handle(context)
+            .handle(context.clone())
             .await
             .unwrap();
 
@@ -371,9 +383,9 @@ mod tests {
 
         let mut params = build_params(head, timestamp + 12, json!([])).unwrap();
         params[1]["targetGasLimit"] = json!(format!("{parent_gas_limit:#x}"));
-        let response = BuildBlockV1Request::parse(&Some(params))
+        let response = BuildBlockV1Request::parse(&raw_params(&Some(params)))
             .unwrap()
-            .handle(context)
+            .handle(context.clone())
             .await
             .unwrap();
 
