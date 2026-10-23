@@ -29,7 +29,7 @@ use crate::eth::client::Config;
 use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
-        GetTransactionCountRequest,
+        GetStorageValuesRequest, GetTransactionCountRequest,
     },
     block::{
         BlockNumberRequest, GetBlobBaseFee, GetBlockByHashRequest, GetBlockByNumberRequest,
@@ -1691,7 +1691,7 @@ pub async fn map_authrpc_requests(
 /// Routes `eth_*` namespace requests to their handlers.
 ///
 /// Handles all standard Ethereum JSON-RPC methods including:
-/// - Account queries: `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_getTransactionCount`
+/// - Account queries: `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_getStorageValues`, `eth_getTransactionCount`
 /// - Block queries: `eth_getBlockByNumber`, `eth_getBlockByHash`, `eth_blockNumber`
 /// - Transaction operations: `eth_sendRawTransaction`, `eth_getTransactionByHash`, `eth_getTransactionReceipt`
 /// - Gas estimation: `eth_estimateGas`, `eth_gasPrice`, `eth_maxPriorityFeePerGas`, `eth_feeHistory`
@@ -1706,6 +1706,7 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_getBalance" => GetBalanceRequest::call(req, context).await,
         "eth_getCode" => GetCodeRequest::call(req, context).await,
         "eth_getStorageAt" => GetStorageAtRequest::call(req, context).await,
+        "eth_getStorageValues" => GetStorageValuesRequest::call(req, context).await,
         "eth_getBlockTransactionCountByNumber" => {
             GetBlockTransactionCountRequest::call(req, context).await
         }
