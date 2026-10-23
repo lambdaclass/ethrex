@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde_json::{Value, value::RawValue};
 use tracing::debug;
@@ -287,6 +287,22 @@ pub struct GetStorageValuesRequest {
     pub block: BlockIdentifierOrHash,
 }
 
+/// Parses a storage slot as the spec's `bytesMax32`: `0x` and at most 64 hex
+/// digits, where `0x` alone is slot 0.
+fn parse_storage_slot(slot: &str) -> Result<H256, RpcErr> {
+    let invalid =
+        || RpcErr::InvalidParams("storage slot must be 0x and at most 64 hex digits".to_owned());
+    let digits = slot.strip_prefix("0x").ok_or_else(invalid)?;
+    if digits.len() > 64 || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(invalid());
+    }
+    if digits.is_empty() {
+        return Ok(H256::zero());
+    }
+    let slot = U256::from_str_radix(digits, 16).map_err(|_| invalid())?;
+    Ok(H256::from_uint(&slot))
+}
+
 impl RpcHandler for GetStorageValuesRequest {
     fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
@@ -296,23 +312,28 @@ impl RpcHandler for GetStorageValuesRequest {
         if params.len() != 1 && params.len() != 2 {
             return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         };
-        // params[0] is an object mapping address -> array of storage slots.
-        let raw: HashMap<String, Vec<U256>> = serde_json::from_str(params[0].get())?;
+        // params[0] is an object mapping address -> array of storage slots. A
+        // BTreeMap reads it in a fixed order, so when two keys spell the same
+        // address the same one wins on every call.
+        let raw: BTreeMap<String, Vec<String>> = serde_json::from_str(params[0].get())?;
         let mut requests = HashMap::with_capacity(raw.len());
         let mut total_slots = 0usize;
         for (address, slots) in raw {
             total_slots += slots.len();
             if total_slots > MAX_STORAGE_VALUES_SLOTS {
-                return Err(RpcErr::BadParams(format!(
+                return Err(RpcErr::LimitExceeded(format!(
                     "too many slots (max {MAX_STORAGE_VALUES_SLOTS})"
                 )));
             }
             let address: Address = serde_json::from_value(Value::String(address))?;
-            let slots = slots.iter().map(H256::from_uint).collect();
+            let slots = slots
+                .iter()
+                .map(|slot| parse_storage_slot(slot))
+                .collect::<Result<_, _>>()?;
             requests.insert(address, slots);
         }
         if total_slots == 0 {
-            return Err(RpcErr::BadParams("empty request".to_owned()));
+            return Err(RpcErr::InvalidParams("empty request".to_owned()));
         }
         Ok(GetStorageValuesRequest {
             requests,
@@ -449,7 +470,61 @@ mod tests {
 
     #[test]
     fn test_get_storage_values_request_rejects_empty() {
-        assert!(GetStorageValuesRequest::parse(&raw_params(&Some(vec![json!({})]))).is_err());
+        for requests in [
+            json!({}),
+            json!({"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef": []}),
+        ] {
+            assert!(matches!(
+                GetStorageValuesRequest::parse(&raw_params(&Some(vec![requests]))),
+                Err(RpcErr::InvalidParams(ref msg)) if msg == "empty request"
+            ));
+        }
+    }
+
+    #[test]
+    fn test_get_storage_values_request_slot_format() {
+        let parse = |slot: &str| {
+            GetStorageValuesRequest::parse(&raw_params(&Some(vec![json!({
+                "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef": [slot]
+            })])))
+        };
+        let addr: Address = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            .parse()
+            .unwrap();
+        for (slot, expected) in [
+            ("0x", U256::zero()),
+            ("0x10", U256::from(16u64)),
+            (
+                "0x0100000000000000000000000000000000000000000000000000000000000000",
+                U256::one() << 248,
+            ),
+        ] {
+            let request = parse(slot).unwrap();
+            assert_eq!(
+                request.requests.get(&addr).unwrap(),
+                &vec![H256::from_uint(&expected)],
+                "{slot}"
+            );
+        }
+        // Without 0x, `10` would read slot 16 where eth_getStorageAt reads slot 10.
+        let too_long = format!("0x{}", "0".repeat(65));
+        for slot in ["10", "0xzz", too_long.as_str()] {
+            assert!(
+                matches!(parse(slot), Err(RpcErr::InvalidParams(_))),
+                "{slot} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_storage_values_request_accepts_the_cap() {
+        let slots: Vec<_> = (0..MAX_STORAGE_VALUES_SLOTS)
+            .map(|slot| format!("{slot:#x}"))
+            .collect();
+        let params = Some(vec![json!({
+            "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef": slots
+        })]);
+        assert!(GetStorageValuesRequest::parse(&raw_params(&params)).is_ok());
     }
 
     #[test]
@@ -463,7 +538,7 @@ mod tests {
 
         assert!(matches!(
             GetStorageValuesRequest::parse(&raw_params(&params)),
-            Err(RpcErr::BadParams(ref msg)) if msg.contains("too many slots")
+            Err(RpcErr::LimitExceeded(ref msg)) if msg.contains("too many slots")
         ));
     }
 
@@ -478,7 +553,7 @@ mod tests {
 
         assert!(matches!(
             GetStorageValuesRequest::parse(&raw_params(&params)),
-            Err(RpcErr::BadParams(ref msg)) if msg.contains("too many slots")
+            Err(RpcErr::LimitExceeded(ref msg)) if msg.contains("too many slots")
         ));
     }
 
