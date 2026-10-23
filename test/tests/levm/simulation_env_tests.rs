@@ -557,6 +557,39 @@ fn simulation_rejects_fields_before_their_block_scheduled_fork() {
 }
 
 #[test]
+fn create_access_list_rejects_a_block_before_berlin() {
+    // A plain call sets no fork-gated field, but the access list it would return
+    // does not exist before Berlin. The test header is block 1.
+    let call = GenericTransaction {
+        from: SENDER,
+        to: TxKind::Call(GASLIMIT_READER),
+        ..Default::default()
+    };
+    let pre_berlin = ChainConfig {
+        berlin_block: Some(2),
+        ..Default::default()
+    };
+    let (mut db, header) = db_and_header(pre_berlin, None);
+    let err = LEVM::create_access_list(call.clone(), &header, &mut db, VMType::L1, &NativeCrypto)
+        .expect_err("the request must be rejected before Berlin");
+    assert!(
+        matches!(
+            err,
+            VMError::TxValidation(TxValidationError::Type1TxPreFork)
+        ),
+        "expected Type1TxPreFork, got {err:?}"
+    );
+
+    let at_berlin = ChainConfig {
+        berlin_block: Some(1),
+        ..Default::default()
+    };
+    let (mut db, header) = db_and_header(at_berlin, None);
+    LEVM::create_access_list(call, &header, &mut db, VMType::L1, &NativeCrypto)
+        .expect("the request is valid once Berlin is active");
+}
+
+#[test]
 fn simulation_treats_blob_hashes_without_a_cap_as_a_blob_call() {
     let call_with_hashes = |hash: H256| GenericTransaction {
         from: SENDER,

@@ -4047,6 +4047,12 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<(ExecutionResult, AccessList), VMError> {
+        // The result is an EIP-2930 access list, so the request is invalid on a block
+        // before Berlin, whatever fields the call sets.
+        let berlin_block = db.store.get_chain_config()?.berlin_block;
+        if berlin_block.is_some_and(|block| header.number < block) {
+            return Err(TxValidationError::Type1TxPreFork.into());
+        }
         let mut env = env_from_generic(&tx, header, db, vm_type)?;
 
         adjust_disabled_base_fee(&mut env);
