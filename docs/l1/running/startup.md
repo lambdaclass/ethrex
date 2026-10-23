@@ -14,6 +14,15 @@ These are the only names `--network` accepts. Any other value is treated as a pa
 
 For more information about sync modes please read the [sync modes document](../fundamentals/sync_modes.md). Snap syncing is the default; to switch to full sync use the flag `--syncmode full`. Full sync is not possible on a fresh mainnet or sepolia database, since ethrex only executes post-merge blocks.
 
+## Private networks and devnets
+
+Two flags keep a node on a private network from talking to anything outside it:
+
+- `--p2p.netrestrict <CIDR,...>` confines all P2P traffic to the given IP networks. Nodes discovered outside them are ignored, bootnodes outside them are dropped, and inbound TCP and UDP from outside is discarded. For example, `--p2p.netrestrict 10.0.0.0/8,172.16.0.0/12`.
+- `--p2p.discv4=false --p2p.discv5=false` turns discovery off. The node then connects only to its `--bootnodes`, which act as static peers.
+
+Setting `--p2p.target-peers` to the number of nodes in the network also helps: connection attempts stop once the target is reached, and discovery lookups slow down as it is approached.
+
 ## Run an Ethereum node
 
 This guide will assume that you already [installed ethrex](../../getting-started/installation/) and you know how to set up a [consensus client](./consensus_client.md) to communicate with ethrex.
