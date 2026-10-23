@@ -12,7 +12,10 @@
 use crate::{
     metrics::METRICS,
     peer_filter::{EthForkIdFilter, PeerFilter},
-    rlpx::{connection::server::PeerConnection, p2p::Capability},
+    rlpx::{
+        connection::server::{ConnectionId, PeerConnection},
+        p2p::Capability,
+    },
     types::{Node, NodeRecord},
     utils::distance,
 };
@@ -318,6 +321,9 @@ pub struct PeerData {
     pub is_connection_inbound: bool,
     /// communication channels between the peer data and its active connection
     pub connection: Option<PeerConnection>,
+    /// The connection this entry was registered for. Only that connection's
+    /// `remove_peer` removes the entry.
+    connection_id: Option<ConnectionId>,
     /// This tracks the score of a peer
     score: i64,
     /// Track the amount of concurrent requests this peer is handling
@@ -342,6 +348,7 @@ impl PeerData {
             negotiated_eth,
             is_connection_inbound: false,
             connection,
+            connection_id: None,
             score: Default::default(),
             requests: Default::default(),
             last_response_time: None,
@@ -426,17 +433,10 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn new_contacts(&self, nodes: Vec<Node>, protocol: DiscoveryProtocol)
     -> Result<(), ActorError>;
     fn new_contact_records(&self, node_records: Vec<NodeRecord>) -> Result<(), ActorError>;
-    fn new_connected_peer(
-        &self,
-        node: Node,
-        connection: PeerConnection,
-        capabilities: Vec<Capability>,
-        negotiated_capabilities: Vec<Capability>,
-        negotiated_eth: Option<Capability>,
-        is_inbound: bool,
-    ) -> Result<(), ActorError>;
     fn set_session_info(&self, node_id: H256, session: Session) -> Result<(), ActorError>;
-    fn remove_peer(&self, node_id: H256) -> Result<(), ActorError>;
+    /// Removes `node_id`'s entry if it was registered for `connection_id`, and drops
+    /// the node's discv5 session unless another connection still holds the entry.
+    fn remove_peer(&self, node_id: H256, connection_id: ConnectionId) -> Result<(), ActorError>;
     fn dec_requests(&self, node_id: H256) -> Result<(), ActorError>;
     fn set_unwanted(&self, node_id: H256) -> Result<(), ActorError>;
     fn record_success(&self, node_id: H256) -> Result<(), ActorError>;
@@ -457,6 +457,20 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn shutdown(&self) -> Result<(), ActorError>;
 
     // Request (call) methods
+    /// Registers an established connection to `node`, unless the node already has
+    /// one. Returns whether this connection was registered: a node keeps the
+    /// connection that registered first, and a second one must be closed.
+    #[allow(clippy::too_many_arguments)]
+    fn new_connected_peer(
+        &self,
+        node: Node,
+        connection: PeerConnection,
+        connection_id: ConnectionId,
+        capabilities: Vec<Capability>,
+        negotiated_capabilities: Vec<Capability>,
+        negotiated_eth: Option<Capability>,
+        is_inbound: bool,
+    ) -> Response<bool>;
     fn peer_count(&self) -> Response<usize>;
     fn peer_count_by_capabilities(&self, capabilities: Vec<Capability>) -> Response<usize>;
     fn target_reached(&self) -> Response<bool>;
@@ -605,13 +619,16 @@ impl PeerTableServer {
         self.do_new_contact_records(msg.node_records).await;
     }
 
-    #[send_handler]
+    #[request_handler]
     async fn handle_new_connected_peer(
         &mut self,
         msg: peer_table_server_protocol::NewConnectedPeer,
         _ctx: &Context<Self>,
-    ) {
+    ) -> bool {
         let new_peer_id = msg.node.node_id();
+        if self.peers.contains_key(&new_peer_id) {
+            return false;
+        }
         let mut new_peer = PeerData::new(
             msg.node,
             None,
@@ -621,7 +638,9 @@ impl PeerTableServer {
         );
         new_peer.negotiated_capabilities = msg.negotiated_capabilities;
         new_peer.is_connection_inbound = msg.is_inbound;
+        new_peer.connection_id = Some(msg.connection_id);
         self.peers.insert(new_peer_id, new_peer);
+        true
     }
 
     #[send_handler]
@@ -644,7 +663,15 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::RemovePeer,
         _ctx: &Context<Self>,
     ) {
-        self.peers.swap_remove(&msg.node_id);
+        // The entry belongs to the connection that registered it. Another connection to
+        // the same node, such as a refused duplicate, leaves the entry and its discv5
+        // session alone.
+        if let Some(peer) = self.peers.get(&msg.node_id) {
+            if peer.connection_id != Some(msg.connection_id) {
+                return;
+            }
+            self.peers.swap_remove(&msg.node_id);
+        }
         // Also drop the standalone discv5 session so it isn't retained after the peer leaves
         // (the sessions map was previously insert-only and grew per handshake).
         self.sessions.remove(&msg.node_id);
@@ -1758,6 +1785,55 @@ mod tests {
 
     fn table_with(filter: impl PeerFilter + 'static) -> PeerTableServer {
         PeerTableServer::new(H256::zero(), 10, Box::new(filter))
+    }
+
+    /// A node keeps the connection that registered first. A second connection to
+    /// the same node is refused, so closing it cannot take the live entry away.
+    #[tokio::test]
+    async fn a_second_connection_to_a_connected_node_is_not_registered() {
+        let table = PeerTableServer::spawn_with_filter(H256::zero(), 10, FixedAnswer(true));
+        let (node_id, contact) = dummy_contact(1);
+        let (first, second) = (ConnectionId::next(), ConnectionId::next());
+        let register = |connection_id, is_inbound| {
+            table.new_connected_peer(
+                contact.node.clone(),
+                PeerConnection::unestablished(),
+                connection_id,
+                vec![Capability::eth(69)],
+                vec![Capability::eth(69)],
+                Some(Capability::eth(69)),
+                is_inbound,
+            )
+        };
+
+        assert!(
+            register(first, false).await.unwrap(),
+            "the first connection registers"
+        );
+        assert!(
+            !register(second, true).await.unwrap(),
+            "the second connection is refused"
+        );
+
+        let peers = table.get_peers_data().await.unwrap();
+        assert_eq!(peers.len(), 1);
+        assert!(
+            !peers[0].is_connection_inbound,
+            "the first connection's entry is kept"
+        );
+
+        table.remove_peer(node_id, second).unwrap();
+        assert_eq!(
+            table.peer_count().await.unwrap(),
+            1,
+            "closing the refused connection leaves the entry"
+        );
+        table.remove_peer(node_id, first).unwrap();
+        assert_eq!(
+            table.peer_count().await.unwrap(),
+            0,
+            "closing the registered connection removes the entry"
+        );
     }
 
     /// A signed record for `seed`'s node at sequence number `seq`.

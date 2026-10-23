@@ -12,3 +12,9 @@ use ethrex_rlp::error::RLPDecodeError;
 pub fn bytes_to_cell_mask(b: &Bytes) -> Result<Option<u128>, RLPDecodeError> {
     crate::rlpx::eth::eth72::transactions::bytes_to_cell_mask(b)
 }
+
+/// Shim over the crate-private `network::serve_p2p_requests`: accepts inbound
+/// RLPx connections for `context` without starting discovery.
+pub async fn serve_p2p_requests(context: crate::network::P2PContext) {
+    crate::network::serve_p2p_requests(context).await
+}
