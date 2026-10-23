@@ -715,8 +715,9 @@ impl Blockchain {
             }
         }
 
-        // EIP-7928: Post-tx phase uses index n+1 for both requests and withdrawals.
-        // Order must match geth: requests (system calls) BEFORE withdrawals.
+        // EIP-7928: Post-tx phase uses index n+1 for both withdrawals and requests.
+        // Withdrawals precede the request system calls, as on block import; see the
+        // ordering note in `LEVM::execute_block`.
         if !state_test
             && context
                 .chain_config()
@@ -738,6 +739,7 @@ impl Blockchain {
         // set matching EELS, and reports the failure as a block exception.
         let mut block_exception = None;
         if !state_test {
+            self.apply_withdrawals(&mut context)?;
             if let Err(error) = self.extract_requests(&mut context) {
                 block_exception = Some(error.to_string());
                 context.requests = context
@@ -745,7 +747,6 @@ impl Blockchain {
                     .is_prague_activated(context.payload.header.timestamp)
                     .then_some(Vec::new());
             }
-            self.apply_withdrawals(&mut context)?;
         }
         self.finalize_payload(&mut context)?;
 
@@ -774,8 +775,9 @@ impl Blockchain {
             None => self.fill_transactions(&mut context)?,
             Some(transactions) => self.fill_explicit_transactions(&mut context, transactions)?,
         }
-        // EIP-7928: Post-tx phase uses index n+1 for both requests and withdrawals.
-        // Order must match geth: requests (system calls) BEFORE withdrawals.
+        // EIP-7928: Post-tx phase uses index n+1 for both withdrawals and requests.
+        // Withdrawals precede the request system calls, as on block import; see the
+        // ordering note in `LEVM::execute_block`.
         if context
             .chain_config()
             .is_amsterdam_activated(context.payload.header.timestamp)
@@ -790,8 +792,8 @@ impl Blockchain {
                 recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
             }
         }
-        self.extract_requests(&mut context)?;
         self.apply_withdrawals(&mut context)?;
+        self.extract_requests(&mut context)?;
         self.finalize_payload(&mut context)?;
 
         let interval = Instant::now().duration_since(since).as_millis();

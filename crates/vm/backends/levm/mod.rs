@@ -786,7 +786,7 @@ impl LEVM {
             // Mark pure-access accounts touched during the withdrawal/request phase.
             // All withdrawal recipients (including 0-amount) are marked because the
             // BAL recorder calls extend_touched_addresses for them, even though
-            // process_withdrawals only calls get_account_mut for amount > 0.
+            // process_withdrawals only records a balance change for amount > 0.
             if !unaccessed_pure_accounts.is_empty() {
                 if let Some(withdrawals) = &block.body.withdrawals {
                     for w in withdrawals {
@@ -812,7 +812,7 @@ impl LEVM {
             )?;
 
             // EIP-7928 records withdrawal recipients regardless of amount, but
-            // `process_withdrawals` only loads the account for amount > 0.
+            // `process_withdrawals` only records a balance change for amount > 0.
             if let Some(withdrawals) = &block.body.withdrawals {
                 for w in withdrawals {
                     if !validation_index.addr_to_idx.contains_key(&w.address) {
@@ -3240,13 +3240,7 @@ impl LEVM {
             return Ok(());
         }
 
-        for withdrawal in block
-            .body
-            .withdrawals
-            .iter()
-            .flatten()
-            .filter(|withdrawal| withdrawal.amount > 0)
-        {
+        for withdrawal in block.body.withdrawals.iter().flatten() {
             db.get_account_mut(withdrawal.address).map_err(|_| {
                 EvmError::DB(format!(
                     "Withdrawal account {} not found",
@@ -3801,11 +3795,20 @@ impl LEVM {
         withdrawals: &[Withdrawal],
     ) -> Result<(), EvmError> {
         // For every withdrawal we increment the target account's balance
-        for (address, increment) in withdrawals
-            .iter()
-            .filter(|withdrawal| withdrawal.amount > 0)
-            .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
-        {
+        for withdrawal in withdrawals {
+            let address = withdrawal.address;
+            // A zero withdrawal changes nothing, but the spec still reads its recipient
+            // (`create_ether`), so a stateless witness has to carry that account's
+            // proof. Reading it here is what makes a witness that leaves the proof out
+            // fail, as `validation_state_unchanged_account_read` requires; without the
+            // read the block validates against an incomplete witness.
+            if withdrawal.amount == 0 {
+                db.get_account(address).map_err(|_| {
+                    EvmError::DB(format!("Withdrawal account {address} could not be read"))
+                })?;
+                continue;
+            }
+            let increment = u128::from(withdrawal.amount) * u128::from(GWEI_TO_WEI);
             let account = db
                 .get_account_mut(address)
                 .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
