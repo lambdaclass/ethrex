@@ -6,20 +6,17 @@
 //! was gated on a non-zero gas price instead of on the transaction not being a system call.
 //! A system call never touches the coinbase, so the coinbase stays out of its BAL.
 
+use super::test_db::TestDatabase;
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
-    constants::{EMPTY_TRIE_HASH, SYSTEM_ADDRESS},
-    types::{
-        Account, AccountState, ChainConfig, Code, CodeMetadata, EIP1559Transaction, Fork,
-        Transaction, TxKind,
-    },
+    constants::SYSTEM_ADDRESS,
+    types::{Account, Code, EIP1559Transaction, Fork, Transaction, TxKind},
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
-    db::{Database, gen_db::GeneralizedDatabase},
+    db::gen_db::GeneralizedDatabase,
     environment::{EVMConfig, Environment},
-    errors::DatabaseError,
     hooks::default_hook::pay_coinbase,
     tracing::LevmCallTracer,
     vm::{VM, VMType},
@@ -28,37 +25,6 @@ use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 const GAS_LIMIT: u64 = 1_000_000;
-
-struct TestDb;
-
-impl Database for TestDb {
-    fn get_account_state(&self, _address: Address) -> Result<AccountState, DatabaseError> {
-        Ok(AccountState {
-            storage_root: *EMPTY_TRIE_HASH,
-            ..Default::default()
-        })
-    }
-
-    fn get_storage_value(&self, _address: Address, _key: H256) -> Result<U256, DatabaseError> {
-        Ok(U256::zero())
-    }
-
-    fn get_block_hash(&self, _block_number: u64) -> Result<H256, DatabaseError> {
-        Ok(H256::zero())
-    }
-
-    fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
-        Ok(ChainConfig::default())
-    }
-
-    fn get_account_code(&self, _code_hash: H256) -> Result<Code, DatabaseError> {
-        Ok(Code::default())
-    }
-
-    fn get_code_metadata(&self, _code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
-        Ok(CodeMetadata { length: 0 })
-    }
-}
 
 /// Runs `run` on a VM whose transaction calls an existing account, and returns the addresses in
 /// the resulting BAL. A user transaction is a value transfer from a funded EOA at the given gas
@@ -92,7 +58,8 @@ fn bal_addresses(
     ]
     .into_iter()
     .collect();
-    let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(TestDb), accounts);
+    let mut db =
+        GeneralizedDatabase::new_with_account_state(Arc::new(TestDatabase::new()), accounts);
     db.enable_bal_recording();
     db.set_bal_index(1);
     if is_system_call && let Some(recorder) = db.bal_recorder.as_mut() {
@@ -113,28 +80,15 @@ fn bal_addresses(
         coinbase,
         timestamp: 1000,
         prev_randao: Some(H256::zero()),
-        difficulty: U256::zero(),
-        slot_number: U256::zero(),
         chain_id: U256::from(1),
         base_fee_per_gas: U256::from(gas_price),
         base_blob_fee_per_gas: U256::from(1),
         gas_price: U256::from(gas_price),
-        block_excess_blob_gas: None,
-        block_blob_gas_used: None,
-        tx_blob_hashes: vec![],
         tx_max_priority_fee_per_gas: Some(U256::zero()),
         tx_max_fee_per_gas: Some(U256::from(gas_price)),
-        tx_max_fee_per_blob_gas: None,
-        tx_nonce: 0,
         block_gas_limit: GAS_LIMIT * 2,
-        is_privileged: false,
-        fee_token: None,
-        disable_balance_check: false,
-        disable_nonce_check: false,
-        disable_gas_allowance_check: false,
-        disable_sender_eoa_check: false,
-        disable_execution_gas_cap: false,
         is_system_call,
+        ..Default::default()
     };
     let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
         to: TxKind::Call(recipient),
