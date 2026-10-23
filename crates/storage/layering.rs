@@ -76,10 +76,14 @@
 //! the new layer together into a single atomic RocksDB write batch, then
 //! clears the overlay.
 
-use ethrex_common::{H256, types::BlockNumber};
+use ethrex_common::{
+    H256,
+    seeded_hash::{SeededHashMap, SeededState},
+    types::BlockNumber,
+};
 use fastbloom::AtomicBloomFilter;
 use rayon::prelude::*;
-use rustc_hash::{FxBuildHasher, FxHashMap};
+use rustc_hash::FxHashMap;
 use std::{
     fmt,
     sync::{Arc, RwLock},
@@ -99,7 +103,8 @@ const FALSE_POSITIVE_RATE: f64 = 0.02;
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
-    nodes: FxHashMap<Vec<u8>, Vec<u8>>,
+    /// Seeded: these are the paths a block's state writes touch, which contracts choose.
+    nodes: SeededHashMap<Vec<u8>, Vec<u8>>,
     parent: H256,
     id: usize,
     /// Number of the block whose post-state this layer represents. Used by the
@@ -130,7 +135,7 @@ pub struct TrieLayerCache {
     ///
     /// Used to avoid looking up all layers when the given path doesn't exist in any
     /// layer, thus going directly to the database.
-    bloom: AtomicBloomFilter<FxBuildHasher>,
+    bloom: AtomicBloomFilter<SeededState>,
     /// Optional in-memory overlay bridging on-disk state at the cache edge `D` to the
     /// virtual state at a deep-reorg pivot. When installed, reads that miss the layer
     /// chain consult the overlay before falling through to disk. `None` in steady state.
@@ -240,9 +245,9 @@ impl TrieLayerCache {
         self.commit_threshold
     }
 
-    fn create_filter(expected_items: usize) -> AtomicBloomFilter<FxBuildHasher> {
+    fn create_filter(expected_items: usize) -> AtomicBloomFilter<SeededState> {
         AtomicBloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
-            .hasher(FxBuildHasher)
+            .hasher(SeededState::default())
             .expected_items(expected_items.max(BLOOM_SIZE))
     }
 
@@ -388,7 +393,7 @@ impl TrieLayerCache {
             self.bloom.insert(p.as_ref());
         }
 
-        let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
+        let nodes: SeededHashMap<Vec<u8>, Vec<u8>> = key_values
             .into_iter()
             .map(|(path, value)| (path.into_vec(), value))
             .collect();
@@ -736,13 +741,14 @@ pub enum OverlayError {
 /// new-chain commit folds the overlay and the new layer together into a single
 /// atomic write (the reconciliation step in `commit_to_disk`).
 pub struct Overlay {
-    account_trie: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
-    storage_trie: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
-    account_flat: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
-    storage_flat: FxHashMap<Vec<u8>, Option<Vec<u8>>>,
+    /// Seeded, like the layer maps: the keys are the paths the reorged blocks wrote.
+    account_trie: SeededHashMap<Vec<u8>, Option<Vec<u8>>>,
+    storage_trie: SeededHashMap<Vec<u8>, Option<Vec<u8>>>,
+    account_flat: SeededHashMap<Vec<u8>, Option<Vec<u8>>>,
+    storage_flat: SeededHashMap<Vec<u8>, Option<Vec<u8>>>,
     /// Bloom filter shared across all four CFs. A miss here lets readers skip the
     /// overlay lookup and fall through to disk without touching any map.
-    bloom: AtomicBloomFilter<FxBuildHasher>,
+    bloom: AtomicBloomFilter<SeededState>,
     /// Highest block number covered by the overlay (= cache edge `D` at install time).
     from_block: BlockNumber,
     /// Lowest block number covered by the overlay (= `pivot + 1`).
@@ -772,12 +778,12 @@ impl fmt::Debug for Overlay {
 impl Default for Overlay {
     fn default() -> Self {
         Self {
-            account_trie: FxHashMap::default(),
-            storage_trie: FxHashMap::default(),
-            account_flat: FxHashMap::default(),
-            storage_flat: FxHashMap::default(),
+            account_trie: SeededHashMap::default(),
+            storage_trie: SeededHashMap::default(),
+            account_flat: SeededHashMap::default(),
+            storage_flat: SeededHashMap::default(),
             bloom: AtomicBloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
-                .hasher(FxBuildHasher)
+                .hasher(SeededState::default())
                 .expected_items(Self::BLOOM_INITIAL_CAPACITY),
             from_block: 0,
             to_block: 0,
@@ -1765,5 +1771,39 @@ mod tests {
             Some(roots[1]),
             "batch depth gate must flush the layer 4 deep, bounding memory"
         );
+    }
+}
+
+#[cfg(test)]
+mod seeded_map_tests {
+    use super::*;
+    use std::hash::BuildHasher;
+
+    /// Fails if `state` hashes a key like a fresh instance of its type does, as every
+    /// instance of an unseeded hasher does.
+    #[track_caller]
+    fn assert_seeded<S: BuildHasher + Default>(state: &S) {
+        let path = vec![0x5au8; 65];
+        assert_ne!(state.hash_one(&path), S::default().hash_one(&path));
+    }
+
+    /// Contracts choose the slots and accounts a block writes, so the paths a layer and the
+    /// overlay hold are theirs to pick.
+    #[test]
+    fn layer_and_overlay_maps_are_seeded() {
+        let layer = TrieLayer {
+            nodes: SeededHashMap::default(),
+            parent: H256::zero(),
+            id: 0,
+            block_number: 0,
+            block_hash: H256::zero(),
+        };
+        assert_seeded(layer.nodes.hasher());
+
+        let overlay = Overlay::default();
+        assert_seeded(overlay.account_trie.hasher());
+        assert_seeded(overlay.storage_trie.hasher());
+        assert_seeded(overlay.account_flat.hasher());
+        assert_seeded(overlay.storage_flat.hasher());
     }
 }

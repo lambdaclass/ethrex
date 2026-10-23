@@ -3,9 +3,23 @@ use std::{fmt::Display, str::FromStr};
 use ethrex_common::types::{BlockHash, BlockHeader, BlockNumber};
 use ethrex_storage::{Store, error::StoreError};
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{Value, json, value::RawValue};
 
 use crate::utils::RpcErr;
+
+/// Longest raw JSON accepted for a block identifier param: a tag, a hex number, or an
+/// EIP-1898 object with a hash and `requireCanonical`, with ample room for whitespace.
+/// Anything longer is rejected before being turned into a `Value`.
+const MAX_BLOCK_IDENTIFIER_PARAM_LEN: usize = 1024;
+
+fn block_identifier_param_value(param: &RawValue, arg_index: u64) -> Result<Value, RpcErr> {
+    if param.get().len() > MAX_BLOCK_IDENTIFIER_PARAM_LEN {
+        return Err(RpcErr::BadParams(format!(
+            "block identifier param {arg_index} is too long"
+        )));
+    }
+    Ok(serde_json::from_str(param.get())?)
+}
 
 #[derive(Clone, Debug)]
 pub enum BlockIdentifier {
@@ -54,6 +68,11 @@ impl BlockIdentifier {
                 }
             },
         }
+    }
+
+    /// Parses the raw JSON-RPC param at `arg_index`.
+    pub fn parse_param(param: &RawValue, arg_index: u64) -> Result<Self, RpcErr> {
+        Self::parse(block_identifier_param_value(param, arg_index)?, arg_index)
     }
 
     pub fn parse(serde_value: Value, arg_index: u64) -> Result<Self, RpcErr> {
@@ -108,6 +127,11 @@ impl BlockIdentifierOrHash {
             BlockIdentifierOrHash::Identifier(id) => id.resolve_block_number(storage).await,
             BlockIdentifierOrHash::Hash(block_hash) => storage.get_block_number(*block_hash).await,
         }
+    }
+
+    /// Parses the raw JSON-RPC param at `arg_index`.
+    pub fn parse_param(param: &RawValue, arg_index: u64) -> Result<Self, RpcErr> {
+        Self::parse(block_identifier_param_value(param, arg_index)?, arg_index)
     }
 
     pub fn parse(serde_value: Value, arg_index: u64) -> Result<BlockIdentifierOrHash, RpcErr> {

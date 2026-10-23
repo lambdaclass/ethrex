@@ -47,7 +47,7 @@ pub fn address_to_word(address: Address) -> U256 {
 /// address = keccak256(0xff || sender_address || salt || keccak256(initialization_code))[12:]
 pub fn calculate_create2_address(
     sender_address: Address,
-    initialization_code: &Bytes,
+    initialization_code: &[u8],
     salt: U256,
 ) -> Result<Address, InternalError> {
     let init_code_hash = keccak(initialization_code);
@@ -574,7 +574,13 @@ impl<'a> VM<'a> {
                 let gas_limit = self.tx.gas_limit();
                 let execution_gas = gas_limit.saturating_sub(total_gas);
                 let regular_gas_budget = TX_MAX_GAS_LIMIT_AMSTERDAM.saturating_sub(regular_gas);
-                let gas_left = regular_gas_budget.min(execution_gas);
+                // A simulation that lifted the cap (eth_call, debug_traceCall) spends its
+                // whole gas limit on execution and funds no reservoir, as geth does.
+                let gas_left = if self.env.disable_execution_gas_cap {
+                    execution_gas
+                } else {
+                    regular_gas_budget.min(execution_gas)
+                };
                 let reservoir = execution_gas.saturating_sub(gas_left);
                 if reservoir > 0 {
                     // Pre-consume reservoir from gas_remaining so GAS opcode returns <= TX_MAX_GAS_LIMIT_AMSTERDAM
@@ -617,7 +623,10 @@ impl<'a> VM<'a> {
 
         // Calldata Cost
         // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-        let calldata_cost = gas_cost::tx_calldata(&self.current_call_frame.calldata)?;
+        let calldata_cost = self
+            .current_call_frame
+            .calldata
+            .with_slice(gas_cost::tx_calldata)??;
 
         regular_gas = regular_gas.checked_add(calldata_cost).ok_or(OutOfGas)?;
 
@@ -750,10 +759,13 @@ impl<'a> VM<'a> {
         let fork = self.env.config.fork;
 
         // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
+        let tx_calldata;
         let calldata = if self.is_create()? {
             self.current_call_frame.bytecode.code()
         } else {
-            self.current_call_frame.calldata.as_ref()
+            // A transaction's own data is owned, so this shares it rather than copying.
+            tx_calldata = self.current_call_frame.calldata.to_bytes()?;
+            tx_calldata.as_ref()
         };
 
         // EIP-7976 floor tokens: for the floor arm, all calldata bytes count unweighted.
@@ -1042,7 +1054,7 @@ pub fn account_to_levm_account(account: Account) -> (LevmAccount, Code) {
         LevmAccount {
             info: account.info,
             has_storage: !account.storage.is_empty(), // This is used in scenarios in which the storage is already all in the account. For the Levm Runner
-            storage: account.storage,
+            storage: account.storage.into_iter().collect(),
             status: AccountStatus::Unmodified,
             exists: true,
         },
