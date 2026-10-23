@@ -5,6 +5,7 @@ use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::account_proof::{AccountProof, StorageProof};
 use crate::types::block_identifier::{BlockIdentifierOrHash, BlockTag};
 use crate::utils::RpcErr;
+use ethrex_common::types::AccountState;
 use ethrex_common::{Address, BigEndianHash, H256, U256, serde_utils};
 
 pub struct GetBalanceRequest {
@@ -31,7 +32,51 @@ pub struct GetTransactionCountRequest {
 pub struct GetProofRequest {
     pub address: Address,
     pub storage_keys: Vec<H256>,
+    /// The form of each requested key that the response echoes, by index.
+    pub storage_key_echoes: Vec<String>,
     pub block: BlockIdentifierOrHash,
+}
+
+/// Parses an `eth_getProof` storage key into its slot and its echo form.
+/// A key with 63 or 64 hex digits echoes as 32 bytes; any other key echoes
+/// as a minimal quantity.
+fn parse_storage_key(key: &str) -> Result<(H256, String), RpcErr> {
+    let invalid = || RpcErr::InvalidParams(format!("invalid storage key: {key}"));
+    let digits = key.strip_prefix("0x").ok_or_else(invalid)?;
+    if digits.len() > 64 || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(invalid());
+    }
+    let value = if digits.is_empty() {
+        U256::zero()
+    } else {
+        U256::from_str_radix(digits, 16).map_err(|_| invalid())?
+    };
+    let slot = H256::from_uint(&value);
+    let echo = if digits.len() >= 63 {
+        format!("{slot:#x}")
+    } else {
+        format!("{value:#x}")
+    };
+    Ok((slot, echo))
+}
+
+/// A missing state root means the node does not keep that state only once it is
+/// synced, holds the state of its head, and the block is not above that head;
+/// before that, the state may still arrive.
+fn state_is_caught_up(context: &RpcApiContext, block_number: u64) -> Result<bool, RpcErr> {
+    if !context.blockchain.is_synced() {
+        return Ok(false);
+    }
+    let latest = context.storage.get_latest_block_number()?;
+    // A block above the head has not been executed yet, so its state is not
+    // pruned: a node that fell behind its consensus client can hold such blocks.
+    if block_number > latest {
+        return Ok(false);
+    }
+    match context.storage.get_block_header(latest)? {
+        Some(header) => Ok(context.storage.has_state_root(header.state_root)?),
+        None => Ok(false),
+    }
 }
 
 impl RpcHandler for GetBalanceRequest {
@@ -200,11 +245,18 @@ impl RpcHandler for GetProofRequest {
         if params.len() != 3 {
             return Err(RpcErr::BadParams("Expected 3 params".to_owned()));
         };
-        let storage_keys: Vec<U256> = serde_json::from_str(params[1].get())?;
-        let storage_keys = storage_keys.iter().map(H256::from_uint).collect();
+        let raw_keys: Vec<String> = serde_json::from_str(params[1].get())
+            .map_err(|error| RpcErr::InvalidParams(format!("invalid storage keys: {error}")))?;
+        let (storage_keys, storage_key_echoes) = raw_keys
+            .iter()
+            .map(|key| parse_storage_key(key))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .unzip();
         Ok(GetProofRequest {
             address: serde_json::from_str(params[0].get())?,
             storage_keys,
+            storage_key_echoes,
             block: BlockIdentifierOrHash::parse_param(&params[2], 2)?,
         })
     }
@@ -215,13 +267,27 @@ impl RpcHandler for GetProofRequest {
             "Requested proof for account {} at block {} with storage keys: {:?}",
             self.address, self.block, self.storage_keys
         );
-        let Some(block_number) = self.block.resolve_block_number(storage).await? else {
+        // A hash must resolve to its own header. Going through the block number
+        // would return the canonical header at that height for a fork block.
+        let header = match &self.block {
+            BlockIdentifierOrHash::Hash(hash) => storage.get_block_header_by_hash(*hash)?,
+            BlockIdentifierOrHash::Identifier(id) => id.resolve_block_header(storage).await?,
+        };
+        let Some(header) = header else {
             return Ok(Value::Null);
         };
-        let Some(header) = storage.get_block_header(block_number)? else {
-            return Ok(Value::Null);
-        };
-        // Create account proof
+        if !storage.has_state_root(header.state_root)? {
+            if state_is_caught_up(&context, header.number)? {
+                return Err(RpcErr::PrunedHistoryUnavailable(format!(
+                    "state for block {:#x} is unavailable",
+                    header.hash()
+                )));
+            }
+            return Err(RpcErr::Internal(format!(
+                "state for block {:#x} is not available yet: the node is syncing",
+                header.hash()
+            )));
+        }
         let Some(account_proof) = storage
             .get_account_proof(header.state_root, self.address, &self.storage_keys)
             .await?
@@ -231,13 +297,20 @@ impl RpcHandler for GetProofRequest {
         let storage_proof = account_proof
             .storage_proof
             .into_iter()
-            .map(|sp| StorageProof {
-                key: sp.key.into_uint(),
+            .zip(&self.storage_key_echoes)
+            .map(|(sp, key)| StorageProof {
+                key: key.clone(),
                 value: sp.value,
                 proof: sp.proof,
             })
             .collect();
-        let account = account_proof.account;
+        // The eth_getProof spec reports zero hashes for an absent account.
+        let account = account_proof.account.unwrap_or(AccountState {
+            nonce: 0,
+            balance: U256::zero(),
+            code_hash: H256::zero(),
+            storage_root: H256::zero(),
+        });
         let account_proof = AccountProof {
             account_proof: account_proof.proof,
             address: self.address,
@@ -380,5 +453,236 @@ mod tests {
             .unwrap();
 
         assert_eq!(pending, json!("0x5a"));
+    }
+
+    fn proof_params(keys: Value) -> Option<Vec<Box<RawValue>>> {
+        raw_params(&Some(vec![
+            json!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"),
+            keys,
+            json!("latest"),
+        ]))
+    }
+
+    fn proof_request(
+        address: Address,
+        keys: &[&str],
+        block: BlockIdentifierOrHash,
+    ) -> GetProofRequest {
+        let (storage_keys, storage_key_echoes) = keys
+            .iter()
+            .map(|key| parse_storage_key(key).unwrap())
+            .unzip();
+        GetProofRequest {
+            address,
+            storage_keys,
+            storage_key_echoes,
+            block,
+        }
+    }
+
+    fn latest() -> BlockIdentifierOrHash {
+        use crate::types::block_identifier::BlockIdentifier;
+        BlockIdentifierOrHash::Identifier(BlockIdentifier::Tag(BlockTag::Latest))
+    }
+
+    #[test]
+    fn get_proof_parse_echoes_storage_keys() {
+        let key_64 = "0x00000000000000000000000000000000000000000000000000000000000000AB";
+        let key_63 = "0x0000000000000000000000000000000000000000000000000000000000000ab";
+        let key_62 = "0x00000000000000000000000000000000000000000000000000000000000ab";
+        let request = GetProofRequest::parse(&proof_params(json!([
+            key_64, key_63, key_62, "0x", "0x0001", key_64
+        ])))
+        .unwrap();
+
+        let slot_ab = H256::from_low_u64_be(0xab);
+        assert_eq!(
+            request.storage_keys,
+            vec![
+                slot_ab,
+                slot_ab,
+                slot_ab,
+                H256::zero(),
+                H256::from_low_u64_be(1),
+                slot_ab
+            ]
+        );
+        let padded_ab = format!("{slot_ab:#x}");
+        assert_eq!(
+            request.storage_key_echoes,
+            vec![
+                padded_ab.clone(),
+                padded_ab.clone(),
+                "0xab".to_string(),
+                "0x0".to_string(),
+                "0x1".to_string(),
+                padded_ab
+            ]
+        );
+    }
+
+    #[test]
+    fn get_proof_parse_rejects_invalid_storage_keys() {
+        let key_66 = format!("0x{}", "0".repeat(66));
+        for keys in [
+            json!(["0xzz"]),
+            json!([key_66]),
+            json!(["01"]),
+            json!([1]),
+            json!("0x1"),
+        ] {
+            let err = GetProofRequest::parse(&proof_params(keys.clone())).err();
+            assert!(
+                matches!(err, Some(RpcErr::InvalidParams(_))),
+                "keys {keys} gave {err:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn get_proof_existing_account_echoes_keys_in_order() {
+        let address = Address::from_low_u64_be(0xabcd);
+        let context = context_with_account_nonce(address, 0x59).await;
+        let key_64 = "0x0000000000000000000000000000000000000000000000000000000000000001";
+
+        let response = proof_request(address, &[key_64, "0x", "0x01", key_64], latest())
+            .handle(context.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(response["nonce"], json!("0x59"));
+        assert_eq!(
+            response["codeHash"],
+            json!(format!(
+                "{:#x}",
+                *ethrex_common::constants::EMPTY_KECCAK_HASH
+            ))
+        );
+        assert_eq!(
+            response["storageHash"],
+            json!(format!("{:#x}", *ethrex_common::constants::EMPTY_TRIE_HASH))
+        );
+        let keys: Vec<&Value> = response["storageProof"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| &entry["key"])
+            .collect();
+        assert_eq!(keys, vec![key_64, "0x0", "0x1", key_64]);
+    }
+
+    #[tokio::test]
+    async fn get_proof_absent_account_has_zero_hashes() {
+        let address = Address::from_low_u64_be(0xabcd);
+        let context = context_with_account_nonce(address, 1).await;
+        let absent = Address::from_low_u64_be(0xdead);
+
+        let response = proof_request(absent, &["0x5", "0x5"], latest())
+            .handle(context.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(response["codeHash"], json!(format!("{:#x}", H256::zero())));
+        assert_eq!(
+            response["storageHash"],
+            json!(format!("{:#x}", H256::zero()))
+        );
+        assert_eq!(response["balance"], json!("0x0"));
+        assert_eq!(response["nonce"], json!("0x0"));
+        assert!(!response["accountProof"].as_array().unwrap().is_empty());
+        let entry = json!({"key": "0x5", "value": "0x0", "proof": []});
+        assert_eq!(response["storageProof"], json!([entry, entry]));
+    }
+
+    #[tokio::test]
+    async fn get_proof_missing_state_error_depends_on_sync() {
+        use crate::test_utils::add_empty_blocks;
+        let address = Address::from_low_u64_be(0xabcd);
+        let context = context_with_account_nonce(address, 1).await;
+        let genesis = context.storage.get_block_header(0).unwrap().unwrap();
+        // Test blocks carry a state root that the store does not hold.
+        add_empty_blocks(&context.storage, 1).await;
+        let block_one = context.storage.get_block_header(1).unwrap().unwrap();
+        let mut head = genesis.clone();
+        head.number = 2;
+        head.parent_hash = block_one.hash();
+        let head_hash = head.hash();
+        context
+            .storage
+            .add_block(ethrex_common::types::Block::new(
+                head,
+                ethrex_common::types::BlockBody::default(),
+            ))
+            .await
+            .unwrap();
+        context
+            .storage
+            .forkchoice_update(vec![], 2, head_hash, None, None)
+            .await
+            .unwrap();
+
+        let syncing = proof_request(address, &[], BlockIdentifierOrHash::Hash(block_one.hash()))
+            .handle(context.clone())
+            .await
+            .unwrap_err();
+        assert!(matches!(syncing, RpcErr::Internal(_)));
+
+        context.blockchain.set_synced();
+        let pruned = proof_request(address, &[], BlockIdentifierOrHash::Hash(block_one.hash()))
+            .handle(context.clone())
+            .await
+            .unwrap_err();
+        assert!(matches!(pruned, RpcErr::PrunedHistoryUnavailable(_)));
+
+        // A stored block above the head has not been executed yet, so its state
+        // can still arrive, even on a synced node.
+        let mut above_head = block_one.clone();
+        above_head.number = 3;
+        above_head.parent_hash = head_hash;
+        let above_head_hash = above_head.hash();
+        context
+            .storage
+            .add_block(ethrex_common::types::Block::new(
+                above_head,
+                ethrex_common::types::BlockBody::default(),
+            ))
+            .await
+            .unwrap();
+        let not_executed =
+            proof_request(address, &[], BlockIdentifierOrHash::Hash(above_head_hash))
+                .handle(context.clone())
+                .await
+                .unwrap_err();
+        assert!(matches!(not_executed, RpcErr::Internal(_)));
+    }
+
+    #[tokio::test]
+    async fn get_proof_by_hash_uses_that_block_not_the_canonical_one() {
+        use crate::test_utils::add_empty_blocks;
+        let address = Address::from_low_u64_be(0xabcd);
+        let context = context_with_account_nonce(address, 0x59).await;
+        let genesis = context.storage.get_block_header(0).unwrap().unwrap();
+        add_empty_blocks(&context.storage, 1).await;
+        let canonical = context.storage.get_block_header(1).unwrap().unwrap();
+        let mut fork = genesis.clone();
+        fork.number = 1;
+        fork.parent_hash = genesis.hash();
+        fork.extra_data = vec![0xf0].into();
+        let fork_hash = fork.hash();
+        assert_ne!(fork_hash, canonical.hash());
+        context.storage.add_block_headers(vec![fork]).await.unwrap();
+
+        let fork_response = proof_request(address, &[], BlockIdentifierOrHash::Hash(fork_hash))
+            .handle(context.clone())
+            .await
+            .unwrap();
+        assert_eq!(fork_response["nonce"], json!("0x59"));
+
+        let canonical_err =
+            proof_request(address, &[], BlockIdentifierOrHash::Hash(canonical.hash()))
+                .handle(context.clone())
+                .await
+                .unwrap_err();
+        assert!(matches!(canonical_err, RpcErr::Internal(_)));
     }
 }
