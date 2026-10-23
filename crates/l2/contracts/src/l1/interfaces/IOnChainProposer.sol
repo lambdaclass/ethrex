@@ -12,11 +12,14 @@ interface IOnChainProposer {
     error MissingRisc0Verifier(); // 0x1871c084
     error MissingSp1Verifier(); // 0xc0b62621
     error MissingTdxVerifier(); // 0xee7f6b60
+    error MissingZiskVerifier(); // 0x65a18107
     error AlignedModeRequiresSp1(); // 0xb41e395e
     error AlignedModeDoesNotSupportRisc0(); // 0xadae5cff
+    error AlignedModeDoesNotSupportZisk(); // 0xfd235a9f
     error CommitHashIsZero(); // 0x1f14b5aa
     error MissingSp1VerificationKey(); // 0x544c07b4
     error MissingRisc0VerificationKey(); // 0x60c177e0
+    error MissingZiskVerificationKey(); // 0x1615dd51
     error BridgeIsZeroAddress(); // 0x850138f2
     error BridgeIsContractAddress(); // 0xdf655de9
 
@@ -41,6 +44,7 @@ interface IOnChainProposer {
     error InvalidRisc0Proof(); // 0x14add973
     error InvalidSp1Proof(); // 0x7ff849b5
     error InvalidTdxProof(); // 0x62013a95
+    error InvalidZiskProof(); // 0x5f22b00e
 
     // Aligned verify errors
     error IncorrectFirstBatchNumber(); // 0x5f83abb8
@@ -120,6 +124,14 @@ interface IOnChainProposer {
         bytes32 new_vk
     ) external;
 
+    /// @notice Upgrades the ZisK verification key that represents the sequencer's code.
+    /// @param new_vk new program key for the ZisK verifier, four u64 words packed big-endian
+    /// @param commit_hash git commit hash that produced the new verification key
+    function upgradeZiskVerificationKey(
+        bytes32 commit_hash,
+        bytes32 new_vk
+    ) external;
+
     /// @notice Commits to a batch of L2 blocks.
     /// @dev Committing to an L2 batch means to store the batch's commitment
     /// and to publish withdrawals if any.
@@ -151,11 +163,13 @@ interface IOnChainProposer {
     /// @param risc0BlockProofs An array of RISC0 proofs, one per batch.
     /// @param sp1ProofsBytes An array of SP1 proofs, one per batch.
     /// @param tdxSignatures An array of TDX signatures, one per batch.
+    /// @param ziskProofsBytes An array of ZisK PLONK proofs, one per batch.
     function verifyBatches(
         uint256 firstBatchNumber,
         bytes[] calldata risc0BlockProofs,
         bytes[] calldata sp1ProofsBytes,
-        bytes[] calldata tdxSignatures
+        bytes[] calldata tdxSignatures,
+        bytes[] calldata ziskProofsBytes
     ) external;
 
     // TODO: imageid, programvkey and riscvvkey should be constants

@@ -46,7 +46,14 @@ jobs:
         # Note: risc0 backend linting is temporarily disabled: the c-kzg 2.1.8 floor exceeds the
         # highest risc0 c-kzg fork tag (v2.1.7-risczero.0), so the guest workspace can't resolve.
         # Re-add "risc0" once risc0/c-kzg-4844 publishes a >=2.1.8 tag.
-        backend: ["sp1", "zisk"]
+        include:
+          - backend: sp1
+            features: sp1,ci
+          # zisk-sdk is the in-process proving tier the L2 prover uses; it builds
+          # ZisK's prover library (pil2-stark), and zisk-cpu-only keeps that build
+          # free of CUDA on runners that happen to have a toolkit.
+          - backend: zisk
+            features: zisk,zisk-sdk,zisk-cpu-only,ci
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6
@@ -87,11 +94,11 @@ jobs:
 
       - name: Check ${{ matrix.backend }} backend
         run: |
-          cargo check -r -p ethrex-prover -F "${{ matrix.backend }},ci"
+          cargo check -r -p ethrex-prover -F "${{ matrix.features }}"
 
       - name: Clippy ${{ matrix.backend }} backend
         run: |
-          cargo clippy -r -p ethrex-prover --all-targets -F "${{ matrix.backend }},ci"
+          cargo clippy -r -p ethrex-prover --all-targets -F "${{ matrix.features }}"
 
       - name: Check ${{ matrix.backend }} Cargo.lock modified but not committed
         run: |

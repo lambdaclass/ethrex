@@ -14,12 +14,17 @@ use tracing::{error, info};
 
 const LATEST_VERSION_URL: &str = "https://api.github.com/repos/lambdaclass/ethrex/releases/latest";
 
-#[cfg(all(feature = "jemalloc", not(target_env = "msvc")))]
+// The ZisK SDK's `zisk-common` crate declares its own jemalloc global allocator
+// and `malloc_conf` for every binary that links it, and a binary may only have
+// one of each, so the `zisk` build leaves both to it.
+#[cfg(all(feature = "jemalloc", not(feature = "zisk"), not(target_env = "msvc")))]
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 fn log_global_allocator() {
-    if cfg!(all(feature = "jemalloc", not(target_env = "msvc"))) {
+    if cfg!(feature = "zisk") {
+        tracing::info!("Global allocator: jemalloc (ZisK SDK)");
+    } else if cfg!(all(feature = "jemalloc", not(target_env = "msvc"))) {
         tracing::info!("Global allocator: jemalloc (tikv-jemallocator)");
     } else {
         tracing::info!("Global allocator: system (std::alloc::System)");
@@ -32,6 +37,7 @@ fn log_global_allocator() {
 #[cfg(all(
     feature = "jemalloc",
     not(feature = "jemalloc_profiling"),
+    not(feature = "zisk"),
     not(target_env = "msvc")
 ))]
 #[allow(non_upper_case_globals)]
@@ -41,7 +47,11 @@ pub static malloc_conf: &[u8] =
 
 // This could be also enabled via `MALLOC_CONF` env var, but for consistency with the previous jemalloc feature
 // usage, we keep it in the code and enable the profiling feature only with the `jemalloc_profiling` feature flag.
-#[cfg(all(feature = "jemalloc_profiling", not(target_env = "msvc")))]
+#[cfg(all(
+    feature = "jemalloc_profiling",
+    not(feature = "zisk"),
+    not(target_env = "msvc")
+))]
 #[allow(non_upper_case_globals)]
 #[unsafe(export_name = "malloc_conf")]
 pub static malloc_conf: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19,background_thread:true,dirty_decay_ms:30000,muzzy_decay_ms:30000\0";

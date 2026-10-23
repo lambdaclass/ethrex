@@ -61,7 +61,13 @@ pub fn execution_program(
     let balance_diffs = get_balance_diffs(&batch_messages.l2_out_messages);
 
     // Verify blob proof
-    let blob_versioned_hash = verify_blob(&blocks, &fee_configs, blob_commitment, blob_proof)?;
+    let blob_versioned_hash = verify_blob(
+        &blocks,
+        &fee_configs,
+        blob_commitment,
+        blob_proof,
+        crypto.as_ref(),
+    )?;
 
     Ok(ProgramOutput {
         initial_state_hash,
