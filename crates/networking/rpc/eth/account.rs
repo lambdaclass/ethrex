@@ -351,7 +351,16 @@ impl RpcHandler for GetStorageValuesRequest {
             self.requests.len(),
             self.block
         );
-        let Some(block_number) = self.block.resolve_block_number(&context.storage).await? else {
+        let storage = &context.storage;
+        // Resolve the block once and read every slot from its state root. Going
+        // through the block number for each slot could read two blocks' states if
+        // the chain reorged mid-request, read the canonical block instead of the
+        // one a hash names, and answer zeros for a block above the head.
+        let header = match &self.block {
+            BlockIdentifierOrHash::Hash(hash) => storage.get_block_header_by_hash(*hash)?,
+            BlockIdentifierOrHash::Identifier(id) => id.resolve_block_header(storage).await?,
+        };
+        let Some(header) = header else {
             return Err(RpcErr::Internal(
                 "Could not resolve block number".to_owned(),
             ));
@@ -360,9 +369,8 @@ impl RpcHandler for GetStorageValuesRequest {
         for (address, slots) in &self.requests {
             let mut values = Vec::with_capacity(slots.len());
             for slot in slots {
-                let value = context
-                    .storage
-                    .get_storage_at(block_number, *address, *slot)?
+                let value = storage
+                    .get_storage_at_root(header.state_root, *address, *slot)?
                     .unwrap_or_default();
                 values.push(format!("{:#x}", H256::from_uint(&value)));
             }
@@ -555,6 +563,69 @@ mod tests {
             GetStorageValuesRequest::parse(&raw_params(&params)),
             Err(RpcErr::LimitExceeded(ref msg)) if msg.contains("too many slots")
         ));
+    }
+
+    /// Values come from the requested block's state, keyed by the lowercase
+    /// address, with zeros for an absent account or slot. A block the node does
+    /// not have is an error rather than zeros.
+    #[tokio::test]
+    async fn test_get_storage_values_handle() {
+        use crate::test_utils::{TEST_GENESIS, default_context_with_storage};
+        use crate::types::block_identifier::BlockIdentifier;
+        use ethrex_common::types::{Genesis, GenesisAccount};
+        use ethrex_storage::{EngineType, Store};
+
+        let contract = Address::from_low_u64_be(0xabcd);
+        let mut genesis: Genesis = serde_json::from_str(TEST_GENESIS).unwrap();
+        genesis.alloc.insert(
+            contract,
+            GenesisAccount {
+                code: Default::default(),
+                storage: [(U256::from(1u64), U256::from(0x33u64))].into(),
+                balance: U256::zero(),
+                nonce: 1,
+            },
+        );
+        let mut store = Store::new("", EngineType::InMemory).unwrap();
+        store.add_initial_state(genesis).await.unwrap();
+        let context = default_context_with_storage(store).await;
+        let genesis_hash = context.storage.get_block_header(0).unwrap().unwrap().hash();
+
+        let absent = Address::from_low_u64_be(0xdead);
+        let requests: HashMap<Address, Vec<H256>> = [
+            (
+                contract,
+                vec![H256::from_low_u64_be(1), H256::from_low_u64_be(2)],
+            ),
+            (absent, vec![H256::from_low_u64_be(1)]),
+        ]
+        .into();
+        let word = |value: u64| format!("{:#x}", H256::from_low_u64_be(value));
+        let expected = json!({
+            format!("{contract:#x}"): [word(0x33), word(0)],
+            format!("{absent:#x}"): [word(0)],
+        });
+        for block in [
+            BlockIdentifierOrHash::default(),
+            BlockIdentifierOrHash::Hash(genesis_hash),
+        ] {
+            let result = GetStorageValuesRequest {
+                requests: requests.clone(),
+                block,
+            }
+            .handle(context.clone())
+            .await
+            .unwrap();
+            assert_eq!(result, expected);
+        }
+
+        let above_head = GetStorageValuesRequest {
+            requests,
+            block: BlockIdentifierOrHash::Identifier(BlockIdentifier::Number(5)),
+        }
+        .handle(context.clone())
+        .await;
+        assert!(matches!(above_head, Err(RpcErr::Internal(_))));
     }
 
     /// Builds an in-memory store whose genesis pre-sets `address`'s nonce, and a
