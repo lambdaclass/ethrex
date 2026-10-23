@@ -61,12 +61,18 @@ fn parse_storage_key(key: &str) -> Result<(H256, String), RpcErr> {
 }
 
 /// A missing state root means the node does not keep that state only once it is
-/// synced and holds the state of its head; before that, the state may still arrive.
-fn state_is_caught_up(context: &RpcApiContext) -> Result<bool, RpcErr> {
+/// synced, holds the state of its head, and the block is not above that head;
+/// before that, the state may still arrive.
+fn state_is_caught_up(context: &RpcApiContext, block_number: u64) -> Result<bool, RpcErr> {
     if !context.blockchain.is_synced() {
         return Ok(false);
     }
     let latest = context.storage.get_latest_block_number()?;
+    // A block above the head has not been executed yet, so its state is not
+    // pruned: a node that fell behind its consensus client can hold such blocks.
+    if block_number > latest {
+        return Ok(false);
+    }
     match context.storage.get_block_header(latest)? {
         Some(header) => Ok(context.storage.has_state_root(header.state_root)?),
         None => Ok(false),
@@ -271,7 +277,7 @@ impl RpcHandler for GetProofRequest {
             return Ok(Value::Null);
         };
         if !storage.has_state_root(header.state_root)? {
-            if state_is_caught_up(&context)? {
+            if state_is_caught_up(&context, header.number)? {
                 return Err(RpcErr::PrunedHistoryUnavailable(format!(
                     "state for block {:#x} is unavailable",
                     header.hash()
@@ -627,6 +633,27 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(pruned, RpcErr::PrunedHistoryUnavailable(_)));
+
+        // A stored block above the head has not been executed yet, so its state
+        // can still arrive, even on a synced node.
+        let mut above_head = block_one.clone();
+        above_head.number = 3;
+        above_head.parent_hash = head_hash;
+        let above_head_hash = above_head.hash();
+        context
+            .storage
+            .add_block(ethrex_common::types::Block::new(
+                above_head,
+                ethrex_common::types::BlockBody::default(),
+            ))
+            .await
+            .unwrap();
+        let not_executed =
+            proof_request(address, &[], BlockIdentifierOrHash::Hash(above_head_hash))
+                .handle(context.clone())
+                .await
+                .unwrap_err();
+        assert!(matches!(not_executed, RpcErr::Internal(_)));
     }
 
     #[tokio::test]
