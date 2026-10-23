@@ -94,8 +94,18 @@ pub async fn build_payload(
     Ok(context.into())
 }
 
-/// Same as `blockchain::fill_transactions` but enforces that the block encoded size
-/// does not exceed `SAFE_BYTES_PER_BLOB`.
+/// Bytes the committer adds around a block in the batch blob that the running
+/// size in `fill_transactions` does not see: the 8-byte block count that opens
+/// the batch, the growth of the transactions list and block list RLP prefixes as
+/// the block fills (up to 3 bytes), and the growth of the header's `gas_used`
+/// from the single byte of zero to up to 9 bytes. Without this margin a block
+/// could end a few bytes over the blob and the committer, which cannot split a
+/// block, would never commit it.
+const BLOB_FRAMING_MARGIN: usize = 8 + 3 + 9;
+
+/// Same as `blockchain::fill_transactions` but enforces that the block encoded size,
+/// plus the framing the committer adds around it in the batch blob, does not
+/// exceed `SAFE_BYTES_PER_BLOB`.
 /// Also, uses a configured `block_gas_limit` to limit the gas used in the block,
 /// which can be lower than the block gas limit specified in the payload header.
 pub async fn fill_transactions(
@@ -110,7 +120,7 @@ pub async fn fill_transactions(
     let VMType::L2(fee_config) = context.vm.vm_type else {
         return Err(BlockProducerError::Custom("invalid VM type".to_string()));
     };
-    let mut acc_encoded_size = context.payload.length();
+    let mut acc_encoded_size = context.payload.length() + BLOB_FRAMING_MARGIN;
     let fee_config_len = fee_config.to_vec().len();
     let chain_config = store.get_chain_config();
     let chain_id = chain_config.chain_id;
