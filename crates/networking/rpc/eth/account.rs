@@ -453,7 +453,7 @@ mod tests {
             BlockTag::Latest
         );
         assert_eq!(
-            GetProofRequest::parse(&raw_params(&Some(vec![addr.clone(), json!([])])))
+            GetProofRequest::parse(&raw_params(&Some(vec![addr, json!([])])))
                 .unwrap()
                 .block,
             BlockTag::Latest
