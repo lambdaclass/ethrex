@@ -1691,7 +1691,7 @@ pub async fn map_authrpc_requests(
 /// Routes `eth_*` namespace requests to their handlers.
 ///
 /// Handles all standard Ethereum JSON-RPC methods including:
-/// - Account queries: `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_getTransactionCount`
+/// - Account queries: `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_getStorageValues`, `eth_getTransactionCount`
 /// - Block queries: `eth_getBlockByNumber`, `eth_getBlockByHash`, `eth_blockNumber`
 /// - Transaction operations: `eth_sendRawTransaction`, `eth_getTransactionByHash`, `eth_getTransactionReceipt`
 /// - Gas estimation: `eth_estimateGas`, `eth_gasPrice`, `eth_maxPriorityFeePerGas`, `eth_feeHistory`
