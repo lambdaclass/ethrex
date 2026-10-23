@@ -1433,8 +1433,9 @@ impl PeerTableServer {
         }
 
         // Check that the IP address from which we receive the request matches the one we have stored
-        // to prevent amplification attacks.
-        if sender_ip != contact.node.ip {
+        // to prevent amplification attacks. A dual-stack (`::`) socket reports an IPv4 sender as
+        // `::ffff:a.b.c.d` while the contact holds the plain IPv4 form, so compare both unmapped.
+        if sender_ip.to_canonical() != contact.node.ip.to_canonical() {
             return ContactValidation::IpMismatch;
         }
         ContactValidation::Valid(Box::new(contact.clone()))
@@ -1687,6 +1688,32 @@ mod tests {
         let node_id = node.node_id();
         let contact = Contact::new(node, DiscoveryProtocol::Discv4);
         (node_id, contact)
+    }
+
+    /// A socket bound to `::` hands us an IPv4 peer as `::ffff:a.b.c.d`. That is the
+    /// same host as the contact stored under its plain IPv4 address, so it must
+    /// validate; an address that is actually different must still be refused.
+    #[test]
+    fn validate_contact_accepts_the_ipv4_mapped_form_of_the_stored_ip() {
+        let mut table = PeerTableServer::new(H256::zero(), 1, Box::new(FixedAnswer(true)));
+        let (node_id, mut contact) = dummy_contact(1);
+        // A contact is validated once its ping has been answered.
+        contact.record_ping_sent(Bytes::from_static(b"ping"));
+        contact.ping_id = None;
+        table.insert_contact(node_id, contact);
+
+        let stored = Ipv4Addr::new(127, 0, 0, 1);
+        let mapped = IpAddr::V6(stored.to_ipv6_mapped());
+        assert!(matches!(
+            table.do_validate_contact(node_id, mapped),
+            ContactValidation::Valid(_)
+        ));
+
+        let other = IpAddr::V6(Ipv4Addr::new(127, 0, 0, 2).to_ipv6_mapped());
+        assert!(matches!(
+            table.do_validate_contact(node_id, other),
+            ContactValidation::IpMismatch
+        ));
     }
 
     /// Helper: register a peer that advertises `advertised` and settled on
