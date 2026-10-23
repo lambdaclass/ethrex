@@ -33,6 +33,21 @@ pub struct Evm {
     pub stateless_validator: Option<Arc<dyn StatelessValidator>>,
 }
 
+/// What a simulation does with the EIP-8037 cap on execution gas (Amsterdam+).
+///
+/// A transaction may spend at most the per-transaction execution limit on execution and
+/// routes the rest of its gas limit to the state-gas reservoir. A simulation that is never
+/// submitted need not: geth lets `eth_call` and `debug_traceCall` spend their whole gas
+/// limit on execution, while `eth_estimateGas` keeps the cap so that its answer holds for a
+/// transaction that can be included.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExecutionGasCap {
+    /// The transaction rule applies.
+    Enforced,
+    /// The whole gas limit is execution gas.
+    Lifted,
+}
+
 impl core::fmt::Debug for Evm {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "LEVM",)
@@ -284,6 +299,7 @@ impl Evm {
         &mut self,
         tx: &GenericTransaction,
         header: &BlockHeader,
+        execution_gas_cap: ExecutionGasCap,
     ) -> Result<ExecutionResult, EvmError> {
         LEVM::simulate_tx_from_generic(
             tx,
@@ -292,6 +308,7 @@ impl Evm {
             self.vm_type,
             self.crypto.as_ref(),
             self.stateless_validator.as_deref(),
+            execution_gas_cap,
         )
     }
 

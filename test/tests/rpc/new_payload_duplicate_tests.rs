@@ -4,6 +4,7 @@
 //! ends up executing the block, every copy must get the block's real answer, and a
 //! witness only for the requests that asked for one.
 
+use ethrex_rpc::test_utils::raw_params;
 use std::{fs::File, io::BufReader, path::PathBuf};
 
 use bytes::Bytes;
@@ -74,7 +75,7 @@ fn new_payload_v5(block: Block, built: &PayloadBuildResult) -> NewPayloadV5Reque
         json!(H256::zero()),
         Value::Array(requests),
     ]);
-    NewPayloadV5Request::parse(&params).expect("well-formed newPayloadV5 params")
+    NewPayloadV5Request::parse(&raw_params(&params)).expect("well-formed newPayloadV5 params")
 }
 
 fn latest_valid_hash(response: &Value) -> H256 {

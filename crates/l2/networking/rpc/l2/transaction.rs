@@ -13,7 +13,7 @@ use ethrex_common::{
 use ethrex_l2_common::utils::get_address_from_secret_key;
 use ethrex_rpc::types::transaction::SendRawTransactionRequest;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 
 const DELGATION_PREFIX: [u8; 3] = [0xef, 0x01, 0x00];
 const EIP7702_DELEGATED_CODE_LEN: usize = 23;
@@ -32,7 +32,7 @@ pub struct SponsoredTx {
 // You can check the reference implementation here
 // https://github.com/ithacaxyz/odyssey/blob/main/crates/wallet/src/lib.rs
 impl RpcHandler for SponsoredTx {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
             "No params provided".to_owned(),
         ))?;
@@ -44,13 +44,13 @@ impl RpcHandler for SponsoredTx {
             ))
             .into());
         };
-        serde_json::from_value(
+        serde_json::from_str(
             params
                 .first()
                 .ok_or(RpcErr::InvalidEthrexL2Message(
                     "Failed to parse request into ethrex_SendTransaction".to_string(),
                 ))?
-                .clone(),
+                .get(),
         )
         .map_err(|e| {
             RpcErr::InvalidEthrexL2Message(format!(

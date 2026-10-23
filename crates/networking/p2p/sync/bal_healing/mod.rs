@@ -159,7 +159,7 @@ pub async fn advance_state_via_bals(
                 .collect();
             diagnostics.write().await.snap2_bal_requests_sent += 1;
 
-            let (response, peer_id) = match peers.request_snap2_bals(&pending).await {
+            let (response, peer_id) = match peers.request_snap2_bals(&pending, &[]).await {
                 Ok(Some(served)) => served,
                 Ok(None) => {
                     warn!(

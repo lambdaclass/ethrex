@@ -25,6 +25,7 @@ use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::TxValidationError;
 use ethrex_levm::vm::VMType;
 use ethrex_storage::{EngineType, Store};
+use ethrex_vm::backends::ExecutionGasCap;
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::{DynVmDatabase, EvmError, ExecutionResult, VMError};
 use rustc_hash::FxHashMap;
@@ -157,6 +158,7 @@ fn simulated_slot_number(slot_number: Option<u64>) -> U256 {
         VMType::L1,
         &NativeCrypto,
         None,
+        ExecutionGasCap::Enforced,
     )
     .expect("simulation must not error");
     match result {
@@ -198,9 +200,16 @@ fn simulated_block_gas_limit(gas: Option<u64>) -> U256 {
         gas,
         ..Default::default()
     };
-    let result =
-        LEVM::simulate_tx_from_generic(&tx, &header, &mut db, VMType::L1, &NativeCrypto, None)
-            .expect("simulation must not error");
+    let result = LEVM::simulate_tx_from_generic(
+        &tx,
+        &header,
+        &mut db,
+        VMType::L1,
+        &NativeCrypto,
+        None,
+        ExecutionGasCap::Enforced,
+    )
+    .expect("simulation must not error");
     match result {
         ExecutionResult::Success { output, .. } => U256::from_big_endian(&output),
         other => panic!("expected GASLIMIT call to succeed, got {other:?}"),
@@ -260,6 +269,7 @@ fn simulation_allows_a_contract_as_the_sender() {
         VMType::L1,
         &NativeCrypto,
         None,
+        ExecutionGasCap::Enforced,
     )
     .expect("a sender holding code must not be rejected under simulation");
     assert!(
@@ -328,9 +338,16 @@ fn simulation_allows_a_zero_blob_fee_cap() {
         blob_versioned_hashes: vec![H256(versioned_hash)],
         ..Default::default()
     };
-    let result =
-        LEVM::simulate_tx_from_generic(&tx, &header, &mut db, VMType::L1, &NativeCrypto, None)
-            .expect("a zero blob fee cap must not be rejected under simulation");
+    let result = LEVM::simulate_tx_from_generic(
+        &tx,
+        &header,
+        &mut db,
+        VMType::L1,
+        &NativeCrypto,
+        None,
+        ExecutionGasCap::Enforced,
+    )
+    .expect("a zero blob fee cap must not be rejected under simulation");
     assert!(
         matches!(result, ExecutionResult::Success { .. }),
         "expected the call to run, got {result:?}"
@@ -354,9 +371,16 @@ fn simulation_rejects_a_blob_fee_cap_without_blob_hashes() {
     for cap in [U256::zero(), U256::one()] {
         let (mut db, header) = amsterdam_db_and_header(Some(0));
         let tx = call_with_blob_fee_cap(cap);
-        let err =
-            LEVM::simulate_tx_from_generic(&tx, &header, &mut db, VMType::L1, &NativeCrypto, None)
-                .expect_err("a blob fee cap without blob hashes must be rejected");
+        let err = LEVM::simulate_tx_from_generic(
+            &tx,
+            &header,
+            &mut db,
+            VMType::L1,
+            &NativeCrypto,
+            None,
+            ExecutionGasCap::Enforced,
+        )
+        .expect_err("a blob fee cap without blob hashes must be rejected");
         assert!(
             matches!(&err, EvmError::Transaction(msg) if msg.contains(&TxValidationError::Type3TxZeroBlobs.to_string())),
             "expected a zero-blobs error, got {err:?}"
@@ -388,9 +412,16 @@ fn simulation_rejects_a_blob_fee_cap_before_cancun() {
     };
     let (mut db, header) = db_and_header(chain_config, None);
     let tx = call_with_blob_fee_cap(U256::one());
-    let err =
-        LEVM::simulate_tx_from_generic(&tx, &header, &mut db, VMType::L1, &NativeCrypto, None)
-            .expect_err("a blob fee cap before Cancun must be rejected");
+    let err = LEVM::simulate_tx_from_generic(
+        &tx,
+        &header,
+        &mut db,
+        VMType::L1,
+        &NativeCrypto,
+        None,
+        ExecutionGasCap::Enforced,
+    )
+    .expect_err("a blob fee cap before Cancun must be rejected");
     assert!(
         matches!(&err, EvmError::Transaction(msg) if msg.contains(&TxValidationError::Type3TxPreFork.to_string())),
         "expected a type-3 pre-fork error, got {err:?}"
@@ -410,9 +441,16 @@ fn simulated_blob_base_fee(
         blob_versioned_hashes,
         ..Default::default()
     };
-    let result =
-        LEVM::simulate_tx_from_generic(&tx, &header, &mut db, VMType::L1, &NativeCrypto, None)
-            .expect("simulation must not error");
+    let result = LEVM::simulate_tx_from_generic(
+        &tx,
+        &header,
+        &mut db,
+        VMType::L1,
+        &NativeCrypto,
+        None,
+        ExecutionGasCap::Enforced,
+    )
+    .expect("simulation must not error");
     match result {
         ExecutionResult::Success { output, .. } => U256::from_big_endian(&output),
         other => panic!("expected BLOBBASEFEE call to succeed, got {other:?}"),
@@ -436,9 +474,16 @@ fn assert_simulation_rejects(
     want: TxValidationError,
 ) {
     let (mut db, header) = db_and_header(chain_config, None);
-    let err =
-        LEVM::simulate_tx_from_generic(&tx, &header, &mut db, VMType::L1, &NativeCrypto, None)
-            .expect_err("the call must be rejected");
+    let err = LEVM::simulate_tx_from_generic(
+        &tx,
+        &header,
+        &mut db,
+        VMType::L1,
+        &NativeCrypto,
+        None,
+        ExecutionGasCap::Enforced,
+    )
+    .expect_err("the call must be rejected");
     assert!(
         matches!(&err, EvmError::Transaction(msg) if msg.contains(&want.to_string())),
         "expected {want:?}, got {err:?}"
@@ -494,9 +539,16 @@ fn simulation_rejects_fields_before_their_block_scheduled_fork() {
     };
     for tx in [with_access_list, with_priority_fee] {
         let (mut db, header) = db_and_header(at_fork, None);
-        let result =
-            LEVM::simulate_tx_from_generic(&tx, &header, &mut db, VMType::L1, &NativeCrypto, None)
-                .expect("the field is valid once its fork is active");
+        let result = LEVM::simulate_tx_from_generic(
+            &tx,
+            &header,
+            &mut db,
+            VMType::L1,
+            &NativeCrypto,
+            None,
+            ExecutionGasCap::Enforced,
+        )
+        .expect("the field is valid once its fork is active");
         assert!(
             matches!(result, ExecutionResult::Success { .. }),
             "expected the call to run, got {result:?}"
@@ -535,6 +587,7 @@ fn simulation_treats_blob_hashes_without_a_cap_as_a_blob_call() {
         VMType::L1,
         &NativeCrypto,
         None,
+        ExecutionGasCap::Enforced,
     )
     .expect_err("a hash without the KZG version byte must be rejected");
     assert!(

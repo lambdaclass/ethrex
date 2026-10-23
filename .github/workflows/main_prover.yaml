@@ -76,12 +76,19 @@ jobs:
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: rm -rf cmd/.env
 
-      # Remove stale SP1 GPU container from previous runs. The SP1 SDK
-      # spawns a Docker container named "sp1-gpu" for GPU proving which
-      # is not managed by docker compose. If a prior run was cancelled or
-      # timed out, the container may still exist and block the new run.
-      - name: Clean stale sp1-gpu container
-        run: docker rm -f sp1-gpu || true
+      # Stop a stale SP1 GPU server from previous runs. The SP1 SDK starts
+      # `sp1-gpu-server` as a child process for GPU proving, listening on
+      # /tmp/sp1-cuda-<device>.sock. If a prior run was cancelled or timed
+      # out, the server may still be running and block the new run.
+      - name: Clean stale sp1-gpu-server
+        run: pkill -x sp1-gpu-server || true
+
+      # The SP1 SDK gives the `sp1-gpu-server` it starts about one second to
+      # open its socket, and the server initializes the GPU first. With
+      # persistence mode disabled the driver initializes the GPU again on every
+      # start, which takes about two seconds on this runner.
+      - name: Enable GPU persistence mode
+        run: sudo nvidia-smi -pm 1
 
       - name: Build prover
         # if: ${{ always() && github.event_name == 'merge_group' }}
@@ -170,6 +177,21 @@ jobs:
 
       - name: Run test
         # if: ${{ always() && github.event_name == 'merge_group' }}
+        # The prover's sp1-gpu-server reads these. With SP1's default proving
+        # pipeline it peaks at about 42 GB of host memory and the runner, which
+        # has 44 GB, kills it. With one worker per stage it peaks at about 35 GB,
+        # and small proofs, like this test's batches, take the same time.
+        env:
+          SP1_WORKER_NUM_CORE_WORKERS: 1
+          SP1_WORKER_CORE_BUFFER_SIZE: 1
+          SP1_WORKER_NUM_SPLICING_WORKERS: 1
+          SP1_WORKER_SPLICING_BUFFER_SIZE: 1
+          SP1_WORKER_NUM_RECURSION_EXECUTOR_WORKERS: 1
+          SP1_WORKER_RECURSION_EXECUTOR_BUFFER_SIZE: 1
+          SP1_WORKER_NUM_PREPARE_REDUCE_WORKERS: 1
+          SP1_WORKER_PREPARE_REDUCE_BUFFER_SIZE: 1
+          SP1_WORKER_NUM_RECURSION_PROVER_WORKERS: 2
+          SP1_WORKER_RECURSION_PROVER_BUFFER_SIZE: 2
         run: |
           cd crates/l2
           RUST_LOG=info,ethrex_l2_prover=debug ../../target/release/ethrex l2 prover --proof-coordinators tcp://127.0.0.1:3900 --backend sp1 &
@@ -185,7 +207,7 @@ jobs:
         run: |
           cd crates/l2
           docker compose down
-          docker rm -f sp1-gpu || true
+          pkill -x sp1-gpu-server || true
 
       - name: Ensure admin permissions in _work
         if: always()

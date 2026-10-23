@@ -124,7 +124,11 @@ pub trait StorageReadView: Send + Sync {
         keys.iter().map(|k| self.get(table, k)).collect()
     }
 
-    /// Returns an iterator over all key-value pairs with the given prefix.
+    /// Returns the key-value pairs of `table` from the first key not less than `prefix`
+    /// onward, in key order. The iterator does not stop where keys stop starting with
+    /// `prefix`: the RocksDB backend configures no prefix extractor, so this is a plain
+    /// seek. Callers stop once keys leave the range they want, and may seek into the
+    /// middle of a prefix.
     fn prefix_iterator(
         &self,
         table: &'static str,

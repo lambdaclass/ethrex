@@ -1,7 +1,10 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use crate::rlpx::{
-    eth::transactions::{MAX_POOLED_TRANSACTIONS_BYTES, POOLED_TX_SIZE_TOLERANCE},
+    eth::transactions::{
+        MAX_POOLED_TRANSACTIONS_BYTES, POOLED_TX_SIZE_TOLERANCE, decode_announced_txs,
+        filter_announced,
+    },
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress, snappy_decompress_bounded},
 };
@@ -13,7 +16,7 @@ use ethrex_common::types::{Fork, P2PTransaction, WrappedEIP4844Transaction};
 use ethrex_common::{H256, types::Transaction};
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{
-    encode::RLPEncode,
+    encode::{RLPEncode, list_length},
     error::{RLPDecodeError, RLPEncodeError},
     structs::{Decoder, Encoder},
 };
@@ -222,19 +225,15 @@ impl NewPooledTransactionHashes72 {
     }
 
     /// Return a new announcement containing only the hashes in `requested`,
-    /// preserving their original type and size metadata. The `cell_mask` is
-    /// preserved from the original announcement.
+    /// preserving their original type and size metadata, in announcement order.
+    /// The `cell_mask` is preserved from the original announcement.
     pub fn filter_to(&self, requested: &[H256]) -> Self {
-        let mut types = Vec::with_capacity(requested.len());
-        let mut sizes = Vec::with_capacity(requested.len());
-        let mut hashes = Vec::with_capacity(requested.len());
-        for &hash in requested {
-            if let Some(pos) = self.transaction_hashes.iter().position(|h| *h == hash) {
-                types.push(self.transaction_types[pos]);
-                sizes.push(self.transaction_sizes[pos]);
-                hashes.push(hash);
-            }
-        }
+        let (types, sizes, hashes) = filter_announced(
+            &self.transaction_types,
+            &self.transaction_sizes,
+            &self.transaction_hashes,
+            requested,
+        );
         Self {
             transaction_types: types.into(),
             transaction_sizes: sizes,
@@ -265,29 +264,17 @@ impl RLPxMessage for NewPooledTransactionHashes72 {
     fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
         let decompressed_data = snappy_decompress(msg_data)?;
         let decoder = Decoder::new(&decompressed_data)?;
-        let (transaction_types, decoder): (Bytes, _) = decoder.decode_field("transactionTypes")?;
-        let (transaction_sizes, decoder): (Vec<usize>, _) =
-            decoder.decode_field("transactionSizes")?;
-        let (transaction_hashes, decoder): (Vec<H256>, _) =
-            decoder.decode_field("transactionHashes")?;
+        let (transaction_types, transaction_sizes, transaction_hashes, decoder) =
+            decode_announced_txs(decoder)?;
         let (mask_bytes, _): (Bytes, _) = decoder.decode_field("cellMask")?;
         let cell_mask = bytes_to_cell_mask(&mask_bytes)?;
 
-        if transaction_hashes.len() == transaction_sizes.len()
-            && transaction_sizes.len() == transaction_types.len()
-        {
-            Ok(Self {
-                transaction_types,
-                transaction_sizes,
-                transaction_hashes,
-                cell_mask,
-            })
-        } else {
-            Err(RLPDecodeError::Custom(
-                "transaction_hashes, transaction_sizes and transaction_types must have the same length"
-                    .to_string(),
-            ))
-        }
+        Ok(Self {
+            transaction_types,
+            transaction_sizes,
+            transaction_hashes,
+            cell_mask,
+        })
     }
 }
 
@@ -307,6 +294,21 @@ pub fn encode_elided_canonical(wrapped: &WrappedEIP4844Transaction) -> Vec<u8> {
     let mut out = vec![0x03u8];
     out.extend_from_slice(&inner);
     out
+}
+
+/// The length of [`encode_elided_canonical`]'s output, without encoding it.
+pub fn elided_canonical_len(wrapped: &WrappedEIP4844Transaction) -> usize {
+    // An empty `Vec` does not allocate.
+    let empty_blobs: Vec<Vec<u8>> = Vec::new();
+    let payload = wrapped.tx.length()
+        + wrapped
+            .wrapper_version
+            .map_or(0, |version| version.length())
+        + empty_blobs.length()
+        + wrapped.blobs_bundle.commitments.length()
+        + wrapped.blobs_bundle.proofs.length();
+    // The type byte, then the list.
+    1 + list_length(payload)
 }
 
 /// A transaction as it appears in an eth/72 `PooledTransactions`: an RLP byte
@@ -348,18 +350,20 @@ impl PooledTransactions72 {
     /// Validates that received txs match the request.
     /// Size check is skipped for blob txs since announced size reflects full blobs
     /// while eth/72 uses elided encoding.
+    /// Validates that the received TXs match the request, returning each one's hash with its
+    /// size as delivered (blob transactions without their blobs).
     pub fn validate_requested(
         &self,
         requested: &NewPooledTransactionHashes72,
         _fork: Fork,
-    ) -> Result<(), MempoolError> {
+    ) -> Result<HashMap<H256, usize>, MempoolError> {
         // A well-formed response contains each requested tx at most once; reject duplicates
         // before any per-tx work so a peer echoing one tx N times can't balloon the response
         // (mirrors the eth/71 path in `PooledTransactions::validate_requested`).
-        let mut seen = HashSet::with_capacity(self.pooled_transactions.len());
+        let mut delivered = HashMap::with_capacity(self.pooled_transactions.len());
         for tx in &self.pooled_transactions {
             let tx_hash = tx.compute_hash();
-            if !seen.insert(tx_hash) {
+            if delivered.contains_key(&tx_hash) {
                 return Err(MempoolError::DuplicatePooledTx);
             }
             let Some(pos) = requested
@@ -376,9 +380,9 @@ impl PooledTransactions72 {
             }
             // Size validation skipped for blob txs: announced size reflects full-blob
             // encoding while eth/72 elided encoding is smaller.
+            let tx_size = tx.encode_canonical_len();
             if tx.tx_type() as u8 != 3 {
                 let expected_size = requested.transaction_sizes[pos];
-                let tx_size = tx.encode_canonical_len();
                 // Same tolerance as the eth/71 path: geth's tx fetcher allows up to 8 bytes
                 // of skew between the announced and actual size before treating it as a
                 // protocol violation.
@@ -386,8 +390,9 @@ impl PooledTransactions72 {
                     return Err(MempoolError::InvalidPooledTxSize);
                 }
             }
+            delivered.insert(tx_hash, tx_size);
         }
-        Ok(())
+        Ok(delivered)
     }
 
     /// Stores transactions; blob txs are stored with commitments+proofs, blobs elided.
@@ -466,5 +471,41 @@ impl RLPxMessage for PooledTransactions72 {
             decoder.decode_field("pooledTransactions")?;
 
         Ok(Self::new(id, pooled_transactions))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::{BYTES_PER_BLOB, BlobsBundle, EIP4844Transaction};
+
+    #[test]
+    fn elided_length_matches_the_elided_encoding() {
+        let bare = WrappedEIP4844Transaction {
+            tx: EIP4844Transaction::default(),
+            wrapper_version: None,
+            blobs_bundle: BlobsBundle::default(),
+        };
+        // A v1 sidecar: one blob, its commitment and its 128 cell proofs, long enough for every
+        // list to take a multi-byte RLP length.
+        let v1 = WrappedEIP4844Transaction {
+            tx: EIP4844Transaction {
+                blob_versioned_hashes: vec![H256::zero()],
+                ..Default::default()
+            },
+            wrapper_version: Some(1),
+            blobs_bundle: BlobsBundle {
+                blobs: vec![[0; BYTES_PER_BLOB]],
+                commitments: vec![[1; 48]],
+                proofs: vec![[2; 48]; 128],
+                version: 1,
+            },
+        };
+        for wrapped in [bare, v1] {
+            assert_eq!(
+                elided_canonical_len(&wrapped),
+                encode_elided_canonical(&wrapped).len()
+            );
+        }
     }
 }
