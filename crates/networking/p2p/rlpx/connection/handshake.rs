@@ -163,6 +163,7 @@ pub(crate) async fn perform(
             client_version: context.client_version.clone(),
             connection_broadcast_send: context.broadcast.clone(),
             peer_table: context.table.clone(),
+            discovery: context.discovery.clone(),
             #[cfg(feature = "l2")]
             l2_state: context
                 .based_context
@@ -171,6 +172,7 @@ pub(crate) async fn perform(
             current_requests: HashMap::new(),
             disconnect_reason: None,
             is_validated: false,
+            registered: false,
             serve_requests: WindowCounter::new(),
             announced_hashes: WindowCounter::new(),
             short_tx_answer_strikes: 0,
