@@ -353,8 +353,14 @@ mod tests {
             .unwrap()
             .gas_limit;
 
+        // Within one block's adjustment bound of the parent, and away from both
+        // the parent's limit and where the node's own ceiling would move it.
+        let target = parent_gas_limit - 1000;
+        assert_eq!(calc_gas_limit(parent_gas_limit, target), target);
+        assert_ne!(calc_gas_limit(parent_gas_limit, context.gas_ceil), target);
+
         let mut params = build_params(head, timestamp + 12, json!([])).unwrap();
-        params[1]["targetGasLimit"] = json!(format!("{parent_gas_limit:#x}"));
+        params[1]["targetGasLimit"] = json!(format!("{target:#x}"));
         let response = BuildBlockV1Request::parse(&raw_params(&Some(params)))
             .unwrap()
             .handle(context.clone())
@@ -363,7 +369,7 @@ mod tests {
 
         assert_eq!(
             response["executionPayload"]["gasLimit"],
-            json!(format!("{parent_gas_limit:#x}"))
+            json!(format!("{target:#x}"))
         );
     }
 
