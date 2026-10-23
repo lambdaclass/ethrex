@@ -48,8 +48,6 @@ jobs:
       - name: Setup Rust environment
         uses: ./.github/actions/setup-rust
 
-      # Exit status 2 means ere moved SP1 before the SP1 fork has a branch for the
-      # new version. That is a wait, not a failure: tomorrow's run tries again.
       - name: Bump ere
         id: bump
         env:
@@ -57,14 +55,7 @@ jobs:
           TAG: ${{ inputs.tag }}
           BUMP_ERE_SUMMARY: ${{ runner.temp }}/bump-ere.md
         run: |
-          status=0
-          .github/scripts/bump-ere.sh ${TAG:+"$TAG"} || status=$?
-          if [[ $status -eq 2 ]]; then
-            echo "::warning::ere moved SP1 but the SP1 fork has no matching patch branch yet; skipping this run."
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          [[ $status -eq 0 ]] || exit "$status"
+          .github/scripts/bump-ere.sh ${TAG:+"$TAG"}
           if git diff --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0

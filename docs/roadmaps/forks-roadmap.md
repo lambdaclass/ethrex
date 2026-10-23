@@ -17,9 +17,9 @@ Next fork: **Glamsterdam** (CL Gloas, EL Amsterdam). Mainnet date not yet schedu
 **glamsterdam-devnet-8**
 
 - Spec baseline: [`devnets/glamsterdam/8`](https://github.com/ethereum/execution-specs/tree/devnets/glamsterdam/8)
-- Fixtures: [`tests@v21.0.0`](https://github.com/ethereum/execution-specs/releases/tag/tests@v21.0.0), the first mainnet bundle to carry Amsterdam, which is why there is no longer a separate devnet pin
-- EELS commit: `faf66377663259411f7c150f5490cbac683d3cc9`
-- Status: 🟢 aligned, blockchain, state and engine ef-tests green on the v21.0.0 bundle
+- Fixtures: [`tests@v21.0.1`](https://github.com/ethereum/execution-specs/releases/tag/tests@v21.0.1), a coverage-only follow-up to `tests@v21.0.0`, the first mainnet bundle to carry Amsterdam, which is why there is no longer a separate devnet pin
+- EELS commit: `1562e2f8b5cb1efda7e0d7c517f2dfb5742c0a43`
+- Status: 🟢 aligned, blockchain, state and engine ef-tests green on the v21.0.1 bundle
 - Tracking: [#6583]
 
 **Bumping to a new bundle:** edit `tooling/ef_tests/.fixtures_url` and `.github/config/hive/amsterdam.yaml` (`fixtures` plus `eels_commit`), both, always, since grading one release's client against another's bundle fails every fixture the releases disagree on, then re-run the three ef-test suites and hive `eels/consume-engine` Amsterdam. The overlay file that used to add the devnet bundle on top of the mainnet one is gone: v21.0.0 ships more Amsterdam fixtures than the last devnet release did (`for_amsterdam` 3277 against 3118, `for_bpo2toamsterdamattime15k` 58 against 41), so an overlay would now downgrade coverage instead of adding to it.
@@ -104,10 +104,10 @@ Glamsterdam declined 47 EIPs per [EIP-7773], including EIP-7692 (EOF) and EIP-79
 The fork enum lives in `crates/common/types/genesis.rs`, ending at `Amsterdam`;
 activation timestamps are `ChainConfig` fields, with `bpo1_time`..`bpo5_time` already
 defined for the BPOs and Hegotá. Amsterdam is scheduled on Sepolia (`amsterdamTime`
-1791294816, 2026-10-06 13:53:36 UTC, epoch 353024; ethereum/pm#2205, EIP-7773) and Hoodi
-(`amsterdamTime` 1793036568, 2026-10-26 17:42:48 UTC, epoch 132352; ethereum/pm#2263,
-eth-clients/hoodi#31) in their genesis files under `cmd/ethrex/networks/`. The mainnet date is
-still TBD upstream, so its preset carries no `amsterdamTime` yet.
+1791294816, 2026-10-06 13:53:36 UTC, epoch 353024; ethereum/pm#2205, EIP-7773) in
+`cmd/ethrex/networks/sepolia/genesis.json`. Hoodi's 2026-10-26 activation was unscheduled
+(eth-clients/hoodi#33) and the mainnet date is still TBD upstream, so their presets carry no
+`amsterdamTime` yet.
 
 ---
 
