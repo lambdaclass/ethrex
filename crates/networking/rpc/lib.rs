@@ -42,11 +42,12 @@
 //!
 //! ```ignore
 //! use ethrex_rpc::{RpcHandler, RpcApiContext, RpcErr};
+//! use serde_json::value::RawValue;
 //!
 //! struct MyHandler { /* fields */ }
 //!
 //! impl RpcHandler for MyHandler {
-//!     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+//!     fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
 //!         // Parse JSON-RPC parameters
 //!     }
 //!
@@ -77,7 +78,8 @@ pub mod utils;
 pub use clients::{EngineClient, EthClient};
 
 pub use rpc::{
-    BoundRpc, RpcRole, RpcStartupError, bind_api, bind_listener, start_api, start_block_executor,
+    AUTHRPC_MAX_BODY_SIZE, BoundRpc, DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE, DEFAULT_RPC_GAS_CAP,
+    RpcRole, RpcStartupError, bind_api, bind_listener, start_api, start_block_executor,
 };
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -85,6 +87,10 @@ pub mod test_utils;
 
 // TODO: These exports are needed by ethrex-l2-rpc, but we do not want to
 // export them in the public API of this crate.
+pub use eth::logs::{
+    DEFAULT_LOG_QUERY_WORK_BUDGET, DEFAULT_MAX_BLOCKS_PER_FILTER, DEFAULT_MAX_LOG_QUERY_WORK,
+    DEFAULT_MAX_LOGS_PER_RESPONSE, LogQueryLimits,
+};
 pub use eth::{
     filter::{ActiveFilters, clean_outdated_filters},
     gas_price::GasPrice,
@@ -94,7 +100,7 @@ pub use eth::{
 pub use rpc::{
     ClientVersion, NodeData, RpcApiContext, RpcHandler, RpcRequestWrapper, WebSocketConfig,
     handle_eth_subscribe, handle_eth_unsubscribe, handle_websocket, map_debug_requests,
-    map_eth_requests, map_http_requests, rpc_response, shutdown_signal,
+    map_eth_requests, map_http_requests, rpc_response, shutdown_signal, validate_batch,
 };
 pub use subscription_manager::{SubscriptionManager, SubscriptionManagerProtocol};
 pub use utils::{RpcErr, RpcErrorMetadata, RpcNamespace};

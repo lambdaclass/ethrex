@@ -43,32 +43,8 @@ jobs:
           path: book/html
           retention-days: 1
 
-  link-check:
-    name: Link Check
-    runs-on: ubuntu-latest
-    needs: lint
-    steps:
-      - uses: actions/checkout@v6
-
-      # Persist lychee's per-URL result cache so unchanged links aren't
-      # re-fetched on every run (config lives in lychee.toml).
-      - name: Restore lychee cache
-        uses: actions/cache@v4
-        with:
-          path: .lycheecache
-          key: lychee-${{ github.sha }}
-          restore-keys: lychee-
-
-      - name: Check links
-        uses: lycheeverse/lychee-action@v2
-        with:
-          # lychee renamed its release tags to a `lychee-` prefix; the action's
-          # floating v2 tag now handles the prefix itself (pass the PLAIN
-          # version — it builds `download/lychee-<version>/`). Pinned explicitly
-          # so future default drift can't break the job silently again.
-          lycheeVersion: v0.24.2
-          args: --no-progress --config lychee.toml docs/
-          fail: true
+  # Link checking lives in pr-weekly_docs_link_check.yaml: external link rot
+  # must not fail this publish workflow on every merge.
 
   deploy:
     name: Deploy

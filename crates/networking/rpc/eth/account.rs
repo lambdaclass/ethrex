@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use tracing::debug;
 
 use crate::rpc::{RpcApiContext, RpcHandler};
@@ -37,7 +37,7 @@ pub struct GetProofRequest {
 }
 
 impl RpcHandler for GetBalanceRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetBalanceRequest, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<GetBalanceRequest, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -46,10 +46,10 @@ impl RpcHandler for GetBalanceRequest {
             return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         };
         Ok(GetBalanceRequest {
-            address: serde_json::from_value(params[0].clone())?,
+            address: serde_json::from_str(params[0].get())?,
             block: params
                 .get(1)
-                .map(|b| BlockIdentifierOrHash::parse(b.clone(), 1))
+                .map(|param| BlockIdentifierOrHash::parse_param(param, 1))
                 .transpose()?
                 .unwrap_or_default(),
         })
@@ -78,7 +78,7 @@ impl RpcHandler for GetBalanceRequest {
 }
 
 impl RpcHandler for GetCodeRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetCodeRequest, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<GetCodeRequest, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -87,10 +87,10 @@ impl RpcHandler for GetCodeRequest {
             return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         };
         Ok(GetCodeRequest {
-            address: serde_json::from_value(params[0].clone())?,
+            address: serde_json::from_str(params[0].get())?,
             block: params
                 .get(1)
-                .map(|b| BlockIdentifierOrHash::parse(b.clone(), 1))
+                .map(|param| BlockIdentifierOrHash::parse_param(param, 1))
                 .transpose()?
                 .unwrap_or_default(),
         })
@@ -120,7 +120,7 @@ impl RpcHandler for GetCodeRequest {
 }
 
 impl RpcHandler for GetStorageAtRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetStorageAtRequest, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<GetStorageAtRequest, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -128,13 +128,13 @@ impl RpcHandler for GetStorageAtRequest {
         if params.len() != 2 && params.len() != 3 {
             return Err(RpcErr::BadParams("Expected 2 or 3 params".to_owned()));
         };
-        let storage_slot_u256 = serde_utils::u256::deser_hex_or_dec_str(params[1].clone())?;
+        let storage_slot_u256 = serde_utils::u256::deser_hex_or_dec_str(&*params[1])?;
         Ok(GetStorageAtRequest {
-            address: serde_json::from_value(params[0].clone())?,
+            address: serde_json::from_str(params[0].get())?,
             storage_slot: H256::from_uint(&storage_slot_u256),
             block: params
                 .get(2)
-                .map(|b| BlockIdentifierOrHash::parse(b.clone(), 2))
+                .map(|param| BlockIdentifierOrHash::parse_param(param, 2))
                 .transpose()?
                 .unwrap_or_default(),
         })
@@ -162,7 +162,7 @@ impl RpcHandler for GetStorageAtRequest {
 }
 
 impl RpcHandler for GetTransactionCountRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetTransactionCountRequest, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<GetTransactionCountRequest, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -171,10 +171,10 @@ impl RpcHandler for GetTransactionCountRequest {
             return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         };
         Ok(GetTransactionCountRequest {
-            address: serde_json::from_value(params[0].clone())?,
+            address: serde_json::from_str(params[0].get())?,
             block: params
                 .get(1)
-                .map(|b| BlockIdentifierOrHash::parse(b.clone(), 1))
+                .map(|param| BlockIdentifierOrHash::parse_param(param, 1))
                 .transpose()?
                 .unwrap_or_default(),
         })
@@ -215,7 +215,7 @@ impl RpcHandler for GetTransactionCountRequest {
 }
 
 impl RpcHandler for GetProofRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -223,14 +223,14 @@ impl RpcHandler for GetProofRequest {
         if params.len() != 2 && params.len() != 3 {
             return Err(RpcErr::BadParams("Expected 2 or 3 params".to_owned()));
         };
-        let storage_keys: Vec<U256> = serde_json::from_value(params[1].clone())?;
+        let storage_keys: Vec<U256> = serde_json::from_str(params[1].get())?;
         let storage_keys = storage_keys.iter().map(H256::from_uint).collect();
         Ok(GetProofRequest {
-            address: serde_json::from_value(params[0].clone())?,
+            address: serde_json::from_str(params[0].get())?,
             storage_keys,
             block: params
                 .get(2)
-                .map(|b| BlockIdentifierOrHash::parse(b.clone(), 2))
+                .map(|param| BlockIdentifierOrHash::parse_param(param, 2))
                 .transpose()?
                 .unwrap_or_default(),
         })
@@ -288,7 +288,7 @@ pub struct GetStorageValuesRequest {
 }
 
 impl RpcHandler for GetStorageValuesRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -297,7 +297,7 @@ impl RpcHandler for GetStorageValuesRequest {
             return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         };
         // params[0] is an object mapping address -> array of storage slots.
-        let raw: HashMap<String, Vec<U256>> = serde_json::from_value(params[0].clone())?;
+        let raw: HashMap<String, Vec<U256>> = serde_json::from_str(params[0].get())?;
         let mut requests = HashMap::with_capacity(raw.len());
         let mut total_slots = 0usize;
         for (address, slots) in raw {
@@ -318,7 +318,7 @@ impl RpcHandler for GetStorageValuesRequest {
             requests,
             block: params
                 .get(1)
-                .map(|b| BlockIdentifierOrHash::parse(b.clone(), 1))
+                .map(|param| BlockIdentifierOrHash::parse_param(param, 1))
                 .transpose()?
                 .unwrap_or_default(),
         })
@@ -354,7 +354,7 @@ impl RpcHandler for GetStorageValuesRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::TestContext;
+    use crate::test_utils::{TestContext, raw_params};
     use serde_json::json;
 
     #[test]
@@ -365,7 +365,7 @@ mod tests {
             json!("0x1"),
             json!("latest"),
         ]);
-        let request = GetStorageAtRequest::parse(&params).unwrap();
+        let request = GetStorageAtRequest::parse(&raw_params(&params)).unwrap();
 
         let expected_address = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
             .parse()
@@ -383,7 +383,7 @@ mod tests {
             json!("1"),
             json!("latest"),
         ]);
-        let request = GetStorageAtRequest::parse(&params).unwrap();
+        let request = GetStorageAtRequest::parse(&raw_params(&params)).unwrap();
 
         let expected_address = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
             .parse()
@@ -400,31 +400,31 @@ mod tests {
         // and resolve it to the latest tag.
         let addr = json!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
         assert_eq!(
-            GetBalanceRequest::parse(&Some(vec![addr.clone()]))
+            GetBalanceRequest::parse(&raw_params(&Some(vec![addr.clone()])))
                 .unwrap()
                 .block,
             BlockTag::Latest
         );
         assert_eq!(
-            GetCodeRequest::parse(&Some(vec![addr.clone()]))
+            GetCodeRequest::parse(&raw_params(&Some(vec![addr.clone()])))
                 .unwrap()
                 .block,
             BlockTag::Latest
         );
         assert_eq!(
-            GetTransactionCountRequest::parse(&Some(vec![addr.clone()]))
+            GetTransactionCountRequest::parse(&raw_params(&Some(vec![addr.clone()])))
                 .unwrap()
                 .block,
             BlockTag::Latest
         );
         assert_eq!(
-            GetStorageAtRequest::parse(&Some(vec![addr.clone(), json!("0x0")]))
+            GetStorageAtRequest::parse(&raw_params(&Some(vec![addr.clone(), json!("0x0")])))
                 .unwrap()
                 .block,
             BlockTag::Latest
         );
         assert_eq!(
-            GetProofRequest::parse(&Some(vec![addr.clone(), json!([])]))
+            GetProofRequest::parse(&raw_params(&Some(vec![addr.clone(), json!([])])))
                 .unwrap()
                 .block,
             BlockTag::Latest
@@ -436,7 +436,7 @@ mod tests {
         let params = Some(vec![json!({
             "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef": ["0x1"]
         })]);
-        let request = GetStorageValuesRequest::parse(&params).unwrap();
+        let request = GetStorageValuesRequest::parse(&raw_params(&params)).unwrap();
         assert_eq!(request.block, BlockTag::Latest);
         let addr: Address = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
             .parse()
@@ -449,7 +449,7 @@ mod tests {
 
     #[test]
     fn test_get_storage_values_request_rejects_empty() {
-        assert!(GetStorageValuesRequest::parse(&Some(vec![json!({})])).is_err());
+        assert!(GetStorageValuesRequest::parse(&raw_params(&Some(vec![json!({})]))).is_err());
     }
 
     #[test]
@@ -462,7 +462,7 @@ mod tests {
         })]);
 
         assert!(matches!(
-            GetStorageValuesRequest::parse(&params),
+            GetStorageValuesRequest::parse(&raw_params(&params)),
             Err(RpcErr::BadParams(ref msg)) if msg.contains("too many slots")
         ));
     }
@@ -477,7 +477,7 @@ mod tests {
         })]);
 
         assert!(matches!(
-            GetStorageValuesRequest::parse(&params),
+            GetStorageValuesRequest::parse(&raw_params(&params)),
             Err(RpcErr::BadParams(ref msg)) if msg.contains("too many slots")
         ));
     }

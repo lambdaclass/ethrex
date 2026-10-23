@@ -951,18 +951,25 @@ impl PeerHandler {
     /// Request block access lists via snap/2 (`GetBlockAccessLists`/`BlockAccessLists`).
     ///
     /// Tries up to `REQUEST_RETRY_ATTEMPTS` distinct snap/2 peers, skipping any that
-    /// already failed this call. EIP-8189 ("Security Considerations") asks implementations
-    /// to deprioritize unreliable peers rather than let one determine the outcome, so a
-    /// timeout or a malformed reply moves on to another peer instead of ending the replay.
+    /// already failed this call and any in `exclude`. EIP-8189 ("Security
+    /// Considerations") asks implementations to deprioritize unreliable peers rather
+    /// than let one determine the outcome, so a timeout or a malformed reply moves on
+    /// to another peer instead of ending the replay. `exclude` lets the caller carry
+    /// that across calls: a peer that answered a previous request for the same block
+    /// without the list is not the one to ask for it again.
     ///
     /// Returns `None` only once no untried snap/2 peer remains. On success returns
-    /// `(bals, peer_id)` identifying the responding peer, so the caller can attribute a
-    /// later validation failure to whoever served the data.
+    /// `(bals, peer_id)` identifying the responding peer. The reply is not scored
+    /// here: every entry may be the unavailable marker, so only the caller, once it
+    /// has verified and applied an entry, knows whether the peer served anything.
+    /// The caller credits the peer once per list it applies and charges it for a
+    /// list it could not use.
     pub async fn request_snap2_bals(
-        &mut self,
+        &self,
         block_hashes: &[H256],
+        exclude: &[H256],
     ) -> Result<Option<(Vec<Option<BlockAccessList>>, H256)>, PeerHandlerError> {
-        let mut failed_peers: Vec<H256> = Vec::new();
+        let mut failed_peers: Vec<H256> = exclude.to_vec();
 
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let Some((peer_id, mut connection, permit)) = self
@@ -991,7 +998,6 @@ impl PeerHandler {
                 Ok(RLPxMessage::Snap2BlockAccessLists(Snap2BlockAccessLists { id, bals }))
                     if id == request_id =>
                 {
-                    self.peer_table.record_success(peer_id)?;
                     return Ok(Some((bals, peer_id)));
                 }
                 _ => {
@@ -1002,7 +1008,7 @@ impl PeerHandler {
             }
         }
 
-        warn!("[SYNCING] no snap/2 peer served block access lists");
+        debug!("[SYNCING] no snap/2 peer served block access lists");
         Ok(None)
     }
 

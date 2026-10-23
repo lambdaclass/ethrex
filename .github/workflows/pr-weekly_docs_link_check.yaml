@@ -1,0 +1,52 @@
+name: Docs Link Check
+
+# External links rot on their own schedule, not when the docs change. Checking
+# them on every push to main failed the docs publish workflow on every merge
+# whenever any third-party page moved, even though the docs themselves deployed
+# fine. This runs on docs PRs, where a new dead link can be fixed before merge,
+# and weekly on main, where link rot elsewhere is reported once a week through
+# the failure alerts.
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "lychee.toml"
+      - ".github/workflows/pr-weekly_docs_link_check.yaml"
+  schedule:
+    # Mondays at 06:00 UTC.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  link-check:
+    name: Link Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Persist lychee's per-URL result cache so unchanged links aren't
+      # re-fetched on every run (config lives in lychee.toml).
+      - name: Restore lychee cache
+        uses: actions/cache@v4
+        with:
+          path: .lycheecache
+          key: lychee-${{ github.sha }}
+          restore-keys: lychee-
+
+      - name: Check links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          # lychee renamed its release tags to a `lychee-` prefix; the action's
+          # floating v2 tag now handles the prefix itself (pass the PLAIN
+          # version — it builds `download/lychee-<version>/`). Pinned explicitly
+          # so future default drift can't break the job silently again.
+          lycheeVersion: v0.24.2
+          args: --no-progress --config lychee.toml docs/
+          fail: true
