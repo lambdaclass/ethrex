@@ -1268,17 +1268,17 @@ impl Transaction {
                 // parity bit (which would recover a bogus sender). `v` is taken
                 // at its full width: a chain id near 2^64 still fits in 64 bits,
                 // but its `v` does not.
-                let parity = match self.chain_id() {
-                    Some(chain_id) => tx.v.checked_sub(U256::from(35) + U256::from(chain_id) * 2),
-                    None => tx.v.checked_sub(U256::from(27)),
-                };
-                let signature_y_parity = match parity {
-                    Some(parity) if parity.is_zero() => false,
-                    Some(parity) if parity == U256::one() => true,
-                    _ => return Err(CryptoError::InvalidSignature),
+                let chain_id = self.chain_id();
+                let signature_y_parity = match chain_id {
+                    // The chain id is derived from this `v` as (v - 35) / 2, so `v` is
+                    // 35 + chain_id * 2 + parity, which is odd exactly when the parity is 0.
+                    Some(_) => !tx.v.bit(0),
+                    None if tx.v == U256::from(27) => false,
+                    None if tx.v == U256::from(28) => true,
+                    None => return Err(CryptoError::InvalidSignature),
                 };
                 let mut buf = vec![];
-                match self.chain_id() {
+                match chain_id {
                     None => Encoder::new(&mut buf)
                         .encode_field(&tx.nonce)
                         .encode_field(&tx.gas_price)
