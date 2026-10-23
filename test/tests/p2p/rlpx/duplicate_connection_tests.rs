@@ -104,15 +104,12 @@ async fn wait_for_peer_count(table: &PeerTable, expected: usize, timeout: Durati
     }
 }
 
-/// The node is connected to B, then dials B again. B, which accepts a single peer,
-/// refuses the second connection the way any client refuses one it does not want
-/// (geth answers a duplicate with `AlreadyConnected`). When that refused connection
-/// closes, A must still list B and keep what B's live connection told it, here the
-/// EIP-8070 cell availability B advertised: the first connection is still up.
-#[tokio::test]
-async fn a_refused_duplicate_connection_keeps_the_live_peer_listed() {
+/// A is connected to B, then dials B again. When the second connection closes, A must
+/// still list B and keep what B's live connection told it, here the EIP-8070 cell
+/// availability B advertised: the first connection is still up.
+async fn dialing_twice_keeps_the_live_peer_listed(b_target_peers: usize) {
     let a = spawn_node(0x11, 10).await;
-    let b = spawn_node(0x22, 1).await;
+    let b = spawn_node(0x22, b_target_peers).await;
 
     a.initiator
         .initiate(b.node.clone())
@@ -157,4 +154,18 @@ async fn a_refused_duplicate_connection_keeps_the_live_peer_listed() {
         Some(b_cell_mask),
         "closing the refused duplicate must not forget the cells B advertised"
     );
+}
+
+/// B accepts a single peer, so it refuses the second connection the way any client
+/// refuses one it does not want (geth answers a duplicate with `AlreadyConnected`).
+#[tokio::test]
+async fn a_refused_duplicate_connection_keeps_the_live_peer_listed() {
+    dialing_twice_keeps_the_live_peer_listed(1).await;
+}
+
+/// Both nodes have room for more peers, so the second connection gets as far as
+/// registering, finds the node already listed and is refused with `AlreadyConnected`.
+#[tokio::test]
+async fn a_duplicate_refused_as_already_connected_keeps_the_live_peer_listed() {
+    dialing_twice_keeps_the_live_peer_listed(10).await;
 }

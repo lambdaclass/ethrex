@@ -317,7 +317,10 @@ mod tests {
     use crate::{
         peer_filter::EthForkIdFilter,
         peer_table::{MIN_SCORE_CRITICAL, PeerTableServer},
-        rlpx::{connection::server::PeerConnection, p2p::Capability},
+        rlpx::{
+            connection::server::{ConnectionId, PeerConnection},
+            p2p::Capability,
+        },
         types::Node,
     };
 
@@ -395,6 +398,7 @@ mod tests {
                 .new_connected_peer(
                     node.clone(),
                     PeerConnection::unestablished(),
+                    ConnectionId::next(),
                     vec![Capability::snap(2)],
                     vec![Capability::snap(2)],
                     None,

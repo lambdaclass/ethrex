@@ -173,6 +173,20 @@ pub struct PeerConnection {
     handle: ActorRef<PeerConnectionServer>,
 }
 
+/// Identifies one RLPx connection. A node can have more than one connection at a time
+/// (a duplicate dial, or a reconnect before the old connection closes), and the peer
+/// table uses this to tell the connection it lists for the node from the others.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConnectionId(u64);
+
+impl ConnectionId {
+    /// An id no other connection in this process has.
+    pub(crate) fn next() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        Self(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+}
+
 impl PeerConnection {
     pub fn spawn_as_receiver(
         context: P2PContext,
@@ -415,9 +429,11 @@ pub struct Established {
     pub(crate) announced_hashes: WindowCounter,
     // Under-delivery: net count of short answers to our GetPooledTransactions requests
     pub(crate) short_tx_answer_strikes: u32,
-    // Whether this connection owns the node's peer-table entry. A node keeps only the
-    // connection that registered first, so a duplicate one must not remove that entry
-    // when it closes.
+    // Identifies this connection to the peer table, which removes a node's entry only
+    // for the connection that registered it.
+    pub(crate) connection_id: ConnectionId,
+    // Whether the peer table registered this connection for its node. Only then does
+    // this connection own the node's tx-broadcaster index, which it frees when it closes.
     pub(crate) registered_in_peer_table: bool,
     // Leech detection: total transactions sent to this peer via GetPooledTransactions responses
     pub(crate) txs_sent_to_peer: u64,
@@ -625,24 +641,26 @@ impl PeerConnectionServer {
                         )
                         .await;
                 }
-                // Only the connection that registered the node may remove it: a duplicate
-                // connection to an already-connected node must leave the live one listed.
-                if established_state.registered_in_peer_table {
-                    if let Err(e) = established_state
-                        .peer_table
-                        .remove_peer(established_state.node.node_id())
-                    {
-                        debug!("Failed to remove peer from table: {e}");
-                    }
-                    // Free the peer's tx-broadcaster index (and clear its bit across known txs)
-                    // so the broadcaster's per-peer index map / PeerMask widths stay bounded to
-                    // live peers.
-                    if let Err(e) = established_state
+                // The peer table removes the node only if it lists this connection for it, so
+                // a duplicate connection to an already-connected node leaves the live one
+                // listed. Sent even when registration failed: a registration the peer table
+                // applied after this connection stopped waiting for it is undone here.
+                if let Err(e) = established_state.peer_table.remove_peer(
+                    established_state.node.node_id(),
+                    established_state.connection_id,
+                ) {
+                    debug!("Failed to remove peer from table: {e}");
+                }
+                // Free the peer's tx-broadcaster index (and clear its bit across known txs)
+                // so the broadcaster's per-peer index map / PeerMask widths stay bounded to
+                // live peers. The index belongs to the registered connection, so a duplicate
+                // leaves the live one's index alone.
+                if established_state.registered_in_peer_table
+                    && let Err(e) = established_state
                         .tx_broadcaster
                         .remove_peer(established_state.node.node_id())
-                    {
-                        debug!("Failed to remove peer from tx broadcaster: {e}");
-                    }
+                {
+                    debug!("Failed to remove peer from tx broadcaster: {e}");
                 }
                 established_state.teardown().await;
             }
@@ -1071,6 +1089,7 @@ where
         .new_connected_peer(
             state.node.clone(),
             connection.clone(),
+            state.connection_id,
             state.capabilities.clone(),
             negotiated_capabilities,
             state.negotiated_eth_capability.clone(),
@@ -3268,6 +3287,7 @@ mod tx_announcement_tests {
             serve_requests: WindowCounter::new(),
             announced_hashes: WindowCounter::new(),
             short_tx_answer_strikes: 0,
+            connection_id: ConnectionId::next(),
             registered_in_peer_table: false,
             txs_sent_to_peer: 0,
             received_txs_from_peer: false,
@@ -3642,6 +3662,7 @@ mod tx_announcement_tests {
                 .new_connected_peer(
                     state.node.clone(),
                     PeerConnection::unestablished(),
+                    state.connection_id,
                     vec![],
                     vec![],
                     None,
