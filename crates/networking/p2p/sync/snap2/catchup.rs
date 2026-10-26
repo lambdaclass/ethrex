@@ -316,7 +316,10 @@ mod tests {
     use super::*;
     use crate::{
         peer_table::{MIN_SCORE_CRITICAL, PeerTableServer},
-        rlpx::{connection::server::PeerConnection, p2p::Capability},
+        rlpx::{
+            connection::server::{ConnectionId, PeerConnection},
+            p2p::Capability,
+        },
         types::Node,
     };
 
@@ -386,10 +389,11 @@ mod tests {
     async fn table_with(nodes: &[Node]) -> PeerTable {
         let table = PeerTableServer::spawn(10);
         for node in nodes {
-            table
+            let registered = table
                 .new_connected_peer(
                     node.clone(),
                     PeerConnection::unestablished(),
+                    ConnectionId::next(),
                     vec![Capability::snap(2)],
                     vec![Capability::snap(2)],
                     None,
@@ -397,6 +401,7 @@ mod tests {
                 )
                 .await
                 .expect("register peer");
+            assert!(registered, "each test node is distinct");
         }
         table
     }

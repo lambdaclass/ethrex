@@ -12,7 +12,10 @@
 //! holding its slot for as long as the request is outstanding.
 
 use crate::{
-    rlpx::{connection::server::PeerConnection, p2p::Capability},
+    rlpx::{
+        connection::server::{ConnectionId, PeerConnection},
+        p2p::Capability,
+    },
     types::{Node, NodeRecord},
 };
 use ethrex_common::H256;
@@ -62,6 +65,9 @@ pub struct PeerData {
     pub is_connection_inbound: bool,
     /// communication channels between the peer data and its active connection
     pub connection: Option<PeerConnection>,
+    /// The connection this entry was registered for. Only that connection's
+    /// `remove_peer` removes the entry.
+    connection_id: Option<ConnectionId>,
     /// This tracks the score of a peer
     score: i64,
     /// Track the amount of concurrent requests this peer is handling
@@ -86,6 +92,7 @@ impl PeerData {
             negotiated_eth,
             is_connection_inbound: false,
             connection,
+            connection_id: None,
             score: Default::default(),
             requests: Default::default(),
             last_response_time: None,
@@ -159,7 +166,8 @@ impl Drop for RequestPermit {
 pub trait PeerTableServerProtocol: Send + Sync {
     // Send (cast) methods
 
-    fn remove_peer(&self, node_id: H256) -> Result<(), ActorError>;
+    /// Removes `node_id`'s entry if it was registered for `connection_id`.
+    fn remove_peer(&self, node_id: H256, connection_id: ConnectionId) -> Result<(), ActorError>;
     fn dec_requests(&self, node_id: H256) -> Result<(), ActorError>;
     fn record_success(&self, node_id: H256) -> Result<(), ActorError>;
     fn record_failure(&self, node_id: H256) -> Result<(), ActorError>;
@@ -173,11 +181,15 @@ pub trait PeerTableServerProtocol: Send + Sync {
     /// `false` means we already hold a connection to this node id and the
     /// caller lost a race, so it should hang up rather than register. The
     /// check and the insert both happen in this actor's message loop, which is
-    /// what makes the claim atomic between two connection actors.
+    /// what makes the claim atomic between two connection actors. The slot is
+    /// held for `connection_id`, so only that connection's `remove_peer`
+    /// releases it.
+    #[allow(clippy::too_many_arguments)]
     fn new_connected_peer(
         &self,
         node: Node,
         connection: PeerConnection,
+        connection_id: ConnectionId,
         capabilities: Vec<Capability>,
         negotiated_capabilities: Vec<Capability>,
         negotiated_eth: Option<Capability>,
@@ -263,6 +275,7 @@ impl PeerTableServer {
         self.do_new_connected_peer(
             msg.node,
             Some(msg.connection),
+            msg.connection_id,
             msg.capabilities,
             msg.negotiated_capabilities,
             msg.negotiated_eth,
@@ -276,7 +289,15 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::RemovePeer,
         _ctx: &Context<Self>,
     ) {
-        self.peers.swap_remove(&msg.node_id);
+        // The entry belongs to the connection that registered it. Another connection to
+        // the same node, such as a refused duplicate, leaves the entry alone.
+        if self
+            .peers
+            .get(&msg.node_id)
+            .is_some_and(|peer| peer.connection_id == Some(msg.connection_id))
+        {
+            self.peers.swap_remove(&msg.node_id);
+        }
     }
 
     #[send_handler]
@@ -572,10 +593,12 @@ impl PeerTableServer {
     /// displaced connection stayed open but became invisible to peer selection,
     /// and whichever actor stopped first then removed the survivor's entry on
     /// its way out.
+    #[allow(clippy::too_many_arguments)]
     fn do_new_connected_peer(
         &mut self,
         node: Node,
         connection: Option<PeerConnection>,
+        connection_id: ConnectionId,
         capabilities: Vec<Capability>,
         negotiated_capabilities: Vec<Capability>,
         negotiated_eth: Option<Capability>,
@@ -588,6 +611,7 @@ impl PeerTableServer {
         let mut new_peer = PeerData::new(node, None, connection, capabilities, negotiated_eth);
         new_peer.negotiated_capabilities = negotiated_capabilities;
         new_peer.is_connection_inbound = is_inbound;
+        new_peer.connection_id = Some(connection_id);
         self.peers.insert(new_peer_id, new_peer);
         true
     }
@@ -742,7 +766,15 @@ mod tests {
     /// Registration with no live connection behind it, and no negotiated `eth`
     /// version: enough to exercise the claim, which only ever looks at the node id.
     fn claim(table: &mut PeerTableServer, node: Node) -> bool {
-        table.do_new_connected_peer(node, None, vec![], vec![], None, false)
+        table.do_new_connected_peer(
+            node,
+            None,
+            ConnectionId::next(),
+            vec![],
+            vec![],
+            None,
+            false,
+        )
     }
 
     #[test]
@@ -782,6 +814,56 @@ mod tests {
         assert!(
             claim(&mut table, node(3)),
             "a reconnect is granted the slot"
+        );
+    }
+
+    /// A node keeps the connection that registered first. A second connection to
+    /// the same node is refused, so closing it cannot take the live entry away.
+    #[tokio::test]
+    async fn a_second_connection_to_a_connected_node_is_not_registered() {
+        let table = PeerTableServer::spawn(10);
+        let node = node(1);
+        let node_id = node.node_id();
+        let (first, second) = (ConnectionId::next(), ConnectionId::next());
+        let register = |connection_id, is_inbound| {
+            table.new_connected_peer(
+                node.clone(),
+                PeerConnection::unestablished(),
+                connection_id,
+                vec![Capability::eth(69)],
+                vec![Capability::eth(69)],
+                Some(Capability::eth(69)),
+                is_inbound,
+            )
+        };
+
+        assert!(
+            register(first, false).await.unwrap(),
+            "the first connection registers"
+        );
+        assert!(
+            !register(second, true).await.unwrap(),
+            "the second connection is refused"
+        );
+
+        let peers = table.get_peers_data().await.unwrap();
+        assert_eq!(peers.len(), 1);
+        assert!(
+            !peers[0].is_connection_inbound,
+            "the first connection's entry is kept"
+        );
+
+        table.remove_peer(node_id, second).unwrap();
+        assert_eq!(
+            table.peer_count().await.unwrap(),
+            1,
+            "closing the refused connection leaves the entry"
+        );
+        table.remove_peer(node_id, first).unwrap();
+        assert_eq!(
+            table.peer_count().await.unwrap(),
+            0,
+            "closing the registered connection removes the entry"
         );
     }
 

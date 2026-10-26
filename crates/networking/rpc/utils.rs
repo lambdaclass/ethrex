@@ -255,8 +255,8 @@ impl From<RpcErr> for RpcErrorMetadata {
             },
             RpcErr::PrunedHistoryUnavailable(context) => RpcErrorMetadata {
                 code: 4444,
-                data: Some(context),
-                message: "Pruned history unavailable".to_string(),
+                data: None,
+                message: format!("Pruned history unavailable: {context}"),
             },
             RpcErr::LimitExceeded(context) => RpcErrorMetadata {
                 code: -32005,

@@ -3612,6 +3612,7 @@ dependencies = [
  "ethrex-l2-rpc",
  "ethrex-metrics",
  "ethrex-p2p",
+ "ethrex-partial",
  "ethrex-repl",
  "ethrex-rlp",
  "ethrex-rpc",
@@ -4047,6 +4048,44 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "ethrex-partial"
+version = "30.0.0"
+dependencies = [
+ "async-trait",
+ "axum 0.8.9",
+ "blst",
+ "bytes",
+ "ethereum-types",
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-crypto",
+ "ethrex-p2p",
+ "ethrex-rlp",
+ "ethrex-rpc",
+ "ethrex-storage",
+ "ethrex-trie",
+ "ethrex-vm",
+ "futures",
+ "hex",
+ "libssz",
+ "libssz-derive",
+ "libssz-merkle",
+ "libssz-types",
+ "rand 0.8.5",
+ "reqwest 0.12.28",
+ "secp256k1 0.30.0",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tower-http 0.6.8",
  "tracing",
 ]
 

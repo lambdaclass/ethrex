@@ -174,6 +174,20 @@ pub struct PeerConnection {
     handle: ActorRef<PeerConnectionServer>,
 }
 
+/// Identifies one RLPx connection. A node can have more than one connection at a time
+/// (a duplicate dial, or a reconnect before the old connection closes), and the peer
+/// table uses this to tell the connection it lists for the node from the others.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConnectionId(u64);
+
+impl ConnectionId {
+    /// An id no other connection in this process has.
+    pub(crate) fn next() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        Self(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+}
+
 impl PeerConnection {
     pub fn spawn_as_receiver(
         context: P2PContext,
@@ -413,16 +427,19 @@ pub struct Established {
     pub(crate) disconnect_reason: Option<DisconnectReason>,
     // Indicates if the peer has been validated (ie. the connection was established successfully)
     pub(crate) is_validated: bool,
-    /// Whether this actor holds the peer table's slot for this node id. Only the
-    /// actor that claimed it may release it: a duplicate connection that lost
-    /// the race must leave the winner's registration alone on its way out.
-    pub(crate) registered: bool,
     // Rate limiting: data-serving requests received in the current window
     pub(crate) serve_requests: WindowCounter,
     // Rate limiting: transaction hashes announced in the current window
     pub(crate) announced_hashes: WindowCounter,
     // Under-delivery: net count of short answers to our GetPooledTransactions requests
     pub(crate) short_tx_answer_strikes: u32,
+    // Identifies this connection to the peer table, which removes a node's entry only
+    // for the connection that registered it.
+    pub(crate) connection_id: ConnectionId,
+    // Whether the peer table registered this connection for its node. Only then does
+    // this connection own the node's tx-broadcaster index and its `Connected` report to
+    // discovery, which it releases when it closes.
+    pub(crate) registered_in_peer_table: bool,
     // Leech detection: total transactions sent to this peer via GetPooledTransactions responses
     pub(crate) txs_sent_to_peer: u64,
     // Leech detection: whether we have received any transactions from this peer
@@ -474,11 +491,14 @@ impl Established {
             retry_on_alternates(&self.blockchain, &self.peer_table, &pending_hashes).await;
         }
         // EIP-8070: forget this peer's advertised cell availability so the map
-        // does not grow unbounded across reconnects.
-        if let Err(e) = self
-            .blockchain
-            .mempool
-            .clear_peer_cell_availability(self.node.node_id())
+        // does not grow unbounded across reconnects. A session that never started
+        // recorded none: what its node id holds belongs to another session of the
+        // same node, which keeps it.
+        if self.is_validated
+            && let Err(e) = self
+                .blockchain
+                .mempool
+                .clear_peer_cell_availability(self.node.node_id())
         {
             warn!(error = %e, "clear_peer_cell_availability failed during teardown");
         }
@@ -624,16 +644,20 @@ impl PeerConnectionServer {
                         )
                         .await;
                 }
-                // Gated on `registered`: an actor that lost the claim never put
-                // anything in these tables, and releasing on its way out would
-                // evict the connection that won.
-                if established_state.registered {
-                    if let Err(e) = established_state
-                        .peer_table
-                        .remove_peer(established_state.node.node_id())
-                    {
-                        debug!("Failed to remove peer from table: {e}");
-                    }
+                // The peer table removes the node only if it lists this connection for it, so
+                // a duplicate connection to an already-connected node leaves the live one
+                // listed. Sent even when registration failed: a registration the peer table
+                // applied after this connection stopped waiting for it is undone here.
+                if let Err(e) = established_state.peer_table.remove_peer(
+                    established_state.node.node_id(),
+                    established_state.connection_id,
+                ) {
+                    debug!("Failed to remove peer from table: {e}");
+                }
+                // Gated on registration: an actor that lost the claim never reported
+                // the peer to discovery nor owned its broadcaster index, and releasing
+                // them on its way out would evict the connection that won.
+                if established_state.registered_in_peer_table {
                     // Pairs with the `Connected` report in `initialize_connection`. This is
                     // the only teardown an established connection takes, and it still runs
                     // when a message handler panics, because the actor loop catches the
@@ -947,8 +971,7 @@ impl PeerConnectionServer {
                         res.and(l2_connection::process_batches_on_queue(established_state).await)
                     }
                     L2Cast::BlockBroadcast => {
-                        let res = l2_connection::send_new_block(established_state).await;
-                        res.and(l2_connection::process_blocks_on_queue(established_state).await)
+                        l2_connection::send_new_block(established_state).await
                     }
                 }
             } else {
@@ -1081,24 +1104,23 @@ where
 
     // Claim the slot before telling anyone we have this peer. Losing means
     // another actor already holds a connection to the same node id, so we hang
-    // up with the reason devp2p expects and touch neither table.
-    let claimed = state
+    // up with the reason devp2p expects and report nothing to discovery.
+    let registered = state
         .peer_table
         .new_connected_peer(
             state.node.clone(),
             connection.clone(),
+            state.connection_id,
             state.capabilities.clone(),
             negotiated_capabilities,
             state.negotiated_eth_capability.clone(),
             state.is_inbound,
         )
         .await?;
-    if !claimed {
-        return Err(PeerConnectionError::DisconnectSent(
-            DisconnectReason::AlreadyConnected,
-        ));
+    if !registered {
+        return Err(PeerConnectionError::AlreadyConnected);
     }
-    state.registered = true;
+    state.registered_in_peer_table = true;
     state
         .discovery
         .record_peer_event(state.node.node_id(), PeerEvent::Connected);
@@ -1265,6 +1287,8 @@ where
             Some(msg) => msg?,
             None => return Err(PeerConnectionError::Disconnected),
         };
+        #[cfg(feature = "l2")]
+        state.l2_state.set_peer_head(&state.storage, &msg);
         match msg {
             Message::Status68(msg_data) => {
                 trace!(peer=%state.node, "Received Status(68)");
@@ -1331,7 +1355,8 @@ async fn connection_failed(state: &mut Established, error_text: &str, error: &Pe
     // Discard peer from kademlia table in some cases
     match error {
         // already connected, don't discard it
-        PeerConnectionError::DisconnectReceived(DisconnectReason::AlreadyConnected)
+        PeerConnectionError::AlreadyConnected
+        | PeerConnectionError::DisconnectReceived(DisconnectReason::AlreadyConnected)
         | PeerConnectionError::DisconnectSent(DisconnectReason::AlreadyConnected) => {
             debug!(
                 peer=%state.node,
@@ -1358,6 +1383,7 @@ fn match_disconnect_reason(error: &PeerConnectionError) -> Option<DisconnectReas
         PeerConnectionError::DisconnectReceived(reason) => Some(*reason),
         PeerConnectionError::RLPDecodeError(_) => Some(DisconnectReason::NetworkError),
         PeerConnectionError::TooManyPeers => Some(DisconnectReason::TooManyPeers),
+        PeerConnectionError::AlreadyConnected => Some(DisconnectReason::AlreadyConnected),
         // TODO build a proper matching between error types and disconnection reasons
         _ => None,
     }
@@ -3285,10 +3311,11 @@ mod tx_announcement_tests {
             current_requests: HashMap::new(),
             disconnect_reason: None,
             is_validated: true,
-            registered: false,
             serve_requests: WindowCounter::new(),
             announced_hashes: WindowCounter::new(),
             short_tx_answer_strikes: 0,
+            connection_id: ConnectionId::next(),
+            registered_in_peer_table: false,
             txs_sent_to_peer: 0,
             received_txs_from_peer: false,
             missed_pongs: 0,
@@ -3657,11 +3684,12 @@ mod tx_announcement_tests {
         for eth_version in [68, 72] {
             let (mut state, mut outbound) = session(eth_version);
             let peer = state.node.node_id();
-            state
+            let registered = state
                 .peer_table
                 .new_connected_peer(
                     state.node.clone(),
                     PeerConnection::unestablished(),
+                    state.connection_id,
                     vec![],
                     vec![],
                     None,
@@ -3669,6 +3697,7 @@ mod tx_announcement_tests {
                 )
                 .await
                 .expect("register peer");
+            assert!(registered, "each session starts with an empty table");
             handle_incoming_message(&mut state, announcement(eth_version, &txs(0, 1)))
                 .await
                 .unwrap();
