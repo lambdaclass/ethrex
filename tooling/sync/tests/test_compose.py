@@ -1,10 +1,13 @@
 import json
+import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from multisync import compose
-from multisync.config import load, parse, select
+from multisync.config import ConfigError, load, parse, select
 
 COMPLETED = {"condition": "service_completed_successfully"}
 
@@ -40,14 +43,39 @@ class BuildTest(unittest.TestCase):
         svc = self.services["ethlambda-hoodi"]
         command = svc["command"]
         self.assertEqual(command[command.index("--execution-endpoint") + 1], "http://ethrex-hoodi:8551")
-        self.assertEqual(svc["ports"], ["5052:5052"])
+        self.assertEqual(svc["ports"], ["127.0.0.1:5052:5052"])
         self.assertEqual((svc["stop_signal"], svc["stop_grace_period"]), ("SIGINT", "60s"))
 
     def test_client_override(self):
         svc = self.services["ethlambda-hoodi"]
-        self.assertEqual((svc["image"], svc["pull_policy"]), ("eth:dev", "always"))
+        self.assertEqual((svc["image"], svc["pull_policy"]), ("eth:dev", "always"))  # ethlambda's default image is a moving tag
         self.assertEqual(svc["environment"], {"RUST_LOG": "debug"})
         self.assertEqual(svc["command"][-1], "--x")
+
+    def test_pinned_images_pull_only_when_missing(self):
+        self.assertEqual(self.services["geth-plataberget"]["pull_policy"], "missing")
+        self.assertEqual(self.services["prysm-plataberget"]["pull_policy"], "missing")
+
+    def test_override_values_escape_dollars_but_templates_do_not(self):
+        config = parse({
+            "pair": [{"network": "hoodi", "el": "ethrex", "cl": "ethlambda"}],
+            "clients": {"ethlambda": {"env": {"FOO": "a$b"}, "extra_args": ["--x=$HOME"]}},
+        })
+        services = compose.build(config, select(config))["services"]
+        self.assertEqual(services["ethlambda-hoodi"]["environment"], {"FOO": "a$$b"})
+        self.assertEqual(services["ethlambda-hoodi"]["command"][-1], "--x=$$HOME")
+        self.assertEqual(services["ethrex-hoodi"]["image"], "${ETHREX_IMAGE:-ghcr.io/lambdaclass/ethrex:main}")
+
+    def test_unknown_image_override_is_rejected(self):
+        with self.assertRaisesRegex(ConfigError, "unknown client 'etherx'.*ethlambda.*ethrex.*geth"):
+            compose.build(self.config, select(self.config), {"etherx": "img"})
+
+    def test_clients_wait_for_the_jwt_and_share_the_secret(self):
+        for name, pair in (("ethrex-hoodi", "hoodi"), ("ethlambda-hoodi", "hoodi"),
+                           ("geth-plataberget", "plataberget"), ("prysm-plataberget", "plataberget")):
+            svc = self.services[name]
+            self.assertIn(f"secrets-{pair}:/secrets", svc["volumes"], name)
+            self.assertEqual(svc["depends_on"][f"setup-jwt-{pair}"], COMPLETED, name)
 
     def test_network_files_are_mounted_where_needed(self):
         for name in ("geth-plataberget", "prysm-plataberget"):
@@ -66,6 +94,42 @@ class BuildTest(unittest.TestCase):
         doc = compose.build(self.config, select(self.config), {"ethrex": "ethrex-local:multisync"})
         svc = doc["services"]["ethrex-hoodi"]
         self.assertEqual((svc["image"], svc["pull_policy"]), ("ethrex-local:multisync", "never"))
+
+
+class PrepareTest(unittest.TestCase):
+    def write_config(self, d):
+        path = Path(d) / "m.toml"
+        path.write_text('[[pair]]\nnetwork = "hoodi"\nel = "ethrex"\ncl = "lighthouse"\n')
+        return path
+
+    def test_prepare_returns_pairs_and_document(self):
+        with tempfile.TemporaryDirectory() as d:
+            pairs, document = compose.prepare(self.write_config(d))
+            self.assertEqual([p.name for p in pairs], ["hoodi"])
+            self.assertIn("ethrex-hoodi", document["services"])
+
+    def test_prepare_rejects_a_short_window_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            config_path = self.write_config(d)
+            out = Path(d) / "c.json"
+            with mock.patch.dict(os.environ, {"BLOCK_PROCESSING_DURATION": "60"}):
+                with self.assertRaisesRegex(ConfigError, "under two hoodi epochs"):
+                    compose.prepare(config_path)
+                with self.assertRaises(ConfigError):
+                    compose.generate(config_path, out)
+                self.assertEqual(compose.main(["generate", "--config", str(config_path), "--out", str(out)]), 1)
+            self.assertFalse(out.exists())
+
+    def test_prepare_rejects_an_unknown_image_override(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaisesRegex(ConfigError, "unknown client 'etherx'"):
+                compose.prepare(self.write_config(d), image_overrides={"etherx": "img"})
+
+    def test_write_dumps_json(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "c.json"
+            compose.write({"services": {}}, out)
+            self.assertEqual(json.loads(out.read_text()), {"services": {}})
 
 
 class CliTest(unittest.TestCase):
@@ -119,14 +183,19 @@ class CommittedConfigTest(unittest.TestCase):
             "ethrex-mainnet": ["8547:8545", "3701:3701"],
             "ethrex-hoodi-2": ["8548:8545"],
             "ethrex-plataberget": ["8549:8545"],
-            "lighthouse-hoodi": ["5052:5052"],
-            "lighthouse-sepolia": ["5053:5052"],
-            "lighthouse-mainnet": ["5054:5052"],
-            "lighthouse-hoodi-2": ["5055:5052"],
-            "prysm-plataberget": ["5056:3500"],
+            "lighthouse-hoodi": ["127.0.0.1:5052:5052"],
+            "lighthouse-sepolia": ["127.0.0.1:5053:5052"],
+            "lighthouse-mainnet": ["127.0.0.1:5054:5052"],
+            "lighthouse-hoodi-2": ["127.0.0.1:5055:5052"],
+            "prysm-plataberget": ["127.0.0.1:5056:3500"],
         }
         for name, ports in expected.items():
             self.assertEqual(self.services[name]["ports"], ports, name)
+
+    def test_no_bare_dollar_in_any_command(self):
+        for name, svc in self.services.items():
+            for part in svc["command"]:
+                self.assertIsNone(re.search(r"\$(?!\{)", part.replace("$$", "")), f"{name}: {part}")
 
     def test_ethrex_keeps_its_environment_overrides(self):
         svc = self.services["ethrex-mainnet"]

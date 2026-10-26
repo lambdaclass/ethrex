@@ -59,9 +59,11 @@ class Network:
         if not self.metadata_url:
             return None
         files = " ".join(self.metadata_files)
-        # `$$` is compose's escape for a literal `$`. Lighthouse reads the
-        # bootnodes and the deposit block under its own file names. The marker
-        # is the last file written, so a partly filled volume fetches again.
+        # `$$` is compose's escape for a literal `$`. Lighthouse v8.3.2 reads the
+        # standard bootstrap_nodes.yaml and deposit_contract_block.txt; the copies
+        # under boot_enr.yaml and deploy_block.txt are for older releases, which
+        # read those names. deploy_block.txt is the completion marker, the last
+        # file written, so a partly filled volume fetches again.
         script = (
             "set -e; "
             f"if [ -f {NETWORK_CONFIG_DIR}/deploy_block.txt ]; then echo '{self.name} config present'; exit 0; fi; "

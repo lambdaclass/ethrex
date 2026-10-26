@@ -1,8 +1,10 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from multisync.config import ConfigError, check_windows, load, parse, select
+from multisync.config import ConfigError, check_windows, default_block_processing_duration, load, parse, select
 
 
 def pair(**overrides):
@@ -43,6 +45,21 @@ class ParseTest(unittest.TestCase):
         self.assertConfigError({"pair": [pair()], "clients": {"teku": {}}}, "clients.teku: unknown client")
         self.assertConfigError({"pair": [pair()], "clients": {"ethlambda": {"extra_args": [1]}}}, "list of strings")
         self.assertConfigError({"pair": [pair()], "clients": {"ethlambda": {"env": {"A": 1}}}}, "values must be strings")
+
+    def test_names_must_match_fully(self):
+        self.assertConfigError({"pair": [pair(name="hoodi\n")]}, "must match [a-z0-9-]+")
+
+    def test_host_ports_are_in_range(self):
+        for key in ("el_rpc_port", "cl_api_port", "el_metrics_port", "cl_metrics_port"):
+            for bad in (0, -1, 65536):
+                self.assertConfigError({"pair": [pair(**{key: bad})]}, f"pair 1: '{key}' must be between 1 and 65535")
+        parse({"pair": [pair(el_rpc_port=65535, cl_api_port=1)]})
+
+    def test_durations_are_positive_integers(self):
+        for key in ("sync_timeout", "block_processing_duration"):
+            for bad in (0, -5):
+                self.assertConfigError({"pair": [pair(**{key: bad})]}, f"'{key}' must be a positive integer")
+        self.assertConfigError({"pair": [pair(sync_timeout=True)]}, "'sync_timeout' must be of type int")
 
     def test_overrides(self):
         config = parse({
@@ -88,6 +105,20 @@ class WindowTest(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "under two hoodi epochs"):
             check_windows(pairs, 1320)
         check_windows(select(parse({"pair": [pair()]})), 1320)
+
+    def test_explicit_zero_is_not_the_default(self):
+        # Bypass parse's positive check: check_windows must not treat 0 as unset.
+        [p] = select(parse({"pair": [pair()]}))
+        p.block_processing_duration = 0
+        with self.assertRaisesRegex(ConfigError, "block_processing_duration 0s"):
+            check_windows([p], 1320)
+
+    def test_default_duration_reads_the_environment_at_call_time(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("BLOCK_PROCESSING_DURATION", None)
+            self.assertEqual(default_block_processing_duration(), 22 * 60)
+        with mock.patch.dict(os.environ, {"BLOCK_PROCESSING_DURATION": "60"}):
+            self.assertEqual(default_block_processing_duration(), 60)
 
 
 class LoadTest(unittest.TestCase):

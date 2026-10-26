@@ -74,6 +74,16 @@ class ClTemplateTest(unittest.TestCase):
         self.assertEqual(command[-2:], ["--custody-group-count", "8"])
 
 
+class PullPolicyTest(unittest.TestCase):
+    def test_policies(self):
+        self.assertEqual(EL_CLIENTS["ethrex"].pull_policy, "${ETHREX_PULL_POLICY:-always}")
+        self.assertEqual(CL_CLIENTS["ethlambda"].pull_policy, "always")
+        for name in ("geth", "nethermind"):
+            self.assertEqual(EL_CLIENTS[name].pull_policy, "missing")
+        for name in ("lighthouse", "prysm"):
+            self.assertEqual(CL_CLIENTS[name].pull_policy, "missing")
+
+
 class RosterTest(unittest.TestCase):
     def test_roster(self):
         self.assertEqual(set(EL_CLIENTS), {"ethrex", "geth", "nethermind"})

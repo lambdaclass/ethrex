@@ -17,18 +17,25 @@ from pathlib import Path
 from typing import Optional
 
 from .clients import DATA_DIR, Client
-from .config import ClientOverride, Config, ConfigError, Pair, load, select
+from .clients import CL_CLIENTS, EL_CLIENTS
+from .config import ClientOverride, Config, ConfigError, Pair, check_windows, default_block_processing_duration, load, select
 from .networks import NETWORK_CONFIG_DIR
 
 DEFAULT_CONFIG = "multisync.toml"
 DEFAULT_OUTPUT = "docker-compose.multisync.json"
 JWT_SCRIPT = 'apk add openssl && openssl rand -hex 32 | tr -d "\\n" | tee /secrets/jwt.hex'
 COMPLETED = {"condition": "service_completed_successfully"}
+# Only the local monitor reads the Beacon API, so it is not published to the network.
+LOCALHOST = "127.0.0.1"
 
 
 def build(config: Config, pairs: list[Pair], image_overrides: Optional[dict[str, str]] = None) -> dict:
     """Compose document for `pairs`. `image_overrides` maps a client to a local image."""
     image_overrides = image_overrides or {}
+    known = sorted({*EL_CLIENTS, *CL_CLIENTS})
+    for client_name in image_overrides:
+        if client_name not in known:
+            raise ConfigError(f"--image-override: unknown client '{client_name}' (known: {', '.join(known)})")
     services: dict[str, dict] = {}
     volumes: set[str] = set()
     for pair in pairs:
@@ -40,10 +47,10 @@ def build(config: Config, pairs: list[Pair], image_overrides: Optional[dict[str,
         volumes.add(pair.secrets_volume)
 
         engine_url = f"http://{pair.el_container}:{pair.el.engine_port}"
-        el_command = pair.el.command(pair.network, config.override(pair.el.name).extra_args)
-        cl_command = pair.cl.command(pair.network, engine_url, config.override(pair.cl.name).extra_args)
+        el_command = pair.el.command(pair.network, _escape_all(config.override(pair.el.name).extra_args))
+        cl_command = pair.cl.command(pair.network, engine_url, _escape_all(config.override(pair.cl.name).extra_args))
         el_ports = [(pair.el_rpc_port, pair.el.rpc_port), (pair.el_metrics_port, pair.el.metrics_port)]
-        cl_ports = [(pair.cl_api_port, pair.cl.api_port), (pair.cl_metrics_port, pair.cl.metrics_port)]
+        cl_ports = [(f"{LOCALHOST}:{pair.cl_api_port}", pair.cl.api_port), (pair.cl_metrics_port, pair.cl.metrics_port)]
         for client, container, command, ports in (
             (pair.el, pair.el_container, el_command, el_ports),
             (pair.cl, pair.cl_container, cl_command, cl_ports),
@@ -59,12 +66,21 @@ def build(config: Config, pairs: list[Pair], image_overrides: Optional[dict[str,
     return {"services": services, "volumes": {name: {} for name in sorted(volumes)}}
 
 
+def _escape(value: str) -> str:
+    """Compose interpolates `$` in every string; `$$` passes a literal one to the client."""
+    return value.replace("$", "$$")
+
+
+def _escape_all(values: list[str]) -> list[str]:
+    return [_escape(value) for value in values]
+
+
 def _client_service(
     pair: Pair,
     client: Client,
     container: str,
     command: list[str],
-    ports: list[tuple[Optional[int], int]],
+    ports: list[tuple[Optional[int | str], int]],
     override: ClientOverride,
     image_override: Optional[str],
 ) -> dict:
@@ -75,7 +91,7 @@ def _client_service(
         depends_on[pair.network.setup_service_name] = COMPLETED
     service = {
         "image": image_override or override.image or client.default_image,
-        "pull_policy": "never" if image_override else (override.pull_policy or client.default_pull_policy),
+        "pull_policy": "never" if image_override else (override.pull_policy or client.pull_policy),
         "container_name": container,
         "restart": "unless-stopped",
         "volumes": volumes,
@@ -86,7 +102,7 @@ def _client_service(
     entrypoint = client.entrypoint(pair.network)
     if entrypoint:
         service["entrypoint"] = entrypoint
-    environment = {**client.environment, **override.env}
+    environment = {**client.environment, **{key: _escape(value) for key, value in override.env.items()}}
     if environment:
         service["environment"] = environment
     if client.ulimits_nofile:
@@ -98,12 +114,22 @@ def _client_service(
     return service
 
 
-def generate(config_path, out_path, only: Optional[str] = None, image_overrides: Optional[dict[str, str]] = None) -> list[Pair]:
-    """Write the compose file for the selected pairs and return them."""
+def prepare(config_path, only: Optional[str] = None, image_overrides: Optional[dict[str, str]] = None) -> tuple[list[Pair], dict]:
+    """Load, select, validate the windows and build. Raises `ConfigError`; touches no files."""
     config = load(config_path)
     pairs = select(config, only)
-    document = build(config, pairs, image_overrides)
+    check_windows(pairs, default_block_processing_duration())
+    return pairs, build(config, pairs, image_overrides)
+
+
+def write(document: dict, out_path) -> None:
     Path(out_path).write_text(json.dumps(document, indent=2) + "\n")
+
+
+def generate(config_path, out_path, only: Optional[str] = None, image_overrides: Optional[dict[str, str]] = None) -> list[Pair]:
+    """Write the compose file for the selected pairs and return them."""
+    pairs, document = prepare(config_path, only, image_overrides)
+    write(document, out_path)
     return pairs
 
 

@@ -6,6 +6,7 @@ unknown keys, clients and networks, duplicate names, clashing host ports.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,7 +22,8 @@ from .networks import NETWORKS, Network
 
 EL_RPC_PORT_BASE = 8545
 CL_API_PORT_BASE = 5052
-NAME_PATTERN = re.compile(r"^[a-z0-9-]+$")
+NAME_PATTERN = re.compile(r"[a-z0-9-]+")
+DEFAULT_BLOCK_PROCESSING_DURATION = 22 * 60  # seconds
 
 PAIR_KEYS = {
     "network": str,
@@ -36,6 +38,8 @@ PAIR_KEYS = {
     "cl_api_port": int,
     "cl_metrics_port": int,
 }
+HOST_PORT_KEYS = ("el_rpc_port", "el_metrics_port", "cl_api_port", "cl_metrics_port")
+POSITIVE_KEYS = ("sync_timeout", "block_processing_duration")
 REQUIRED_PAIR_KEYS = ("network", "el", "cl")
 OVERRIDE_KEYS = {"image": str, "pull_policy": str, "extra_args": list, "env": dict}
 
@@ -152,10 +156,15 @@ def select(config: Config, only: Optional[str] = None) -> list[Pair]:
     return selected
 
 
+def default_block_processing_duration() -> int:
+    """Window length in seconds when a pair sets none: `BLOCK_PROCESSING_DURATION`, read at call time."""
+    return int(os.environ.get("BLOCK_PROCESSING_DURATION", DEFAULT_BLOCK_PROCESSING_DURATION))
+
+
 def check_windows(pairs: list[Pair], default_duration: int) -> None:
     """The end-of-window finality check needs a window of at least two epochs."""
     for p in pairs:
-        duration = p.block_processing_duration or default_duration
+        duration = p.block_processing_duration if p.block_processing_duration is not None else default_duration
         minimum = 2 * p.network.epoch_seconds
         if duration < minimum:
             raise ConfigError(
@@ -181,8 +190,14 @@ def _parse_pair(raw: Any, index: int) -> Pair:
         if not client.can_run(network):
             raise ConfigError(f"{where}: {client.name} has no built-in {network.name} and the network publishes no files")
     name = raw.get("name", network.name)
-    if not NAME_PATTERN.match(name):
+    if not NAME_PATTERN.fullmatch(name):
         raise ConfigError(f"{where}: name '{name}' must match [a-z0-9-]+")
+    for key in HOST_PORT_KEYS:
+        if key in raw and not 1 <= raw[key] <= 65535:
+            raise ConfigError(f"{where}: '{key}' must be between 1 and 65535")
+    for key in POSITIVE_KEYS:
+        if key in raw and raw[key] <= 0:
+            raise ConfigError(f"{where}: '{key}' must be a positive integer")
     return Pair(
         name=name,
         network=network,

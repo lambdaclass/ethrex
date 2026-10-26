@@ -19,7 +19,7 @@ class NetworksTest(unittest.TestCase):
         script = service["command"][2]
         # `$$` is compose's escape for a literal `$`.
         self.assertIn("$$f", script)
-        # Lighthouse reads these two under its own names.
+        # Lighthouse v8.3.2 reads the standard names; older releases read these copies.
         self.assertIn("boot_enr.yaml", script)
         self.assertIn("deploy_block.txt", script)
         self.assertIn("genesis.json", script)

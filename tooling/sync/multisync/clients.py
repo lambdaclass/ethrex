@@ -24,7 +24,9 @@ class Client:
     name: str = ""
     role: str = ""
     default_image: str = ""
-    default_pull_policy: str = "always"
+    # A pinned version tag never changes, so pulling it on every start only adds
+    # a registry dependency; clients on a moving tag override this.
+    pull_policy: str = "missing"
     metrics_port: int = 0
     # Networks the client knows by name. It starts on any other network from
     # the files that network's setup service downloads.
@@ -75,7 +77,7 @@ class Ethrex(ElClient):
     # Compose interpolation keeps the ETHREX_IMAGE, ETHREX_PULL_POLICY, RUST_LOG
     # and ETHREX_ROCKSDB_BLOCK_CACHE_SIZE environment overrides working.
     default_image = "${ETHREX_IMAGE:-ghcr.io/lambdaclass/ethrex:main}"
-    default_pull_policy = "${ETHREX_PULL_POLICY:-always}"
+    pull_policy = "${ETHREX_PULL_POLICY:-always}"
     metrics_port = 3701
     builtin_networks = ALL_NETWORKS
     environment = {
@@ -166,7 +168,9 @@ class Lighthouse(ClClient):
 
     def flags(self, network: Network, engine_url: str) -> list[str]:
         if self.uses_network_files(network):
-            # Reads config.yaml, genesis.ssz, boot_enr.yaml and deploy_block.txt.
+            # v8.3.2 reads config.yaml, genesis.ssz, bootstrap_nodes.yaml and
+            # deposit_contract_block.txt; older releases read boot_enr.yaml and
+            # deploy_block.txt, which the setup service also writes.
             chain = ["--testnet-dir", NETWORK_CONFIG_DIR]
         else:
             chain = ["--network", network.name]
@@ -216,6 +220,7 @@ class Prysm(ClClient):
 class Ethlambda(ClClient):
     name = "ethlambda"
     default_image = "ghcr.io/lambdaclass/ethlambda:beacon"
+    pull_policy = "always"  # `:beacon` is a moving tag
     api_port = 5052
     metrics_port = 5054
     builtin_networks = ALL_NETWORKS
