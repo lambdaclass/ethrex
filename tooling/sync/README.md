@@ -151,14 +151,30 @@ Every pair's CL is checked over the standard Beacon API, so the same checks judg
 
 | Check | When | Fails when |
 |-------|------|------------|
-| Startup | until the first answer | no answer within `CL_STARTUP_TIMEOUT` |
+| Startup | until the first answer | no answer within `CL_STARTUP_TIMEOUT`, or the CL container exits before answering |
 | Unresponsive | after the first answer | no answer for `NODE_UNRESPONSIVE_TIMEOUT` |
 | Head stall | whole cycle | `head_slot` unchanged for `CL_HEAD_STALL_TIMEOUT` |
 | Provider match | whole cycle, every `CL_PROVIDER_CHECK_INTERVAL` | the CL's finalized root differs from the checkpoint provider's at the same epoch |
-| Healthy at end | end of block processing | `is_syncing`, `is_optimistic` or `el_offline` is true; the finalized epoch did not advance during the window; or no provider match was seen in it |
-| EL/CL hash | end of block processing | the EL's `finalized` block hash differs from the one the CL's finalized block names (the payload hash, or under Gloas the bid's parent hash) |
+| Healthy at end | end of block processing | `is_syncing`, `is_optimistic` or `el_offline` is true; the finalized epoch did not advance during the window; or no provider match was seen in it. The flags are re-read for up to three slots, since `is_optimistic` can flip for a slot |
+| EL/CL hash | end of block processing | the EL's `finalized` block hash differs from the one the CL's finalized block names (the payload hash, or under Gloas the bid's parent hash). Re-read for up to three slots; fork choice's finalized block leads the head state's after an epoch boundary, so either one is accepted |
+
+The CL Beacon API is published on 127.0.0.1 only. Pinned client images are pulled only when missing; ethlambda's moving `beacon` tag and ethrex always pull.
+
+The EL fails the pair too when its RPC never answers within `EL_STARTUP_TIMEOUT` (the error adds the container's exit code if it exited). An EL counts as synced only once `eth_syncing` is false at a block above 0. The EL and CL windows start together, when the CL starts following.
 
 The checkpoint provider is each network's checkpoint-sync URL. A provider outage alone never fails a pair; only "no match seen during the window" does, and its error says how many provider polls failed.
+
+### Upgrading from the hand-written compose file
+
+1. The first restart under this version removes the old stack's containers and its `ethrex-*` volumes by itself, since they share the compose project `sync`. The old CL volumes are never declared in the new file, so remove them once by hand. Check the exact names first with `docker volume ls --filter name=sync_consensus`.
+
+```bash
+docker volume rm sync_consensus-hoodi sync_consensus-sepolia sync_consensus-mainnet sync_consensus-hoodi-2 sync_consensus-plataberget
+```
+
+2. A monitor running `--auto-update` on the old code stops at its first pull after this change lands, because it still reads the deleted YAML. Restart it by hand with `make multisync-loop-auto`.
+
+After a pull that moves HEAD, the monitor now restarts itself, so new code and config schema apply without a manual restart.
 
 ### Auto-Update Mode with State Trie Validation
 
@@ -232,6 +248,7 @@ CHECK_INTERVAL=10                 # How often to check node status in seconds
 STATUS_PRINT_INTERVAL=30          # How often to print status in seconds
 
 # CL checks (optional - values shown are defaults, in seconds)
+EL_STARTUP_TIMEOUT=900            # Fail if the EL's RPC never answers within this
 CL_STARTUP_TIMEOUT=900            # Fail if the CL's Beacon API never answers within this
 CL_HEAD_STALL_TIMEOUT=600         # Fail if the CL head does not move for this long
 CL_PROVIDER_CHECK_INTERVAL=60     # How often to compare finality with the checkpoint provider

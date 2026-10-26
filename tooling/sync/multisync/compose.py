@@ -16,8 +16,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from .clients import DATA_DIR, Client
-from .clients import CL_CLIENTS, EL_CLIENTS
+from .clients import CL_CLIENTS, DATA_DIR, EL_CLIENTS, Client
 from .config import ClientOverride, Config, ConfigError, Pair, check_windows, default_block_processing_duration, load, select
 from .networks import NETWORK_CONFIG_DIR
 
