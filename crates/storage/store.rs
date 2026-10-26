@@ -4111,10 +4111,9 @@ impl Store {
                 value: U256::zero(),
             }));
         }
-        let account = account_opt.unwrap_or_default();
         let account_proof = AccountProof {
             proof,
-            account,
+            account: account_opt,
             storage_proof,
         };
         Ok(Some(account_proof))
@@ -5876,7 +5875,8 @@ fn state_trie_locked_backend(
 
 pub struct AccountProof {
     pub proof: Vec<NodeRLP>,
-    pub account: AccountState,
+    /// `None` when the account is absent from the state trie.
+    pub account: Option<AccountState>,
     pub storage_proof: Vec<StorageSlotProof>,
 }
 
