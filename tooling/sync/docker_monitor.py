@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monitor Docker Compose snapsync instances for sync completion."""
+"""Monitor multisync EL+CL pairs: EL snap sync and block processing, plus CL health."""
 
 import argparse
 import os
@@ -8,12 +8,18 @@ import socket
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
 import requests
+
+from multisync import beacon_checks
+from multisync import compose as multisync_compose
+from multisync import config as multisync_config
+from multisync.config import ConfigError, Pair
+from multisync.util import fmt_time
 
 # Load .env file if it exists
 if os.path.exists('.env'):
@@ -31,14 +37,13 @@ BLOCK_STALL_TIMEOUT = int(os.environ.get("BLOCK_STALL_TIMEOUT", 10 * 60))  # def
 NODE_UNRESPONSIVE_TIMEOUT = int(os.environ.get("NODE_UNRESPONSIVE_TIMEOUT", 5 * 60))  # default 5 minutes (in seconds)
 STATUS_PRINT_INTERVAL = int(os.environ.get("STATUS_PRINT_INTERVAL", 30))
 
-# Network to port mapping (fixed in docker-compose.multisync.yaml)
-NETWORK_PORTS = {
-    "hoodi": 8545,
-    "sepolia": 8546,
-    "mainnet": 8547,
-    "hoodi-2": 8548,
-    "plataberget": 8549,
-}
+CL_TIMEOUTS = beacon_checks.ClTimeouts(
+    startup=int(os.environ.get("CL_STARTUP_TIMEOUT", 15 * 60)),
+    unresponsive=NODE_UNRESPONSIVE_TIMEOUT,
+    head_stall=int(os.environ.get("CL_HEAD_STALL_TIMEOUT", 10 * 60)),
+    provider_interval=int(os.environ.get("CL_PROVIDER_CHECK_INTERVAL", 60)),
+)
+DEFAULT_CONFIG = os.environ.get("MULTISYNC_CONFIG", multisync_compose.DEFAULT_CONFIG)
 
 # Logging configuration
 LOGS_DIR = Path("./multisync_logs")
@@ -307,9 +312,7 @@ class DiagnosticsTracker:
 
 @dataclass
 class Instance:
-    name: str
-    port: int
-    container: str = ""
+    pair: Pair
     status: str = "waiting"
     start_time: float = 0
     sync_time: float = 0
@@ -320,16 +323,39 @@ class Instance:
     error: str = ""
     first_failure_time: float = 0
     validation_status: str = ""  # Current validation progress (if any)
+    cl: beacon_checks.ClState = field(default_factory=beacon_checks.ClState)
+
+    @property
+    def name(self) -> str:
+        return self.pair.name
+
+    @property
+    def container(self) -> str:
+        return self.pair.el_container
+
+    @property
+    def cl_container(self) -> str:
+        return self.pair.cl_container
+
+    @property
+    def ethrex_extras(self) -> bool:
+        return self.pair.el.ethrex_extras
 
     @property
     def rpc_url(self) -> str:
-        return f"http://localhost:{self.port}"
+        return f"http://localhost:{self.pair.el_rpc_port}"
 
+    @property
+    def cl_api(self) -> beacon_checks.BeaconApi:
+        return beacon_checks.BeaconApi(f"http://localhost:{self.pair.cl_api_port}")
 
-def fmt_time(secs: float) -> str:
-    secs = int(abs(secs))
-    h, m, s = secs // 3600, (secs % 3600) // 60, secs % 60
-    return " ".join(f"{v}{u}" for v, u in [(h, "h"), (m, "m"), (s, "s")] if v or (not h and not m))
+    @property
+    def provider_api(self) -> beacon_checks.BeaconApi:
+        return beacon_checks.BeaconApi(self.pair.network.checkpoint_url, timeout=10)
+
+    @property
+    def block_processing_duration(self) -> int:
+        return self.pair.block_processing_duration or BLOCK_PROCESSING_DURATION
 
 
 def git_commit() -> str:
@@ -542,12 +568,18 @@ def check_validation_progress(container: str) -> Optional[str]:
         return None
 
 
-def rpc_call(url: str, method: str) -> Optional[Any]:
+def rpc_call(url: str, method: str, params: Optional[list] = None) -> Optional[Any]:
     try:
-        return requests.post(url, json={"jsonrpc": "2.0", "method": method, "params": [], "id": 1}, timeout=5).json().get("result")
+        payload = {"jsonrpc": "2.0", "method": method, "params": params or [], "id": 1}
+        return requests.post(url, json=payload, timeout=5).json().get("result")
     except Exception:
         return None
 
+
+def el_finalized_hash(url: str) -> Optional[str]:
+    """Hash of the EL's `finalized` block, set by the CL's last fcU."""
+    block = rpc_call(url, "eth_getBlockByNumber", ["finalized", False])
+    return block.get("hash") if isinstance(block, dict) else None
 
 def rpc_set_log_level(url: str, level: str) -> bool:
     """Set the node's log level via admin_setLogLevel RPC."""
@@ -625,7 +657,7 @@ def slack_notify(run_id: str, run_count: int, instances: list, hostname: str, br
 
     for i in instances:
         icon = "✅" if i.status == "success" else "❌"
-        line = f"{icon} *{i.name}*: `{i.status}`"
+        line = f"{icon} *{i.pair.label}*: `{i.status}`"
         if i.sync_time:
             line += f" (sync: {fmt_time(i.sync_time)})"
         # Show validation status if it was tracked
@@ -635,14 +667,15 @@ def slack_notify(run_id: str, run_count: int, instances: list, hostname: str, br
             line += f" post-sync block: {i.initial_block}"
         if i.initial_block and i.last_block > i.initial_block:
             blocks_processed = i.last_block - i.initial_block
-            line += f" (processed +{blocks_processed} blocks in {BLOCK_PROCESSING_DURATION//60}m)"
+            line += f" (processed +{blocks_processed} blocks in {i.block_processing_duration//60}m)"
         if i.error:
             line += f"\n       Error: {i.error}"
+        line += f"\n       CL {i.pair.cl.name}: {beacon_checks.describe(i.cl)}"
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": line}})
 
-    # Add phase breakdown for each instance
+    # Add phase breakdown for each instance (ethrex logs only)
     for i in instances:
-        phases = parse_phase_timings(run_id, i.container)
+        phases = parse_phase_timings(run_id, i.container) if i.ethrex_extras else []
         if phases:
             phase_lines = [f"📊 *Phase Breakdown — {i.name}*", "```"]
             max_name_len = max(len(name) for name, _, _ in phases)
@@ -692,15 +725,12 @@ def save_container_logs(container: str, run_id: str, suffix: str = ""):
 
 
 def save_all_logs(instances: list[Instance], run_id: str, compose_file: str):
-    """Save logs for all containers (ethrex + consensus)."""
+    """Save logs for every pair's EL and CL containers."""
     print(f"\n📁 Saving logs for run {run_id}...")
 
     for inst in instances:
-        # Save ethrex logs
         save_container_logs(inst.container, run_id)
-        # Save consensus logs (convention: consensus-{network})
-        consensus_container = inst.container.replace("ethrex-", "consensus-")
-        save_container_logs(consensus_container, run_id)
+        save_container_logs(inst.cl_container, run_id)
 
     print(f"📁 Logs saved to {LOGS_DIR}/run_{run_id}/\n")
 
@@ -739,7 +769,7 @@ def log_run_result(run_id: str, run_count: int, instances: list[Instance], hostn
 
     for inst in instances:
         icon = "✅" if inst.status == "success" else "❌"
-        line = f"  {icon} {inst.name}: {inst.status}"
+        line = f"  {icon} {inst.pair.label}: {inst.status}"
         if inst.sync_time:
             line += f" (sync: {fmt_time(inst.sync_time)})"
         if inst.validation_status:
@@ -748,13 +778,14 @@ def log_run_result(run_id: str, run_count: int, instances: list[Instance], hostn
             line += f" post-sync block: {inst.initial_block}"
         if inst.initial_block and inst.last_block > inst.initial_block:
             blocks_processed = inst.last_block - inst.initial_block
-            line += f" (processed +{blocks_processed} blocks in {BLOCK_PROCESSING_DURATION//60}m)"
+            line += f" (processed +{blocks_processed} blocks in {inst.block_processing_duration//60}m)"
         if inst.error:
             line += f"\n       Error: {inst.error}"
+        line += f"\n       CL {inst.pair.cl.name}: {beacon_checks.describe(inst.cl)}"
         lines.append(line)
 
-        # Add phase breakdown
-        phases = parse_phase_timings(run_id, inst.container)
+        # Add phase breakdown (ethrex logs only)
+        phases = parse_phase_timings(run_id, inst.container) if inst.ethrex_extras else []
         if phases:
             lines.append(f"    Phase Breakdown:")
             max_name_len = max(len(name) for name, _, _ in phases)
@@ -810,51 +841,30 @@ def get_next_run_count() -> int:
         return 1
 
 
-def restart_containers(compose_file: str, compose_dir: str, networks: list[str] = None, image_tag: str = ""):
-    """Stop and restart docker compose containers, clearing volumes.
+def restart_containers(args, image_overrides: dict[str, str]) -> bool:
+    """Remove the running pairs with their volumes, regenerate the compose file
+    from the config, and start the selected pairs again.
 
     Args:
-        compose_file: Docker compose file name
-        compose_dir: Directory containing docker compose file
-        networks: Optional list of network names (for selective restart)
-        image_tag: Optional image tag override (sets ETHREX_IMAGE env var)
+        args: parsed monitor arguments (config, networks, compose file and dir)
+        image_overrides: client name -> local image tag, run with pull_policy never
     """
     print("\n🔄 Restarting containers...\n", flush=True)
+    compose_path = Path(args.compose_dir) / args.compose_file
+    compose_cmd = ["docker", "compose", "-f", args.compose_file]
     try:
-        subprocess.run(["docker", "compose", "-f", compose_file, "down", "-v"], cwd=compose_dir, check=True)
-        time.sleep(5)
-
-        env = os.environ.copy()
-        if image_tag:
-            env["ETHREX_IMAGE"] = image_tag
-            env["ETHREX_PULL_POLICY"] = "never"
-
-        # Build service list if networks specified
-        cmd = ["docker", "compose", "-f", compose_file, "up", "-d"]
-        if networks:
-            for n in networks:
-                cmd.extend([f"setup-jwt-{n}", f"ethrex-{n}", f"consensus-{n}"])
-
-        subprocess.run(cmd, cwd=compose_dir, check=True, env=env)
+        # Down with the file the running pairs were started from, so a config
+        # edit between cycles cannot leave old containers behind.
+        if compose_path.exists():
+            subprocess.run([*compose_cmd, "down", "-v", "--remove-orphans"], cwd=args.compose_dir, check=True)
+            time.sleep(5)
+        multisync_compose.generate(args.config, compose_path, args.networks, image_overrides)
+        subprocess.run([*compose_cmd, "up", "-d", "--remove-orphans"], cwd=args.compose_dir, check=True)
         print("✅ Containers restarted successfully\n", flush=True)
         return True
-    except subprocess.CalledProcessError as e:
+    except (subprocess.CalledProcessError, ConfigError) as e:
         print(f"❌ Failed to restart containers: {e}\n", flush=True)
         return False
-
-
-def reset_instance(inst: Instance):
-    """Reset instance state for a new sync cycle."""
-    inst.status = "waiting"
-    inst.start_time = 0
-    inst.sync_time = 0
-    inst.last_block = 0
-    inst.last_block_time = 0
-    inst.block_check_start = 0
-    inst.initial_block = 0
-    inst.error = ""
-    inst.first_failure_time = 0
-    inst.validation_status = ""
 
 
 def print_status(instances: list[Instance]):
@@ -872,22 +882,25 @@ def print_status(instances: list[Instance]):
         elif i.status == "synced":
             extra = f" (synced in {fmt_time(i.sync_time)})"
         elif i.status == "block_processing":
-            extra = f" (block {i.last_block}, +{i.last_block - i.initial_block} blocks, {fmt_time(BLOCK_PROCESSING_DURATION - (time.time() - i.block_check_start))} left)"
+            extra = f" (block {i.last_block}, +{i.last_block - i.initial_block} blocks, {fmt_time(i.block_processing_duration - (time.time() - i.block_check_start))} left)"
         elif i.status == "success":
             extra = f" ✓ synced in {fmt_time(i.sync_time)}, processed +{i.last_block - i.initial_block} blocks"
         elif i.status == "failed":
             extra = f" - {i.error}"
         else:
             extra = ""
-        print(f"  {STATUS_EMOJI.get(i.status, '?')} {i.name} (:{i.port}): {i.status}{extra}")
+        print(f"  {STATUS_EMOJI.get(i.status, '?')} {i.pair.label} (:{i.pair.el_rpc_port}): {i.status}{extra}")
+        print(f"      CL {i.pair.cl.name} (:{i.pair.cl_api_port}): {beacon_checks.describe(i.cl)}")
 
     print(flush=True)
 
 
 def update_instance(inst: Instance, timeout_min: int) -> bool:
+    """Advance one pair's EL state machine."""
     if inst.status in ("success", "failed"):
         return False
 
+    timeout_min = inst.pair.sync_timeout or timeout_min
     now = time.time()
     block = rpc_call(inst.rpc_url, "eth_blockNumber")
     block = int(block, 16) if block else None
@@ -902,8 +915,8 @@ def update_instance(inst: Instance, timeout_min: int) -> bool:
                 # Check if container exited (possibly due to validation failure)
                 is_running, exit_code = container_exit_info(inst.container)
                 if is_running is False and exit_code is not None:
-                    # Container exited - check for validation failure
-                    validation_error = check_validation_failure(inst.container)
+                    # Container exited - check for validation failure (ethrex only)
+                    validation_error = check_validation_failure(inst.container) if inst.ethrex_extras else None
                     if validation_error:
                         inst.status, inst.error = "failed", validation_error
                     else:
@@ -914,31 +927,32 @@ def update_instance(inst: Instance, timeout_min: int) -> bool:
         return False
 
     inst.first_failure_time = 0
-    
+
     if inst.status == "waiting":
         inst.status, inst.start_time = "syncing", inst.start_time or now
         return True
-    
+
     if inst.status == "syncing":
         if (now - inst.start_time) > timeout_min * 60:
             inst.status, inst.error = "failed", f"Sync timeout after {fmt_time(timeout_min * 60)}"
             return True
-        # Check for validation progress (shows when validation is running)
-        validation_progress = check_validation_progress(inst.container)
-        if validation_progress and validation_progress != inst.validation_status:
-            inst.validation_status = validation_progress
-            return True  # Status changed, refresh display
+        # Check for validation progress (shows when validation is running; ethrex only)
+        if inst.ethrex_extras:
+            validation_progress = check_validation_progress(inst.container)
+            if validation_progress and validation_progress != inst.validation_status:
+                inst.validation_status = validation_progress
+                return True  # Status changed, refresh display
         if rpc_call(inst.rpc_url, "eth_syncing") is False:
             inst.status, inst.sync_time = "synced", now - inst.start_time
             inst.block_check_start, inst.last_block = now, block
             inst.initial_block, inst.last_block_time = block, now
             return True
-    
+
     if inst.status == "synced":
         inst.status = "block_processing"
         inst.block_check_start, inst.last_block, inst.initial_block, inst.last_block_time = now, block, block, now
         return True
-    
+
     if inst.status == "block_processing":
         # Check for stalled node (no new blocks for too long)
         if (now - inst.last_block_time) > BLOCK_STALL_TIMEOUT:
@@ -948,7 +962,7 @@ def update_instance(inst: Instance, timeout_min: int) -> bool:
         if block and block > inst.last_block:
             inst.last_block, inst.last_block_time = block, now
         # Success after duration, but only if we made progress
-        if (now - inst.block_check_start) > BLOCK_PROCESSING_DURATION:
+        if (now - inst.block_check_start) > inst.block_processing_duration:
             if inst.last_block > inst.initial_block:
                 inst.status = "success"
                 # If validation was running, mark it as complete
@@ -958,22 +972,74 @@ def update_instance(inst: Instance, timeout_min: int) -> bool:
             else:
                 inst.status, inst.error = "failed", "No block progress during monitoring"
                 return True
-    
+
     return False
+
+
+def update_pair(inst: Instance, timeout_min: int) -> bool:
+    """Advance one pair: the EL state machine, then the CL checks around it.
+
+    A CL failure fails the pair at once, in any EL phase. The EL's success
+    stands only if the CL's end-of-window checks pass too.
+    """
+    if inst.status in ("success", "failed"):
+        return False
+    changed = update_instance(inst, timeout_min)
+    if inst.status == "failed":
+        if not inst.error.startswith("EL: "):
+            inst.error = f"EL: {inst.error}"
+        return True
+
+    cl_changed = beacon_checks.update(
+        inst.cl, inst.cl_api, inst.provider_api, time.time(), CL_TIMEOUTS,
+        exit_code=lambda: container_exit_info(inst.cl_container)[1],
+    )
+    if inst.cl.status == "failed":
+        inst.status, inst.error = "failed", inst.cl.error
+        return True
+    # The window starts once both sides are up; a CL still waiting cannot have a finalized epoch to measure from.
+    if inst.status == "block_processing" and inst.cl.status == "following" and not inst.cl.in_window:
+        beacon_checks.start_window(inst.cl)
+    if inst.status == "success":
+        error = beacon_checks.end_checks(inst.cl, inst.cl_api, lambda: el_finalized_hash(inst.rpc_url))
+        if error:
+            inst.status, inst.error = "failed", error
+    return changed or cl_changed
+
+
+def load_instances(args) -> list[Instance]:
+    """One Instance per selected pair; exits on a config error."""
+    try:
+        config = multisync_config.load(args.config)
+        pairs = multisync_config.select(config, args.networks)
+        multisync_config.check_windows(pairs, BLOCK_PROCESSING_DURATION)
+    except ConfigError as e:
+        sys.exit(f"Error: {e}")
+    return [Instance(pair) for pair in pairs]
+
+
+def new_tracker(instances: list[Instance], run_id: str) -> DiagnosticsTracker:
+    """Diagnostics poll ethrex-only admin RPCs, so only ethrex pairs are tracked."""
+    tracker = DiagnosticsTracker([i for i in instances if i.ethrex_extras])
+    tracker.set_run_id(run_id)
+    return tracker
 
 
 def main():
     global WATCHED_PHASES
-    p = argparse.ArgumentParser(description="Monitor Docker snapsync instances")
-    p.add_argument("--networks", default="hoodi,sepolia,mainnet")
+    p = argparse.ArgumentParser(description="Monitor multisync EL+CL pairs")
+    p.add_argument("--config", default=DEFAULT_CONFIG,
+                   help="Multisync config file (default: MULTISYNC_CONFIG or multisync.toml)")
+    p.add_argument("--networks", default=os.environ.get("MULTISYNC_NETWORKS", ""),
+                   help="Comma-separated pair names to run (default: every pair the config enables)")
     p.add_argument("--timeout", type=int, default=SYNC_TIMEOUT)
     p.add_argument("--no-slack", action="store_true")
     p.add_argument("--exit-on-success", action="store_true")
-    p.add_argument("--compose-file", default="docker-compose.multisync.yaml", help="Docker compose file name")
+    p.add_argument("--compose-file", default=multisync_compose.DEFAULT_OUTPUT, help="Generated docker compose file name")
     p.add_argument("--compose-dir", default=".", help="Directory containing docker compose file")
     # Auto-update and build options
     p.add_argument("--auto-update", action="store_true",
-                   help="Pull latest code and rebuild Docker image before each run")
+                   help="Pull latest code and rebuild the ethrex Docker image before each run")
     p.add_argument("--branch", default=os.environ.get("MULTISYNC_BRANCH", ""),
                    help="Git branch to track (default: from MULTISYNC_BRANCH env or current branch)")
     p.add_argument("--build-profile", default=os.environ.get("MULTISYNC_BUILD_PROFILE", "release-with-debug-assertions"),
@@ -991,17 +1057,8 @@ def main():
 
     # Resolve ethrex directory to absolute path
     ethrex_dir = os.path.abspath(args.ethrex_dir)
-    
-    names = [n.strip() for n in args.networks.split(",")]
-    ports = []
-    for n in names:
-        if n not in NETWORK_PORTS:
-            sys.exit(f"Error: unknown network '{n}', known networks: {list(NETWORK_PORTS.keys())}")
-        ports.append(NETWORK_PORTS[n])
-    containers = [f"ethrex-{n}" for n in names]
-    
-    instances = [Instance(n, p, c) for n, p, c in zip(names, ports, containers)]
-    tracker = DiagnosticsTracker(instances)
+
+    instances = load_instances(args)
 
     # Detect state of already-running containers
     for inst in instances:
@@ -1023,7 +1080,7 @@ def main():
                 # Still syncing
                 inst.status = "syncing"
             # else: node not responding yet, stay in "waiting"
-    
+
     hostname = socket.gethostname()
     branch = args.branch if args.branch else git_branch()
     commit = git_commit()
@@ -1034,16 +1091,17 @@ def main():
     # Get run count from existing logs (persists across restarts)
     run_count = get_next_run_count()
     run_id = generate_run_id()
-    tracker.set_run_id(run_id)
+    tracker = new_tracker(instances, run_id)
 
     print(f"📁 Logs will be saved to {LOGS_DIR.absolute()}")
     print(f"📝 Run history: {RUN_LOG_FILE.absolute()}")
+    print(f"🧩 Pairs: {', '.join(i.pair.label for i in instances)}")
     if args.auto_update:
         print(f"🔄 Auto-update enabled: tracking branch '{branch}'")
         print(f"   Build profile: {args.build_profile}")
         print(f"   Image tag: {args.image_tag}")
     print()
-    
+
     try:
         while True:
             # Auto-update: pull latest and rebuild before each run
@@ -1060,23 +1118,26 @@ def main():
                     print("❌ Failed to build Docker image, aborting")
                     sys.exit(1)
 
-                # Start/restart containers with the new image
-                if not restart_containers(args.compose_file, args.compose_dir, names, args.image_tag):
+                # Start/restart containers with the new ethrex image
+                if not restart_containers(args, {"ethrex": args.image_tag}):
                     print("❌ Failed to start containers", file=sys.stderr)
                     sys.exit(1)
-                # Reset instances since we restarted
-                for inst in instances:
-                    reset_instance(inst)
-                tracker.reset()
+                # Fresh instances: the pull may have changed the config
+                instances = load_instances(args)
+                tracker = new_tracker(instances, run_id)
                 time.sleep(30)  # Wait for containers to start
                 print(f"{'='*60}\n")
 
-            print(f"🔍 Run #{run_count} (ID: {run_id}): Monitoring {len(instances)} instances (timeout: {args.timeout}m)", flush=True)
+            print(f"🔍 Run #{run_count} (ID: {run_id}): Monitoring {len(instances)} pairs (timeout: {args.timeout}m)", flush=True)
             last_print = 0
             while True:
-                changed = any(update_instance(i, args.timeout) for i in instances)
-                # Poll diagnostics endpoints
+                # A list, not a generator: any() would stop at the first changed
+                # pair and leave the rest unpolled this round.
+                changed = any([update_pair(i, args.timeout) for i in instances])
+                # Poll diagnostics endpoints (ethrex only)
                 for inst in instances:
+                    if not inst.ethrex_extras:
+                        continue
                     tracker.poll(inst)
                     # Trigger dump on failure
                     if inst.status == "failed" and changed:
@@ -1096,7 +1157,7 @@ def main():
                 slack_notify(run_id, run_count, instances, hostname, branch, commit, args.build_profile)
             # Check results
             if all(i.status == "success" for i in instances):
-                print(f"🎉 Run #{run_count}: All instances synced successfully!")
+                print(f"🎉 Run #{run_count}: All pairs synced successfully!")
                 if args.exit_on_success:
                     sys.exit(0)
                 # Prepare for another run
@@ -1104,21 +1165,17 @@ def main():
                 run_id = generate_run_id()  # New run ID for the new cycle
                 tracker.set_run_id(run_id)
 
-                # If auto-update is enabled, the loop will pull/build/restart
-                # Otherwise, just restart containers now
+                # In auto-update mode the next iteration pulls, builds, restarts
+                # and rebuilds the instances. Otherwise restart now.
                 if not args.auto_update:
                     image_tag = args.image_tag if args.image_tag != "ethrex-local:multisync" else ""
-                    if restart_containers(args.compose_file, args.compose_dir, names, image_tag):
-                        for inst in instances:
-                            reset_instance(inst)
+                    if restart_containers(args, {"ethrex": image_tag} if image_tag else {}):
+                        instances = load_instances(args)
+                        tracker = new_tracker(instances, run_id)
                         time.sleep(30)  # Wait for containers to start
                     else:
                         print("❌ Failed to restart containers", file=sys.stderr)
                         sys.exit(1)
-                else:
-                    # Reset instances - containers will be restarted after pull/build
-                    for inst in instances:
-                        reset_instance(inst)
             else:
                 # On failure: containers are NOT stopped, you can inspect the DB
                 print("\n" + "="*60)
