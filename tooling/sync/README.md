@@ -166,11 +166,7 @@ The checkpoint provider is each network's checkpoint-sync URL. A provider outage
 
 ### Upgrading from the hand-written compose file
 
-1. The first restart under this version removes the old stack's containers and its `ethrex-*` volumes by itself, since they share the compose project `sync`. The old CL volumes are never declared in the new file, so remove them once by hand. Check the exact names first with `docker volume ls --filter name=sync_consensus`.
-
-```bash
-docker volume rm sync_consensus-hoodi sync_consensus-sepolia sync_consensus-mainnet sync_consensus-hoodi-2 sync_consensus-plataberget
-```
+1. Before the first run under this version, whatever target you use, run `make multisync-clean` once, then remove every leftover volume of the old stack: `docker volume ls -q --filter label=com.docker.compose.project=sync | xargs -r docker volume rm`. Otherwise `multisync-up` reattaches the old synced `ethrex-*` volumes (they keep their names) and the first cycle starts from an old database instead of a snap sync.
 
 2. A monitor running `--auto-update` on the old code stops at its first pull after this change lands, because it still reads the deleted YAML. Restart it by hand with `make multisync-loop-auto`.
 
@@ -252,6 +248,9 @@ EL_STARTUP_TIMEOUT=900            # Fail if the EL's RPC never answers within th
 CL_STARTUP_TIMEOUT=900            # Fail if the CL's Beacon API never answers within this
 CL_HEAD_STALL_TIMEOUT=600         # Fail if the CL head does not move for this long
 CL_PROVIDER_CHECK_INTERVAL=60     # How often to compare finality with the checkpoint provider
+
+# Auto-update (optional - value shown is the default, in seconds)
+AUTO_UPDATE_RETRY_DELAY=600       # Wait this long before pulling again after a failed restart
 ```
 
 `sync_timeout` and `block_processing_duration` in `multisync.toml` override the first two per pair.

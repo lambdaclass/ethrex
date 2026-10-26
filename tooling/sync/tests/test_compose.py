@@ -120,6 +120,29 @@ class PrepareTest(unittest.TestCase):
                 self.assertEqual(compose.main(["generate", "--config", str(config_path), "--out", str(out)]), 1)
             self.assertFalse(out.exists())
 
+    def test_main_loads_the_env_file_next_to_the_package_before_validating(self):
+        with tempfile.TemporaryDirectory() as d:
+            config_path = self.write_config(d)
+            out = Path(d) / "c.json"
+
+            def fake_load(path):
+                os.environ["BLOCK_PROCESSING_DURATION"] = "60"
+
+            with mock.patch.dict(os.environ, {}, clear=False), \
+                    mock.patch.object(compose, "load_env", side_effect=fake_load) as load_env:
+                os.environ.pop("BLOCK_PROCESSING_DURATION", None)
+                self.assertEqual(compose.main(["generate", "--config", str(config_path), "--out", str(out)]), 1)
+            expected = Path(compose.__file__).resolve().parent.parent / ".env"
+            load_env.assert_called_once_with(expected)
+
+    def test_main_reports_a_bad_duration_as_a_config_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            config_path = self.write_config(d)
+            out = Path(d) / "c.json"
+            with mock.patch.dict(os.environ, {"BLOCK_PROCESSING_DURATION": "abc"}), \
+                    mock.patch.object(compose, "load_env"):
+                self.assertEqual(compose.main(["generate", "--config", str(config_path), "--out", str(out)]), 1)
+
     def test_prepare_rejects_an_unknown_image_override(self):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaisesRegex(ConfigError, "unknown client 'etherx'"):

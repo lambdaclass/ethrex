@@ -1,7 +1,10 @@
 import argparse
+import os
 import subprocess
 import tempfile
+import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -28,7 +31,7 @@ class InstanceTest(unittest.TestCase):
         inst = make_instance()
         self.assertEqual((inst.name, inst.container, inst.cl_container), ("hoodi", "ethrex-hoodi", "ethlambda-hoodi"))
         self.assertEqual(inst.rpc_url, "http://localhost:8545")
-        self.assertEqual(inst.cl_api.base_url, "http://localhost:5052")
+        self.assertEqual(inst.cl_api.base_url, "http://127.0.0.1:5052")
         self.assertEqual(inst.provider_api.base_url, "https://checkpoint-sync.hoodi.ethpandaops.io")
         self.assertTrue(inst.ethrex_extras)
         self.assertEqual(inst.block_processing_duration, default_block_processing_duration())
@@ -218,6 +221,38 @@ class ReexecTest(unittest.TestCase):
         execv.assert_not_called()
 
 
+class GitCommitTest(unittest.TestCase):
+    def test_full_hash_from_the_given_directory(self):
+        with mock.patch.object(dm.subprocess, "check_output", return_value=b"abc123\n") as out:
+            self.assertEqual(dm.git_commit("/other"), "abc123")
+        self.assertEqual(out.call_args.args[0], ["git", "rev-parse", "HEAD"])
+        self.assertEqual(out.call_args.kwargs["cwd"], "/other")
+
+    def test_pull_returns_the_full_hash(self):
+        with mock.patch.object(dm.subprocess, "run"), \
+                mock.patch.object(dm.subprocess, "check_output", return_value=b"f" * 40 + b"\n") as out:
+            self.assertEqual(dm.git_pull_latest("main", "/other"), (True, "f" * 40))
+        self.assertEqual(out.call_args.args[0], ["git", "rev-parse", "HEAD"])
+
+
+class ContainerStartTimeTest(unittest.TestCase):
+    def test_started_at_is_utc_whatever_the_local_zone(self):
+        stamp = b"2026-10-26T20:52:52.160113046Z\n"
+        expected = datetime(2026, 10, 26, 20, 52, 52, 160113, tzinfo=timezone.utc).timestamp()
+        old_tz = os.environ.get("TZ")
+        os.environ["TZ"] = "America/Argentina/Buenos_Aires"
+        time.tzset()
+        try:
+            with mock.patch.object(dm.subprocess, "check_output", return_value=stamp):
+                self.assertEqual(dm.container_start_time("c"), expected)
+        finally:
+            if old_tz is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = old_tz
+            time.tzset()
+
+
 def restart_args(directory, **overrides):
     values = dict(config="multisync.toml", networks="", compose_dir=directory,
                   compose_file="compose.json", no_slack=False, branch="main")
@@ -280,6 +315,37 @@ class RestartTest(unittest.TestCase):
         self.slack.assert_called_once()
 
 
+class AutoUpdateRetryTest(unittest.TestCase):
+    def run_main(self, argv, restart_result):
+        patches = {
+            "load_instances": mock.patch.object(dm, "load_instances", return_value=[make_instance()]),
+            "container_start_time": mock.patch.object(dm, "container_start_time", return_value=None),
+            "git_commit": mock.patch.object(dm, "git_commit", return_value="a" * 40),
+            "git_branch": mock.patch.object(dm, "git_branch", return_value="main"),
+            "ensure_logs_dir": mock.patch.object(dm, "ensure_logs_dir"),
+            "get_next_run_count": mock.patch.object(dm, "get_next_run_count", return_value=1),
+            "build": mock.patch.object(dm, "build_docker_image", return_value=True),
+            "restart": mock.patch.object(dm, "restart_containers", return_value=restart_result),
+            "sleep": mock.patch.object(dm.time, "sleep"),
+            "reexec": mock.patch.object(dm, "reexec_if_updated"),
+            "pull": mock.patch.object(dm, "git_pull_latest", side_effect=[(True, "b" * 40), (False, "")]),
+            "argv": mock.patch.object(dm.sys, "argv", ["docker_monitor.py", "--no-slack", *argv]),
+        }
+        started = {k: v.start() for k, v in patches.items()}
+        for v in patches.values():
+            self.addCleanup(v.stop)
+        with self.assertRaises(SystemExit) as exit_info:
+            dm.main()
+        return started, exit_info.exception.code
+
+    def test_auto_mode_waits_and_pulls_again_after_a_failed_restart(self):
+        m, code = self.run_main(["--auto-update"], None)
+        self.assertEqual(code, 1)
+        self.assertEqual(m["pull"].call_count, 2)
+        self.assertEqual(m["restart"].call_count, 1)
+        m["sleep"].assert_any_call(dm.AUTO_UPDATE_RETRY_DELAY)
+
+
 class SlackTextTest(unittest.TestCase):
     def test_posts_text_to_the_failed_webhook(self):
         with mock.patch.dict(dm.os.environ, {"SLACK_WEBHOOK_URL_FAILED": "http://hook"}), \
@@ -295,8 +361,26 @@ class SlackTextTest(unittest.TestCase):
 
 
 class LoadInstancesTest(unittest.TestCase):
+    def test_config_error_is_sent_to_slack_before_exiting(self):
+        args = argparse.Namespace(config="x.toml", networks="", no_slack=False, branch="feat")
+        with mock.patch.object(dm.multisync_compose, "prepare", side_effect=ConfigError("bad pair")), \
+                mock.patch.object(dm, "slack_text") as slack:
+            with self.assertRaises(SystemExit):
+                dm.load_instances(args)
+        text = slack.call_args.args[0]
+        self.assertIn("bad pair", text)
+        self.assertIn("feat", text)
+
+    def test_no_slack_flag_silences_the_config_error(self):
+        args = argparse.Namespace(config="x.toml", networks="", no_slack=True, branch="feat")
+        with mock.patch.object(dm.multisync_compose, "prepare", side_effect=ConfigError("bad")), \
+                mock.patch.object(dm, "slack_text") as slack:
+            with self.assertRaises(SystemExit):
+                dm.load_instances(args)
+        slack.assert_not_called()
+
     def test_uses_prepare_and_exits_on_config_error(self):
-        args = argparse.Namespace(config="x.toml", networks="")
+        args = argparse.Namespace(config="x.toml", networks="", no_slack=True, branch="")
         with mock.patch.object(dm.multisync_compose, "prepare", side_effect=ConfigError("bad")):
             with self.assertRaises(SystemExit):
                 dm.load_instances(args)

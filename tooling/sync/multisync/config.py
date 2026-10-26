@@ -158,7 +158,11 @@ def select(config: Config, only: Optional[str] = None) -> list[Pair]:
 
 def default_block_processing_duration() -> int:
     """Window length in seconds when a pair sets none: `BLOCK_PROCESSING_DURATION`, read at call time."""
-    return int(os.environ.get("BLOCK_PROCESSING_DURATION", DEFAULT_BLOCK_PROCESSING_DURATION))
+    raw = os.environ.get("BLOCK_PROCESSING_DURATION", DEFAULT_BLOCK_PROCESSING_DURATION)
+    try:
+        return int(raw)
+    except ValueError:
+        raise ConfigError(f"BLOCK_PROCESSING_DURATION must be an integer number of seconds, got {raw!r}") from None
 
 
 def check_windows(pairs: list[Pair], default_duration: int) -> None:

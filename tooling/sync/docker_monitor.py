@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -19,16 +19,10 @@ from multisync import beacon_checks
 from multisync import compose as multisync_compose
 from multisync import config as multisync_config
 from multisync.config import ConfigError, Pair
-from multisync.util import fmt_time
+from multisync.util import fmt_time, load_env
 
-# Load .env file if it exists
-if os.path.exists('.env'):
-    with open('.env') as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith('#'):
-                key, _, value = line.partition('=')
-                os.environ[key.strip()] = value.strip()
+# The same file `python3 -m multisync.compose` reads, loaded before the timeouts below.
+load_env(Path(__file__).resolve().parent / ".env")
 
 CHECK_INTERVAL = int(os.environ.get("CHECK_INTERVAL", 10))
 SYNC_TIMEOUT = int(os.environ.get("SYNC_TIMEOUT", 8 * 60))  # default 8 hours (in minutes)
@@ -36,6 +30,7 @@ BLOCK_STALL_TIMEOUT = int(os.environ.get("BLOCK_STALL_TIMEOUT", 10 * 60))  # def
 NODE_UNRESPONSIVE_TIMEOUT = int(os.environ.get("NODE_UNRESPONSIVE_TIMEOUT", 5 * 60))  # default 5 minutes (in seconds)
 STATUS_PRINT_INTERVAL = int(os.environ.get("STATUS_PRINT_INTERVAL", 30))
 EL_STARTUP_TIMEOUT = int(os.environ.get("EL_STARTUP_TIMEOUT", 15 * 60))  # default 15 minutes (in seconds)
+AUTO_UPDATE_RETRY_DELAY = int(os.environ.get("AUTO_UPDATE_RETRY_DELAY", 10 * 60))  # default 10 minutes (in seconds)
 
 CL_TIMEOUTS = beacon_checks.ClTimeouts(
     startup=int(os.environ.get("CL_STARTUP_TIMEOUT", 15 * 60)),
@@ -348,7 +343,7 @@ class Instance:
 
     @property
     def cl_api(self) -> beacon_checks.BeaconApi:
-        return beacon_checks.BeaconApi(f"http://localhost:{self.pair.cl_api_port}")
+        return beacon_checks.BeaconApi(f"http://127.0.0.1:{self.pair.cl_api_port}")
 
     @property
     def provider_api(self) -> beacon_checks.BeaconApi:
@@ -360,11 +355,16 @@ class Instance:
         return own if own is not None else multisync_config.default_block_processing_duration()
 
 
-def git_commit() -> str:
+def git_commit(cwd: Optional[str] = None) -> str:
+    """Full HEAD hash of the repository at `cwd` (default: the current directory)."""
     try:
-        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL).decode().strip()
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=cwd, stderr=subprocess.DEVNULL).decode().strip()
     except Exception:
         return "unknown"
+
+
+def short_hash(commit: str) -> str:
+    return commit[:7]
 
 
 def git_branch() -> str:
@@ -377,7 +377,7 @@ def git_branch() -> str:
 def git_pull_latest(branch: str, ethrex_dir: str) -> tuple[bool, str]:
     """Fetch and pull latest changes from the specified branch.
 
-    Returns (success, new_commit_hash).
+    Returns (success, new full commit hash).
     """
     try:
         print(f"📥 Pulling latest from branch '{branch}'...")
@@ -389,11 +389,11 @@ def git_pull_latest(branch: str, ethrex_dir: str) -> tuple[bool, str]:
         subprocess.run(["git", "pull", "origin", branch], cwd=ethrex_dir, check=True, capture_output=True)
         # Get new commit hash
         new_commit = subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
+            ["git", "rev-parse", "HEAD"],
             cwd=ethrex_dir,
             stderr=subprocess.DEVNULL
         ).decode().strip()
-        print(f"✅ Updated to commit {new_commit}")
+        print(f"✅ Updated to commit {short_hash(new_commit)}")
         return True, new_commit
     except subprocess.CalledProcessError as e:
         error_details = ""
@@ -410,7 +410,7 @@ def reexec_if_updated(started_commit: str, new_commit: str) -> None:
     `multisync` modules run instead of the ones imported at startup."""
     if started_commit == "unknown" or new_commit == started_commit:
         return
-    print(f"🔁 Code updated ({started_commit} -> {new_commit}), restarting the monitor", flush=True)
+    print(f"🔁 Code updated ({short_hash(started_commit)} -> {short_hash(new_commit)}), restarting the monitor", flush=True)
     os.execv(sys.executable, [sys.executable, *sys.argv])
 
 
@@ -479,7 +479,11 @@ def container_start_time(name: str) -> Optional[float]:
         if '.' in out:
             base, frac = out.rsplit('.', 1)
             out = f"{base}.{frac.rstrip('Z')[:6]}"
-        return datetime.fromisoformat(out.replace('Z', '+00:00')).timestamp()
+        # StartedAt is UTC; a naive datetime would be read as local time.
+        started = datetime.fromisoformat(out.replace('Z', '+00:00'))
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        return started.timestamp()
     except Exception:
         return None
 
@@ -1061,6 +1065,9 @@ def load_instances(args) -> list[Instance]:
     try:
         pairs, _ = multisync_compose.prepare(args.config, args.networks)
     except ConfigError as e:
+        if not args.no_slack:
+            branch = args.branch if args.branch else git_branch()
+            slack_text(f"❌ Multisync config invalid on `{socket.gethostname()}` (branch `{branch}`): {e}")
         sys.exit(f"Error: {e}")
     return [Instance(pair) for pair in pairs]
 
@@ -1131,8 +1138,9 @@ def main():
 
     hostname = socket.gethostname()
     branch = args.branch if args.branch else git_branch()
-    commit = git_commit()
-    started_commit = commit
+    # Both sides of the re-exec comparison come from ethrex_dir, as full hashes.
+    started_commit = git_commit(ethrex_dir)
+    commit = short_hash(started_commit)
 
     # Ensure logs directory exists first (needed for run count)
     ensure_logs_dir()
@@ -1164,7 +1172,7 @@ def main():
                     sys.exit(1)
                 # The new code (monitor and multisync package) only runs after a restart.
                 reexec_if_updated(started_commit, new_commit)
-                commit = new_commit  # Update commit for logging
+                commit = short_hash(new_commit)  # Update commit for logging
                 if not build_docker_image(args.build_profile, args.image_tag, ethrex_dir):
                     print("❌ Failed to build Docker image, aborting")
                     sys.exit(1)
@@ -1173,7 +1181,10 @@ def main():
                 pairs = restart_containers(args, {"ethrex": args.image_tag})
                 if pairs is None:
                     print("❌ Failed to start containers", file=sys.stderr)
-                    sys.exit(1)
+                    # The next pull may bring a fix, so keep going instead of waiting for an operator.
+                    print(f"⏳ Pulling again in {fmt_time(AUTO_UPDATE_RETRY_DELAY)}", flush=True)
+                    time.sleep(AUTO_UPDATE_RETRY_DELAY)
+                    continue
                 # Fresh instances: the pull may have changed the config
                 instances = [Instance(p) for p in pairs]
                 tracker = new_tracker(instances, run_id)

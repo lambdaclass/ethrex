@@ -19,6 +19,7 @@ from typing import Optional
 from .clients import CL_CLIENTS, DATA_DIR, EL_CLIENTS, Client
 from .config import ClientOverride, Config, ConfigError, Pair, check_windows, default_block_processing_duration, load, select
 from .networks import NETWORK_CONFIG_DIR
+from .util import load_env
 
 DEFAULT_CONFIG = "multisync.toml"
 DEFAULT_OUTPUT = "docker-compose.multisync.json"
@@ -165,6 +166,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     svc.add_argument("--pair", required=True)
     svc.add_argument("--role", choices=("el", "cl"))
     args = parser.parse_args(argv)
+    # The same tooling/sync/.env the monitor reads, so both validate the same window.
+    load_env(Path(__file__).resolve().parent.parent / ".env")
     try:
         if args.command == "generate":
             pairs = generate(args.config, args.out, args.only, dict(args.image_override))

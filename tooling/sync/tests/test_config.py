@@ -120,6 +120,11 @@ class WindowTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"BLOCK_PROCESSING_DURATION": "60"}):
             self.assertEqual(default_block_processing_duration(), 60)
 
+    def test_non_integer_duration_is_a_config_error(self):
+        with mock.patch.dict(os.environ, {"BLOCK_PROCESSING_DURATION": "300 # note"}):
+            with self.assertRaisesRegex(ConfigError, "BLOCK_PROCESSING_DURATION"):
+                default_block_processing_duration()
+
 
 class LoadTest(unittest.TestCase):
     def test_toml_errors_name_the_file(self):
