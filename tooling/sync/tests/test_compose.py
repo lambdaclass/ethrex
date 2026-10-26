@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from multisync import compose
-from multisync.config import parse, select
+from multisync.config import load, parse, select
 
 COMPLETED = {"condition": "service_completed_successfully"}
 
@@ -90,6 +90,68 @@ class CliTest(unittest.TestCase):
                 compose.main(["generate", "--config", str(config_path), "--out", str(out), "--image-override", "ethrex=local:x"]), 0
             )
             self.assertEqual(json.loads(out.read_text())["services"]["ethrex-hoodi"]["image"], "local:x")
+
+
+SYNC_DIR = Path(__file__).resolve().parent.parent
+COMMITTED = SYNC_DIR / "multisync.toml"
+
+
+class CommittedConfigTest(unittest.TestCase):
+    """The committed config reproduces the matrix the hand-written compose file had."""
+
+    def setUp(self):
+        self.config = load(COMMITTED)
+        every_pair = ",".join(p.name for p in self.config.pairs)
+        self.doc = compose.build(self.config, select(self.config, every_pair))
+        self.services = self.doc["services"]
+
+    def test_default_selection_is_todays(self):
+        self.assertEqual([p.label for p in select(self.config)], [
+            "hoodi: ethrex+lighthouse",
+            "sepolia: ethrex+lighthouse",
+            "mainnet: ethrex+lighthouse",
+        ])
+
+    def test_host_ports_are_todays(self):
+        expected = {
+            "ethrex-hoodi": ["8545:8545", "3702:3701"],
+            "ethrex-sepolia": ["8546:8545", "3703:3701"],
+            "ethrex-mainnet": ["8547:8545", "3701:3701"],
+            "ethrex-hoodi-2": ["8548:8545"],
+            "ethrex-plataberget": ["8549:8545"],
+            "lighthouse-hoodi": ["5052:5052"],
+            "lighthouse-sepolia": ["5053:5052"],
+            "lighthouse-mainnet": ["5054:5052"],
+            "lighthouse-hoodi-2": ["5055:5052"],
+            "prysm-plataberget": ["5056:3500"],
+        }
+        for name, ports in expected.items():
+            self.assertEqual(self.services[name]["ports"], ports, name)
+
+    def test_ethrex_keeps_its_environment_overrides(self):
+        svc = self.services["ethrex-mainnet"]
+        self.assertEqual(svc["image"], "${ETHREX_IMAGE:-ghcr.io/lambdaclass/ethrex:main}")
+        self.assertEqual(svc["pull_policy"], "${ETHREX_PULL_POLICY:-always}")
+        self.assertEqual(svc["environment"], {
+            "RUST_LOG": "${RUST_LOG:-info,ethrex_p2p::sync=debug}",
+            "ETHREX_ROCKSDB_BLOCK_CACHE_SIZE": "${ETHREX_ROCKSDB_BLOCK_CACHE_SIZE:-4294967296}",
+        })
+
+    def test_checkpoint_providers_and_engine_urls_are_todays(self):
+        providers = {
+            "hoodi": "https://checkpoint-sync.hoodi.ethpandaops.io",
+            "sepolia": "https://checkpoint-sync.sepolia.ethpandaops.io",
+            "mainnet": "https://mainnet-checkpoint-sync.attestant.io",
+        }
+        for network, url in providers.items():
+            command = self.services[f"lighthouse-{network}"]["command"]
+            self.assertEqual(command[command.index("--checkpoint-sync-url") + 1], url)
+            self.assertEqual(command[command.index("--execution-endpoint") + 1], f"http://ethrex-{network}:8551")
+
+    def test_plataberget_prysm_reads_the_downloaded_files(self):
+        self.assertIn("config-plataberget:/config:ro", self.services["prysm-plataberget"]["volumes"])
+        self.assertIn("setup-config-plataberget", self.services)
+        self.assertNotIn("config-plataberget:/config:ro", self.services["ethrex-plataberget"]["volumes"])
 
 
 if __name__ == "__main__":
