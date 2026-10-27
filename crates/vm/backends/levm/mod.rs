@@ -99,7 +99,8 @@ const BAL_WARM_CHUNK_ACCOUNTS: usize = 64;
 #[cfg(feature = "rayon")]
 const BAL_WARM_INLINE_ACCOUNTS: usize = 2 * BAL_WARM_CHUNK_ACCOUNTS;
 
-/// Floor on the BAL warmer's thread count, see [`bal_warm_pool`].
+/// Floor on the BAL warmer's thread count, and its size when the host does not
+/// report its parallelism, see [`bal_warm_pool`].
 #[cfg(feature = "rayon")]
 const BAL_WARM_MIN_THREADS: usize = 64;
 
@@ -117,8 +118,7 @@ fn bal_warm_pool() -> &'static rayon::ThreadPool {
     static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
     POOL.get_or_init(|| {
         let threads = std::thread::available_parallelism()
-            .map_or(8, |p| p.get())
-            .saturating_mul(2)
+            .map_or(BAL_WARM_MIN_THREADS, |cpus| cpus.get().saturating_mul(2))
             .max(BAL_WARM_MIN_THREADS);
         rayon::ThreadPoolBuilder::new()
             .num_threads(threads)
