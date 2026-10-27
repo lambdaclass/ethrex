@@ -496,3 +496,32 @@ impl Debug for Store {
         f.debug_struct("In Memory L2 Store").finish()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn update_operations_count_accumulates_values() {
+        let store = Store::new();
+
+        store
+            .update_operations_count(1, 2, 3)
+            .await
+            .expect("first update should succeed");
+
+        store
+            .update_operations_count(4, 5, 6)
+            .await
+            .expect("second update should succeed");
+
+        let counts = store
+            .get_operations_count()
+            .await
+            .expect("get_operations_count should succeed");
+
+        assert_eq!(counts[0], 5);
+        assert_eq!(counts[1], 7);
+        assert_eq!(counts[2], 9);
+    }
+}
