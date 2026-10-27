@@ -39,6 +39,8 @@ const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12
 const WHOAREYOU_RATE_LIMIT: Duration = Duration::from_secs(1);
 /// Maximum number of WHOAREYOU packets sent globally per second.
 const GLOBAL_WHOAREYOU_RATE_LIMIT: u32 = 100;
+/// Largest discv5 log-distance: the bit length of a 256-bit XOR.
+const MAX_LOG_DISTANCE: u32 = 256;
 
 impl DiscoveryServer {
     pub(crate) async fn discv5_handle_packet(
@@ -390,20 +392,9 @@ impl DiscoveryServer {
     }
 
     fn discv5_build_find_node_for_target(&self, target: H256, node: &Node) -> Message {
-        let center_distance = distance(&target, &node.node_id()) as u8;
-        let mut distances = Vec::new();
-        distances.push(center_distance as u32);
-        for i in 0..DISTANCES_PER_FIND_NODE_MSG / 2 {
-            if let Some(d) = center_distance.checked_add(i + 1) {
-                distances.push(d as u32)
-            }
-            if let Some(d) = center_distance.checked_sub(i + 1) {
-                distances.push(d as u32)
-            }
-        }
         Message::FindNode(FindNodeMessage {
             req_id: generate_req_id(),
-            distances,
+            distances: find_node_distances(&target, &node.node_id()),
         })
     }
 
@@ -941,6 +932,27 @@ fn generate_req_id() -> Bytes {
     Bytes::from(rng.r#gen::<u64>().to_be_bytes().to_vec())
 }
 
+/// The log-distances to ask `node_id` for, to learn about nodes near
+/// `target`: the distance between the two, and its neighbours.
+///
+/// FINDNODE distances count from the recipient, and the ones near
+/// `log2(node_id ^ target)` are where it keeps whoever is close to `target`.
+/// The result stays within `1..=256`: half of all random targets sit at 256,
+/// which must not wrap, and 0 would return only the recipient's own record.
+fn find_node_distances(target: &H256, node_id: &H256) -> Vec<u32> {
+    let center = (distance(target, node_id) as u32).clamp(1, MAX_LOG_DISTANCE);
+    let mut distances = vec![center];
+    for step in 1..=u32::from(DISTANCES_PER_FIND_NODE_MSG / 2) {
+        if center + step <= MAX_LOG_DISTANCE {
+            distances.push(center + step);
+        }
+        if center > step {
+            distances.push(center - step);
+        }
+    }
+    distances
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1050,6 +1062,21 @@ mod tests {
             survives_sweeps(&mut server, &peer_id),
             (true, true),
             "using a session must keep both its keys and its IP guard alive"
+        );
+    }
+
+    #[test]
+    fn find_node_distances_stay_within_the_log_distance_range() {
+        let target = H256::zero();
+        // Top bit differs: log-distance 256, which used to wrap to 0 as a u8.
+        let mut far = H256::zero();
+        far.0[0] = 0x80;
+        assert_eq!(find_node_distances(&target, &far), vec![256, 255]);
+        // The recipient is the target: nothing to ask for at distance 0.
+        assert_eq!(find_node_distances(&target, &target), vec![1, 2]);
+        assert_eq!(
+            find_node_distances(&target, &H256::from_low_u64_be(0b1000)),
+            vec![4, 5, 3]
         );
     }
 
