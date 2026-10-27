@@ -22,7 +22,7 @@ pub(crate) fn modexp(base: &[u8], exp: &[u8], modulus: &[u8]) -> Option<Vec<u8>>
     match (modulus_digits.len(), bit_length(exp)) {
         (24..=32, 32..) => pow::<4>(base, exp, modulus_digits, modulus.len()),
         (60..=64, 64..) => pow::<8>(base, exp, modulus_digits, modulus.len()),
-        (120..=128, 192..) => pow::<16>(base, exp, modulus_digits, modulus.len()),
+        (128, 256..) => pow::<16>(base, exp, modulus_digits, modulus.len()),
         _ => None,
     }
 }
