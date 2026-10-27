@@ -16,6 +16,10 @@
 
 - Commit trie layers that are already final without a `STATE_HISTORY` journal entry and without the pre-image read per trie node that entry needs: on an L2 and on a finalizing L1 the journal stays empty and finality pruning writes no range deletes, where before every commit wrote an entry only for the next finality advance to range-delete it [#7377](https://github.com/lambdaclass/ethrex/pull/7377)
 
+### 2026-10-13
+
+- Faster BN254 precompiles: ECADD in affine form with a safegcd inversion, ECMUL with GLV and wNAF (double-and-add for scalars of at most 16 bits), ECPAIRING with a 63-bit G2 subgroup check, its own Miller loop and final exponentiation, and a branch-free field tower on x86-64 CPUs with BMI2 and ADX: ECADD 2.13 → 0.84 µs, full-width ECMUL 47.9 → 20.8 µs, two random pairs 688 → 382 µs, and the 220 BN254 tests of the benchmarkoor compute-repricing suite 125.3 → 57.4 s [#7397](https://github.com/lambdaclass/ethrex/pull/7397)
+
 ### 2026-09-30
 
 - Evict a random bytecode cache entry instead of the least recently used one, and raise the budget to 2 GiB (about 29k contracts of 64 KiB; `--code-cache-size` overrides it): on Plataberget blocks 297947–299844, which keep reusing a growing set of 16k+ distinct 64 KiB contracts, the LRU fell from 87% to 68% hits and blocks with two or more such transactions went from 30 to 44 ms, while with this change they stay at 19–21 ms with every code read hitting the cache, in replay; mainnet is unchanged (-0.29%, no evictions) [#7350](https://github.com/lambdaclass/ethrex/pull/7350)
