@@ -14,6 +14,7 @@
 
 ### 2026-10-20
 
+- Share the Miller loop across pairs in the BLS12-381 pairing check: −8% with 2 pairs up to −23% with 24 [#7446](https://github.com/lambdaclass/ethrex/pull/7446)
 - Fixed-width Montgomery MODEXP for odd moduli of up to 128 bytes: a 32-byte inversion 12.5 → 3.4 µs, 64-byte operands −42% and 128-byte operands −15% [#7445](https://github.com/lambdaclass/ethrex/pull/7445)
 - Shift and extract bytes limb by limb with constant indexes, and write comparison results to the stack with a single store: SAR −38%, SHL −20%, BYTE −16% and SHR −12% per opcode [#7444](https://github.com/lambdaclass/ethrex/pull/7444)
 - Return the popped operand of binary opcodes by reference, so it is no longer copied through a temporary that the next load cannot forward from: EQ −31%, LT, GT and SLT −10% per opcode [#7443](https://github.com/lambdaclass/ethrex/pull/7443)
