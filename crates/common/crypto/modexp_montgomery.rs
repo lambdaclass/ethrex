@@ -551,16 +551,10 @@ mod tests {
             bases.push(vec![]);
             bases.push(vec![1]);
             bases.push(vec![0xff; 32]);
-            bases.push({
-                let mut v = m.clone();
-                *v.last_mut().unwrap() -= 1;
-                v
-            });
-            bases.push({
-                let mut v = m.clone();
-                *v.last_mut().unwrap() += 1;
-                v
-            });
+            // m - 1 and m + 1, computed on the number: a byte-wise +1 overflows for moduli
+            // ending in 0xff, like the P-256 base field.
+            bases.push((&m_nat - Natural::from(1u8)).to_power_of_2_digits_desc(8));
+            bases.push((&m_nat + Natural::from(1u8)).to_power_of_2_digits_desc(8));
             for base in &bases {
                 for (pad_b, pad_e, pad_m) in
                     [(0usize, 0usize, 0usize), (3, 1, 0), (0, 0, 32), (1, 5, 2)]
