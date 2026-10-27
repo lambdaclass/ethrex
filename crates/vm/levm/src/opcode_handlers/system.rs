@@ -1249,7 +1249,7 @@ impl<'a> VM<'a> {
 
             let mut gas_remaining = gas_limit;
             // The precompile reads the arguments in place in the caller's memory.
-            let ctx_result =
+            let mut ctx_result =
                 self.execute_precompile(code_address, &calldata, gas_limit, &mut gas_remaining)?;
 
             let call_frame = &mut self.current_call_frame;
@@ -1279,7 +1279,14 @@ impl<'a> VM<'a> {
                     &ctx_result.output
                 },
             )?;
-            call_frame.sub_return_data = ctx_result.output.clone();
+            // Move the output into the return-data buffer instead of cloning it:
+            // a `Vec`-backed `Bytes` allocates a shared header on its first clone.
+            // Only an active call tracer reads the output again, in `exit_context`.
+            call_frame.sub_return_data = if self.tracer.active {
+                ctx_result.output.clone()
+            } else {
+                std::mem::take(&mut ctx_result.output)
+            };
 
             // What to do, depending on TxResult
             call_frame.stack.push(match &ctx_result.result {
