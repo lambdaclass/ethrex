@@ -644,9 +644,10 @@ impl PeerConnectionServer {
                         )
                         .await;
                 }
-                // Gated on registration: an actor that lost the claim never reported
-                // the peer to discovery nor owned its broadcaster index, and releasing
-                // them on its way out would evict the connection that won.
+                // Gated on registration: an actor the peer table refused, or whose
+                // registration request timed out, never reported the peer to discovery
+                // nor owned its broadcaster index. Releasing them on its way out would
+                // evict the connection that holds them.
                 if established_state.registered_in_peer_table {
                     // Pairs with the `Connected` report in `initialize_connection`. This is
                     // the only teardown an established connection takes, and it still runs
