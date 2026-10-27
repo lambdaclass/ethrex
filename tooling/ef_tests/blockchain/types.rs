@@ -160,7 +160,7 @@ impl TestUnit {
     }
 
     pub fn get_genesis(&self) -> Genesis {
-        let mut config = *self.network.chain_config();
+        let mut config = self.network.chain_config().clone();
         // Overwrite default blob schedule with test's blob schedule
         if let Some(test_config) = &self.config
             && let Some(ref schedule) = test_config.blob_schedule

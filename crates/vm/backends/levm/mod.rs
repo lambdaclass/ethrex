@@ -31,9 +31,9 @@ use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
     Address, U256,
     types::{
-        AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, FrameReceipt,
-        GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind,
-        Withdrawal, requests::Requests,
+        AccessList, AccountUpdate, Block, BlockHeader, ChainConfig, EIP1559Transaction, Fork,
+        FrameReceipt, GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction,
+        TxKind, Withdrawal, requests::Requests,
     },
 };
 #[cfg(feature = "rayon")]
@@ -345,6 +345,7 @@ impl LEVM {
     /// The BAL will be `None` for pre-Amsterdam forks.
     pub fn execute_block(
         block: &Block,
+        parent_timestamp: u64,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         crypto: &dyn Crypto,
@@ -371,7 +372,7 @@ impl LEVM {
             db.set_bal_index(0);
         }
 
-        Self::prepare_block(block, db, vm_type, crypto)?;
+        Self::prepare_block(block, parent_timestamp, db, vm_type, crypto)?;
 
         // Block-invariant EVM config + chain id + base blob fee, computed once and
         // reused by every tx (mirrors `execute_block_pipeline`): avoids a per-tx
@@ -585,6 +586,7 @@ impl LEVM {
     #[allow(clippy::too_many_arguments)]
     pub fn execute_block_pipeline(
         block: &Block,
+        parent_timestamp: u64,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         merkleizer: Option<Sender<Vec<AccountUpdate>>>,
@@ -646,7 +648,7 @@ impl LEVM {
             // loads the recorder never sees, so it can't say what they touched.
             db.enable_bal_recording();
             db.set_bal_index(PRE_BLOCK_BAL_INDEX);
-            let prepare_result = Self::prepare_block(block, db, vm_type, crypto);
+            let prepare_result = Self::prepare_block(block, parent_timestamp, db, vm_type, crypto);
             let pre_block_bal = db.take_bal().unwrap_or_default();
             prepare_result?;
 
@@ -864,7 +866,7 @@ impl LEVM {
             db.set_bal_index(0);
         }
 
-        Self::prepare_block(block, db, vm_type, crypto)?;
+        Self::prepare_block(block, parent_timestamp, db, vm_type, crypto)?;
 
         // Compute base blob fee once for the entire block (block-invariant).
         let base_blob_fee_per_gas =
@@ -3833,6 +3835,35 @@ impl LEVM {
         Ok(())
     }
 
+    /// EIP-8253: on the first Hegota block, sets the nonce of every account in the chain's
+    /// `zero_nonce_storage_accounts` to 1 and records each change at the BAL index the caller
+    /// set, which is 0 at the start of a block. Balance, code and storage are left alone. Every
+    /// other block, and a chain that starts in Hegota, changes nothing.
+    ///
+    /// The write does not inspect the account: the list must name only accounts with a zero
+    /// nonce, empty code and non-empty storage, so a listed account missing from the state is
+    /// created with nonce 1, as the EIP specifies.
+    pub fn bump_zero_nonce_storage_accounts(
+        db: &mut GeneralizedDatabase,
+        chain_config: &ChainConfig,
+        parent_timestamp: u64,
+        block_timestamp: u64,
+    ) -> Result<(), EvmError> {
+        if !chain_config.is_hegota_fork_block(parent_timestamp, block_timestamp) {
+            return Ok(());
+        }
+        for &address in &chain_config.zero_nonce_storage_accounts {
+            db.get_account_mut(address)
+                .map_err(|e| EvmError::DB(format!("EIP-8253 account {address}: {e}")))?
+                .info
+                .nonce = 1;
+            if let Some(recorder) = db.bal_recorder_mut() {
+                recorder.record_nonce_change(address, 1);
+            }
+        }
+        Ok(())
+    }
+
     // SYSTEM CONTRACTS
     pub fn beacon_root_contract_call(
         block_header: &BlockHeader,
@@ -4044,6 +4075,7 @@ impl LEVM {
 
     pub fn prepare_block(
         block: &Block,
+        parent_timestamp: u64,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         crypto: &dyn Crypto,
@@ -4051,6 +4083,14 @@ impl LEVM {
         let chain_config = db.store.get_chain_config()?;
         let block_header = &block.header;
         let fork = chain_config.fork(block_header.timestamp);
+
+        // EIP-8253: the fork block's irregular state change comes before its system calls.
+        Self::bump_zero_nonce_storage_accounts(
+            db,
+            &chain_config,
+            parent_timestamp,
+            block_header.timestamp,
+        )?;
 
         // TODO: I don't like deciding the behavior based on the VMType here.
         if let VMType::L2(_) = vm_type {
@@ -4808,7 +4848,7 @@ mod system_call_coinbase_tests {
             Ok(H256::zero())
         }
         fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
-            Ok(self.chain_config)
+            Ok(self.chain_config.clone())
         }
         fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
             if code_hash == self.history_code.hash {
@@ -5037,7 +5077,7 @@ mod burned_fees_tests {
         }
 
         fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
-            Ok(self.chain_config)
+            Ok(self.chain_config.clone())
         }
 
         fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
@@ -5271,7 +5311,7 @@ mod burned_fees_tests {
 
         // (a) execute_block path
         let mut db1 = make_gen_db(lstar_chain_config());
-        let (result, _bal) = LEVM::execute_block(&block, &mut db1, VMType::L1, &crypto, None)
+        let (result, _bal) = LEVM::execute_block(&block, 0, &mut db1, VMType::L1, &crypto, None)
             .expect("execute_block succeeded");
         let cumulative = result
             .receipts
@@ -5293,6 +5333,7 @@ mod burned_fees_tests {
         let block2 = make_block_with_tx(tx2, BASE_FEE);
         let (result_pipeline, _bal) = LEVM::execute_block_pipeline(
             &block2,
+            0,
             &mut db2,
             VMType::L1,
             Some(tx_sender),
@@ -5313,7 +5354,7 @@ mod burned_fees_tests {
         let block3 = make_block_with_tx(tx3, BASE_FEE);
         let mut db3 = make_gen_db(amsterdam_chain_config());
         let (result_pre_lstar, _) =
-            LEVM::execute_block(&block3, &mut db3, VMType::L1, &crypto, None)
+            LEVM::execute_block(&block3, 0, &mut db3, VMType::L1, &crypto, None)
                 .expect("pre-LStar execute_block succeeded");
         assert_eq!(
             result_pre_lstar.burned_fees, None,
@@ -5353,7 +5394,7 @@ mod burned_fees_tests {
         let tx_a = signed_call_tx(contract_addr, 0, BASE_FEE, TX_GAS_LIMIT);
         let block_a = make_block_with_tx(tx_a, BASE_FEE);
         let mut db_a = make_gen_db_sstore_clear(lstar_chain_config(), contract_addr);
-        let (result_a, _) = LEVM::execute_block(&block_a, &mut db_a, VMType::L1, &crypto, None)
+        let (result_a, _) = LEVM::execute_block(&block_a, 0, &mut db_a, VMType::L1, &crypto, None)
             .expect("execute_block with SSTORE clear succeeded");
 
         let cumulative_a = result_a.receipts[0].cumulative_gas_used;
@@ -5381,6 +5422,7 @@ mod burned_fees_tests {
         let queue_len_b = AtomicUsize::new(0);
         let (result_b, _) = LEVM::execute_block_pipeline(
             &block_b,
+            0,
             &mut db_b,
             VMType::L1,
             Some(tx_sender_b),
@@ -5408,7 +5450,7 @@ mod burned_fees_tests {
         let tx_c = signed_call_tx(contract_addr, 0, BASE_FEE, TX_GAS_LIMIT);
         let block_c = make_block_with_tx(tx_c, BASE_FEE);
         let mut db_c1 = make_gen_db_sstore_clear(lstar_chain_config(), contract_addr);
-        let (_, bal_c) = LEVM::execute_block(&block_c, &mut db_c1, VMType::L1, &crypto, None)
+        let (_, bal_c) = LEVM::execute_block(&block_c, 0, &mut db_c1, VMType::L1, &crypto, None)
             .expect("BAL generation succeeded");
         let bal_c = bal_c.expect("LStar must produce a BAL");
 
@@ -5417,6 +5459,7 @@ mod burned_fees_tests {
         let queue_len_c = AtomicUsize::new(0);
         let (result_c, _) = LEVM::execute_block_pipeline(
             &block_c,
+            0,
             &mut db_c2,
             VMType::L1,
             Some(tx_sender_c),
@@ -5453,7 +5496,7 @@ mod burned_fees_tests {
         let tx_d = signed_call_tx(contract_addr, 0, BASE_FEE, TX_GAS_LIMIT);
         let block_d = make_block_with_tx(tx_d, BASE_FEE);
         let mut db_d = make_gen_db_sstore_clear(amsterdam_chain_config(), contract_addr);
-        let (result_d, _) = LEVM::execute_block(&block_d, &mut db_d, VMType::L1, &crypto, None)
+        let (result_d, _) = LEVM::execute_block(&block_d, 0, &mut db_d, VMType::L1, &crypto, None)
             .expect("pre-LStar with SSTORE clear succeeded");
         assert_eq!(
             result_d.burned_fees, None,

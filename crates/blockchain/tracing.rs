@@ -86,7 +86,7 @@ impl Blockchain {
             .rebuild_parent_state(block.header.parent_hash, reexec)
             .await?;
         // Run the block until the transaction we want to trace
-        vm.rerun_block(&block, Some(tx_index))?;
+        vm.rerun_block(&block, self.parent_timestamp(&block)?, Some(tx_index))?;
         // Block-absolute log index base: logs emitted by the preceding txs (geth's `logSize`).
         let log_index_base = self.log_index_base(block_hash, tx_index, with_log).await?;
         // Trace the transaction
@@ -138,8 +138,9 @@ impl Blockchain {
         let mut vm = self
             .rebuild_parent_state(block.header.parent_hash, reexec)
             .await?;
+        let parent_timestamp = self.parent_timestamp(&block)?;
         timeout_trace_operation(timeout, move || {
-            vm.trace_block_calls(&block, only_top_call, with_log)
+            vm.trace_block_calls(&block, parent_timestamp, only_top_call, with_log)
         })
         .await
     }
@@ -169,7 +170,7 @@ impl Blockchain {
             .rebuild_parent_state(block.header.parent_hash, reexec)
             .await?;
         // Run the block until the transaction we want to trace
-        vm.rerun_block(&block, Some(tx_index))?;
+        vm.rerun_block(&block, self.parent_timestamp(&block)?, Some(tx_index))?;
         // Trace the transaction
         timeout_trace_operation(timeout, move || {
             vm.trace_tx_prestate(&block, tx_index, diff_mode, include_empty)
@@ -194,8 +195,9 @@ impl Blockchain {
         let mut vm = self
             .rebuild_parent_state(block.header.parent_hash, reexec)
             .await?;
+        let parent_timestamp = self.parent_timestamp(&block)?;
         timeout_trace_operation(timeout, move || {
-            vm.trace_block_prestate(&block, diff_mode, include_empty)
+            vm.trace_block_prestate(&block, parent_timestamp, diff_mode, include_empty)
         })
         .await
     }
@@ -221,7 +223,7 @@ impl Blockchain {
         let mut vm = self
             .rebuild_parent_state(block.header.parent_hash, reexec)
             .await?;
-        vm.rerun_block(&block, Some(tx_index))?;
+        vm.rerun_block(&block, self.parent_timestamp(&block)?, Some(tx_index))?;
         timeout_trace_operation(timeout, move || vm.trace_tx_opcodes(&block, tx_index, cfg)).await
     }
 
@@ -241,7 +243,11 @@ impl Blockchain {
         let mut vm = self
             .rebuild_parent_state(block.header.parent_hash, reexec)
             .await?;
-        timeout_trace_operation(timeout, move || vm.trace_block_opcodes(&block, cfg)).await
+        let parent_timestamp = self.parent_timestamp(&block)?;
+        timeout_trace_operation(timeout, move || {
+            vm.trace_block_opcodes(&block, parent_timestamp, cfg)
+        })
+        .await
     }
 
     /// Traces a synthetic `eth_call`-shaped request (`debug_traceCall`) with the callTracer.
@@ -372,7 +378,7 @@ impl Blockchain {
         let (mut vm, base_db) = self
             .rebuild_parent_state_with_db(block.header.parent_hash, reexec)
             .await?;
-        vm.rerun_block(block, tx_index)?;
+        vm.rerun_block(block, self.parent_timestamp(block)?, tx_index)?;
         // With no overlay to install there is nothing to layer over, so hand back the
         // replay's own `Evm` as this function always did. Projecting it through
         // `ReplayedVmDatabase` would work, but the projection reconstructs `storage_root`
@@ -448,6 +454,7 @@ impl Blockchain {
             .storage
             .get_block_header_by_hash(parent_hash)?
             .ok_or(ChainError::ParentNotFound)?;
+        let mut parent_timestamp = parent_header.timestamp;
         let vm_db = StoreVmDatabase::new_with_block_hash_cache(
             self.storage.clone(),
             parent_header,
@@ -456,9 +463,19 @@ impl Blockchain {
         let mut vm = self.new_evm(vm_db.clone())?;
         // Run parents to rebuild pre-state
         for block in blocks_to_re_execute.iter().rev() {
-            vm.rerun_block(block, None)?;
+            vm.rerun_block(block, parent_timestamp, None)?;
+            parent_timestamp = block.header.timestamp;
         }
         Ok((vm, vm_db))
+    }
+
+    /// Timestamp of `block`'s parent, which tells whether `block` is a fork block.
+    fn parent_timestamp(&self, block: &Block) -> Result<u64, ChainError> {
+        Ok(self
+            .storage
+            .get_block_header_by_hash(block.header.parent_hash)?
+            .ok_or(ChainError::ParentNotFound)?
+            .timestamp)
     }
 }
 

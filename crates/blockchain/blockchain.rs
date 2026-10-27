@@ -781,10 +781,11 @@ impl Blockchain {
         validate_block_pre_execution(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         self.validate_l1_transaction_types(block)?;
 
+        let parent_timestamp = parent_header.timestamp;
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
         let mut vm = self.new_evm(vm_db)?;
 
-        let (execution_result, bal) = vm.execute_block(block)?;
+        let (execution_result, bal) = vm.execute_block(block, parent_timestamp)?;
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
@@ -834,10 +835,11 @@ impl Blockchain {
         let parent_header = find_parent_header(&block.header, &self.storage)?;
 
         // Create VM and execute block with BAL recording
+        let parent_timestamp = parent_header.timestamp;
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
         let mut vm = self.new_evm(vm_db)?;
 
-        let (_execution_result, bal) = vm.execute_block(block)?;
+        let (_execution_result, bal) = vm.execute_block(block, parent_timestamp)?;
 
         Ok(bal)
     }
@@ -1165,6 +1167,7 @@ impl Blockchain {
                         let header_bal = bal.clone();
                         let result = vm.execute_block_pipeline(
                             block,
+                            parent_header.timestamp,
                             tx,
                             queue_length_ref,
                             bal,
@@ -2024,6 +2027,7 @@ impl Blockchain {
             // will fail in the second iteration of this for loop. To ensure this,
             // doesn't fail, later in this function we store the new state after
             // re-execution.
+            let parent_timestamp = parent_header.timestamp;
             let vm_db: DynVmDatabase =
                 Box::new(StoreVmDatabase::new(self.storage.clone(), parent_header)?);
 
@@ -2055,7 +2059,7 @@ impl Blockchain {
             attach_stateless_validator(&mut vm);
 
             // Re-execute block with logger
-            let (execution_result, bal) = vm.execute_block(block)?;
+            let (execution_result, bal) = vm.execute_block(block, parent_timestamp)?;
             block_access_lists.push(bal);
 
             // Gather account updates

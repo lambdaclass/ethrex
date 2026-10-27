@@ -111,9 +111,11 @@ impl Evm {
     pub fn execute_block(
         &mut self,
         block: &Block,
+        parent_timestamp: u64,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         LEVM::execute_block(
             block,
+            parent_timestamp,
             &mut self.db,
             self.vm_type,
             self.crypto.as_ref(),
@@ -130,6 +132,7 @@ impl Evm {
     pub fn execute_block_pipeline(
         &mut self,
         block: &Block,
+        parent_timestamp: u64,
         merkleizer: Option<Sender<Vec<AccountUpdate>>>,
         queue_length: &AtomicUsize,
         bal: Option<Arc<BlockAccessList>>,
@@ -137,6 +140,7 @@ impl Evm {
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         LEVM::execute_block_pipeline(
             block,
+            parent_timestamp,
             &mut self.db,
             self.vm_type,
             merkleizer,
@@ -208,11 +212,24 @@ impl Evm {
         LEVM::undo_last_tx(&mut self.db)
     }
 
-    /// Wraps [LEVM::beacon_root_contract_call], [LEVM::process_block_hash_history].
+    /// Wraps [LEVM::bump_zero_nonce_storage_accounts], [LEVM::beacon_root_contract_call],
+    /// [LEVM::process_block_hash_history].
     /// This function is used to run/apply all the system contracts to the state.
-    pub fn apply_system_calls(&mut self, block_header: &BlockHeader) -> Result<(), EvmError> {
+    pub fn apply_system_calls(
+        &mut self,
+        block_header: &BlockHeader,
+        parent_timestamp: u64,
+    ) -> Result<(), EvmError> {
         let chain_config = self.db.store.get_chain_config()?;
         let fork = chain_config.fork(block_header.timestamp);
+
+        // EIP-8253: the fork block's irregular state change comes before its system calls.
+        LEVM::bump_zero_nonce_storage_accounts(
+            &mut self.db,
+            &chain_config,
+            parent_timestamp,
+            block_header.timestamp,
+        )?;
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
             LEVM::beacon_root_contract_call(

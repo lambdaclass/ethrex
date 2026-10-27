@@ -51,7 +51,7 @@ pub fn is_fork_id_valid(storage: &Store, remote_fork_id: &ForkId) -> Result<bool
         .get_block_header(latest_block_number)?
         .ok_or(StoreError::Custom("Latest block not in DB".to_string()))?;
     let local_fork_id = ForkId::new(
-        chain_config,
+        chain_config.clone(),
         genesis_header.clone(),
         latest_block_header.timestamp,
         latest_block_number,

@@ -815,7 +815,7 @@ impl GuestProgramState {
 
     /// Retrieves the chain configuration for the execution witness.
     pub fn get_chain_config(&self) -> Result<ChainConfig, GuestProgramStateError> {
-        Ok(self.chain_config)
+        Ok(self.chain_config.clone())
     }
 
     /// Retrieves the account code for a specific account.

@@ -134,9 +134,9 @@ async fn test_genesis_block(mut store: Store) {
     let genesis_hive: Genesis = serde_json::from_str(GENESIS_HIVE).expect("deserialize hive.json");
 
     let kurtosis_hash = genesis_kurtosis.get_block().hash();
-    let kurtosis_config = genesis_kurtosis.config;
+    let kurtosis_config = genesis_kurtosis.config.clone();
     let hive_hash = genesis_hive.get_block().hash();
-    let hive_config = genesis_hive.config;
+    let hive_config = genesis_hive.config.clone();
     assert_ne!(kurtosis_hash, hive_hash);
     assert_ne!(kurtosis_config, hive_config);
 

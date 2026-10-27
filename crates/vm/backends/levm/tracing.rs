@@ -30,12 +30,13 @@ impl LEVM {
     pub fn rerun_block(
         db: &mut GeneralizedDatabase,
         block: &Block,
+        parent_timestamp: u64,
         stop_index: Option<usize>,
         vm_type: VMType,
         crypto: &dyn Crypto,
         stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<(), EvmError> {
-        Self::prepare_block(block, db, vm_type, crypto)?;
+        Self::prepare_block(block, parent_timestamp, db, vm_type, crypto)?;
 
         // Executes transactions and stops when the index matches the stop index.
         for (index, (tx, sender)) in block
@@ -345,12 +346,13 @@ impl LEVM {
     pub fn trace_block_calls(
         db: &mut GeneralizedDatabase,
         block: &Block,
+        parent_timestamp: u64,
         only_top_call: bool,
         with_log: bool,
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<Vec<(H256, CallTrace)>, EvmError> {
-        Self::rerun_block(db, block, Some(0), vm_type, crypto, None)?;
+        Self::rerun_block(db, block, parent_timestamp, Some(0), vm_type, crypto, None)?;
         let (config, chain_id, base_blob_fee) = block_trace_env_config(db, &block.header)?;
         let mut traces = Vec::with_capacity(block.body.transactions.len());
         // Running block-absolute log index: the whole block is traced from tx 0, so each
@@ -392,12 +394,13 @@ impl LEVM {
     pub fn trace_block_prestate(
         db: &mut GeneralizedDatabase,
         block: &Block,
+        parent_timestamp: u64,
         diff_mode: bool,
         include_empty: bool,
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<Vec<(H256, PrestateResult)>, EvmError> {
-        Self::rerun_block(db, block, Some(0), vm_type, crypto, None)?;
+        Self::rerun_block(db, block, parent_timestamp, Some(0), vm_type, crypto, None)?;
         let (config, chain_id, base_blob_fee) = block_trace_env_config(db, &block.header)?;
         let mut traces = Vec::with_capacity(block.body.transactions.len());
         for (tx, sender) in block
@@ -426,11 +429,12 @@ impl LEVM {
     pub fn trace_block_opcodes(
         db: &mut GeneralizedDatabase,
         block: &Block,
+        parent_timestamp: u64,
         cfg: OpcodeTracerConfig,
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<Vec<(H256, OpcodeTraceResult)>, EvmError> {
-        Self::rerun_block(db, block, Some(0), vm_type, crypto, None)?;
+        Self::rerun_block(db, block, parent_timestamp, Some(0), vm_type, crypto, None)?;
         let (config, chain_id, base_blob_fee) = block_trace_env_config(db, &block.header)?;
         let mut traces = Vec::with_capacity(block.body.transactions.len());
         for (tx, sender) in block

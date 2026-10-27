@@ -136,7 +136,7 @@ pub fn run(args: T8nArgs) -> Result<(), T8nError> {
     // The pre-state alloc becomes the genesis of an in-memory store; the
     // genesis block acts as the parent the payload executes on top of.
     let genesis = Genesis {
-        config,
+        config: config.clone(),
         alloc: inputs.alloc.clone(),
         coinbase: Default::default(),
         difficulty: U256::zero(),

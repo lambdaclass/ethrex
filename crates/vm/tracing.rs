@@ -159,12 +159,14 @@ impl Evm {
     pub fn trace_block_calls(
         &mut self,
         block: &Block,
+        parent_timestamp: u64,
         only_top_call: bool,
         with_log: bool,
     ) -> Result<Vec<(H256, CallTrace)>, EvmError> {
         LEVM::trace_block_calls(
             &mut self.db,
             block,
+            parent_timestamp,
             only_top_call,
             with_log,
             self.vm_type,
@@ -177,12 +179,14 @@ impl Evm {
     pub fn trace_block_prestate(
         &mut self,
         block: &Block,
+        parent_timestamp: u64,
         diff_mode: bool,
         include_empty: bool,
     ) -> Result<Vec<(H256, PrestateResult)>, EvmError> {
         LEVM::trace_block_prestate(
             &mut self.db,
             block,
+            parent_timestamp,
             diff_mode,
             include_empty,
             self.vm_type,
@@ -195,9 +199,17 @@ impl Evm {
     pub fn trace_block_opcodes(
         &mut self,
         block: &Block,
+        parent_timestamp: u64,
         cfg: OpcodeTracerConfig,
     ) -> Result<Vec<(H256, OpcodeTraceResult)>, EvmError> {
-        LEVM::trace_block_opcodes(&mut self.db, block, cfg, self.vm_type, self.crypto.as_ref())
+        LEVM::trace_block_opcodes(
+            &mut self.db,
+            block,
+            parent_timestamp,
+            cfg,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
     }
 
     /// Reruns the given block, saving the changes on the state, doesn't output any results or receipts.
@@ -207,11 +219,13 @@ impl Evm {
     pub fn rerun_block(
         &mut self,
         block: &Block,
+        parent_timestamp: u64,
         stop_index: Option<usize>,
     ) -> Result<(), EvmError> {
         LEVM::rerun_block(
             &mut self.db,
             block,
+            parent_timestamp,
             stop_index,
             self.vm_type,
             self.crypto.as_ref(),

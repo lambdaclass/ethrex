@@ -26,7 +26,7 @@ async fn test_validate_status() {
         .add_initial_state(genesis.clone())
         .await
         .expect("Failed to add genesis block to DB");
-    let config = genesis.config;
+    let config = genesis.config.clone();
     let total_difficulty = U256::from(config.terminal_total_difficulty.unwrap_or_default());
     let genesis_header = genesis.get_block().header;
     let genesis_hash = genesis_header.hash();

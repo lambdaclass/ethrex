@@ -140,7 +140,7 @@ fn write_stress_fixture(
 ) -> eyre::Result<()> {
     let rpc_witness = RpcExecutionWitness::try_from(witness)
         .map_err(|e| eyre::eyre!("witness -> RpcExecutionWitness: {e:?}"))?;
-    let chain_config = *test.network.chain_config();
+    let chain_config = test.network.chain_config().clone();
 
     let cache = Cache {
         blocks,

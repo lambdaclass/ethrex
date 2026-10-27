@@ -247,6 +247,8 @@ pub struct PayloadBuildContext {
     pub block_state_gas_used: u64,
     /// Whether Amsterdam fork is active for this block.
     pub is_amsterdam: bool,
+    /// Timestamp of the parent block, which tells whether this is a fork block.
+    parent_timestamp: u64,
     pub receipts: Vec<Receipt>,
     pub requests: Option<Vec<EncodedRequests>>,
     pub block_value: U256,
@@ -295,6 +297,7 @@ impl PayloadBuildContext {
             .get_block_header_by_hash(payload.header.parent_hash)
             .map_err(|e| EvmError::DB(e.to_string()))?
             .ok_or_else(|| EvmError::DB("parent header not found".to_string()))?;
+        let parent_timestamp = parent_header.timestamp;
         let vm_db = StoreVmDatabase::new_with_block_hash_cache(
             storage.clone(),
             parent_header,
@@ -322,6 +325,7 @@ impl PayloadBuildContext {
             block_regular_gas_used: 0,
             block_state_gas_used: 0,
             is_amsterdam,
+            parent_timestamp,
             receipts: vec![],
             requests: config
                 .is_prague_activated(payload.header.timestamp)
@@ -831,13 +835,16 @@ impl Blockchain {
     }
 
     // This function applies system level operations:
+    // - On the Hegota fork block, set the nonce of the EIP-8253 accounts to 1
     // - Call beacon root contract, and obtain the new state root
     // - Call block hash process contract, and store parent block hash
     pub fn apply_system_operations(
         &self,
         context: &mut PayloadBuildContext,
     ) -> Result<(), EvmError> {
-        context.vm.apply_system_calls(&context.payload.header)
+        context
+            .vm
+            .apply_system_calls(&context.payload.header, context.parent_timestamp)
     }
 
     /// Fetches suitable transactions from the mempool
@@ -1747,7 +1754,7 @@ mod burned_fees_payload_tests {
     #[tokio::test]
     async fn lstar_block_produces_burned_fees() {
         let genesis = load_genesis_with_forks(true, true);
-        let config = genesis.config;
+        let config = genesis.config.clone();
         // slot_number=Some(1): required by the RLP trailing-optional contiguity invariant
         // when burned_fees is Some (LStar+).
         let block = build_empty_payload(genesis, Some(1)).await;

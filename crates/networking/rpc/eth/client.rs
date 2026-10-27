@@ -205,7 +205,13 @@ async fn get_config_for_fork(
         .header;
     let block_number = context.storage.get_latest_block_number()?;
     let fork_id = if let Some(timestamp) = activation_time {
-        ForkId::new(chain_config, genesis_header, timestamp, block_number).fork_hash
+        ForkId::new(
+            chain_config.clone(),
+            genesis_header,
+            timestamp,
+            block_number,
+        )
+        .fork_hash
     } else {
         H32::zero()
     };

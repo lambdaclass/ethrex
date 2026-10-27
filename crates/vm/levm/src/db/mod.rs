@@ -341,12 +341,12 @@ impl Database for CachingDatabase {
 
     fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
         if let Some(cfg) = self.chain_config.get() {
-            return Ok(*cfg);
+            return Ok(cfg.clone());
         }
         let cfg = self.inner.get_chain_config()?;
         // Ignore set error: another thread may have raced us; re-read the winner.
-        let _ = self.chain_config.set(cfg);
-        Ok(*self.chain_config.get().unwrap_or(&cfg))
+        let _ = self.chain_config.set(cfg.clone());
+        Ok(self.chain_config.get().unwrap_or(&cfg).clone())
     }
 
     fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {

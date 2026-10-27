@@ -214,16 +214,7 @@ fn default_bpo2_schedule() -> ForkBlobSchedule {
 /// Blockchain settings defined per block
 #[allow(unused)]
 #[derive(
-    Clone,
-    Copy,
-    Debug,
-    Serialize,
-    Deserialize,
-    Default,
-    PartialEq,
-    RSerialize,
-    RDeserialize,
-    Archive,
+    Clone, Debug, Serialize, Deserialize, Default, PartialEq, RSerialize, RDeserialize, Archive,
 )]
 #[serde(rename_all = "camelCase")]
 pub struct ChainConfig {
@@ -297,6 +288,13 @@ pub struct ChainConfig {
 
     #[serde(default)]
     pub enable_verkle_at_genesis: bool,
+
+    /// EIP-8253: the accounts whose nonce the first Hegota block sets to 1, before its system
+    /// calls. The chain's genesis names them under `zeroNonceStorageAccounts`; a chain that
+    /// does not has none, and its fork block changes nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[rkyv(with = rkyv::with::Map<rkyv_utils::H160Wrapper>)]
+    pub zero_nonce_storage_accounts: Vec<Address>,
 }
 
 lazy_static::lazy_static! {
@@ -384,6 +382,12 @@ impl From<Fork> for &str {
 impl ChainConfig {
     pub fn is_hegota_activated(&self, block_timestamp: u64) -> bool {
         self.hegota_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    /// Whether a block at `block_timestamp` whose parent is at `parent_timestamp` is the
+    /// first Hegota block. A chain that starts in Hegota has no such block.
+    pub fn is_hegota_fork_block(&self, parent_timestamp: u64, block_timestamp: u64) -> bool {
+        self.is_hegota_activated(block_timestamp) && !self.is_hegota_activated(parent_timestamp)
     }
 
     pub fn is_lstar_activated(&self, block_timestamp: u64) -> bool {
