@@ -54,10 +54,10 @@ mod imp {
         std::is_x86_feature_detected!("avx512f") && std::is_x86_feature_detected!("avx512vl")
     }
 
-    /// Picks the backend once per process: the AVX-512VL code wherever it runs. Measured per
-    /// one-block hash, it is 7-9% faster than the scalar code on Intel (Emerald Rapids) and about
-    /// level on AMD Zen 5, whose vector logic and rotates have two-cycle latency. Zen 4 runs them
-    /// in one cycle, so it should gain the most.
+    /// Picks the backend once per process: the AVX-512VL code wherever it runs. On the
+    /// permutation alone, per one-block hash, it is 7-9% faster than the scalar code on Intel
+    /// (Emerald Rapids) and about level on AMD Zen 5, whose vector logic and rotates have two-cycle
+    /// latency. Zen 4 runs them in one cycle and should gain the most, but is unmeasured.
     #[cfg(all(target_arch = "x86_64", feature = "std"))]
     fn backend() -> &'static Backend {
         static SELECTED: std::sync::OnceLock<&'static Backend> = std::sync::OnceLock::new();

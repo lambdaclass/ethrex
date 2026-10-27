@@ -183,6 +183,12 @@ fn store_state(state: &mut State, lanes: [__m128i; 25]) {
 }
 
 /// Same contract as the assembly `SHA3_absorb`, for the 136-byte rate only.
+///
+/// # Safety
+///
+/// The CPU must support AVX-512F and AVX-512VL, which `backend()` checks before picking this.
+/// `state` must be valid and not aliased for the call, `buf` must be readable for `len` bytes, and
+/// `rate` must be `BLOCK_SIZE` (checked in debug builds only).
 #[target_feature(enable = "avx512f,avx512vl")]
 pub(super) unsafe extern "C" fn absorb(
     state: *mut State,
@@ -207,6 +213,12 @@ pub(super) unsafe extern "C" fn absorb(
 }
 
 /// Same contract as the assembly `SHA3_squeeze`, for the 136-byte rate only.
+///
+/// # Safety
+///
+/// The CPU must support AVX-512F and AVX-512VL, which `backend()` checks before picking this.
+/// `state` must be valid and not aliased for the call, `out` must be writable for `len` bytes, and
+/// `rate` must be `BLOCK_SIZE` (checked in debug builds only).
 #[target_feature(enable = "avx512f,avx512vl")]
 pub(super) unsafe extern "C" fn squeeze(
     state: *mut State,
