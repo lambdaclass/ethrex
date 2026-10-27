@@ -10,10 +10,11 @@
 //!   - `CREATE2`
 //!   - `SELFDESTRUCT`
 //!   - `REVERT`
+//!   - `SETCODEFROM`
 
 use crate::{
     call_frame::CallFrame,
-    constants::{AMSTERDAM_INIT_CODE_MAX_SIZE, FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
+    constants::{AMSTERDAM_INIT_CODE_MAX_SIZE, EOF_PREFIX, FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost,
     memory::{self, calculate_memory_size},
@@ -23,7 +24,11 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{Address, H256, U256, evm::calculate_create_address, types::Fork};
-use ethrex_common::{tracing::CallType, types::Code};
+use ethrex_common::{
+    constants::{EMPTY_KECCAK_HASH, SYSTEM_CALL_CONTRACTS},
+    tracing::CallType,
+    types::Code,
+};
 
 pub struct OpCallHandler;
 impl OpcodeHandler for OpCallHandler {
@@ -840,6 +845,67 @@ impl OpcodeHandler for OpSelfDestructHandler {
         vm.tracer.exit_early(0, None)?;
 
         Ok(OpcodeResult::Halt)
+    }
+}
+
+/// EIP-8298 `SETCODEFROM(source)`: sets the code hash of the current account (the
+/// execution-environment address, also under EIP-7702 delegated execution or
+/// DELEGATECALL) to that of `source`, an account with regular deployed code that
+/// this transaction did not create. Pushes 1 if `source` is valid, else 0.
+///
+/// The running frame keeps executing the code it loaded; later calls and `EXTCODE*`
+/// see the new code hash.
+pub struct OpSetCodeFromHandler;
+impl OpcodeHandler for OpSetCodeFromHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        // Both halts come before the source charge, so `source` is never accessed.
+        if vm.current_call_frame.is_static {
+            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
+        }
+        let current = vm.current_call_frame.to;
+        if SYSTEM_CALL_CONTRACTS.contains(&current) {
+            return Err(ExceptionalHalt::CodeChangeInSystemContract.into());
+        }
+
+        let source = word_to_address(vm.current_call_frame.stack.pop1()?);
+
+        // Paid on every attempt, before `source` is read. A failed charge halts the
+        // frame, which takes the warming with it.
+        let source_was_cold = vm.substate.add_accessed_address(source);
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::setcodefrom_source(
+                source_was_cold,
+                vm.env.config.fork,
+            )?)?;
+        // Once the charge is paid `source` is accessed, valid or not (EIP-7928).
+        if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(source);
+        }
+
+        // A nonexistent account reads with the empty code hash, so the existence
+        // requirement is covered by the empty-code one. `source`'s own code is read:
+        // an EIP-7702 delegation is not followed, and its 0xEF prefix makes it invalid.
+        let source_code_hash = vm.db.get_account(source)?.info.code_hash;
+        let source_is_valid = source_code_hash != *EMPTY_KECCAK_HASH
+            && vm.db.get_code(source_code_hash)?.code().first() != Some(&EOF_PREFIX)
+            && !vm.substate.is_account_created(&source);
+
+        if !source_is_valid {
+            vm.current_call_frame.stack.push(FAIL)?;
+            return Ok(OpcodeResult::Continue);
+        }
+
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::SETCODEFROM_CURRENT_ACCESS)?;
+        if vm.db.get_account(current)?.info.code_hash != source_code_hash {
+            vm.current_call_frame
+                .increase_consumed_gas(gas_cost::SETCODEFROM_WRITE)?;
+            vm.adopt_account_code(current, source_code_hash)?;
+        }
+        vm.current_call_frame.stack.push(SUCCESS)?;
+
+        Ok(OpcodeResult::Continue)
     }
 }
 

@@ -22,6 +22,60 @@ pub const MAINNET_DEPOSIT_CONTRACT_ADDRESS: H160 = H160([
     0x3D, 0x77, 0x05, 0xFA,
 ]);
 
+// The contracts the protocol calls from `SYSTEM_ADDRESS` while processing a block.
+// They live here rather than only in `ethrex_vm::system_contracts` so that the EVM
+// can reach them (see `SYSTEM_CALL_CONTRACTS`); `system_contracts` re-uses these
+// values so there is one copy.
+
+/// EIP-4788 beacon roots contract. 0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02
+pub const BEACON_ROOTS_ADDRESS: H160 = H160([
+    0x00, 0x0F, 0x3D, 0xF6, 0xD7, 0x32, 0x80, 0x7E, 0xF1, 0x31, 0x9F, 0xB7, 0xB8, 0xBB, 0x85, 0x22,
+    0xD0, 0xBE, 0xAC, 0x02,
+]);
+
+/// EIP-2935 block hash history contract. 0x0000F90827F1C53a10cb7A02335B175320002935
+pub const HISTORY_STORAGE_ADDRESS: H160 = H160([
+    0x00, 0x00, 0xF9, 0x08, 0x27, 0xF1, 0xC5, 0x3A, 0x10, 0xCB, 0x7A, 0x02, 0x33, 0x5B, 0x17, 0x53,
+    0x20, 0x00, 0x29, 0x35,
+]);
+
+/// EIP-7002 withdrawal request predeploy. 0x00000961Ef480Eb55e80D19ad83579A64c007002
+pub const WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x09, 0x61, 0xEF, 0x48, 0x0E, 0xB5, 0x5E, 0x80, 0xD1, 0x9A, 0xD8, 0x35, 0x79, 0xA6,
+    0x4C, 0x00, 0x70, 0x02,
+]);
+
+/// EIP-7251 consolidation request predeploy. 0x0000BBdDc7CE488642fb579F8B00f3a590007251
+pub const CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS: H160 = H160([
+    0x00, 0x00, 0xBB, 0xDD, 0xC7, 0xCE, 0x48, 0x86, 0x42, 0xFB, 0x57, 0x9F, 0x8B, 0x00, 0xF3, 0xA5,
+    0x90, 0x00, 0x72, 0x51,
+]);
+
+/// EIP-8282 builder deposit predeploy. 0x0000BFF46984E3725691FA540A8C7589300D8282
+pub const BUILDER_DEPOSIT_CONTRACT_ADDRESS: H160 = H160([
+    0x00, 0x00, 0xBF, 0xF4, 0x69, 0x84, 0xE3, 0x72, 0x56, 0x91, 0xFA, 0x54, 0x0A, 0x8C, 0x75, 0x89,
+    0x30, 0x0D, 0x82, 0x82,
+]);
+
+/// EIP-8282 builder exit predeploy. 0x000064D678505AD48F8CCB093BC65613800E8282
+pub const BUILDER_EXIT_CONTRACT_ADDRESS: H160 = H160([
+    0x00, 0x00, 0x64, 0xD6, 0x78, 0x50, 0x5A, 0xD4, 0x8F, 0x8C, 0xCB, 0x09, 0x3B, 0xC6, 0x56, 0x13,
+    0x80, 0x0E, 0x82, 0x82,
+]);
+
+/// Every contract the protocol calls from `SYSTEM_ADDRESS` while processing a block,
+/// at the forks that have `SETCODEFROM` (EIP-8298), which halts when one of them is
+/// the current account: block processing depends on their code. The EIP-6110 deposit
+/// contract is not one of them, as its logs are read but it is never called.
+pub const SYSTEM_CALL_CONTRACTS: [H160; 6] = [
+    BEACON_ROOTS_ADDRESS,
+    HISTORY_STORAGE_ADDRESS,
+    WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+    CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+    BUILDER_DEPOSIT_CONTRACT_ADDRESS,
+    BUILDER_EXIT_CONTRACT_ADDRESS,
+];
+
 // = Keccak256(RLP([])) as of EIP-3675
 pub static DEFAULT_OMMERS_HASH: LazyLock<H256> = LazyLock::new(|| {
     H256::from_slice(

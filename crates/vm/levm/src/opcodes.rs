@@ -172,6 +172,8 @@ pub enum Opcode {
     LOG2 = 0xA2,
     LOG3 = 0xA3,
     LOG4 = 0xA4,
+    // EIP-8298
+    SETCODEFROM = 0xA7,
     // EIP-8141 Frame Transaction opcodes
     APPROVE = 0xAA,
     TXPARAM = 0xB0,
@@ -338,6 +340,7 @@ impl From<u8> for Opcode {
             table[0xA2] = Opcode::LOG2;
             table[0xA3] = Opcode::LOG3;
             table[0xA4] = Opcode::LOG4;
+            table[0xA7] = Opcode::SETCODEFROM;
             table[0xAA] = Opcode::APPROVE;
             table[0xB0] = Opcode::TXPARAM;
             table[0xB1] = Opcode::FRAMEDATALOAD;
@@ -675,6 +678,8 @@ impl<'a> VM<'a> {
         // EIP-7906 transaction assertion opcodes, valid only inside an ASSERT frame
         opcode_table[Opcode::TXTRACE as usize] = OpCodeFn::new::<OpTxTraceHandler>();
         opcode_table[Opcode::EVENTDATACOPY as usize] = OpCodeFn::new::<OpEventDataCopyHandler>();
+        // EIP-8298 code reuse
+        opcode_table[Opcode::SETCODEFROM as usize] = OpCodeFn::new::<OpSetCodeFromHandler>();
 
         opcode_table
     }

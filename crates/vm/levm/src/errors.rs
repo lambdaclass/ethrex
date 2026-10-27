@@ -62,6 +62,10 @@ pub enum ExceptionalHalt {
     InvalidJump,
     #[error("Opcode Not Allowed In Static Context")]
     OpcodeNotAllowedInStaticContext,
+    /// EIP-8298: `SETCODEFROM` would replace the code of a contract the protocol
+    /// calls while processing a block.
+    #[error("Code Change In System Contract")]
+    CodeChangeInSystemContract,
     #[error("Invalid Contract Prefix")]
     InvalidContractPrefix,
     #[error("Very Large Number")]

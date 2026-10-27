@@ -1041,6 +1041,29 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
+    /// EIP-8298: points `address` at existing code by its hash, as `SETCODEFROM`
+    /// does. The bytecode is already stored, so only the code hash changes, and the
+    /// BAL records the hash rather than the bytecode.
+    pub fn adopt_account_code(
+        &mut self,
+        address: Address,
+        code_hash: H256,
+    ) -> Result<(), InternalError> {
+        if self.db.bal_recorder.is_some() {
+            // Captured before the change, for net-zero detection as in
+            // `update_account_bytecode`.
+            let current_code_bytes = self.db.get_account_code(address)?.code_bytes();
+            if let Some(recorder) = self.db.bal_recorder.as_mut() {
+                recorder.capture_initial_code_presence(address, !current_code_bytes.is_empty());
+                recorder.set_initial_code(address, current_code_bytes);
+                recorder.record_code_adoption(address, code_hash);
+            }
+        }
+
+        self.get_account_mut(address)?.info.code_hash = code_hash;
+        Ok(())
+    }
+
     // =================== Nonce related functions ======================
     /// Increments the nonce of the given account.
     /// Per EIP-7928, nonce changes are recorded for:

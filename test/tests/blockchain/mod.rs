@@ -11,6 +11,7 @@ mod eip7702_revert_authority_tests;
 mod eip7702_zero_transfer_tests;
 mod eip8037_block_gate_tests;
 mod eip8070_kzg_tests;
+mod eip8298_tests;
 mod explicit_blob_tx_tests;
 mod frame_blob_tx_tests;
 mod l1_tx_type_tests;

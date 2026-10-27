@@ -258,7 +258,9 @@ fn geth_error_string(err: &VMError) -> String {
             // geth's wording for a nonce that cannot advance.
             NonceOverflow => "nonce uint64 overflow",
             // No direct geth analogue; keep LEVM's message.
-            VeryLargeNumber | OutOfBounds | Precompile(_) => return err.to_string(),
+            VeryLargeNumber | OutOfBounds | CodeChangeInSystemContract | Precompile(_) => {
+                return err.to_string();
+            }
         },
         _ => return err.to_string(),
     };

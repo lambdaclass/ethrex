@@ -952,6 +952,22 @@ pub fn extcodehash(address_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
     )
 }
 
+/// EIP-8298 `SETCODEFROM_SOURCE_GAS`, charged on every attempt: loading the source
+/// account leaf (cold or warm), plus a `WARM_ACCESS` for inspecting its code.
+pub fn setcodefrom_source(source_was_cold: bool, fork: Fork) -> Result<u64, VMError> {
+    address_access_cost(source_was_cold, 0, 0, WARM_ADDRESS_ACCESS_COST, fork)?
+        .checked_add(WARM_ADDRESS_ACCESS_COST)
+        .ok_or(OutOfGas.into())
+}
+
+/// EIP-8298 `SETCODEFROM_CURRENT_ACCESS_GAS`: for a valid source, accessing the
+/// already warm current account to compare code hashes.
+pub const SETCODEFROM_CURRENT_ACCESS: u64 = WARM_ADDRESS_ACCESS_COST;
+
+/// EIP-8298 `SETCODEFROM_WRITE_GAS`: the EIP-8038 `ACCOUNT_WRITE` of updating the
+/// current account's code hash, charged only when it changes.
+pub const SETCODEFROM_WRITE: u64 = ACCOUNT_WRITE_AMSTERDAM;
+
 #[allow(clippy::too_many_arguments)]
 pub fn call(
     new_memory_size: usize,

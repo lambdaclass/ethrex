@@ -7,7 +7,10 @@ use crate::{
 };
 
 use bytes::Bytes;
-use ethrex_common::types::{Code, Fork};
+use ethrex_common::{
+    constants::EMPTY_KECCAK_HASH,
+    types::{Code, Fork},
+};
 
 impl<'a> VM<'a> {
     pub fn handle_precompile_result(
@@ -44,6 +47,19 @@ impl<'a> VM<'a> {
 
     #[cold] // used in the hot path loop, called only really once.
     pub fn handle_opcode_result(&mut self) -> Result<ContextResult, VMError> {
+        // EIP-8298: initcode that adopted code through SETCODEFROM leaves the created
+        // account's code hash set. Its return data is then not validated, charged or
+        // deposited; the creation deploys the adopted code, which it reports as its
+        // output. Before Hegota a created account's code is always empty here.
+        if self.is_create()? && self.env.config.fork >= Fork::Hegota {
+            let contract_address = self.current_call_frame.to;
+            let code_hash = self.db.get_account(contract_address)?.info.code_hash;
+            if code_hash != *EMPTY_KECCAK_HASH {
+                self.current_call_frame.output = self.db.get_code(code_hash)?.code_bytes();
+                return self.successful_context_result();
+            }
+        }
+
         // On successful create check output validity
         if self.is_create()? {
             let validate_create = self.validate_contract_creation();
@@ -93,6 +109,10 @@ impl<'a> VM<'a> {
             self.update_account_bytecode(contract_address, Code::from_bytecode(code, self.crypto))?;
         }
 
+        self.successful_context_result()
+    }
+
+    fn successful_context_result(&mut self) -> Result<ContextResult, VMError> {
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         let gas_used = {
             let callframe = &mut self.current_call_frame;
