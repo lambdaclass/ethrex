@@ -11,6 +11,7 @@ use crate::{
     },
     gas_cost::{
         STATE_BYTES_PER_AUTH_BASE, STATE_BYTES_PER_NEW_ACCOUNT, STATE_BYTES_PER_STORAGE_SET,
+        WARM_ADDRESS_ACCESS_COST, cold_account_access_cost,
         cost_per_state_byte as compute_cost_per_state_byte,
     },
     hooks::{
@@ -32,7 +33,7 @@ use ethrex_common::{
     tracing::CallType,
     types::{
         AccessListEntry, Code, Fork, Frame, FrameFeeBudget, FrameMode, Log, Transaction, TxType,
-        block_access_list::BlockAccessListCheckpoint, fee_config::FeeConfig,
+        block_access_list::BlockAccessListCheckpoint, fee_config::FeeConfig, is_eip7702_delegation,
     },
 };
 use ethrex_crypto::Crypto;
@@ -3616,28 +3617,24 @@ impl<'a> VM<'a> {
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         if self.address_is_precompile(&self.current_call_frame.to) {
             // `execute_precompile` itself never touches state gas (it only mutates
-            // `gas_remaining`; it has no access to `state_gas_used` / `state_gas_reservoir` /
-            // `state_gas_spill`) — the assert below guards that. The in-region EIP-2780
+            // `gas_remaining`, plus, for EIP-8151's ecrecover, the warm set and the BAL;
+            // never `state_gas_used` / `state_gas_reservoir` / `state_gas_spill`) — the
+            // assert below guards that. The in-region EIP-2780
             // value-to-not-alive NEW_ACCOUNT charge (`prepare_execution`),
             // however, IS frame state gas, and on an exceptional halt/revert it must be
-            // rolled back (see below). `self` is borrowed by field rather than via
-            // `&mut self.current_call_frame` so the refund call, which needs `&mut self`,
-            // can run after `execute_precompile`.
+            // rolled back (see below).
             let state_gas_used_before_precompile = self.state_gas_used;
             // Resolve a relocation destination back to the precompile it hosts.
             let code_address =
                 self.effective_precompile_address(self.current_call_frame.code_address);
             let precompile_gas_limit = self.current_call_frame.gas_limit;
             let mut gas_remaining = self.current_call_frame.gas_remaining as u64;
-            let result = Self::execute_precompile(
+            let calldata = self.current_call_frame.calldata.clone();
+            let result = self.execute_precompile(
                 code_address,
-                &self.current_call_frame.calldata,
+                &calldata,
                 precompile_gas_limit,
                 &mut gas_remaining,
-                self.env.config.fork,
-                self.db.store.precompile_cache(),
-                self.crypto,
-                self.stateless_validator,
             );
 
             debug_assert_eq!(
@@ -4061,30 +4058,68 @@ impl<'a> VM<'a> {
     }
 
     /// Executes precompile and handles the output that it returns, generating a report.
-    #[allow(clippy::too_many_arguments)]
     pub fn execute_precompile(
+        &mut self,
         code_address: H160,
         calldata: &Bytes,
         gas_limit: u64,
         gas_remaining: &mut u64,
-        fork: Fork,
-        cache: Option<&precompiles::PrecompileCache>,
-        crypto: &dyn Crypto,
-        stateless_validator: Option<&dyn crate::StatelessValidator>,
     ) -> Result<ContextResult, VMError> {
-        Self::handle_precompile_result(
-            precompiles::execute_precompile(
-                code_address,
-                calldata,
-                gas_remaining,
-                fork,
-                cache,
-                crypto,
-                stateless_validator,
-            ),
-            gas_limit,
-            *gas_remaining,
-        )
+        let result = precompiles::execute_precompile(
+            code_address,
+            calldata,
+            gas_remaining,
+            self.env.config.fork,
+            self.db.store.precompile_cache(),
+            self.crypto,
+            self.stateless_validator,
+        );
+        let result = self.check_ecrecover_signer_code(code_address, result, gas_remaining);
+        Self::handle_precompile_result(result, gas_limit, *gas_remaining)
+    }
+
+    /// EIP-8151 (Hegota+): a successful ecrecover also pays for an account access and a code
+    /// read of the recovered address, warms it and records it in the BAL, and then withholds
+    /// it, returning empty output as a failed recovery does, unless its raw code is empty or
+    /// exactly an EIP-7702 delegation designation. It runs on the precompile's result, so the
+    /// precompile cache keeps holding only what the calldata determines.
+    fn check_ecrecover_signer_code(
+        &mut self,
+        code_address: Address,
+        result: Result<Bytes, VMError>,
+        gas_remaining: &mut u64,
+    ) -> Result<Bytes, VMError> {
+        if code_address != precompiles::ECRECOVER.address || self.env.config.fork < Fork::Hegota {
+            return result;
+        }
+        let output = result?;
+        // A failed recovery returns empty output and reads no state.
+        let Some(signer) = output.get(12..32).map(Address::from_slice) else {
+            return Ok(output);
+        };
+
+        // Cold or warm comes from the warm set before the account is read, and the cost is
+        // paid before the signer is warmed, recorded or read: an unpaid check accesses nothing.
+        let access_cost = if self.substate.is_address_accessed(&signer) {
+            WARM_ADDRESS_ACCESS_COST
+        } else {
+            cold_account_access_cost(self.env.config.fork)
+        };
+        let code_check_cost = access_cost
+            .checked_add(WARM_ADDRESS_ACCESS_COST)
+            .ok_or(InternalError::Overflow)?;
+        precompiles::increase_precompile_consumed_gas(code_check_cost, gas_remaining)?;
+
+        self.substate.add_accessed_address(signer);
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
+            recorder.record_touched_address(signer);
+        }
+        let code = self.db.get_account_code(signer)?.code();
+        if code.is_empty() || is_eip7702_delegation(code) {
+            Ok(output)
+        } else {
+            Ok(Bytes::new())
+        }
     }
 
     /// True if external transaction is a contract creation
