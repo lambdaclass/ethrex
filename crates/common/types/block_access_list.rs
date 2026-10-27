@@ -2437,6 +2437,26 @@ mod checkpoint_restore_tests {
     }
 
     #[test]
+    fn repeated_touches_keep_one_entry_and_survive_tx_restore() {
+        let mut r = BlockAccessListRecorder::new();
+        r.set_block_access_index(1);
+        for address in [addr(1), addr(2), addr(1), addr(2), addr(2)] {
+            r.record_touched_address(address);
+        }
+        let touched =
+            |r: &BlockAccessListRecorder| r.touched_addresses.iter().copied().collect::<Vec<_>>();
+        assert_eq!(touched(&r), [addr(1), addr(2)]);
+        // A rejected transaction truncates the set, so the address it touched last is no
+        // longer present and must be recorded again by the next transaction.
+        let tx_cp = r.tx_checkpoint();
+        r.record_touched_address(addr(3));
+        r.tx_restore(tx_cp);
+        r.record_touched_address(addr(2));
+        r.record_touched_address(addr(3));
+        assert_eq!(touched(&r), [addr(1), addr(2), addr(3)]);
+    }
+
+    #[test]
     fn tx_restore_undoes_everything_including_touched_addresses() {
         let mut r = BlockAccessListRecorder::new();
         // Tx 1 commits.
