@@ -106,8 +106,8 @@ impl Stack {
     /// in place (one `offset` write instead of `pop::<2>` + `push`'s two), where `a` is the
     /// original top and `*b` the original second operand.
     ///
-    /// The popped value is returned by reference: returned by value inside the `Result`, its
-    /// first byte shares storage with the error, and LLVM copies it into a temporary in
+    /// The popped value is returned by reference. Returned by value inside the `Result`, it
+    /// would share its first byte with the error, and LLVM would copy it into a temporary in
     /// pieces that a 32-byte load can't forward from, stalling every EQ.
     #[inline]
     pub fn pop1_and_top_mut(&mut self) -> Result<(&U256, &mut U256), ExceptionalHalt> {
@@ -119,6 +119,7 @@ impl Stack {
         let (popped, rest) = self.values.split_at_mut(new_top);
         match (popped.last(), rest.first_mut()) {
             (Some(a), Some(b)) => Ok((a, b)),
+            // Unreachable: `new_top` is at least 1 and below the length, so neither half is empty.
             _ => Err(ExceptionalHalt::StackUnderflow),
         }
     }
