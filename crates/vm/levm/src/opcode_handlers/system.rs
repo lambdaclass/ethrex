@@ -790,8 +790,10 @@ impl OpcodeHandler for OpSelfDestructHandler {
                 vm.transfer(to, beneficiary, balance)?;
             }
 
-            // Selfdestruct is executed in the same transaction as the contract was created
-            if vm.substate.is_account_created(&to) {
+            // Selfdestruct is executed in the same transaction as the contract was created.
+            // [EIP-4758] (Hegota+): the opcode is SENDALL, which only moves the balance and
+            // never destroys the account, not even one created in this transaction.
+            if vm.env.config.fork < Fork::Hegota && vm.substate.is_account_created(&to) {
                 // [EIP-8246] (Amsterdam+): balance is NOT burned; nonce/code/storage are cleared
                 // at finalization while balance is preserved. Pre-Amsterdam (EIP-6780): Ether is
                 // burned when to == beneficiary.
