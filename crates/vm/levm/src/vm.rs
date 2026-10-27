@@ -787,6 +787,11 @@ pub struct VM<'a> {
     /// generation, the stateless validator itself) — those paths can't supply
     /// one without a dependency cycle or recursion.
     pub stateless_validator: Option<&'a dyn crate::StatelessValidator>,
+    /// EIP-7906: the state diff the `ASSERT` frames read, built on the first
+    /// `TXTRACE` or `EVENTDATACOPY` and kept for the rest of the transaction. It
+    /// cannot change while it is read: `ASSERT` frames are static and emit no logs,
+    /// and a failing one skips every frame after it.
+    pub(crate) assertion_diff: Option<crate::opcode_handlers::tx_assertion::TxDiff>,
 }
 
 /// secp256k1 group order `n`.
@@ -1226,6 +1231,7 @@ impl<'a> VM<'a> {
             opcode_table: VM::build_opcode_table(fork),
             crypto,
             stateless_validator,
+            assertion_diff: None,
         };
 
         let call_type = if is_create {
@@ -4403,6 +4409,7 @@ impl<'a> VM<'a> {
             stateless_validator: None,
             validation_observer: ValidationObserver::disabled(),
             frame_tx_context: None,
+            assertion_diff: None,
         }
     }
 

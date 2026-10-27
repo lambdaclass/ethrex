@@ -4,8 +4,10 @@
 //! `ASSERT` frames, and halt exceptionally anywhere else. The diff is the net
 //! difference between the transaction prestate (`GeneralizedDatabase::tx_prestate`,
 //! each account and slot as the transaction first touched it) and the live state at
-//! the reading instruction. The tables are recomputed on every read from those two
-//! maps and from the logs of the frames that have completed.
+//! the reading instruction. The tables are built from those two maps and from the
+//! logs of the frames that have completed on the first read, and every later read
+//! indexes them: each call does constant work for its flat price, as the EIP's gas
+//! rationale assumes.
 
 use ethrex_common::types::{AccountInfo, FrameMode, Log};
 use ethrex_common::{Address, H256, U256};
@@ -24,6 +26,45 @@ use crate::vm::VM;
 type FieldChange = (Address, U256, U256);
 /// One `slots_changed` entry: `(address, slot_key, value_before, value_after)`.
 type SlotChange = (Address, H256, U256, U256);
+
+/// The transaction's state diff in its enumeration order, as `TXTRACE` and
+/// `EVENTDATACOPY` index it.
+#[derive(Debug, Clone, Default)]
+pub struct TxDiff {
+    balances: Vec<FieldChange>,
+    slots: Vec<SlotChange>,
+    codes: Vec<FieldChange>,
+    nonces: Vec<FieldChange>,
+    events: Vec<Log>,
+}
+
+/// Builds the diff into `VM::assertion_diff` unless an earlier read of the same
+/// transaction already did. Code hashes are compared as stored: an EIP-7702
+/// delegation indicator is hashed itself, not followed, and a missing account has
+/// the empty-code hash.
+fn ensure_tx_diff(vm: &mut VM<'_>) -> Result<(), VMError> {
+    if vm.assertion_diff.is_some() {
+        return Ok(());
+    }
+    let prestate = tx_prestate(vm)?;
+    let current = &vm.db.current_accounts_state;
+    let diff = TxDiff {
+        balances: field_changes(prestate, current, |info| info.balance),
+        slots: slot_changes(prestate, current),
+        codes: field_changes(prestate, current, |info| h256_to_u256(info.code_hash)),
+        nonces: field_changes(prestate, current, |info| U256::from(info.nonce)),
+        events: transaction_events(vm),
+    };
+    vm.assertion_diff = Some(diff);
+    Ok(())
+}
+
+/// The diff `ensure_tx_diff` built.
+fn tx_diff<'a>(vm: &'a VM<'_>) -> Result<&'a TxDiff, VMError> {
+    vm.assertion_diff
+        .as_ref()
+        .ok_or_else(|| InternalError::msg("EIP-7906 diff read before it was built").into())
+}
 
 /// An account-field table: every address the transaction touched whose live value
 /// of `field` differs from its prestate value, ascending by address.
@@ -165,36 +206,30 @@ impl OpcodeHandler for OpTxTraceHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::TXTRACE)?;
         require_assert_frame(vm)?;
+        ensure_tx_diff(vm)?;
 
-        let prestate = tx_prestate(vm)?;
-        let current = &vm.db.current_accounts_state;
-        // Code hashes are compared as stored: an EIP-7702 delegation indicator is
-        // hashed itself, not followed, and a missing account has the empty-code hash.
-        let balances = || field_changes(prestate, current, |info| info.balance);
-        let codes = || field_changes(prestate, current, |info| h256_to_u256(info.code_hash));
-        let nonces = || field_changes(prestate, current, |info| U256::from(info.nonce));
+        let diff = tx_diff(vm)?;
         let param = u8::try_from(param).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
         let value = match param {
             0x00 => {
                 require_zero(index)?;
-                U256::from(balances().len())
+                U256::from(diff.balances.len())
             }
             0x01 => {
                 require_zero(index)?;
-                U256::from(slot_changes(prestate, current).len())
+                U256::from(diff.slots.len())
             }
             0x02 => {
                 require_zero(index)?;
-                U256::from(codes().len())
+                U256::from(diff.codes.len())
             }
             0x03 => {
                 require_zero(index)?;
-                U256::from(nonces().len())
+                U256::from(diff.nonces.len())
             }
-            0x04..=0x06 => field_entry(table_entry(&balances(), index)?, param, 0x04),
+            0x04..=0x06 => field_entry(table_entry(&diff.balances, index)?, param, 0x04),
             0x07..=0x0A => {
-                let (address, key, before, after) =
-                    table_entry(&slot_changes(prestate, current), index)?;
+                let (address, key, before, after) = table_entry(&diff.slots, index)?;
                 match param {
                     0x07 => address_to_u256(address),
                     0x08 => before,
@@ -202,14 +237,14 @@ impl OpcodeHandler for OpTxTraceHandler {
                     _ => h256_to_u256(key),
                 }
             }
-            0x0B..=0x0D => field_entry(table_entry(&codes(), index)?, param, 0x0B),
-            0x0E..=0x10 => field_entry(table_entry(&nonces(), index)?, param, 0x0E),
+            0x0B..=0x0D => field_entry(table_entry(&diff.codes, index)?, param, 0x0B),
+            0x0E..=0x10 => field_entry(table_entry(&diff.nonces, index)?, param, 0x0E),
             0x11 => {
                 require_zero(index)?;
-                U256::from(transaction_events(vm).len())
+                U256::from(diff.events.len())
             }
             0x12..=0x18 => {
-                let event = table_entry(&transaction_events(vm), index)?;
+                let event = table_entry(&diff.events, index)?;
                 match param {
                     0x12 => address_to_u256(event.address),
                     0x13 => U256::from(event.topics.len()),
@@ -263,8 +298,9 @@ impl OpcodeHandler for OpEventDataCopyHandler {
                 size,
             )?)?;
         require_assert_frame(vm)?;
+        ensure_tx_diff(vm)?;
 
-        let event = table_entry(&transaction_events(vm), event_index)?;
+        let event = table_entry(&tx_diff(vm)?.events, event_index)?;
         let start = usize::try_from(data_offset).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
         let end = start
             .checked_add(size)
