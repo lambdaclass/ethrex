@@ -3537,8 +3537,8 @@ impl Blockchain {
     /// non-head canonical blocks leak in and are never evicted (value/nonce
     /// eviction pins low nonces). Resetting against on-chain nonces clears them.
     ///
-    /// A blob-carrying EIP-8141 frame tx is stale once any of its EIP-8250 nonce
-    /// keys has moved past its sequence; only key 0 is the account nonce.
+    /// A blob-carrying EIP-8141 frame tx is stale once the nonce domain its EIP-8250
+    /// key set selects has moved past its sequence.
     pub async fn remove_stale_blob_txs(&self, head_hash: BlockHash) -> Result<(), StoreError> {
         let blob_txs = self.mempool.blob_txs()?;
         if blob_txs.is_empty() {
@@ -3571,27 +3571,24 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Whether any of `frame_tx`'s EIP-8250 nonce keys has moved past its
-    /// sequence at `head_hash`: key 0 is `account_nonce`, every other key is
-    /// its `NONCE_MANAGER` slot.
+    /// Whether `frame_tx`'s EIP-8250 nonce domain has moved past its sequence at
+    /// `head_hash`: the empty key set is `account_nonce`, every key its
+    /// `NONCE_MANAGER` slot. A single-use set is stale once any of its keys is used.
     fn frame_tx_nonce_consumed(
         &self,
         head_hash: BlockHash,
         frame_tx: &ethrex_common::types::FrameTransaction,
         account_nonce: u64,
     ) -> Result<bool, StoreError> {
-        if frame_tx.nonce_keys.iter().any(U256::is_zero) && account_nonce > frame_tx.nonce_seq {
-            return Ok(true);
-        }
-        if frame_tx.nonce_keys.iter().all(U256::is_zero) {
-            return Ok(false);
+        if !frame_tx.is_keyed() {
+            return Ok(account_nonce > frame_tx.nonce_seq);
         }
         // Without the head's state the keys cannot be read; keep the tx rather
         // than evict it on missing information.
         let Some(header) = self.storage.get_block_header_by_hash(head_hash)? else {
             return Ok(false);
         };
-        for nonce_key in frame_tx.nonce_keys.iter().filter(|key| !key.is_zero()) {
+        for nonce_key in &frame_tx.nonce_keys {
             let sequence = self
                 .storage
                 .get_storage_at_root(
@@ -3600,7 +3597,12 @@ impl Blockchain {
                     ethrex_common::types::keyed_nonce_slot(frame_tx.sender, *nonce_key),
                 )?
                 .unwrap_or_default();
-            if sequence > U256::from(frame_tx.nonce_seq) {
+            let consumed = if frame_tx.is_single_use() {
+                !sequence.is_zero()
+            } else {
+                sequence > U256::from(frame_tx.nonce_seq)
+            };
+            if consumed {
                 return Ok(true);
             }
         }

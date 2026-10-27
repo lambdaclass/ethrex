@@ -95,7 +95,7 @@ fn frame_tx_with_one_blob(chain_id: u64) -> (FrameTransaction, BlobsBundle) {
         .expect("build the blob sidecar");
     let tx = FrameTransaction {
         chain_id,
-        nonce_keys: vec![U256::zero()],
+        nonce_keys: vec![],
         nonce_seq: 0,
         sender: SENDER,
         frames: vec![Frame {

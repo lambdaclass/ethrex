@@ -663,7 +663,7 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
     let sender = Address::from_low_u64_be(0xABCD);
     FrameTransaction {
         chain_id: 0, // matches ChainConfig::default().chain_id
-        nonce_keys: vec![U256::zero()],
+        nonce_keys: vec![],
         nonce_seq: 0,
         sender,
         // A single `self_verify` frame: VERIFY mode, targets the sender, and
@@ -1101,7 +1101,7 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
     data.copy_from_slice(&deadline.to_be_bytes());
     FrameTransaction {
         chain_id: 0,
-        nonce_keys: vec![U256::zero()],
+        nonce_keys: vec![],
         nonce_seq: 0,
         sender,
         frames: vec![
@@ -1847,7 +1847,7 @@ fn funded_frame_tx(max_fee_per_gas: u64, max_priority_fee_per_gas: u64) -> Frame
     let sender = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
     let mut tx = FrameTransaction {
         chain_id: 0,
-        nonce_keys: vec![U256::zero()],
+        nonce_keys: vec![],
         nonce_seq: 0,
         sender,
         frames: vec![Frame {
@@ -1948,7 +1948,7 @@ async fn mempool_rejects_underfunded_paymaster() {
     let phantom_sender = Address::from_low_u64_be(0xDEAD_BEEF);
     let phantom_frame_tx = FrameTransaction {
         chain_id: 0,
-        nonce_keys: vec![U256::zero()],
+        nonce_keys: vec![],
         nonce_seq: 99,
         sender: phantom_sender,
         frames: vec![Frame {
@@ -2027,7 +2027,7 @@ async fn mempool_enforces_noncanonical_paymaster_limit() {
     let phantom_sender = Address::from_low_u64_be(0xDEAD_BEEF);
     let phantom_frame_tx = FrameTransaction {
         chain_id: 0,
-        nonce_keys: vec![U256::zero()],
+        nonce_keys: vec![],
         nonce_seq: 99,
         sender: phantom_sender,
         frames: vec![Frame {
@@ -2104,7 +2104,7 @@ async fn mempool_rejects_second_frame_tx_same_sender_new_nonce() {
     // Directly insert a frame tx at nonce=1 (bypasses simulation nonce check).
     let nonce1_frame_tx = FrameTransaction {
         chain_id: 0,
-        nonce_keys: vec![U256::zero()],
+        nonce_keys: vec![],
         nonce_seq: 1,
         sender,
         frames: vec![Frame {
@@ -2349,7 +2349,7 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
     let phantom_sender = Address::from_low_u64_be(0xCAFE_F00D);
     let phantom_frame_tx = FrameTransaction {
         chain_id: 0,
-        nonce_keys: vec![U256::zero()],
+        nonce_keys: vec![],
         nonce_seq: 7,
         sender: phantom_sender,
         frames: vec![Frame {
@@ -3363,7 +3363,7 @@ mod p2p_serve_tests {
     fn make_frame_tx() -> FrameTransaction {
         FrameTransaction {
             chain_id: 1,
-            nonce_keys: vec![U256::zero()],
+            nonce_keys: vec![],
             nonce_seq: 7,
             sender: Address::from_low_u64_be(0xABCD),
             frames: vec![Frame {

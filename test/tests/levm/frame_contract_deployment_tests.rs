@@ -240,7 +240,7 @@ fn frame_tx_result(
     let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(store), cache);
     let tx = FrameTransaction {
         chain_id: 1,
-        nonce_keys: vec![U256::zero()],
+        nonce_keys: vec![],
         nonce_seq: 0,
         sender: SENDER,
         frames: vec![

@@ -1677,7 +1677,7 @@ impl Transaction {
             Transaction::PrivilegedL2Transaction(tx) => tx.nonce,
             Transaction::FeeTokenTransaction(tx) => tx.nonce,
             // EIP-8250: the sequence shared by the selected nonce keys. It equals the
-            // sender's account nonce only for `nonce_keys == [0]`.
+            // sender's account nonce only for the empty key set.
             Transaction::FrameTransaction(tx) => tx.nonce_seq,
         }
     }
@@ -2204,10 +2204,10 @@ impl RLPDecode for FrameSignature {
 #[derive(Clone, Debug, PartialEq, Eq, RSerialize, RDeserialize, Archive)]
 pub struct FrameTransaction {
     pub chain_id: u64,
-    /// EIP-8250 keyed nonces, replacing EIP-8141's single `nonce`: one to sixteen
-    /// strictly increasing keys sharing [`Self::nonce_seq`]. `[0]` selects the
-    /// sender's account nonce; any other set selects independent sequences held in
-    /// the `NONCE_MANAGER` system contract.
+    /// EIP-8250 keyed nonces, replacing EIP-8141's single `nonce`: up to sixteen
+    /// strictly increasing keys sharing [`Self::nonce_seq`]. The empty set selects
+    /// the sender's account nonce; any other set selects independent sequences held
+    /// in the `NONCE_MANAGER` system contract, key `0` included.
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::U256Wrapper>)]
     pub nonce_keys: Vec<U256>,
     /// EIP-8250: the sequence every selected nonce key must currently hold.
@@ -2236,12 +2236,11 @@ pub struct FrameTransaction {
 }
 
 impl Default for FrameTransaction {
-    /// Selects the legacy nonce key set `[0]` (EIP-8250), the only key set that is
-    /// valid without naming keys: an empty `nonce_keys` list is statically invalid.
+    /// Selects the empty nonce key set, the sender's account nonce (EIP-8250).
     fn default() -> Self {
         Self {
             chain_id: 0,
-            nonce_keys: vec![U256::zero()],
+            nonce_keys: Vec::new(),
             nonce_seq: 0,
             sender: Address::zero(),
             frames: Vec::new(),
@@ -2267,6 +2266,9 @@ pub const FRAME_TX_ENTRY_POINT_U64: u64 = 0xaa;
 pub const FRAME_TX_MAX_FRAMES: usize = 64;
 /// EIP-8250 `MAX_NONCE_KEYS`: the most nonce keys a frame transaction may select.
 pub const FRAME_TX_MAX_NONCE_KEYS: usize = 16;
+/// EIP-8250 `MAX_NONCE_SEQ`: the bound of a nonce sequence, and the single-use
+/// sequence of a keyed transaction.
+pub const FRAME_TX_MAX_NONCE_SEQ: u64 = u64::MAX;
 /// EIP-8250 `KEYED_NONCE_ACCESS_COST`: EIP-8038's `COLD_STORAGE_ACCESS` (2,100) plus
 /// `STORAGE_WRITE` (10,000), the cold read and the write of one keyed-nonce slot. It
 /// tracks the Amsterdam storage schedule in `ethrex_levm::gas_cost`, which a test pins.
@@ -2605,11 +2607,15 @@ impl FrameTransaction {
     /// EIP-8250 `nonce_calldata`: `rlp(nonce_keys) || rlp(nonce_seq)`, the bytes the
     /// keyed nonce fields add to the payload. They are priced exactly as frame and
     /// signature data, so they enter both [`Self::data_cost`] and
-    /// [`Self::calldata_tokens`].
+    /// [`Self::calldata_tokens`]. A single-use key set (keyed, at `MAX_NONCE_SEQ`)
+    /// is exempt from pricing its `nonce_seq`, so the single-use form never costs
+    /// more than first use at sequence zero; the field is still encoded and signed.
     pub fn nonce_calldata(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         self.nonce_keys.encode(&mut buf);
-        self.nonce_seq.encode(&mut buf);
+        if !self.is_single_use() {
+            self.nonce_seq.encode(&mut buf);
+        }
         buf
     }
 
@@ -2625,10 +2631,16 @@ impl FrameTransaction {
     }
 
     /// Whether the transaction selects keyed nonces (EIP-8250) rather than the
-    /// sender's account nonce. Static validation allows key `0` only as the whole
-    /// set, so a transaction is either `[0]` or all non-zero keys.
+    /// sender's account nonce, which the empty key set selects. Key `0` is an
+    /// ordinary key.
     pub fn is_keyed(&self) -> bool {
-        self.nonce_keys.as_slice() != [U256::zero()]
+        !self.nonce_keys.is_empty()
+    }
+
+    /// EIP-8250's single-use form: a keyed transaction at `MAX_NONCE_SEQ`, valid only
+    /// while every selected key is unused, and exhausting each of them.
+    pub fn is_single_use(&self) -> bool {
+        self.is_keyed() && self.nonce_seq == FRAME_TX_MAX_NONCE_SEQ
     }
 
     /// EIP-8272: the index of the recent root verifier frame when it sits where the
@@ -2675,14 +2687,11 @@ impl FrameTransaction {
             .saturating_add(self.keyed_nonce_access_cost())
     }
 
-    /// EIP-8250 `keyed_nonce_access_cost`: `KEYED_NONCE_ACCESS_COST` for every
-    /// non-zero key, and nothing for `[0]`. EIP-8250 adds it to both
+    /// EIP-8250 `keyed_nonce_access_cost`: `KEYED_NONCE_ACCESS_COST` for every key,
+    /// so nothing for the empty set. EIP-8250 adds it to both
     /// `frame_tx_intrinsic_gas` and `calldata_floor_gas`, so the cold read and write
     /// of each slot is paid even when the calldata floor binds.
     pub fn keyed_nonce_access_cost(&self) -> u64 {
-        if !self.is_keyed() {
-            return 0;
-        }
         (self.nonce_keys.len() as u64).saturating_mul(FRAME_TX_KEYED_NONCE_ACCESS_COST)
     }
 
@@ -2820,23 +2829,19 @@ impl FrameTransaction {
     /// Validate static constraints per EIP-8141 spec.
     /// Returns an error string if the transaction is invalid.
     pub fn validate_static_constraints(&self) -> Result<(), String> {
-        // EIP-8250: one to sixteen strictly increasing keys, key 0 only as `[0]`.
-        if self.nonce_keys.is_empty() || self.nonce_keys.len() > FRAME_TX_MAX_NONCE_KEYS {
+        // EIP-8250: the account nonce cannot be used at `MAX_NONCE_SEQ`, which only
+        // a keyed set may select, as its single-use form.
+        if !self.is_keyed() && self.nonce_seq == FRAME_TX_MAX_NONCE_SEQ {
+            return Err("nonce_seq must be below MAX_NONCE_SEQ (2**64 - 1)".to_string());
+        }
+        // EIP-8250: at most sixteen strictly increasing keys.
+        if self.nonce_keys.len() > FRAME_TX_MAX_NONCE_KEYS {
             return Err(format!(
-                "nonce_keys count must be between 1 and {FRAME_TX_MAX_NONCE_KEYS}"
+                "nonce_keys count must be at most {FRAME_TX_MAX_NONCE_KEYS}"
             ));
         }
         if self.nonce_keys.windows(2).any(|pair| pair[0] >= pair[1]) {
             return Err("nonce_keys must be strictly increasing".to_string());
-        }
-        // Keys are strictly increasing, so a zero key, if present, is the first.
-        if self.nonce_keys.len() > 1 && self.nonce_keys[0].is_zero() {
-            return Err("nonce key 0 is only valid as the sole nonce key".to_string());
-        }
-        // EIP-8250: `nonce_seq < MAX_NONCE_SEQ` reads no state, so it is a rule of the
-        // transaction itself, checkable before stateful validity.
-        if self.nonce_seq == u64::MAX {
-            return Err("nonce_seq must be below MAX_NONCE_SEQ (2**64 - 1)".to_string());
         }
         if self.frames.is_empty() || self.frames.len() > FRAME_TX_MAX_FRAMES {
             return Err(format!(
@@ -5927,7 +5932,7 @@ mod tests {
     fn make_test_frame_tx() -> FrameTransaction {
         FrameTransaction {
             chain_id: 1,
-            nonce_keys: vec![U256::zero()],
+            nonce_keys: vec![],
             nonce_seq: 42,
             sender: Address::from_low_u64_be(0xABCD),
             frames: vec![
@@ -6232,7 +6237,7 @@ mod tests {
             .collect();
         FrameTransaction {
             chain_id: 1,
-            nonce_keys: vec![U256::zero()],
+            nonce_keys: vec![],
             nonce_seq: 0,
             sender: Address::from_low_u64_be(0xABCD),
             frames,
@@ -6316,7 +6321,7 @@ mod tests {
     fn frame_tx_with(frames: Vec<Frame>) -> FrameTransaction {
         FrameTransaction {
             chain_id: 1,
-            nonce_keys: vec![U256::zero()],
+            nonce_keys: vec![],
             nonce_seq: 0,
             sender: Address::from_low_u64_be(0xABCD),
             frames,
@@ -6418,7 +6423,7 @@ mod tests {
         // VERIFY frame with non-zero value must be rejected.
         let verify_tx = FrameTransaction {
             chain_id: 1,
-            nonce_keys: vec![U256::zero()],
+            nonce_keys: vec![],
             nonce_seq: 0,
             sender: Address::from_low_u64_be(0xABCD),
             frames: vec![Frame {

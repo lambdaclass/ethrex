@@ -169,7 +169,7 @@ fn assert_post_tx() -> Frame {
 fn frame_tx(frames: Vec<Frame>, nonce_seq: u64) -> FrameTransaction {
     FrameTransaction {
         chain_id: CHAIN_ID,
-        nonce_keys: vec![U256::zero()],
+        nonce_keys: vec![],
         nonce_seq,
         sender: SENDER,
         frames,

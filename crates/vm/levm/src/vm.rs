@@ -1817,22 +1817,18 @@ impl<'a> VM<'a> {
         Ok(report)
     }
 
-    /// EIP-8250 `current_nonce_seq`: key `0` reads the sender's account nonce;
-    /// any other key reads its `NONCE_MANAGER` slot, where an absent slot is
-    /// sequence zero.
+    /// EIP-8250 `current_nonce_seq`: every key reads its `NONCE_MANAGER` slot, where
+    /// an absent slot is sequence zero.
     ///
     /// A protocol read: it neither warms the slot nor charges gas. The slot only
-    /// ever holds a `u64` (consumption writes `nonce_seq + 1`); a wider value can
-    /// only come from crafted state and is reported as `u64::MAX`, which never
-    /// equals a valid `nonce_seq`.
+    /// ever holds a `u64` (consumption writes `nonce_seq + 1` or `MAX_NONCE_SEQ`); a
+    /// wider value can only come from crafted state and is reported as `u64::MAX`,
+    /// an exhausted key.
     pub(crate) fn current_nonce_seq(
         &mut self,
         sender: Address,
         nonce_key: U256,
     ) -> Result<u64, VMError> {
-        if nonce_key.is_zero() {
-            return Ok(self.db.get_account(sender)?.info.nonce);
-        }
         let nonce_manager = ethrex_common::types::frame_tx_nonce_manager();
         // Storage reads require the account to be cached first.
         self.db.get_account(nonce_manager)?;
@@ -1855,30 +1851,45 @@ impl<'a> VM<'a> {
             ))
     }
 
-    /// EIP-8250 §Stateful validity: every selected key must currently hold the
-    /// transaction's `nonce_seq`, checked at the same stage as EIP-8141's nonce
-    /// check, before any frame executes.
+    /// EIP-8250 §Stateful validity, checked at the same stage as EIP-8141's nonce
+    /// check, before any frame executes: the empty key set requires the sender's
+    /// account nonce to equal `nonce_seq`; a single-use set requires every selected
+    /// key to be unused; any other keyed set requires every selected key to hold
+    /// `nonce_seq`.
     fn check_nonce_set(
         &mut self,
         frame_tx: &ethrex_common::types::FrameTransaction,
     ) -> Result<(), VMError> {
+        let mismatch = |expected: u64, actual: u64| {
+            VMError::TxValidation(crate::errors::TxValidationError::NonceMismatch {
+                expected,
+                actual,
+            })
+        };
+        if !frame_tx.is_keyed() {
+            let current = self.db.get_account(frame_tx.sender)?.info.nonce;
+            if current != frame_tx.nonce_seq {
+                return Err(mismatch(current, frame_tx.nonce_seq));
+            }
+            return Ok(());
+        }
+        let required = if frame_tx.is_single_use() {
+            0
+        } else {
+            frame_tx.nonce_seq
+        };
         for nonce_key in &frame_tx.nonce_keys {
             let current = self.current_nonce_seq(frame_tx.sender, *nonce_key)?;
-            if current != frame_tx.nonce_seq {
-                return Err(VMError::TxValidation(
-                    crate::errors::TxValidationError::NonceMismatch {
-                        expected: current,
-                        actual: frame_tx.nonce_seq,
-                    },
-                ));
+            if current != required {
+                return Err(mismatch(current, required));
             }
         }
         Ok(())
     }
 
     /// EIP-8250 §Nonce consumption, step 1: the state gas a payment-scoped
-    /// `APPROVE` owes for the nonce set it is about to consume. `[0]` pays the
-    /// EIP-8037 account creation when `tx.sender` does not exist; any other set
+    /// `APPROVE` owes for the nonce set it is about to consume. The empty set pays
+    /// the EIP-8037 account creation when `tx.sender` does not exist; a keyed set
     /// pays `KEYED_NONCE_FIRST_USE_STATE_GAS` (one storage set) per selected key
     /// whose slot still reads zero. Reads only.
     pub(crate) fn nonce_state_gas(
@@ -1901,10 +1912,11 @@ impl<'a> VM<'a> {
         Ok(first_uses.saturating_mul(self.state_gas_storage_set))
     }
 
-    /// EIP-8250 `consume_nonce_set`, run once on the payment approval: `[0]`
+    /// EIP-8250 `consume_nonce_set`, run once on the payment approval: the empty set
     /// increments the sender's account nonce (whatever it currently is, since an
-    /// earlier frame may have changed it); any other set writes `nonce_seq + 1` to
-    /// every selected key's slot.
+    /// earlier frame may have changed it); a keyed set writes `nonce_seq + 1` to
+    /// every selected key's slot, or `MAX_NONCE_SEQ` for the single-use form, which
+    /// exhausts each key.
     ///
     /// The writes are protocol bookkeeping: no `SSTORE` pricing and no warming. They
     /// go through the ordinary journaled storage path, so the enclosing frame's
@@ -1917,11 +1929,16 @@ impl<'a> VM<'a> {
             self.increment_account_nonce(frame_tx.sender)?;
             return Ok(());
         }
-        // Stateful validity bounds `nonce_seq` below `u64::MAX`.
-        let next_seq = frame_tx
-            .nonce_seq
-            .checked_add(1)
-            .ok_or(VMError::Internal(InternalError::Overflow))?;
+        // Below `MAX_NONCE_SEQ` a sequential use advances the key, so the addition
+        // cannot overflow.
+        let next_seq = if frame_tx.is_single_use() {
+            ethrex_common::types::FRAME_TX_MAX_NONCE_SEQ
+        } else {
+            frame_tx
+                .nonce_seq
+                .checked_add(1)
+                .ok_or(VMError::Internal(InternalError::Overflow))?
+        };
         let nonce_manager = ethrex_common::types::frame_tx_nonce_manager();
         self.db.get_account(nonce_manager)?;
         for nonce_key in &frame_tx.nonce_keys {
@@ -1964,11 +1981,12 @@ impl<'a> VM<'a> {
         // accounts).
         let sender = frame_tx.sender;
 
-        // EIP-8250: `nonce_seq < MAX_NONCE_SEQ` is a rule of the transaction itself.
-        // `validate_static_constraints` enforces it too, but it is checked here first so
-        // the transaction reports `NONCE_IS_MAX`, the exception execution-specs raises
-        // ahead of every other static rule, instead of a generic frame-format error.
-        if frame_tx.nonce_seq == u64::MAX {
+        // EIP-8250: the empty key set cannot be used at `MAX_NONCE_SEQ`, a rule of the
+        // transaction itself. `validate_static_constraints` enforces it too, but it is
+        // checked here first so the transaction reports `NONCE_IS_MAX`, the exception
+        // execution-specs raises ahead of every other static rule, instead of a
+        // generic frame-format error.
+        if !frame_tx.is_keyed() && frame_tx.nonce_seq == u64::MAX {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::NonceIsMax,
             ));

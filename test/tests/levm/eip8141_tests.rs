@@ -130,7 +130,7 @@ fn frame_tx_env(tx: &FrameTransaction) -> Environment {
 fn frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
     FrameTransaction {
         chain_id: HARNESS_CHAIN_ID,
-        nonce_keys: vec![U256::zero()],
+        nonce_keys: vec![],
         nonce_seq: 0,
         sender: FUNDED_SENDER,
         frames,
@@ -2367,7 +2367,7 @@ mod validation_observer_tests {
     fn frame_tx_for_obs(sender: Address, frames: Vec<Frame>) -> Transaction {
         Transaction::FrameTransaction(FrameTransaction {
             chain_id: 0,
-            nonce_keys: vec![U256::zero()],
+            nonce_keys: vec![],
             nonce_seq: 0,
             sender,
             frames,
@@ -2917,7 +2917,7 @@ mod frame_validation_prefix_tests {
     fn frame_tx_prefix(sender: Address, frames: Vec<Frame>) -> Transaction {
         Transaction::FrameTransaction(FrameTransaction {
             chain_id: 0,
-            nonce_keys: vec![U256::zero()],
+            nonce_keys: vec![],
             nonce_seq: 0,
             sender,
             frames,

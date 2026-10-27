@@ -38,7 +38,7 @@ fn cancun_config() -> ChainConfig {
 fn frame_tx_with_blobs(n_blobs: usize) -> FrameTransaction {
     FrameTransaction {
         chain_id: 0,
-        nonce_keys: vec![U256::zero()],
+        nonce_keys: vec![],
         nonce_seq: 0,
         sender: Default::default(),
         frames: vec![Frame {
@@ -188,7 +188,7 @@ fn base_frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
         sender: sender_addr(),
         frames,
         chain_id: 1,
-        nonce_keys: vec![U256::zero()],
+        nonce_keys: vec![],
         nonce_seq: 42,
         max_fee: U256::from(10_000_000_000_000_000u64),
         max_priority_fee_per_gas: U256::from(1_000_000_000u64),
@@ -491,7 +491,7 @@ fn prefix_rejection_gas_budget_exceeded() {
 fn make_test_frame_tx() -> FrameTransaction {
     FrameTransaction {
         chain_id: 1,
-        nonce_keys: vec![U256::zero()],
+        nonce_keys: vec![],
         nonce_seq: 42,
         sender: Address::from_low_u64_be(0xABCD),
         frames: vec![
@@ -628,28 +628,23 @@ fn static_validation_enforces_the_eip_8250_nonce_rules() {
         tx.validate_static_constraints()
     };
     for (label, keys, seq) in [
-        ("the legacy key", vec![0], 0),
+        ("the empty key set", vec![], 0),
+        ("the last account-nonce sequence", vec![], u64::MAX - 1),
+        ("key 0 alone", vec![0], 0),
+        ("key 0 beside another key", vec![0, 1], 0),
         ("one keyed nonce", vec![7], 0),
         ("sixteen increasing keys", (1..=16).collect(), 3),
-        ("the last usable sequence", vec![1, 2], u64::MAX - 1),
+        ("the single-use sequence on a key", vec![9], u64::MAX),
     ] {
         assert!(with(keys, seq).is_ok(), "{label} must be statically valid");
     }
     for (label, keys, seq, reason) in [
-        ("no keys", vec![], 0, "nonce_keys count"),
         ("seventeen keys", (1..=17).collect(), 0, "nonce_keys count"),
         ("a repeated key", vec![3, 3], 0, "strictly increasing"),
         ("decreasing keys", vec![5, 4], 0, "strictly increasing"),
-        ("key 0 beside another key", vec![0, 1], 0, "sole nonce key"),
         (
-            "the maximum sequence on [0]",
-            vec![0],
-            u64::MAX,
-            "MAX_NONCE_SEQ",
-        ),
-        (
-            "the maximum sequence on a key",
-            vec![9],
+            "the maximum sequence on the empty key set",
+            vec![],
             u64::MAX,
             "MAX_NONCE_SEQ",
         ),
@@ -661,28 +656,48 @@ fn static_validation_enforces_the_eip_8250_nonce_rules() {
 
 #[test]
 fn keyed_nonce_access_is_charged_in_intrinsic_gas_and_in_the_floor() {
-    // EIP-8250: every non-zero key adds KEYED_NONCE_ACCESS_COST to both
-    // `frame_tx_intrinsic_gas` and `calldata_floor_gas`; `[0]` adds nothing.
+    // EIP-8250: every key, key 0 included, adds KEYED_NONCE_ACCESS_COST to both
+    // `frame_tx_intrinsic_gas` and `calldata_floor_gas`; the empty set adds nothing.
     let legacy = make_test_frame_tx();
-    assert_eq!(legacy.nonce_keys, vec![U256::zero()]);
+    assert!(legacy.nonce_keys.is_empty());
     assert_eq!(legacy.keyed_nonce_access_cost(), 0);
 
-    // `[5]` encodes to as many bytes as `[0]`, all non-zero, so the access cost is
-    // the only difference on either side.
+    // `[0]` and `[5]` encode to as many bytes as each other, so between them the
+    // data is priced the same and only the key count moves the access cost.
+    let mut key_zero = legacy.clone();
+    key_zero.nonce_keys = vec![U256::zero()];
     let mut one_key = legacy.clone();
     one_key.nonce_keys = vec![U256::from(5)];
+    assert_eq!(
+        key_zero.keyed_nonce_access_cost(),
+        FRAME_TX_KEYED_NONCE_ACCESS_COST
+    );
     assert_eq!(
         one_key.keyed_nonce_access_cost(),
         FRAME_TX_KEYED_NONCE_ACCESS_COST
     );
-    assert_eq!(one_key.data_cost(), legacy.data_cost());
+    assert_eq!(one_key.data_cost(), key_zero.data_cost());
     assert_eq!(
         one_key.standard_gas_limit() - legacy.standard_gas_limit(),
-        FRAME_TX_KEYED_NONCE_ACCESS_COST
+        FRAME_TX_KEYED_NONCE_ACCESS_COST + (one_key.data_cost() - legacy.data_cost())
     );
     assert_eq!(
         one_key.calldata_floor_total() - legacy.calldata_floor_total(),
         FRAME_TX_KEYED_NONCE_ACCESS_COST
+            + (one_key.calldata_floor_gas() - legacy.calldata_floor_gas())
+    );
+
+    // The single-use sequence is not priced as data: a keyed transaction at
+    // `MAX_NONCE_SEQ` costs no more than the same keys at sequence zero.
+    let mut first_use = one_key.clone();
+    first_use.nonce_seq = 0;
+    let mut single_use = one_key;
+    single_use.nonce_seq = u64::MAX;
+    assert!(single_use.data_cost() <= first_use.data_cost());
+    assert_eq!(
+        single_use.nonce_calldata(),
+        vec![0xc1, 0x05],
+        "only rlp(nonce_keys) is priced"
     );
 
     let mut three_keys = legacy;
@@ -758,8 +773,8 @@ fn data_cost_covers_frame_signature_and_nonce_data() {
     // signer/msg/signature, and EIP-8250's `rlp(nonce_keys) || rlp(nonce_seq)` --
     // no other RLP framing, no other scalar fields.
     let mut tx = make_test_frame_tx();
-    // nonce_keys [0], nonce_seq 42: `c1 80` || `2a`, three non-zero bytes -> 48.
-    assert_eq!(tx.nonce_calldata(), vec![0xc1, 0x80, 0x2a]);
+    // nonce_keys [], nonce_seq 42: `c0` || `2a`, two non-zero bytes -> 32.
+    assert_eq!(tx.nonce_calldata(), vec![0xc0, 0x2a]);
     tx.frames[0].data = Bytes::from(vec![0u8; 3]); // 3 zero bytes -> 12
     tx.frames[1].data = Bytes::from(vec![0xAAu8; 2]); // 2 non-zero -> 32
     tx.signatures = vec![FrameSignature {
@@ -770,10 +785,10 @@ fn data_cost_covers_frame_signature_and_nonce_data() {
         // so its bytes are priced as if all non-zero: 16 + 16, not 16 + 4.
         signature: Bytes::from(vec![0xAAu8, 0x00]),
     }];
-    assert_eq!(tx.data_cost(), 12 + 32 + 16 + 16 + 48);
-    // Floor tokens are unweighted: 10 bytes * 4 tokens * 16 gas = 640.
-    assert_eq!(tx.calldata_tokens(), 10 * 4);
-    assert_eq!(tx.calldata_floor_gas(), 10 * 64);
+    assert_eq!(tx.data_cost(), 12 + 32 + 16 + 16 + 32);
+    // Floor tokens are unweighted: 9 bytes * 4 tokens * 16 gas = 576.
+    assert_eq!(tx.calldata_tokens(), 9 * 4);
+    assert_eq!(tx.calldata_floor_gas(), 9 * 64);
 }
 
 #[test]

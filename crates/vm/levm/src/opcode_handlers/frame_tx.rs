@@ -661,13 +661,8 @@ pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U
         0x0E => Ok(U256::from(ctx.tx.nonce_keys.len())),
         // EIP-8250 `TXPARAM_NONCE_KEYS_HASH`.
         0x0F => Ok(U256::from_big_endian(ctx.tx.nonce_keys_hash().as_bytes())),
-        // EIP-8250 `TXPARAM_NONCE_KEY_0`. Static validation guarantees one key.
-        0x10 => ctx
-            .tx
-            .nonce_keys
-            .first()
-            .copied()
-            .ok_or_else(|| ExceptionalHalt::InvalidOpcode.into()),
+        // EIP-8250 `TXPARAM_NONCE_KEY_0`, zero for the empty key set.
+        0x10 => Ok(ctx.tx.nonce_keys.first().copied().unwrap_or_default()),
         // 0x0C is state gas remaining in the executing frame's pool, which lives on
         // the VM rather than the context; `load_tx_param` has no access to it, so the
         // handler answers it before delegating here.

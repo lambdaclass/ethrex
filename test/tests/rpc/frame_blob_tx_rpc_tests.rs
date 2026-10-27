@@ -97,7 +97,7 @@ async fn send_a_frame_tx_in_its_blob_network_wrapper() {
     let versioned_hash = kzg_commitment_to_versioned_hash(&bundle.commitments[0]);
     let tx = FrameTransaction {
         chain_id,
-        nonce_keys: vec![U256::zero()],
+        nonce_keys: vec![],
         nonce_seq: 0,
         sender: SENDER,
         frames: vec![Frame {

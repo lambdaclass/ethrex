@@ -200,7 +200,7 @@ fn key0_consumption_survives_a_later_batch_revert() {
             frame(FrameMode::Sender, 0x04, reverter, 100_000, &[]),
             frame(FrameMode::Sender, 0x00, reverter, 100_000, &[]),
         ],
-        vec![U256::zero()],
+        vec![],
     );
     let (result, db) = run_frame_tx(&accounts, tx);
     let report = result.expect("payment is granted outside the batch, so the tx is valid");
@@ -208,7 +208,7 @@ fn key0_consumption_survives_a_later_batch_revert() {
     assert_eq!(
         nonce_of(&db, FUNDED_SENDER),
         1,
-        "key-0 consumption from the non-batch payment frame survives the later batch revert",
+        "account-nonce consumption from the non-batch payment frame survives the later batch revert",
     );
     assert!(
         storage_slot(&db, reverter, H256::zero()).is_zero(),
@@ -262,7 +262,7 @@ fn keyed_nonce_consumption_survives_a_later_batch_revert() {
     assert_eq!(
         nonce_of(&db, FUNDED_SENDER),
         0,
-        "a non-zero key must not touch the sender's linear account nonce",
+        "a keyed set must not touch the sender's linear account nonce",
     );
 }
 
@@ -342,15 +342,16 @@ fn consuming_a_keyed_nonce_does_not_warm_the_nonce_manager() {
 #[test]
 fn a_keyed_nonce_first_use_is_priced_as_state_gas() {
     // EIP-8250: a fresh key pays one storage set of state gas, drawn from the
-    // approving frame's `limits.state`, and every non-zero key pays
-    // KEYED_NONCE_ACCESS_COST of intrinsic execution gas for the cold read and write
-    // of its slot. Nothing else: no EIP-2200 SSTORE charge, no EIP-2929 access.
-    let legacy_only = keyed_nonce_probe(COLD_CONTROL, vec![U256::zero()]);
+    // approving frame's `limits.state`, and every key pays KEYED_NONCE_ACCESS_COST
+    // of intrinsic execution gas for the cold read and write of its slot. Nothing
+    // else: no EIP-2200 SSTORE charge, no EIP-2929 access.
+    let legacy_only = keyed_nonce_probe(COLD_CONTROL, vec![]);
     let one_key = keyed_nonce_probe(COLD_CONTROL, vec![U256::one()]);
     let two_keys = keyed_nonce_probe(COLD_CONTROL, vec![U256::one(), U256::from(2u64)]);
 
     // The state dimension: exactly one first-use charge per fresh key, and none
-    // for key 0, which is the account nonce and occupies no NONCE_MANAGER slot.
+    // for the empty key set, which is the account nonce and occupies no
+    // NONCE_MANAGER slot.
     assert_eq!(
         one_key.state_gas_used - legacy_only.state_gas_used,
         KEYED_NONCE_FIRST_USE_STATE_GAS,
@@ -362,7 +363,7 @@ fn a_keyed_nonce_first_use_is_priced_as_state_gas() {
         "a second fresh key must cost exactly one more KEYED_NONCE_FIRST_USE_STATE_GAS"
     );
 
-    // The execution dimension: each non-zero key adds exactly KEYED_NONCE_ACCESS_COST
+    // The execution dimension: each key adds exactly KEYED_NONCE_ACCESS_COST
     // plus the few gas of envelope data its encoding takes. A second cold-slot access
     // or an EIP-2200 charge on top would add thousands, so bounding the excess below
     // `ENVELOPE_SLACK` is what makes this an assertion about pricing.
@@ -370,7 +371,7 @@ fn a_keyed_nonce_first_use_is_priced_as_state_gas() {
     let execution = |report: &ExecutionReport| report.gas_used - report.state_gas_used;
     for (label, delta) in [
         (
-            "a fresh key over [0]",
+            "a fresh key over the empty set",
             execution(&one_key) - execution(&legacy_only),
         ),
         (
@@ -576,9 +577,9 @@ fn a_first_use_keyed_nonce_halts_the_frame_without_its_state_budget() {
     );
 }
 
-// ==================== Key 0 from a sender that does not exist ====================
+// ============ The account nonce from a sender that does not exist ============
 
-/// EIP-8250 §Nonce consumption, step 1, on the legacy key: when `tx.sender` does not
+/// EIP-8250 §Nonce consumption, step 1, on the empty key set: when `tx.sender` does not
 /// exist under EIP-8037's existence rule, the approving frame pays account creation
 /// state gas immediately before the nonce increment creates the account. The sender
 /// here is a never-seen EOA with no balance, so a paymaster's `APPROVE(APPROVE_PAYMENT)`
@@ -625,7 +626,7 @@ mod key_zero_from_a_fresh_sender {
                     ..frame(FrameMode::Verify, 0x01, PAYMASTER, 100_000, &[])
                 },
             ],
-            vec![U256::zero()],
+            vec![],
         );
         tx.sender = sender;
         tx.signatures = vec![FrameSignature {
@@ -794,22 +795,70 @@ fn every_selected_key_must_be_at_the_transaction_sequence() {
         );
     }
 
-    // The legacy domain is independent: [0] still runs at the account nonce 0.
-    execute_on(&mut db, keyed_tx(vec![U256::zero()], 0))
-        .expect("the legacy key is unaffected by keyed consumption");
+    // The account-nonce domain is independent: the empty key set still runs at the
+    // account nonce 0.
+    execute_on(&mut db, keyed_tx(vec![], 0))
+        .expect("the account nonce is unaffected by keyed consumption");
     assert_eq!(nonce_of(&db, FUNDED_SENDER), 1);
 }
 
 #[test]
-fn the_maximum_sequence_is_never_valid() {
+fn the_maximum_sequence_is_invalid_on_the_account_nonce() {
     let mut db = seeded_db(&[contract_sender()]);
-    let result = execute_on(&mut db, keyed_tx(vec![U256::one()], u64::MAX));
+    let result = execute_on(&mut db, keyed_tx(vec![], u64::MAX));
     assert!(
         matches!(
             result,
             Err(VMError::TxValidation(TxValidationError::NonceIsMax))
         ),
-        "nonce_seq = 2**64 - 1 must be invalid, got {result:?}"
+        "the empty key set at nonce_seq = 2**64 - 1 must be invalid, got {result:?}"
+    );
+}
+
+#[test]
+fn the_maximum_sequence_uses_each_key_once() {
+    // EIP-8250: a keyed set at MAX_NONCE_SEQ requires every selected key to be
+    // unused and exhausts each of them, so no sequence can select them again.
+    let mut db = seeded_db(&[contract_sender()]);
+    let nonce_manager = frame_tx_nonce_manager();
+
+    let single_use = execute_on(
+        &mut db,
+        keyed_tx(vec![U256::one(), U256::from(2)], u64::MAX),
+    )
+    .expect("unused keys accept the single-use sequence");
+    assert_eq!(
+        single_use.state_gas_used,
+        2 * KEYED_NONCE_FIRST_USE_STATE_GAS,
+        "each unused key pays its first-use charge"
+    );
+    for key in [U256::one(), U256::from(2)] {
+        assert_eq!(
+            storage_slot(&db, nonce_manager, keyed_slot(FUNDED_SENDER, key)),
+            U256::from(u64::MAX),
+            "single-use consumption writes MAX_NONCE_SEQ"
+        );
+    }
+    assert_eq!(nonce_of(&db, FUNDED_SENDER), 0);
+
+    // An exhausted key accepts neither the single-use form again nor any sequence.
+    assert_nonce_mismatch(
+        &execute_on(&mut db, keyed_tx(vec![U256::one()], u64::MAX)),
+        u64::MAX,
+        0,
+    );
+    assert_nonce_mismatch(
+        &execute_on(&mut db, keyed_tx(vec![U256::one()], u64::MAX - 1)),
+        u64::MAX,
+        u64::MAX - 1,
+    );
+
+    // A key used sequentially is no longer unused, so the single-use form fails too.
+    execute_on(&mut db, keyed_tx(vec![U256::from(3)], 0)).expect("first sequential use");
+    assert_nonce_mismatch(
+        &execute_on(&mut db, keyed_tx(vec![U256::from(3)], u64::MAX)),
+        1,
+        0,
     );
 }
 
@@ -883,13 +932,13 @@ fn txparam_exposes_the_nonce_fields() {
 
 #[test]
 fn txparam_legacy_nonce_is_not_updated_by_payment_approval() {
-    // On [0] the payment approval in frame 0 increments the account nonce to 8,
-    // but 0x0D stays the value observed before any frame executed.
-    let [seq, legacy, count, _, key_0] = probe_txparams(7, vec![U256::zero()], 7);
+    // On the empty key set the payment approval in frame 0 increments the account
+    // nonce to 8, but 0x0D stays the value observed before any frame executed.
+    let [seq, legacy, count, _, key_0] = probe_txparams(7, vec![], 7);
     assert_eq!(seq, U256::from(7));
     assert_eq!(legacy, U256::from(7));
-    assert_eq!(count, U256::one());
-    assert_eq!(key_0, U256::zero());
+    assert_eq!(count, U256::zero(), "the empty key set has no keys");
+    assert_eq!(key_0, U256::zero(), "0x10 reads zero for the empty key set");
 }
 
 // ==================== Keyed-nonce access cost and block access list ====================
@@ -945,13 +994,26 @@ fn consumed_keys_are_storage_changes_of_the_nonce_manager() {
         assert_eq!(change.slot_changes[0].post_value, U256::one());
     }
 
-    // The legacy key consumes the account nonce and leaves NONCE_MANAGER out.
-    let legacy = block_access_list_of(keyed_tx(vec![U256::zero()], 0));
+    // The empty key set consumes the account nonce and leaves NONCE_MANAGER out.
+    let legacy = block_access_list_of(keyed_tx(vec![], 0));
     assert!(
         !legacy
             .accounts()
             .iter()
             .any(|account| account.address == frame_tx_nonce_manager()),
-        "a [0] transaction must not touch NONCE_MANAGER"
+        "an empty key set must not touch NONCE_MANAGER"
+    );
+
+    // Key 0 is an ordinary key: its slot is a storage change like any other.
+    let key_zero = block_access_list_of(keyed_tx(vec![U256::zero()], 0));
+    let manager = key_zero
+        .accounts()
+        .iter()
+        .find(|account| account.address == frame_tx_nonce_manager())
+        .expect("a key-0 transaction must put NONCE_MANAGER in the block access list");
+    assert_eq!(
+        manager.storage_changes.len(),
+        1,
+        "key 0's slot is written: {manager:?}"
     );
 }

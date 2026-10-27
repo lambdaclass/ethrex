@@ -1003,7 +1003,8 @@ impl Mempool {
             // predecessor is the same-nonce frame tx, the slot already points to it,
             // so this is equivalent to the previous `existing_frame_hash` removal.
             // An EIP-8250 keyed predecessor is not in that index, so remove the
-            // same-identity frame tx found above as well; for `[0]` it is the same tx.
+            // same-identity frame tx found above as well; for the empty key set it
+            // is the same tx.
             if let Some(old_hash) = existing_frame_hash {
                 inner.remove_transaction_with_lock(&old_hash)?;
             }
