@@ -1329,13 +1329,23 @@ impl Mempool {
             }
 
             // Filter by blob gas fee
-            if is_blob_tx
-                && let Some(blob_fee) = filter.blob_fee
-                && tx
-                    .max_fee_per_blob_gas()
-                    .is_none_or(|fee| fee < blob_fee.into())
-            {
-                return false;
+            if is_blob_tx && let Some(blob_fee) = filter.blob_fee {
+                let covers_blob_fee = match tx {
+                    // EIP-8141: one `max_fee` budget pays for the blob gas too, so it
+                    // must cover the worst case at both base fees.
+                    Transaction::FrameTransaction(frame_tx) => frame_tx
+                        .fee_budget(
+                            U256::from(filter.base_fee.unwrap_or_default()),
+                            U256::from(blob_fee),
+                        )
+                        .is_some(),
+                    _ => tx
+                        .max_fee_per_blob_gas()
+                        .is_some_and(|fee| fee >= blob_fee.into()),
+                };
+                if !covers_blob_fee {
+                    return false;
+                }
             }
             true
         };
@@ -2057,8 +2067,10 @@ impl Mempool {
         // pooled tx (whose per-field maxes are `None`).
         let bumped_fee_cap = is_bumped_u256(tx_in_pool.gas_fee_cap(), tx.gas_fee_cap(), bump);
         let bumped_tip = is_bumped_u256(tx_in_pool.gas_tip_cap(), tx.gas_tip_cap(), bump);
-        // Blob fee dimension (both sides are blob txs here, per the gate).
-        let bumped_blob = if new_is_blob {
+        // Blob fee dimension (both sides are blob txs here, per the gate). An
+        // EIP-8141 frame tx has none: its `max_fee` budget, compared above as the
+        // fee cap, pays for its blob gas too.
+        let bumped_blob = if new_is_blob && !matches!(tx, Transaction::FrameTransaction(_)) {
             is_bumped_u256(
                 tx_in_pool.max_fee_per_blob_gas().unwrap_or_default(),
                 tx.max_fee_per_blob_gas().unwrap_or_default(),

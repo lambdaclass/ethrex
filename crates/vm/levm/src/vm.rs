@@ -31,7 +31,7 @@ use ethrex_common::{
     Address, BigEndianHash, H160, H256, U256,
     tracing::CallType,
     types::{
-        AccessListEntry, Code, Fork, Frame, FrameMode, Log, Transaction, TxType,
+        AccessListEntry, Code, Fork, Frame, FrameFeeBudget, FrameMode, Log, Transaction, TxType,
         block_access_list::BlockAccessListCheckpoint, fee_config::FeeConfig,
     },
 };
@@ -556,18 +556,16 @@ pub struct FrameTxContext {
     /// Whether APPROVE was called in the current frame
     pub approve_called_in_current_frame: bool,
     /// Cached `FrameTransaction::max_gas()`. Computing it re-encodes every frame
-    /// and signature, so it must not run per-opcode (TXPARAM 0x06,
-    /// compute_tx_max_cost). Computed once at tx entry.
+    /// and signature, so it must not run per-opcode. Computed once at tx entry.
     pub max_gas: u64,
     /// EIP-8250 `TXPARAM(0x0D)`: the sender's account nonce in the transaction's
     /// pre-state, observed before any frame executes. Payment approval, keyed
     /// nonce consumption, deployment, `CREATE` and `CREATE2` do not update it.
     pub legacy_sender_nonce: u64,
-    /// The block's EIP-4844 blob base fee, captured at tx entry. `max_cost`
-    /// collects the blob fee at this rate, not at `max_fee_per_blob_gas`
-    /// (EIP-8141 §Gas accounting), and `load_tx_param` has no `Environment`
-    /// handle to read it from.
-    pub blob_base_fee: U256,
+    /// EIP-8141 §Fee budget: the escrow `max_cost` a payment approval collects and
+    /// the price `GASPRICE` reports, fixed at tx entry by the transaction's
+    /// `max_fee` and the block's base fees.
+    pub fee_budget: FrameFeeBudget,
 }
 
 impl FrameTxContext {
@@ -1843,6 +1841,20 @@ impl<'a> VM<'a> {
         Ok(u64::try_from(value).unwrap_or(u64::MAX))
     }
 
+    /// EIP-8141 §Fee budget at this block's base fees. A transaction whose
+    /// `max_fee` is below `required_max_fee` is invalid; the reference maps that
+    /// to `INSUFFICIENT_MAX_FEE_PER_GAS`.
+    fn frame_tx_fee_budget(
+        &self,
+        frame_tx: &ethrex_common::types::FrameTransaction,
+    ) -> Result<FrameFeeBudget, VMError> {
+        frame_tx
+            .fee_budget(self.env.base_fee_per_gas, self.env.base_blob_fee_per_gas)
+            .ok_or(VMError::TxValidation(
+                crate::errors::TxValidationError::InsufficientMaxFeePerGas,
+            ))
+    }
+
     /// EIP-8250 §Stateful validity: every selected key must currently hold the
     /// transaction's `nonce_seq`, checked at the same stage as EIP-8141's nonce
     /// check, before any frame executes.
@@ -2001,69 +2013,15 @@ impl<'a> VM<'a> {
             ));
         }
 
-        // GASLIMIT_PRICE_PRODUCT_OVERFLOW: `APPROVE` collects the transaction's
-        // maximum cost -- `max_gas` at `max_fee_per_gas` plus the blob cost at the
-        // base rate -- from the payer. A cost that cannot be represented makes the
-        // transaction unpayable, so reject it here. Without this the arithmetic
-        // fails inside `APPROVE`, the frame halts, nothing approves, and the
-        // transaction is reported as an unapproved payer instead of an overflow.
-        // Mirrors `compute_tx_max_cost`, which this must stay in step with.
-        // `max_cost` is collected over `max_gas`, which spans BOTH dimensions -- the
-        // payer buys the whole declared budget. That is a different quantity from the
-        // EIP-7825 cap above, which is execution-only.
-        let max_cost_representable = frame_tx
-            .max_fee_per_gas
-            .checked_mul(U256::from(frame_tx.max_gas()))
-            .and_then(|gas_cost| {
-                U256::from(frame_tx.blob_versioned_hashes.len())
-                    .checked_mul(U256::from(131072u64))
-                    .and_then(|blob_gas| blob_gas.checked_mul(self.env.base_blob_fee_per_gas))
-                    .and_then(|blob_cost| gas_cost.checked_add(blob_cost))
-            });
-        if max_cost_representable.is_none() {
-            return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::GasLimitPriceProductOverflow,
-            ));
-        }
+        // EIP-8141 §Fee budget: `max_fee` must cover the worst case at the block's
+        // base fees, `max_gas` at the base fee plus the blob gas at the blob base
+        // fee, before any frame executes. `max_cost <= max_fee`, so the escrow is
+        // always representable.
+        let fee_budget = self.frame_tx_fee_budget(&frame_tx)?;
 
         // EIP-8250 stateful validity: every selected key holds `nonce_seq`.
         let sender_info = self.db.get_account(sender)?.info.clone();
         self.check_nonce_set(&frame_tx)?;
-
-        // Check priority fee <= max fee
-        if frame_tx.max_priority_fee_per_gas > frame_tx.max_fee_per_gas {
-            return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::PriorityGreaterThanMaxFeePerGas {
-                    priority_fee: frame_tx.max_priority_fee_per_gas,
-                    max_fee_per_gas: frame_tx.max_fee_per_gas,
-                },
-            ));
-        }
-
-        // Check max_fee >= base_fee
-        if frame_tx.max_fee_per_gas < self.env.base_fee_per_gas {
-            return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::InsufficientMaxFeePerGas,
-            ));
-        }
-
-        // EIP-4844 INSUFFICIENT_MAX_FEE_PER_BLOB_GAS: a blob-carrying tx whose
-        // max_fee_per_blob_gas is below the block's base blob fee is invalid. The
-        // frame path is self-contained and never runs the default hook's
-        // validate_max_fee_per_blob_gas, so it is enforced here. APPROVE charges
-        // the blob fee at the base rate unconditionally, so without this a frame tx
-        // below the base blob fee would execute and silently overpay rather than be
-        // rejected — a divergence from a conformant client that rejects it.
-        if !frame_tx.blob_versioned_hashes.is_empty()
-            && frame_tx.max_fee_per_blob_gas < self.env.base_blob_fee_per_gas
-        {
-            return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::InsufficientMaxFeePerBlobGas {
-                    base_fee_per_blob_gas: self.env.base_blob_fee_per_gas,
-                    tx_max_fee_per_blob_gas: frame_tx.max_fee_per_blob_gas,
-                },
-            ));
-        }
 
         // Initialize FrameTxContext
         let sig_hash = frame_tx.compute_sig_hash();
@@ -2080,7 +2038,7 @@ impl<'a> VM<'a> {
             approve_called_in_current_frame: false,
             max_gas,
             legacy_sender_nonce: sender_info.nonce,
-            blob_base_fee: self.env.base_blob_fee_per_gas,
+            fee_budget,
         });
 
         // EIP-8141: every outer signature must validate
@@ -3020,59 +2978,34 @@ impl<'a> VM<'a> {
             .max(frame_tx.calldata_floor_total());
         let total_gas_used = payer_execution_gas;
 
-        // Gas refunds: the payer was debited the transaction's `max_cost` at
-        // APPROVE (`max_gas` at `max_fee_per_gas`, plus the blob cost already at
-        // the base rate, `compute_tx_max_cost`, §Gas accounting). What the payer
-        // owes is the effective-rate cost of the gas actually used plus the same
-        // base-rate blob burn, so the blob terms cancel and the burn is collected
-        // exactly once and never refunded. Everything above that is returned here.
+        // EIP-8141 settlement of the `max_cost` escrow collected at APPROVE: the gas
+        // used at the base fee plus the blob gas at the blob base fee is burned, the
+        // coinbase receives the priority fee per gas on the gas used, capped by what
+        // the escrow holds after the burn, and the payer gets back the rest.
         // Intrinsic gas is inside `total_gas_used`, so it stays non-refundable.
-        // When max_fee == effective_gas_price this reduces exactly to the unused
-        // -frame-gas refund: max·T + B − e·U − B = e·(T − U).
-        let effective_gas_price = self.env.gas_price;
-        let charged = crate::opcode_handlers::frame_tx::compute_tx_max_cost(&ctx)
-            .map_err(|_| VMError::Internal(InternalError::Overflow))?;
-        let blob_burn = crate::utils::calculate_blob_gas_cost(
-            &ctx.tx.blob_versioned_hashes,
-            self.env.base_blob_fee_per_gas,
-        )?;
         // The payer owes both dimensions. `max_gas` -- the quantity `max_cost` was
         // collected over -- sums each frame's execution and state budgets, so
         // settling against the execution dimension alone would refund the payer the
         // whole state budget it actually spent.
         let settled_gas = total_gas_used.saturating_add(tx_state_gas);
-        let owed = effective_gas_price
-            .checked_mul(U256::from(settled_gas))
-            .and_then(|gas_owed| gas_owed.checked_add(blob_burn))
-            .ok_or(VMError::Internal(InternalError::Overflow))?;
-        // charged >= owed always: effective <= max_fee (by construction of the
-        // effective price), the blob terms are identical, and total_gas_used <=
-        // max_gas (frames are bounded by their limits, and the floor is charged
-        // on both sides).
-        let refund_amount = charged
-            .checked_sub(owed)
-            .ok_or(VMError::Internal(InternalError::Underflow))?;
+        let settlement = ctx.fee_budget.settle(
+            &ctx.tx,
+            settled_gas,
+            self.env.base_fee_per_gas,
+            self.env.base_blob_fee_per_gas,
+        );
 
-        self.increase_account_balance(payer, refund_amount)?;
+        self.increase_account_balance(payer, settlement.payer_refund)?;
 
         // Pay coinbase. Mirror `pay_coinbase` on the normal-tx path so a frame
         // transaction has the same coinbase BlockAccessList / witness footprint:
         // EIP-7928 requires the coinbase to appear in the BAL for any user tx even
         // when the priority fee is zero, and EELS reads the coinbase account
         // unconditionally during fee transfer (so EIP-8025 witnesses record its
-        // trie path even at zero fee). A frame tx is always a user tx (non-zero
-        // effective gas price), unlike a system call.
-        let priority_fee = effective_gas_price.saturating_sub(self.env.base_fee_per_gas);
-        // The tip is paid over the same gas the payer was charged for, which spans
-        // both dimensions: settling the payer over `settled_gas` while tipping over
-        // the execution dimension alone would burn the difference instead of paying
-        // it to the coinbase.
-        let coinbase_fee = priority_fee
-            .checked_mul(U256::from(settled_gas))
-            .ok_or(VMError::Internal(InternalError::Overflow))?;
-        if !effective_gas_price.is_zero()
-            && let Some(recorder) = self.db.bal_recorder.as_mut()
-        {
+        // trie path even at zero fee). A frame tx is always a user tx, unlike a
+        // system call.
+        let coinbase_fee = settlement.priority_fee_paid;
+        if let Some(recorder) = self.db.bal_recorder.as_mut() {
             recorder.record_touched_address(self.env.coinbase);
         }
         if coinbase_fee.is_zero() {
@@ -3290,23 +3223,10 @@ impl<'a> VM<'a> {
             ));
         }
 
+        let fee_budget = self.frame_tx_fee_budget(&frame_tx)?;
+
         let sender_info = self.db.get_account(sender)?.info.clone();
         self.check_nonce_set(&frame_tx)?;
-
-        if frame_tx.max_priority_fee_per_gas > frame_tx.max_fee_per_gas {
-            return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::PriorityGreaterThanMaxFeePerGas {
-                    priority_fee: frame_tx.max_priority_fee_per_gas,
-                    max_fee_per_gas: frame_tx.max_fee_per_gas,
-                },
-            ));
-        }
-
-        if frame_tx.max_fee_per_gas < self.env.base_fee_per_gas {
-            return Err(VMError::TxValidation(
-                crate::errors::TxValidationError::InsufficientMaxFeePerGas,
-            ));
-        }
 
         let sig_hash = frame_tx.compute_sig_hash();
         let max_gas = frame_tx.max_gas();
@@ -3322,7 +3242,7 @@ impl<'a> VM<'a> {
             approve_called_in_current_frame: false,
             max_gas,
             legacy_sender_nonce: sender_info.nonce,
-            blob_base_fee: self.env.base_blob_fee_per_gas,
+            fee_budget,
         });
 
         if !validate_frame_signatures(

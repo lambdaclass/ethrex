@@ -107,9 +107,9 @@ fn frame_tx_with_one_blob(chain_id: u64) -> (FrameTransaction, BlobsBundle) {
             value: U256::zero(),
             data: Bytes::new(),
         }],
+        // Covers the execution, state and blob gas at any base fees this test sees.
+        max_fee: U256::from(10_000_000 * GWEI),
         max_priority_fee_per_gas: U256::from(GWEI),
-        max_fee_per_gas: U256::from(10 * GWEI),
-        max_fee_per_blob_gas: U256::from(GWEI),
         blob_versioned_hashes: vec![kzg_commitment_to_versioned_hash(&bundle.commitments[0])],
         ..Default::default()
     };

@@ -17,7 +17,7 @@ use crate::errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError};
 use crate::gas_cost;
 use crate::memory::calculate_memory_size;
 use crate::opcode_handlers::OpcodeHandler;
-use crate::opcode_handlers::frame_tx::{address_to_u256, compute_tx_max_cost};
+use crate::opcode_handlers::frame_tx::address_to_u256;
 use crate::utils::{code_has_delegation, size_offset_to_usize, word_to_address};
 use crate::vm::VM;
 
@@ -277,13 +277,13 @@ impl OpcodeHandler for OpTxTraceHandler {
             }
             0x14 => {
                 require_zero(index)?;
-                // The payer's escrow: the transaction's maximum cost, blob fees
-                // included, collected at payment approval.
-                let ctx = vm
-                    .frame_tx_context
+                // The payer's escrow: EIP-8141's `max_cost`, blob fees included,
+                // collected at payment approval.
+                vm.frame_tx_context
                     .as_ref()
-                    .ok_or(ExceptionalHalt::InvalidOpcode)?;
-                compute_tx_max_cost(ctx)?
+                    .ok_or(ExceptionalHalt::InvalidOpcode)?
+                    .fee_budget
+                    .max_cost
             }
             0x15 => {
                 require_zero(index)?;

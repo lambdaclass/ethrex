@@ -51,9 +51,8 @@ fn frame_tx_with_blobs(n_blobs: usize) -> FrameTransaction {
             data: Bytes::new(),
         }],
         signatures: vec![],
-        max_priority_fee_per_gas: U256::from(0u64),
-        max_fee_per_gas: U256::from(0u64),
-        max_fee_per_blob_gas: Default::default(),
+        max_fee: U256::zero(),
+        max_priority_fee_per_gas: U256::zero(),
         blob_versioned_hashes: (0..n_blobs).map(|_| H256::zero()).collect(),
         ..Default::default()
     }
@@ -191,8 +190,8 @@ fn base_frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
         chain_id: 1,
         nonce_keys: vec![U256::zero()],
         nonce_seq: 42,
+        max_fee: U256::from(10_000_000_000_000_000u64),
         max_priority_fee_per_gas: U256::from(1_000_000_000u64),
-        max_fee_per_gas: U256::from(30_000_000_000u64),
         ..Default::default()
     }
 }
@@ -521,9 +520,8 @@ fn make_test_frame_tx() -> FrameTransaction {
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; 65]),
         }],
+        max_fee: U256::from(10_000_000_000_000_000u64),
         max_priority_fee_per_gas: U256::from(1_000_000_000u64),
-        max_fee_per_gas: U256::from(30_000_000_000u64),
-        max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
     }
@@ -610,7 +608,6 @@ fn static_validation_rejects_approve_execution_with_third_party_target() {
 fn static_validation_rejects_wrong_blob_hash_version() {
     let mut tx = make_test_frame_tx();
     tx.blob_versioned_hashes = vec![H256([0xABu8; 32])];
-    tx.max_fee_per_blob_gas = U256::from(1u64);
     assert!(
         tx.validate_static_constraints()
             .unwrap_err()
@@ -756,18 +753,6 @@ fn static_validation_enforces_the_eip_7906_post_tx_rules() {
 }
 
 #[test]
-fn static_validation_rejects_blob_fee_without_blobs() {
-    let mut tx = make_test_frame_tx();
-    assert!(tx.blob_versioned_hashes.is_empty());
-    tx.max_fee_per_blob_gas = U256::from(1u64);
-    assert!(
-        tx.validate_static_constraints()
-            .unwrap_err()
-            .contains("max_fee_per_blob_gas must be zero"),
-    );
-}
-
-#[test]
 fn data_cost_covers_frame_signature_and_nonce_data() {
     // 4 gas per zero byte, 16 per non-zero, over frame.data, each signature's
     // signer/msg/signature, and EIP-8250's `rlp(nonce_keys) || rlp(nonce_seq)` --
@@ -781,9 +766,11 @@ fn data_cost_covers_frame_signature_and_nonce_data() {
         scheme: FRAME_SIG_SCHEME_ARBITRARY,
         signer: None, // empty signer contributes nothing
         msg: Bytes::new(),
-        signature: Bytes::from(vec![0xAAu8, 0x00]), // 16 + 4
+        // The signature hash commits only to the length of an empty-msg signature,
+        // so its bytes are priced as if all non-zero: 16 + 16, not 16 + 4.
+        signature: Bytes::from(vec![0xAAu8, 0x00]),
     }];
-    assert_eq!(tx.data_cost(), 12 + 32 + 16 + 4 + 48);
+    assert_eq!(tx.data_cost(), 12 + 32 + 16 + 16 + 48);
     // Floor tokens are unweighted: 10 bytes * 4 tokens * 16 gas = 640.
     assert_eq!(tx.calldata_tokens(), 10 * 4);
     assert_eq!(tx.calldata_floor_gas(), 10 * 64);
@@ -902,8 +889,9 @@ fn prefix_accepts_expiry_frame_as_first_frame() {
 /// A frame transaction filled by the reference implementation for EIP-8250
 /// (execution-specs `eips/bogota/eip-8250`, `test_block_access_list[used_key]`):
 /// nonce key `0xbeef` at sequence 1, one VERIFY frame, one SECP256K1 signature by
-/// the sender over the canonical signature hash.
-const REFERENCE_KEYED_TX: &str = "06f88e01c382beef0194f6c3a9edc1afa0ad5b720e4d42e1437c43d3b3ffcfce010380c8830186a083061a808080f85cf85a0194f6c3a9edc1afa0ad5b720e4d42e1437c43d3b3ff80b84101826476e494fe82f10a2404cf66ab899917793bc48b6989302c951cc84e885c2b322ee8bdde8137d28cacfa37ce8edc4c18aa84bdf4dcf5eb3b26fb19de7b085cc3800780c0";
+/// the sender over the canonical signature hash, and EIP-8141's
+/// `fees = [max_fee, max_priority_fee_per_gas]`.
+const REFERENCE_KEYED_TX: &str = "06f89501c382beef0194f6c3a9edc1afa0ad5b720e4d42e1437c43d3b3ffcfce010380c8830186a083061a808080f85cf85a0194f6c3a9edc1afa0ad5b720e4d42e1437c43d3b3ff80b84101710a020d4f90c3144f1847d37461853fc105172b956f697ac334db968f71744d6a3ba412b16006ea1f274e3ffd32e07f1946cc7a4053de1142dccba6e1d37de6ca880de0b6b3a764000080c0";
 
 /// Cross-check ethrex's frame-transaction encoder against bytes produced by the
 /// reference implementation.

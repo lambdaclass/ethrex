@@ -611,20 +611,28 @@ impl Transaction {
             TxType::EIP1559 => self.calc_effective_gas_price(base_fee_per_gas),
             TxType::EIP4844 => self.calc_effective_gas_price(base_fee_per_gas),
             TxType::EIP7702 => self.calc_effective_gas_price(base_fee_per_gas),
-            TxType::Frame => self.calc_effective_gas_price(base_fee_per_gas),
+            // An EIP-8141 frame transaction has no fee cap per gas: its price comes
+            // from the `max_fee` budget, the blob base fee and the gas it uses (see
+            // `FrameFeeBudget`).
+            TxType::Frame => None,
             TxType::FeeToken => self.calc_effective_gas_price(base_fee_per_gas),
             TxType::Privileged => Some(self.gas_price()),
         }
     }
 
     pub fn cost_without_base_fee(&self) -> Option<U256> {
+        // EIP-8141: `max_fee` bounds everything the payer can be charged, at any
+        // base fees. A frame transaction moves no value at the top level.
+        if let Transaction::FrameTransaction(tx) = self {
+            return Some(tx.max_fee);
+        }
         let price = match self.tx_type() {
             TxType::Legacy => self.gas_price(),
             TxType::EIP2930 => self.gas_price(),
             TxType::EIP1559 => self.max_fee_per_gas()?,
             TxType::EIP4844 => self.max_fee_per_gas()?,
             TxType::EIP7702 => self.max_fee_per_gas()?,
-            TxType::Frame => self.max_fee_per_gas()?,
+            TxType::Frame => return None, // returned above
             TxType::FeeToken => self.max_fee_per_gas()?,
             TxType::Privileged => self.gas_price(),
         };
@@ -1574,7 +1582,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => U256::from(tx.max_fee_per_gas),
             Transaction::PrivilegedL2Transaction(tx) => U256::from(tx.max_fee_per_gas),
             Transaction::FeeTokenTransaction(tx) => U256::from(tx.max_fee_per_gas),
-            Transaction::FrameTransaction(tx) => tx.max_fee_per_gas,
+            Transaction::FrameTransaction(tx) => tx.max_fee_per_gas_share(),
         }
     }
 
@@ -1712,24 +1720,23 @@ impl Transaction {
             Transaction::EIP7702Transaction(_) => None,
             Transaction::PrivilegedL2Transaction(_) => None,
             Transaction::FeeTokenTransaction(_) => None,
-            Transaction::FrameTransaction(tx) => {
-                if tx.blob_versioned_hashes.is_empty() {
-                    None
-                } else {
-                    Some(tx.max_fee_per_blob_gas)
-                }
-            }
+            // EIP-8141 pays blob gas from the `max_fee` budget: there is no fee cap
+            // per blob gas, even when the transaction carries blobs.
+            Transaction::FrameTransaction(_) => None,
         }
     }
 
     /// Whether this transaction carries blob data, and therefore an expensive
     /// EIP-4844 sidecar. True for EIP-4844 transactions and for EIP-8141 frame
-    /// transactions with a non-empty `blob_versioned_hashes` — matching for
-    /// which types [`Self::max_fee_per_blob_gas`] yields a fee. Prefer this
-    /// over matching on `EIP4844Transaction` alone when the question is "does
-    /// this tx have a sidecar to re-propagate".
+    /// transactions with a non-empty `blob_versioned_hashes`. Prefer this over
+    /// matching on `EIP4844Transaction` alone when the question is "does this tx
+    /// have a sidecar to re-propagate".
     pub fn is_blob_carrying(&self) -> bool {
-        self.max_fee_per_blob_gas().is_some()
+        match self {
+            Transaction::EIP4844Transaction(_) => true,
+            Transaction::FrameTransaction(tx) => !tx.blob_versioned_hashes.is_empty(),
+            _ => false,
+        }
     }
 
     pub fn is_contract_creation(&self) -> bool {
@@ -1749,9 +1756,9 @@ impl Transaction {
         matches!(self, Transaction::PrivilegedL2Transaction(_))
     }
 
-    /// The transaction's `max_fee_per_gas`, widened to `U256` because EIP-8141
-    /// bounds a frame transaction's fee fields at 2**256 while every other type
-    /// keeps them within `u64`.
+    /// The transaction's `max_fee_per_gas`, widened to `U256` like
+    /// [`Self::max_priority_fee`]. `None` for an EIP-8141 frame transaction, whose
+    /// `max_fee` caps its total fee rather than its price per gas.
     pub fn max_fee_per_gas(&self) -> Option<U256> {
         match self {
             Transaction::LegacyTransaction(_tx) => None,
@@ -1761,7 +1768,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => Some(U256::from(tx.max_fee_per_gas)),
             Transaction::PrivilegedL2Transaction(tx) => Some(U256::from(tx.max_fee_per_gas)),
             Transaction::FeeTokenTransaction(tx) => Some(U256::from(tx.max_fee_per_gas)),
-            Transaction::FrameTransaction(tx) => Some(tx.max_fee_per_gas),
+            Transaction::FrameTransaction(_) => None,
         }
     }
 
@@ -1791,14 +1798,30 @@ impl Transaction {
         self.max_priority_fee().unwrap_or_else(|| self.gas_price())
     }
 
+    /// The fee cap compared by the mempool's replacement rule. For an EIP-8141 frame
+    /// transaction it is the `max_fee` budget, which its replacement must raise.
     pub fn gas_fee_cap(&self) -> U256 {
+        if let Transaction::FrameTransaction(tx) = self {
+            return tx.max_fee;
+        }
         self.max_fee_per_gas().unwrap_or_else(|| self.gas_price())
     }
 
     /// Returns the effective tip per gas for this transaction.
     /// Returns `None` if the transaction's fee cap is below the base fee (i.e. the
     /// transaction cannot pay for its inclusion).
+    ///
+    /// For an EIP-8141 frame transaction the tip per gas is what the `max_fee`
+    /// budget pays on each unit of `max_gas` once the base fee is covered. The blob
+    /// base fee is not known here, so blob gas is left out of that requirement:
+    /// the result orders transactions, and the exact fee budget is checked when the
+    /// transaction executes.
     pub fn effective_gas_tip(&self, base_fee: Option<u64>) -> Option<U256> {
+        if let Transaction::FrameTransaction(tx) = self {
+            let base_fee = U256::from(base_fee.unwrap_or_default());
+            let budget = tx.fee_budget(base_fee, U256::zero())?;
+            return Some(budget.gas_price - base_fee);
+        }
         let tip_cap = self.gas_tip_cap();
         let Some(base_fee) = base_fee else {
             return Some(tip_cap);
@@ -2195,15 +2218,15 @@ pub struct FrameTransaction {
     /// EIP-8141 outer signature list. Validated
     /// before any frame executes; referenced by VERIFY frames and SIGPARAM.
     pub signatures: Vec<FrameSignature>,
-    /// EIP-8141 bounds the fee fields at 2**256, not 2**64: a frame transaction
-    /// may legitimately name a fee no balance could pay, and a node still has to
-    /// decode it to reject it for the balance rather than for the field width.
+    /// EIP-8141 `fees.max_fee`: one budget, in wei, for all of the transaction's
+    /// execution, state and blob gas. The fee fields are bounded at 2**256, not
+    /// 2**64: a frame transaction may legitimately name a fee no balance could
+    /// pay, and a node still has to decode it to reject it for the balance rather
+    /// than for the field width.
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub max_fee: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub max_priority_fee_per_gas: U256,
-    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
-    pub max_fee_per_gas: U256,
-    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
-    pub max_fee_per_blob_gas: U256,
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H256Wrapper>)]
     pub blob_versioned_hashes: Vec<H256>,
     #[rkyv(with=rkyv::with::Skip)]
@@ -2223,9 +2246,8 @@ impl Default for FrameTransaction {
             sender: Address::zero(),
             frames: Vec::new(),
             signatures: Vec::new(),
+            max_fee: U256::zero(),
             max_priority_fee_per_gas: U256::zero(),
-            max_fee_per_gas: U256::zero(),
-            max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: Vec::new(),
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
@@ -2408,12 +2430,67 @@ impl RecentRootReference {
     }
 }
 
+/// EIP-8141's fee budget of a frame transaction at an including block's base fees
+/// (see [`FrameTransaction::fee_budget`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameFeeBudget {
+    /// `max_cost`: the escrow collected from the payer on payment approval, the
+    /// worst-case base-fee charge plus the largest tip the `max_fee` budget allows.
+    /// Never above `max_fee`.
+    pub max_cost: U256,
+    /// What `GASPRICE` returns: the base fee plus `max_priority_fee // max_gas`. The
+    /// payer pays at least this per unit of gas used, blob gas aside.
+    pub gas_price: U256,
+}
+
+/// EIP-8141 settlement of a frame transaction (see [`FrameFeeBudget::settle`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameFeeSettlement {
+    /// `base_fee_paid`: the gas used at the base fee plus the blob gas at the blob
+    /// base fee, burned.
+    pub base_fee_paid: U256,
+    /// `priority_fee_paid`: credited to the coinbase.
+    pub priority_fee_paid: U256,
+    /// `payer_refund`: the rest of the escrow, returned to the payer.
+    pub payer_refund: U256,
+}
+
+impl FrameFeeBudget {
+    /// Split the escrow after execution: the gas used at the base fee and the blob
+    /// gas at the blob base fee are burned, the coinbase receives the priority fee
+    /// per gas on the gas used, capped by what the escrow holds after the burn, and
+    /// the payer gets back the rest. `gas_used <= max_gas`, so the burn never
+    /// exceeds `max_cost` and the refund is never negative.
+    pub fn settle(
+        &self,
+        tx: &FrameTransaction,
+        gas_used: u64,
+        base_fee_per_gas: U256,
+        blob_base_fee: U256,
+    ) -> FrameFeeSettlement {
+        let base_fee_paid = U256::from(gas_used)
+            .saturating_mul(base_fee_per_gas)
+            .saturating_add(U256::from(tx.blob_gas()).saturating_mul(blob_base_fee));
+        let escrow_left = self.max_cost.saturating_sub(base_fee_paid);
+        let priority_fee_paid = tx
+            .max_priority_fee_per_gas
+            .saturating_mul(U256::from(gas_used))
+            .min(escrow_left);
+        FrameFeeSettlement {
+            base_fee_paid,
+            priority_fee_paid,
+            payer_refund: escrow_left - priority_fee_paid,
+        }
+    }
+}
+
 impl FrameTransaction {
-    /// Canonical signature hash (EIP-8141): the raw
-    /// `signature` bytes of every signature with empty `msg` are elided (a
-    /// signature over this hash cannot commit to its own bytes). Frame data is
-    /// NO LONGER elided — it is fully covered. Signatures with an explicit
-    /// 32-byte `msg` keep their bytes (they sign that digest, not this hash).
+    /// Canonical signature hash (EIP-8141): the raw `signature` bytes of every
+    /// signature with empty `msg` are replaced by their byte length, RLP-encoded
+    /// as an unsigned integer. A signature over this hash cannot commit to its own
+    /// bytes, but committing to their length fixes what the payer is charged for
+    /// them. Frame data is fully covered. Signatures with an explicit 32-byte
+    /// `msg` keep their bytes (they sign that digest, not this hash).
     pub fn compute_sig_hash(&self) -> H256 {
         let mut buf = vec![TxType::Frame as u8];
         let elided_signatures: Vec<FrameSignature> = self
@@ -2421,11 +2498,15 @@ impl FrameTransaction {
             .iter()
             .map(|s| {
                 if s.msg.is_empty() {
+                    // An unsigned integer RLP-encodes as its minimal big-endian
+                    // bytes, so the length can stand in the bytes field directly.
+                    let length = (s.signature.len() as u64).to_be_bytes();
+                    let first_nonzero = length.iter().position(|b| *b != 0).unwrap_or(8);
                     FrameSignature {
                         scheme: s.scheme,
                         signer: s.signer,
                         msg: s.msg.clone(),
-                        signature: Bytes::new(),
+                        signature: Bytes::copy_from_slice(&length[first_nonzero..]),
                     }
                 } else {
                     s.clone()
@@ -2440,11 +2521,7 @@ impl FrameTransaction {
             .encode_field(&self.sender)
             .encode_field(&self.frames)
             .encode_field(&elided_signatures)
-            .encode_field(&(
-                self.max_priority_fee_per_gas,
-                self.max_fee_per_gas,
-                self.max_fee_per_blob_gas,
-            ))
+            .encode_field(&(self.max_fee, self.max_priority_fee_per_gas))
             .encode_field(&self.blob_versioned_hashes)
             .finish();
         keccak(&buf)
@@ -2465,8 +2542,10 @@ impl FrameTransaction {
             .sum()
     }
 
-    /// Iterate the EIP-8141 data fields the calldata cost is charged over:
-    /// each frame's `data`, and each signature's `signer`, `msg` and `signature`.
+    /// Iterate the EIP-8141 data fields priced by their content: each frame's
+    /// `data`, each signature's `signer` and `msg`, and the `signature` bytes of
+    /// signatures with an explicit `msg`. The `signature` bytes of an empty-`msg`
+    /// signature are priced by length alone (see [`Self::elided_signature_len`]).
     /// The RLP framing and the remaining scalar fields are not included.
     fn data_fields(&self) -> impl Iterator<Item = &[u8]> {
         const EMPTY: &[u8] = &[];
@@ -2477,13 +2556,29 @@ impl FrameTransaction {
                 [
                     s.signer.as_ref().map_or(EMPTY, |a| a.as_bytes()),
                     s.msg.as_ref(),
-                    s.signature.as_ref(),
+                    if s.msg.is_empty() {
+                        EMPTY
+                    } else {
+                        s.signature.as_ref()
+                    },
                 ]
             }))
     }
 
+    /// Total length of the `signature` bytes of signatures with an empty `msg`.
+    /// EIP-8141's canonical signature hash commits only to their length, so the
+    /// intrinsic cost prices them as if all non-zero: the payer's charge then
+    /// depends only on what the signature hash covers.
+    fn elided_signature_len(&self) -> u64 {
+        self.signatures
+            .iter()
+            .filter(|s| s.msg.is_empty())
+            .fold(0u64, |acc, s| acc.saturating_add(s.signature.len() as u64))
+    }
+
     /// EIP-7623 calldata cost over the frame and signature data and EIP-8250's
-    /// nonce calldata: 4 gas per zero byte, 16 per non-zero byte.
+    /// nonce calldata: 4 gas per zero byte, 16 per non-zero byte, and 16 per byte
+    /// of an empty-`msg` signature whatever its value.
     pub fn data_cost(&self) -> u64 {
         let nonce_calldata = self.nonce_calldata();
         self.data_fields()
@@ -2492,6 +2587,7 @@ impl FrameTransaction {
             .fold(0u64, |acc, byte| {
                 acc.saturating_add(if *byte == 0 { 4 } else { 16 })
             })
+            .saturating_add(self.elided_signature_len().saturating_mul(16))
     }
 
     /// EIP-7623 token count over the frame and signature data and EIP-8250's nonce
@@ -2501,6 +2597,7 @@ impl FrameTransaction {
     pub fn calldata_tokens(&self) -> u64 {
         self.data_fields()
             .fold(0u64, |acc, field| acc.saturating_add(field.len() as u64))
+            .saturating_add(self.elided_signature_len())
             .saturating_add(self.nonce_calldata().len() as u64)
             .saturating_mul(FRAME_TX_STANDARD_TOKEN_COST)
     }
@@ -2659,6 +2756,48 @@ impl FrameTransaction {
         self.standard_gas_limit().max(floor_side)
     }
 
+    /// EIP-8141 `blob_gas`: `GAS_PER_BLOB` per blob versioned hash.
+    pub fn blob_gas(&self) -> u64 {
+        (self.blob_versioned_hashes.len() as u64)
+            .saturating_mul(u64::from(crate::constants::GAS_PER_BLOB))
+    }
+
+    /// `max_fee / max_gas`: the most the budget can pay per unit of gas, at a zero
+    /// blob base fee. It stands in where a per-gas fee cap is expected, such as the
+    /// gas price shapes RPC reports; consensus never uses it.
+    pub fn max_fee_per_gas_share(&self) -> U256 {
+        // `max_gas` is never zero: it includes the fixed intrinsic cost.
+        self.max_fee / U256::from(self.max_gas())
+    }
+
+    /// EIP-8141 fee budget at an including block's base fees. `None` when
+    /// `max_fee` is below `required_max_fee`, the worst-case base-fee charge
+    /// (`max_gas` at the base fee plus the blob gas at the blob base fee): the
+    /// transaction is then invalid in that block. The arithmetic is exact, so a
+    /// requirement past 2**256 is one no `max_fee` can meet.
+    pub fn fee_budget(
+        &self,
+        base_fee_per_gas: U256,
+        blob_base_fee: U256,
+    ) -> Option<FrameFeeBudget> {
+        let max_gas = U256::from(self.max_gas());
+        let required_max_fee = max_gas
+            .checked_mul(base_fee_per_gas)?
+            .checked_add(U256::from(self.blob_gas()).checked_mul(blob_base_fee)?)?;
+        let budget_left = self.max_fee.checked_sub(required_max_fee)?;
+        // `max_priority_fee_per_gas * max_gas` may exceed 2**256; whatever it is,
+        // the budget left caps it, so saturating cannot change the minimum.
+        let max_priority_fee = self
+            .max_priority_fee_per_gas
+            .saturating_mul(max_gas)
+            .min(budget_left);
+        Some(FrameFeeBudget {
+            max_cost: required_max_fee + max_priority_fee,
+            // `max_gas` is never zero: it includes the fixed intrinsic cost.
+            gas_price: base_fee_per_gas + max_priority_fee / max_gas,
+        })
+    }
+
     /// Σ(`limits.state`) over every frame.
     pub fn total_frame_state_gas(&self) -> u64 {
         self.frames
@@ -2705,17 +2844,12 @@ impl FrameTransaction {
             ));
         }
         // Per EIP-8141, every versioned hash must carry the EIP-4844 KZG version
-        // byte, and a transaction carrying no blobs must not name a blob fee.
+        // byte. Blob gas is paid from the `max_fee` budget, so there is no blob fee
+        // field to constrain.
         for (i, hash) in self.blob_versioned_hashes.iter().enumerate() {
             if hash.0.first() != Some(&VERSIONED_HASH_VERSION_KZG) {
                 return Err(format!("Blob versioned hash {i}: wrong version byte"));
             }
-        }
-        if self.blob_versioned_hashes.is_empty() && !self.max_fee_per_blob_gas.is_zero() {
-            return Err(
-                "max_fee_per_blob_gas must be zero when the transaction carries no blobs"
-                    .to_string(),
-            );
         }
         // EIP-8141 signature list validation: scheme must be a known value; msg
         // must be empty or a non-zero 32-byte digest.
@@ -3283,11 +3417,7 @@ impl RLPEncode for FrameTransaction {
             .encode_field(&self.sender)
             .encode_field(&self.frames)
             .encode_field(&self.signatures)
-            .encode_field(&(
-                self.max_priority_fee_per_gas,
-                self.max_fee_per_gas,
-                self.max_fee_per_blob_gas,
-            ))
+            .encode_field(&(self.max_fee, self.max_priority_fee_per_gas))
             .encode_field(&self.blob_versioned_hashes)
             .finish();
     }
@@ -3306,19 +3436,16 @@ impl RLPDecode for FrameTransaction {
         let (sender, decoder) = decoder.decode_field("sender")?;
         let (frames, decoder) = decoder.decode_field("frames")?;
         let (signatures, decoder) = decoder.decode_field("signatures")?;
-        // Decode the nested `fees` list field by field rather than as one tuple.
-        // A fee wider than 256 bits is rejected here, during decoding, and the
-        // field name is the only thing that says *which* fee was malformed --
-        // decoding the triple as a unit reports `fees ... InvalidLength`, which
-        // cannot distinguish a max-fee overflow from a priority-fee one.
+        // Decode the nested `fees` list, `[max_fee, max_priority_fee_per_gas]`,
+        // field by field rather than as one tuple. A fee wider than 256 bits is
+        // rejected here, during decoding, and the field name is the only thing that
+        // says *which* fee was malformed -- decoding the pair as a unit reports
+        // `fees ... InvalidLength`, which cannot distinguish the two.
         let (fees_encoded, decoder) = decoder.get_encoded_item()?;
         let fees_decoder = Decoder::new(&fees_encoded)?;
+        let (max_fee, fees_decoder): (U256, _) = fees_decoder.decode_field("max_fee")?;
         let (max_priority_fee_per_gas, fees_decoder): (U256, _) =
             fees_decoder.decode_field("max_priority_fee_per_gas")?;
-        let (max_fee_per_gas, fees_decoder): (U256, _) =
-            fees_decoder.decode_field("max_fee_per_gas")?;
-        let (max_fee_per_blob_gas, fees_decoder): (U256, _) =
-            fees_decoder.decode_field("max_fee_per_blob_gas")?;
         fees_decoder.finish()?;
         let (blob_versioned_hashes, decoder) = decoder.decode_field("blob_versioned_hashes")?;
         let tx = FrameTransaction {
@@ -3328,9 +3455,8 @@ impl RLPDecode for FrameTransaction {
             sender,
             frames,
             signatures,
+            max_fee,
             max_priority_fee_per_gas,
-            max_fee_per_gas,
-            max_fee_per_blob_gas,
             blob_versioned_hashes,
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
@@ -4046,12 +4172,13 @@ mod serde_impl {
                     .map(SignatureEntry::from)
                     .collect::<Vec<_>>(),
             )?;
+            // EIP-8141 `fees`: one `max_fee` budget for all execution, state and
+            // blob gas, and the priority fee per gas.
+            s.serialize_field("maxFee", &format!("{:#x}", self.max_fee))?;
             s.serialize_field(
                 "maxPriorityFeePerGas",
                 &format!("{:#x}", self.max_priority_fee_per_gas),
             )?;
-            s.serialize_field("maxFeePerGas", &format!("{:#x}", self.max_fee_per_gas))?;
-            s.serialize_field("maxFeePerBlobGas", &self.max_fee_per_blob_gas)?;
             s.serialize_field("blobVersionedHashes", &self.blob_versioned_hashes)?;
             s.end()
         }
@@ -4934,7 +5061,9 @@ mod serde_impl {
                 from: value.sender,
                 gas: Some(value.max_gas()),
                 value: U256::zero(),
-                gas_price: value.max_fee_per_gas,
+                // The frame transaction caps its total fee, not a price per gas;
+                // its per-gas share of the budget stands in for the cap here.
+                gas_price: value.max_fee_per_gas_share(),
                 // `GenericTransaction` keeps these as `u64`, and `U256::as_u64`
                 // panics rather than truncating, so saturate: this conversion feeds
                 // RPC and simulation shapes, and a fee this large is unaffordable at
@@ -4942,12 +5071,11 @@ mod serde_impl {
                 max_priority_fee_per_gas: Some(
                     u64::try_from(value.max_priority_fee_per_gas).unwrap_or(u64::MAX),
                 ),
-                max_fee_per_gas: Some(u64::try_from(value.max_fee_per_gas).unwrap_or(u64::MAX)),
-                max_fee_per_blob_gas: if value.blob_versioned_hashes.is_empty() {
-                    None
-                } else {
-                    Some(value.max_fee_per_blob_gas)
-                },
+                max_fee_per_gas: Some(
+                    u64::try_from(value.max_fee_per_gas_share()).unwrap_or(u64::MAX),
+                ),
+                // Blob gas is paid from the same budget: there is no blob fee cap.
+                max_fee_per_blob_gas: None,
                 access_list: vec![],
                 fee_token: None,
                 authorization_list: None,
@@ -5074,16 +5202,14 @@ mod tests {
 
     #[test]
     fn is_blob_carrying_covers_frame_txs_with_blob_hashes() {
-        // An EIP-8141 frame tx carries `max_fee_per_blob_gas` +
-        // `blob_versioned_hashes` of its own, so blob-ness cannot be decided
-        // by matching on `EIP4844Transaction` alone: a blob-bearing frame tx
-        // would otherwise be treated as a plain tx by the mempool's
-        // replacement rules and skip the blob-fee comparison entirely.
+        // An EIP-8141 frame tx carries `blob_versioned_hashes` of its own, so
+        // blob-ness cannot be decided by matching on `EIP4844Transaction` alone:
+        // a blob-bearing frame tx would otherwise be treated as a plain tx by the
+        // mempool's replacement rules and sidecar handling.
         let plain_frame = Transaction::FrameTransaction(FrameTransaction::default());
         assert!(!plain_frame.is_blob_carrying());
 
         let blob_frame = Transaction::FrameTransaction(FrameTransaction {
-            max_fee_per_blob_gas: U256::from(7u64),
             blob_versioned_hashes: vec![H256::from_low_u64_be(1)],
             ..Default::default()
         });
@@ -5830,9 +5956,9 @@ mod tests {
                 msg: Bytes::new(),
                 signature: Bytes::from(vec![0u8; 65]),
             }],
+            // 0.01 ETH: a budget of 30 gwei over ~330k gas.
+            max_fee: U256::from(10_000_000_000_000_000u64),
             max_priority_fee_per_gas: U256::from(1_000_000_000u64),
-            max_fee_per_gas: U256::from(30_000_000_000u64),
-            max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
@@ -6033,8 +6159,10 @@ mod tests {
         assert!(tx.access_list().is_empty());
         assert!(tx.authorization_list().is_none());
         assert_eq!(tx.max_priority_fee(), Some(U256::from(1_000_000_000u64)));
-        assert_eq!(tx.max_fee_per_gas(), Some(U256::from(30_000_000_000u64)));
-        assert_eq!(tx.max_fee_per_blob_gas(), None); // no blobs
+        // EIP-8141: one `max_fee` budget, no per-gas or per-blob-gas caps.
+        assert_eq!(tx.max_fee_per_gas(), None);
+        assert_eq!(tx.max_fee_per_blob_gas(), None);
+        assert_eq!(tx.gas_fee_cap(), U256::from(10_000_000_000_000_000u64));
         assert!(!tx.is_contract_creation());
         // sender returns explicit sender, no ECDSA
         assert_eq!(
@@ -6109,9 +6237,8 @@ mod tests {
             sender: Address::from_low_u64_be(0xABCD),
             frames,
             signatures: vec![],
+            max_fee: U256::from(10_000_000_000_000_000u64),
             max_priority_fee_per_gas: U256::from(1_000_000_000u64),
-            max_fee_per_gas: U256::from(30_000_000_000u64),
-            max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
@@ -6194,9 +6321,8 @@ mod tests {
             sender: Address::from_low_u64_be(0xABCD),
             frames,
             signatures: vec![],
+            max_fee: U256::from(10_000_000_000_000_000u64),
             max_priority_fee_per_gas: U256::from(1_000_000_000u64),
-            max_fee_per_gas: U256::from(30_000_000_000u64),
-            max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
@@ -6305,9 +6431,8 @@ mod tests {
                 data: Bytes::new(),
             }],
             signatures: vec![],
+            max_fee: U256::from(10_000_000_000_000_000u64),
             max_priority_fee_per_gas: U256::from(1_000_000_000u64),
-            max_fee_per_gas: U256::from(30_000_000_000u64),
-            max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
@@ -6687,9 +6812,8 @@ mod tests {
                 msg: Bytes::new(),
                 signature: Bytes::from(vec![0x01u8; 65]),
             }],
+            max_fee: U256::from(0x6fc23ac00u64),
             max_priority_fee_per_gas: U256::from(0x3b9aca00u64),
-            max_fee_per_gas: U256::from(0x6fc23ac00u64),
-            max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
@@ -6698,12 +6822,12 @@ mod tests {
         let mut buf = Vec::new();
         tx.encode(&mut buf);
         let rlp_hex = hex::encode(&buf);
-        // GOLDEN_RLP: EIP-8250 layout, `nonce_keys = [0]` (`c180`) then `nonce_seq`.
-        // The layout is cross-checked against reference bytes in
-        // `reference_frame_tx_reencodes_byte_identically`.
+        // GOLDEN_RLP: EIP-8250 layout, `nonce_keys = [0]` (`c180`) then `nonce_seq`,
+        // and `fees = [max_fee, max_priority_fee_per_gas]`. Computed with the
+        // execution-specs Bogota frame transaction.
         assert_eq!(
             rlp_hex,
-            "f8b501c1800794000000000000000000000000000000000000abcdefcf010380c7825208831e848080821122de0280940000000000000000000000000000000000001234c4829c40808080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101cc843b9aca008506fc23ac0080c0"
+            "f8b401c1800794000000000000000000000000000000000000abcdefcf010380c7825208831e848080821122de0280940000000000000000000000000000000000001234c4829c40808080f85cf85a0194000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101cb8506fc23ac00843b9aca00c0"
         );
 
         // Round-trips losslessly.
@@ -6712,12 +6836,11 @@ mod tests {
         assert_eq!(decoded, tx);
 
         let sig_hash = tx.compute_sig_hash();
-        // GOLDEN_SIG_HASH: over the EIP-8250 layout. The hash construction is
-        // cross-checked against a reference signature in
-        // `reference_frame_tx_signature_binds_the_nonce_fields`.
+        // GOLDEN_SIG_HASH: computed with the execution-specs Bogota frame
+        // transaction, which replaces the empty-msg signature by its length.
         assert_eq!(
             format!("{:#x}", sig_hash),
-            "0xab79d82e38567c944b076afa917f6df24ba84ea4d67aebf786382955ab27e05d",
+            "0x333553372a297d192dfe71c852fd03b83823647cd4f7c813f3bc21c252edc7ec",
         );
 
         // Elision invariant: changing empty-msg signature bytes must NOT change sig_hash.
@@ -6727,6 +6850,14 @@ mod tests {
             tx.compute_sig_hash(),
             tx2.compute_sig_hash(),
             "sig_hash must be independent of empty-msg signature bytes",
+        );
+
+        // ...but it commits to their length, which fixes what the payer is charged.
+        let mut tx3 = tx.clone();
+        tx3.signatures[0].signature = Bytes::from(vec![0x01u8; 66]);
+        assert_eq!(
+            format!("{:#x}", tx3.compute_sig_hash()),
+            "0x10ec6d45726bafe828f1d303cd8b6f2ff1bcb5a133ca00bfa67de4b018c925c9",
         );
     }
 

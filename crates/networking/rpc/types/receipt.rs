@@ -1,5 +1,5 @@
 use ethrex_common::{
-    Address, Bloom, Bytes, H256,
+    Address, Bloom, Bytes, H256, U256,
     constants::GAS_PER_BLOB,
     evm::calculate_create_address,
     serde_utils,
@@ -280,11 +280,22 @@ impl RpcReceiptTxInfo {
         let nonce = transaction.nonce();
         let from = transaction.sender(&NativeCrypto)?;
         let transaction_hash = transaction.hash(&NativeCrypto);
-        let effective_gas_price =
-            u64::try_from(transaction.effective_gas_price(base_fee_per_gas).ok_or(
-                RpcErr::Internal("Could not get effective gas price from tx".into()),
-            )?)
-            .map_err(|_| RpcErr::Internal("effective gas price overflows u64".into()))?;
+        let effective_gas_price = match &transaction {
+            // EIP-8141: a frame transaction's price per gas comes from its `max_fee`
+            // budget at the block's base fees. Report the price `GASPRICE` returned
+            // to its frames, the lower bound of what the payer paid per gas used.
+            Transaction::FrameTransaction(tx) => tx
+                .fee_budget(
+                    U256::from(base_fee_per_gas.unwrap_or_default()),
+                    U256::from(block_blob_gas_price),
+                )
+                .map(|budget| budget.gas_price),
+            _ => transaction.effective_gas_price(base_fee_per_gas),
+        };
+        let effective_gas_price = u64::try_from(effective_gas_price.ok_or(RpcErr::Internal(
+            "Could not get effective gas price from tx".into(),
+        ))?)
+        .map_err(|_| RpcErr::Internal("effective gas price overflows u64".into()))?;
         let transaction_index = index;
         // EIP-4844 transactions and EIP-8141 frame transactions that carry blobs.
         let (blob_gas_price, blob_gas_used) = if transaction.is_blob_carrying() {
@@ -430,7 +441,7 @@ mod tests {
         let sender = Address::from(hex!("7435ed30a8b4aeb0877cef0c6e8cffe834eb865f"));
         let tx = Transaction::FrameTransaction(FrameTransaction {
             sender,
-            max_fee_per_gas: ethrex_common::U256::one(),
+            max_fee: ethrex_common::U256::one(),
             max_priority_fee_per_gas: ethrex_common::U256::one(),
             ..Default::default()
         });
@@ -540,9 +551,9 @@ mod tests {
     fn blob_carrying_frame_transaction_receipt_reports_blob_gas() {
         let frame_tx = |blob_versioned_hashes: Vec<H256>| {
             Transaction::FrameTransaction(FrameTransaction {
-                max_fee_per_gas: ethrex_common::U256::one(),
+                // Enough to cover two blobs at a blob base fee of 3.
+                max_fee: ethrex_common::U256::from(1_000_000_000u64),
                 max_priority_fee_per_gas: ethrex_common::U256::one(),
-                max_fee_per_blob_gas: ethrex_common::U256::one(),
                 blob_versioned_hashes,
                 ..Default::default()
             })

@@ -109,9 +109,8 @@ async fn send_a_frame_tx_in_its_blob_network_wrapper() {
             value: U256::zero(),
             data: Bytes::new(),
         }],
+        max_fee: U256::from(10_000_000 * GWEI),
         max_priority_fee_per_gas: U256::from(GWEI),
-        max_fee_per_gas: U256::from(10 * GWEI),
-        max_fee_per_blob_gas: U256::from(GWEI),
         blob_versioned_hashes: vec![versioned_hash],
         ..Default::default()
     };

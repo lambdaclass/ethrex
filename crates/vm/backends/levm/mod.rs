@@ -3421,11 +3421,17 @@ impl LEVM {
         vm_type: VMType,
         base_blob_fee_per_gas: U256,
     ) -> Result<Environment, EvmError> {
-        let gas_price: U256 = calculate_gas_price_for_tx(
-            tx,
-            block_header.base_fee_per_gas.unwrap_or_default(),
-            &vm_type,
-        )?;
+        let base_fee_per_gas = block_header.base_fee_per_gas.unwrap_or_default();
+        let gas_price: U256 = match tx {
+            // EIP-8141: `GASPRICE` reports the price the `max_fee` budget pays per
+            // unit of gas at this block's base fees. A budget below the requirement
+            // leaves the transaction invalid, which the VM reports in its place in
+            // the validation order, before any frame can read this.
+            Transaction::FrameTransaction(frame_tx) => frame_tx
+                .fee_budget(U256::from(base_fee_per_gas), base_blob_fee_per_gas)
+                .map_or(U256::from(base_fee_per_gas), |budget| budget.gas_price),
+            _ => calculate_gas_price_for_tx(tx, base_fee_per_gas, &vm_type)?,
+        };
 
         let block_excess_blob_gas = block_header.excess_blob_gas;
         let env = Environment {
@@ -3759,32 +3765,13 @@ impl LEVM {
         })
     }
 
-    /// Mempool reservation ceiling for a frame transaction:
-    /// `max_gas * max_fee_per_gas + len(blob_hashes) * 131072 * max_fee_per_blob_gas`,
-    /// saturating.
+    /// Mempool reservation ceiling for a frame transaction: its `max_fee`.
     ///
-    /// The consensus `max_cost` that APPROVE collects prices blobs at the
-    /// including block's `blob_base_fee` (EIP-8141 §Gas Accounting, TXPARAM 0x06;
-    /// `load_tx_param` 0x06 in `opcode_handlers/frame_tx.rs`). That rate is not
-    /// known at admission — the simulation runs against the current head, while
-    /// execution charges the base fee of whichever later block includes the
-    /// transaction — and the blob base fee moves per block, so pricing the
-    /// reservation at the head's rate could reserve less than the eventual charge.
-    /// `max_fee_per_blob_gas >= blob_base_fee` is an inclusion condition
-    /// (EIP-8141 §Blob handling), so the declared max rate bounds every block that
-    /// can include the transaction and keeps this a true ceiling.
-    ///
-    /// Intentionally saturating (not checked): the TXPARAM 0x06 consensus handler
-    /// uses checked_mul/checked_add and halts on overflow. Saturating to
-    /// `U256::MAX` here only makes the reservation larger, never smaller.
+    /// The `max_cost` that APPROVE collects depends on the base fees of the
+    /// including block, which are not known at admission. `max_fee` bounds it at
+    /// any base fees, so EIP-8141 reserves that instead.
     fn frame_tx_reservation_ceiling(frame_tx: &ethrex_common::types::FrameTransaction) -> U256 {
-        let gas_cost = frame_tx
-            .max_fee_per_gas
-            .saturating_mul(U256::from(frame_tx.max_gas()));
-        let blob_cost = U256::from(frame_tx.blob_versioned_hashes.len())
-            .saturating_mul(U256::from(131072u64))
-            .saturating_mul(frame_tx.max_fee_per_blob_gas);
-        gas_cost.saturating_add(blob_cost)
+        frame_tx.max_fee
     }
 
     pub fn get_state_transitions(

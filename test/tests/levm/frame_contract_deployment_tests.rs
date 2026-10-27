@@ -255,8 +255,8 @@ fn frame_tx_result(
                 data: Bytes::new(),
             },
         ],
+        max_fee: U256::from(1_000_000_000_000_000_000u64),
         max_priority_fee_per_gas: U256::from(1),
-        max_fee_per_gas: U256::from(1_000),
         ..Default::default()
     };
     let env = Environment {
@@ -266,7 +266,9 @@ fn frame_tx_result(
         config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
         chain_id: U256::from(1),
         base_fee_per_gas: U256::from(1),
-        gas_price: tx.max_fee_per_gas,
+        gas_price: tx
+            .fee_budget(U256::one(), U256::zero())
+            .map_or(U256::one(), |budget| budget.gas_price),
         slot_number: U256::from(10),
         ..Default::default()
     };

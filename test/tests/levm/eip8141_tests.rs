@@ -40,7 +40,7 @@ const FUNDED_SENDER: Address = Address::repeat_byte(0xAA);
 /// did not pass the sender in `accounts`). Kept as a constant so the rollback
 /// assertion can verify the sender against the exact value it was seeded with.
 const AUTO_SEED_SENDER_BALANCE: U256 = U256::MAX;
-/// Harness base fee. `frame_tx_with_frames` sets `max_fee_per_gas` well above it.
+/// Harness base fee. `frame_tx_with_frames` sets a `max_fee` far above what it requires.
 const HARNESS_BASE_FEE: u64 = 1;
 /// Coinbase used by the harness env (the `..Default::default()` zero address).
 /// Fee tests read its post-execution balance to assert value conservation.
@@ -115,19 +115,18 @@ fn frame_tx_env(tx: &FrameTransaction) -> Environment {
         config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
         chain_id: U256::from(HARNESS_CHAIN_ID),
         base_fee_per_gas: U256::from(HARNESS_BASE_FEE),
-        // NOTE: gas_price here is max_fee_per_gas, NOT the effective price.
-        // Fine for tests that don't assert on fee amounts. Tests that check
-        // payer balances MUST use `run_frame_tx_with_fees`, which derives the
-        // effective price min(base+priority, max_fee) like production.
-        gas_price: tx.max_fee_per_gas,
+        // What `GASPRICE` reports, derived from the fee budget like production.
+        gas_price: tx
+            .fee_budget(U256::from(HARNESS_BASE_FEE), U256::zero())
+            .map_or(U256::from(HARNESS_BASE_FEE), |budget| budget.gas_price),
         tx_nonce: tx.nonce_seq,
         ..Default::default()
     }
 }
 
 /// Build a frame transaction wrapping `frames`, with sane harness defaults:
-/// harness chain id, nonce 0, sender = `FUNDED_SENDER`, fees above the harness
-/// base fee, and an empty signature list.
+/// harness chain id, nonce 0, sender = `FUNDED_SENDER`, a fee budget far above
+/// what the harness base fee requires, and an empty signature list.
 fn frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
     FrameTransaction {
         chain_id: HARNESS_CHAIN_ID,
@@ -136,9 +135,8 @@ fn frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
         sender: FUNDED_SENDER,
         frames,
         signatures: Vec::new(),
+        max_fee: U256::from(1_000_000_000_000_000_000u64),
         max_priority_fee_per_gas: U256::from(1u64),
-        max_fee_per_gas: U256::from(HARNESS_BASE_FEE + 1_000),
-        max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: Vec::new(),
         inner_hash: Default::default(),
         cached_canonical: Default::default(),
@@ -188,10 +186,9 @@ fn run_frame_tx(
 }
 
 /// Like `run_frame_tx`, but builds the env with the given block `base_fee`
-/// instead of `HARNESS_BASE_FEE`. The env's effective `gas_price` is derived
-/// from the tx the same way production does (`calculate_gas_price_for_tx`):
-/// `min(base_fee + max_priority_fee_per_gas, max_fee_per_gas)`. Used by fee
-/// tests that need a real base-fee/effective-price spread.
+/// instead of `HARNESS_BASE_FEE`. The env's `gas_price` is derived from the fee
+/// budget the same way production does. Used by fee tests that need a real
+/// base-fee/priority-fee spread.
 fn run_frame_tx_with_fees(
     accounts: &[SeededAccount],
     tx: FrameTransaction,
@@ -210,11 +207,9 @@ fn run_frame_tx_with_fees(
     let mut db = seeded_db(&seeded);
     let mut env = frame_tx_env(&tx);
     env.base_fee_per_gas = U256::from(base_fee);
-    // Effective gas price, matching production `calculate_gas_price_for_tx`.
-    let effective = U256::from(base_fee)
-        .saturating_add(tx.max_priority_fee_per_gas)
-        .min(tx.max_fee_per_gas);
-    env.gas_price = effective;
+    env.gas_price = tx
+        .fee_budget(env.base_fee_per_gas, env.base_blob_fee_per_gas)
+        .map_or(env.base_fee_per_gas, |budget| budget.gas_price);
     let transaction = Transaction::FrameTransaction(tx);
 
     let result = {
@@ -470,7 +465,8 @@ fn payer_pays_effective_price_no_burn() {
             data: Bytes::new(),
         },
     ]);
-    tx.max_fee_per_gas = U256::from(100_000_000_000u64); // 100 gwei
+    // 100 gwei for every unit of `max_gas`: the budget covers the whole tip.
+    tx.max_fee = U256::from(100_000_000_000u64) * U256::from(tx.max_gas());
     tx.max_priority_fee_per_gas = U256::from(2_000_000_000u64); // 2 gwei
     let (result, db) = run_frame_tx_with_fees(
         &[
@@ -1431,48 +1427,61 @@ fn reverted_frame_reports_no_state_gas() {
 }
 
 #[test]
-fn frame_tx_below_base_blob_fee_is_rejected() {
-    // EIP-4844 INSUFFICIENT_MAX_FEE_PER_BLOB_GAS on the frame path: a blob-carrying
-    // frame tx whose max_fee_per_blob_gas is below the block base blob fee must be
-    // invalid. The check fires before any frame executes, so a lone SENDER frame is
-    // enough to reach it.
-    let mut tx = frame_tx_with_frames(vec![Frame {
-        mode: u8::from(FrameMode::Sender),
-        flags: 0x00,
-        target: None,
-        gas_limit: 100_000,
-        state_gas_limit: 1_000_000,
-        value: U256::zero(),
-        data: Bytes::new(),
-    }]);
-    tx.blob_versioned_hashes = vec![H256::repeat_byte(0x01)];
-    tx.max_fee_per_blob_gas = U256::zero();
+fn frame_tx_budget_must_cover_the_blob_fee() {
+    // EIP-8141 §Fee budget: `max_fee` pays for the blob gas at the block's blob base
+    // fee as well as `max_gas` at the base fee, and the transaction is invalid when it
+    // covers less. The check fires before any frame executes, so a lone SENDER frame
+    // is enough to reach it.
+    let run = |extra_fee: u64| {
+        let mut tx = frame_tx_with_frames(vec![Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0x00,
+            target: None,
+            gas_limit: 100_000,
+            state_gas_limit: 1_000_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        }]);
+        tx.blob_versioned_hashes = vec![H256::repeat_byte(0x01)];
+        // `max_gas` at the base fee, plus `extra_fee` towards the blob gas.
+        tx.max_fee = U256::from(tx.max_gas() * HARNESS_BASE_FEE + extra_fee);
 
-    let mut db = seeded_db(&[(FUNDED_SENDER, AUTO_SEED_SENDER_BALANCE, 0, Bytes::new())]);
-    let mut env = frame_tx_env(&tx);
-    // base blob fee strictly above the tx's max_fee_per_blob_gas (0).
-    env.base_blob_fee_per_gas = U256::from(1u64);
-    let transaction = Transaction::FrameTransaction(tx);
+        let mut db = seeded_db(&[(FUNDED_SENDER, AUTO_SEED_SENDER_BALANCE, 0, Bytes::new())]);
+        let mut env = frame_tx_env(&tx);
+        env.base_blob_fee_per_gas = U256::from(1u64);
+        let transaction = Transaction::FrameTransaction(tx);
 
-    let mut vm = VM::new(
-        env,
-        &mut db,
-        &transaction,
-        LevmCallTracer::disabled(),
-        VMType::L1,
-        &NativeCrypto,
-        None,
-    )
-    .expect("VM::new should succeed for a frame tx");
-    let result = vm.execute();
-    assert!(
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &transaction,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &NativeCrypto,
+            None,
+        )
+        .expect("VM::new should succeed for a frame tx");
+        vm.execute()
+    };
+    let insufficient = |result: &Result<ExecutionReport, VMError>| {
         matches!(
             result,
             Err(VMError::TxValidation(
-                ethrex_levm::errors::TxValidationError::InsufficientMaxFeePerBlobGas { .. }
+                ethrex_levm::errors::TxValidationError::InsufficientMaxFeePerGas
             ))
-        ),
-        "blob-carrying frame tx below base blob fee must be rejected, got {result:?}"
+        )
+    };
+
+    // One blob is `GAS_PER_BLOB` (131072) blob gas at a blob base fee of 1.
+    let short = run(131_071);
+    assert!(
+        insufficient(&short),
+        "a budget one wei short of the blob fee must be rejected, got {short:?}"
+    );
+    let exact = run(131_072);
+    assert!(
+        !insufficient(&exact),
+        "a budget covering the blob fee exactly passes the fee check, got {exact:?}"
     );
 }
 
@@ -1645,7 +1654,10 @@ mod frame_tx_opcode_handler_tests {
             approve_called_in_current_frame: false,
             max_gas: 0,
             legacy_sender_nonce: 0,
-            blob_base_fee: U256::zero(),
+            fee_budget: ethrex_common::types::FrameFeeBudget {
+                max_cost: U256::zero(),
+                gas_price: U256::zero(),
+            },
         }
     }
 
@@ -1735,7 +1747,10 @@ mod frame_tx_opcode_handler_tests {
             approve_called_in_current_frame: false,
             max_gas: 0,
             legacy_sender_nonce: 0,
-            blob_base_fee: U256::zero(),
+            fee_budget: ethrex_common::types::FrameFeeBudget {
+                max_cost: U256::zero(),
+                gas_price: U256::zero(),
+            },
         };
         let result = load_tx_param(&ctx, 0x0B).unwrap();
         assert_eq!(result, U256::zero());
@@ -2357,9 +2372,8 @@ mod validation_observer_tests {
             sender,
             frames,
             signatures: Vec::new(),
-            max_priority_fee_per_gas: U256::from(0u64),
-            max_fee_per_gas: U256::from(0u64),
-            max_fee_per_blob_gas: U256::zero(),
+            max_fee: U256::zero(),
+            max_priority_fee_per_gas: U256::zero(),
             blob_versioned_hashes: Vec::new(),
             ..Default::default()
         })
@@ -2908,9 +2922,8 @@ mod frame_validation_prefix_tests {
             sender,
             frames,
             signatures: Vec::new(),
-            max_priority_fee_per_gas: U256::from(0u64),
-            max_fee_per_gas: U256::from(0u64),
-            max_fee_per_blob_gas: U256::zero(),
+            max_fee: U256::zero(),
+            max_priority_fee_per_gas: U256::zero(),
             blob_versioned_hashes: Vec::new(),
             ..Default::default()
         })
@@ -3006,32 +3019,29 @@ mod frame_validation_prefix_tests {
         assert_eq!(outcome.accessed_paymaster, Some((sender, false)));
     }
 
-    /// The paymaster reservation bounds the blob fee at the transaction's declared
-    /// `max_fee_per_blob_gas`, not at the head block's `blob_base_fee`. Admission
-    /// simulates against the current head while execution charges the base fee of
-    /// whichever later block includes the transaction, and the blob base fee moves
-    /// per block. EIP-8141 §Blob handling makes `max_fee_per_blob_gas >=
-    /// blob_base_fee` an inclusion condition, so the declared rate bounds every
-    /// block that can include the transaction; the head's rate does not.
+    /// The paymaster reservation is the transaction's `max_fee`, not the `max_cost`
+    /// APPROVE collects at the head block's base fees. Admission simulates against
+    /// the current head while execution charges the base fees of whichever later
+    /// block includes the transaction, and both base fees move per block. EIP-8141
+    /// bounds `max_cost` by `max_fee` at any base fees, so `max_fee` is the ceiling;
+    /// the head's `max_cost` is not.
     #[test]
-    fn reservation_ceiling_prices_blobs_at_the_declared_max_rate() {
-        const GAS_PER_BLOB: u64 = 1 << 17;
-        const MAX_FEE_PER_BLOB_GAS: u64 = 1_000;
+    fn reservation_ceiling_is_the_max_fee() {
+        const MAX_FEE: u64 = 1_000_000_000;
 
         let sender = addr(0x5E_11_02);
         let mut tx = frame_tx_prefix(sender, vec![frame(1, 0x03, sender, 50_000)]);
         let Transaction::FrameTransaction(frame_tx) = &mut tx else {
             unreachable!("frame_tx_prefix builds a frame transaction")
         };
-        frame_tx.max_fee_per_blob_gas = U256::from(MAX_FEE_PER_BLOB_GAS);
+        frame_tx.max_fee = U256::from(MAX_FEE);
         frame_tx.blob_versioned_hashes = vec![H256([
             0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 0,
         ])];
 
-        // Enough balance to cover the consensus max cost APPROVE collects, which
-        // prices the blob at the head's base fee — the quantity this reservation
-        // deliberately does not use.
+        // Enough balance to cover the `max_cost` APPROVE collects at the head's base
+        // fees, which is far below `max_fee`.
         let mut db = db_with(vec![(sender, account(1_000_000, approve_code(0x03)))]);
         let prefix = ValidationPrefix {
             shape: PrefixShape::SelfVerify,
@@ -3056,11 +3066,10 @@ mod frame_validation_prefix_tests {
             "the blob-carrying self_verify prefix must pass, got {:?}",
             outcome.violation
         );
-        // max_fee_per_gas is zero here, so the ceiling is the blob term alone.
         assert_eq!(
             outcome.reservation_ceiling,
-            U256::from(GAS_PER_BLOB * MAX_FEE_PER_BLOB_GAS),
-            "the reservation must price the blob at max_fee_per_blob_gas"
+            U256::from(MAX_FEE),
+            "the reservation must be the transaction's max_fee"
         );
     }
 
@@ -3183,7 +3192,10 @@ mod atomic_batch_approval_rollback_tests {
             approve_called_in_current_frame: false,
             max_gas: 0,
             legacy_sender_nonce: 0,
-            blob_base_fee: U256::zero(),
+            fee_budget: ethrex_common::types::FrameFeeBudget {
+                max_cost: U256::zero(),
+                gas_price: U256::zero(),
+            },
         }
     }
 
@@ -5058,7 +5070,6 @@ fn wrong_blob_version_byte_reports_the_blob_hash_rule() {
     let mut hash = [0u8; 32];
     hash[0] = 0x02; // not VERSIONED_HASH_VERSION_KZG
     tx.blob_versioned_hashes = vec![H256(hash)];
-    tx.max_fee_per_blob_gas = U256::from(1_000_000_000u64);
 
     let (result, _db) = run_frame_tx(&[], tx);
     assert!(
@@ -5072,12 +5083,10 @@ fn wrong_blob_version_byte_reports_the_blob_hash_rule() {
     );
 }
 
-/// A `max_fee_per_gas` that fits `U256` but whose product with `max_gas` does
-/// not makes the transaction unpayable. `APPROVE` collects that product, so
-/// before this was checked up front the arithmetic failed mid-approval and the
-/// transaction was reported as an unapproved payer.
+/// EIP-8141 §Fee budget: a `max_fee` below `max_gas` at the base fee is invalid
+/// before any frame executes, however large the priority fee per gas is.
 #[test]
-fn unrepresentable_max_cost_reports_the_product_overflow() {
+fn max_fee_below_the_base_fee_requirement_is_rejected() {
     let mut tx = frame_tx_with_frames(vec![Frame {
         mode: u8::from(FrameMode::Default),
         flags: 0,
@@ -5087,18 +5096,18 @@ fn unrepresentable_max_cost_reports_the_product_overflow() {
         value: U256::zero(),
         data: Bytes::new(),
     }]);
-    // Fits the field, but `max_fee_per_gas * max_gas` cannot.
-    tx.max_fee_per_gas = U256::one() << 255;
+    tx.max_fee = U256::from(tx.max_gas() * HARNESS_BASE_FEE - 1);
+    tx.max_priority_fee_per_gas = U256::MAX;
 
     let (result, _db) = run_frame_tx(&[], tx);
     assert!(
         matches!(
             result,
             Err(VMError::TxValidation(
-                ethrex_levm::errors::TxValidationError::GasLimitPriceProductOverflow
+                ethrex_levm::errors::TxValidationError::InsufficientMaxFeePerGas
             ))
         ),
-        "expected GasLimitPriceProductOverflow, got {result:?}"
+        "expected InsufficientMaxFeePerGas, got {result:?}"
     );
 }
 

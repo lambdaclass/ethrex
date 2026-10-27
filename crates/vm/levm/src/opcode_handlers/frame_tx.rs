@@ -38,33 +38,6 @@ pub fn u256_to_offset(value: U256) -> Option<usize> {
     usize::try_from(value.0[0]).ok()
 }
 
-/// Compute the transaction's MAXIMUM cost (EIP-8141 §Gas Accounting: APPROVE must
-/// "collect the transaction's maximum cost from payer"):
-/// `max_cost = max_fee_per_gas * max_gas
-///           + len(blob_hashes) * 131072 * blob_base_fee`.
-/// This is the single definition of "maximum cost": APPROVE (scopes 0x1/0x3)
-/// debits it from the payer, TXPARAM(0x06) reports it, and the
-/// mempool paymaster reservation reserves it. The end-of-tx refund returns
-/// `max_cost - effective_gas_price * total_gas_used - base-rate blob burn`, so
-/// the payer nets the effective-rate cost of the gas actually used plus the
-/// EIP-4844 blob burn (intrinsic gas is inside `total_gas_used`, so it stays
-/// non-refundable).
-pub(crate) fn compute_tx_max_cost(ctx: &crate::vm::FrameTxContext) -> Result<U256, VMError> {
-    let gas_cost = ctx
-        .tx
-        .max_fee_per_gas
-        .checked_mul(U256::from(ctx.max_gas))
-        .ok_or(ExceptionalHalt::InvalidOpcode)?;
-    let blob_cost = U256::from(ctx.tx.blob_versioned_hashes.len())
-        .checked_mul(U256::from(131072u64))
-        .ok_or(ExceptionalHalt::InvalidOpcode)?
-        .checked_mul(ctx.blob_base_fee)
-        .ok_or(ExceptionalHalt::InvalidOpcode)?;
-    gas_cost
-        .checked_add(blob_cost)
-        .ok_or(ExceptionalHalt::InvalidOpcode.into())
-}
-
 /// The payment half of a payment-scoped `APPROVE` (scope `0x1` or `0x3`), after
 /// the scope and ordering checks: the payer must cover `max_cost`, then EIP-8250's
 /// approval transition charges the nonce state gas, consumes the nonce set and
@@ -79,7 +52,7 @@ fn approve_payment(vm: &mut VM<'_>, frame_target: ethrex_common::Address) -> Res
         .frame_tx_context
         .as_ref()
         .ok_or(ExceptionalHalt::InvalidOpcode)?;
-    let tx_cost = compute_tx_max_cost(ctx)?;
+    let tx_cost = ctx.fee_budget.max_cost;
     let frame_tx = ctx.tx.clone();
 
     // EIP-8141: the payer must cover the transaction's maximum cost, or the
@@ -672,9 +645,7 @@ pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U
         0x01 => Ok(U256::from(ctx.tx.nonce_seq)),
         0x02 => Ok(address_to_u256(ctx.tx.sender)),
         0x03 => Ok(ctx.tx.max_priority_fee_per_gas),
-        0x04 => Ok(ctx.tx.max_fee_per_gas),
-        0x05 => Ok(ctx.tx.max_fee_per_blob_gas),
-        0x06 => compute_tx_max_cost(ctx),
+        0x04 => Ok(ctx.tx.max_fee),
         0x07 => Ok(U256::from(ctx.tx.blob_versioned_hashes.len())),
         0x08 => {
             let mut bytes = [0u8; 32];
@@ -787,21 +758,17 @@ fn execute_default_verify(
 }
 
 #[cfg(test)]
-mod max_cost_tests {
-    use super::{compute_tx_max_cost, load_tx_param};
+mod txparam_fee_tests {
+    use super::load_tx_param;
     use crate::vm::FrameTxContext;
-    use ethrex_common::{H256, U256, types::FrameTransaction};
+    use ethrex_common::{
+        H256, U256,
+        types::{FrameFeeBudget, FrameTransaction},
+    };
 
-    fn ctx(max_fee: u64, blobs: usize, blob_base_fee: u64, max_gas: u64) -> FrameTxContext {
-        let tx = FrameTransaction {
-            max_fee_per_gas: U256::from(max_fee),
-            // Deliberately far above the base fee: `max_fee_per_blob_gas` bounds
-            // inclusion only and must not reach `max_cost`.
-            max_fee_per_blob_gas: U256::from(blob_base_fee).saturating_mul(U256::from(1_000u64)),
-            blob_versioned_hashes: vec![H256::zero(); blobs],
-            ..Default::default()
-        };
-        FrameTxContext {
+    #[test]
+    fn txparam_reads_the_fee_budget_and_drops_the_per_gas_caps() {
+        let ctx = FrameTxContext {
             sender_approved: false,
             payer_address: None,
             frame_results: Vec::new(),
@@ -809,32 +776,24 @@ mod max_cost_tests {
             outstanding_charge_owners: Default::default(),
             journal: Vec::new(),
             sig_hash: H256::zero(),
-            tx,
+            tx: FrameTransaction {
+                max_fee: U256::from(1_000_000u64),
+                max_priority_fee_per_gas: U256::from(3u64),
+                ..Default::default()
+            },
             approve_called_in_current_frame: false,
-            max_gas,
+            max_gas: 21_000,
             legacy_sender_nonce: 0,
-            blob_base_fee: U256::from(blob_base_fee),
-        }
-    }
-
-    #[test]
-    fn max_cost_is_max_fee_times_limit_plus_base_rate_blob_cost() {
-        // 10 * 100_000 + 2 * 131072 * 5 = 1_000_000 + 1_310_720
-        let c = ctx(10, 2, 5, 100_000);
-        assert_eq!(compute_tx_max_cost(&c).unwrap(), U256::from(2_310_720u64));
-        // No blobs: just max_fee * max_gas.
-        let c = ctx(7, 0, 999, 21_000);
-        assert_eq!(compute_tx_max_cost(&c).unwrap(), U256::from(147_000u64));
-    }
-
-    #[test]
-    fn txparam_0x06_reports_the_same_maximum_cost_approve_debits() {
-        // TXPARAM(0x06) and the APPROVE debit must stay one definition of
-        // "maximum cost"; a split between them is a consensus bug.
-        let c = ctx(10, 2, 5, 100_000);
-        assert_eq!(
-            load_tx_param(&c, 0x06).unwrap(),
-            compute_tx_max_cost(&c).unwrap()
-        );
+            fee_budget: FrameFeeBudget {
+                max_cost: U256::from(500_000u64),
+                gas_price: U256::from(10u64),
+            },
+        };
+        assert_eq!(load_tx_param(&ctx, 0x03).unwrap(), U256::from(3u64));
+        // `MAX_FEE` is the transaction's budget, not the escrow collected from it.
+        assert_eq!(load_tx_param(&ctx, 0x04).unwrap(), U256::from(1_000_000u64));
+        // `MAX_FEE_PER_BLOB_GAS` and `MAX_COST` are gone: reading them halts.
+        assert!(load_tx_param(&ctx, 0x05).is_err());
+        assert!(load_tx_param(&ctx, 0x06).is_err());
     }
 }

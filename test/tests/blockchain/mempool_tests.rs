@@ -683,9 +683,8 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
             data: Bytes::new(),
         }],
         signatures: vec![],
-        max_priority_fee_per_gas: U256::from(0u64),
-        max_fee_per_gas: U256::from(0u64),
-        max_fee_per_blob_gas: U256::zero(),
+        max_fee: U256::zero(),
+        max_priority_fee_per_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
     }
@@ -939,10 +938,10 @@ async fn configured_max_verify_gas_overrides_the_spec_default() {
     // The minimum priority-fee floor at admission postdates this test's helper,
     // which builds a zero-fee transaction. Without a tip the raised-budget case
     // is rejected by the tip floor before the verify-gas budget is consulted,
-    // so the assertion below would fail for an unrelated reason. The fee cap has
-    // to clear the tip as well.
+    // so the assertion below would fail for an unrelated reason. The fee budget
+    // has to clear the tip as well.
     frame_tx.max_priority_fee_per_gas = U256::one();
-    frame_tx.max_fee_per_gas = U256::from(1_000_000_000u64);
+    frame_tx.max_fee = U256::from(1_000_000_000u64) * U256::from(frame_tx.max_gas());
     let tx = Transaction::FrameTransaction(frame_tx);
     let sender = tx.sender(&NativeCrypto).unwrap();
 
@@ -1127,9 +1126,8 @@ fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
             },
         ],
         signatures: vec![],
-        max_priority_fee_per_gas: U256::from(0u64),
-        max_fee_per_gas: U256::from(0u64),
-        max_fee_per_blob_gas: U256::zero(),
+        max_fee: U256::zero(),
+        max_priority_fee_per_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
     }
@@ -1842,16 +1840,12 @@ async fn setup_hegota_store_funded() -> Store {
     store
 }
 
-/// A frame tx that looks like `minimal_valid_frame_tx()` but with positive fees
-/// so `max_cost = gas_limit * max_fee_per_gas > 0`. The sender must be seeded
-/// with enough balance to cover it (use `setup_hegota_store_funded`).
+/// A frame tx that looks like `minimal_valid_frame_tx()` but with positive fees:
+/// a `max_fee` of `max_fee_per_gas` for every unit of `max_gas`. The sender must
+/// be seeded with enough balance to cover it (use `setup_hegota_store_funded`).
 fn funded_frame_tx(max_fee_per_gas: u64, max_priority_fee_per_gas: u64) -> FrameTransaction {
-    let (max_fee_per_gas, max_priority_fee_per_gas) = (
-        U256::from(max_fee_per_gas),
-        U256::from(max_priority_fee_per_gas),
-    );
     let sender = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
-    FrameTransaction {
+    let mut tx = FrameTransaction {
         chain_id: 0,
         nonce_keys: vec![U256::zero()],
         nonce_seq: 0,
@@ -1866,12 +1860,12 @@ fn funded_frame_tx(max_fee_per_gas: u64, max_priority_fee_per_gas: u64) -> Frame
             data: Bytes::new(),
         }],
         signatures: vec![],
-        max_priority_fee_per_gas,
-        max_fee_per_gas,
-        max_fee_per_blob_gas: U256::zero(),
+        max_priority_fee_per_gas: U256::from(max_priority_fee_per_gas),
         blob_versioned_hashes: vec![],
         ..Default::default()
-    }
+    };
+    tx.max_fee = U256::from(max_fee_per_gas) * U256::from(tx.max_gas());
+    tx
 }
 
 #[tokio::test]
@@ -1896,15 +1890,15 @@ async fn mempool_rejects_underfunded_paymaster() {
     // `available = paymaster_balance - reserved_pending_cost`) must reject a
     // frame tx with FrameTxPaymasterUnderfunded.
     //
-    // Note: since APPROVE now collects the tx's MAXIMUM cost during the
-    // validation-prefix simulation (max_fee_per_gas * max_gas), a payer
-    // that cannot cover max_cost reverts *inside* the simulation
-    // (FrameTxValidationFailed), never reaching this check. The availability
-    // check is therefore only reachable when the payer covers a single tx's
-    // max_cost but PRIOR pending reservations for the same paymaster leave less
-    // than max_cost available. We reproduce that by seeding the paymaster with
-    // exactly one max_cost (so simulation passes, balance exactly exhausted),
-    // then phantom-injecting a pending reservation of max_cost against it.
+    // Note: since APPROVE collects the tx's `max_cost` during the
+    // validation-prefix simulation, a payer that cannot cover it reverts
+    // *inside* the simulation (FrameTxValidationFailed), never reaching this
+    // check. The availability check is therefore only reachable when the payer
+    // covers a single tx but PRIOR pending reservations for the same paymaster
+    // leave less than its reservation available. A reservation is the tx's
+    // `max_fee`, which bounds `max_cost` at any base fees. We reproduce that by
+    // seeding the paymaster with exactly one `max_fee` (so simulation passes),
+    // then phantom-injecting a pending reservation of `max_fee` against it.
     //
     // Setup mirrors mempool_enforces_noncanonical_paymaster_limit; the underfunded
     // check (`available < max_cost`) is evaluated before the non-canonical
@@ -1912,8 +1906,7 @@ async fn mempool_rejects_underfunded_paymaster() {
     let max_fee_per_gas = 2_000_000_000u64;
     let max_priority_fee_per_gas = 1_000_000_000u64;
     let frame_tx = funded_frame_tx(max_fee_per_gas, max_priority_fee_per_gas);
-    let total_gas = frame_tx.max_gas();
-    let max_cost = U256::from(max_fee_per_gas) * U256::from(total_gas);
+    let max_cost = frame_tx.max_fee;
 
     let paymaster = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
     let genesis = Genesis {
@@ -1968,9 +1961,8 @@ async fn mempool_rejects_underfunded_paymaster() {
             data: Bytes::new(),
         }],
         signatures: vec![],
-        max_priority_fee_per_gas: U256::from(0u64),
-        max_fee_per_gas: U256::from(0u64),
-        max_fee_per_blob_gas: U256::zero(),
+        max_fee: U256::zero(),
+        max_priority_fee_per_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
     };
@@ -2048,9 +2040,8 @@ async fn mempool_enforces_noncanonical_paymaster_limit() {
             data: Bytes::new(),
         }],
         signatures: vec![],
-        max_priority_fee_per_gas: U256::from(0u64),
-        max_fee_per_gas: U256::from(0u64),
-        max_fee_per_blob_gas: U256::zero(),
+        max_fee: U256::zero(),
+        max_priority_fee_per_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
     };
@@ -2126,9 +2117,8 @@ async fn mempool_rejects_second_frame_tx_same_sender_new_nonce() {
             data: Bytes::new(),
         }],
         signatures: vec![],
-        max_priority_fee_per_gas: U256::from(0u64),
-        max_fee_per_gas: U256::from(0u64),
-        max_fee_per_blob_gas: U256::zero(),
+        max_fee: U256::zero(),
+        max_priority_fee_per_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
     };
@@ -2372,9 +2362,8 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
             data: Bytes::new(),
         }],
         signatures: vec![],
-        max_priority_fee_per_gas: U256::from(0u64),
-        max_fee_per_gas: U256::from(0u64),
-        max_fee_per_blob_gas: U256::zero(),
+        max_fee: U256::zero(),
+        max_priority_fee_per_gas: U256::zero(),
         blob_versioned_hashes: vec![],
         ..Default::default()
     };
@@ -2556,7 +2545,7 @@ async fn mempool_revalidation_evicts_invalid_frame_tx() {
     let deadline: u64 = 2000;
     let sender = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
     let mut expiry_tx = frame_tx_with_expiry(deadline);
-    expiry_tx.max_fee_per_gas = U256::from(1_000_000_000u64);
+    expiry_tx.max_fee = U256::from(1_000_000_000u64) * U256::from(expiry_tx.max_gas());
     expiry_tx.max_priority_fee_per_gas = U256::from(1_000_000_000u64);
     let tx = Transaction::FrameTransaction(expiry_tx);
     let tx_hash = blockchain
@@ -3392,9 +3381,8 @@ mod p2p_serve_tests {
                 msg: bytes::Bytes::new(),
                 signature: bytes::Bytes::from(vec![0u8; 65]),
             }],
+            max_fee: U256::from(10_000_000_000_000_000u64),
             max_priority_fee_per_gas: U256::from(1_000_000_000u64),
-            max_fee_per_gas: U256::from(30_000_000_000u64),
-            max_fee_per_blob_gas: U256::zero(),
             blob_versioned_hashes: vec![],
             ..Default::default()
         }
@@ -3580,7 +3568,7 @@ fn priced_frame_tx(
         }
     };
     frame_tx.nonce_seq = nonce;
-    frame_tx.max_fee_per_gas = U256::from(max_fee);
+    frame_tx.max_fee = U256::from(max_fee);
     frame_tx.max_priority_fee_per_gas = U256::from(priority_fee);
     Transaction::FrameTransaction(frame_tx)
 }
@@ -3602,7 +3590,7 @@ fn insert_frame_tx(mempool: &Mempool, sender: Address, tx: Transaction) -> H256 
 #[test]
 fn frame_tx_replacement_requires_a_minimum_bump_on_both_fees() {
     // EIP-8141 §Replacement and Eviction: a replacement is accepted only if it
-    // raises BOTH max_fee_per_gas and max_priority_fee_per_gas by at least the
+    // raises BOTH max_fee and max_priority_fee_per_gas by at least the
     // node's minimum increment. Each frame-tx replacement re-runs the
     // validation-prefix simulation, so one-wei bumps would be free EVM work.
     let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
@@ -3955,7 +3943,7 @@ mod keyed_nonces {
             let mut tx = keyed_frame_tx(nonce_keys, nonce_seq);
             tx.sender = sender;
             tx.frames[0].target = Some(sender);
-            tx.max_fee_per_gas = U256::from(max_fee);
+            tx.max_fee = U256::from(max_fee);
             tx.max_priority_fee_per_gas = U256::from(priority);
             Transaction::FrameTransaction(tx)
         };

@@ -76,7 +76,9 @@ fn frame_tx_env(tx: &FrameTransaction) -> Environment {
         config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
         chain_id: U256::from(HARNESS_CHAIN_ID),
         base_fee_per_gas: U256::from(HARNESS_BASE_FEE),
-        gas_price: tx.max_fee_per_gas,
+        gas_price: tx
+            .fee_budget(U256::from(HARNESS_BASE_FEE), U256::zero())
+            .map_or(U256::from(HARNESS_BASE_FEE), |budget| budget.gas_price),
         tx_nonce: tx.nonce_seq,
         ..Default::default()
     }
@@ -90,9 +92,8 @@ fn frame_tx_with_keys(frames: Vec<Frame>, nonce_keys: Vec<U256>) -> FrameTransac
         sender: FUNDED_SENDER,
         frames,
         signatures: Vec::new(),
+        max_fee: U256::from(1_000_000_000_000_000_000u64),
         max_priority_fee_per_gas: U256::from(1),
-        max_fee_per_gas: U256::from(HARNESS_BASE_FEE + 1_000),
-        max_fee_per_blob_gas: U256::zero(),
         blob_versioned_hashes: Vec::new(),
         inner_hash: Default::default(),
         cached_canonical: Default::default(),

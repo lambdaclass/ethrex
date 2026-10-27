@@ -3966,8 +3966,11 @@ impl Blockchain {
             return Err(MempoolError::TxGasLimitExceededError);
         }
 
-        // Check priority fee is less or equal than gas fee gap
-        if tx.max_priority_fee().unwrap_or_default() > tx.max_fee_per_gas().unwrap_or_default() {
+        // Check priority fee is less or equal than gas fee gap. An EIP-8141 frame
+        // transaction has no fee cap per gas: its `max_fee` budget caps the tip.
+        if let Some(max_fee_per_gas) = tx.max_fee_per_gas()
+            && tx.max_priority_fee().unwrap_or_default() > max_fee_per_gas
+        {
             return Err(MempoolError::TxTipAboveFeeCapError);
         }
 

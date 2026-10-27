@@ -173,8 +173,8 @@ fn frame_tx(frames: Vec<Frame>, nonce_seq: u64) -> FrameTransaction {
         nonce_seq,
         sender: SENDER,
         frames,
+        max_fee: U256::from(1_000_000_000_000_000_000u64),
         max_priority_fee_per_gas: U256::from(1),
-        max_fee_per_gas: U256::from(BASE_FEE + 1_000),
         ..Default::default()
     }
 }
@@ -187,7 +187,9 @@ fn execute(db: &mut GeneralizedDatabase, tx: FrameTransaction) -> Result<Executi
         config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
         chain_id: U256::from(CHAIN_ID),
         base_fee_per_gas: U256::from(BASE_FEE),
-        gas_price: tx.max_fee_per_gas,
+        gas_price: tx
+            .fee_budget(U256::from(BASE_FEE), U256::zero())
+            .map_or(U256::from(BASE_FEE), |budget| budget.gas_price),
         tx_nonce: tx.nonce_seq,
         ..Default::default()
     };
@@ -246,7 +248,9 @@ fn assert_holds(checks: &[(Vec<u8>, U256)]) {
 fn txtrace_enumerates_the_transaction_diff() {
     let max_cost = {
         let tx = frame_tx(vec![verify(), bump_counter(), assert_post_tx()], 0);
-        U256::from(tx.max_gas()) * tx.max_fee_per_gas
+        tx.fee_budget(U256::from(BASE_FEE), U256::zero())
+            .expect("the budget covers the base fee")
+            .max_cost
     };
     assert_holds(&[
         // The payer's escrow is the only balance change before settlement.

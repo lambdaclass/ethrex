@@ -414,6 +414,8 @@ pub struct Transaction {
     pub max_fee_per_gas: Option<U256>,
     pub max_fee_per_blob_gas: Option<U256>,
     pub max_priority_fee_per_gas: Option<U256>,
+    /// EIP-8141 only: the frame transaction's total fee budget.
+    pub max_fee: Option<U256>,
     pub blob_versioned_hashes: Option<Vec<H256>>,
     pub hash: Option<H256>,
     pub sender: Option<Address>,
@@ -655,11 +657,8 @@ impl From<Transaction> for FrameTransaction {
                     signature: s.signature,
                 })
                 .collect(),
+            max_fee: val.max_fee.unwrap_or_default(),
             max_priority_fee_per_gas: val.max_priority_fee_per_gas.unwrap_or_default(),
-            max_fee_per_gas: val
-                .max_fee_per_gas
-                .unwrap_or(val.gas_price.unwrap_or_default()),
-            max_fee_per_blob_gas: val.max_fee_per_blob_gas.unwrap_or_default(),
             blob_versioned_hashes: val.blob_versioned_hashes.unwrap_or_default(),
             ..Default::default()
         }

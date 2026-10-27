@@ -391,10 +391,9 @@ pub struct FrameValidationOutcome {
     /// string for the admission error). `None` when `passed` is true.
     pub violation: Option<String>,
     /// An upper bound on what the payer can be charged in any block that may
-    /// include this transaction, used by the paymaster reservation accounting.
-    /// Not the consensus `max_cost` of TXPARAM 0x06: see
-    /// [`Evm::simulate_frame_validation_prefix`]'s reservation-ceiling helper for
-    /// why the blob term is priced at `max_fee_per_blob_gas` here.
+    /// include this transaction, used by the paymaster reservation accounting:
+    /// the transaction's `max_fee`, not the `max_cost` APPROVE collects at one
+    /// block's base fees.
     pub reservation_ceiling: ethrex_common::U256,
     /// The paymaster accessed by the prefix and whether its code matched the
     /// canonical paymaster hash. `None` when no distinct paymaster was
