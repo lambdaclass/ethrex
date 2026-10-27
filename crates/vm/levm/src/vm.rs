@@ -17,7 +17,7 @@ use crate::{
         backup_hook::BackupHook,
         hook::{Hook, get_hooks},
     },
-    memory::Memory,
+    memory::{CallData, Memory},
     opcode_tracer::LevmOpcodeTracer,
     opcodes::OpCodeFn,
     precompiles::{
@@ -27,11 +27,12 @@ use crate::{
     validation_observer::ValidationObserver,
 };
 use bytes::Bytes;
+use ethrex_common::seeded_hash::{SeededHashMap, SeededHashSet};
 use ethrex_common::{
-    Address, BigEndianHash, H160, H256, U256,
+    Address, BigEndianHash, H256, U256,
     tracing::CallType,
     types::{
-        AccessListEntry, Code, Fork, Frame, FrameMode, Log, Transaction, TxType,
+        AccessListEntry, Code, Fork, Frame, FrameMode, InitcodeBuffer, Log, Transaction, TxType,
         block_access_list::BlockAccessListCheckpoint, fee_config::FeeConfig,
     },
 };
@@ -46,6 +47,13 @@ use std::{
 
 /// Storage mapping from slot key to value.
 pub type Storage = FxHashMap<U256, H256>;
+
+/// Addresses accessed by a transaction (EIP-2929). Seeded: contracts choose which
+/// addresses they touch.
+pub type AccessedAddresses = SeededHashSet<Address>;
+/// Storage slots accessed by a transaction, per address (EIP-2929). Seeded: contracts
+/// choose the slot keys.
+pub type AccessedStorageSlots = SeededHashMap<Address, SeededHashSet<H256>>;
 
 /// Specifies whether the VM operates in L1 or L2 mode.
 #[derive(Debug, Clone, Copy, Default)]
@@ -88,9 +96,9 @@ pub struct Substate {
     selfdestruct_set: FxHashSet<Address>,
     /// Addresses accessed during execution (for EIP-2929 warm/cold gas costs).
     /// Precompiles are NOT stored here; they are warm by construction (see `is_warm_precompile`).
-    accessed_addresses: FxHashSet<Address>,
+    accessed_addresses: AccessedAddresses,
     /// Storage slots accessed per address (for EIP-2929 warm/cold gas costs).
-    accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
+    accessed_storage_slots: AccessedStorageSlots,
     /// Accounts created during this transaction.
     created_accounts: FxHashSet<Address>,
     /// Accumulated gas refund (e.g., from storage clears).
@@ -104,8 +112,8 @@ pub struct Substate {
 impl Substate {
     pub fn from_accesses(
         fork: Fork,
-        accessed_addresses: FxHashSet<Address>,
-        accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
+        accessed_addresses: AccessedAddresses,
+        accessed_storage_slots: AccessedStorageSlots,
     ) -> Self {
         Self {
             parent: None,
@@ -561,9 +569,9 @@ impl FrameTxContext {
 #[derive(Debug, Default)]
 pub struct PrepareRegionBackupMarker {
     /// Addresses already backed up in `original_accounts_info` before the region.
-    accounts: FxHashSet<Address>,
+    accounts: SeededHashSet<Address>,
     /// Addresses already backed up in `original_account_storage_slots` before the region.
-    storage: FxHashSet<Address>,
+    storage: SeededHashSet<Address>,
     /// Length of `inserted_code_hashes` before the region.
     code_hashes_len: usize,
     /// Region-entry state of every account already backed up before the region
@@ -573,7 +581,7 @@ pub struct PrepareRegionBackupMarker {
     /// authorization on the sender) leaves no new backup entry. `fail_prepare_region`
     /// restores these to the captured state, reverting the in-region write while
     /// keeping the pre-region nonce bump / fee deduction.
-    entry_state: FxHashMap<Address, LevmAccount>,
+    entry_state: SeededHashMap<Address, LevmAccount>,
     /// BAL recorder checkpoint at region entry, so an applied-then-reverted
     /// delegation's code/nonce changes are discarded (demoted to an access-only
     /// touch) rather than leaking into the block access list.
@@ -611,7 +619,8 @@ pub struct VM<'a> {
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
     /// Original storage values before transaction (for SSTORE gas calculation),
     /// keyed first by account to avoid hashing the full tuple on each access.
-    pub storage_original_values: FxHashMap<Address, FxHashMap<H256, U256>>,
+    /// Seeded: contracts choose the keys at both levels.
+    pub storage_original_values: SeededHashMap<Address, SeededHashMap<H256, U256>>,
     /// Call tracer for execution tracing.
     pub tracer: LevmCallTracer,
     /// Opcode (EIP-3155) tracer.  Disabled by default; zero overhead when inactive.
@@ -625,6 +634,11 @@ pub struct VM<'a> {
     pub debug_mode: DebugMode,
     /// Pool of reusable stacks to reduce allocations.
     pub stack_pool: Vec<Stack>,
+    /// Pool of reusable initcode buffers for CREATE frames. A buffer returns here when its
+    /// frame ends, so a contract that issues many CREATEs reuses one allocation instead of
+    /// copying its initcode into a fresh one each time. Inside zkVM guests whose bump
+    /// allocators never free, those fresh copies are never reclaimed and exhaust the heap.
+    pub initcode_pool: Vec<InitcodeBuffer>,
     /// VM type (L1 or L2 with fee config).
     pub vm_type: VMType,
     /// Frame transaction context (EIP-8141). Set when executing a frame tx.
@@ -801,12 +815,9 @@ pub fn validate_frame_signatures(
                 calldata[63] = v.saturating_add(27);
                 calldata[64..96].copy_from_slice(r);
                 calldata[96..128].copy_from_slice(s);
-                let Ok(result) = crate::precompiles::ecrecover(
-                    &Bytes::from(calldata),
-                    &mut scratch_gas,
-                    fork,
-                    crypto,
-                ) else {
+                let Ok(result) =
+                    crate::precompiles::ecrecover(&calldata, &mut scratch_gas, fork, crypto)
+                else {
                     return false;
                 };
                 if result.len() != 32 {
@@ -852,12 +863,9 @@ pub fn validate_frame_signatures(
                 calldata[64..96].copy_from_slice(s);
                 calldata[96..128].copy_from_slice(qx);
                 calldata[128..160].copy_from_slice(qy);
-                let Ok(result) = crate::precompiles::p_256_verify(
-                    &Bytes::from(calldata),
-                    &mut scratch_gas,
-                    fork,
-                    crypto,
-                ) else {
+                let Ok(result) =
+                    crate::precompiles::p_256_verify(&calldata, &mut scratch_gas, fork, crypto)
+                else {
                     return false;
                 };
                 if result.len() != 32 || result[31] != 1 {
@@ -927,8 +935,12 @@ impl<'a> VM<'a> {
     /// stacks for sub-call frames. This avoids the per-tx 32 KB stack alloc+zero on a warm pool —
     /// the dominant allocation for transfer-heavy blocks, where the root frame is the only frame.
     ///
+    /// It also adopts `initcode_pool` as the VM's pool of CREATE initcode buffers, so a
+    /// transaction reuses the buffers an earlier one left.
+    ///
     /// Pair with [`VM::reclaim_into`] after execution to return every stack (root + sub-frame)
-    /// to `stack_pool` and the root memory buffer to `memory_pool` so the next tx reuses them.
+    /// to `stack_pool`, the root memory buffer to `memory_pool` and the initcode buffers to
+    /// `initcode_pool`, so the next tx reuses them.
     #[allow(clippy::too_many_arguments)]
     pub fn new_pooled(
         env: Environment,
@@ -940,6 +952,7 @@ impl<'a> VM<'a> {
         stateless_validator: Option<&'a dyn crate::StatelessValidator>,
         stack_pool: &mut Vec<Stack>,
         memory_pool: &mut Vec<Memory>,
+        initcode_pool: &mut Vec<InitcodeBuffer>,
     ) -> Result<Self, VMError> {
         // Reuse a pooled stack for the root frame. `clear()` only resets the offset (no zeroing),
         // which is sound because the EVM never reads stack slots it didn't write — the same
@@ -964,16 +977,27 @@ impl<'a> VM<'a> {
         )?;
         // Adopt the caller's pooled stacks for sub-frames; returned via `reclaim_into`.
         mem::swap(&mut vm.stack_pool, stack_pool);
+        // Likewise the initcode buffers. A pool that started empty with every transaction would
+        // make each one allocate its buffers afresh and drop them with its VM, which a zkVM
+        // guest's bump allocator never reclaims.
+        mem::swap(&mut vm.initcode_pool, initcode_pool);
         Ok(vm)
     }
 
     /// Returns this VM's reusable buffers to the caller's pools so the next transaction reuses
     /// them instead of allocating: every stack (root call-frame stack plus any sub-frame stacks
-    /// still pooled internally) to `stack_pool`, and the root memory buffer to `memory_pool`.
+    /// still pooled internally) to `stack_pool`, the root memory buffer to `memory_pool`, and the
+    /// pooled initcode buffers to `initcode_pool`.
     /// Must run on both the success and error paths of [`VM::execute`].
-    pub fn reclaim_into(mut self, stack_pool: &mut Vec<Stack>, memory_pool: &mut Vec<Memory>) {
+    pub fn reclaim_into(
+        mut self,
+        stack_pool: &mut Vec<Stack>,
+        memory_pool: &mut Vec<Memory>,
+        initcode_pool: &mut Vec<InitcodeBuffer>,
+    ) {
         // Hand the internal sub-frame pool back to the caller first.
         mem::swap(&mut self.stack_pool, stack_pool);
+        mem::swap(&mut self.initcode_pool, initcode_pool);
         // Then reclaim the root frame's stack. Moving it out by value (VM/CallFrame have no Drop)
         // avoids leaving a fresh 32 KB `Stack::default()` placeholder behind — which a
         // `mem::take`/`mem::replace` against an empty pool would force, defeating the win on
@@ -989,8 +1013,10 @@ impl<'a> VM<'a> {
         // popping them) still hold clones. Drop them first so the buffer is `Rc`-unique on BOTH
         // paths before we clear it — otherwise the clear would propagate to a frame still holding a
         // reference. `CallFrame` has no `Drop` and these frames are never read again, so dropping
-        // them early is free.
+        // them early is free. The frame left current on the error path may be a callee whose
+        // arguments are a view of the buffer (`CallData`), which holds a clone as well.
         self.call_frames.clear();
+        self.current_call_frame.calldata = CallData::default();
         let mut root_memory = self.current_call_frame.memory;
         debug_assert_eq!(
             Rc::strong_count(&root_memory.buffer),
@@ -1057,12 +1083,13 @@ impl<'a> VM<'a> {
             db,
             tx,
             hooks,
-            storage_original_values: FxHashMap::default(),
+            storage_original_values: Default::default(),
             tracer,
             opcode_tracer: LevmOpcodeTracer::disabled(),
             validation_observer: ValidationObserver::disabled(),
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
+            initcode_pool: Vec::new(),
             vm_type,
             preserve_top_level_backup,
             state_gas_used: 0,
@@ -1086,7 +1113,7 @@ impl<'a> VM<'a> {
                 Address::default(), // Will be assigned at the end of prepare_execution
                 Code::default(),    // Will be assigned at the end of prepare_execution
                 tx.value(),
-                tx.data().clone(),
+                tx.data().clone().into(),
                 false,
                 env.gas_limit,
                 0,
@@ -1115,8 +1142,8 @@ impl<'a> VM<'a> {
             callee,
             vm.tx.value(),
             vm.env.gas_limit,
-            vm.tx.data(),
-        );
+            &vm.tx.data().clone().into(),
+        )?;
 
         #[cfg(feature = "debug")]
         {
@@ -1380,8 +1407,9 @@ impl<'a> VM<'a> {
         self.prep_baseline_reservoir = self.state_gas_reservoir;
         self.prep_baseline_state_gas_spill = self.state_gas_spill;
         let backup = &self.current_call_frame.call_frame_backup;
-        let accounts: FxHashSet<Address> = backup.original_accounts_info.keys().copied().collect();
-        let storage: FxHashSet<Address> = backup
+        let accounts: SeededHashSet<Address> =
+            backup.original_accounts_info.keys().copied().collect();
+        let storage: SeededHashSet<Address> = backup
             .original_account_storage_slots
             .keys()
             .copied()
@@ -1391,7 +1419,7 @@ impl<'a> VM<'a> {
         // self-sponsored EIP-7702 authorization (or any in-region write to a
         // pre-region-touched account) can be reverted without disturbing its
         // pre-region nonce/fee writes. See `PrepareRegionBackupMarker::entry_state`.
-        let entry_state: FxHashMap<Address, LevmAccount> = accounts
+        let entry_state: SeededHashMap<Address, LevmAccount> = accounts
             .iter()
             .filter_map(|address| {
                 self.db
@@ -1988,12 +2016,12 @@ impl<'a> VM<'a> {
                     caller,                                    // msg_sender
                     target,                                    // to (delegator; ADDRESS/storage)
                     code_address,                              // code_address (delegatee when 7702)
-                    bytecode,           // bytecode (delegatee's code when 7702)
-                    frame.value,        // msg_value -- CALLVALUE
-                    frame.data.clone(), // calldata
-                    is_static,          // is_static
-                    frame.gas_limit,    // gas_limit
-                    0,                  // depth
+                    bytecode,                  // bytecode (delegatee's code when 7702)
+                    frame.value,               // msg_value -- CALLVALUE
+                    frame.data.clone().into(), // calldata
+                    is_static,                 // is_static
+                    frame.gas_limit,           // gas_limit
+                    0,                         // depth
                     false, // should_transfer_value (do_frame_value_transfer! handles it)
                     false, // is_create
                     0,     // ret_offset
@@ -2289,13 +2317,14 @@ impl<'a> VM<'a> {
         // EIP-7928 requires the coinbase to appear in the BAL for any user tx even
         // when the priority fee is zero, and EELS reads the coinbase account
         // unconditionally during fee transfer (so EIP-8025 witnesses record its
-        // trie path even at zero fee). A frame tx is always a user tx (non-zero
-        // effective gas price), unlike a system call.
+        // trie path even at zero fee). A frame tx is always a user tx, never a
+        // system call, even when its effective gas price is zero (possible on a
+        // chain whose base fee is zero).
         let priority_fee = effective_gas_price.saturating_sub(self.env.base_fee_per_gas);
         let coinbase_fee = priority_fee
             .checked_mul(U256::from(total_gas_used))
             .ok_or(VMError::Internal(InternalError::Overflow))?;
-        if !effective_gas_price.is_zero()
+        if !self.env.is_system_call
             && let Some(recorder) = self.db.bal_recorder.as_mut()
         {
             recorder.record_touched_address(self.env.coinbase);
@@ -2651,7 +2680,7 @@ impl<'a> VM<'a> {
                     code_address,
                     bytecode,
                     frame.value,
-                    frame.data.clone(),
+                    frame.data.clone().into(),
                     is_static,
                     frame.gas_limit,
                     0,
@@ -2807,28 +2836,21 @@ impl<'a> VM<'a> {
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         if self.address_is_precompile(&self.current_call_frame.to) {
             // `execute_precompile` itself never touches state gas (it only mutates
-            // `gas_remaining`; it has no access to `state_gas_used` / `state_gas_reservoir` /
-            // `state_gas_spill`) — the assert below guards that. The in-region EIP-2780
-            // value-to-not-alive NEW_ACCOUNT charge (`prepare_execution`),
+            // `gas_remaining`; it takes `&self`, so it cannot change `state_gas_used` /
+            // `state_gas_reservoir` / `state_gas_spill`) — the assert below guards that. The
+            // in-region EIP-2780 value-to-not-alive NEW_ACCOUNT charge (`prepare_execution`),
             // however, IS frame state gas, and on an exceptional halt/revert it must be
             // rolled back (see below). `self` is borrowed by field rather than via
             // `&mut self.current_call_frame` so the refund call, which needs `&mut self`,
             // can run after `execute_precompile`.
             let state_gas_used_before_precompile = self.state_gas_used;
-            // Resolve a relocation destination back to the precompile it hosts.
-            let code_address =
-                self.effective_precompile_address(self.current_call_frame.code_address);
             let precompile_gas_limit = self.current_call_frame.gas_limit;
             let mut gas_remaining = self.current_call_frame.gas_remaining as u64;
-            let result = Self::execute_precompile(
-                code_address,
+            let result = self.execute_precompile(
+                self.current_call_frame.code_address,
                 &self.current_call_frame.calldata,
                 precompile_gas_limit,
                 &mut gas_remaining,
-                self.env.config.fork,
-                self.db.store.precompile_cache(),
-                self.crypto,
-                self.stateless_validator,
             );
 
             debug_assert_eq!(
@@ -3222,31 +3244,29 @@ impl<'a> VM<'a> {
             .finalize_step(gas_cost, refund_after, err_str.as_deref());
     }
 
-    /// Executes precompile and handles the output that it returns, generating a report.
-    #[allow(clippy::too_many_arguments)]
+    /// Executes the precompile at `code_address` (a relocation destination resolves to the
+    /// precompile it hosts) and handles the output that it returns, generating a report.
+    /// The precompile reads `calldata` in place, even when it is a range of caller memory.
     pub fn execute_precompile(
-        code_address: H160,
-        calldata: &Bytes,
+        &self,
+        code_address: Address,
+        calldata: &CallData,
         gas_limit: u64,
         gas_remaining: &mut u64,
-        fork: Fork,
-        cache: Option<&precompiles::PrecompileCache>,
-        crypto: &dyn Crypto,
-        stateless_validator: Option<&dyn crate::StatelessValidator>,
     ) -> Result<ContextResult, VMError> {
-        Self::handle_precompile_result(
+        let precompile_address = self.effective_precompile_address(code_address);
+        let output = calldata.with_slice(|input| {
             precompiles::execute_precompile(
-                code_address,
-                calldata,
+                precompile_address,
+                input,
                 gas_remaining,
-                fork,
-                cache,
-                crypto,
-                stateless_validator,
-            ),
-            gas_limit,
-            *gas_remaining,
-        )
+                self.env.config.fork,
+                self.db.store.precompile_cache(),
+                self.crypto,
+                self.stateless_validator,
+            )
+        })?;
+        Self::handle_precompile_result(output, gas_limit, *gas_remaining)
     }
 
     /// True if external transaction is a contract creation
@@ -3451,11 +3471,10 @@ impl Substate {
         // remaining working set is small (sender + coinbase + recipient + access-list/touched
         // addresses; real p99 ~7), so a capacity of 8 covers most txs with little waste.
         let mut initial_accessed_addresses =
-            FxHashSet::with_capacity_and_hasher(8, Default::default());
+            AccessedAddresses::with_capacity_and_hasher(8, Default::default());
         // Storage slots are ~98% empty (p95 0, p99 4), so `default()` (alloc-free until first
         // insert) beats pre-sizing, which would tax the common empty case.
-        let mut initial_accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>> =
-            FxHashMap::default();
+        let mut initial_accessed_storage_slots = AccessedStorageSlots::default();
 
         // Add Tx sender to accessed accounts
         initial_accessed_addresses.insert(env.origin);
@@ -3524,7 +3543,7 @@ impl<'a> VM<'a> {
             Address::default(),
             Code::default(),
             U256::zero(),
-            Bytes::new(),
+            CallData::default(),
             false,
             Self::STATE_GAS_HARNESS_FRAME_GAS,
             0,
@@ -3543,11 +3562,12 @@ impl<'a> VM<'a> {
             db,
             tx,
             hooks: Vec::new(),
-            storage_original_values: FxHashMap::default(),
+            storage_original_values: Default::default(),
             tracer: LevmCallTracer::disabled(),
             opcode_tracer: LevmOpcodeTracer::disabled(),
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
+            initcode_pool: Vec::new(),
             vm_type: VMType::L1,
             preserve_top_level_backup: false,
             state_gas_used: 0,

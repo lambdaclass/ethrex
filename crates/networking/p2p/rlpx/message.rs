@@ -25,7 +25,9 @@ use super::l2::messages::{BatchSealed, L2Message, NewBlock};
 #[cfg(feature = "l2")]
 use super::l2::{self, messages};
 use super::p2p::{DisconnectMessage, HelloMessage, PingMessage, PongMessage};
+use super::utils::snappy_decompress_prefix;
 
+use ethrex_rlp::decode::RLPDecode as _;
 use ethrex_rlp::encode::RLPEncode;
 
 const ETH_CAPABILITY_OFFSET: u8 = 0x10;
@@ -466,6 +468,78 @@ impl Message {
                 L2Message::NewBlock(msg) => msg.encode(buf),
             },
         }
+    }
+
+    /// The id of a request whose response the connection matches against the requests it
+    /// is waiting on (the responses [`Self::routed_response_id`] recognizes); `None` for
+    /// every other message, including requests whose responses are tracked elsewhere.
+    pub fn routed_request_id(&self) -> Option<u64> {
+        match self {
+            Message::GetBlockHeaders(message) => Some(message.id),
+            Message::GetBlockBodies(message) => Some(message.id),
+            Message::GetReceipts68(message) => Some(message.id),
+            Message::GetReceipts69(message) => Some(message.id),
+            Message::GetReceipts70(message) => Some(message.id),
+            Message::GetAccountRange(message) => Some(message.id),
+            Message::GetStorageRanges(message) => Some(message.id),
+            Message::GetByteCodes(message) => Some(message.id),
+            Message::GetTrieNodes(message) => Some(message.id),
+            Message::GetBlockAccessLists(message) => Some(message.id),
+            Message::Snap2GetBlockAccessLists(message) => Some(message.id),
+            _ => None,
+        }
+    }
+
+    /// For a response to a request in [`Self::routed_request_id`], reads the request id
+    /// without decoding the rest of the message. `None` for every other message code.
+    pub fn routed_response_id(
+        msg_id: u8,
+        data: &[u8],
+        eth_version: EthCapVersion,
+        snap_version: Option<SnapCapVersion>,
+    ) -> Result<Option<u64>, RLPDecodeError> {
+        let is_routed_response = if msg_id < eth_version.eth_capability_offset() {
+            false
+        } else if msg_id < eth_version.snap_capability_offset() {
+            match msg_id - eth_version.eth_capability_offset() {
+                // Receipts68, Receipts69 and Receipts70 share one code.
+                BlockHeaders::CODE | BlockBodies::CODE | Receipts68::CODE => true,
+                BlockAccessLists::CODE => {
+                    matches!(eth_version, EthCapVersion::V71 | EthCapVersion::V72)
+                }
+                _ => false,
+            }
+        } else if msg_id < eth_version.based_capability_offset() {
+            let snap_code = msg_id - eth_version.snap_capability_offset();
+            snap_version.is_some_and(|version| version.is_valid_code(snap_code))
+                && matches!(
+                    snap_code,
+                    AccountRange::CODE
+                        | StorageRanges::CODE
+                        | ByteCodes::CODE
+                        | TrieNodes::CODE
+                        | Snap2BlockAccessLists::CODE
+                )
+        } else {
+            false
+        };
+        if !is_routed_response {
+            return Ok(None);
+        }
+        // The id is the list's first field, so the list header (at most 9 bytes) and the id
+        // (at most 9) are all that has to be decompressed to read it.
+        let prefix = snappy_decompress_prefix(data, 18)?;
+        let header_len = match prefix.first() {
+            Some(0xc0..=0xf7) => 1,
+            Some(&first) if first >= 0xf8 => 1 + usize::from(first - 0xf7),
+            _ => return Err(RLPDecodeError::MalformedData),
+        };
+        let (id, _) = u64::decode_unfinished(
+            prefix
+                .get(header_len..)
+                .ok_or(RLPDecodeError::MalformedData)?,
+        )?;
+        Ok(Some(id))
     }
 
     pub fn request_id(&self) -> Option<u64> {

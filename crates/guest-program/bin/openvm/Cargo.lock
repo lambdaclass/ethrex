@@ -78,7 +78,7 @@ dependencies = [
  "ark-serialize",
  "ark-std",
  "arrayvec",
- "digest",
+ "digest 0.10.7",
  "educe",
  "itertools 0.13.0",
  "num-bigint",
@@ -134,7 +134,7 @@ dependencies = [
  "ark-serialize-derive",
  "ark-std",
  "arrayvec",
- "digest",
+ "digest 0.10.7",
  "num-bigint",
 ]
 
@@ -233,19 +233,7 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7bc6d6292be3a19e6379786dac800f551e5865a5bb51ebbe3064ab80433f403"
 dependencies = [
- "ff",
- "group",
- "pairing",
- "rand_core",
- "subtle",
-]
-
-[[package]]
-name = "bls12_381"
-version = "0.8.0"
-source = "git+https://github.com/lambdaclass/bls12_381?branch=expose-affine-constructors#78cad0378b17fc3157b83f514be192bf46edf9a1"
-dependencies = [
- "digest",
+ "digest 0.9.0",
  "ff",
  "group",
  "pairing",
@@ -565,6 +553,15 @@ dependencies = [
 
 [[package]]
 name = "digest"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3dd60d1080a57a05ab032377049e0591415d2b31afd7028356dbf3cc6dcb066"
+dependencies = [
+ "generic-array",
+]
+
+[[package]]
+name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
@@ -588,7 +585,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee27f32b5c5292967d2d4a9d7f1e0b0aed2c15daded5a60300e4abb9d8020bca"
 dependencies = [
  "der",
- "digest",
+ "digest 0.10.7",
  "elliptic-curve",
  "rfc6979",
  "signature",
@@ -621,7 +618,7 @@ checksum = "b5e6043086bf7973472e0c7dff2142ea0b680d30e18d9cc40f267efbf222bd47"
 dependencies = [
  "base16ct",
  "crypto-bigint",
- "digest",
+ "digest 0.10.7",
  "ff",
  "generic-array",
  "group",
@@ -687,7 +684,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "28.0.0"
+version = "30.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -695,6 +692,7 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-rlp",
  "ethrex-trie",
+ "foldhash 0.2.0",
  "hex",
  "hex-literal 0.4.1",
  "hex-simd",
@@ -718,7 +716,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "28.0.0"
+version = "30.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -737,7 +735,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-openvm"
-version = "28.0.0"
+version = "30.0.0"
 dependencies = [
  "ethrex-common",
  "ethrex-guest-program",
@@ -752,9 +750,9 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "28.0.0"
+version = "30.0.0"
 dependencies = [
- "bls12_381 0.8.0 (git+https://github.com/lambdaclass/bls12_381?branch=expose-affine-constructors)",
+ "bls12_381",
  "bytes",
  "ethereum-types",
  "ethrex-common",
@@ -778,7 +776,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "28.0.0"
+version = "30.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -795,7 +793,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "28.0.0"
+version = "30.0.0"
 dependencies = [
  "bytes",
  "derive_more",
@@ -812,7 +810,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "28.0.0"
+version = "30.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -821,7 +819,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "28.0.0"
+version = "30.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -840,7 +838,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "28.0.0"
+version = "30.0.0"
 dependencies = [
  "bytes",
  "derive_more",
@@ -962,7 +960,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0cd39c0df23c8b72cb7158ccb106341b078d5019b5478b3bfdaf14e898177d3"
 dependencies = [
  "blake2b_simd",
- "digest",
+ "digest 0.10.7",
  "ff",
  "group",
  "hex",
@@ -1054,7 +1052,7 @@ version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
 dependencies = [
- "digest",
+ "digest 0.10.7",
 ]
 
 [[package]]
@@ -1603,7 +1601,7 @@ name = "openvm-kzg"
 version = "0.2.0-alpha"
 source = "git+https://github.com/axiom-crypto/openvm-kzg.git?rev=530a6ed413def5296b7e4967650ba4fc8fd92ea1#530a6ed413def5296b7e4967650ba4fc8fd92ea1"
 dependencies = [
- "bls12_381 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "bls12_381",
  "hex",
  "hex-literal 1.1.0",
  "openvm-algebra-guest",
@@ -2008,7 +2006,7 @@ version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd124222d17ad93a644ed9d011a40f4fb64aa54275c08cc216524a9ea82fb09f"
 dependencies = [
- "digest",
+ "digest 0.10.7",
 ]
 
 [[package]]
@@ -2222,7 +2220,7 @@ checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
  "cpufeatures",
- "digest",
+ "digest 0.10.7",
 ]
 
 [[package]]
@@ -2231,7 +2229,7 @@ version = "0.10.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75872d278a8f37ef87fa0ddbda7802605cb18344497949862c0d4dcb291eba60"
 dependencies = [
- "digest",
+ "digest 0.10.7",
  "keccak",
 ]
 
@@ -2247,7 +2245,7 @@ version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
 dependencies = [
- "digest",
+ "digest 0.10.7",
  "rand_core",
 ]
 

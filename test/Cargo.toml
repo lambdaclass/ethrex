@@ -74,5 +74,10 @@ serial_test = "3"
 name = "ethrex_tests"
 path = "tests/tests.rs"
 
+# Its own binary: it installs a counting global allocator.
+[[test]]
+name = "allocation_tests"
+path = "tests/allocation_tests.rs"
+
 [lints]
 workspace = true

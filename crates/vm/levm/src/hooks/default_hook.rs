@@ -522,9 +522,10 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
         .ok_or(InternalError::Overflow)?;
 
     // Per EIP-7928: Coinbase must appear in BAL when there's a user transaction,
-    // even if the priority fee is zero. System contract calls have gas_price = 0,
-    // so we use this to distinguish them from user transactions.
-    if !vm.env.gas_price.is_zero()
+    // even if the priority fee is zero. The spec reads the coinbase for every user
+    // transaction, including one with gas price zero on a zero-base-fee chain; only
+    // system contract calls leave it untouched.
+    if !vm.env.is_system_call
         && let Some(recorder) = vm.db.bal_recorder.as_mut()
     {
         recorder.record_touched_address(vm.env.coinbase);
@@ -674,6 +675,7 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>, intrinsic: &IntrinsicGas) -> Resu
     // NOTE: We use IntrinsicGasTooLow (not TxMaxGasLimitExceeded) intentionally —
     // this matches the EELS exception mapping for this specific case.
     if vm.env.config.fork >= Fork::Amsterdam
+        && !vm.env.disable_execution_gas_cap
         && regular_gas.max(floor_cost_by_tokens) > TX_MAX_GAS_LIMIT_AMSTERDAM
     {
         return Err(TxValidationError::IntrinsicGasTooLow.into());
@@ -936,7 +938,8 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
     // Get bytecode and code_address for assigning those values to the callframe.
     let (bytecode, code_address) = if vm.is_create()? {
         // Here bytecode is the calldata and the code_address is just the created contract address.
-        let calldata = std::mem::take(&mut vm.current_call_frame.calldata);
+        // A transaction's own data is owned, so this takes it rather than copying.
+        let calldata = std::mem::take(&mut vm.current_call_frame.calldata).to_bytes()?;
         (
             // SAFETY: we don't need the hash for the initcode
             Code::from_bytecode_unchecked(calldata, H256::zero()),

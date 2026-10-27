@@ -2,6 +2,7 @@ pub mod blobs;
 pub mod client_version;
 pub mod exchange_transition_config;
 pub mod fork_choice;
+pub(crate) mod in_flight;
 pub mod payload;
 
 use crate::{
@@ -9,13 +10,13 @@ use crate::{
     utils::RpcErr,
     utils::RpcRequest,
 };
-use serde_json::{Value, json};
+use serde_json::{Value, json, value::RawValue};
 
 pub type ExchangeCapabilitiesRequest = Vec<String>;
 
 /// List of capabilities that the execution layer client supports. Add new capabilities here.
 /// More info: https://github.com/ethereum/execution-apis/blob/main/src/engine/common.md#engine_exchangecapabilities
-pub const CAPABILITIES: [&str; 25] = [
+pub const CAPABILITIES: [&str; 26] = [
     "engine_forkchoiceUpdatedV1",
     "engine_forkchoiceUpdatedV2",
     "engine_forkchoiceUpdatedV3",
@@ -25,6 +26,7 @@ pub const CAPABILITIES: [&str; 25] = [
     "engine_newPayloadV3",
     "engine_newPayloadV4",
     "engine_newPayloadV5",
+    "engine_newPayloadWithWitnessV4",
     "engine_newPayloadWithWitnessV5",
     "engine_getPayloadV1",
     "engine_getPayloadV2",
@@ -45,24 +47,22 @@ pub const CAPABILITIES: [&str; 25] = [
 
 impl From<ExchangeCapabilitiesRequest> for RpcRequest {
     fn from(val: ExchangeCapabilitiesRequest) -> Self {
-        RpcRequest {
-            method: "engine_exchangeCapabilities".to_string(),
-            params: Some(vec![serde_json::json!(val)]),
-            ..Default::default()
-        }
+        RpcRequest::new(
+            "engine_exchangeCapabilities",
+            Some(vec![serde_json::json!(val)]),
+        )
     }
 }
 
 impl RpcHandler for ExchangeCapabilitiesRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?
             .first()
             .ok_or(RpcErr::BadParams("Expected 1 param".to_owned()))
             .and_then(|v| {
-                serde_json::from_value(v.clone())
-                    .map_err(|error| RpcErr::BadParams(error.to_string()))
+                serde_json::from_str(v.get()).map_err(|error| RpcErr::BadParams(error.to_string()))
             })
     }
 
@@ -76,7 +76,8 @@ mod tests {
     use super::CAPABILITIES;
 
     #[test]
-    fn capabilities_include_new_payload_with_witness_v5() {
+    fn capabilities_include_new_payload_with_witness_v4_and_v5() {
+        assert!(CAPABILITIES.contains(&"engine_newPayloadWithWitnessV4"));
         assert!(CAPABILITIES.contains(&"engine_newPayloadWithWitnessV5"));
     }
 }

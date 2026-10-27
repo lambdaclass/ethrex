@@ -45,6 +45,7 @@
 pub mod constants;
 pub mod error;
 pub mod fork_choice;
+mod glamsterdam;
 pub mod mempool;
 pub mod payload;
 pub mod prewarm;
@@ -68,6 +69,7 @@ use ethrex_common::constants::{
 use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
 use crate::vm::{OverlaidVmDatabase, StateOverride, precompile_moves};
+use ethrex_common::seeded_hash::{SeededHashMap, SeededHashSet};
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::EIP4844Transaction;
 #[cfg(feature = "c-kzg")]
@@ -85,6 +87,7 @@ use ethrex_common::types::{EIP7702_DELEGATED_CODE_LEN, is_eip7702_delegation};
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
+use ethrex_common::validate_block_access_list_size;
 use ethrex_common::{Address, H256, U256};
 pub use ethrex_common::{
     get_total_blob_gas, validate_block_access_list_hash, validate_block_pre_execution,
@@ -494,7 +497,7 @@ enum WorkerRequest {
     ProcessAccount {
         prefix: H256,
         info: Option<AccountInfo>,
-        storage: FxHashMap<H256, U256>,
+        storage: SeededHashMap<H256, U256>,
         removed: bool,
         removed_storage: bool,
     },
@@ -872,6 +875,17 @@ impl Blockchain {
         }
         let block_validated_instant = Instant::now();
 
+        // Everything the pipeline drives from a supplied BAL (synthesized trie updates, the
+        // storage and trie-node prefetches, the warmer, the parallel executor's indices)
+        // does work in proportion to the BAL's size rather than to gas. A BAL over the
+        // EIP-7928 item cap belongs to an invalid block, but that is only reported after
+        // execution so that transaction errors take priority. Run such a block on the
+        // sequential path instead, which rebuilds the BAL from execution and rejects the
+        // block by its hash, so the work stays bounded by gas.
+        let bal = bal.filter(|bal| {
+            validate_block_access_list_size(&block.header, &chain_config, bal).is_ok()
+        });
+
         let exec_merkle_start = Instant::now();
         let queue_length = AtomicUsize::new(0);
         let queue_length_ref = &queue_length;
@@ -926,7 +940,7 @@ impl Blockchain {
         // executor (see `bal_parallel_exec_enabled` below) streams per-tx
         // updates over the channel, which only the streaming merkleizer
         // consumes — the synthesized path would leave the receiver dropped.
-        let optimistic_updates: Option<FxHashMap<Address, BalSynthesisItem>> =
+        let optimistic_updates: Option<SeededHashMap<Address, BalSynthesisItem>> =
             if self.options.bal_parallel_trie_enabled && !collect_witness {
                 bal.as_deref().map(synthesize_bal_updates)
             } else {
@@ -1426,11 +1440,11 @@ impl Blockchain {
 
             // Coordination runs on the calling thread, concurrently with pool tasks.
             let mut code_updates: Vec<(H256, Code)> = vec![];
-            let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
+            let mut hashed_address_cache: SeededHashMap<Address, H256> = Default::default();
             let mut has_storage: FxHashSet<H256> = Default::default();
 
-            let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
-                collect_witness.then(FxHashMap::default);
+            let mut accumulator: Option<SeededHashMap<Address, AccountUpdate>> =
+                collect_witness.then(SeededHashMap::default);
 
             for updates in rx {
                 let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
@@ -1581,7 +1595,7 @@ impl Blockchain {
     )]
     fn handle_merkleization_bal_from_updates(
         &self,
-        prepared: FxHashMap<Address, BalSynthesisItem>,
+        prepared: SeededHashMap<Address, BalSynthesisItem>,
         parent_header: &BlockHeader,
     ) -> Result<AccountUpdatesList, StoreError> {
         const NUM_WORKERS: usize = 16;
@@ -2109,22 +2123,11 @@ impl Blockchain {
                 }
             }
 
-            // Store all the accessed evm bytecodes. `code_accessed` records one entry
-            // per read, and a contract read for both its bytecode and its length is
-            // recorded twice, so dedup before embedding: a repeated hash would put the
-            // same (up to 24KB) bytecode in the witness more than once.
-            let accessed_codes: Vec<H256> = {
-                let accessed = logger.code_accessed.lock().map_err(|_e| {
+            // Store all the accessed evm bytecodes, each once.
+            let accessed_codes =
+                unique_code_hashes(&logger.code_accessed.lock().map_err(|_e| {
                     ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
-                })?;
-                let mut seen =
-                    FxHashSet::with_capacity_and_hasher(accessed.len(), Default::default());
-                accessed
-                    .iter()
-                    .copied()
-                    .filter(|h| seen.insert(*h))
-                    .collect()
-            };
+                })?);
             for code_hash in &accessed_codes {
                 let code = self
                     .storage
@@ -2382,21 +2385,10 @@ impl Blockchain {
             }
         }
 
-        // Store all the accessed evm bytecodes. `code_accessed` records one entry
-        // per read, and a contract read for both its bytecode and its length is
-        // recorded twice, so dedup before embedding: a repeated hash would put the
-        // same (up to 24KB) bytecode in the witness more than once.
-        let accessed_codes: Vec<H256> = {
-            let accessed = logger.code_accessed.lock().map_err(|_e| {
-                ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
-            })?;
-            let mut seen = FxHashSet::with_capacity_and_hasher(accessed.len(), Default::default());
-            accessed
-                .iter()
-                .copied()
-                .filter(|h| seen.insert(*h))
-                .collect()
-        };
+        // Store all the accessed evm bytecodes, each once.
+        let accessed_codes = unique_code_hashes(&logger.code_accessed.lock().map_err(|_e| {
+            ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
+        })?);
         for code_hash in &accessed_codes {
             let code = self
                 .storage
@@ -2762,6 +2754,16 @@ impl Blockchain {
             },
         };
 
+        // Decided before execution because `parent_header` is moved below; the banner
+        // itself is only logged once the block is stored.
+        let is_first_amsterdam_block = matches!(self.options.r#type, BlockchainType::L1)
+            && !glamsterdam::shown()
+            && glamsterdam::is_first_amsterdam_block(
+                &self.storage.get_chain_config(),
+                parent_header.timestamp,
+                block.header.timestamp,
+            );
+
         let should_store_witness = self.options.precompute_witnesses && self.is_synced();
         let collect_witness = should_store_witness || force_witness;
 
@@ -2896,6 +2898,11 @@ impl Blockchain {
                 warmer_duration,
                 instants,
             );
+        }
+
+        // After the block's own performance log, so the banner follows the block it marks.
+        if is_first_amsterdam_block && result.is_ok() {
+            glamsterdam::log_once(block_number, block_hash);
         }
 
         metrics!(
@@ -3481,12 +3488,19 @@ impl Blockchain {
         self.mempool.remove_transaction(hash)
     }
 
-    /// Remove all transactions in the executed block from the pool (if we have them)
+    /// Remove all transactions in the executed block from the pool (if we have them), and note
+    /// them as included so peers that announced them are not expected to still serve them.
     pub fn remove_block_transactions_from_pool(&self, block: &Block) -> Result<(), StoreError> {
-        for tx in &block.body.transactions {
-            self.mempool.remove_transaction(&tx.hash(&NativeCrypto))?;
+        let hashes: Vec<H256> = block
+            .body
+            .transactions
+            .iter()
+            .map(|tx| tx.hash(&NativeCrypto))
+            .collect();
+        for hash in &hashes {
+            self.mempool.remove_transaction(hash)?;
         }
-        Ok(())
+        self.mempool.note_included_txs(hashes)
     }
 
     /// Drop blob txs with nonce below the sender's on-chain nonce at `head_hash`.
@@ -4965,6 +4979,19 @@ pub fn new_evm<D: VmDatabase + 'static>(
     Ok(evm)
 }
 
+/// The code hashes in `accessed`, each once, in the order they were first read. The logger
+/// records one entry per read, and a contract read for both its bytecode and its length is
+/// recorded twice; a repeated hash would put the same (up to 24KB) bytecode in a witness more
+/// than once. Seeded: a deployer can grind its code hash into a chosen bucket.
+fn unique_code_hashes(accessed: &[H256]) -> Vec<H256> {
+    let mut seen = SeededHashSet::with_capacity_and_hasher(accessed.len(), Default::default());
+    accessed
+        .iter()
+        .copied()
+        .filter(|hash| seen.insert(*hash))
+        .collect()
+}
+
 /// Attach the stateless validator to an `Evm` so its `EXECUTE` precompile
 /// can delegate to `verify_stateless_new_payload` when processing native-rollup
 /// `advance()` calls.
@@ -4975,7 +5002,6 @@ pub fn new_evm<D: VmDatabase + 'static>(
 /// callers that build `Evm::new_for_l1` without blockchain access (the
 /// guest-program crate, the stateless verifier itself, witness generation,
 /// the prover backend) also rely on the constructor staying validator-less.
-///
 fn attach_stateless_validator(evm: &mut Evm) {
     evm.stateless_validator = Some(Arc::new(stateless::StatelessExecutor {
         crypto: Arc::new(NativeCrypto),
@@ -5287,6 +5313,13 @@ mod tests {
     };
     use ethrex_storage::EngineType;
     use std::path::Path;
+
+    #[test]
+    fn unique_code_hashes_keeps_the_first_read_of_each_hash() {
+        let [a, b, c] = [1, 2, 3].map(H256::from_low_u64_be);
+        assert_eq!(unique_code_hashes(&[b, a, b, c, a, b]), vec![b, a, c]);
+        assert!(unique_code_hashes(&[]).is_empty());
+    }
 
     async fn build_test_blockchain_with_one_block() -> (Blockchain, Vec<Block>) {
         let genesis_path = Path::new(concat!(

@@ -134,8 +134,8 @@ Guest binaries use base features (`sp1`, `risc0`, etc.) to get their `Crypto` im
 
 Each subdirectory in `bin/` contains a guest implementation for a specific zkVM. The ethrex execution logic serves as the backend that each zkVM guest calls into.
 
-### SP1 v5.0.8 (Succinct)
-- **Architecture**: RISC-V 32-bit
+### SP1 v6.9.0 (Succinct)
+- **Architecture**: RISC-V 64-bit (the ELF keeps its `riscv32im` file name from SP1 5)
 - **ELF output**: `bin/sp1/out/riscv32im-succinct-zkvm-elf`
 - **Patches**: Optimized crypto libraries for SHA2, SHA3, K256, etc.
 
@@ -168,7 +168,7 @@ Each subdirectory in `bin/` contains a guest implementation for a specific zkVM.
 ```
 
 1. **Input**: a 2-byte big-endian schema id followed by the SSZ `SszStatelessInput`
-   (payload, execution witness, chain id, public keys). On L2 the shape differs; see `l2/input.rs`.
+   (payload, execution witness, chain id). On L2 the shape differs; see `l2/input.rs`.
 2. **Execution**: The guest program re-executes blocks inside the zkVM
 3. **Output**: on L1, 43 bytes —
    `new_payload_request_root (32) || successful_validation (1) || chain_id (8) || schema_id (2)`

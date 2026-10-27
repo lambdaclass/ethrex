@@ -19,7 +19,10 @@ use ethrex_p2p::{
     network::P2PContext,
     peer_handler::PeerHandler,
     peer_table::PeerTableServer,
-    rlpx::{initiator::RLPxInitiator, l2::l2_connection::P2PBasedContext},
+    rlpx::{
+        initiator::RLPxInitiator,
+        l2::{block_importer::L2BlockImporter, l2_connection::P2PBasedContext},
+    },
     sync::{BackfillConfig, HistoryChain},
     sync_manager::SyncManager,
     types::{LocalNode, SharedLocalNode},
@@ -92,9 +95,11 @@ async fn init_rpc_api(
         rollup_store,
         log_filter_handler,
         l2_gas_limit,
+        opts.rpc_gas_cap,
         l2_opts.sponsored_gas_limit,
         allowed_namespaces,
         ethrex_namespace_allowed,
+        initializers::get_log_query_limits(opts),
     )
     .await?;
 
@@ -317,6 +322,11 @@ pub async fn init_l2(
             #[cfg(feature = "l2")]
             Some(P2PBasedContext {
                 store_rollup: rollup_store.clone(),
+                block_importer: L2BlockImporter::spawn(
+                    store.clone(),
+                    blockchain.clone(),
+                    rollup_store.clone(),
+                ),
                 // TODO: The Web3Signer refactor introduced a limitation where the committer key cannot be accessed directly because the signer could be either Local or Remote.
                 // The Signer enum cannot be used in the P2PBasedContext struct due to cyclic dependencies between the l2-rpc and p2p crates.
                 // As a temporary solution, a dummy committer key is used until a proper mechanism to utilize the Signer enum is implemented.
