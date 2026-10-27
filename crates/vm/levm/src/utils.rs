@@ -292,9 +292,8 @@ pub fn eip7702_peek_delegation(
     let account = db.get_account(address)?;
     // An account without code (an EOA or a precompile) cannot carry a delegation
     // designation. Calls to precompiles take this path every time, so skip the
-    // code-cache lookup and return no code at all: even an empty `Code` clones a
-    // process-wide `Arc`, whose reference count every thread executing
-    // transactions in parallel would then contend on.
+    // code-cache lookup and the clone and drop of the empty `Code` entry, and
+    // return no code at all.
     if !account.has_code() {
         return Ok((None, None));
     }
