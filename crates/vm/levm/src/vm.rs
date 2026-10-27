@@ -3034,37 +3034,6 @@ impl<'a> VM<'a> {
             self.increase_account_balance(self.env.coinbase, coinbase_fee)?;
         }
 
-        // EIP-8141: finalize self-destructs at tx end, mirroring the default
-        // finalize hook ordering (refund -> coinbase -> delete). SELFDESTRUCT is
-        // unrestricted during frame execution (the banned-opcode set only applies
-        // to the mempool validation prefix), so a frame may mark same-tx-created
-        // accounts for deletion (EIP-6780). Without this they leak into the
-        // post-state. `iter_selfdestruct` walks the full substate chain, so a
-        // single call here covers every committed frame. Any EIP-7708 burn logs
-        // emitted (rare: only when a destroyed account later received ETH in the
-        // same tx) are appended to the tx-level aggregate `all_logs`: the per-frame
-        // consensus receipts have no slot for end-of-tx logs, but the header and
-        // receipt blooms are derived from these aggregate logs (receipt.rs,
-        // payload.rs), so they must be recorded there.
-        //
-        // KNOWN SPEC GAP (cross-client interop): these tx-end burn logs are in the
-        // aggregate bloom but NOT in any per-frame consensus receipt, so a client
-        // that re-derives the type-0x06 logs_bloom purely from the canonical
-        // per-frame logs would compute a different bloom (part of the block hash).
-        // ethrex producer and validator agree (both execute over the live
-        // aggregate), so this is not an intra-client split; it only bites
-        // cross-client and only for this rare destroy-after-receiving-ETH case.
-        // EIP-7708 is silent on receipt placement and EIP-8141's frame receipt has
-        // no tx-level logs slot, so the canonical home is genuinely undefined; do
-        // not pin one (e.g. attribute to the last frame) unilaterally — confirm the
-        // bloom-derivation rule against another client / the devnet first.
-        let logs_before = self.substate.current_logs().len();
-        crate::hooks::default_hook::delete_self_destruct_accounts(self)?;
-        let mut logs_after = self.substate.current_logs();
-        if logs_after.len() > logs_before {
-            all_logs.extend(logs_after.split_off(logs_before));
-        }
-
         // Frame txs short-circuit the hook/finalize path, so the BackupHook never
         // runs and `db.tx_backup` stays None on the success path. A block builder
         // can execute a frame tx successfully and then reject it (e.g. the EIP-8037
@@ -3074,7 +3043,7 @@ impl<'a> VM<'a> {
         // the built block's state root diverges from re-execution. Populate it here
         // exactly as `BackupHook::finalize_execution` would: `tx_level_backup` holds
         // every committed frame's originals, and the outer call-frame backup now also
-        // holds the refund/coinbase/self-destruct originals. Gated on
+        // holds the refund/coinbase originals. Gated on
         // `preserve_top_level_backup` so it is set only when a hook reads it (L2);
         // on L1 the field is never consulted.
         if self.preserve_top_level_backup {
