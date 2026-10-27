@@ -26,8 +26,8 @@ pub(crate) fn modexp(base: &[u8], exp: &[u8], modulus: &[u8]) -> Option<Vec<u8>>
     // exponent. Both bounds come from timing the two paths against each other.
     match (modulus_digits.len(), bit_length(exp)) {
         (20..=32, 8..) => pow::<4>(base, exp, modulus_digits, modulus.len()),
-        (56..=64, 24..) => pow::<8>(base, exp, modulus_digits, modulus.len()),
-        (120..=128, 128..) => pow::<16>(base, exp, modulus_digits, modulus.len()),
+        (56..=64, 32..) => pow::<8>(base, exp, modulus_digits, modulus.len()),
+        (120..=128, 192..) => pow::<16>(base, exp, modulus_digits, modulus.len()),
         _ => None,
     }
 }
