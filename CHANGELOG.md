@@ -19,6 +19,7 @@
 ### 2026-10-13
 
 - Faster BN254 precompiles: ECADD in affine form with a safegcd inversion, ECMUL with GLV and wNAF (double-and-add for scalars of at most 16 bits), ECPAIRING with a 63-bit G2 subgroup check, its own Miller loop and final exponentiation, and a branch-free field tower on x86-64 CPUs with BMI2 and ADX: ECADD 2.13 → 0.84 µs, full-width ECMUL 47.9 → 20.8 µs, two random pairs 688 → 382 µs, and the 220 BN254 tests of the benchmarkoor compute-repricing suite 125.3 → 57.4 s [#7397](https://github.com/lambdaclass/ethrex/pull/7397)
+- Faster keccak on x86-64: `keccak_hash` absorbs one-shot inputs without building the streaming state, and CPUs with AVX-512F and AVX-512VL run a permutation that keeps all 25 lanes in 128-bit registers, picked at runtime: cycles per chained hash −14..−16% on Intel (Emerald Rapids) and −2..−6% on AMD Zen 5, criterion 32 B 198 → 172 ns on Zen 5 [#7398](https://github.com/lambdaclass/ethrex/pull/7398)
 
 ### 2026-09-30
 
