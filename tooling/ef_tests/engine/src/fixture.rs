@@ -202,6 +202,14 @@ fn build_genesis(
             .expect("config_json is an object")
             .insert("blobSchedule".into(), converted);
     }
+    // EIP-8253: each fixture names the accounts its fork block bumps, under the same
+    // key `ChainConfig` reads.
+    if let Some(accounts) = config.get("zeroNonceStorageAccounts") {
+        config_json
+            .as_object_mut()
+            .expect("config_json is an object")
+            .insert("zeroNonceStorageAccounts".into(), accounts.clone());
+    }
     let genesis_json = build_genesis_json(header, pre, config_json);
     serde_json::from_value::<Genesis>(genesis_json).context("Failed to deserialize Genesis")
 }
