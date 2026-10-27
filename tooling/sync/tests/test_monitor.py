@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import subprocess
 import tempfile
@@ -251,6 +252,71 @@ class ContainerStartTimeTest(unittest.TestCase):
             else:
                 os.environ["TZ"] = old_tz
             time.tzset()
+
+
+ETHLAMBDA_REV = "a11df91fee172274ddc1c5cf2aed8e35d86e8476"
+
+
+def inspect_output(image, image_id, labels=None):
+    return json.dumps([{"Image": image_id, "Config": {"Image": image, "Labels": labels}}]).encode()
+
+
+class ClientBuildTest(unittest.TestCase):
+    labeled = inspect_output("ethlambda:local", "sha256:59ed6d5030a5f927a0ef", {
+        dm.OCI_REVISION: ETHLAMBDA_REV,
+        dm.OCI_SOURCE: "https://github.com/lambdaclass/ethlambda",
+    })
+
+    def test_a_labeled_image_names_its_commit_linked_to_its_own_repo(self):
+        with mock.patch.object(dm.subprocess, "check_output", return_value=self.labeled):
+            build = dm.container_build("ethlambda", "ethlambda-hoodi")
+        self.assertEqual(build.describe(slack=False), "ethlambda: ethlambda:local, commit a11df91")
+        self.assertEqual(
+            build.describe(slack=True),
+            f"ethlambda: `ethlambda:local`, commit <https://github.com/lambdaclass/ethlambda/commit/{ETHLAMBDA_REV}|a11df91>",
+        )
+
+    def test_an_unlabeled_image_falls_back_to_its_image_id(self):
+        out = inspect_output("sigp/lighthouse:v8.3.2", "sha256:5b3e1b7c9a2d4f00aa11", {"org.opencontainers.image.version": "22.04"})
+        with mock.patch.object(dm.subprocess, "check_output", return_value=out):
+            build = dm.container_build("lighthouse", "lighthouse-hoodi")
+        self.assertEqual(build.describe(slack=False), "lighthouse: sigp/lighthouse:v8.3.2, image 5b3e1b7c9a2d")
+
+    def test_a_placeholder_revision_is_not_a_commit(self):
+        out = inspect_output("ethlambda:dev", "sha256:0123456789abcdef", {dm.OCI_REVISION: "unknown"})
+        with mock.patch.object(dm.subprocess, "check_output", return_value=out):
+            build = dm.container_build("ethlambda", "ethlambda-hoodi")
+        self.assertEqual(build.describe(slack=False), "ethlambda: ethlambda:dev, image 0123456789ab")
+
+    def test_a_container_docker_cannot_inspect_has_no_image(self):
+        with mock.patch.object(dm.subprocess, "check_output", side_effect=subprocess.CalledProcessError(1, "docker")):
+            build = dm.container_build("geth", "geth-hoodi")
+        self.assertEqual(build.describe(slack=True), "geth: image unknown")
+
+    def test_a_client_shared_by_pairs_is_listed_once(self):
+        config = parse({"pair": [
+            {"network": "hoodi", "el": "ethrex", "cl": "ethlambda"},
+            {"network": "sepolia", "el": "ethrex", "cl": "lighthouse"},
+        ]})
+        instances = [dm.Instance(p) for p in select(config)]
+        outputs = {
+            "ethrex-hoodi": inspect_output("ghcr.io/lambdaclass/ethrex:main", "sha256:df03c6c1df97"),
+            "ethrex-sepolia": inspect_output("ghcr.io/lambdaclass/ethrex:main", "sha256:df03c6c1df97"),
+            "ethlambda-hoodi": self.labeled,
+            "lighthouse-sepolia": inspect_output("sigp/lighthouse:v8.3.2", "sha256:5b3e1b7c9a2d"),
+        }
+        with mock.patch.object(dm.subprocess, "check_output", side_effect=lambda cmd, **_: outputs[cmd[-1]]):
+            builds = dm.client_builds(instances)
+        self.assertEqual([b.client for b in builds], ["ethrex", "ethlambda", "lighthouse"])
+
+    def test_the_slack_summary_lists_the_clients(self):
+        build = dm.ClientBuild("ethlambda", "ethlambda:local", revision=ETHLAMBDA_REV)
+        with mock.patch.dict(dm.os.environ, {"SLACK_WEBHOOK_URL_SUCCESS": "http://hook"}), \
+                mock.patch.object(dm, "client_builds", return_value=[build]), \
+                mock.patch.object(dm.requests, "post") as post:
+            dm.slack_notify("20261027_112140", 4, [make_instance("success")], "host", "main", "7a15c34")
+        summary = post.call_args.kwargs["json"]["blocks"][1]["text"]["text"]
+        self.assertIn("*Clients:*\n• ethlambda: `ethlambda:local`, commit a11df91\n", summary)
 
 
 def restart_args(directory, **overrides):

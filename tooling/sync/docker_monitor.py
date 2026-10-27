@@ -2,6 +2,7 @@
 """Monitor multisync EL+CL pairs: EL snap sync and block processing, plus CL health."""
 
 import argparse
+import json
 import os
 import re
 import socket
@@ -488,6 +489,59 @@ def container_start_time(name: str) -> Optional[float]:
         return None
 
 
+OCI_REVISION = "org.opencontainers.image.revision"
+OCI_SOURCE = "org.opencontainers.image.source"
+
+
+@dataclass(frozen=True)
+class ClientBuild:
+    """The image one client ran, and the commit it was built from when the image's labels name one."""
+    client: str
+    image: Optional[str]  # None when docker could not inspect the container
+    image_id: str = ""
+    revision: str = ""
+    source: str = ""
+
+    def describe(self, slack: bool) -> str:
+        """`<client>: <image>, commit <rev>`, or the image ID when the image names no commit."""
+        if self.image is None:
+            return f"{self.client}: image unknown"
+        image = f"`{self.image}`" if slack else self.image
+        if self.revision:
+            rev = short_hash(self.revision)
+            if slack and self.source.startswith("https://github.com/"):
+                rev = f"<{self.source.rstrip('/')}/commit/{self.revision}|{rev}>"
+            return f"{self.client}: {image}, commit {rev}"
+        # Docker's short form of an image ID: its first 12 hex digits.
+        return f"{self.client}: {image}, image {self.image_id.removeprefix('sha256:')[:12]}"
+
+
+def container_build(client: str, container: str) -> ClientBuild:
+    """What `container` runs: its image, and the commit from the image's OCI labels."""
+    try:
+        out = subprocess.check_output(["docker", "inspect", container], stderr=subprocess.DEVNULL)
+        info = json.loads(out)[0]
+    except Exception:
+        return ClientBuild(client, None)
+    labels = info["Config"].get("Labels") or {}
+    revision = labels.get(OCI_REVISION, "")
+    # Images built without a commit carry a placeholder (ethlambda's says "unknown").
+    if not re.fullmatch(r"[0-9a-f]{7,40}", revision):
+        revision = ""
+    return ClientBuild(client, info["Config"]["Image"], info.get("Image", ""), revision, labels.get(OCI_SOURCE, ""))
+
+
+def client_builds(instances: list[Instance]) -> list[ClientBuild]:
+    """Every client's build in this run, in pair order, listed once per distinct image."""
+    builds = []
+    for inst in instances:
+        for client, container in ((inst.pair.el.name, inst.container), (inst.pair.cl.name, inst.cl_container)):
+            build = container_build(client, container)
+            if build not in builds:
+                builds.append(build)
+    return builds
+
+
 def container_exit_info(name: str) -> tuple[Optional[bool], Optional[int]]:
     """Check if container has exited and get exit code.
 
@@ -647,11 +701,13 @@ def slack_notify(run_id: str, run_count: int, instances: list, hostname: str, br
 
     # Check for validation failures
     validation_failures = [i for i in instances if i.error and "validation" in i.error.lower()]
+    clients = "".join(f"• {b.describe(slack=True)}\n" for b in client_builds(instances))
 
     summary = (
         f"*Host:* `{hostname}`\n"
         f"*Branch:* `{branch}`\n"
         f"*Commit:* <https://github.com/lambdaclass/ethrex/commit/{commit}|{commit}>\n"
+        f"*Clients:*\n{clients}"
         f"*Elapsed:* `{elapsed_str}`\n"
         f"*Validation:* `{validation_str}`\n"
         f"*Logs:* `tooling/sync/multisync_logs/run_{run_id}`\n"
@@ -783,6 +839,8 @@ def log_run_result(run_id: str, run_count: int, instances: list[Instance], hostn
         f"Host:       {hostname}",
         f"Branch:     {branch}",
         f"Commit:     {commit}",
+        "Clients:",
+        *(f"  {b.describe(slack=False)}" for b in client_builds(instances)),
         f"Elapsed:    {elapsed_str}",
         f"Validation: {validation_str}",
         f"Result:     {'SUCCESS' if all_success else 'FAILED'}",
