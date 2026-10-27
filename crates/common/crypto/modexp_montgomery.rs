@@ -12,14 +12,14 @@ use crate::safegcd::Modulus;
 /// modulus that does not fill most of its 4, 8 or 16 limbs, a base wider than
 /// those limbs, or an exponent too short to pay for the Montgomery setup.
 pub(crate) fn modexp(base: &[u8], exp: &[u8], modulus: &[u8]) -> Option<Vec<u8>> {
-    if let Some(inverse) = known_prime_inverse(base, exp, modulus) {
-        return Some(inverse);
-    }
     // Leading zero bytes carry no value, so padded operands keep the limb
     // count of their significant bytes.
     let modulus_digits = strip_leading_zeros(modulus);
     let base = strip_leading_zeros(base);
     let exp = strip_leading_zeros(exp);
+    if let Some(inverse) = known_prime_inverse(base, exp, modulus_digits, modulus.len()) {
+        return Some(inverse);
+    }
     // Products on 64 * N bits cost more than the generic path's exact-width
     // ones for a modulus well below 64 * N bits, and computing `R^2 mod m` and
     // the window table costs more than a whole generic call with a short
@@ -89,28 +89,25 @@ const KNOWN_PRIMES: [Modulus; 7] = [
 ];
 
 /// `base^exp mod modulus` computed as an inversion when the modulus is one of [`KNOWN_PRIMES`] and
-/// the exponent is the modulus minus 2, as `modulus.len()` big-endian bytes; `None` otherwise, or
-/// when the base has more than 32 significant bytes. Leading zero bytes are allowed in every operand.
-fn known_prime_inverse(base: &[u8], exp: &[u8], modulus: &[u8]) -> Option<Vec<u8>> {
-    let modulus_digits = strip_leading_zeros(modulus);
+/// the exponent is the modulus minus 2, as `out_len` big-endian bytes; `None` otherwise, or when
+/// the base has more than 32 bytes. The operands come without leading zero bytes.
+fn known_prime_inverse(base: &[u8], exp: &[u8], modulus: &[u8], out_len: usize) -> Option<Vec<u8>> {
     // Every known prime has 32 significant bytes.
-    if modulus_digits.len() != 32 {
+    if modulus.len() != 32 {
         return None;
     }
-    let m = from_be_bytes::<4>(modulus_digits);
+    let m = from_be_bytes::<4>(modulus);
     let prime = KNOWN_PRIMES.iter().find(|prime| prime.limbs == m)?;
-    let exp_digits = strip_leading_zeros(exp);
-    let base_digits = strip_leading_zeros(base);
-    if exp_digits.len() > 32 || base_digits.len() > 32 {
+    if exp.len() > 32 || base.len() > 32 {
         return None;
     }
     let mut m_minus_2 = m;
     sub_assign(&mut m_minus_2, &limb_two());
-    if from_be_bytes::<4>(exp_digits) != m_minus_2 {
+    if from_be_bytes::<4>(exp) != m_minus_2 {
         return None;
     }
     // Every known prime is above 2^253, so a 32-byte base is below 8m.
-    let mut value = from_be_bytes::<4>(base_digits);
+    let mut value = from_be_bytes::<4>(base);
     while !less_than(&value, &m) {
         sub_assign(&mut value, &m);
     }
@@ -120,7 +117,7 @@ fn known_prime_inverse(base: &[u8], exp: &[u8], modulus: &[u8]) -> Option<Vec<u8
     } else {
         prime.inverse(value)
     };
-    let mut out = vec![0u8; modulus.len()];
+    let mut out = vec![0u8; out_len];
     for (i, byte) in out.iter_mut().rev().take(32).enumerate() {
         *byte = (result[i / 8] >> (8 * (i % 8))) as u8;
     }
@@ -387,6 +384,16 @@ fn sub_assign<const N: usize>(a: &mut [u64; N], b: &[u64; N]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [`known_prime_inverse`] on operands that may have leading zero bytes, as `modexp` calls it.
+    fn inverse(base: &[u8], exp: &[u8], modulus: &[u8]) -> Option<Vec<u8>> {
+        known_prime_inverse(
+            strip_leading_zeros(base),
+            strip_leading_zeros(exp),
+            strip_leading_zeros(modulus),
+            modulus.len(),
+        )
+    }
     use malachite::Natural;
     use malachite::base::num::arithmetic::traits::ModPow;
     use malachite::base::num::conversion::traits::PowerOf2Digits;
@@ -561,7 +568,7 @@ mod tests {
                     let b = [vec![0u8; pad_b], base.clone()].concat();
                     let e = [vec![0u8; pad_e], exp.clone()].concat();
                     let md = [vec![0u8; pad_m], m.clone()].concat();
-                    assert!(known_prime_inverse(&b, &e, &md).is_some(), "prime {k}");
+                    assert!(inverse(&b, &e, &md).is_some(), "prime {k}");
                     assert_eq!(
                         modexp(&b, &e, &md),
                         Some(reference(&b, &e, &md)),
@@ -579,14 +586,12 @@ mod tests {
                 limbs_to_be(&m_minus_3),
                 [vec![1u8], exp.clone()].concat(),
             ] {
-                assert!(known_prime_inverse(&bases[0], &other, &m).is_none());
+                assert!(inverse(&bases[0], &other, &m).is_none());
             }
-            assert!(
-                known_prime_inverse(&[vec![1u8], bases[0].clone()].concat(), &exp, &m).is_none()
-            );
+            assert!(inverse(&[vec![1u8], bases[0].clone()].concat(), &exp, &m).is_none());
             let mut not_prime = m.clone();
             *not_prime.last_mut().unwrap() ^= 2;
-            assert!(known_prime_inverse(&bases[0], &exp, &not_prime).is_none());
+            assert!(inverse(&bases[0], &exp, &not_prime).is_none());
         }
     }
 
