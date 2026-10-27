@@ -6,40 +6,64 @@
 //! integers of the generic path and is several times faster.
 
 /// Returns `base^exp mod modulus` as `modulus.len()` big-endian bytes, or
-/// `None` when the inputs are outside what this path handles (even or zero
-/// modulus, modulus or base longer than 128 bytes).
+/// `None` when the generic path should handle the inputs: an even modulus, a
+/// modulus that does not fill most of its 4, 8 or 16 limbs, a base wider than
+/// those limbs, or an exponent too short to pay for the Montgomery setup.
 pub(crate) fn modexp(base: &[u8], exp: &[u8], modulus: &[u8]) -> Option<Vec<u8>> {
-    // The base only has to be below 2^(64 * N), not below the modulus: the
-    // Montgomery conversion reduces it.
-    let width = modulus.len().max(base.len());
-    let result = if width <= 32 {
-        pow::<4>(base, exp, modulus)?
-    } else if width <= 64 {
-        pow::<8>(base, exp, modulus)?
-    } else if width <= 128 {
-        pow::<16>(base, exp, modulus)?
-    } else {
-        return None;
-    };
-    Some(result)
+    // Leading zero bytes carry no value, so padded operands keep the limb
+    // count of their significant bytes.
+    let modulus_digits = strip_leading_zeros(modulus);
+    let base = strip_leading_zeros(base);
+    let exp = strip_leading_zeros(exp);
+    // Products on 64 * N bits cost more than the generic path's exact-width
+    // ones for a modulus well below 64 * N bits, and computing `R^2 mod m` and
+    // the window table costs more than a whole generic call with a short
+    // exponent. Both bounds come from timing the two paths against each other.
+    match (modulus_digits.len(), bit_length(exp)) {
+        (24..=32, 32..) => pow::<4>(base, exp, modulus_digits, modulus.len()),
+        (60..=64, 64..) => pow::<8>(base, exp, modulus_digits, modulus.len()),
+        (120..=128, 192..) => pow::<16>(base, exp, modulus_digits, modulus.len()),
+        _ => None,
+    }
 }
 
-fn pow<const N: usize>(base: &[u8], exp: &[u8], modulus: &[u8]) -> Option<Vec<u8>> {
+/// `base^exp mod modulus` as `out_len` big-endian bytes, for a modulus of at
+/// most `8 * N` bytes and `out_len` at least its length.
+fn pow<const N: usize>(base: &[u8], exp: &[u8], modulus: &[u8], out_len: usize) -> Option<Vec<u8>> {
+    // The Montgomery conversion reduces any base below 2^(64 * N), not a wider one.
+    if base.len() > 8 * N {
+        return None;
+    }
     let m = from_be_bytes::<N>(modulus);
     if m[0] & 1 == 0 {
         // Even, or zero.
         return None;
     }
-    let mut out = vec![0u8; modulus.len()];
+    let mut out = vec![0u8; out_len];
     if is_one(&m) {
         return Some(out);
     }
     let result = pow_odd(&from_be_bytes::<N>(base), exp, Montgomery::new(m));
-    // `result < modulus < 2^(8 * modulus.len())`, so the dropped bytes are zero.
-    for (i, byte) in out.iter_mut().rev().enumerate() {
+    // `result < modulus < 2^(64 * N)`, so the bytes above the low `8 * N` stay zero.
+    for (i, byte) in out.iter_mut().rev().take(8 * N).enumerate() {
         *byte = (result[i / 8] >> (8 * (i % 8))) as u8;
     }
     Some(out)
+}
+
+fn strip_leading_zeros(bytes: &[u8]) -> &[u8] {
+    let first = bytes
+        .iter()
+        .position(|&byte| byte != 0)
+        .unwrap_or(bytes.len());
+    &bytes[first..]
+}
+
+/// Bit length of a big-endian number without leading zero bytes.
+fn bit_length(bytes: &[u8]) -> usize {
+    bytes
+        .first()
+        .map_or(0, |&top| 8 * bytes.len() - top.leading_zeros() as usize)
 }
 
 /// `base^exp mod m` for odd `m > 1` and `base < 2^(64 * N)`.
@@ -219,8 +243,22 @@ mod tests {
         out
     }
 
+    /// The Montgomery path on the narrowest limb count that holds the modulus,
+    /// for any exponent: what `modexp` computes without its gate.
+    fn montgomery(base: &[u8], exp: &[u8], modulus: &[u8]) -> Option<Vec<u8>> {
+        let digits = strip_leading_zeros(modulus);
+        let base = strip_leading_zeros(base);
+        match digits.len() {
+            0..=32 => pow::<4>(base, exp, digits, modulus.len()),
+            33..=64 => pow::<8>(base, exp, digits, modulus.len()),
+            65..=128 => pow::<16>(base, exp, digits, modulus.len()),
+            _ => None,
+        }
+    }
+
     #[test]
     fn matches_reference_on_random_inputs() {
+        let mut gated_in = 0;
         for seed in 0..3000u64 {
             let mod_len = 1 + usize::try_from(seed % 128).unwrap();
             let base_len = usize::try_from((seed / 3) % 129).unwrap();
@@ -232,12 +270,19 @@ mod tests {
             }
             let base = bytes(seed + 1_000_000, base_len);
             let exp = bytes(seed + 2_000_000, exp_len);
-            assert_eq!(
-                modexp(&base, &exp, &modulus).unwrap(),
-                reference(&base, &exp, &modulus),
-                "seed {seed}"
-            );
+            let expected = reference(&base, &exp, &modulus);
+            if let Some(result) = modexp(&base, &exp, &modulus) {
+                assert_eq!(result, expected, "seed {seed}");
+                gated_in += 1;
+            }
+            if let Some(result) = montgomery(&base, &exp, &modulus) {
+                assert_eq!(result, expected, "seed {seed}, without the gate");
+            }
         }
+        assert!(
+            gated_in > 100,
+            "only {gated_in} cases took the Montgomery path"
+        );
     }
 
     #[test]
@@ -248,16 +293,22 @@ mod tests {
             modexp(&max, &max, &max).unwrap(),
             reference(&max, &max, &max)
         );
-        assert_eq!(modexp(&max, &[], &max).unwrap(), reference(&max, &[], &max));
         assert_eq!(modexp(&[], &max, &max).unwrap(), reference(&[], &max, &max));
-        assert_eq!(modexp(&max, &max, &one).unwrap(), vec![0u8]);
-        assert_eq!(modexp(&max, &[0, 0, 0], &one).unwrap(), vec![0u8]);
-        // Leading zero bytes in the modulus keep the output width.
-        let padded = [0u8, 0, 0, 7];
         assert_eq!(
-            modexp(&[3], &[5], &padded).unwrap(),
-            reference(&[3], &[5], &padded)
+            montgomery(&max, &[], &max).unwrap(),
+            reference(&max, &[], &max)
         );
+        assert_eq!(montgomery(&max, &max, &one).unwrap(), vec![0u8]);
+        assert_eq!(montgomery(&max, &[0, 0, 0], &one).unwrap(), vec![0u8]);
+        // Leading zero bytes keep the output width, also past 128 bytes.
+        for zeros in [1usize, 8, 200] {
+            let padded = [vec![0u8; zeros], max.to_vec()].concat();
+            assert_eq!(
+                modexp(&[3], &max, &padded).unwrap(),
+                reference(&[3], &max, &padded),
+                "{zeros} leading zero bytes"
+            );
+        }
         // Width boundaries: 32/33, 64/65 and 128 bytes, with a long base too.
         for len in [32usize, 33, 64, 65, 128] {
             let mut modulus = vec![0xffu8; len];
@@ -265,17 +316,41 @@ mod tests {
             let base = [0xabu8; 128];
             for base_len in [0usize, 1, len, 128] {
                 let base = &base[..base_len];
-                assert_eq!(
-                    modexp(base, &max, &modulus).unwrap(),
-                    reference(base, &max, &modulus),
-                    "modulus {len} bytes, base {base_len} bytes"
-                );
+                let expected = reference(base, &max, &modulus);
+                if let Some(result) = modexp(base, &max, &modulus) {
+                    assert_eq!(
+                        result, expected,
+                        "modulus {len} bytes, base {base_len} bytes"
+                    );
+                }
+                if let Some(result) = montgomery(base, &max, &modulus) {
+                    assert_eq!(
+                        result, expected,
+                        "modulus {len} bytes, base {base_len} bytes"
+                    );
+                }
             }
         }
         // Unsupported shapes fall back.
-        assert!(modexp(&[2], &[3], &[4]).is_none());
-        assert!(modexp(&[2], &[3], &[0]).is_none());
-        assert!(modexp(&[2], &[3], &[1u8; 129]).is_none());
-        assert!(modexp(&[2u8; 129], &[3], &[7]).is_none());
+        assert!(modexp(&[2], &max, &[4u8; 32]).is_none());
+        assert!(modexp(&[2], &max, &[0u8; 32]).is_none());
+        assert!(modexp(&[2], &max, &[1u8; 129]).is_none());
+        assert!(modexp(&[2u8; 33], &max, &max).is_none());
+    }
+
+    /// Minimum-gas calls: a short exponent, or a modulus far narrower than its
+    /// declared length, cost more on the Montgomery path than on the generic one.
+    #[test]
+    fn minimum_gas_shapes_take_the_generic_path() {
+        let wide = [0xabu8; 128];
+        let mut padded = [0u8; 128];
+        padded[127] = 0xfb;
+        let mut full = [0xffu8; 128];
+        full[127] = 0xfd;
+        assert!(modexp(&wide, &[3], &[0xfb]).is_none());
+        assert!(modexp(&[2], &[3], &padded).is_none());
+        assert!(modexp(&wide, &[3], &full).is_none());
+        assert!(modexp(&wide, &[], &full).is_none());
+        assert!(modexp(&wide, &[0; 32], &full).is_none());
     }
 }
