@@ -27,6 +27,8 @@ use ethrex_crypto::{
 use num_bigint::BigUint;
 use tiny_keccak::{Hasher, Keccak};
 
+use super::difffuzz_bls_crypto::{env_or, guarded};
+
 /// SplitMix64: deterministic, so a seed reproduces a failing case.
 struct Rng(u64);
 impl Rng {
@@ -177,16 +179,19 @@ fn modexp_check(r: &mut Rng, n: usize) -> usize {
         let (base, exp, modulus) = modexp_case(r);
         let expected = modexp_reference(&base, &exp, &modulus);
         for (name, crypto) in providers {
-            let got = crypto.modexp(&base, &exp, &modulus);
-            if !matches!(&got, Ok(v) if *v == expected) {
+            let got = guarded(|| crypto.modexp(&base, &exp, &modulus));
+            if !matches!(&got, Ok(Ok(v)) if *v == expected) {
                 bad += 1;
                 if bad <= 20 {
                     eprintln!(
-                        "MODEXP ({name}) MISMATCH base={} exp={} mod={} got={:?} expected={}",
+                        "MODEXP ({name}) MISMATCH base={} exp={} mod={} got={} expected={}",
                         hex(&base),
                         hex(&exp),
                         hex(&modulus),
-                        got.map(|v| hex(&v)),
+                        match got {
+                            Ok(v) => format!("{:?}", v.map(|v| hex(&v))),
+                            Err(panic) => format!("PANIC({panic})"),
+                        },
                         hex(&expected)
                     );
                 }
@@ -236,7 +241,7 @@ fn split(r: &mut Rng, len: usize) -> Vec<usize> {
 
 fn keccak_check_one(r: &mut Rng, data: &[u8]) -> bool {
     let expected = keccak_reference(data);
-    if keccak_hash(data) != expected {
+    if guarded(|| keccak_hash(data)) != Ok(expected) {
         eprintln!(
             "KECCAK one-shot MISMATCH len={} data={}",
             data.len(),
@@ -244,18 +249,21 @@ fn keccak_check_one(r: &mut Rng, data: &[u8]) -> bool {
         );
         return false;
     }
-    let mut hasher = Keccak256::new();
-    let mut offset = 0;
     let parts = split(r, data.len());
-    for part in &parts {
-        let _ = hasher.update(&data[offset..offset + part]);
-        offset += part;
-    }
-    let streamed: [u8; 32] = hasher.finalize();
-    if streamed != expected {
+    let streamed = guarded(|| {
+        let mut hasher = Keccak256::new();
+        let mut offset = 0;
+        for part in &parts {
+            let _ = hasher.update(&data[offset..offset + part]);
+            offset += part;
+        }
+        hasher.finalize()
+    });
+    if streamed != Ok(expected) {
         eprintln!(
-            "KECCAK streaming MISMATCH len={} parts={parts:?}",
-            data.len()
+            "KECCAK streaming MISMATCH len={} parts={parts:?} data={}",
+            data.len(),
+            hex(data)
         );
         return false;
     }
@@ -297,13 +305,6 @@ fn difffuzz_keccak_quick() {
 }
 
 // ------------------------------------------------------------------ long runs
-
-fn env_or<T: std::str::FromStr>(name: &str, default: T) -> T {
-    std::env::var(name)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
-}
 
 /// Runs `f` on `DIFFFUZZ_THREADS` threads until `DIFFFUZZ_SECS` elapse; `f` returns
 /// (cases, mismatches) for one round.

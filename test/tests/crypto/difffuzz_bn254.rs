@@ -28,7 +28,6 @@
 //! ```
 
 use std::fmt;
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::{Duration, Instant};
 
 use ark_bn254::{Fq, Fq2, Fr, G1Affine, G2Affine};
@@ -37,6 +36,8 @@ use ark_ff::{AdditiveGroup, BigInt, BigInteger, PrimeField, Zero};
 use ethrex_common::types::Fork;
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_levm::precompiles::{ecadd, ecmul, ecpairing};
+
+use super::difffuzz_bls_crypto::{env_or, guarded};
 
 /// Keeps every `Crypto` default, so the precompiles run the generic `ark-bn254` code.
 #[derive(Debug)]
@@ -119,15 +120,6 @@ enum Op {
 
 /// `Ok(None)` is a rejected input, `Err` a panic message.
 type Outcome = Result<Option<Vec<u8>>, String>;
-
-fn guarded(f: impl FnOnce() -> Option<Vec<u8>>) -> Outcome {
-    catch_unwind(AssertUnwindSafe(f)).map_err(|e| {
-        e.downcast_ref::<&str>()
-            .map(|s| s.to_string())
-            .or_else(|| e.downcast_ref::<String>().cloned())
-            .unwrap_or_else(|| "panic".into())
-    })
-}
 
 fn levm(op: Op, input: &[u8], crypto: &dyn Crypto) -> Outcome {
     guarded(|| {
@@ -773,13 +765,6 @@ fn difffuzz_bn254_quick() {
     eprintln!("difffuzz_bn254_quick: {stats}");
     assert!(true_pairings > 0, "no true pairing generated");
     assert_eq!(stats.failures(), 0, "{stats}");
-}
-
-fn env_or<T: std::str::FromStr>(name: &str, default: T) -> T {
-    std::env::var(name)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
 }
 
 #[test]

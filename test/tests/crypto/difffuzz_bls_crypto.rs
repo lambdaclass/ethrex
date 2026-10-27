@@ -26,6 +26,8 @@
 //!     cargo test --release -p ethrex-test --test ethrex_tests difffuzz_ -- --ignored
 //! ```
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
+
 use ark_bls12_381::{Bls12_381, Fq, Fq2, Fr, G1Affine, G2Affine};
 use ark_ec::{AffineRepr, CurveGroup, pairing::Pairing};
 use ark_ff::{BigInt, BigInteger, One, PrimeField, Zero};
@@ -374,11 +376,26 @@ pub(crate) fn hex(v: &[u8]) -> String {
     v.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// `default` when `name` is unset; a value that does not parse panics instead of falling back.
 pub(crate) fn env_or<T: std::str::FromStr>(name: &str, default: T) -> T {
-    std::env::var(name)
-        .ok()
+    let Some(value) = std::env::var_os(name) else {
+        return default;
+    };
+    value
+        .to_str()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
+        .unwrap_or_else(|| panic!("{name}={} is not a valid value", value.to_string_lossy()))
+}
+
+/// Runs `f`, turning a panic into `Err` with its message, so a harness can count it as a
+/// mismatch and print the input that caused it.
+pub(crate) fn guarded<T>(f: impl FnOnce() -> T) -> Result<T, String> {
+    catch_unwind(AssertUnwindSafe(f)).map_err(|e| {
+        e.downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| e.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "panic".into())
+    })
 }
 
 // ------------------------------------------------------------------ driver
@@ -395,14 +412,17 @@ fn run(inputs: impl IntoIterator<Item = Vec<u8>>) -> (usize, usize, usize) {
         if expected.as_ref().is_some_and(|v| v[31] == 1) {
             trues += 1;
         }
-        let got = native(&input);
-        if got != expected {
+        let got = guarded(|| native(&input));
+        if got.as_ref() != Ok(&expected) {
             bad += 1;
             if bad <= 10 {
                 eprintln!(
-                    "BLS MISMATCH input={} NativeCrypto={:?} reference={:?}",
+                    "BLS MISMATCH input={} NativeCrypto={} reference={:?}",
                     hex(&input),
-                    got.map(|v| hex(&v)),
+                    match got {
+                        Ok(v) => format!("{:?}", v.map(|v| hex(&v))),
+                        Err(panic) => format!("PANIC({panic})"),
+                    },
                     expected.map(|v| hex(&v))
                 );
             }

@@ -40,6 +40,7 @@ use num_bigint::BigUint;
 use rustc_hash::FxHashMap;
 
 use super::test_db::TestDatabase;
+use crate::crypto::difffuzz_bls_crypto::{env_or, guarded};
 
 // ------------------------------------------------------------------ reference model
 
@@ -242,8 +243,38 @@ struct Case {
     operands: Vec<[u8; 32]>, // operands[0] is the top of the stack
 }
 
-/// Runs a batch through LEVM and returns one 32-byte word per case.
+fn hex(w: &[u8; 32]) -> String {
+    w.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Runs a batch through LEVM and returns one 32-byte word per case. When the batch fails (an
+/// error, a transaction that does not succeed or a panic), runs its cases one at a time and panics
+/// with the first one that fails on its own.
 fn run_batch(cases: &[Case]) -> Vec<[u8; 32]> {
+    let run = |cases: &[Case]| {
+        guarded(|| try_run_batch(cases)).unwrap_or_else(|panic| Err(format!("PANIC({panic})")))
+    };
+    let failure = match run(cases) {
+        Ok(words) => return words,
+        Err(e) => e,
+    };
+    for case in cases {
+        if let Err(e) = run(std::slice::from_ref(case)) {
+            panic!(
+                "FAILED op={:#04x} operands(top first)=[{}]: {e}",
+                case.op,
+                case.operands.iter().map(hex).collect::<Vec<_>>().join(", ")
+            );
+        }
+    }
+    panic!(
+        "batch of {} cases failed ({failure}), but each case passes on its own",
+        cases.len()
+    );
+}
+
+/// Runs a batch through LEVM as one transaction and returns one 32-byte word per case.
+fn try_run_batch(cases: &[Case]) -> Result<Vec<[u8; 32]>, String> {
     let mut code = Vec::with_capacity(cases.len() * 110);
     for (i, case) in cases.iter().enumerate() {
         for operand in case.operands.iter().rev() {
@@ -307,19 +338,19 @@ fn run_batch(cases: &[Case]) -> Vec<[u8; 32]> {
         &NativeCrypto,
         None,
     )
-    .expect("vm");
-    let report = vm.execute().expect("execute");
-    assert!(
-        report.is_success(),
-        "batch did not succeed: {:?}",
-        report.result
-    );
-    assert_eq!(report.output.len(), cases.len() * 32, "output size");
-    report
+    .map_err(|e| format!("vm: {e:?}"))?;
+    let report = vm.execute().map_err(|e| format!("execute: {e:?}"))?;
+    if !report.is_success() {
+        return Err(format!("did not succeed: {:?}", report.result));
+    }
+    if report.output.len() != cases.len() * 32 {
+        return Err(format!("output size {}", report.output.len()));
+    }
+    Ok(report
         .output
         .chunks(32)
         .map(|c| c.try_into().unwrap())
-        .collect()
+        .collect())
 }
 
 /// Returns the number of mismatches (the first ones printed).
@@ -335,7 +366,6 @@ fn check(cases: &[Case]) -> usize {
         if got != expected {
             bad += 1;
             if bad <= 20 {
-                let hex = |w: &[u8; 32]| w.iter().map(|b| format!("{b:02x}")).collect::<String>();
                 eprintln!(
                     "MISMATCH op={:#04x} operands(top first)=[{}] levm={} reference={}",
                     case.op,
@@ -598,13 +628,6 @@ fn difffuzz_ops_quick() {
         bad += check(&cases);
     }
     assert_eq!(bad, 0, "{bad} mismatches");
-}
-
-fn env_or<T: std::str::FromStr>(name: &str, default: T) -> T {
-    std::env::var(name)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
 }
 
 #[test]

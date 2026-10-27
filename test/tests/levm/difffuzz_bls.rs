@@ -23,7 +23,9 @@ use ethrex_common::types::Fork;
 use ethrex_crypto::NativeCrypto;
 use ethrex_levm::precompiles::bls12_pairing_check;
 
-use crate::crypto::difffuzz_bls_crypto::{Pools, Rng, env_or, gen_input, hex, rare_inputs};
+use crate::crypto::difffuzz_bls_crypto::{
+    Pools, Rng, env_or, gen_input, guarded, hex, rare_inputs,
+};
 
 /// The precompile rejects an empty input, unlike the empty product the shared model accepts.
 fn reference(input: &[u8]) -> Option<Vec<u8>> {
@@ -49,14 +51,17 @@ fn run(inputs: impl IntoIterator<Item = Vec<u8>>) -> (usize, usize, usize) {
         if expected.as_ref().is_some_and(|v| v[31] == 1) {
             trues += 1;
         }
-        let got = levm(&input);
-        if got != expected {
+        let got = guarded(|| levm(&input));
+        if got.as_ref() != Ok(&expected) {
             bad += 1;
             if bad <= 10 {
                 eprintln!(
-                    "BLS MISMATCH input={} levm={:?} reference={:?}",
+                    "BLS MISMATCH input={} levm={} reference={:?}",
                     hex(&input),
-                    got.map(|v| hex(&v)),
+                    match got {
+                        Ok(v) => format!("{:?}", v.map(|v| hex(&v))),
+                        Err(panic) => format!("PANIC({panic})"),
+                    },
                     expected.map(|v| hex(&v))
                 );
             }
