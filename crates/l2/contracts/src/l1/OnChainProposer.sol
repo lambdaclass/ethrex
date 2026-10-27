@@ -11,6 +11,7 @@ import {ICommonBridge} from "./interfaces/ICommonBridge.sol";
 import {IRiscZeroVerifier} from "./interfaces/IRiscZeroVerifier.sol";
 import {ISP1Verifier} from "./interfaces/ISP1Verifier.sol";
 import {ITDXVerifier} from "./interfaces/ITDXVerifier.sol";
+import {IZiskVerifier} from "./interfaces/IZiskVerifier.sol";
 import "../l2/interfaces/ICommonBridgeL2.sol";
 
 /// @title OnChainProposer contract.
@@ -45,6 +46,11 @@ contract OnChainProposer is
 
     uint8 internal constant SP1_VERIFIER_ID = 1;
     uint8 internal constant RISC0_VERIFIER_ID = 2;
+    uint8 internal constant ZISK_VERIFIER_ID = 3;
+
+    /// @dev ZisK exposes 64 public slots of one u64 each; the verifier takes them
+    /// as a 512-byte string, every slot little-endian.
+    uint256 internal constant ZISK_PUBLIC_VALUES_LENGTH = 64 * 8;
 
     /// @notice Aligned Layer proving system ID for SP1 in isProofVerified calls.
     /// @dev Currently only SP1 is supported by Aligned in aggregation mode.
@@ -114,6 +120,13 @@ contract OnChainProposer is
     mapping(bytes32 commitHash => mapping(uint8 verifierId => bytes32 vk))
         public verificationKeys;
 
+    // Appended after the existing layout so deployed proxies upgrade in place.
+
+    /// @notice Address of the ZisK PLONK verifier (ZiskVerifier.sol of the pinned ZisK release).
+    address public ZISK_VERIFIER_ADDRESS;
+    /// @notice True if a ZisK proof is required for batch verification.
+    bool public REQUIRE_ZISK_PROOF;
+
     /// @notice Initializes the contract.
     /// @dev This method is called only once after the contract is deployed.
     /// @dev The owner is expected to be the Timelock contract.
@@ -122,19 +135,23 @@ contract OnChainProposer is
     /// @param alignedProofAggregator the address of the alignedProofAggregatorService contract.
     /// @param r0verifier the address of the risc0 groth16 verifier.
     /// @param sp1verifier the address of the sp1 groth16 verifier.
+    /// @param ziskVerifier the address of the ZisK PLONK verifier.
     function initialize(
         bool _validium,
         address timelock_owner,
         bool requireRisc0Proof,
         bool requireSp1Proof,
         bool requireTdxProof,
+        bool requireZiskProof,
         bool aligned,
         address r0verifier,
         address sp1verifier,
         address tdxverifier,
+        address ziskVerifier,
         address alignedProofAggregator,
         bytes32 sp1Vk,
         bytes32 risc0Vk,
+        bytes32 ziskVk,
         bytes32 commitHash,
         bytes32 genesisStateRoot,
         uint256 chainId,
@@ -145,6 +162,7 @@ contract OnChainProposer is
         REQUIRE_RISC0_PROOF = requireRisc0Proof;
         REQUIRE_SP1_PROOF = requireSp1Proof;
         REQUIRE_TDX_PROOF = requireTdxProof;
+        REQUIRE_ZISK_PROOF = requireZiskProof;
 
         if (REQUIRE_RISC0_PROOF && r0verifier == address(0))
             revert MissingRisc0Verifier();
@@ -157,6 +175,9 @@ contract OnChainProposer is
         if (REQUIRE_TDX_PROOF && tdxverifier == address(0))
             revert MissingTdxVerifier();
         TDX_VERIFIER_ADDRESS = tdxverifier;
+        if (REQUIRE_ZISK_PROOF && ziskVerifier == address(0))
+            revert MissingZiskVerifier();
+        ZISK_VERIFIER_ADDRESS = ziskVerifier;
 
         ALIGNED_MODE = aligned;
         ALIGNEDPROOFAGGREGATOR = alignedProofAggregator;
@@ -166,14 +187,20 @@ contract OnChainProposer is
         // Aligned mode does not support RISC0 proofs (not yet available in aggregation mode)
         if (aligned && requireRisc0Proof)
             revert AlignedModeDoesNotSupportRisc0();
+        // Aligned has no ZisK aggregation either, and verifyBatches (where the ZisK
+        // verifier is called) is disabled in Aligned mode.
+        if (aligned && requireZiskProof) revert AlignedModeDoesNotSupportZisk();
 
         if (commitHash == bytes32(0)) revert CommitHashIsZero();
         if (REQUIRE_SP1_PROOF && sp1Vk == bytes32(0))
             revert MissingSp1VerificationKey();
         if (REQUIRE_RISC0_PROOF && risc0Vk == bytes32(0))
             revert MissingRisc0VerificationKey();
+        if (REQUIRE_ZISK_PROOF && ziskVk == bytes32(0))
+            revert MissingZiskVerificationKey();
         verificationKeys[commitHash][SP1_VERIFIER_ID] = sp1Vk;
         verificationKeys[commitHash][RISC0_VERIFIER_ID] = risc0Vk;
+        verificationKeys[commitHash][ZISK_VERIFIER_ID] = ziskVk;
 
         BatchCommitmentInfo storage commitment = batchCommitments[0];
         commitment.newStateRoot = genesisStateRoot;
@@ -235,6 +262,18 @@ contract OnChainProposer is
         // as we may want to disable the version
         verificationKeys[commit_hash][RISC0_VERIFIER_ID] = new_vk;
         emit VerificationKeyUpgraded("RISC0", commit_hash, new_vk);
+    }
+
+    /// @inheritdoc IOnChainProposer
+    function upgradeZiskVerificationKey(
+        bytes32 commit_hash,
+        bytes32 new_vk
+    ) public onlyOwner {
+        if (commit_hash == bytes32(0)) revert CommitHashIsZero();
+        // we don't want to restrict setting the vk to zero
+        // as we may want to disable the version
+        verificationKeys[commit_hash][ZISK_VERIFIER_ID] = new_vk;
+        emit VerificationKeyUpgraded("ZisK", commit_hash, new_vk);
     }
 
     /// @inheritdoc IOnChainProposer
@@ -304,6 +343,11 @@ contract OnChainProposer is
             verificationKeys[commitHash][RISC0_VERIFIER_ID] == bytes32(0)
         ) {
             revert MissingVerificationKeyForCommit();
+        } else if (
+            REQUIRE_ZISK_PROOF &&
+            verificationKeys[commitHash][ZISK_VERIFIER_ID] == bytes32(0)
+        ) {
+            revert MissingVerificationKeyForCommit();
         }
 
         batchCommitments[batchNumber] = BatchCommitmentInfo(
@@ -327,7 +371,8 @@ contract OnChainProposer is
         uint256 batchNumber,
         bytes calldata risc0BlockProof,
         bytes calldata sp1ProofBytes,
-        bytes calldata tdxSignature
+        bytes calldata tdxSignature,
+        bytes calldata ziskProofBytes
     ) internal {
         if (batchNumber != lastVerifiedBatch + 1)
             revert BatchNotSequential();
@@ -413,6 +458,25 @@ contract OnChainProposer is
             }
         }
 
+        if (REQUIRE_ZISK_PROOF) {
+            bytes32 batchCommitHash = batchCommitments[batchNumber].commitHash;
+            bytes32 ziskVk = verificationKeys[batchCommitHash][ZISK_VERIFIER_ID];
+            IZiskVerifier ziskVerifier = IZiskVerifier(ZISK_VERIFIER_ADDRESS);
+            try
+                ziskVerifier.verifySnarkProof(
+                    ziskVk,
+                    // The recursion root is fixed per ZisK release and ships with
+                    // the verifier, so it is read from the verifier rather than
+                    // taken from the proof.
+                    ziskVerifier.getRootCVadcopFinal(),
+                    _ziskPublicValues(publicInputs),
+                    ziskProofBytes
+                )
+            {} catch {
+                revert InvalidZiskProof();
+            }
+        }
+
         ICommonBridge(BRIDGE).publishL2Messages(
             batchCommitments[batchNumber].balanceDiffs
         );
@@ -426,24 +490,47 @@ contract OnChainProposer is
         emit BatchVerified(lastVerifiedBatch);
     }
 
+    /// @notice Builds the ZisK public values that commit to `publicInputs`.
+    /// @dev The ZisK guest commits `sha256(publicInputs)` as eight 32-bit output
+    /// slots, each the little-endian reading of four digest bytes. The verifier
+    /// hashes the 64 slots as u64 words in little-endian, so slot i occupies
+    /// bytes [8i, 8i+8): the four digest bytes in order, then four zero bytes.
+    /// Slots 8 to 63 are never written by the guest and stay zero.
+    function _ziskPublicValues(
+        bytes memory publicInputs
+    ) internal pure returns (bytes memory publicValues) {
+        bytes32 digest = sha256(publicInputs);
+        publicValues = new bytes(ZISK_PUBLIC_VALUES_LENGTH);
+        for (uint256 slot = 0; slot < 8; slot++) {
+            for (uint256 i = 0; i < 4; i++) {
+                publicValues[slot * 8 + i] = digest[slot * 4 + i];
+            }
+        }
+    }
+
     /// @inheritdoc IOnChainProposer
     function verifyBatches(
         uint256 firstBatchNumber,
         bytes[] calldata risc0BlockProofs,
         bytes[] calldata sp1ProofsBytes,
-        bytes[] calldata tdxSignatures
+        bytes[] calldata tdxSignatures,
+        bytes[] calldata ziskProofsBytes
     ) external override onlyOwner whenNotPaused {
         if (ALIGNED_MODE) revert UseAlignedVerification();
         uint256 batchCount = risc0BlockProofs.length;
         if (batchCount == 0) revert EmptyBatchArray();
-        if (sp1ProofsBytes.length != batchCount || tdxSignatures.length != batchCount)
-            revert BatchArrayLengthMismatch();
+        if (
+            sp1ProofsBytes.length != batchCount ||
+            tdxSignatures.length != batchCount ||
+            ziskProofsBytes.length != batchCount
+        ) revert BatchArrayLengthMismatch();
         for (uint256 i = 0; i < batchCount; i++) {
             _verifyBatchInternal(
                 firstBatchNumber + i,
                 risc0BlockProofs[i],
                 sp1ProofsBytes[i],
-                tdxSignatures[i]
+                tdxSignatures[i],
+                ziskProofsBytes[i]
             );
         }
     }

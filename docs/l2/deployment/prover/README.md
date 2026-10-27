@@ -7,5 +7,6 @@ Use this section to choose which prover setup best fits your already deployed et
 - [Overview](./overview.md)
 - [Running an ethrex L2 SP1 prover](./sp1.md)
 - [Running an ethrex L2 RISC0 prover](./risc0.md)
+- [Running an ethrex L2 ZisK prover](./zisk.md)
 - [Running an ethrex L2 TDX prover](./tee.md)
 - [Running multiple provers](./multi-prover.md)
