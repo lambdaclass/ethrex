@@ -94,22 +94,24 @@ fn bench_bn254(c: &mut Criterion) {
     }
 }
 
-fn bench_pairing_parts(c: &mut Criterion) {
+/// The pieces of a pairing check on the arkworks reference implementation, which
+/// `main` runs; `NativeCrypto` uses its own tower, timed by `bench_bn254`.
+fn bench_ark_pairing_parts(c: &mut Criterion) {
     use ark_ec::pairing::Pairing;
     let g = ark_bn254::G1Affine::generator();
     let h = ark_bn254::G2Affine::generator();
     let p = (g * ark_bn254::Fr::from(7u64)).into_affine();
     let q = (h * ark_bn254::Fr::from(11u64)).into_affine();
-    c.bench_function("part_g1_subgroup_oncurve", |b| {
+    c.bench_function("ark_g1_on_curve", |b| {
         b.iter(|| black_box(&p).is_on_curve())
     });
-    c.bench_function("part_g2_subgroup_check", |b| {
+    c.bench_function("ark_g2_subgroup_check", |b| {
         b.iter(|| black_box(&q).is_in_correct_subgroup_assuming_on_curve())
     });
-    c.bench_function("part_miller_loop_1", |b| {
+    c.bench_function("ark_miller_loop_1", |b| {
         b.iter(|| ark_bn254::Bn254::multi_miller_loop([black_box(p)], [black_box(q)]))
     });
-    c.bench_function("part_miller_loop_2", |b| {
+    c.bench_function("ark_miller_loop_2", |b| {
         b.iter(|| {
             ark_bn254::Bn254::multi_miller_loop(
                 [black_box(p), black_box(p)],
@@ -118,10 +120,10 @@ fn bench_pairing_parts(c: &mut Criterion) {
         })
     });
     let ml = ark_bn254::Bn254::multi_miller_loop([p], [q]);
-    c.bench_function("part_final_exp", |b| {
+    c.bench_function("ark_final_exp", |b| {
         b.iter(|| ark_bn254::Bn254::final_exponentiation(black_box(ml)))
     });
 }
 
-criterion_group!(benches, bench_bn254, bench_pairing_parts);
+criterion_group!(benches, bench_bn254, bench_ark_pairing_parts);
 criterion_main!(benches);

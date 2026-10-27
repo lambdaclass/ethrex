@@ -769,8 +769,9 @@ fn inverse(value: &Fq) -> Option<Fq> {
     if value.is_zero() {
         return None;
     }
-    let inv = safegcd::inverse(value.into_bigint().0);
-    Fq::from_bigint(BigInt(inv))
+    let inv = Fq::from_bigint(BigInt(safegcd::inverse(value.into_bigint().0)));
+    debug_assert!(inv.is_some_and(|inv| inv * value == Fq::ONE));
+    inv
 }
 
 /// Variable-time modular inversion modulo the BN254 base field prime using
@@ -1069,6 +1070,13 @@ mod tests {
         }
         let p_minus_one = -Fq::ONE;
         assert_eq!(inverse(&p_minus_one), p_minus_one.inverse());
+        let p_minus_two = -Fq::from(2u64);
+        assert_eq!(inverse(&p_minus_two), p_minus_two.inverse());
+        // Powers of two around the 62-bit batch and 64-bit limb boundaries.
+        for k in [61u64, 62, 63, 64, 124, 186, 248, 253] {
+            let a = Fq::from(2u64).pow([k]);
+            assert_eq!(inverse(&a), a.inverse(), "2^{k}");
+        }
         assert_eq!(inverse(&Fq::ZERO), None);
     }
 
