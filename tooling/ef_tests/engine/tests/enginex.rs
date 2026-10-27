@@ -2,7 +2,9 @@
 // them: the fixtures of one pre-allocation group share a single client, and each
 // starts with a forkchoice update back to the group's genesis, so every fixture's
 // chain is a new branch off the same genesis on a client that has already built
-// the earlier ones. Groups run in parallel; a group's fixtures run in order.
+// the earlier ones. Groups run in parallel; a group's fixtures run in order. A
+// group whose fixtures configure the chain differently (EIP-8253's account list)
+// gets one client per configuration.
 //
 // Vectors live under `vectors_x/eest/` (`make enginex-vectors`): the fixture
 // subtrees plus `pre_alloc/<preHash>.json`. Without them nothing runs, as with
@@ -36,16 +38,37 @@ fn runtime() -> &'static tokio::runtime::Runtime {
     })
 }
 
-/// The one field the index pass needs from each fixture.
+/// The fields the index pass needs from each fixture: its pre-allocation group and
+/// the chain configuration its client starts with.
 #[derive(Deserialize)]
 struct GroupRef {
     #[serde(rename = "preHash")]
     pre_hash: String,
+    #[serde(default)]
+    config: ClientConfig,
 }
 
-/// The fixtures of one pre-allocation group, by the files that hold them.
+/// The part of a fixture's chain configuration a client is started with that the
+/// pre-allocation hash does not cover: EIP-8253's account list, which each fixture
+/// names itself. Fixtures of one pre-allocation group can name different lists, so
+/// a client is shared only by the fixtures that agree on it.
+#[derive(Deserialize, Default, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ClientConfig {
+    #[serde(rename = "zeroNonceStorageAccounts", default)]
+    zero_nonce_storage_accounts: Vec<String>,
+}
+
+impl ClientConfig {
+    fn of(fixture_config: &serde_json::Value) -> Self {
+        serde_json::from_value(fixture_config.clone()).unwrap_or_default()
+    }
+}
+
+/// The fixtures of one pre-allocation group that share a client configuration, by
+/// the files that hold them.
 struct GroupPlan {
     pre_hash: String,
+    client_config: ClientConfig,
     files: Vec<PathBuf>,
     fixtures: usize,
 }
@@ -147,7 +170,7 @@ fn plan_groups(files: &[PathBuf], limit: Option<&Regex>) -> (Vec<GroupPlan>, usi
         })
         .collect();
 
-    let mut groups: BTreeMap<String, GroupPlan> = BTreeMap::new();
+    let mut groups: BTreeMap<(String, ClientConfig), GroupPlan> = BTreeMap::new();
     let mut filtered = 0;
     for (file, refs) in indexed {
         for (name, group_ref) in refs {
@@ -156,9 +179,10 @@ fn plan_groups(files: &[PathBuf], limit: Option<&Regex>) -> (Vec<GroupPlan>, usi
                 continue;
             }
             let plan = groups
-                .entry(group_ref.pre_hash.clone())
+                .entry((group_ref.pre_hash.clone(), group_ref.config.clone()))
                 .or_insert_with(|| GroupPlan {
                     pre_hash: group_ref.pre_hash,
+                    client_config: group_ref.config,
                     files: Vec::new(),
                     fixtures: 0,
                 });
@@ -213,7 +237,10 @@ async fn run_group(
             }
         };
         for (name, fixture) in &fixtures {
-            if fixture.pre_hash != plan.pre_hash || limit.is_some_and(|re| !re.is_match(name)) {
+            if fixture.pre_hash != plan.pre_hash
+                || ClientConfig::of(&fixture.config) != plan.client_config
+                || limit.is_some_and(|re| !re.is_match(name))
+            {
                 continue;
             }
             let client = match &mut client {
