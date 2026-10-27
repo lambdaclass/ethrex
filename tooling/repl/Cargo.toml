@@ -1,4 +1,5 @@
 [package]
+workspace = "../.."
 name = "ethrex-repl"
 version.workspace = true
 edition.workspace = true
