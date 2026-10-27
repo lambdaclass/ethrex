@@ -38,10 +38,18 @@ use tokio_util::udp::UdpFramed;
 use tracing::{debug, error, info, trace, warn};
 
 use super::{
-    DiscoveryConfig, codec::DiscriminatingCodec, contact_table::ContactTable,
-    contact_table::DiscoveryProtocol, contact_table::PeerEvent, lookup_interval_function,
+    DiscoveryConfig,
+    codec::DiscriminatingCodec,
+    contact_table::ContactTable,
+    contact_table::DiscoveryProtocol,
+    contact_table::PeerEvent,
+    lookup_interval_function,
+    query::{
+        FindNodesError, FindNodesRequest, FindNodesResult, NodePredicate, QUERY_TICK_INTERVAL,
+    },
 };
 use std::sync::OnceLock;
+use tokio::sync::oneshot;
 
 /// Minimum packet size for a valid discv4 packet.
 /// hash (32) + signature (65) + type (1) = 98 bytes
@@ -92,10 +100,20 @@ pub trait DiscoveryServerProtocol: Send + Sync {
     fn enr_lookup(&self) -> Result<(), ActorError>;
     fn prune(&self) -> Result<(), ActorError>;
     fn shutdown(&self) -> Result<(), ActorError>;
+    /// Start a predicate query. Answered on the request's own reply channel,
+    /// since the answer only exists several NODES messages later.
+    fn find_nodes(&self, request: FindNodesRequest) -> Result<(), ActorError>;
+    /// Expire silent requests and deadlines of running predicate queries.
+    fn query_tick(&self) -> Result<(), ActorError>;
+    /// Ask a known discv5 contact for its current ENR.
+    fn refresh_enr(&self, node_id: H256) -> Result<(), ActorError>;
 
     /// The next node worth dialing, or `None` when nothing in the pool is
     /// eligible right now.
     fn next_dial_candidate(&self) -> Response<Option<Node>>;
+    /// Every cached record that passes `predicate`, from contacts the
+    /// consumer could dial.
+    fn records_matching(&self, predicate: NodePredicate) -> Response<Vec<NodeRecord>>;
 }
 
 /// The consumer's handle on a discovery server.
@@ -104,9 +122,11 @@ pub trait DiscoveryServerProtocol: Send + Sync {
 /// at all when p2p is disabled, so the handle is filled in once the server is
 /// up and is inert until then.
 ///
-/// Every message across this boundary but one is a cast. Discovery never calls
-/// back into its consumer, which is what keeps two actors with sequential
-/// mailboxes from deadlocking on each other.
+/// Discovery never calls back into its consumer, which is what keeps two
+/// actors with sequential mailboxes from deadlocking on each other. Most
+/// messages across this boundary are casts; the two requests answer straight
+/// from the contact table, and a predicate query answers on a oneshot channel
+/// the caller owns.
 #[derive(Clone, Debug, Default)]
 pub struct DiscoveryHandle(Arc<OnceLock<ActorRef<DiscoveryServer>>>);
 
@@ -155,6 +175,67 @@ impl DiscoveryHandle {
             .inspect_err(|e| debug!(err=?e, "Failed to ask discovery for a dial candidate"))
             .ok()
             .flatten()
+    }
+
+    /// Walk the discv5 network for nodes whose ENR passes `predicate`, and
+    /// return once `want` of them have answered one of the walk's FINDNODEs,
+    /// or at `timeout` (capped at [`MAX_QUERY_TIMEOUT`](super::query::MAX_QUERY_TIMEOUT))
+    /// with what was found.
+    ///
+    /// A match counts only once its node answers us, which keeps dead records
+    /// out; see [`FindNodesResult`] for how the query went. Nodes the consumer
+    /// is connected to, or has turned down, never match. `predicate` runs on
+    /// every record the walk sees, inside the discovery server's loop, so keep
+    /// it cheap.
+    ///
+    /// At most [`MAX_ACTIVE_QUERIES`](super::query::MAX_ACTIVE_QUERIES) run at
+    /// once; another is refused with
+    /// [`FindNodesError::TooManyQueries`] rather than queued. Dropping the
+    /// returned future abandons the query.
+    pub async fn find_nodes(
+        &self,
+        predicate: impl Fn(&NodeRecord) -> bool + Send + 'static,
+        want: usize,
+        timeout: Duration,
+    ) -> Result<FindNodesResult, FindNodesError> {
+        let server = self.server().ok_or(FindNodesError::NotRunning)?;
+        let (reply, answer) = oneshot::channel();
+        server
+            .find_nodes(FindNodesRequest {
+                predicate: Box::new(predicate),
+                want,
+                timeout,
+                reply,
+            })
+            .map_err(|_| FindNodesError::NotRunning)?;
+        // A dropped sender means the server stopped with the query running.
+        answer.await.map_err(|_| FindNodesError::NotRunning)?
+    }
+
+    /// Every record discovery already holds that passes `predicate`, from
+    /// contacts the consumer is not connected to and has not turned down. For
+    /// dialing known matches before walking the network for more. Empty when
+    /// discovery is down or the request failed.
+    pub async fn records_matching(
+        &self,
+        predicate: impl Fn(&NodeRecord) -> bool + Send + 'static,
+    ) -> Vec<NodeRecord> {
+        let Some(server) = self.server() else {
+            return Vec::new();
+        };
+        server
+            .records_matching(Box::new(predicate))
+            .await
+            .inspect_err(|e| debug!(err=?e, "Failed to ask discovery for matching records"))
+            .unwrap_or_default()
+    }
+
+    /// Ask a known discv5 contact for its current ENR. Any newer record lands
+    /// in the contact table and goes through the [`PeerFilter`] like any other.
+    pub fn refresh_enr(&self, node_id: H256) {
+        if let Some(server) = self.server() {
+            let _ = server.refresh_enr(node_id);
+        }
     }
 }
 
@@ -443,6 +524,47 @@ impl DiscoveryServer {
         self.contacts.next_dial_candidate()
     }
 
+    #[request_handler]
+    async fn handle_records_matching(
+        &mut self,
+        msg: discovery_server_protocol::RecordsMatching,
+        _ctx: &Context<Self>,
+    ) -> Vec<NodeRecord> {
+        self.contacts.records_matching(&*msg.predicate)
+    }
+
+    #[send_handler]
+    async fn handle_find_nodes(
+        &mut self,
+        msg: discovery_server_protocol::FindNodes,
+        ctx: &Context<Self>,
+    ) {
+        self.discv5_start_query(msg.request).await;
+        self.arm_query_tick(ctx);
+    }
+
+    #[send_handler]
+    async fn handle_query_tick(
+        &mut self,
+        _msg: discovery_server_protocol::QueryTick,
+        ctx: &Context<Self>,
+    ) {
+        if let Some(discv5) = self.discv5.as_mut() {
+            discv5.query_tick_armed = false;
+        }
+        self.discv5_tick_queries().await;
+        self.arm_query_tick(ctx);
+    }
+
+    #[send_handler]
+    async fn handle_refresh_enr(
+        &mut self,
+        msg: discovery_server_protocol::RefreshEnr,
+        _ctx: &Context<Self>,
+    ) {
+        self.discv5_refresh_enr(msg.node_id).await;
+    }
+
     #[send_handler]
     async fn handle_shutdown(
         &mut self,
@@ -567,6 +689,23 @@ impl DiscoveryServer {
         guard.record = self.local_node_record.clone();
     }
 
+    /// Schedule the next query tick while any predicate query runs. The tick
+    /// stops by itself once none do, so an idle server pays nothing for it.
+    fn arm_query_tick(&mut self, ctx: &Context<Self>) {
+        let Some(discv5) = self.discv5.as_mut() else {
+            return;
+        };
+        if discv5.active_queries.is_empty() || discv5.query_tick_armed {
+            return;
+        }
+        discv5.query_tick_armed = true;
+        send_after(
+            QUERY_TICK_INTERVAL,
+            ctx.clone(),
+            discovery_server_protocol::QueryTick,
+        );
+    }
+
     pub(crate) fn get_lookup_interval(&self) -> Duration {
         let peer_completion = self.contacts.peer_completion();
         lookup_interval_function(
@@ -627,6 +766,15 @@ impl DiscoveryServer {
     /// the handlers by hand.
     pub fn contacts_mut(&mut self) -> &mut ContactTable {
         &mut self.contacts
+    }
+
+    /// Starts a server built by [`Self::new_for_discv5_test`], timers and UDP
+    /// listener included, and returns a handle on it, so a test outside this
+    /// crate can run real nodes without depending on the actor runtime.
+    pub fn start_for_test(self) -> DiscoveryHandle {
+        let handle = DiscoveryHandle::new();
+        handle.set(self.start());
+        handle
     }
 
     /// Builds a DiscoveryServer suitable for unit tests of discv5 handlers.

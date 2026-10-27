@@ -16,12 +16,14 @@ mod discv4_handlers;
 mod discv5_handlers;
 pub mod ip_predictor;
 pub mod lookup;
+pub mod query;
 pub mod server;
 
 pub use contact_table::{
     Contact, ContactTable, ContactValidation, DiscoveryProtocol, PeerEvent, Session,
 };
 pub use ip_predictor::IpPredictor;
+pub use query::{FindNodesError, FindNodesResult, NodePredicate, QueryOutcome};
 pub use server::{
     DiscoveryHandle, DiscoveryServer, DiscoveryServerError, DiscoveryServerProtocol,
     is_discv4_packet,

@@ -1,4 +1,5 @@
-use crate::discovery::lookup::IterativeLookup;
+use crate::discovery::lookup::{IterativeLookup, LookupId};
+use crate::discovery::query::NodeQuery;
 use crate::discv5::messages::Message;
 use crate::{
     discv5::messages::Packet,
@@ -70,8 +71,20 @@ pub struct Discv5State {
     /// Tracks the source IP that each session was established from, with the time the
     /// session was last used so idle entries can be evicted (see `SESSION_TTL`).
     pub session_ips: FxHashMap<H256, SessionSource>,
-    /// Currently active iterative lookups.
-    pub active_lookups: Vec<IterativeLookup>,
+    /// The background crawl's active iterative lookups. Timer-driven: each
+    /// tick sends the next alpha queries.
+    pub active_lookups: Vec<(LookupId, IterativeLookup)>,
+    /// Running predicate queries. Response-driven, and kept apart from the
+    /// crawl so the crawl's timer never advances them.
+    pub(crate) active_queries: Vec<NodeQuery>,
+    /// Which lookup sent each FINDNODE, keyed like `pending_findnodes`, so a
+    /// NODES response reaches the lookup that asked and no other. A FINDNODE
+    /// sent outside any lookup, such as an ENR refresh, has no entry. Expires
+    /// with its `pending_findnodes` entry.
+    pub(crate) findnode_owners: FxHashMap<(H256, Bytes), LookupId>,
+    /// Whether a query tick is scheduled, so a second one is never armed.
+    pub(crate) query_tick_armed: bool,
+    next_lookup_id: u64,
     /// FINDNODE requests we sent and have not yet timed out, keyed by
     /// (peer node id, request id). A NODES response is only accepted if it
     /// matches one of these: without the check, any peer with a session can
@@ -98,6 +111,10 @@ impl Default for Discv5State {
             whoareyou_global_window_start: Instant::now(),
             session_ips: Default::default(),
             active_lookups: Vec::new(),
+            active_queries: Vec::new(),
+            findnode_owners: Default::default(),
+            query_tick_armed: false,
+            next_lookup_id: 0,
         }
     }
 }
@@ -116,6 +133,13 @@ impl Discv5State {
         nonce
     }
 
+    /// A fresh id for a lookup about to start.
+    pub(crate) fn next_lookup_id(&mut self) -> LookupId {
+        let id = LookupId(self.next_lookup_id);
+        self.next_lookup_id = self.next_lookup_id.wrapping_add(1);
+        id
+    }
+
     /// Remove stale entries from pending caches.
     pub fn cleanup_stale_entries(&mut self) {
         let now = Instant::now();
@@ -129,6 +153,8 @@ impl Discv5State {
 
         self.pending_findnodes
             .retain(|_key, timestamp| now.duration_since(*timestamp) < PENDING_FINDNODE_TIMEOUT);
+        self.findnode_owners
+            .retain(|key, _| self.pending_findnodes.contains_key(key));
 
         let before_challenges = self.pending_challenges.len();
         self.pending_challenges

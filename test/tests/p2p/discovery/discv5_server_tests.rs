@@ -1,17 +1,18 @@
 use bytes::Bytes;
 use ethrex_common::H256;
 use ethrex_p2p::discovery::DiscoveryServer;
-use ethrex_p2p::discovery::{ContactTable, Session as ContactSession};
+use ethrex_p2p::discovery::{ContactTable, QueryOutcome, Session as ContactSession};
 use ethrex_p2p::discv5::messages::PongMessage;
 use ethrex_p2p::peer_filter::AcceptAllFilter;
 use ethrex_p2p::types::{Node, NodeRecord};
+use ethrex_p2p::utils::{distance, public_key_from_signing_key};
 use rand::{SeedableRng, rngs::StdRng};
 use rustc_hash::FxHashSet;
 use secp256k1::SecretKey;
 use std::{
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 use tokio::net::UdpSocket;
 
@@ -426,4 +427,98 @@ async fn test_ip_voting_ignores_unroutable_but_keeps_private() {
         Some(1),
         "IPv6 unique-local must remain a valid vote candidate"
     );
+}
+
+const MARKER: &[u8] = b"marker";
+
+/// A discv5 node bound to a fresh localhost port, not started yet.
+struct LocalNode {
+    server: DiscoveryServer,
+    id: H256,
+    record: NodeRecord,
+}
+
+async fn local_node(signer: SecretKey, marked: bool) -> LocalNode {
+    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let port = socket.local_addr().unwrap().port();
+    let node = Node::new(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        port,
+        port,
+        public_key_from_signing_key(&signer),
+    );
+    let mut record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+    if marked {
+        record
+            .edit(&signer, |pairs| {
+                pairs.set_extra(MARKER, vec![1u8]);
+            })
+            .unwrap();
+    }
+    let server = DiscoveryServer::new_for_discv5_test(
+        node.clone(),
+        record.clone(),
+        signer,
+        Arc::new(socket),
+        Box::new(AcceptAllFilter),
+    );
+    LocalNode {
+        server,
+        id: node.node_id(),
+        record,
+    }
+}
+
+/// Teach `node` about `peer` as a contact it has already validated. An ethrex
+/// node refuses FINDNODE from a contact it has not pinged yet, and waiting for
+/// the revalidation timer would only make the test slower and noisier.
+async fn knows(node: &mut LocalNode, peer: &LocalNode) {
+    let contacts = node.server.contacts_mut();
+    contacts
+        .new_contact_records(vec![peer.record.clone()])
+        .await;
+    let ping_id = Bytes::from_static(b"ping");
+    contacts.record_ping_sent(&peer.id, ping_id.clone());
+    contacts.record_pong_received(&peer.id, &ping_id);
+}
+
+#[tokio::test]
+async fn a_predicate_query_walks_to_a_node_it_did_not_know() {
+    // A knows only B, and only B knows C, the one node advertising the marker.
+    // A has to learn C from B's NODES response, then hear back from C itself,
+    // before the match counts.
+    let mut a = local_node(SecretKey::new(&mut rand::rngs::OsRng), false).await;
+    let mut b = local_node(SecretKey::new(&mut rand::rngs::OsRng), false).await;
+    // B hands C over only when asked for C's log-distance from B. A walk asks
+    // for the distance to its random target and the two either side, so with C
+    // at 255 one walk reaches it for 7 targets in 8. The query re-walks up to
+    // `MAX_IDLE_WALKS` more times, so missing C altogether is about 1 in 4096.
+    let c_signer = loop {
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let id = ethrex_p2p::utils::node_id(&public_key_from_signing_key(&signer));
+        if distance(&b.id, &id) == 255 {
+            break signer;
+        }
+    };
+    let mut c = local_node(c_signer, true).await;
+    knows(&mut a, &b).await;
+    knows(&mut b, &a).await;
+    knows(&mut b, &c).await;
+    knows(&mut c, &a).await;
+    let c_record = c.record.clone();
+
+    let a = a.server.start_for_test();
+    let _b = b.server.start_for_test();
+    let _c = c.server.start_for_test();
+
+    let result = a
+        .find_nodes(
+            |record| record.pairs().extra(MARKER).is_some(),
+            1,
+            Duration::from_secs(10),
+        )
+        .await
+        .expect("the query must run");
+    assert_eq!(result.outcome, QueryOutcome::Satisfied, "{result:?}");
+    assert_eq!(result.records, vec![c_record]);
 }
