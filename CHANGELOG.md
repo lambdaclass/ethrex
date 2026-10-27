@@ -14,6 +14,7 @@
 
 ### 2026-10-20
 
+- Skip rehashing the last touched address in the block access list recorder: SELFBALANCE −29% and IDENTITY calls −16% in loops [#7450](https://github.com/lambdaclass/ethrex/pull/7450)
 - Look an already-loaded account up once in `load_account`: a SELFBALANCE loop 21.1 → 17.1 ms (−19%) [#7449](https://github.com/lambdaclass/ethrex/pull/7449)
 - Move a precompile's output into the caller's return-data buffer instead of cloning it: IDENTITY calls returning 256 B to 1 KiB −8% to −14% [#7448](https://github.com/lambdaclass/ethrex/pull/7448)
 - Skip the code lookup for calls to precompiles and other code-less targets, and keep the empty jump destination bitmap per thread so parallel transactions stop contending on its reference count: IDENTITY calls −21% to −33% and calls to EOAs −13% with 6 threads [#7447](https://github.com/lambdaclass/ethrex/pull/7447)
