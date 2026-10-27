@@ -638,7 +638,10 @@ impl fmt::Display for ComparisonReport {
             | &self.revm_updated_accounts_only)
             | &self.shared_updated_accounts;
 
-        for address in all_updated_accounts {
+        let mut sorted_accounts: Vec<_> = all_updated_accounts.iter().copied().collect();
+        sorted_accounts.sort();
+
+        for address in sorted_accounts {
             writeln!(f, "\n\t\t\t{address:#x}:")?;
 
             let account_updates_for_address: Vec<(String, AccountUpdate)> =
