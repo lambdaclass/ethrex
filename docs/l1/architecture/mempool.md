@@ -71,7 +71,7 @@ The inner state, mutated only under the write lock:
 | `max_blob_mempool_size` | `usize` | Cap on the blob sub-pool. |
 | `mempool_prune_threshold` | `usize` | Length at which `txs_order` is compacted to drop tombstones (`max + max/2`). |
 | `pending_frame_tx_by_sender` | `FxHashMap<Address, (H256, u64)>` | EIP-8141: at most one pending frame tx per sender — `(hash, nonce)`. |
-| `reserved_pending_cost` | `FxHashMap<Address, U256>` | EIP-8141: per-paymaster sum of reserved max-cost across pending frame txs. |
+| `reserved_pending_cost` | `FxHashMap<Address, U256>` | EIP-8141: per-paymaster sum of the `max_fee` reserved across pending frame txs. |
 | `noncanonical_paymaster_pending` | `FxHashMap<Address, u8>` | EIP-8141: count of pending frame txs per non-canonical paymaster. |
 | `frame_tx_paymaster` | `FxHashMap<H256, FramePaymasterReservation>` | EIP-8141: per-frame-tx paymaster reservation record. |
 
@@ -118,7 +118,7 @@ Notes on individual checks:
 
 **Privileged short-circuit.** `Transaction::PrivilegedL2Transaction` returns early before pool admission; these are produced by the L2 sequencer.
 
-**Frame transactions (EIP-8141).** Frame txs go through an extended set of gates — fork activation (`FrameTxPreFork`), expiry (`FrameTxExpired`), static structural validity (`InvalidFrameTransaction`), a signature-verification gas budget (`FrameTxVerifyGasExceeded` / `FrameTxVerifyGasBudgetExceeded`), signature authenticity and low-`s` malleability (`InvalidFrameSignature` / `FrameTxMalleableSignature`), and validation-prefix shape (`FrameTxUnrecognizedPrefix` / `FrameTxInvalidPrefixStructure`). The validation-prefix simulation and paymaster accounting run last (see [Frame transactions](#frame-transactions-eip-8141)).
+**Frame transactions (EIP-8141).** Frame txs go through an extended set of gates — fork activation (`FrameTxPreFork`), expiry (`FrameTxExpired`), static structural validity (`InvalidFrameTransaction`), a signature-verification gas budget (`FrameTxVerifyGasExceeded` / `FrameTxVerifyGasBudgetExceeded`), signature authenticity and low-`s` malleability (`InvalidFrameSignature` / `FrameTxMalleableSignature`), and validation-prefix shape (`FrameTxUnrecognizedPrefix` / `FrameTxInvalidPrefixStructure`). The validation-prefix simulation and paymaster accounting run last (see [Frame transactions](#frame-transactions-eip-8141)). A frame tx has no fee cap per gas or per blob gas, since its `max_fee` budget pays for all of its gas, so checks 8 and 12 do not apply to it, and the paymaster reservation is its `max_fee`.
 
 **Per-tx wire-size cap.** Non-blob transactions are bounded by `MAX_TX_SIZE = 128 KiB` against `Transaction::encode_canonical_len()`. Blob transactions are bounded by `MAX_BLOB_TX_SIZE` in `add_blob_transaction_to_pool` against the wire wrapper, since ethrex stores the core transaction and the sidecar in separate structs.
 
@@ -216,7 +216,7 @@ Regular and blob transactions are evicted by separate policies:
 Frame transactions carry a validation prefix and may be sponsored by a paymaster. The mempool holds extra per-sender and per-paymaster state to admit them safely:
 
 - **One pending frame tx per sender** — `pending_frame_tx_by_sender` enforces a single in-flight frame tx per sender; the check and insert are atomic under the write lock.
-- **Paymaster reservation accounting** — `reserved_pending_cost` sums each paymaster's reserved max-cost across pending frame txs so concurrent sponsored txs can't collectively overdraw it (`FrameTxPaymasterUnderfunded`); `noncanonical_paymaster_pending` bounds the number of pending frame txs a non-canonical paymaster may sponsor (`FrameTxNonCanonicalPaymasterLimit`); `frame_tx_paymaster` records each tx's reservation so removal (eviction / inclusion / reorg) releases it exactly once.
+- **Paymaster reservation accounting** — `reserved_pending_cost` sums each paymaster's reserved `max_fee` across pending frame txs so concurrent sponsored txs can't collectively overdraw it (`FrameTxPaymasterUnderfunded`); `noncanonical_paymaster_pending` bounds the number of pending frame txs a non-canonical paymaster may sponsor (`FrameTxNonCanonicalPaymasterLimit`); `frame_tx_paymaster` records each tx's reservation so removal (eviction / inclusion / reorg) releases it exactly once.
 
 The unlocked checks in `validate_transaction` (availability, non-canonical limit) are a pre-filter; the authoritative re-check runs under the write lock in `add_transaction`, matching the pattern used by the per-sender gates.
 
