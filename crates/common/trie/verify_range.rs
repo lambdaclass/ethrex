@@ -215,9 +215,9 @@ fn process_proof_nodes(
     //   3. Nodes for which we do not have the proof are treated as external references.
     let mut stack = VecDeque::from_iter([(
         Nibbles::default(),
-        proof.get_node(root)?.ok_or(TrieError::Verify(format!(
-            "root node missing from proof: {root:?}"
-        )))?,
+        proof
+            .get_node(root)?
+            .ok_or_else(|| TrieError::Verify(format!("root node missing from proof: {root:?}")))?,
     )]);
     while let Some((mut current_path, current_node)) = stack.pop_front() {
         let value = match current_node {

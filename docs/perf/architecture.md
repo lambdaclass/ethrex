@@ -553,14 +553,17 @@ Used for batch reads - holds persistent snapshots of all 4 tables, avoiding per-
 
 ### Nibbles Implementation
 
-**Location:** `crates/common/trie/nibbles.rs:23-28`
+**Location:** `crates/common/trie/nibbles.rs:421-423`
 
 ```rust
 pub struct Nibbles {
-    data: Vec<u8>,              // Current path (max 65 nibbles for account, 131 for storage)
-    already_consumed: Vec<u8>,  // Consumed during traversal (for path tracking)
+    data: Vec<u8>,              // A whole path (max 65 nibbles for account, 131 for storage)
 }
 ```
+
+`Nibbles` is only ever a *whole path* - a node's stored partial path, or a lookup
+key. Traversal state lives in `PathCursor` (`crates/common/trie/path_cursor.rs:16-20`),
+a `Copy`, allocation-free cursor over a borrowed path.
 
 See [Trie Library Deep Dive](#trie-library-deep-dive) below for detailed allocation analysis.
 
@@ -588,39 +591,59 @@ This section provides detailed analysis of the core trie implementation in `crat
 
 **Location:** `crates/common/trie/nibbles.rs`
 
-The `Nibbles` struct uses two `Vec<u8>` fields, causing allocations on nearly every operation.
+`Nibbles` used to carry two `Vec<u8>` fields and double as its own traversal
+cursor, so every step of a descent reallocated the path. The traversal half of
+that is fixed; the whole-path operations still allocate.
 
 **Structure:**
 ```rust
 pub struct Nibbles {
-    data: Vec<u8>,              // Current path (max 65 nibbles)
-    already_consumed: Vec<u8>,  // Path tracking during traversal
+    data: Vec<u8>,              // A whole path (max 65 nibbles)
 }
 ```
 
-**Allocation-Heavy Operations:**
+**Fixed: traversal no longer allocates.** Descent state moved into
+`PathCursor` (`crates/common/trie/path_cursor.rs`), a `Copy` `(&'a [u8], usize)`
+pair. Its accessors hand out subslices of the *original* path with the path's
+lifetime, so a node's database key (`consumed()`) can be read out and the cursor
+moved on in the same expression, with no allocation anywhere in the descent.
+`TrieDB` read keys are `&[u8]` for the same reason.
+
+| Was | Cost | Now |
+|-----|------|-----|
+| `Nibbles::skip_prefix()` | new Vec per extension/leaf match | `PathCursor::skip_prefix()` (`path_cursor.rs:71`) - bumps an index |
+| `Nibbles::offset()` on the descent path | slice + concat | `PathCursor::advanced()` (`path_cursor.rs:87`) - bumps an index |
+| `Nibbles::next()` | `data.remove(0)`, O(n) shift | `PathCursor::next()` (`path_cursor.rs:51`) - bumps an index |
+| `Nibbles::current()` | `already_consumed.clone()` per node visited | `PathCursor::consumed()` (`path_cursor.rs:38`) - a subslice |
+
+`PathCursor::to_nibbles()` (`path_cursor.rs:120`) is the one allocating method,
+called only where an owned path is genuinely stored (a new node's partial path or
+prefix).
+
+**Still allocation-heavy** (all of these build a *new* whole path, so they are
+inherent to the current `Vec`-backed representation):
 
 | Method | Line | Issue | Frequency |
 |--------|------|-------|-----------|
-| `skip_prefix()` | 106 | `self.data[prefix.len()..].to_vec()` | Every extension/leaf match |
-| `offset()` | 147-151 | Two allocations: slice + concat | Every branch child traversal |
-| `slice()` | 154-156 | `self.data[start..end].to_vec()` | Node restructuring |
-| `next()` | 137 | `self.data.remove(0)` - O(n) shift | Every branch choice |
-| `prepend()` | 170 | `self.data.insert(0, nibble)` - O(n) shift | Node restructuring |
-| `concat()` | 242-246 | `[...].concat()` creates new Vec | Extension prefix handling |
-| `append_new()` | 250-255 | Two clones + vec![nibble] | Commit path building |
-| `current()` | 258-263 | `already_consumed.clone()` | Error reporting, path tracking |
-| `from_raw()` | 73-86 | `flat_map` allocates intermediates | Every key conversion |
-| `encode_compact()` | 180-208 | New Vec per encoding | Every node serialization |
+| `offset()` | 485 | `self.data[offset..].to_vec()` | Node restructuring |
+| `slice()` | 490 | `self.data[start..end].to_vec()` | Node restructuring |
+| `prepend()` | 505 | `self.data.insert(0, nibble)` - O(n) shift | Node restructuring |
+| `concat()` | 587 | New Vec sized for both halves | Extension prefix handling |
+| `append_new()` | 595 | New Vec, one per child descended into | Commit path building |
+| `from_raw()` | 437 | One Vec per key (SIMD-filled, no intermediates) | Every key conversion |
+| `encode_compact()` | 517 | New Vec per encoding | Every node serialization |
 
-**Recommended Fix:** Replace with stack-allocated array (noted in TODO at line 11):
+**Remaining idea:** inline the storage so a whole path needs no heap allocation
+at all:
 ```rust
 pub struct Nibbles {
     data: [u8; 68],    // Max 65 nibbles + 3 padding
     len: u8,
-    consumed: u8,      // Index into data for cursor position
 }
 ```
+This is a much bigger change than the cursor split was - `Nibbles` is in the
+public API of the trie crate, is RLP/serde/rkyv-encoded, and storage keys are
+built from it - so it is tracked separately.
 
 ### NodeRef and Hash Memoization
 
@@ -767,40 +790,43 @@ pub struct LeafNode {
    - Arc<Node> is 8 bytes
    - Total ~48 bytes per child reference
 
-3. **Nibbles duplication**:
-   - Both `data` and `already_consumed` Vecs
-   - `already_consumed` only used for path tracking during traversal
+3. **Nibbles is a single heap-allocated path**:
+   - One `Vec<u8>`; the second (`already_consumed`) Vec is gone, traversal state
+     now lives in the `Copy` `PathCursor` on the stack
+   - A `Vec` is still 24 bytes plus an allocation per stored path
 
 ### Trie Operations: Allocation Patterns
 
-**Insert Path** (`trie.rs:130-150`, node methods):
+**Insert Path** (`trie.rs:173`, node methods):
 
 ```
 insert(path, value)
-  └── Nibbles::from_bytes(&path)           // Allocates 2 Vecs
-        └── path.skip_prefix()              // Allocates new Vec
-              └── path.offset()             // Allocates 2 Vecs
-                    └── path.next_choice()  // O(n) remove(0)
+  └── Nibbles::from_bytes(&path)           // Allocates 1 Vec (SIMD-filled)
+        └── path.cursor()                  // Free: (&[u8], usize), Copy
+              └── cursor.skip_prefix()     // Bumps an index
+                    └── cursor.next_choice() // Bumps an index
                           └── ... recursive
 ```
 
-Each level of trie traversal allocates multiple times.
+Descent is allocation-free; the only allocations left on an insert are the one
+key expansion and whatever new node the insert actually creates.
 
-**Get Path** (`trie.rs:101-127`):
+**Get Path** (`trie.rs:143`):
 
 ```
 get(pathrlp)
-  └── Nibbles::from_bytes(pathrlp)         // Allocates
-        └── node.get(db, path)
-              └── path.skip_prefix()        // Allocates
-                    └── path.current()      // Allocates (for error handling)
+  └── Nibbles::from_bytes(pathrlp)         // Allocates 1 Vec
+        └── path.cursor()                  // Free
+              └── node.get(db, cursor)
+                    └── cursor.skip_prefix() // Bumps an index
+                          └── db.get(cursor.consumed()) // &[u8] key, no owned path
 ```
 
-**Commit/Hash Path** (`node.rs:132-161`):
+**Commit/Hash Path** (`node.rs:270`):
 
 ```
 commit(path, acc)
-  └── path.append_new(choice)              // Allocates 2 Vecs per child
+  └── path.append_new(choice)              // 1 Vec, only for children descended into
         └── path.concat(&prefix)           // Allocates new Vec
               └── Vec::new() for encoding  // Allocates buffer
 ```
