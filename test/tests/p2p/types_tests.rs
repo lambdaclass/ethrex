@@ -157,6 +157,14 @@ async fn encode_decode_node_record_with_forkid() {
 }
 
 #[test]
+fn enr_url_is_unpadded() {
+    let enr_string = "enr:-I-4QFn4UMX2MSKTv3-_PFzSC7IOGZKbZYIgoWAnvraw4ltbU7Y7nrJh_o9KyuiNMF6uHLAHVX-wZhWWBg3vQVVr-COEatYhgoJpZIJ2NIJpcISsEAAKiXNlY3AyNTZrMaEDQ5E8xlrYGMHuvp9F-qV00UopOe0vGDmkQiXh9ymbkimDdGNwgnZfg3VkcIJ2Xw";
+    let base64_decoded = ethrex_common::base64::decode(&enr_string.as_bytes()[4..]);
+    let record = NodeRecord::decode(&base64_decoded).unwrap();
+    assert_eq!(record.enr_url().unwrap(), enr_string);
+}
+
+#[test]
 fn verify_enr_signature_valid() {
     // https://github.com/ethereum/devp2p/blob/master/enr.md#test-vectors
     let enr_string = "enr:-IS4QHCYrYZbAKWCBRlAy5zzaDZXJBGkcnh4MHcBFZntXNFrdvJjX04jRzjzCBOonrkTfj499SZuOh8R33Ls8RRcy5wBgmlkgnY0gmlwhH8AAAGJc2VjcDI1NmsxoQPKY0yuDUmstAHYpMa2_oxVtw0RW_QAdpzBQA8yWM0xOIN1ZHCCdl8";

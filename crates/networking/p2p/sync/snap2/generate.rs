@@ -70,7 +70,8 @@ const BULK_STORAGE_TRIE_SLOTS: usize = 1024;
 const STORAGE_WRITE_BATCH_NODES: usize = 20_000;
 
 /// Build one storage trie per account holding slots, returning what each hashes
-/// to.
+/// to, plus the empty root for every account served with storage that has no
+/// slots left.
 ///
 /// Single-threaded across accounts, unlike the snap/1 storage insert which fans
 /// out across a thread pool.
@@ -85,13 +86,22 @@ async fn build_storage_tries(
 
     // The account stream names every account; only those with slots get a trie.
     for entry in flat.iter_accounts() {
-        let (account_hash, _) = entry?;
+        let (account_hash, encoded) = entry?;
         let mut slots = flat.iter_slots(account_hash);
 
         // Take enough slots to tell the two builders apart without materializing
         // a large contract, which is exactly the case the bulk path exists for.
         let head: Vec<(H256, Vec<u8>)> = slots.by_ref().take(BULK_STORAGE_TRIE_SLOTS).collect();
         if head.is_empty() {
+            // No slots means an empty storage trie, whatever root the account
+            // was served with. A non-empty served root is either storage the
+            // access lists cleared since, which would otherwise miss the pivot
+            // root on every attempt, or storage the download never received,
+            // which would otherwise verify with no trie behind it. Recording
+            // only these keeps the map from holding every account in the state.
+            if AccountState::decode(&encoded)?.storage_root != *EMPTY_TRIE_HASH {
+                storage_roots.insert(account_hash, *EMPTY_TRIE_HASH);
+            }
             continue;
         }
 

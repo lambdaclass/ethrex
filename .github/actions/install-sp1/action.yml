@@ -4,6 +4,12 @@ description: "Install SP1 Toolchain"
 runs:
   using: "composite"
   steps:
+    # SP1 6's build scripts (sp1-prover-types) compile protobuf definitions.
+    - name: Install protoc
+      uses: arduino/setup-protoc@v3
+      with:
+        repo-token: ${{ github.token }}
+
     - name: Install SP1
       shell: bash
       run: |
@@ -13,4 +19,4 @@ runs:
         # HTTP error, `retry` sees success, and bash then runs the error page.
         retry curl -fsSL https://sp1.succinct.xyz -o /tmp/sp1_install.sh
         bash /tmp/sp1_install.sh
-        retry ~/.sp1/bin/sp1up --version 5.0.8
+        retry ~/.sp1/bin/sp1up --version 6.9.0
