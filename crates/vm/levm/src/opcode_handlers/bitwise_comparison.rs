@@ -284,10 +284,11 @@ fn store_u64(slot: &mut U256, value: u64) {
     )]
     unsafe {
         use std::arch::x86_64::{_mm256_set_epi64x, _mm256_storeu_si256};
-        let value = i64::from_ne_bytes(value.to_ne_bytes());
+        // The store also relies on the limbs being in little-endian order, `U256`'s public layout.
+        const { assert!(size_of::<U256>() == 32) };
         _mm256_storeu_si256(
             std::ptr::from_mut(slot).cast(),
-            _mm256_set_epi64x(0, 0, 0, value),
+            _mm256_set_epi64x(0, 0, 0, value.cast_signed()),
         );
     }
     #[cfg(not(all(target_arch = "x86_64", target_feature = "avx")))]
