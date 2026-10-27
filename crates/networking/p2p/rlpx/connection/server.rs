@@ -644,16 +644,6 @@ impl PeerConnectionServer {
                         )
                         .await;
                 }
-                // The peer table removes the node only if it lists this connection for it, so
-                // a duplicate connection to an already-connected node leaves the live one
-                // listed. Sent even when registration failed: a registration the peer table
-                // applied after this connection stopped waiting for it is undone here.
-                if let Err(e) = established_state.peer_table.remove_peer(
-                    established_state.node.node_id(),
-                    established_state.connection_id,
-                ) {
-                    debug!("Failed to remove peer from table: {e}");
-                }
                 // Gated on registration: an actor that lost the claim never reported
                 // the peer to discovery nor owned its broadcaster index, and releasing
                 // them on its way out would evict the connection that won.
@@ -666,12 +656,32 @@ impl PeerConnectionServer {
                     // It does not cover a panic inside `started()` itself, which cancels the
                     // actor and returns without running this hook. `Connected` is reported
                     // from there, so that window can strand an id in discovery's connected
-                    // set. `remove_peer` above is lost to the same window, leaving the peer
+                    // set. `remove_peer` below is lost to the same window, leaving the peer
                     // table's own map equally stale, so the two stores at least agree.
+                    //
+                    // Reported before `remove_peer`, because discovery keeps connected peers
+                    // as a set. Once the peer table drops this entry, a new connection to the
+                    // same node can register and report `Connected`, and a `Disconnected`
+                    // landing after it would take the live connection out of the set. Both
+                    // reports go through discovery's one mailbox, and that registration can
+                    // only happen after the peer table processes a removal sent below, so
+                    // this `Disconnected` is always queued ahead of its `Connected`.
                     established_state.discovery.record_peer_event(
                         established_state.node.node_id(),
                         PeerEvent::Disconnected,
                     );
+                }
+                // The peer table removes the node only if it lists this connection for it, so
+                // a duplicate connection to an already-connected node leaves the live one
+                // listed. Sent even when registration failed: a registration the peer table
+                // applied after this connection stopped waiting for it is undone here.
+                if let Err(e) = established_state.peer_table.remove_peer(
+                    established_state.node.node_id(),
+                    established_state.connection_id,
+                ) {
+                    debug!("Failed to remove peer from table: {e}");
+                }
+                if established_state.registered_in_peer_table {
                     // Free the peer's tx-broadcaster index (and clear its bit across known txs) so
                     // the broadcaster's per-peer index map / PeerMask widths stay bounded to live peers.
                     if let Err(e) = established_state
