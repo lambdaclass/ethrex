@@ -182,8 +182,7 @@ pub enum Opcode {
     SIGDATACOPY = 0xB5,
     // EIP-7906 transaction assertions
     TXTRACE = 0xB6,
-    TXDIFF = 0xB7,
-    EVENTDATACOPY = 0xB8,
+    EVENTDATACOPY = 0xB7,
     // EIP-8024
     DUPN = 0xE6,
     SWAPN = 0xE7,
@@ -347,8 +346,7 @@ impl From<u8> for Opcode {
             table[0xB4] = Opcode::SIGPARAM;
             table[0xB5] = Opcode::SIGDATACOPY;
             table[0xB6] = Opcode::TXTRACE;
-            table[0xB7] = Opcode::TXDIFF;
-            table[0xB8] = Opcode::EVENTDATACOPY;
+            table[0xB7] = Opcode::EVENTDATACOPY;
             table[0x51] = Opcode::MLOAD;
             table[0x52] = Opcode::MSTORE;
             table[0x53] = Opcode::MSTORE8;
@@ -674,9 +672,8 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::FRAMEPARAM as usize] = OpCodeFn::new::<OpFrameParamHandler>();
         opcode_table[Opcode::SIGPARAM as usize] = OpCodeFn::new::<OpSigParamHandler>();
         opcode_table[Opcode::SIGDATACOPY as usize] = OpCodeFn::new::<OpSigDataCopyHandler>();
-        // EIP-7906 transaction assertion opcodes, valid only inside a POST_TX frame
+        // EIP-7906 transaction assertion opcodes, valid only inside an ASSERT frame
         opcode_table[Opcode::TXTRACE as usize] = OpCodeFn::new::<OpTxTraceHandler>();
-        opcode_table[Opcode::TXDIFF as usize] = OpCodeFn::new::<OpTxDiffHandler>();
         opcode_table[Opcode::EVENTDATACOPY as usize] = OpCodeFn::new::<OpEventDataCopyHandler>();
 
         opcode_table

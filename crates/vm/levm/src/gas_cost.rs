@@ -73,8 +73,7 @@ pub const FRAMEDATACOPY_DYNAMIC_BASE: u64 = 3;
 pub const FRAMEPARAM: u64 = 2;
 pub const SIGPARAM: u64 = 2;
 
-/// EIP-7906 `TXTRACE`, and the `TXDIFF` params answered from the diff alone:
-/// `WARM_STORAGE_READ_COST`.
+/// EIP-7906 `TXTRACE`: `WARM_STORAGE_READ_COST`.
 pub const TXTRACE: u64 = 100;
 pub const EVENTDATACOPY_STATIC: u64 = 3;
 pub const EVENTDATACOPY_DYNAMIC_BASE: u64 = 3;

@@ -1,15 +1,13 @@
-//! EIP-7906 transaction assertions: `TXTRACE` (0xB6), `TXDIFF` (0xB7) and
-//! `EVENTDATACOPY` (0xB8).
+//! EIP-7906 transaction assertions: `TXTRACE` (0xB6) and `EVENTDATACOPY` (0xB7).
 //!
-//! The three opcodes expose the executing frame transaction's state diff to its
-//! `POST_TX` frames, and halt exceptionally anywhere else. The diff is the net
+//! The two opcodes expose the executing frame transaction's state diff to its
+//! `ASSERT` frames, and halt exceptionally anywhere else. The diff is the net
 //! difference between the transaction prestate (`GeneralizedDatabase::tx_prestate`,
 //! each account and slot as the transaction first touched it) and the live state at
 //! the reading instruction. The tables are recomputed on every read from those two
 //! maps and from the logs of the frames that have completed.
 
-use ethrex_common::constants::EMPTY_KECCAK_HASH;
-use ethrex_common::types::{FrameMode, Log};
+use ethrex_common::types::{AccountInfo, FrameMode, Log};
 use ethrex_common::{Address, H256, U256};
 
 use crate::db::gen_db::CacheDB;
@@ -18,38 +16,36 @@ use crate::gas_cost;
 use crate::memory::calculate_memory_size;
 use crate::opcode_handlers::OpcodeHandler;
 use crate::opcode_handlers::frame_tx::address_to_u256;
-use crate::utils::{code_has_delegation, size_offset_to_usize, word_to_address};
+use crate::utils::size_offset_to_usize;
 use crate::vm::VM;
 
-/// `account_change_flags` bits, in the field order of the account tuple
-/// `(nonce, balance, storage_root, code_hash)`.
-const CHANGE_FLAG_NONCE: u8 = 0b0001;
-const CHANGE_FLAG_BALANCE: u8 = 0b0010;
-const CHANGE_FLAG_STORAGE: u8 = 0b0100;
-const CHANGE_FLAG_CODE: u8 = 0b1000;
-
-/// One `balances_changed` entry: `(address, balance_before, balance_after)`.
-type BalanceChange = (Address, U256, U256);
+/// One entry of an account-field table (`balances_changed`, `codes_changed`,
+/// `nonces_changed`): `(address, before, after)`.
+type FieldChange = (Address, U256, U256);
 /// One `slots_changed` entry: `(address, slot_key, value_before, value_after)`.
 type SlotChange = (Address, H256, U256, U256);
-/// One `contracts_deployed` entry: `(address, codehash_after)`.
-type DeployedContract = (Address, H256);
 
-/// The `balances_changed` table: every address the transaction touched whose live
-/// balance differs from its prestate balance, ascending by address.
+/// An account-field table: every address the transaction touched whose live value
+/// of `field` differs from its prestate value, ascending by address.
 ///
 /// The touched set is the prestate map, not the live cache: the cache can span
 /// several transactions, so iterating it would report other transactions'
 /// changes. An account enters the prestate map on the same first touch that puts
-/// it in the cache, so a prestate entry always has a live one.
-fn balance_changes(prestate: &CacheDB, current: &CacheDB) -> Vec<BalanceChange> {
-    let mut changes: Vec<BalanceChange> = prestate
+/// it in the cache, so a prestate entry always has a live one. An account that did
+/// not exist reads as the empty account: balance and nonce zero, the empty-code
+/// hash.
+fn field_changes(
+    prestate: &CacheDB,
+    current: &CacheDB,
+    field: impl Fn(&AccountInfo) -> U256,
+) -> Vec<FieldChange> {
+    let mut changes: Vec<FieldChange> = prestate
         .iter()
         .filter_map(|(address, account)| {
-            let before = account.info.balance;
+            let before = field(&account.info);
             let after = current
                 .get(address)
-                .map_or(before, |live| live.info.balance);
+                .map_or(before, |live| field(&live.info));
             (after != before).then_some((*address, before, after))
         })
         .collect();
@@ -77,33 +73,6 @@ fn slot_changes(prestate: &CacheDB, current: &CacheDB) -> Vec<SlotChange> {
     changes
 }
 
-/// The `contracts_deployed` table: every address whose code went from empty to
-/// code that is not an EIP-7702 delegation designator, ascending by address.
-fn deployed_contracts(vm: &VM<'_>, prestate: &CacheDB) -> Result<Vec<DeployedContract>, VMError> {
-    let mut deployed: Vec<DeployedContract> = Vec::new();
-    for (address, account) in prestate {
-        if account.info.code_hash != *EMPTY_KECCAK_HASH {
-            continue;
-        }
-        let after = vm
-            .db
-            .current_accounts_state
-            .get(address)
-            .map_or(*EMPTY_KECCAK_HASH, |live| live.info.code_hash);
-        if after == *EMPTY_KECCAK_HASH {
-            continue;
-        }
-        if let Some(code) = vm.db.codes.get(&after)
-            && code_has_delegation(code.code())?
-        {
-            continue;
-        }
-        deployed.push((*address, after));
-    }
-    deployed.sort_by_key(|entry| entry.0);
-    Ok(deployed)
-}
-
 /// The `events_count` table: the logs of every completed frame, in the order the
 /// transaction receipt reports them. A frame that failed, or whose atomic batch was
 /// unrolled, has no logs in its result and so contributes none.
@@ -119,49 +88,22 @@ fn transaction_events(vm: &VM<'_>) -> Vec<Log> {
         .unwrap_or_default()
 }
 
-/// `account_change_flags` for `address`. An address outside the prestate map was
-/// never touched by the transaction, so every bit is clear and no state is read.
-fn account_change_flags(
-    prestate: &CacheDB,
-    current: &CacheDB,
-    slots: &[SlotChange],
-    address: Address,
-) -> U256 {
-    let (Some(before), Some(after)) = (prestate.get(&address), current.get(&address)) else {
-        return U256::zero();
-    };
-    let mut flags = 0u8;
-    if before.info.nonce != after.info.nonce {
-        flags |= CHANGE_FLAG_NONCE;
-    }
-    if before.info.balance != after.info.balance {
-        flags |= CHANGE_FLAG_BALANCE;
-    }
-    if slots.iter().any(|change| change.0 == address) {
-        flags |= CHANGE_FLAG_STORAGE;
-    }
-    if before.info.code_hash != after.info.code_hash {
-        flags |= CHANGE_FLAG_CODE;
-    }
-    U256::from(flags)
-}
-
-/// Halts unless the executing frame is a `POST_TX` frame. The check keys on the
-/// frame, not the call depth, so the opcodes work anywhere in a `POST_TX` frame's
+/// Halts unless the executing frame is an `ASSERT` frame. The check keys on the
+/// frame, not the call depth, so the opcodes work anywhere in an `ASSERT` frame's
 /// call subtree and nowhere else.
-fn require_post_tx_frame(vm: &VM<'_>) -> Result<(), VMError> {
+fn require_assert_frame(vm: &VM<'_>) -> Result<(), VMError> {
     let ctx = vm
         .frame_tx_context
         .as_ref()
         .ok_or(ExceptionalHalt::InvalidOpcode)?;
     match ctx.tx.frames.get(ctx.current_frame_index) {
-        Some(frame) if frame.execution_mode() == FrameMode::PostTx => Ok(()),
+        Some(frame) if frame.execution_mode() == FrameMode::Assert => Ok(()),
         _ => Err(ExceptionalHalt::InvalidOpcode.into()),
     }
 }
 
-/// The transaction prestate. `VM::new` installs it for every transaction carrying a
-/// `POST_TX` frame, and `require_post_tx_frame` has established that this is one, so
+/// The transaction prestate. `VM::new` installs it for every transaction carrying an
+/// `ASSERT` frame, and `require_assert_frame` has established that this is one, so
 /// its absence is a broken invariant rather than something the opcodes can observe.
 fn tx_prestate<'a>(vm: &'a VM<'_>) -> Result<&'a CacheDB, VMError> {
     vm.db
@@ -170,7 +112,7 @@ fn tx_prestate<'a>(vm: &'a VM<'_>) -> Result<&'a CacheDB, VMError> {
         .ok_or_else(|| InternalError::msg("EIP-7906 opcode without a transaction prestate").into())
 }
 
-/// Halts unless an operand the parameter tables mark *must be 0* is zero.
+/// Halts unless an operand the parameter table marks *must be 0* is zero.
 fn require_zero(operand: U256) -> Result<(), VMError> {
     if operand.is_zero() {
         Ok(())
@@ -196,12 +138,20 @@ fn event_topic(event: &Log, position: usize) -> Result<U256, VMError> {
         .ok_or_else(|| ExceptionalHalt::InvalidOpcode.into())
 }
 
-fn u256_to_h256(value: U256) -> H256 {
-    H256(value.to_big_endian())
-}
-
 fn h256_to_u256(value: H256) -> U256 {
     U256::from_big_endian(value.as_bytes())
+}
+
+/// One field of an account-field table entry. Every state-change table lists its
+/// fields in the same order, so param `first` reads the address, `first + 1` the
+/// before value and `first + 2` the after value.
+fn field_entry(change: FieldChange, param: u8, first: u8) -> U256 {
+    let (address, before, after) = change;
+    match param.saturating_sub(first) {
+        0 => address_to_u256(address),
+        1 => before,
+        _ => after,
+    }
 }
 
 /// `TXTRACE` (0xB6): one value of the transaction's state diff, selected by `param`
@@ -214,15 +164,20 @@ impl OpcodeHandler for OpTxTraceHandler {
         let [param, index] = *vm.current_call_frame.stack.pop()?;
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::TXTRACE)?;
-        require_post_tx_frame(vm)?;
+        require_assert_frame(vm)?;
 
         let prestate = tx_prestate(vm)?;
         let current = &vm.db.current_accounts_state;
+        // Code hashes are compared as stored: an EIP-7702 delegation indicator is
+        // hashed itself, not followed, and a missing account has the empty-code hash.
+        let balances = || field_changes(prestate, current, |info| info.balance);
+        let codes = || field_changes(prestate, current, |info| h256_to_u256(info.code_hash));
+        let nonces = || field_changes(prestate, current, |info| U256::from(info.nonce));
         let param = u8::try_from(param).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
         let value = match param {
             0x00 => {
                 require_zero(index)?;
-                U256::from(balance_changes(prestate, current).len())
+                U256::from(balances().len())
             }
             0x01 => {
                 require_zero(index)?;
@@ -230,52 +185,42 @@ impl OpcodeHandler for OpTxTraceHandler {
             }
             0x02 => {
                 require_zero(index)?;
-                U256::from(deployed_contracts(vm, prestate)?.len())
+                U256::from(codes().len())
             }
-            0x03..=0x05 => {
-                let (address, before, after) =
-                    table_entry(&balance_changes(prestate, current), index)?;
-                match param {
-                    0x03 => address_to_u256(address),
-                    0x04 => before,
-                    _ => after,
-                }
+            0x03 => {
+                require_zero(index)?;
+                U256::from(nonces().len())
             }
-            0x06..=0x09 => {
+            0x04..=0x06 => field_entry(table_entry(&balances(), index)?, param, 0x04),
+            0x07..=0x0A => {
                 let (address, key, before, after) =
                     table_entry(&slot_changes(prestate, current), index)?;
                 match param {
-                    0x06 => address_to_u256(address),
-                    0x07 => h256_to_u256(key),
+                    0x07 => address_to_u256(address),
                     0x08 => before,
-                    _ => after,
+                    0x09 => after,
+                    _ => h256_to_u256(key),
                 }
             }
-            0x0A | 0x0B => {
-                let (address, code_hash) = table_entry(&deployed_contracts(vm, prestate)?, index)?;
-                if param == 0x0A {
-                    address_to_u256(address)
-                } else {
-                    h256_to_u256(code_hash)
-                }
-            }
-            0x0C => {
+            0x0B..=0x0D => field_entry(table_entry(&codes(), index)?, param, 0x0B),
+            0x0E..=0x10 => field_entry(table_entry(&nonces(), index)?, param, 0x0E),
+            0x11 => {
                 require_zero(index)?;
                 U256::from(transaction_events(vm).len())
             }
-            0x0D..=0x13 => {
+            0x12..=0x18 => {
                 let event = table_entry(&transaction_events(vm), index)?;
                 match param {
-                    0x0D => address_to_u256(event.address),
-                    0x0E => U256::from(event.topics.len()),
-                    0x0F => event_topic(&event, 0)?,
-                    0x10 => event_topic(&event, 1)?,
-                    0x11 => event_topic(&event, 2)?,
-                    0x12 => event_topic(&event, 3)?,
+                    0x12 => address_to_u256(event.address),
+                    0x13 => U256::from(event.topics.len()),
+                    0x14 => event_topic(&event, 0)?,
+                    0x15 => event_topic(&event, 1)?,
+                    0x16 => event_topic(&event, 2)?,
+                    0x17 => event_topic(&event, 3)?,
                     _ => U256::from(event.data.len()),
                 }
             }
-            0x14 => {
+            0x19 => {
                 require_zero(index)?;
                 // The payer's escrow: EIP-8141's `max_cost`, blob fees included,
                 // collected at payment approval.
@@ -285,7 +230,7 @@ impl OpcodeHandler for OpTxTraceHandler {
                     .fee_budget
                     .max_cost
             }
-            0x15 => {
+            0x1A => {
                 require_zero(index)?;
                 // Zero while no frame has approved payment, which leaves the
                 // transaction invalid regardless.
@@ -301,135 +246,7 @@ impl OpcodeHandler for OpTxTraceHandler {
     }
 }
 
-/// `TXDIFF` (0xB7): a keyed lookup into the transaction's state diff. Stack:
-/// `param` (top), then an address or topic `key`, then a slot key, per-key index or
-/// zero.
-///
-/// Params `0x00` to `0x05` read one slot, balance or code hash before and after the
-/// transaction. A key the transaction never touched is read live, so they are
-/// priced, warmed and recorded in the block access list like any other state read.
-/// Params `0x06` to `0x0C` are answered from the diff alone at the flat `TXTRACE`
-/// cost.
-pub struct OpTxDiffHandler;
-impl OpcodeHandler for OpTxDiffHandler {
-    #[inline(always)]
-    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
-        let [param, key, index] = *vm.current_call_frame.stack.pop()?;
-        let address = word_to_address(key);
-        let slot = u256_to_h256(index);
-        let param = u8::try_from(param).unwrap_or(u8::MAX);
-
-        // Gas, and the EIP-2929 access it implies, before anything else.
-        let fork = vm.env.config.fork;
-        let cost = match param {
-            0x00 | 0x01 => gas_cost::sload(vm.substate.add_accessed_slot(address, slot), fork)?,
-            0x02..=0x05 => gas_cost::balance(vm.substate.add_accessed_address(address), fork)?,
-            _ => gas_cost::TXTRACE,
-        };
-        vm.current_call_frame.increase_consumed_gas(cost)?;
-        require_post_tx_frame(vm)?;
-
-        let value = match param {
-            0x00 | 0x01 => {
-                // The live read captures the slot's prestate if this is the
-                // transaction's first touch, so an untouched slot reads the same value
-                // before and after.
-                vm.db.get_account(address)?;
-                let live = vm.get_storage_value(address, slot)?;
-                vm.record_storage_slot_to_bal(address, index);
-                if param == 0x00 {
-                    tx_prestate(vm)?
-                        .get(&address)
-                        .and_then(|account| account.storage.get(&slot).copied())
-                        .unwrap_or(live)
-                } else {
-                    live
-                }
-            }
-            0x02..=0x05 => {
-                require_zero(index)?;
-                let live = vm.db.get_account(address)?.info.clone();
-                if let Some(recorder) = vm.db.bal_recorder.as_mut() {
-                    recorder.record_touched_address(address);
-                }
-                let before = tx_prestate(vm)?
-                    .get(&address)
-                    .map_or_else(|| live.clone(), |account| account.info.clone());
-                match param {
-                    0x02 => before.balance,
-                    0x03 => live.balance,
-                    0x04 => h256_to_u256(before.code_hash),
-                    _ => h256_to_u256(live.code_hash),
-                }
-            }
-            0x06..=0x0A => {
-                let prestate = tx_prestate(vm)?;
-                let current = &vm.db.current_accounts_state;
-                match param {
-                    0x06 | 0x07 => {
-                        let indices: Vec<usize> = slot_changes(prestate, current)
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, change)| (change.0 == address).then_some(i))
-                            .collect();
-                        if param == 0x06 {
-                            require_zero(index)?;
-                            U256::from(indices.len())
-                        } else {
-                            U256::from(table_entry(&indices, index)?)
-                        }
-                    }
-                    0x08 | 0x09 => {
-                        let indices: Vec<usize> = transaction_events(vm)
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(i, event)| (event.address == address).then_some(i))
-                            .collect();
-                        if param == 0x08 {
-                            require_zero(index)?;
-                            U256::from(indices.len())
-                        } else {
-                            U256::from(table_entry(&indices, index)?)
-                        }
-                    }
-                    _ => {
-                        require_zero(index)?;
-                        let slots = slot_changes(prestate, current);
-                        account_change_flags(prestate, current, &slots, address)
-                    }
-                }
-            }
-            0x0B | 0x0C => {
-                // Keyed by the full topic value. `topic0`, the event signature, is
-                // excluded: it identifies the event type, not a participant.
-                let topic = u256_to_h256(key);
-                let indices: Vec<usize> = transaction_events(vm)
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, event)| {
-                        event
-                            .topics
-                            .iter()
-                            .skip(1)
-                            .any(|candidate| *candidate == topic)
-                            .then_some(i)
-                    })
-                    .collect();
-                if param == 0x0B {
-                    require_zero(index)?;
-                    U256::from(indices.len())
-                } else {
-                    U256::from(table_entry(&indices, index)?)
-                }
-            }
-            _ => return Err(ExceptionalHalt::InvalidOpcode.into()),
-        };
-        vm.current_call_frame.stack.push(value)?;
-        Ok(OpcodeResult::Continue)
-    }
-}
-
-/// `EVENTDATACOPY` (0xB8): copies part of one event's non-indexed data into memory,
+/// `EVENTDATACOPY` (0xB7): copies part of one event's non-indexed data into memory,
 /// priced like `CALLDATACOPY`. Unlike `CALLDATACOPY`, a range past the end of the
 /// data halts instead of zero-padding, as does an event index past the event count.
 pub struct OpEventDataCopyHandler;
@@ -445,7 +262,7 @@ impl OpcodeHandler for OpEventDataCopyHandler {
                 vm.current_call_frame.memory.len(),
                 size,
             )?)?;
-        require_post_tx_frame(vm)?;
+        require_assert_frame(vm)?;
 
         let event = table_entry(&transaction_events(vm), event_index)?;
         let start = usize::try_from(data_offset).map_err(|_| ExceptionalHalt::InvalidOpcode)?;

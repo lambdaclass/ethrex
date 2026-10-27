@@ -1979,11 +1979,11 @@ pub enum FrameMode {
     Default = 0,
     Verify = 1,
     Sender = 2,
-    /// EIP-7906 `POST_TX`: a read-only assertion frame. `POST_TX` frames form a
+    /// EIP-7906 `ASSERT`: a read-only assertion frame. `ASSERT` frames form a
     /// trailing suffix of the frame list and are the only context in which
-    /// `TXTRACE`, `TXDIFF` and `EVENTDATACOPY` are valid. One that fails reverts
+    /// `TXTRACE` and `EVENTDATACOPY` are valid. One that fails reverts
     /// the execution body without invalidating the transaction.
-    PostTx = 3,
+    Assert = 3,
 }
 
 impl FrameMode {
@@ -1994,7 +1994,7 @@ impl FrameMode {
             0 => Some(FrameMode::Default),
             1 => Some(FrameMode::Verify),
             2 => Some(FrameMode::Sender),
-            3 => Some(FrameMode::PostTx),
+            3 => Some(FrameMode::Assert),
             _ => None,
         }
     }
@@ -2006,7 +2006,7 @@ impl From<FrameMode> for u8 {
             FrameMode::Default => 0,
             FrameMode::Verify => 1,
             FrameMode::Sender => 2,
-            FrameMode::PostTx => 3,
+            FrameMode::Assert => 3,
         }
     }
 }
@@ -2894,20 +2894,20 @@ impl FrameTransaction {
         // bound below rejects tx-level totals that don't fit in signed i64.
         let mut total_frame_gas: u128 = 0;
         let mut expiry_frame_count: usize = 0;
-        let mut seen_post_tx = false;
+        let mut seen_assert = false;
         for (i, frame) in self.frames.iter().enumerate() {
-            // Reject reserved execution modes (4-255). EIP-7906 adds POST_TX (3) to
+            // Reject reserved execution modes (4-255). EIP-7906 adds ASSERT (3) to
             // the modes EIP-8141 accepts.
             if FrameMode::from_u8(frame.mode).is_none() {
                 return Err(format!("Frame {i}: reserved execution mode {}", frame.mode));
             }
-            // EIP-7906: POST_TX frames form a contiguous trailing suffix, so the diff
+            // EIP-7906: ASSERT frames form a contiguous trailing suffix, so the diff
             // they observe is the transaction's final outcome.
-            if frame.mode == FrameMode::PostTx as u8 {
-                seen_post_tx = true;
-            } else if seen_post_tx {
+            if frame.mode == FrameMode::Assert as u8 {
+                seen_assert = true;
+            } else if seen_assert {
                 return Err(format!(
-                    "Frame {i}: only POST_TX frames may follow a POST_TX frame"
+                    "Frame {i}: only ASSERT frames may follow an ASSERT frame"
                 ));
             }
             // Reserved flag bits 3-7 must be zero
@@ -3000,15 +3000,15 @@ impl FrameTransaction {
             // on a non-VERIFY frame, requires a subsequent frame to batch with,
             // and that frame must be non-VERIFY too: batches never contain
             // VERIFY frames.
-            // EIP-7906 extends this to POST_TX frames: the flag is not valid on one,
+            // EIP-7906 extends this to ASSERT frames: the flag is not valid on one,
             // nor on the frame before one, so no batch contains an assertion and
             // unrolling a failed batch can never skip it.
             if frame.is_atomic_batch() {
                 if frame.mode == FrameMode::Verify as u8 {
                     return Err(format!("Frame {i}: atomic batch flag on a VERIFY frame"));
                 }
-                if frame.mode == FrameMode::PostTx as u8 {
-                    return Err(format!("Frame {i}: atomic batch flag on a POST_TX frame"));
+                if frame.mode == FrameMode::Assert as u8 {
+                    return Err(format!("Frame {i}: atomic batch flag on an ASSERT frame"));
                 }
                 match self.frames.get(i.saturating_add(1)) {
                     None => return Err(format!("Frame {i}: atomic batch flag on last frame")),
@@ -3017,9 +3017,9 @@ impl FrameTransaction {
                             "Frame {i}: atomic batch flag followed by a VERIFY frame"
                         ));
                     }
-                    Some(next) if next.mode == FrameMode::PostTx as u8 => {
+                    Some(next) if next.mode == FrameMode::Assert as u8 => {
                         return Err(format!(
-                            "Frame {i}: atomic batch flag followed by a POST_TX frame"
+                            "Frame {i}: atomic batch flag followed by an ASSERT frame"
                         ));
                     }
                     Some(_) => {}

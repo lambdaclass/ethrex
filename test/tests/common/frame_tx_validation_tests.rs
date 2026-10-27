@@ -709,8 +709,8 @@ fn keyed_nonce_access_is_charged_in_intrinsic_gas_and_in_the_floor() {
 }
 
 #[test]
-fn static_validation_enforces_the_eip_7906_post_tx_rules() {
-    const POST_TX: u8 = FrameMode::PostTx as u8;
+fn static_validation_enforces_the_eip_7906_assert_rules() {
+    const ASSERT: u8 = FrameMode::Assert as u8;
     const ATOMIC_BATCH: u8 = 0x04;
     let with = |modes_and_flags: &[(u8, u8)]| {
         let mut tx = make_test_frame_tx();
@@ -729,36 +729,43 @@ fn static_validation_enforces_the_eip_7906_post_tx_rules() {
     };
     let verify = (FrameMode::Verify as u8, APPROVE_EXECUTION_AND_PAYMENT);
     let sender = (FrameMode::Sender as u8, 0);
-    let post_tx = (POST_TX, 0);
+    let assert_frame = (ASSERT, 0);
 
     for (label, frames) in [
-        ("one trailing POST_TX frame", vec![verify, sender, post_tx]),
         (
-            "two trailing POST_TX frames",
-            vec![verify, sender, post_tx, post_tx],
+            "one trailing ASSERT frame",
+            vec![verify, sender, assert_frame],
         ),
         (
-            "approval scope on a POST_TX frame",
-            vec![verify, sender, (POST_TX, 0x03)],
+            "two trailing ASSERT frames",
+            vec![verify, sender, assert_frame, assert_frame],
+        ),
+        (
+            "approval scope on an ASSERT frame",
+            vec![verify, sender, (ASSERT, 0x03)],
         ),
     ] {
         assert!(with(&frames).is_ok(), "{label} must be statically valid");
     }
     for (label, frames, reason) in [
         (
-            "a SENDER frame after a POST_TX frame",
-            vec![verify, post_tx, sender],
-            "only POST_TX frames may follow",
+            "a SENDER frame after an ASSERT frame",
+            vec![verify, assert_frame, sender],
+            "only ASSERT frames may follow",
         ),
         (
-            "the batch flag on a POST_TX frame",
-            vec![verify, (POST_TX, ATOMIC_BATCH), post_tx],
-            "atomic batch flag on a POST_TX frame",
+            "the batch flag on an ASSERT frame",
+            vec![verify, (ASSERT, ATOMIC_BATCH), assert_frame],
+            "atomic batch flag on an ASSERT frame",
         ),
         (
-            "a batch reaching into a POST_TX frame",
-            vec![verify, (FrameMode::Sender as u8, ATOMIC_BATCH), post_tx],
-            "followed by a POST_TX frame",
+            "a batch reaching into an ASSERT frame",
+            vec![
+                verify,
+                (FrameMode::Sender as u8, ATOMIC_BATCH),
+                assert_frame,
+            ],
+            "followed by an ASSERT frame",
         ),
         ("mode 4", vec![verify, (4, 0)], "reserved execution mode"),
     ] {

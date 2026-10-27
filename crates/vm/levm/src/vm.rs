@@ -960,9 +960,9 @@ pub fn validate_frame_signatures(
 /// Exposed (hidden) for the `ethrex-test` crate's frame-batch unit tests; not
 /// part of the stable public API.
 #[doc(hidden)]
-/// EIP-7906: the rollback point a failing POST_TX frame returns to, captured when
+/// EIP-7906: the rollback point a failing ASSERT frame returns to, captured when
 /// the validation prefix ends, that is when the frame that sets the payer completes.
-/// The frames after it are the execution body. A failing POST_TX frame restores
+/// The frames after it are the execution body. A failing ASSERT frame restores
 /// everything captured here, so the transaction keeps the prefix's effects, the
 /// payment included, and loses the body's.
 struct ExecutionBody {
@@ -1127,7 +1127,7 @@ impl<'a> VM<'a> {
     ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
         // EIP-7906: install the transaction prestate for a transaction that can run
-        // TXTRACE / TXDIFF / EVENTDATACOPY, and drop the previous transaction's map
+        // TXTRACE / EVENTDATACOPY, and drop the previous transaction's map
         // for every other one. It must precede `get_tx_callee` and every other
         // account resolution, so that the transaction's first touch is the one
         // recorded.
@@ -1136,7 +1136,7 @@ impl<'a> VM<'a> {
                 if frame_tx
                     .frames
                     .iter()
-                    .any(|frame| frame.execution_mode() == FrameMode::PostTx)))
+                    .any(|frame| frame.execution_mode() == FrameMode::Assert)))
         .then(crate::db::gen_db::CacheDB::default);
 
         let mut substate = Substate::initialize(&env, tx)?;
@@ -2116,19 +2116,19 @@ impl<'a> VM<'a> {
         // gas those frames accumulated.
         let mut state_gas_used_at_batch_entry: i64 = 0;
         let mut skip_until_batch_end: Option<usize> = None; // skip remaining frames in a failed batch
-        // EIP-7906: a failing POST_TX frame reverts the execution body and skips the
-        // frames after it. Only a transaction carrying POST_TX frames captures the
+        // EIP-7906: a failing ASSERT frame reverts the execution body and skips the
+        // frames after it. Only a transaction carrying ASSERT frames captures the
         // body's rollback point.
-        let has_post_tx_frames = frame_tx
+        let has_assert_frames = frame_tx
             .frames
             .iter()
-            .any(|frame| frame.execution_mode() == FrameMode::PostTx);
+            .any(|frame| frame.execution_mode() == FrameMode::Assert);
         let mut execution_body: Option<ExecutionBody> = None;
         let mut skip_remaining_frames = false;
 
         // Execute frames sequentially
         for (frame_idx, frame) in frame_tx.frames.iter().enumerate() {
-            // EIP-7906: a frame after a failed POST_TX frame never runs. Like a
+            // EIP-7906: a frame after a failed ASSERT frame never runs. Like a
             // skipped batch frame it reports status SKIPPED and no gas, so its
             // allotted gas is refunded.
             if skip_remaining_frames {
@@ -2248,9 +2248,9 @@ impl<'a> VM<'a> {
             let (caller, is_static) = match frame.execution_mode() {
                 FrameMode::Default => (entry_point, false),
                 FrameMode::Verify => (entry_point, true),
-                // EIP-7906: a POST_TX frame is called from ENTRY_POINT with
+                // EIP-7906: an ASSERT frame is called from ENTRY_POINT with
                 // STATICCALL semantics.
-                FrameMode::PostTx => (entry_point, true),
+                FrameMode::Assert => (entry_point, true),
                 FrameMode::Sender => {
                     // SENDER mode requires sender_approved
                     let ctx = self.frame_tx_context.as_ref().ok_or(VMError::Internal(
@@ -2755,14 +2755,14 @@ impl<'a> VM<'a> {
                 frame_logs,
             ));
 
-            // EIP-7906: a failing POST_TX frame reverts the whole execution body,
+            // EIP-7906: a failing ASSERT frame reverts the whole execution body,
             // overriding any batch, and ends frame execution. The transaction stays
             // valid and pays for the gas used up to here. Body frames keep their
             // status and execution gas, with empty logs and no state gas, as for an
-            // unrolled batch. No batch can be open: neither a POST_TX frame nor the
+            // unrolled batch. No batch can be open: neither an ASSERT frame nor the
             // frame before one may carry the batch flag. Without a body there is
             // no payer, and the transaction is invalid at the end of the loop.
-            if frame.execution_mode() == FrameMode::PostTx && !frame_success {
+            if frame.execution_mode() == FrameMode::Assert && !frame_success {
                 if let Some(body) = execution_body.take() {
                     self.substate.revert_backup(); // body-level snapshot
                     crate::utils::restore_cache_state(self.db, body.backup)?;
@@ -2879,9 +2879,9 @@ impl<'a> VM<'a> {
             }
 
             // EIP-7906: the validation prefix ends with the frame that sets the
-            // payer. Capture the rollback point a failing POST_TX frame returns to.
+            // payer. Capture the rollback point a failing ASSERT frame returns to.
             // Approval scope is banned on batch frames, so no batch is open here.
-            if has_post_tx_frames
+            if has_assert_frames
                 && execution_body.is_none()
                 && !in_atomic_batch
                 && self
@@ -2914,7 +2914,7 @@ impl<'a> VM<'a> {
             self.substate.clear_transient_storage();
         }
 
-        // EIP-7906: no POST_TX frame failed, so the execution body stands.
+        // EIP-7906: no ASSERT frame failed, so the execution body stands.
         if execution_body.is_some() {
             self.substate.commit_backup(); // body-level snapshot
         }
@@ -3361,11 +3361,11 @@ impl<'a> VM<'a> {
             let (caller, is_static) = match frame.execution_mode() {
                 FrameMode::Default => (entry_point, false),
                 FrameMode::Verify => (entry_point, true),
-                FrameMode::Sender | FrameMode::PostTx => {
-                    // Structural rules exclude SENDER and POST_TX frames from the
+                FrameMode::Sender | FrameMode::Assert => {
+                    // Structural rules exclude SENDER and ASSERT frames from the
                     // prefix.
                     return Err(VMError::Internal(InternalError::Custom(
-                        "SENDER or POST_TX frame in validation prefix".to_string(),
+                        "SENDER or ASSERT frame in validation prefix".to_string(),
                     )));
                 }
             };

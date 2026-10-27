@@ -234,7 +234,7 @@ pub struct GeneralizedDatabase {
     pub precompile_moves: Option<Arc<PrecompileMoves>>,
     /// EIP-7906 transaction prestate: each account and slot as it was when the
     /// current transaction first touched it. Set only for a transaction that can run
-    /// the EIP-7906 opcodes (a frame transaction with a POST_TX frame) and reset by
+    /// the EIP-7906 opcodes (a frame transaction with an ASSERT frame) and reset by
     /// every `VM::new`, so it never spans two transactions.
     ///
     /// It is kept apart from `initial_accounts_state`, whose scope is the block or

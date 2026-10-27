@@ -1,6 +1,6 @@
 //! EIP-7906 transaction assertions, executed by the VM the way a block executes
-//! them: `POST_TX` frames observe the transaction's diff through `TXTRACE`, `TXDIFF`
-//! and `EVENTDATACOPY`, and one that fails reverts the execution body while the
+//! them: `ASSERT` frames observe the transaction's diff through `TXTRACE` and
+//! `EVENTDATACOPY`, and one that fails reverts the execution body while the
 //! transaction stays valid.
 
 use bytes::Bytes;
@@ -9,7 +9,11 @@ use ethrex_common::types::{
     Account, BlockHeader, Code, FRAME_RECEIPT_STATUS_FAILURE, FRAME_RECEIPT_STATUS_SKIPPED,
     FRAME_RECEIPT_STATUS_SUCCESS, Fork, Frame, FrameMode, FrameTransaction, Transaction,
 };
-use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH, utils::keccak};
+use ethrex_common::{
+    Address, H256, U256,
+    constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH},
+    utils::keccak,
+};
 use ethrex_crypto::NativeCrypto;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::environment::{EVMConfig, Environment};
@@ -37,20 +41,23 @@ const COUNTER_CODE: &[u8] = &[
 const COUNTER_SLOT: u64 = 1;
 const TOPIC0: u64 = 0x77;
 const TOPIC1: u64 = 0x88;
-/// Runs `TXTRACE(0, 0)` and stops: it halts unless it runs inside a POST_TX frame.
+/// Runs `TXTRACE(0, 0)` and stops: it halts unless it runs inside an ASSERT frame.
 const TXTRACE_PROBE: Address = Address::repeat_byte(0xD0);
 const TXTRACE_PROBE_CODE: &[u8] = &[0x60, 0x00, 0x60, 0x00, 0xB6, 0x00];
-/// Never touched by the transaction: a live-read control.
-const BYSTANDER: Address = Address::repeat_byte(0xB1);
-const BYSTANDER_BALANCE: u64 = 5;
-const BYSTANDER_SLOT_VALUE: u64 = 9;
+/// `FACTORY` runs `CREATE` with initcode that deploys the one-byte runtime `STOP`.
+const FACTORY: Address = Address::repeat_byte(0xFA);
+const FACTORY_CODE: &[u8] = &[
+    0x69, 0x60, 0x00, 0x60, 0x00, 0x53, 0x60, 0x01, 0x60, 0x00, 0xf3, // PUSH10 initcode
+    0x60, 0x00, 0x52, // MSTORE(0, initcode)
+    0x60, 0x0a, 0x60, 0x16, 0x60, 0x00, 0xf0, // CREATE(0, 22, 10)
+    0x00,
+];
 const ASSERTION: Address = Address::repeat_byte(0xA5);
 /// EIP-8037 state gas for one zero-to-nonzero storage write.
 const STORAGE_SET_STATE_GAS: u64 = 64 * 1530;
 
 const TXTRACE: u8 = 0xB6;
-const TXDIFF: u8 = 0xB7;
-const EVENTDATACOPY: u8 = 0xB8;
+const EVENTDATACOPY: u8 = 0xB7;
 
 fn push32(code: &mut Vec<u8>, value: U256) {
     code.push(0x7f);
@@ -62,15 +69,6 @@ fn txtrace(param: u8, index: u64) -> Vec<u8> {
     let mut code = Vec::new();
     push32(&mut code, U256::from(index));
     code.extend_from_slice(&[0x60, param, TXTRACE]);
-    code
-}
-
-/// Code that leaves `TXDIFF(param, key, index)` on the stack.
-fn txdiff(param: u8, key: U256, index: u64) -> Vec<u8> {
-    let mut code = Vec::new();
-    push32(&mut code, U256::from(index));
-    push32(&mut code, key);
-    code.extend_from_slice(&[0x60, param, TXDIFF]);
     code
 }
 
@@ -129,15 +127,7 @@ fn chain(assertion: Bytes) -> GeneralizedDatabase {
         TXTRACE_PROBE,
         account(0, TXTRACE_PROBE_CODE, FxHashMap::default()),
     );
-    let mut bystander_storage = FxHashMap::default();
-    bystander_storage.insert(
-        H256::from_low_u64_be(COUNTER_SLOT),
-        U256::from(BYSTANDER_SLOT_VALUE),
-    );
-    cache.insert(
-        BYSTANDER,
-        account(BYSTANDER_BALANCE, &[0x00], bystander_storage),
-    );
+    cache.insert(FACTORY, account(0, FACTORY_CODE, FxHashMap::default()));
     cache.insert(ASSERTION, account(0, &assertion, FxHashMap::default()));
     GeneralizedDatabase::new_with_account_state(Arc::new(store), cache)
 }
@@ -162,8 +152,8 @@ fn bump_counter() -> Frame {
     frame(FrameMode::Sender, COUNTER, STORAGE_SET_STATE_GAS)
 }
 
-fn assert_post_tx() -> Frame {
-    frame(FrameMode::PostTx, ASSERTION, 0)
+fn assert_frame() -> Frame {
+    frame(FrameMode::Assert, ASSERTION, 0)
 }
 
 fn frame_tx(frames: Vec<Frame>, nonce_seq: u64) -> FrameTransaction {
@@ -225,12 +215,12 @@ fn counter_value(db: &GeneralizedDatabase) -> U256 {
         .unwrap_or_default()
 }
 
-/// Runs `[VERIFY, SENDER -> COUNTER, POST_TX -> assertion]` and returns the report.
+/// Runs `[VERIFY, SENDER -> COUNTER, ASSERT -> assertion]` and returns the report.
 fn run_assertion(checks: &[(Vec<u8>, U256)]) -> ExecutionReport {
     let mut db = chain(assertion_code(checks));
     execute(
         &mut db,
-        frame_tx(vec![verify(), bump_counter(), assert_post_tx()], 0),
+        frame_tx(vec![verify(), bump_counter(), assert_frame()], 0),
     )
     .expect("the transaction is valid")
 }
@@ -247,7 +237,7 @@ fn assert_holds(checks: &[(Vec<u8>, U256)]) {
 #[test]
 fn txtrace_enumerates_the_transaction_diff() {
     let max_cost = {
-        let tx = frame_tx(vec![verify(), bump_counter(), assert_post_tx()], 0);
+        let tx = frame_tx(vec![verify(), bump_counter(), assert_frame()], 0);
         tx.fee_budget(U256::from(BASE_FEE), U256::zero())
             .expect("the budget covers the base fee")
             .max_cost
@@ -255,78 +245,94 @@ fn txtrace_enumerates_the_transaction_diff() {
     assert_holds(&[
         // The payer's escrow is the only balance change before settlement.
         (txtrace(0x00, 0), U256::from(1)),
-        (txtrace(0x03, 0), word(SENDER)),
-        // The counter's slot, before and after.
+        (txtrace(0x04, 0), word(SENDER)),
+        // The counter's slot: address, before, after, key.
         (txtrace(0x01, 0), U256::from(1)),
-        (txtrace(0x06, 0), word(COUNTER)),
-        (txtrace(0x07, 0), U256::from(COUNTER_SLOT)),
+        (txtrace(0x07, 0), word(COUNTER)),
         (txtrace(0x08, 0), U256::zero()),
         (txtrace(0x09, 0), U256::one()),
+        (txtrace(0x0A, 0), U256::from(COUNTER_SLOT)),
+        // No code changed.
         (txtrace(0x02, 0), U256::zero()),
+        // The payment approval incremented the sender's account nonce.
+        (txtrace(0x03, 0), U256::from(1)),
+        (txtrace(0x0E, 0), word(SENDER)),
+        (txtrace(0x0F, 0), U256::zero()),
+        (txtrace(0x10, 0), U256::one()),
         // The counter's event.
-        (txtrace(0x0C, 0), U256::from(1)),
-        (txtrace(0x0D, 0), word(COUNTER)),
-        (txtrace(0x0E, 0), U256::from(2)),
-        (txtrace(0x0F, 0), U256::from(TOPIC0)),
-        (txtrace(0x10, 0), U256::from(TOPIC1)),
-        (txtrace(0x13, 0), U256::from(32)),
+        (txtrace(0x11, 0), U256::from(1)),
+        (txtrace(0x12, 0), word(COUNTER)),
+        (txtrace(0x13, 0), U256::from(2)),
+        (txtrace(0x14, 0), U256::from(TOPIC0)),
+        (txtrace(0x15, 0), U256::from(TOPIC1)),
+        (txtrace(0x18, 0), U256::from(32)),
         // Gas payment.
-        (txtrace(0x14, 0), max_cost),
-        (txtrace(0x15, 0), word(SENDER)),
+        (txtrace(0x19, 0), max_cost),
+        (txtrace(0x1A, 0), word(SENDER)),
     ]);
 }
 
 #[test]
-fn txdiff_looks_up_keys_and_views() {
-    let counter = word(COUNTER);
-    let slot = U256::from(COUNTER_SLOT);
-    assert_holds(&[
-        (txdiff_slot(0x00, counter, slot), U256::zero()),
-        (txdiff_slot(0x01, counter, slot), U256::one()),
-        // An untouched key reads the live value before and after.
+fn a_created_contract_is_a_code_and_a_nonce_change() {
+    // The body runs `FACTORY`, whose `CREATE` deploys `STOP` at a fresh address.
+    let mut db = chain(assertion_code(&[
+        (txtrace(0x02, 0), U256::one()),
+        // A missing account has the empty-code hash.
         (
-            txdiff_slot(0x00, word(BYSTANDER), slot),
-            U256::from(BYSTANDER_SLOT_VALUE),
+            txtrace(0x0C, 0),
+            U256::from_big_endian(EMPTY_KECCAK_HASH.as_bytes()),
         ),
         (
-            txdiff_slot(0x01, word(BYSTANDER), slot),
-            U256::from(BYSTANDER_SLOT_VALUE),
+            txtrace(0x0D, 0),
+            U256::from_big_endian(keccak([0x00u8]).as_bytes()),
         ),
-        (
-            txdiff(0x02, word(BYSTANDER), 0),
-            U256::from(BYSTANDER_BALANCE),
+        // The sender's approval, the factory's `CREATE` and the new contract.
+        (txtrace(0x03, 0), U256::from(3)),
+    ]));
+    let report = execute(
+        &mut db,
+        frame_tx(
+            vec![
+                verify(),
+                frame(FrameMode::Sender, FACTORY, 1_000_000),
+                assert_frame(),
+            ],
+            0,
         ),
-        (
-            txdiff(0x03, word(BYSTANDER), 0),
-            U256::from(BYSTANDER_BALANCE),
-        ),
-        (
-            txdiff(0x04, counter, 0),
-            U256::from_big_endian(keccak(COUNTER_CODE).as_bytes()),
-        ),
-        // Per-address and per-topic views map to the global tables.
-        (txdiff(0x06, counter, 0), U256::one()),
-        (txdiff(0x07, counter, 0), U256::zero()),
-        (txdiff(0x08, counter, 0), U256::one()),
-        (txdiff(0x09, counter, 0), U256::zero()),
-        (txdiff(0x0B, U256::from(TOPIC1), 0), U256::one()),
-        (txdiff(0x0C, U256::from(TOPIC1), 0), U256::zero()),
-        // `topic0` is the event signature and is not a participant.
-        (txdiff(0x0B, U256::from(TOPIC0), 0), U256::zero()),
-        // Change flags: storage for the counter, nonce and balance for the sender.
-        (txdiff(0x0A, counter, 0), U256::from(0b0100)),
-        (txdiff(0x0A, word(SENDER), 0), U256::from(0b0011)),
-        (txdiff(0x0A, word(BYSTANDER), 0), U256::zero()),
-    ]);
+    )
+    .expect("the transaction is valid");
+    assert_eq!(statuses(&report), vec![FRAME_RECEIPT_STATUS_SUCCESS; 3]);
 }
 
-/// `TXDIFF(param, address, slot)`: the slot is the third operand.
-fn txdiff_slot(param: u8, address: U256, slot: U256) -> Vec<u8> {
-    let mut code = Vec::new();
-    push32(&mut code, slot);
-    push32(&mut code, address);
-    code.extend_from_slice(&[0x60, param, TXDIFF]);
-    code
+#[test]
+fn a_keyed_sender_is_not_a_nonce_change() {
+    // A keyed nonce lives in NONCE_MANAGER storage, so the sender's account nonce,
+    // and with it the nonce table, stays as it was.
+    let mut db = chain(assertion_code(&[
+        (txtrace(0x03, 0), U256::zero()),
+        (txtrace(0x01, 0), U256::from(2)),
+    ]));
+    let mut tx = frame_tx(
+        vec![
+            frame(FrameMode::Verify, SENDER, STORAGE_SET_STATE_GAS),
+            bump_counter(),
+            assert_frame(),
+        ],
+        0,
+    );
+    tx.nonce_keys = vec![U256::one()];
+    let report = execute(&mut db, tx).expect("the transaction is valid");
+    assert_eq!(statuses(&report), vec![FRAME_RECEIPT_STATUS_SUCCESS; 3]);
+}
+
+#[test]
+fn the_freed_opcode_and_an_undefined_param_halt() {
+    // 0xB8 held EVENTDATACOPY before TXDIFF was dropped; it is unassigned now.
+    let freed = run_assertion(&[(vec![0xB8], U256::zero())]);
+    assert_eq!(statuses(&freed)[2], FRAME_RECEIPT_STATUS_FAILURE);
+    // 0x1A is the last TXTRACE param.
+    let undefined = run_assertion(&[(txtrace(0x1B, 0), U256::zero())]);
+    assert_eq!(statuses(&undefined)[2], FRAME_RECEIPT_STATUS_FAILURE);
 }
 
 #[test]
@@ -372,7 +378,7 @@ fn a_failing_assertion_reverts_the_execution_body_and_keeps_the_transaction() {
     let mut db = chain(assertion_code(&[(txtrace(0x01, 0), U256::from(2))]));
     let report = execute(
         &mut db,
-        frame_tx(vec![verify(), bump_counter(), assert_post_tx()], 0),
+        frame_tx(vec![verify(), bump_counter(), assert_frame()], 0),
     )
     .expect("a failed assertion leaves the transaction valid");
 
@@ -404,7 +410,7 @@ fn frames_after_a_failed_assertion_are_skipped() {
     let report = execute(
         &mut db,
         frame_tx(
-            vec![verify(), bump_counter(), assert_post_tx(), assert_post_tx()],
+            vec![verify(), bump_counter(), assert_frame(), assert_frame()],
             0,
         ),
     )
@@ -422,7 +428,7 @@ fn frames_after_a_failed_assertion_are_skipped() {
 }
 
 #[test]
-fn the_opcodes_halt_outside_a_post_tx_frame() {
+fn the_opcodes_halt_outside_an_assert_frame() {
     let mut db = chain(assertion_code(&[]));
     let report = execute(
         &mut db,
@@ -439,7 +445,7 @@ fn the_opcodes_halt_outside_a_post_tx_frame() {
 }
 
 #[test]
-fn approve_in_a_post_tx_frame_halts_and_reverts_the_body() {
+fn approve_in_an_assert_frame_halts_and_reverts_the_body() {
     let mut db = chain(assertion_code(&[]));
     let report = execute(
         &mut db,
@@ -447,7 +453,7 @@ fn approve_in_a_post_tx_frame_halts_and_reverts_the_body() {
             vec![
                 verify(),
                 bump_counter(),
-                frame(FrameMode::PostTx, SENDER, 0),
+                frame(FrameMode::Assert, SENDER, 0),
             ],
             0,
         ),
@@ -461,16 +467,14 @@ fn approve_in_a_post_tx_frame_halts_and_reverts_the_body() {
 fn the_prestate_includes_earlier_transactions() {
     // The first transaction bumps the counter to 1 in the same database; the second
     // bumps it to 2 and must see 1 as the value before it ran.
-    let slot = U256::from(COUNTER_SLOT);
     let mut db = chain(assertion_code(&[
-        (txdiff_slot(0x00, word(COUNTER), slot), U256::one()),
-        (txdiff_slot(0x01, word(COUNTER), slot), U256::from(2)),
         (txtrace(0x08, 0), U256::one()),
+        (txtrace(0x09, 0), U256::from(2)),
     ]));
     execute(&mut db, frame_tx(vec![verify(), bump_counter()], 0)).expect("first tx is valid");
     let report = execute(
         &mut db,
-        frame_tx(vec![verify(), bump_counter(), assert_post_tx()], 1),
+        frame_tx(vec![verify(), bump_counter(), assert_frame()], 1),
     )
     .expect("second tx is valid");
     assert_eq!(statuses(&report), vec![FRAME_RECEIPT_STATUS_SUCCESS; 3]);
