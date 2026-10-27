@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-10-20
+
+- Faster DIV, SDIV, MOD, SMOD, ADDMOD, MULMOD, EXP and SIGNEXTEND: Knuth division over fixed-size words with one hardware `div` per digit on x86-64, closed-form EXP powers, and results built limb by limb with constant indexes: DIV 48.0 → 17.2 ns, MOD of a 127-bit value 54.7 → 25.1 ns, ADDMOD 65.3 → 27.6 ns and MULMOD 118.0 → 76.1 ns per opcode [#7442](https://github.com/lambdaclass/ethrex/pull/7442)
+
 ### 2026-10-14
 
 - Commit trie layers that are already final without a `STATE_HISTORY` journal entry and without the pre-image read per trie node that entry needs: on an L2 and on a finalizing L1 the journal stays empty and finality pruning writes no range deletes, where before every commit wrote an entry only for the next finality advance to range-delete it [#7377](https://github.com/lambdaclass/ethrex/pull/7377)
