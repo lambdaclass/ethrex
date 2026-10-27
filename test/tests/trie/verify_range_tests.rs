@@ -175,8 +175,8 @@ proptest! {
     }
 
     #[test]
-    // Two Edge Proofs, first and last keys dont exist
-    fn proptest_verify_range_nonexistant_edge_keys(data in btree_set(vec(1..u8::MAX-1, 32), 200), start in 1_usize..=100_usize, end in 101..199_usize) {
+    // Two edge proofs where the first and last keys do not exist
+    fn proptest_verify_range_nonexistent_edge_keys(data in btree_set(vec(1..u8::MAX-1, 32), 200), start in 1_usize..=100_usize, end in 101..199_usize) {
         let data = data.into_iter().collect::<Vec<_>>();
         // Build trie
         let mut trie = Trie::new_temp();
