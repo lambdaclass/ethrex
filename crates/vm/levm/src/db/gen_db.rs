@@ -357,7 +357,9 @@ impl GeneralizedDatabase {
 
         // One lookup on the hot path (every account access of an executing tx lands here). The
         // borrow checker rejects returning the `get_mut` borrow from one branch while the other
-        // branches keep using `self`, so the reference goes through a raw pointer.
+        // branches keep using `self`, so the reference goes through a raw pointer. This is the
+        // known limitation on conditionally returned borrows (NLL problem case #3); once the
+        // Polonius borrow checker ships, the plain `if let` compiles and the `unsafe` can go.
         if let Some(account) = self.current_accounts_state.get_mut(&address) {
             let account: *mut LevmAccount = account;
             // SAFETY: `account` comes from a live `&mut` into `current_accounts_state`, and
