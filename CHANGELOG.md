@@ -19,6 +19,7 @@
 ### 2026-09-30
 
 - Evict a random bytecode cache entry instead of the least recently used one, and raise the budget to 2 GiB (about 29k contracts of 64 KiB; `--code-cache-size` overrides it): on Plataberget blocks 297947–299844, which keep reusing a growing set of 16k+ distinct 64 KiB contracts, the LRU fell from 87% to 68% hits and blocks with two or more such transactions went from 30 to 44 ms, while with this change they stay at 19–21 ms with every code read hitting the cache, in replay; mainnet is unchanged (-0.29%, no evictions) [#7350](https://github.com/lambdaclass/ethrex/pull/7350)
+- Build blst with runtime ISA dispatch (`blst/portable`, `c-kzg/portable`): `-Ctarget-cpu=x86-64-v3` has no ADX, so blst had compiled only its MULQ arithmetic and never used MULX on hosts that support it; Plataberget blocks 287100–287500, dominated by point-evaluation calls, go from 376.7 to 332.8 ms per block in replay, and EIP-2537 operations are 9–14% faster [#7351](https://github.com/lambdaclass/ethrex/pull/7351)
 
 ### 2026-09-29
 
