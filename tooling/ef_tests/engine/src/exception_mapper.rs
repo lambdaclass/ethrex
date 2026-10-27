@@ -73,6 +73,9 @@ const PATTERNS: &[Entry] = &[
         text: "Invalid frame transaction: VERIFY frame did not call APPROVE or payer not approved" },
     Entry { canonical: "TransactionException.GASPRICE_OVERFLOW", kind: Kind::Sub,
         text: "Error decoding field 'max_fee_per_gas'" },
+    // EIP-8141's frame transaction fee budget.
+    Entry { canonical: "TransactionException.GASPRICE_OVERFLOW", kind: Kind::Sub,
+        text: "Error decoding field 'max_fee'" },
     Entry { canonical: "TransactionException.PRIORITY_OVERFLOW", kind: Kind::Sub,
         text: "Error decoding field 'max_priority_fee_per_gas'" },
 
