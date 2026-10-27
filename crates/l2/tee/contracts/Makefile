@@ -3,6 +3,7 @@ DEPLOYMENT_PATH := deploydeps/automata-dcap-attestation/evm/deployment
 
 ETHREX_TDX_DEV_MODE ?= false
 ON_CHAIN_PROPOSER ?= 0x0
+AUTHORIZED_SEQUENCER ?= 0x0
 
 # Pinned revisions for every cloned dependency. These clones are gitignored, so
 # what is recorded here is the only in-tree record of what a deployed verifier was
@@ -106,7 +107,7 @@ deploy: $(SOLC_OUT)/TDXVerifier.bin
 	$(eval CONTRACT_BIN := $(shell cat $(SOLC_OUT)/TDXVerifier.bin))
 	$(eval DCAP_ADDRESS := $(shell cat ${DEPLOYMENT_PATH}/AutomataDcapAttestationFee))
 	rex deploy --print-address $(CONTRACT_BIN) 0 $(PRIVATE_KEY) -- \
-		"constructor(address,address,bool)" $(DCAP_ADDRESS) $(ON_CHAIN_PROPOSER) $(ETHREX_TDX_DEV_MODE) \
+		"constructor(address,address,address,bool)" $(DCAP_ADDRESS) $(ON_CHAIN_PROPOSER) $(AUTHORIZED_SEQUENCER) $(ETHREX_TDX_DEV_MODE) \
 		> ${DEPLOYMENT_PATH}/TDXVerifier
 
 deploy-deps: deploy-dcap setup-pccs-ca
