@@ -7,8 +7,9 @@
 //!   bytes, odd and even moduli of 0 to 192 bytes with the 64-bit limb boundaries favored, and
 //!   bases at or around multiples of the modulus. One case in eight is a modular inversion
 //!   written as an exponentiation, `base^(p - 2) mod p` for a well-known 256-bit prime `p` (the
-//!   BN254, secp256k1, P-256 and BLS12-381 fields and group orders), with near-miss exponents,
-//!   bases at multiples of `p` and zero-padded operands.
+//!   BN254 base and scalar fields, the secp256k1 and P-256 base fields and group orders, and the
+//!   BLS12-381 scalar field), with near-miss exponents, bases at multiples of `p` and zero-padded
+//!   operands.
 //! - keccak: the one-shot `keccak_hash` and the streaming `Keccak256`, fed in random splits that
 //!   favor cuts at and around the 136-byte rate, both against `tiny-keccak`.
 //!

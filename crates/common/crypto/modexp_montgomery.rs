@@ -25,9 +25,9 @@ pub(crate) fn modexp(base: &[u8], exp: &[u8], modulus: &[u8]) -> Option<Vec<u8>>
     // the window table costs more than a whole generic call with a short
     // exponent. Both bounds come from timing the two paths against each other.
     match (modulus_digits.len(), bit_length(exp)) {
-        (24..=32, 32..) => pow::<4>(base, exp, modulus_digits, modulus.len()),
-        (60..=64, 64..) => pow::<8>(base, exp, modulus_digits, modulus.len()),
-        (128, 256..) => pow::<16>(base, exp, modulus_digits, modulus.len()),
+        (20..=32, 8..) => pow::<4>(base, exp, modulus_digits, modulus.len()),
+        (56..=64, 24..) => pow::<8>(base, exp, modulus_digits, modulus.len()),
+        (120..=128, 128..) => pow::<16>(base, exp, modulus_digits, modulus.len()),
         _ => None,
     }
 }
@@ -223,6 +223,7 @@ impl<const N: usize> Montgomery<N> {
         // R^2 mod m, with R = 2^(64 * N): start from 2 in Montgomery form, 2R mod m, and square
         // it log2(64 * N) times. Each Montgomery squaring maps the form of x to the form of x^2,
         // so the result is the form of 2^(64 * N) = R, which is R^2 mod m.
+        const { assert!((64 * N).is_power_of_two()) };
         let mut x = mont.r_mod_m();
         double_mod(&mut x, &modulus);
         for _ in 0..(64 * N).trailing_zeros() {

@@ -14,7 +14,7 @@
 
 ### 2026-10-22
 
-- Answer MODEXP inversions modulo well-known 256-bit primes (base^(p − 2) mod p for the BN254, secp256k1, P-256 and BLS12-381 fields and group orders) with a safegcd inversion, and build the Montgomery constants with 8 squarings instead of 512 doublings: the dominant mainnet MODEXP call 4.09 → 0.73 µs [#7456](https://github.com/lambdaclass/ethrex/pull/7456)
+- Answer MODEXP inversions modulo well-known 256-bit primes (base^(p − 2) mod p for the BN254 base and scalar fields, the secp256k1 and P-256 base fields and group orders, and the BLS12-381 scalar field) with a safegcd inversion, and build the Montgomery constants with 8 squarings instead of 512 doublings: the dominant mainnet MODEXP call 4.09 → 0.73 µs [#7456](https://github.com/lambdaclass/ethrex/pull/7456)
 
 ### 2026-10-20
 
