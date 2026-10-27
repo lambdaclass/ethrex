@@ -6,11 +6,11 @@ use ethrex_common::U256;
 use ethrex_common::types::Account;
 use ethrex_common::types::Code;
 use ethrex_common::types::CodeMetadata;
-#[cfg(feature = "rayon")]
-use ethrex_common::types::block_access_list::SlotChange;
 use ethrex_common::types::block_access_list::{
     BalAddressIndex, BlockAccessList, BlockAccessListRecorder,
 };
+#[cfg(feature = "rayon")]
+use ethrex_common::types::block_access_list::{CodeChange, SlotChange};
 use ethrex_common::utils::ZERO_U256;
 
 use super::Database;
@@ -80,7 +80,7 @@ pub fn seed_one_address_info_from_bal(
             .code_changes
             .get(code_pos.saturating_sub(1))
             .ok_or(InternalError::AccountNotFound)?;
-        Some(code_from_bal(&entry.new_code))
+        Some(code_from_bal(entry))
     } else {
         None
     };
@@ -190,14 +190,20 @@ pub fn seed_one_storage_slot_from_bal(
     post_value_at_or_before(sc, max_idx)
 }
 
-/// Compute code hash and optional `Code` object from raw bytecode in a BAL entry.
+/// Compute code hash and optional `Code` object from a BAL code change.
+///
+/// An EIP-8298 adoption carries no bytecode, so it yields only the hash: the code is
+/// in the pre-block state, or in [`BlockAccessList::adopted_codes`] when an earlier
+/// change of the block deposited it.
 #[cfg(feature = "rayon")]
-pub fn code_from_bal(new_code: &bytes::Bytes) -> (H256, Option<Code>) {
+pub fn code_from_bal(change: &CodeChange) -> (H256, Option<Code>) {
     use ethrex_common::constants::EMPTY_KECCAK_HASH;
-    if new_code.is_empty() {
+    if let Some(code_hash) = change.new_code_hash {
+        (code_hash, None)
+    } else if change.new_code.is_empty() {
         (*EMPTY_KECCAK_HASH, None)
     } else {
-        let code_obj = Code::from_bytecode(new_code.clone(), &ethrex_crypto::NativeCrypto);
+        let code_obj = Code::from_bytecode(change.new_code.clone(), &ethrex_crypto::NativeCrypto);
         let hash = code_obj.hash;
         (hash, Some(code_obj))
     }

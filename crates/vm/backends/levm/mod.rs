@@ -695,13 +695,7 @@ impl LEVM {
                 Err(parallel_err) => {
                     let last_tx_idx =
                         u32::try_from(block.body.transactions.len()).unwrap_or(u32::MAX);
-                    if Self::seed_db_from_bal(
-                        db,
-                        &bal,
-                        last_tx_idx,
-                        &validation_index.accounts_by_min_index,
-                    )
-                    .is_ok()
+                    if Self::seed_db_from_bal(db, &bal, last_tx_idx, &validation_index).is_ok()
                         && let VMType::L1 = vm_type
                         && let Err(e @ EvmError::SystemContractCallFailed(_)) =
                             extract_all_requests_levm(&[], db, &block.header, vm_type, crypto)
@@ -718,12 +712,7 @@ impl LEVM {
             // withdrawal balances (process_withdrawals handles those below).
             let last_tx_idx = u32::try_from(block.body.transactions.len()).unwrap_or(u32::MAX);
             // Eager seed retained: lazy_bal cursor is per-tx only; outer DB has no cursor.
-            Self::seed_db_from_bal(
-                db,
-                &bal,
-                last_tx_idx,
-                &validation_index.accounts_by_min_index,
-            )?;
+            Self::seed_db_from_bal(db, &bal, last_tx_idx, &validation_index)?;
 
             let withdrawal_bal_idx = u32::try_from(block.body.transactions.len())
                 .map(|n| n.saturating_add(1))
@@ -1113,6 +1102,7 @@ impl LEVM {
         // Propagating it here would let a prefetch turn into a block-processing error.
         let _ = store.prefetch_accounts(&write_addrs);
 
+        let adopted_codes = bal.adopted_codes();
         for acct_changes in bal.accounts() {
             let addr = acct_changes.address;
 
@@ -1144,9 +1134,14 @@ impl LEVM {
                 .map(|c| c.post_nonce)
                 .unwrap_or(prestate.nonce);
 
-            // Final code: last entry or prestate
+            // Final code: last entry or prestate. An EIP-8298 adoption carries the
+            // bytecode the block itself deposits, which its depositor may no longer hold.
             let (code_hash, code) = if let Some(c) = acct_changes.code_changes.last() {
-                code_from_bal(&c.new_code)
+                let (code_hash, code) = code_from_bal(c);
+                (
+                    code_hash,
+                    code.or_else(|| adopted_codes.get(&code_hash).cloned()),
+                )
             } else {
                 (prestate.code_hash, None)
             };
@@ -1298,11 +1293,11 @@ impl LEVM {
                     )));
                 }
             }
+            // The whole change, so an EIP-8298 adoption recorded as bytecode (or the
+            // reverse) is caught along with a wrong value.
             for canon_change in &canon.code_changes {
                 let idx = canon_change.block_access_index;
-                if find_exact_change_code(&supplied.code_changes, idx)
-                    != Some(&canon_change.new_code)
-                {
+                if find_exact_change_code(&supplied.code_changes, idx) != Some(canon_change) {
                     return Err(EvmError::Custom(format!(
                         "BAL validation failed: account {addr:?} code changed during {phase} \
                          but the BAL declares no matching change at index {idx}"
@@ -1452,10 +1447,14 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         bal: &BlockAccessList,
         max_idx: u32,
-        accounts_by_min_index: &[(u32, usize)],
+        index: &BalAddressIndex,
     ) -> Result<(), EvmError> {
+        let accounts_by_min_index = &index.accounts_by_min_index;
         let end = accounts_by_min_index.partition_point(|(min_idx, _)| *min_idx <= max_idx);
         let bal_accounts = bal.accounts();
+        // EIP-8298: an adopted code hash the seed installs can refer to bytecode only
+        // this block deposits, which the store does not have yet.
+        Self::insert_adopted_codes(db, index);
         for &(_, acct_idx) in &accounts_by_min_index[..end] {
             seed_one_address_info_from_bal(db, bal, acct_idx, max_idx)
                 .map_err(|e| EvmError::Custom(format!("seed_db_from_bal: {e}")))?;
@@ -1488,6 +1487,17 @@ impl LEVM {
             }
         }
         Ok(())
+    }
+
+    /// EIP-8298: makes the bytecode behind every code hash the block's adoptions
+    /// refer to, and that the block itself deposits, available to `db`. A database
+    /// seeded from the BAL can hold such a hash without the account that deposited the
+    /// bytecode, and the store only learns of that bytecode once the block is applied.
+    #[cfg(feature = "rayon")]
+    fn insert_adopted_codes(db: &mut GeneralizedDatabase, index: &BalAddressIndex) {
+        for (code_hash, code) in &index.adopted_codes {
+            db.codes.entry(*code_hash).or_insert_with(|| code.clone());
+        }
     }
 
     /// Execute block transactions in parallel using BAL-derived state.
@@ -1653,6 +1663,7 @@ impl LEVM {
                     bal_index: u32::try_from(tx_idx + 1).unwrap_or(u32::MAX),
                     index: arc_idx.clone(),
                 });
+                Self::insert_adopted_codes(&mut tx_db, &arc_idx);
                 // Small capacity: parallel txs rarely nest >8 call frames, and
                 // over-allocating per-tx wastes memory across many rayon tasks.
                 let mut stack_pool = Vec::with_capacity(8);
@@ -1717,7 +1728,7 @@ impl LEVM {
                 // pre-state the validator would otherwise re-read from the store. The
                 // recorder already stores it as an `FxHashMap`, so it is moved out here
                 // (no per-tx rebuild).
-                let (shadow_touched, shadow_reads, tx_initial) = tx_db
+                let (shadow_touched, shadow_reads, tx_initial, code_adopters) = tx_db
                     .bal_recorder
                     .take()
                     .map(|mut r| {
@@ -1725,6 +1736,7 @@ impl LEVM {
                             r.take_touched_addresses(),
                             r.take_storage_reads(),
                             r.take_tx_initial_storage(),
+                            r.code_adopters(),
                         )
                     })
                     .unwrap_or_default();
@@ -1804,6 +1816,7 @@ impl LEVM {
                         &store,
                         &pure_reads,
                         &tx_initial,
+                        &code_adopters,
                     )
                     .map_err(|e| match e {
                         // A store failure during validation is infrastructure, not a
@@ -2046,12 +2059,7 @@ impl LEVM {
             .code_changes
             .partition_point(|c| c.block_access_index <= seed_idx);
         if pos > 0 {
-            let seeded_code = &acct.code_changes[pos - 1].new_code;
-            Ok(if seeded_code.is_empty() {
-                *EMPTY_KECCAK_HASH
-            } else {
-                ethrex_common::utils::keccak(seeded_code)
-            })
+            Ok(acct.code_changes[pos - 1].code_hash())
         } else if let Some(a) = system_seed.get(&acct.address) {
             Ok(a.info.code_hash)
         } else {
@@ -2122,14 +2130,7 @@ impl LEVM {
 
         let mut balance = (bpos > 0).then(|| acct.balance_changes[bpos - 1].post_balance);
         let mut nonce = (npos > 0).then(|| acct.nonce_changes[npos - 1].post_nonce);
-        let mut code_hash = (cpos > 0).then(|| {
-            let c = &acct.code_changes[cpos - 1].new_code;
-            if c.is_empty() {
-                *EMPTY_KECCAK_HASH
-            } else {
-                ethrex_common::utils::keccak(c)
-            }
-        });
+        let mut code_hash = (cpos > 0).then(|| acct.code_changes[cpos - 1].code_hash());
 
         // Fields with no BAL history fall back to the pre-system-call snapshot.
         if let Some(a) = system_seed.get(&acct.address) {
@@ -2254,6 +2255,9 @@ impl LEVM {
     ///   written slots (`(addr, slot) -> pre_value`); used as the storage seed
     ///   fast-path so `seeded_storage` avoids a store read. Pass an empty map to
     ///   force the store fallback (e.g. from unit tests).
+    /// `code_adopters`: accounts whose code this tx last set through `SETCODEFROM`
+    ///   (EIP-8298), whose code change the BAL must record as the adopted code hash;
+    ///   every other code change it must record as bytecode.
     ///
     /// Exposed as `pub` (rather than crate-private) solely so the direct
     /// `validate_tx_execution` unit tests in the `ethrex-test` crate
@@ -2271,6 +2275,7 @@ impl LEVM {
         store: &Arc<dyn Database>,
         pure_reads: &FxHashSet<(Address, U256)>,
         tx_initial: &FxHashMap<(Address, U256), U256>,
+        code_adopters: &FxHashSet<Address>,
     ) -> Result<(), BalValidationError> {
         // BAL -> execution: for each BAL account with changes at bal_idx,
         // verify execution produced the matching post-state (and that no
@@ -2416,23 +2421,57 @@ impl LEVM {
                 }
 
                 // Code
-                if let Some(expected_code) = find_exact_change_code(&acct.code_changes, bal_idx) {
+                if let Some(expected) = find_exact_change_code(&acct.code_changes, bal_idx) {
                     match actual {
                         Some(a) => {
-                            let actual_code = if let Some(c) = codes.get(&a.info.code_hash) {
-                                c.code_bytes()
-                            } else {
-                                let c = store.get_account_code(a.info.code_hash).map_err(|e| {
-                                    BalValidationError::Database(format!(
-                                        "DB error reading account code for {addr:?}: {e}"
-                                    ))
-                                })?;
-                                c.code_bytes()
-                            };
-                            if actual_code != *expected_code {
-                                return Err(BalValidationError::Mismatch(format!(
-                                    "account {addr:?} code mismatch at index {bal_idx}"
-                                )));
+                            // EIP-8298: code this tx last set through SETCODEFROM is
+                            // recorded as the adopted hash, any other code as bytecode.
+                            let adopted = code_adopters.contains(&addr);
+                            match expected.new_code_hash {
+                                Some(_) if !adopted => {
+                                    return Err(BalValidationError::Mismatch(format!(
+                                        "account {addr:?} code change at index {bal_idx} is \
+                                         recorded as an adopted code hash, but the code was \
+                                         not adopted through SETCODEFROM"
+                                    )));
+                                }
+                                Some(expected_hash) => {
+                                    if a.info.code_hash != expected_hash {
+                                        return Err(BalValidationError::Mismatch(format!(
+                                            "account {addr:?} code hash mismatch at index \
+                                             {bal_idx}: BAL={expected_hash:?}, exec={:?}",
+                                            a.info.code_hash
+                                        )));
+                                    }
+                                }
+                                None if adopted => {
+                                    return Err(BalValidationError::Mismatch(format!(
+                                        "account {addr:?} code change at index {bal_idx} is \
+                                         recorded as bytecode, but the code was adopted \
+                                         through SETCODEFROM"
+                                    )));
+                                }
+                                None => {
+                                    let actual_code = if let Some(c) = codes.get(&a.info.code_hash)
+                                    {
+                                        c.code_bytes()
+                                    } else {
+                                        let c = store.get_account_code(a.info.code_hash).map_err(
+                                            |e| {
+                                                BalValidationError::Database(format!(
+                                                    "DB error reading account code for \
+                                                         {addr:?}: {e}"
+                                                ))
+                                            },
+                                        )?;
+                                        c.code_bytes()
+                                    };
+                                    if actual_code != expected.new_code {
+                                        return Err(BalValidationError::Mismatch(format!(
+                                            "account {addr:?} code mismatch at index {bal_idx}"
+                                        )));
+                                    }
+                                }
                             }
                             // No-op check: a BAL code change is only canonical if
                             // it actually differs from the start-of-tx seeded code.
@@ -2453,9 +2492,10 @@ impl LEVM {
                             }
                         }
                         None => {
-                            // No-op check: compare against pre-state code.
-                            // Try system_seed + codes cache first, then fall
-                            // back to store (consistent with balance/nonce).
+                            // No-op check: compare against pre-state code, by hash
+                            // since an EIP-8298 adoption records no bytecode. Try
+                            // system_seed first, then fall back to store (consistent
+                            // with balance/nonce).
                             let code_hash = if let Some(a) = system_seed.get(&addr) {
                                 a.info.code_hash
                             } else {
@@ -2468,18 +2508,7 @@ impl LEVM {
                                         ))
                                     })?
                             };
-                            let pre_code = if let Some(c) = codes.get(&code_hash) {
-                                c.code_bytes()
-                            } else {
-                                let c = store.get_account_code(code_hash).map_err(|e| {
-                                    BalValidationError::Database(format!(
-                                        "DB error reading account code for hash \
-                                             {code_hash:?}: {e}"
-                                    ))
-                                })?;
-                                c.code_bytes()
-                            };
-                            if *expected_code == pre_code {
+                            if expected.code_hash() == code_hash {
                                 // Spurious no-op: BAL code change equals pre-state code
                                 // for an account absent from execution state. Reject to
                                 // match the sequential path (the state root won't catch it).
@@ -2771,14 +2800,10 @@ impl LEVM {
                 }
             }
 
-            // Code
-            if let Some(expected_code) = find_exact_change_code(&acct.code_changes, withdrawal_idx)
-            {
-                let code_hash = if expected_code.is_empty() {
-                    *EMPTY_KECCAK_HASH
-                } else {
-                    ethrex_common::utils::keccak(expected_code)
-                };
+            // Code. Only the resulting hash is checked here; `validate_bal_covers`
+            // checks the change is recorded in the form the phase produced (EIP-8298).
+            if let Some(expected) = find_exact_change_code(&acct.code_changes, withdrawal_idx) {
+                let code_hash = expected.code_hash();
                 match actual {
                     Some(a) if a.info.code_hash == code_hash => {}
                     Some(_) => {
@@ -2925,8 +2950,7 @@ impl LEVM {
             // Code
             if !has_exact_change_code(&acct.code_changes, withdrawal_idx) {
                 let seeded_hash = match acct.code_changes.last() {
-                    Some(c) if c.new_code.is_empty() => *EMPTY_KECCAK_HASH,
-                    Some(c) => ethrex_common::utils::keccak(&c.new_code),
+                    Some(c) => c.code_hash(),
                     None => {
                         db.store
                             .get_account_state(*addr)
@@ -3114,15 +3138,11 @@ impl LEVM {
                 }
             }
 
-            // Code
-            if let Some(expected_code) =
-                find_exact_change_code(&acct.code_changes, PRE_BLOCK_BAL_INDEX)
+            // Code. Only the resulting hash is checked here; `validate_bal_covers`
+            // checks the change is recorded in the form the phase produced (EIP-8298).
+            if let Some(expected) = find_exact_change_code(&acct.code_changes, PRE_BLOCK_BAL_INDEX)
             {
-                let expected_hash = if expected_code.is_empty() {
-                    *EMPTY_KECCAK_HASH
-                } else {
-                    ethrex_common::utils::keccak(expected_code)
-                };
+                let expected_hash = expected.code_hash();
                 match actual {
                     Some(a) if a.info.code_hash == expected_hash => {
                         if expected_hash == pre_account(addr)?.2 {

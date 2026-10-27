@@ -6,11 +6,11 @@ use ethrex_rlp::{
     structs,
 };
 use indexmap::{IndexMap, IndexSet};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::constants::{EMPTY_BLOCK_ACCESS_LIST_HASH, SYSTEM_ADDRESS};
+use crate::constants::{EMPTY_BLOCK_ACCESS_LIST_HASH, EMPTY_KECCAK_HASH, SYSTEM_ADDRESS};
 use crate::types::Code;
 use crate::utils::{keccak, u256_to_h256};
 
@@ -218,11 +218,18 @@ impl RLPDecode for NonceChange {
     }
 }
 
+/// A code change: `[block_access_index, new_code]` for code installed by contract
+/// creation or EIP-7702, or `[block_access_index, b"", new_code_hash]` for code an
+/// account adopted through `SETCODEFROM` (EIP-8298).
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct CodeChange {
     /// Block access index per EIP-7928 spec (uint32).
     pub block_access_index: u32,
     pub new_code: Bytes,
+    /// EIP-8298: the code hash adopted through `SETCODEFROM`. The bytecode behind it is
+    /// already in the pre-block state or in an earlier code change, so it is not
+    /// repeated and `new_code` is empty.
+    pub new_code_hash: Option<H256>,
 }
 
 impl CodeChange {
@@ -231,6 +238,26 @@ impl CodeChange {
         Self {
             block_access_index,
             new_code,
+            new_code_hash: None,
+        }
+    }
+
+    /// Creates the code change of an account adopting `code_hash` through
+    /// `SETCODEFROM` (EIP-8298).
+    pub fn adoption(block_access_index: u32, code_hash: H256) -> Self {
+        Self {
+            block_access_index,
+            new_code: Bytes::new(),
+            new_code_hash: Some(code_hash),
+        }
+    }
+
+    /// The code hash the account holds after this change.
+    pub fn code_hash(&self) -> H256 {
+        match self.new_code_hash {
+            Some(code_hash) => code_hash,
+            None if self.new_code.is_empty() => *EMPTY_KECCAK_HASH,
+            None => keccak(&self.new_code),
         }
     }
 }
@@ -240,6 +267,7 @@ impl RLPEncode for CodeChange {
         structs::Encoder::new(buf)
             .encode_field(&self.block_access_index)
             .encode_field(&self.new_code)
+            .encode_optional_field(&self.new_code_hash)
             .finish();
     }
 }
@@ -248,12 +276,21 @@ impl RLPDecode for CodeChange {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), ethrex_rlp::error::RLPDecodeError> {
         let decoder = structs::Decoder::new(rlp)?;
         let (block_access_index, decoder) = decoder.decode_field("block_access_index")?;
-        let (new_code, decoder) = decoder.decode_field("new_code")?;
+        let (new_code, decoder): (Bytes, _) = decoder.decode_field("new_code")?;
+        let (new_code_hash, decoder) = decoder.decode_optional_field();
+        // EIP-8298: an adopted code hash stands in for the bytecode, so a change
+        // carrying both is not a form any code change is recorded in.
+        if new_code_hash.is_some() && !new_code.is_empty() {
+            return Err(ethrex_rlp::error::RLPDecodeError::Custom(
+                "code change carries both bytecode and an adopted code hash".to_string(),
+            ));
+        }
         let remaining = decoder.finish()?;
         Ok((
             Self {
                 block_access_index,
                 new_code,
+                new_code_hash,
             },
             remaining,
         ))
@@ -586,6 +623,39 @@ impl BlockAccessList {
         H256(crypto.keccak256(bytes))
     }
 
+    /// EIP-8298: the bytecode behind each code hash adopted in this block that one of
+    /// its code changes deposits. An adopted hash missing from the map refers to
+    /// bytecode in the pre-block state.
+    ///
+    /// The account that deposited the bytecode can replace its own code later in the
+    /// block, leaving the adopters as the only accounts that reference it, so whoever
+    /// applies the BAL must store the bytecode for them rather than rely on the
+    /// depositor's final code.
+    pub fn adopted_codes(&self) -> FxHashMap<H256, Code> {
+        let adopted: FxHashSet<H256> = self
+            .inner
+            .iter()
+            .flat_map(|account| &account.code_changes)
+            .filter_map(|change| change.new_code_hash)
+            .collect();
+        let mut codes = FxHashMap::default();
+        if adopted.is_empty() {
+            return codes;
+        }
+        for change in self.inner.iter().flat_map(|account| &account.code_changes) {
+            if change.new_code_hash.is_some() || change.new_code.is_empty() {
+                continue;
+            }
+            let code_hash = keccak(&change.new_code);
+            if adopted.contains(&code_hash) {
+                codes.entry(code_hash).or_insert_with(|| {
+                    Code::from_bytecode_unchecked(change.new_code.clone(), code_hash)
+                });
+            }
+        }
+        codes
+    }
+
     /// Builds a validation index for fast per-tx BAL verification.
     /// Call once per block before parallel execution.
     pub fn build_validation_index(&self) -> BalAddressIndex {
@@ -652,6 +722,7 @@ impl BlockAccessList {
             tx_to_accounts,
             accounts_by_min_index,
             slot_idx_by_account,
+            adopted_codes: self.adopted_codes(),
         }
     }
 }
@@ -673,6 +744,9 @@ pub struct BalAddressIndex {
     /// the same `acct_idx` used by `addr_to_idx`; empty inner map for accounts with no
     /// storage writes. Slot uniqueness is enforced by canonical-ordering validation.
     pub slot_idx_by_account: Vec<FxHashMap<H256, usize>>,
+    /// EIP-8298: [`BlockAccessList::adopted_codes`], so a database seeded from the BAL
+    /// can resolve an adopted code hash whose bytecode the block itself deposits.
+    pub adopted_codes: FxHashMap<H256, Code>,
 }
 
 /// Binary search for exact match at `idx` in balance changes (sorted by block_access_index).
@@ -708,10 +782,10 @@ pub fn has_exact_change_nonce(changes: &[NonceChange], idx: u32) -> bool {
 }
 
 /// Binary search for exact match at `idx` in code changes.
-pub fn find_exact_change_code(changes: &[CodeChange], idx: u32) -> Option<&Bytes> {
+pub fn find_exact_change_code(changes: &[CodeChange], idx: u32) -> Option<&CodeChange> {
     let pos = changes.partition_point(|c| c.block_access_index < idx);
     if pos < changes.len() && changes[pos].block_access_index == idx {
-        Some(&changes[pos].new_code)
+        Some(&changes[pos])
     } else {
         None
     }
@@ -860,8 +934,9 @@ pub struct BlockAccessListRecorder {
     balance_changes: BTreeMap<Address, Vec<(u32, U256)>>,
     /// Nonce changes per address (list of (index, post_nonce) pairs).
     nonce_changes: BTreeMap<Address, Vec<(u32, u64)>>,
-    /// Code changes per address (list of (index, new_code) pairs).
-    code_changes: BTreeMap<Address, Vec<(u32, Bytes)>>,
+    /// Code changes per address, each carrying its block access index and either the
+    /// new bytecode or, for an EIP-8298 adoption, the adopted code hash.
+    code_changes: BTreeMap<Address, Vec<CodeChange>>,
     /// Addresses that had non-empty code at the start (before any code changes).
     /// IndexSet for length-based tx-level checkpoint/restore.
     addresses_with_initial_code: IndexSet<Address>,
@@ -1002,15 +1077,17 @@ impl BlockAccessListRecorder {
             // Check if there are code changes for this address in the current transaction
             if let Some(changes) = self.code_changes.get(addr) {
                 // Find the final code for this transaction
-                let final_code = changes
+                let final_change = changes
                     .iter()
-                    .filter(|(idx, _)| *idx == current_idx)
-                    .last()
-                    .map(|(_, code)| code);
+                    .rfind(|change| change.block_access_index == current_idx);
 
-                if let Some(final_code) = final_code
-                    && final_code == pre_code
-                {
+                // An adoption records only the code hash, so it is compared by hash.
+                let is_net_zero = final_change.is_some_and(|change| match change.new_code_hash {
+                    Some(code_hash) if pre_code.is_empty() => code_hash == *EMPTY_KECCAK_HASH,
+                    Some(code_hash) => code_hash == keccak(pre_code),
+                    None => change.new_code == *pre_code,
+                });
+                if is_net_zero {
                     // Net-zero: final code equals pre-transaction code
                     addrs_to_remove.push(*addr);
                 }
@@ -1020,7 +1097,7 @@ impl BlockAccessListRecorder {
         // Remove net-zero code changes
         for addr in addrs_to_remove {
             if let Some(changes) = self.code_changes.get_mut(&addr) {
-                changes.retain(|(idx, _)| *idx != current_idx);
+                changes.retain(|change| change.block_access_index != current_idx);
                 // If no changes remain for this address, remove the address entry
                 if changes.is_empty() {
                     self.code_changes.remove(&addr);
@@ -1272,12 +1349,41 @@ impl BlockAccessListRecorder {
             return;
         }
 
+        self.push_code_change(address, CodeChange::new(self.current_index, new_code));
+    }
+
+    /// Records an account adopting existing code through `SETCODEFROM` (EIP-8298).
+    /// The BAL records the adopted code hash instead of the bytecode, as long as this
+    /// stays the account's last code change in the transaction.
+    pub fn record_code_adoption(&mut self, address: Address, code_hash: H256) {
+        self.push_code_change(address, CodeChange::adoption(self.current_index, code_hash));
+    }
+
+    fn push_code_change(&mut self, address: Address, change: CodeChange) {
         let changes = self.code_changes.entry(address).or_default();
         let prev_len = changes.len();
-        changes.push((self.current_index, new_code));
+        changes.push(change);
         self.code_changes_journal.push((address, prev_len));
         // Mark address as touched (include SYSTEM_ADDRESS for actual state changes)
         self.touched_addresses.insert(address);
+    }
+
+    /// EIP-8298: the accounts whose last code change at the current index is a
+    /// `SETCODEFROM` adoption, so their change there must be recorded as a code hash.
+    /// Parallel BAL validation, which checks execution against a supplied BAL instead
+    /// of building one, uses it to check the form of each code change.
+    pub fn code_adopters(&self) -> FxHashSet<Address> {
+        let current_idx = self.current_index;
+        self.code_changes
+            .iter()
+            .filter(|(_, changes)| {
+                changes
+                    .iter()
+                    .rfind(|change| change.block_access_index == current_idx)
+                    .is_some_and(|change| change.new_code_hash.is_some())
+            })
+            .map(|(address, _)| *address)
+            .collect()
     }
 
     /// Merges additional touched addresses from an iterator.
@@ -1402,14 +1508,14 @@ impl BlockAccessListRecorder {
             // Per EIP-7928, similar to nonce/balance, we only record the final code per tx.
             if let Some(changes) = self.code_changes.get(address) {
                 // Group code changes by transaction index, keeping only the final one
-                let mut changes_by_tx: BTreeMap<u32, Bytes> = BTreeMap::new();
-                for (index, new_code) in changes {
+                let mut changes_by_tx: BTreeMap<u32, &CodeChange> = BTreeMap::new();
+                for change in changes {
                     // Only keep the final code for each transaction (last write wins)
-                    changes_by_tx.insert(*index, new_code.clone());
+                    changes_by_tx.insert(change.block_access_index, change);
                 }
 
-                for (index, new_code) in changes_by_tx {
-                    account_changes.add_code_change(CodeChange::new(index, new_code));
+                for change in changes_by_tx.into_values() {
+                    account_changes.add_code_change(change.clone());
                 }
             }
 
@@ -1744,7 +1850,7 @@ impl BlockAccessListRecorder {
 
         // 3. Remove code changes for this address at current tx index
         if let Some(changes) = self.code_changes.get_mut(&address) {
-            changes.retain(|(i, _)| *i != idx);
+            changes.retain(|change| change.block_access_index != idx);
             if changes.is_empty() {
                 self.code_changes.remove(&address);
             }
@@ -1799,6 +1905,7 @@ pub struct BalSynthesisItem {
 /// and the witness builder captures them from `logger.state_accessed`.
 pub fn synthesize_bal_updates(bal: &BlockAccessList) -> FxHashMap<Address, BalSynthesisItem> {
     let mut result = FxHashMap::default();
+    let adopted_codes = bal.adopted_codes();
 
     for account in bal.accounts() {
         // Skip accounts with no actual changes (storage_reads only).
@@ -1812,11 +1919,22 @@ pub fn synthesize_bal_updates(bal: &BlockAccessList) -> FxHashMap<Address, BalSy
 
         let balance = account.balance_changes.last().map(|c| c.post_balance);
         let nonce = account.nonce_changes.last().map(|c| c.post_nonce);
-        let code = account.code_changes.last().map(|c| {
-            let hash = keccak(&c.new_code);
-            Code::from_bytecode_unchecked(c.new_code.clone(), hash)
-        });
-        let code_hash = code.as_ref().map(|c| c.hash);
+        let (code_hash, code) = match account.code_changes.last() {
+            // EIP-8298: bytecode the block itself deposits is written for the adopter,
+            // the rest is already stored.
+            Some(CodeChange {
+                new_code_hash: Some(code_hash),
+                ..
+            }) => (Some(*code_hash), adopted_codes.get(code_hash).cloned()),
+            Some(c) => {
+                let hash = keccak(&c.new_code);
+                (
+                    Some(hash),
+                    Some(Code::from_bytecode_unchecked(c.new_code.clone(), hash)),
+                )
+            }
+            None => (None, None),
+        };
 
         let mut added_storage: FxHashMap<H256, U256> = FxHashMap::default();
         for sc in &account.storage_changes {
@@ -2536,5 +2654,164 @@ mod canonical_encoding_hash {
                 BlockAccessList::hash_of_canonical_encoding(&bal.encode_to_vec(), &crypto),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod code_adoption_tests {
+    //! EIP-8298: a code hash set by `SETCODEFROM` is recorded as
+    //! `[block_access_index, b"", code_hash]`, every other code change as
+    //! `[block_access_index, new_code]`.
+
+    use super::*;
+    use bytes::Bytes;
+    use ethereum_types::Address;
+
+    fn addr(b: u8) -> Address {
+        let mut a = Address::zero();
+        a.0[19] = b;
+        a
+    }
+
+    const CODE_A: &[u8] = &[0x60, 0x01, 0x00];
+    const CODE_B: &[u8] = &[0x60, 0x02, 0x00];
+
+    #[test]
+    fn adoption_encodes_as_three_elements() {
+        let code_hash = keccak(CODE_A);
+        let change = CodeChange::adoption(3, code_hash);
+
+        let mut expected = Vec::new();
+        structs::Encoder::new(&mut expected)
+            .encode_field(&3u32)
+            .encode_field(&Bytes::new())
+            .encode_field(&code_hash)
+            .finish();
+        assert_eq!(change.encode_to_vec(), expected);
+        assert_eq!(CodeChange::decode(&expected).unwrap(), change);
+        assert_eq!(change.code_hash(), code_hash);
+    }
+
+    #[test]
+    fn deployment_keeps_two_elements() {
+        let change = CodeChange::new(1, Bytes::from_static(CODE_A));
+
+        let mut expected = Vec::new();
+        structs::Encoder::new(&mut expected)
+            .encode_field(&1u32)
+            .encode_field(&Bytes::from_static(CODE_A))
+            .finish();
+        assert_eq!(change.encode_to_vec(), expected);
+        let decoded = CodeChange::decode(&expected).unwrap();
+        assert_eq!(decoded.new_code_hash, None);
+        assert_eq!(decoded.code_hash(), keccak(CODE_A));
+    }
+
+    #[test]
+    fn bytecode_with_code_hash_rejected() {
+        let mut encoded = Vec::new();
+        structs::Encoder::new(&mut encoded)
+            .encode_field(&1u32)
+            .encode_field(&Bytes::from_static(CODE_A))
+            .encode_field(&keccak(CODE_A))
+            .finish();
+        assert!(CodeChange::decode(&encoded).is_err());
+    }
+
+    #[test]
+    fn four_elements_rejected() {
+        let mut encoded = Vec::new();
+        structs::Encoder::new(&mut encoded)
+            .encode_field(&1u32)
+            .encode_field(&Bytes::new())
+            .encode_field(&keccak(CODE_A))
+            .encode_field(&keccak(CODE_B))
+            .finish();
+        assert!(CodeChange::decode(&encoded).is_err());
+    }
+
+    #[test]
+    fn adoption_recorded_as_code_hash() {
+        let mut r = BlockAccessListRecorder::new();
+        r.set_block_access_index(1);
+        r.set_initial_code(addr(1), Bytes::new());
+        r.record_code_adoption(addr(1), keccak(CODE_A));
+
+        let bal = r.build();
+        assert_eq!(
+            bal.accounts()[0].code_changes,
+            vec![CodeChange::adoption(1, keccak(CODE_A))]
+        );
+    }
+
+    /// The form follows the last code change of the transaction, e.g. an EIP-7702
+    /// delegation the delegated code then replaces through `SETCODEFROM`.
+    #[test]
+    fn last_code_change_of_the_tx_decides_the_form() {
+        let mut r = BlockAccessListRecorder::new();
+        r.set_block_access_index(1);
+        r.set_initial_code(addr(1), Bytes::new());
+        r.record_code_change(addr(1), Bytes::from_static(CODE_B));
+        r.record_code_adoption(addr(1), keccak(CODE_A));
+        assert!(r.code_adopters().contains(&addr(1)));
+
+        let bal = r.build();
+        assert_eq!(
+            bal.accounts()[0].code_changes,
+            vec![CodeChange::adoption(1, keccak(CODE_A))]
+        );
+    }
+
+    #[test]
+    fn adopting_back_the_pre_tx_code_is_net_zero() {
+        let mut r = BlockAccessListRecorder::new();
+        r.set_block_access_index(1);
+        r.set_initial_code(addr(1), Bytes::from_static(CODE_A));
+        r.record_code_adoption(addr(1), keccak(CODE_B));
+        r.record_code_adoption(addr(1), keccak(CODE_A));
+
+        let bal = r.build();
+        assert!(bal.accounts()[0].code_changes.is_empty());
+    }
+
+    #[test]
+    fn reverted_adoption_is_dropped() {
+        let mut r = BlockAccessListRecorder::new();
+        r.set_block_access_index(1);
+        r.set_initial_code(addr(1), Bytes::new());
+        let checkpoint = r.checkpoint();
+        r.record_code_adoption(addr(1), keccak(CODE_A));
+        r.restore(checkpoint);
+        assert!(r.code_adopters().is_empty());
+
+        let bal = r.build();
+        assert!(bal.accounts()[0].code_changes.is_empty());
+    }
+
+    /// The depositor of the adopted bytecode adopts other code later in the block:
+    /// only the adopter still references the deposited bytecode, so applying the
+    /// BAL must write it for the adopter.
+    #[test]
+    fn adopted_bytecode_resolved_from_its_deposit() {
+        let depositor = AccountChanges::new(addr(1)).with_code_changes(vec![
+            CodeChange::new(1, Bytes::from_static(CODE_A)),
+            CodeChange::adoption(3, keccak(CODE_B)),
+        ]);
+        let adopter = AccountChanges::new(addr(2))
+            .with_code_changes(vec![CodeChange::adoption(2, keccak(CODE_A))]);
+        let bal = BlockAccessList::from_accounts(vec![depositor, adopter]);
+
+        let codes = bal.adopted_codes();
+        assert_eq!(codes.len(), 1);
+        assert_eq!(codes[&keccak(CODE_A)].code(), CODE_A);
+
+        let updates = synthesize_bal_updates(&bal);
+        let adopter = &updates[&addr(2)];
+        assert_eq!(adopter.code_hash, Some(keccak(CODE_A)));
+        assert_eq!(adopter.code.as_ref().map(Code::code), Some(CODE_A));
+        // CODE_B is not deposited in the block, so it is already stored.
+        let depositor = &updates[&addr(1)];
+        assert_eq!(depositor.code_hash, Some(keccak(CODE_B)));
+        assert!(depositor.code.is_none());
     }
 }

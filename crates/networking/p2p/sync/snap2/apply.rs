@@ -66,6 +66,7 @@ pub fn apply_bal_flat(
     bal: &BlockAccessList,
 ) -> Result<FlatApplyStats, SyncError> {
     let mut stats = FlatApplyStats::default();
+    let adopted_codes = bal.adopted_codes();
 
     for changes in bal.accounts() {
         let account_hash = H256::from_slice(&hash_address(&changes.address));
@@ -107,7 +108,14 @@ pub fn apply_bal_flat(
             account.nonce = last.post_nonce;
         }
         if let Some(last) = changes.code_changes.last() {
-            if last.new_code.is_empty() {
+            if let Some(code_hash) = last.new_code_hash {
+                // EIP-8298 adoption: the bytecode is already stored, unless this block
+                // deposited it, in which case the depositor's own final code may differ.
+                if let Some(code) = adopted_codes.get(&code_hash) {
+                    store_code_sync(store, code.clone())?;
+                }
+                account.code_hash = code_hash;
+            } else if last.new_code.is_empty() {
                 // Code removal, or an EIP-7702 delegation being cleared.
                 account.code_hash = *EMPTY_KECCAK_HASH;
             } else {

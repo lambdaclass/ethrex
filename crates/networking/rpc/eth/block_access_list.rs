@@ -243,10 +243,15 @@ fn account_to_json(acc: &AccountChanges) -> Value {
         .code_changes
         .iter()
         .map(|cc| {
-            json!({
+            let mut change = json!({
                 "index": format!("{:#x}", cc.block_access_index),
                 "code": format!("0x{}", hex::encode(&cc.new_code)),
-            })
+            });
+            // EIP-8298: an adoption records the adopted code hash, with empty code.
+            if let Some(code_hash) = cc.new_code_hash {
+                change["codeHash"] = json!(format!("{code_hash:#x}"));
+            }
+            change
         })
         .collect();
 

@@ -157,6 +157,7 @@ fn noop_balance_change_rejected() {
         &unused_store(),
         &FxHashSet::default(),
         &FxHashMap::default(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "no-op BAL balance change");
 }
@@ -205,6 +206,7 @@ fn noop_nonce_change_rejected() {
         &unused_store(),
         &FxHashSet::default(),
         &FxHashMap::default(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "no-op BAL nonce change");
 }
@@ -246,6 +248,7 @@ fn noop_code_change_rejected() {
         &unused_store(),
         &FxHashSet::default(),
         &FxHashMap::default(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "no-op BAL code change");
 }
@@ -298,6 +301,7 @@ fn noop_storage_change_rejected() {
         &unused_store(),
         &FxHashSet::default(),
         &FxHashMap::default(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "no-op BAL storage change");
 }
@@ -349,6 +353,7 @@ fn genuine_balance_change_accepted() {
         &unused_store(),
         &FxHashSet::default(),
         &FxHashMap::default(),
+        &FxHashSet::default(),
     );
     assert!(result.is_ok(), "expected Ok(()), got: {result:?}");
 }
@@ -402,6 +407,7 @@ fn missing_storage_write_rejected() {
         &unused_store(),
         &FxHashSet::default(),
         &FxHashMap::default(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "has no storage_changes entry");
 }
@@ -452,6 +458,7 @@ fn read_only_slot_not_in_changes_accepted() {
         &unused_store(),
         &FxHashSet::default(),
         &FxHashMap::default(),
+        &FxHashSet::default(),
     );
     assert!(result.is_ok(), "expected Ok(()), got: {result:?}");
 }
@@ -508,6 +515,7 @@ fn written_slot_misdeclared_as_read_rejected() {
         &unused_store(),
         &FxHashSet::default(),
         &FxHashMap::default(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "declared_as_read=true");
 }
@@ -557,6 +565,7 @@ fn noop_balance_change_absent_account_rejected() {
         &unused_store(),
         &FxHashSet::default(),
         &FxHashMap::default(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "spurious no-op BAL balance change");
 }
@@ -597,6 +606,7 @@ fn noop_nonce_change_absent_account_rejected() {
         &unused_store(),
         &FxHashSet::default(),
         &FxHashMap::default(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "spurious no-op BAL nonce change");
 }
@@ -635,6 +645,7 @@ fn noop_code_change_absent_account_rejected() {
         &unused_store(),
         &FxHashSet::default(),
         &FxHashMap::default(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "spurious no-op BAL code change");
 }
@@ -681,6 +692,7 @@ fn noop_storage_change_absent_slot_rejected() {
         &unused_store(),
         &FxHashSet::default(),
         &FxHashMap::default(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "spurious no-op BAL storage change");
 }
@@ -740,6 +752,7 @@ fn storage_change_omitted_at_this_index_rejected() {
         &unused_store(),
         &FxHashSet::default(),
         &FxHashMap::default(),
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "has no change at index");
 }
@@ -796,6 +809,7 @@ fn storage_read_at_this_index_with_later_change_accepted() {
         &unused_store(),
         &FxHashSet::default(),
         &FxHashMap::default(),
+        &FxHashSet::default(),
     );
     assert!(result.is_ok(), "expected Ok(()), got: {result:?}");
 }
@@ -860,6 +874,7 @@ fn storage_seed_uses_tx_initial_fast_path() {
         &unused_store(),
         &FxHashSet::default(),
         &tx_initial,
+        &FxHashSet::default(),
     );
     // post (9) != pre (5) → genuine change, accepted — and no store error.
     assert!(result.is_ok(), "expected Ok(()), got: {result:?}");
@@ -911,6 +926,95 @@ fn storage_noop_detected_via_tx_initial() {
         &unused_store(),
         &FxHashSet::default(),
         &tx_initial,
+        &FxHashSet::default(),
     );
     assert_mismatch(&result, "no-op BAL storage change");
+}
+
+/// EIP-8298: validates an account that went from `OLD_CODE` to `ADOPTED_CODE` in tx 0,
+/// against a supplied BAL recording `recorded` for it at index 1. `code_adopters` is
+/// what the per-tx shadow recorder reports as adopted through SETCODEFROM.
+fn validate_recorded_code_change(
+    recorded: CodeChange,
+    code_adopters: &FxHashSet<Address>,
+) -> Result<(), BalValidationError> {
+    let address = addr(9);
+    let old = Code::from_bytecode(Bytes::from_static(OLD_CODE), &NativeCrypto);
+    let adopted = Code::from_bytecode(Bytes::from_static(ADOPTED_CODE), &NativeCrypto);
+
+    let mut system_seed: CacheDB = FxHashMap::default();
+    system_seed.insert(
+        address,
+        account_with(U256::zero(), 1, old.hash, AccountStatus::Unmodified),
+    );
+    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    current_state.insert(
+        address,
+        account_with(U256::zero(), 1, adopted.hash, AccountStatus::Modified),
+    );
+
+    let bal = BlockAccessList::from_accounts(vec![
+        AccountChanges::new(address).with_code_changes(vec![recorded]),
+    ]);
+    let index = bal.build_validation_index();
+    let mut codes: FxHashMap<H256, Code> = FxHashMap::default();
+    codes.insert(old.hash, old);
+    codes.insert(adopted.hash, adopted);
+
+    LEVM::validate_tx_execution(
+        1,
+        0,
+        &current_state,
+        &codes,
+        &bal,
+        &index,
+        &system_seed,
+        &unused_store(),
+        &FxHashSet::default(),
+        &FxHashMap::default(),
+        code_adopters,
+    )
+}
+
+const OLD_CODE: &[u8] = &[0x60, 0x01, 0x00];
+const ADOPTED_CODE: &[u8] = &[0x60, 0x02, 0x00];
+
+fn adopted_code_hash() -> H256 {
+    ethrex_common::utils::keccak(ADOPTED_CODE)
+}
+
+#[test]
+fn adoption_recorded_as_code_hash_accepted() {
+    let adopters = FxHashSet::from_iter([addr(9)]);
+    let recorded = CodeChange::adoption(1, adopted_code_hash());
+    validate_recorded_code_change(recorded, &adopters).expect("adoption recorded as its hash");
+}
+
+#[test]
+fn adoption_recorded_as_bytecode_rejected() {
+    let adopters = FxHashSet::from_iter([addr(9)]);
+    let recorded = CodeChange::new(1, Bytes::from_static(ADOPTED_CODE));
+    assert_mismatch(
+        &validate_recorded_code_change(recorded, &adopters),
+        "recorded as bytecode, but the code was adopted",
+    );
+}
+
+#[test]
+fn deployed_code_recorded_as_code_hash_rejected() {
+    let recorded = CodeChange::adoption(1, adopted_code_hash());
+    assert_mismatch(
+        &validate_recorded_code_change(recorded, &FxHashSet::default()),
+        "recorded as an adopted code hash, but the code was not adopted",
+    );
+}
+
+#[test]
+fn adoption_of_other_code_hash_rejected() {
+    let adopters = FxHashSet::from_iter([addr(9)]);
+    let recorded = CodeChange::adoption(1, H256::repeat_byte(0x42));
+    assert_mismatch(
+        &validate_recorded_code_change(recorded, &adopters),
+        "code hash mismatch",
+    );
 }

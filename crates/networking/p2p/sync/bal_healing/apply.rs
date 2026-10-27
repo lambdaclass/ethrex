@@ -64,6 +64,7 @@ pub fn apply_bal(
     let mut state_trie = store.open_state_trie(parent_state_root)?;
     // Accumulate storage trie nodes so we can persist them after the state root is computed.
     let mut storage_trie_batch: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+    let adopted_codes = bal.adopted_codes();
 
     for account_changes in bal.accounts() {
         let hashed_addr_bytes = hash_address(&account_changes.address);
@@ -87,7 +88,14 @@ pub fn apply_bal(
 
         // Step 2d: apply code changes — final entry wins.
         if let Some(last_cc) = account_changes.code_changes.last() {
-            if last_cc.new_code.is_empty() {
+            if let Some(code_hash) = last_cc.new_code_hash {
+                // EIP-8298 adoption: the bytecode is already stored, unless this block
+                // deposited it, in which case the depositor's own final code may differ.
+                if let Some(code) = adopted_codes.get(&code_hash) {
+                    store_code_sync(store, code.clone())?;
+                }
+                account_state.code_hash = code_hash;
+            } else if last_cc.new_code.is_empty() {
                 // Delegation clear (EIP-7702) or code removal: set code_hash to empty.
                 account_state.code_hash = *EMPTY_KECCAK_HASH;
             } else {
