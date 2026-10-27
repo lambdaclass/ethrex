@@ -49,7 +49,7 @@ gas_arr=()
 txs_arr=()
 blocks_arr=()
 
-while read -r line; do
+while IFS= read -r line; do
     if echo "$line" | grep -q 'proving_time_ms='; then
         batch=$(echo "$line" | grep -o 'batch=[0-9]*' | head -1 | cut -d= -f2)
         secs=$(echo "$line" | grep -o 'proving_time_s=[0-9]*' | cut -d= -f2)
@@ -135,20 +135,24 @@ gpu=$(detect_gpu)
     done
 
     # Summary stats.
-    count=0; total=0; min=999999999; max=0; total_gas=0; total_txs=0
-    for i in "${!batches[@]}"; do
-        ms=${ms_arr[$i]}
-        gas=${gas_arr[$i]}
-        txs=${txs_arr[$i]}
-        count=$((count + 1))
-        total=$((total + ms))
-        ((ms < min)) && min=$ms
-        ((ms > max)) && max=$ms
-        [[ "$gas" != "-" && -n "$gas" ]] && total_gas=$((total_gas + ${gas%%.*}))
-        [[ "$txs" != "-" && -n "$txs" ]] && total_txs=$((total_txs + ${txs%%.*}))
-    done
-
-    if [[ $count -gt 0 ]]; then
+    if [[ ${#ms_arr[@]} -gt 0 ]]; then
+        min=${ms_arr[0]}
+        max=${ms_arr[0]}
+        count=0
+        total=0
+        total_gas=0
+        total_txs=0
+        for i in "${!batches[@]}"; do
+            ms=${ms_arr[$i]}
+            gas=${gas_arr[$i]}
+            txs=${txs_arr[$i]}
+            count=$((count + 1))
+            total=$((total + ms))
+            if (( ms < min )); then min=$ms; fi
+            if (( ms > max )); then max=$ms; fi
+            [[ "$gas" != "-" && -n "$gas" ]] && total_gas=$((total_gas + ${gas%%.*}))
+            [[ "$txs" != "-" && -n "$txs" ]] && total_txs=$((total_txs + ${txs%%.*}))
+        done
         avg=$((total / count))
         echo ""
         echo "## Summary"
