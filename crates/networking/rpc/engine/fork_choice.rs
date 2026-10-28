@@ -392,15 +392,27 @@ async fn handle_forkchoice(
                     context
                         .blockchain
                         .remove_block_transactions_from_pool(&block)?;
-                    // Reset blob sub-pool against on-chain nonces (head-block
-                    // pruning above misses stale blobs from non-head blocks).
+                    // Reset the pool against on-chain nonces (head-block pruning
+                    // above misses txs mined in non-head blocks and txs that lost
+                    // to a same-nonce replacement). This batch-reads every pooled
+                    // sender's account, so it is offloaded to the blocking pool.
                     // Best-effort housekeeping: a state-read failure here must
                     // not fail an otherwise-successful FCU, so log and continue
                     // rather than propagating. The next FCU re-runs the sweep.
-                    if let Err(err) = context.blockchain.remove_stale_blob_txs(block.hash()).await {
-                        warn!(
-                            "Failed to prune stale blob txs from mempool after fork choice: {err}"
-                        );
+                    let blockchain = context.blockchain.clone();
+                    let head_header = block.header.clone();
+                    match tokio::task::spawn_blocking(move || {
+                        blockchain.remove_stale_txs(&head_header)
+                    })
+                    .await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(err)) => {
+                            warn!("Failed to prune stale txs from mempool after fork choice: {err}")
+                        }
+                        Err(err) => {
+                            warn!("Stale-tx pruning task failed to join after fork choice: {err}")
+                        }
                     }
                     // Re-simulate pending frame txs (EIP-8141) whose validity may
                     // have changed because of this block, evicting any that no

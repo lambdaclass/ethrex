@@ -1109,20 +1109,38 @@ impl Mempool {
         Ok(())
     }
 
-    /// `(hash, sender, nonce)` for every blob tx in the pool. `blobs_bundle_pool`
-    /// is keyed by blob-tx hash, so its keys are exactly the held blob txs.
-    pub fn blob_txs(&self) -> Result<Vec<(H256, Address, u64)>, StoreError> {
+    /// `(sender, lowest pooled nonce)` for every sender with a tx in the pool.
+    pub fn lowest_nonce_by_sender(&self) -> Result<Vec<(Address, u64)>, StoreError> {
         let inner = self.read()?;
-        Ok(inner
-            .blobs_bundle_pool
-            .keys()
-            .filter_map(|hash| {
-                inner
-                    .transaction_pool
-                    .get(hash)
-                    .map(|tx| (*hash, tx.sender(), tx.nonce()))
-            })
-            .collect())
+        let mut lowest: Vec<(Address, u64)> = Vec::new();
+        // `txs_by_sender_nonce` is ordered by `(sender, nonce)`, so a sender's
+        // first entry holds its lowest nonce.
+        for &(sender, nonce) in inner.txs_by_sender_nonce.keys() {
+            if lowest.last().is_none_or(|&(last, _)| last != sender) {
+                lowest.push((sender, nonce));
+            }
+        }
+        Ok(lowest)
+    }
+
+    /// Removes every tx whose nonce is below its sender's `account_nonce`, all
+    /// under a single write lock.
+    pub fn remove_txs_below_nonce(
+        &self,
+        account_nonces: &[(Address, u64)],
+    ) -> Result<(), StoreError> {
+        let mut inner = self.write()?;
+        for &(sender, account_nonce) in account_nonces {
+            let stale: Vec<H256> = inner
+                .txs_by_sender_nonce
+                .range((sender, 0)..(sender, account_nonce))
+                .map(|(_, hash)| *hash)
+                .collect();
+            for hash in stale {
+                inner.remove_transaction_with_lock(&hash)?;
+            }
+        }
+        Ok(())
     }
 
     /// Add a blobs bundle to the pool by its blob transaction hash
