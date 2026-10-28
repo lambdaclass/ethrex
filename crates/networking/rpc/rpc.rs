@@ -486,6 +486,7 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::InvalidParams(_) => "InvalidParams",
         RpcErr::InvalidRequest(_) => "InvalidRequest",
         RpcErr::MissingParam(_) => "MissingParam",
+        RpcErr::ServerError(_) => "ServerError",
         RpcErr::TooLargeRequest => "TooLargeRequest",
         RpcErr::BadHexFormat(_) => "BadHexFormat",
         RpcErr::UnsupportedFork(_) => "UnsupportedFork",
@@ -1285,7 +1286,7 @@ pub(crate) async fn handle_http_request(
             return Ok(Json(
                 rpc_response(
                     RpcRequestId::String("".to_string()),
-                    Err(RpcErr::BadParams("Invalid request body".to_string())),
+                    Err(RpcErr::ServerError("Invalid request body".to_string())),
                 )
                 .map_err(|_| StatusCode::BAD_REQUEST)?,
             ));
@@ -1545,7 +1546,7 @@ pub async fn handle_eth_subscribe(
         })?;
 
     if subscription_ids.len() >= MAX_SUBSCRIPTIONS_PER_CONNECTION {
-        return Err(RpcErr::BadParams(format!(
+        return Err(RpcErr::ServerError(format!(
             "Too many subscriptions (max {MAX_SUBSCRIPTIONS_PER_CONNECTION})"
         )));
     }

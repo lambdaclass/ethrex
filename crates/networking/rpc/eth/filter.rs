@@ -341,7 +341,7 @@ impl FilterChangesRequest {
                 RpcErr::Internal("Failed to filter logs".to_string())
             })
         } else {
-            Err(RpcErr::BadParams(
+            Err(RpcErr::ServerError(
                 "No matching filter for given id".to_string(),
             ))
         }
