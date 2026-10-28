@@ -39,7 +39,7 @@ jobs:
       # Pushes to ghcr.io/lambdaclass/ethrex
       - name: Build and push Docker image
         id: push
-        uses: ./.github/actions/build-docker
+        uses: $/.github/actions/build-docker
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}

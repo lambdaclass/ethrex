@@ -80,10 +80,10 @@ jobs:
 
       - name: Free Disk Space
         if: ${{ matrix.os == 'linux' }}
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l2
 
@@ -92,7 +92,7 @@ jobs:
         env:
           SHELL: /bin/bash
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        uses: ./.github/actions/install-sp1
+        uses: $/.github/actions/install-sp1
       - name: Set up QEMU (only Linux ARM)
         if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
         uses: docker/setup-qemu-action@v4.4.0
@@ -103,7 +103,7 @@ jobs:
         if: ${{ matrix.platform == 'ubuntu-22.04' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        uses: ./.github/actions/install-risc0
+        uses: $/.github/actions/install-risc0
 
       - name: Install CUDA (only Linux x86 GPU)
         uses: Jimver/cuda-toolkit@v0.2.35
@@ -120,7 +120,7 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install solc
-        uses: ./.github/actions/install-solc
+        uses: $/.github/actions/install-solc
 
       - name: Build ethrex
         run: |
@@ -180,10 +180,10 @@ jobs:
         run: echo "ERE_TAG=$(.github/scripts/zkvm-version.sh --ere-tag --docker)" >> "$GITHUB_ENV"
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
 
       - name: Install uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -412,7 +412,7 @@ jobs:
         uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Determine tag version
         id: tag_version
@@ -433,7 +433,7 @@ jobs:
 
       - name: Build L1 Docker image
         id: build_l1
-        uses: ./.github/actions/build-docker
+        uses: $/.github/actions/build-docker
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -454,7 +454,7 @@ jobs:
 
       - name: Build L2 Docker image
         id: build_l2
-        uses: ./.github/actions/build-docker
+        uses: $/.github/actions/build-docker
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -535,7 +535,7 @@ jobs:
 
       - name: Sign stateless-validator artifacts
         if: env.HAS_MINISIGN_SECRET_KEY == 'true'
-        uses: ./.github/actions/sign-stateless
+        uses: $/.github/actions/sign-stateless
         with:
           artifact-dir: ./bin
           secret-key: ${{ secrets.MINISIGN_SECRET_KEY }}
@@ -641,7 +641,7 @@ jobs:
       # upload on the conformance check, so an ELF that failed it never gets here.
       - name: Sign stateless-validator artifacts
         if: env.HAS_MINISIGN_SECRET_KEY == 'true'
-        uses: ./.github/actions/sign-stateless
+        uses: $/.github/actions/sign-stateless
         with:
           artifact-dir: ./bin
           secret-key: ${{ secrets.MINISIGN_SECRET_KEY }}

@@ -39,7 +39,7 @@ jobs:
 
       - name: Setup Rust Environment
         if: ${{ steps.cache.outputs.cache-hit != 'true' }}
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1
 

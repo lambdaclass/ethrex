@@ -82,10 +82,10 @@ jobs:
         uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l2
           components: rustfmt, clippy
@@ -93,7 +93,7 @@ jobs:
       - name: Install RISC0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        uses: ./.github/actions/install-risc0
+        uses: $/.github/actions/install-risc0
 
       - name: Create placeholder SP1 ELF
         run: |
@@ -143,7 +143,7 @@ jobs:
         uses: actions/checkout@v6.1.0
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l2
 
@@ -165,7 +165,7 @@ jobs:
         uses: docker/setup-buildx-action@v4.4.1
 
       - name: Build L1 docker image
-        uses: ./.github/actions/build-docker
+        uses: $/.github/actions/build-docker
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -197,7 +197,7 @@ jobs:
         uses: docker/setup-buildx-action@v4.4.1
 
       - name: Build L2 docker image
-        uses: ./.github/actions/build-docker
+        uses: $/.github/actions/build-docker
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -227,10 +227,10 @@ jobs:
         uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l2
 
@@ -243,10 +243,10 @@ jobs:
         run: npm install -g yarn
 
       - name: Install solc
-        uses: ./.github/actions/install-solc
+        uses: $/.github/actions/install-solc
 
       - name: Install rex
-        uses: ./.github/actions/install-rex
+        uses: $/.github/actions/install-rex
 
       - name: Build ethrex with L2 features and contracts
         env:
@@ -357,13 +357,13 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l2
           save-cache: 'true'
 
       - name: Install solc
-        uses: ./.github/actions/install-solc
+        uses: $/.github/actions/install-solc
 
       - name: Build prover
         run: |
@@ -407,7 +407,7 @@ jobs:
           ETHREX_LOG_LEVEL=debug docker compose up --detach ethrex_l1
 
       - name: Install rex
-        uses: ./.github/actions/install-rex
+        uses: $/.github/actions/install-rex
 
       - name: Deploy contracts
         run: |
@@ -518,15 +518,15 @@ jobs:
         uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l2
 
       - name: Install solc
-        uses: ./.github/actions/install-solc
+        uses: $/.github/actions/install-solc
 
       - name: Download ethrex image artifact
         uses: actions/download-artifact@v6.0.0
@@ -666,7 +666,7 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l2
 
@@ -691,7 +691,7 @@ jobs:
           docker load --input /tmp/ethrex_image_l2.tar
 
       - name: Install solc
-        uses: ./.github/actions/install-solc
+        uses: $/.github/actions/install-solc
 
       - name: Start L1 & Deploy contracts
         run: |
@@ -735,15 +735,15 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l2
 
       - name: Install solc
-        uses: ./.github/actions/install-solc
+        uses: $/.github/actions/install-solc
 
       - name: Install rex
-        uses: ./.github/actions/install-rex
+        uses: $/.github/actions/install-rex
 
       - name: Build prover
         run: |

@@ -52,15 +52,12 @@ jobs:
       - name: Install gh-actions-lock
         run: gh extension install github/gh-actions-lock --pin v0.4.0
 
-      # Fails when actions.lock is out of sync with the workflows, or a locked
-      # pin no longer verifies upstream. Fix locally with `gh actions-lock
-      # --ignore-local-actions` and commit the result.
-      #
-      # `./.github/actions/*` resolve against the workspace, so the lockfile
-      # can't cover the remote actions they use. Locking them needs `uses: $/…`,
-      # which actionlint doesn't parse yet.
+      # The runner refuses any action missing from actions.lock, so a `uses:`
+      # change without a relock fails that workflow at job start. This catches
+      # it on the PR instead, along with locked pins that no longer verify
+      # upstream. Fix locally with `gh actions-lock` and commit the result.
       - name: Verify actions.lock
-        run: gh actions-lock --verify --ignore-local-actions
+        run: gh actions-lock --verify
 
   image-meta:
     name: build-docker image-meta

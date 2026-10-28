@@ -27,7 +27,7 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1
           components: rustfmt, clippy
@@ -49,7 +49,7 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1
           components: rustfmt, clippy
@@ -78,7 +78,7 @@ jobs:
           tool: hyperfine@1.19
 
       - name: Install solc
-        uses: ./.github/actions/install-solc
+        uses: $/.github/actions/install-solc
 
       - name: Download PR binaries
         uses: actions/download-artifact@v6.0.0

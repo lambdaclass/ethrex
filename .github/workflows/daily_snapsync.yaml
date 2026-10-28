@@ -108,7 +108,7 @@ jobs:
           docker image prune -f
 
       - name: Run Snapsync Test
-        uses: ./.github/actions/snapsync-run
+        uses: $/.github/actions/snapsync-run
         id: snapsync
         with:
           network: ${{ matrix.network }}
@@ -162,7 +162,7 @@ jobs:
           docker image prune -f
 
       - name: Run Snapsync Test
-        uses: ./.github/actions/snapsync-run
+        uses: $/.github/actions/snapsync-run
         id: snapsync
         with:
           network: ${{ matrix.network }}

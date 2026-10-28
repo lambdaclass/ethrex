@@ -28,7 +28,7 @@ jobs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
       - uses: actions/checkout@v6.1.0
-      - uses: ./.github/actions/detect-changes
+      - uses: $/.github/actions/detect-changes
         id: changes
       - uses: dorny/paths-filter@v4.0.3
         id: filter
@@ -64,10 +64,10 @@ jobs:
         uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1
           components: rustfmt, clippy
@@ -110,10 +110,10 @@ jobs:
         uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1
           save-cache: 'true'
@@ -155,13 +155,13 @@ jobs:
         uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       # Its own pool: no other job builds the test crate at `release` without
       # the `l2` feature, so the `l1` entry (dev profile) carries nothing it can
       # link against.
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1-difffuzz
           save-cache: 'true'
@@ -179,10 +179,10 @@ jobs:
         uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1
 
@@ -259,11 +259,11 @@ jobs:
       - uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - id: docker
         name: Build Ethrex Docker Image
-        uses: ./.github/actions/build-docker
+        uses: $/.github/actions/build-docker
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -378,7 +378,7 @@ jobs:
         uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Download ethrex image artifact
         uses: actions/download-artifact@v6.0.0
@@ -491,7 +491,7 @@ jobs:
         uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       # If this fails you should run `make update-cargo-lock`
       - name: Check Cargo.lock files are committed
@@ -542,13 +542,13 @@ jobs:
         uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       # Its own pool: this is the only job on main that builds the root
       # workspace at `release-fast`, so the `l1` entry (dev profile) carries
       # nothing it can link against.
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1-reorg
           save-cache: 'true'

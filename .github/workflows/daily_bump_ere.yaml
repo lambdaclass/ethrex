@@ -46,7 +46,7 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Setup Rust environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
 
       - name: Bump ere
         id: bump

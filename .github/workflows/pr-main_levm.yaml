@@ -37,7 +37,7 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1
 
@@ -84,7 +84,7 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1
 
@@ -102,7 +102,7 @@ jobs:
           ref: main
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1
 
@@ -228,7 +228,7 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1
 
@@ -244,7 +244,7 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1
 
@@ -254,7 +254,7 @@ jobs:
           tool: hyperfine@1.16
 
       - name: Install solc
-        uses: ./.github/actions/install-solc
+        uses: $/.github/actions/install-solc
 
       - name: Run benchmarks
         run: |
