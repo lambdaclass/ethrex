@@ -30,7 +30,7 @@ pub struct Receipts68 {
 /// payload, so an eth/68 peer reconstructs the same bytes the receipts trie was
 /// built from.
 #[derive(Debug, Clone)]
-struct ReceiptItem68(Receipt);
+pub(crate) struct ReceiptItem68(pub(crate) Receipt);
 
 impl RLPEncode for ReceiptItem68 {
     /// Mirrors `ReceiptWithBloom`'s wire encoding:

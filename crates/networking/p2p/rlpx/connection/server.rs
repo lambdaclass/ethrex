@@ -27,8 +27,8 @@ use crate::{
                 transactions::{NewPooledTransactionHashes72, PooledTransactions72},
             },
             receipts::{
-                GetReceipts68, GetReceipts70, Receipts68, Receipts69, Receipts70,
-                SOFT_RESPONSE_LIMIT,
+                GetReceipts68, GetReceipts70, MAX_RECEIPTS_REQUEST_HASHES, Receipts68, Receipts69,
+                Receipts70, SOFT_RESPONSE_LIMIT,
             },
             status::{StatusMessage68, StatusMessage69, StatusMessage70, StatusMessage71},
             transactions::{
@@ -1878,17 +1878,11 @@ async fn handle_incoming_message(
             send(state, Message::BlockAccessLists(response)).await?;
         }
         Message::GetReceipts68(GetReceipts68 { id, block_hashes }) if peer_supports_eth => {
-            let mut receipts = Vec::new();
-            for hash in block_hashes.iter() {
-                receipts.push(state.storage.get_receipts_for_block(hash).await?);
-            }
+            let receipts = build_receipts_response(&block_hashes, true, &state.storage).await?;
             send(state, Message::Receipts68(Receipts68::new(id, receipts))).await?;
         }
         Message::GetReceipts69(GetReceipts68 { id, block_hashes }) if peer_supports_eth => {
-            let mut receipts = Vec::new();
-            for hash in block_hashes.iter() {
-                receipts.push(state.storage.get_receipts_for_block(hash).await?);
-            }
+            let receipts = build_receipts_response(&block_hashes, false, &state.storage).await?;
             send(state, Message::Receipts69(Receipts69::new(id, receipts))).await?;
         }
         // EIP-7975: eth/70 partial receipt requests
@@ -1897,7 +1891,7 @@ async fn handle_incoming_message(
             first_block_receipt_index,
             block_hashes,
         }) if peer_supports_eth => {
-            let block_hashes = &block_hashes[..block_hashes.len().min(256)];
+            let block_hashes = &block_hashes[..block_hashes.len().min(MAX_RECEIPTS_REQUEST_HASHES)];
             let mut all_receipts: Vec<Vec<Receipt>> = Vec::new();
             let mut total_size: usize = 0;
             let mut last_block_incomplete = false;
@@ -2521,6 +2515,58 @@ async fn handle_incoming_message(
         message => return Err(PeerConnectionError::MessageNotHandled(format!("{message}"))),
     };
     Ok(())
+}
+
+/// Build the receipt lists of an eth/68 or eth/69 `Receipts` reply to a `GetReceipts` request.
+///
+/// Entries follow the request order, one list per served hash; an unknown block gets an
+/// empty list. At most [`MAX_RECEIPTS_REQUEST_HASHES`] hashes are served, a hash repeated
+/// within one request is read from storage once, and the reply stops growing once the
+/// encoded size of its receipts reaches [`SOFT_RESPONSE_LIMIT`] (the first list is always
+/// served), as the eth/70 arm already does. `with_bloom` says whether each receipt goes
+/// out with its logs bloom (eth/68) or without (eth/69), which the budget accounts for.
+/// Without these bounds, one request naming a heavy block's hash tens of thousands of
+/// times made the node load and encode that block's receipts once per repetition until
+/// it was killed for running out of memory.
+pub async fn build_receipts_response(
+    block_hashes: &[H256],
+    with_bloom: bool,
+    storage: &Store,
+) -> Result<Vec<Vec<Receipt>>, StoreError> {
+    let hashes = &block_hashes[..block_hashes.len().min(MAX_RECEIPTS_REQUEST_HASHES)];
+    // Where each served hash's list sits in the reply, so a repetition copies it from
+    // there instead of reading it again.
+    let mut served: HashMap<H256, usize> = HashMap::new();
+    let mut receipts: Vec<Vec<Receipt>> = Vec::with_capacity(hashes.len());
+    let mut total_size: usize = 0;
+    for hash in hashes {
+        let block_receipts = match served.get(hash) {
+            Some(&index) => receipts[index].clone(),
+            None => storage.get_receipts_for_block(hash).await?,
+        };
+        let size: usize = block_receipts
+            .iter()
+            .map(|receipt| receipt_wire_size(receipt, with_bloom))
+            .sum();
+        if !receipts.is_empty() && total_size + size > SOFT_RESPONSE_LIMIT {
+            break;
+        }
+        total_size += size;
+        served.insert(*hash, receipts.len());
+        receipts.push(block_receipts);
+    }
+    Ok(receipts)
+}
+
+/// What the 256-byte logs bloom adds to a receipt's encoding: the bloom's bytes, its 3-byte
+/// RLP string header, and up to 5 bytes the headers of the items around it grow by. An upper
+/// bound, so the budget never under-counts an eth/68 item.
+const ENCODED_BLOOM_SIZE: usize = ethereum_types::Bloom::len_bytes() + 8;
+
+/// Encoded size of one receipt in a `Receipts` reply. eth/68 items carry the logs bloom
+/// that eth/69 (EIP-7642) dropped; it is counted without being computed.
+fn receipt_wire_size(receipt: &Receipt, with_bloom: bool) -> usize {
+    receipt.length() + if with_bloom { ENCODED_BLOOM_SIZE } else { 0 }
 }
 
 /// Build a `BlockAccessLists` (eth/71, EIP-8159) response for a `GetBlockAccessLists` request.
@@ -3988,5 +4034,158 @@ mod bal_serving_tests {
 
         assert!(resp.bals.len() < BAL_MAX_REQUEST_HASHES);
         assert!(encoded_len(&resp.bals) < BAL_RESPONSE_SOFT_CAP_BYTES + one);
+    }
+}
+
+#[cfg(test)]
+mod receipts_serving_tests {
+    use super::*;
+    use bytes::Bytes;
+    use ethrex_common::{
+        Address,
+        types::{Log, TxType},
+    };
+    use ethrex_storage::EngineType;
+
+    fn store() -> Store {
+        Store::new("memory", EngineType::InMemory).expect("in-memory store")
+    }
+
+    /// `n` receipts, each with one log carrying `data_len` bytes of data.
+    fn receipts(n: usize, data_len: usize) -> Vec<Receipt> {
+        (0..n)
+            .map(|i| {
+                Receipt::new(
+                    TxType::EIP1559,
+                    true,
+                    21_000 * (i as u64 + 1),
+                    vec![Log {
+                        address: Address::from_low_u64_be(1),
+                        topics: vec![H256::from_low_u64_be(i as u64)],
+                        data: Bytes::from(vec![0xAB; data_len]),
+                    }],
+                )
+            })
+            .collect()
+    }
+
+    fn encoded_len(lists: &[Vec<Receipt>], with_bloom: bool) -> usize {
+        lists
+            .iter()
+            .flatten()
+            .map(|receipt| receipt_wire_size(receipt, with_bloom))
+            .sum()
+    }
+
+    /// One request may name a heavy block's hash once per allowed entry. The reply SHALL
+    /// stop at the byte budget instead of carrying that block's receipts once per repetition.
+    #[tokio::test]
+    async fn repeated_hash_of_a_heavy_block_stays_within_the_byte_budget() {
+        let store = store();
+        let hash = H256::from_low_u64_be(7);
+        let heavy = receipts(2_560, 1024);
+        let one = encoded_len(std::slice::from_ref(&heavy), true);
+        assert!(
+            one > SOFT_RESPONSE_LIMIT / 8,
+            "fixture must be heavy ({one} bytes)"
+        );
+        store
+            .add_receipts(hash, heavy)
+            .await
+            .expect("store receipts");
+
+        for with_bloom in [true, false] {
+            let reply = build_receipts_response(
+                &vec![hash; MAX_RECEIPTS_REQUEST_HASHES],
+                with_bloom,
+                &store,
+            )
+            .await
+            .expect("reply");
+
+            assert!(reply.len() < MAX_RECEIPTS_REQUEST_HASHES);
+            assert_eq!(
+                reply[0].len(),
+                2_560,
+                "the first list is always served whole"
+            );
+            assert!(
+                encoded_len(&reply, with_bloom) <= SOFT_RESPONSE_LIMIT + one,
+                "reply carries at most one list beyond the budget"
+            );
+        }
+    }
+
+    /// Entries keep the request order; an unknown block is an empty list and a repeated
+    /// hash gets the same list again.
+    #[tokio::test]
+    async fn entries_follow_request_order() {
+        let store = store();
+        let a = H256::from_low_u64_be(1);
+        let b = H256::from_low_u64_be(2);
+        let unknown = H256::from_low_u64_be(3);
+        store
+            .add_receipts(a, receipts(3, 8))
+            .await
+            .expect("store a");
+        store
+            .add_receipts(b, receipts(5, 8))
+            .await
+            .expect("store b");
+
+        let reply = build_receipts_response(&[a, unknown, b, a], true, &store)
+            .await
+            .expect("reply");
+
+        let lengths: Vec<usize> = reply.iter().map(Vec::len).collect();
+        assert_eq!(lengths, vec![3, 0, 5, 3]);
+        assert_eq!(reply[0], reply[3]);
+    }
+
+    /// More hashes than the protocol allows are cut to the entry limit.
+    #[tokio::test]
+    async fn requests_are_cut_to_the_hash_limit() {
+        let store = store();
+        let hashes: Vec<H256> = (0..(MAX_RECEIPTS_REQUEST_HASHES as u64 + 10))
+            .map(H256::from_low_u64_be)
+            .collect();
+        for hash in &hashes {
+            store
+                .add_receipts(*hash, receipts(1, 8))
+                .await
+                .expect("store");
+        }
+
+        let reply = build_receipts_response(&hashes, false, &store)
+            .await
+            .expect("reply");
+
+        assert_eq!(reply.len(), MAX_RECEIPTS_REQUEST_HASHES);
+        assert!(reply.iter().all(|list| list.len() == 1));
+    }
+
+    /// The eth/68 budget counts the bloom each receipt goes out with, so a block of many
+    /// log-less receipts is not under-counted by the ~260 bytes each bloom adds; the count
+    /// is an upper bound within a few bytes of the item on the wire.
+    #[test]
+    fn eth68_wire_size_counts_the_bloom() {
+        use crate::rlpx::eth::eth68::receipts::ReceiptItem68;
+        for receipt in [
+            Receipt::new(TxType::EIP1559, true, 21_000, vec![]),
+            Receipt::new(
+                TxType::Legacy,
+                false,
+                1 << 20,
+                receipts(1, 100).remove(0).logs,
+            ),
+        ] {
+            let on_the_wire = ReceiptItem68(receipt.clone()).length();
+            let counted = receipt_wire_size(&receipt, true);
+            assert!(
+                (on_the_wire..on_the_wire + 8).contains(&counted),
+                "counted {counted} bytes for a {on_the_wire}-byte eth/68 item"
+            );
+            assert_eq!(receipt_wire_size(&receipt, false), receipt.length());
+        }
     }
 }

@@ -5,6 +5,11 @@ pub use super::eth70::receipts::{GetReceipts70, Receipts70, SOFT_RESPONSE_LIMIT}
 /// Type alias: eth/68 and eth/69 share the same GetReceipts wire format.
 pub type GetReceipts68 = GetReceipts;
 pub type GetReceipts69 = GetReceipts;
+
+/// The most block hashes one `GetReceipts` request is served for, in every eth version;
+/// any beyond are ignored. A reply may carry fewer receipt lists than the request names,
+/// so a requester wanting more asks again from the first unanswered hash.
+pub const MAX_RECEIPTS_REQUEST_HASHES: usize = 256;
 use crate::rlpx::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress},
