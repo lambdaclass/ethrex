@@ -87,6 +87,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 /// Accounts per task in [`LEVM::warm_block_from_bal`]. Small enough that the first
 /// warmed states and code reach the executor within a few point reads, large enough
@@ -287,6 +288,46 @@ impl CompletedGas {
         self.regular.fetch_add(regular_gas, Ordering::Relaxed);
         self.state.fetch_add(state_gas, Ordering::Relaxed);
         self.check(block_gas_limit)
+    }
+}
+
+/// The deferred BAL validation error of the lowest-index transaction that failed it,
+/// shared by every transaction of a parallel block execution.
+///
+/// One error is held however many transactions fail, and a transaction is not validated
+/// once one before it has failed: the block is rejected with that error whatever the
+/// later ones would do. Every transaction still executes, so the gas-limit stop keeps
+/// priority over any BAL error, as it does when nothing fails, and every transaction
+/// before the held one is validated, so the error reported is the earliest failing
+/// transaction's and does not depend on scheduling. Holding one error per transaction
+/// let a block access list with one bogus account cost the node that account's
+/// diagnostic once per transaction until the whole block had run.
+#[derive(Default)]
+pub struct EarliestBalError(Mutex<Option<(usize, EvmError)>>);
+
+impl EarliestBalError {
+    fn held(&self) -> MutexGuard<'_, Option<(usize, EvmError)>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Whether a transaction before `tx_idx` has already failed validation.
+    pub fn precedes(&self, tx_idx: usize) -> bool {
+        self.held()
+            .as_ref()
+            .is_some_and(|(failed, _)| *failed < tx_idx)
+    }
+
+    /// Holds `err` as transaction `tx_idx`'s unless an earlier transaction's is held.
+    pub fn record(&self, tx_idx: usize, err: EvmError) {
+        let mut held = self.held();
+        if held.as_ref().is_none_or(|(failed, _)| tx_idx < *failed) {
+            *held = Some((tx_idx, err));
+        }
+    }
+
+    /// The held error, if any.
+    pub fn take(&self) -> Option<EvmError> {
+        self.held().take().map(|(_, err)| err)
     }
 }
 
@@ -1650,10 +1691,10 @@ impl LEVM {
 
         // 2. Execute all txs in parallel (embarrassingly parallel, BAL-seeded).
         //    BAL validation runs INSIDE the par_iter closure (parallel) but its
-        //    errors are deferred via Option<EvmError> so the post-par_iter
-        //    gas-limit check still takes priority (GAS_USED_OVERFLOW must beat
-        //    BAL mismatch on blocks exceeding the gas limit; the BAL is built
-        //    assuming rejected txs, so miner balance in the BAL won't match
+        //    errors are deferred, in the shared `EarliestBalError`, so the
+        //    post-par_iter gas-limit check still takes priority (GAS_USED_OVERFLOW
+        //    must beat BAL mismatch on blocks exceeding the gas limit; the BAL is
+        //    built assuming rejected txs, so miner balance in the BAL won't match
         //    execution that ran all txs).
         //
         //    The closure also precomputes the small (Vec<(Address, H256)>,
@@ -1668,7 +1709,6 @@ impl LEVM {
             SeededHashSet<Address>, // accessed_accounts tracker (coarse)
             Vec<(Address, H256)>,   // reads_satisfied: (addr, slot) loaded during this tx
             Vec<Address>,           // destroyed: accounts selfdestructed during this tx
-            Option<EvmError>,       // deferred BAL validation error
         );
 
         // Ordered gas admission (step 3 below) can only reject a block once every
@@ -1688,9 +1728,14 @@ impl LEVM {
         // the gas limit, which bounds both the work done and the reports retained.
         let completed_gas = CompletedGas::default();
 
+        // Once a transaction fails BAL validation, the block is rejected with its error
+        // and nothing a later transaction does changes that, so later ones are
+        // executed (the gas-limit stop above needs their gas) but not validated.
+        let earliest_bal_error = EarliestBalError::default();
+
         let exec_results: Result<Vec<TxExecResult>, EvmError> = (0..n_txs)
             .into_par_iter()
-            .map(|tx_idx| -> Result<_, EvmError> {
+            .map(|tx_idx| -> Result<TxExecResult, EvmError> {
                 completed_gas.check(header.gas_limit)?;
                 let (tx, sender) = &txs_with_sender[tx_idx];
                 // Small capacity hint — per-tx DBs materialize only touched accounts via lazy_bal cursor.
@@ -1841,12 +1886,16 @@ impl LEVM {
                     }
                 }
 
-                // Run BAL validation inline. Errors are DEFERRED: stored in
-                // Option<EvmError> so the serial gas-limit check below still
-                // takes priority. Borrow current_state / codes during the
-                // validation closure, then drop them before returning so
-                // they don't cross the rayon boundary.
+                // Run BAL validation inline. Errors are DEFERRED: held in the shared
+                // `earliest_bal_error` so the serial gas-limit check below still
+                // takes priority, and skipped once an earlier transaction has failed,
+                // since the block is rejected with that one's error. Borrow
+                // current_state / codes during the validation closure, then drop
+                // them before returning so they don't cross the rayon boundary.
                 let deferred_bal_err: Option<EvmError> = (|| -> Result<(), EvmError> {
+                    if earliest_bal_error.precedes(tx_idx) {
+                        return Ok(());
+                    }
                     let bal_idx = u32::try_from(tx_idx + 1).unwrap_or(u32::MAX);
                     let seed_idx = u32::try_from(tx_idx).unwrap_or(u32::MAX);
                     Self::validate_tx_execution(
@@ -1914,6 +1963,9 @@ impl LEVM {
                     Ok(())
                 })()
                 .err();
+                if let Some(err) = deferred_bal_err {
+                    earliest_bal_error.record(tx_idx, err);
+                }
 
                 drop(current_state);
                 drop(codes);
@@ -1935,7 +1987,6 @@ impl LEVM {
                     tracked,
                     reads_satisfied,
                     destroyed,
-                    deferred_bal_err,
                 ))
             })
             .collect();
@@ -1948,7 +1999,7 @@ impl LEVM {
         // refactor swapping in an unordered iterator; `sort_unstable_by_key` on
         // an already-sorted slice is near-linear via pdqsort, so the cost is
         // negligible.
-        exec_results.sort_unstable_by_key(|(idx, _, _, _, _, _, _)| *idx);
+        exec_results.sort_unstable_by_key(|(idx, _, _, _, _, _)| *idx);
 
         // 3. Gas limit check — must happen BEFORE BAL validation errors so that
         //    blocks exceeding the gas limit produce GAS_USED_OVERFLOW instead of
@@ -1957,7 +2008,7 @@ impl LEVM {
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
         let mut tx_gas_breakdowns: Vec<TxGasBreakdown> = Vec::with_capacity(exec_results.len());
-        for (tx_idx, _, report, _, _, _, _) in &exec_results {
+        for (tx_idx, _, report, _, _, _) in &exec_results {
             let (tx, _tx_sender) = txs_with_sender
                 .get(*tx_idx)
                 .ok_or_else(|| EvmError::Custom(format!("tx index {tx_idx} out of bounds")))?;
@@ -1992,7 +2043,7 @@ impl LEVM {
         }
 
         // 4. Surface the BAL errors held back until the gas-limit check has passed:
-        //    system-call coverage, then the first deferred per-tx error in tx order.
+        //    system-call coverage, then the earliest deferred per-tx error.
         Self::validate_bal_covers(
             &system_seed,
             pre_block_bal,
@@ -2002,10 +2053,8 @@ impl LEVM {
             PRE_BLOCK_BAL_INDEX,
         )?;
 
-        for (_, _, _, _, _, _, deferred) in &mut exec_results {
-            if let Some(err) = deferred.take() {
-                return Err(err);
-            }
+        if let Some(err) = earliest_bal_error.take() {
+            return Err(err);
         }
 
         // 5. Apply per-tx reads_satisfied / tracked to the shared sets (cheap
@@ -2016,7 +2065,7 @@ impl LEVM {
         //    removed. A phantom storage_reads entry declared on a destroyed
         //    account (never actually read) stays in unread_storage_reads and
         //    is rejected by the leftover-reads check below.
-        for (_, _, _, tracked_accounts, reads_satisfied, _, _) in &exec_results {
+        for (_, _, _, tracked_accounts, reads_satisfied, _) in &exec_results {
             if !unread_storage_reads.is_empty() {
                 for pair in reads_satisfied {
                     unread_storage_reads.remove(pair);
@@ -2036,7 +2085,7 @@ impl LEVM {
         // 6. Build receipts in tx order.
         let mut receipts = Vec::with_capacity(n_txs);
         let mut cumulative_gas_used = 0_u64;
-        for (_, tx_type, report, _, _, _, _) in exec_results {
+        for (_, tx_type, report, _, _, _) in exec_results {
             cumulative_gas_used += report.gas_spent;
             let mut receipt = Receipt::new(
                 tx_type,
@@ -2386,36 +2435,23 @@ impl LEVM {
                                      state: post==pre=={expected}"
                                 )));
                             }
-                            // Dump full BAL entry for diagnosis
-                            let all_bal_indices: Vec<u32> = acct
-                                .balance_changes
-                                .iter()
-                                .map(|c| c.block_access_index)
-                                .collect();
-                            let all_nonce_indices: Vec<u32> = acct
-                                .nonce_changes
-                                .iter()
-                                .map(|c| c.block_access_index)
-                                .collect();
-                            let all_storage_indices: Vec<(u32, u64)> = acct
+                            // Describe the entry by its counts, never its contents: it is
+                            // untrusted input as large as the block access list allows, and
+                            // the message is held until the block is rejected.
+                            let slot_changes: usize = acct
                                 .storage_changes
                                 .iter()
-                                .flat_map(|sc| {
-                                    sc.slot_changes
-                                        .iter()
-                                        .map(|c| (c.block_access_index, sc.slot.low_u64()))
-                                })
-                                .collect();
-                            let code_indices: Vec<u32> = acct
-                                .code_changes
-                                .iter()
-                                .map(|c| c.block_access_index)
-                                .collect();
+                                .map(|sc| sc.slot_changes.len())
+                                .sum();
                             return Err(BalValidationError::Mismatch(format!(
                                 "account {addr:?} has BAL balance change at {bal_idx} \
-                                 but not in execution state (expected={expected}, pre={seeded}, \
-                                 all_bal_idx={all_bal_indices:?}, nonce_idx={all_nonce_indices:?}, \
-                                 storage_idx={all_storage_indices:?}, code_idx={code_indices:?})"
+                                 but not in execution state (expected={expected}, pre={seeded}; \
+                                 the entry has {} balance, {} nonce and {} code changes, and \
+                                 {slot_changes} changes over {} storage slots)",
+                                acct.balance_changes.len(),
+                                acct.nonce_changes.len(),
+                                acct.code_changes.len(),
+                                acct.storage_changes.len(),
                             )));
                         }
                     }

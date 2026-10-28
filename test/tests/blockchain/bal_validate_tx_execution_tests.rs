@@ -1002,3 +1002,72 @@ fn names_the_lowest_unrecorded_storage_write() {
     );
     assert_mismatch(&result, "storage slot 1 was written by execution");
 }
+
+/// A BAL account absent from execution state is rejected with a message that describes
+/// its entry by counts. The entry is untrusted input as large as the list allows, and the
+/// message is held until the block is rejected, so listing its contents let one bogus
+/// account with thousands of slot changes cost tens of megabytes per transaction.
+#[test]
+fn absent_account_diagnostic_is_bounded_by_the_entry_size() {
+    let address = addr(7);
+    let empty = *ethrex_common::constants::EMPTY_KECCAK_HASH;
+    let mut system_seed = CacheDB::default();
+    system_seed.insert(
+        address,
+        account_with(U256::zero(), 0, empty, AccountStatus::Unmodified),
+    );
+    // Execution never touched the account.
+    let current_state = CacheDB::default();
+
+    const SLOTS: u64 = 2_000;
+    const CHANGES_PER_SLOT: u32 = 3;
+    let storage_changes: Vec<SlotChange> = (0..SLOTS)
+        .map(|slot| {
+            SlotChange::with_changes(
+                U256::from(slot),
+                (1..=CHANGES_PER_SLOT)
+                    .map(|index| StorageChange::new(index, U256::one()))
+                    .collect(),
+            )
+        })
+        .collect();
+    let bal = BlockAccessList::from_accounts(vec![
+        AccountChanges::new(address)
+            .with_balance_changes(vec![BalanceChange::new(1, U256::from(5))])
+            .with_storage_changes(storage_changes),
+    ]);
+    let index = bal.build_validation_index();
+    let codes: SeededHashMap<H256, Code> = Default::default();
+
+    let result = LEVM::validate_tx_execution(
+        1,
+        0,
+        &current_state,
+        &codes,
+        &bal,
+        &index,
+        &system_seed,
+        &unused_store(),
+        &Default::default(),
+        &Default::default(),
+    );
+    assert_mismatch(
+        &result,
+        "has BAL balance change at 1 but not in execution state",
+    );
+    let Err(BalValidationError::Mismatch(msg)) = result else {
+        unreachable!("asserted above");
+    };
+    assert!(
+        msg.len() < 1024,
+        "the diagnostic must not grow with the entry, got {} bytes",
+        msg.len()
+    );
+    assert!(
+        msg.contains(&format!(
+            "{} changes over {SLOTS} storage slots",
+            SLOTS * u64::from(CHANGES_PER_SLOT)
+        )),
+        "the diagnostic should give the entry's counts, got: {msg}"
+    );
+}

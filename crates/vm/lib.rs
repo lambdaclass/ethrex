@@ -10,7 +10,9 @@ pub mod backends;
 /// payload builder can enforce it with identical semantics to the validator.
 pub use backends::levm::check_2d_gas_allowance;
 /// Bounds the parallel Amsterdam path uses to reject an over-limit block early.
-pub use backends::levm::{CompletedGas, block_work_budget, check_minimum_block_work};
+pub use backends::levm::{
+    CompletedGas, EarliestBalError, block_work_budget, check_minimum_block_work,
+};
 pub use backends::{
     BlockExecutionResult, Evm, TxGasBreakdown, TxStatus, compute_burned_fees, log_gas_used_mismatch,
 };
