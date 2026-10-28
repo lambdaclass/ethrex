@@ -25,6 +25,7 @@ members = [
   "crates/vm/levm/runner",
   "crates/common/config",
   "tooling/history_validator",
+  "tooling/partial",
   "tooling/repl",
   "test",
 ]
@@ -100,6 +101,7 @@ ethrex-storage-rollup = { path = "./crates/l2/storage", version = "30.0.1" }
 ethrex = { path = "./cmd/ethrex" }
 ethrex-l2-rpc = { path = "./crates/l2/networking/rpc", version = "30.0.1" }
 ethrex-monitor = { path = "./tooling/monitor" }
+ethrex-partial = { path = "./tooling/partial" }
 ethrex-repl = { path = "./tooling/repl" }
 
 tracing = { version = "0.1", features = ["log"] }

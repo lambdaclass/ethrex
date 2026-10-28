@@ -2317,13 +2317,14 @@ impl<'a> VM<'a> {
         // EIP-7928 requires the coinbase to appear in the BAL for any user tx even
         // when the priority fee is zero, and EELS reads the coinbase account
         // unconditionally during fee transfer (so EIP-8025 witnesses record its
-        // trie path even at zero fee). A frame tx is always a user tx (non-zero
-        // effective gas price), unlike a system call.
+        // trie path even at zero fee). A frame tx is always a user tx, never a
+        // system call, even when its effective gas price is zero (possible on a
+        // chain whose base fee is zero).
         let priority_fee = effective_gas_price.saturating_sub(self.env.base_fee_per_gas);
         let coinbase_fee = priority_fee
             .checked_mul(U256::from(total_gas_used))
             .ok_or(VMError::Internal(InternalError::Overflow))?;
-        if !effective_gas_price.is_zero()
+        if !self.env.is_system_call
             && let Some(recorder) = self.db.bal_recorder.as_mut()
         {
             recorder.record_touched_address(self.env.coinbase);

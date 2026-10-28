@@ -94,6 +94,40 @@ use std::sync::mpsc::Sender;
 #[cfg(feature = "rayon")]
 const BAL_WARM_CHUNK_ACCOUNTS: usize = 64;
 
+/// Block access lists with at most this many accounts are warmed on the calling
+/// thread instead of the pool, see [`LEVM::warm_block_from_bal`].
+#[cfg(feature = "rayon")]
+const BAL_WARM_INLINE_ACCOUNTS: usize = 2 * BAL_WARM_CHUNK_ACCOUNTS;
+
+/// Floor on the BAL warmer's thread count, and its size when the host does not
+/// report its parallelism, see [`bal_warm_pool`].
+#[cfg(feature = "rayon")]
+const BAL_WARM_MIN_THREADS: usize = 64;
+
+/// Thread pool for [`LEVM::warm_block_from_bal`].
+///
+/// Warming is a stream of point reads that block on storage, not on CPU. On the
+/// global pool (one thread per core) it kept at most one read in flight per core
+/// and competed with the parallel transaction execution for those same threads,
+/// so a block touching tens of thousands of cold accounts was bound by read
+/// latency at a queue depth of a handful. A dedicated pool wider than the core
+/// count keeps enough reads in flight to use the device's parallelism; when the
+/// data is already cached the chunks finish in microseconds either way.
+#[cfg(feature = "rayon")]
+fn bal_warm_pool() -> &'static rayon::ThreadPool {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let threads = std::thread::available_parallelism()
+            .map_or(BAL_WARM_MIN_THREADS, |cpus| cpus.get().saturating_mul(2))
+            .max(BAL_WARM_MIN_THREADS);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|i| format!("bal-warmer-{i}"))
+            .build()
+            .expect("Failed to create BAL warmer thread pool")
+    })
+}
+
 /// EIP-7928 `block_access_index` of the pre-block system calls.
 /// Only the parallel BAL path reads it, and that path is rayon-gated.
 #[cfg(feature = "rayon")]
@@ -3366,28 +3400,39 @@ impl LEVM {
         // warmer read the same data in the background, and both finished together.
         // Storage slots are prefetched synchronously before the executor starts (see
         // `bal_storage_slots` at the call site), so only states and code are left here.
-        accounts
-            .par_chunks(BAL_WARM_CHUNK_ACCOUNTS)
-            .try_for_each(|chunk| -> Result<(), EvmError> {
+        let warm_chunk = |chunk: &[AccountChanges]| -> Result<(), EvmError> {
+            if cancelled.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+            let addresses: Vec<Address> = chunk.iter().map(|ac| ac.address).collect();
+            store
+                .prefetch_accounts(&addresses)
+                .map_err(|e| EvmError::Custom(format!("prefetch_accounts: {e}")))?;
+            for address in addresses {
                 if cancelled.load(Ordering::Relaxed) {
                     return Ok(());
                 }
-                let addresses: Vec<Address> = chunk.iter().map(|ac| ac.address).collect();
-                store
-                    .prefetch_accounts(&addresses)
-                    .map_err(|e| EvmError::Custom(format!("prefetch_accounts: {e}")))?;
-                for address in addresses {
-                    if cancelled.load(Ordering::Relaxed) {
-                        return Ok(());
-                    }
-                    if let Ok(state) = store.get_account_state(address)
-                        && state.code_hash != *EMPTY_KECCAK_HASH
-                    {
-                        let _ = store.get_account_code(state.code_hash);
-                    }
+                if let Ok(state) = store.get_account_state(address)
+                    && state.code_hash != *EMPTY_KECCAK_HASH
+                {
+                    let _ = store.get_account_code(state.code_hash);
                 }
-                Ok(())
-            })
+            }
+            Ok(())
+        };
+
+        // A short list is read on this thread: waking dozens of pool threads costs
+        // more than the handful of reads, and on a short block that wake-up shows.
+        if accounts.len() <= BAL_WARM_INLINE_ACCOUNTS {
+            return accounts
+                .chunks(BAL_WARM_CHUNK_ACCOUNTS)
+                .try_for_each(warm_chunk);
+        }
+        bal_warm_pool().install(|| {
+            accounts
+                .par_chunks(BAL_WARM_CHUNK_ACCOUNTS)
+                .try_for_each(warm_chunk)
+        })
     }
 
     fn send_state_transitions_tx(
@@ -4047,6 +4092,12 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<(ExecutionResult, AccessList), VMError> {
+        // The result is an EIP-2930 access list, so the request is invalid on a block
+        // before Berlin, whatever fields the call sets.
+        let berlin_block = db.store.get_chain_config()?.berlin_block;
+        if berlin_block.is_some_and(|block| header.number < block) {
+            return Err(TxValidationError::Type1TxPreFork.into());
+        }
         let mut env = env_from_generic(&tx, header, db, vm_type)?;
 
         adjust_disabled_base_fee(&mut env);
@@ -4319,20 +4370,6 @@ pub(crate) fn adjust_disabled_base_fee(env: &mut Environment) {
     if env.gas_price == U256::zero() {
         env.base_fee_per_gas = U256::zero();
     }
-    // Same for the blob fee: a call object that opts out by passing `maxFeePerBlobGas: 0`
-    // must not be rejected for undercutting the block's blob base fee.
-    // `base_blob_fee_per_gas` is the field the validation and the up-front cost both read
-    // (`validate_max_fee_per_blob_gas`, `deduct_caller`), and it is computed in
-    // `env_from_generic` before this runs, so it is what has to be lowered. Clearing
-    // `block_excess_blob_gas` instead had no effect: nothing reads that field, and the
-    // blob base fee derived from a zero excess still has a floor of 1, which a zero fee
-    // cap undercuts just the same.
-    if env
-        .tx_max_fee_per_blob_gas
-        .is_some_and(|v| v == U256::zero())
-    {
-        env.base_blob_fee_per_gas = U256::zero();
-    }
 }
 
 /// When l2 fees are disabled (ie. env.gas_price = 0), set fee configs to None to avoid breaking failing fee deductions
@@ -4361,6 +4398,34 @@ pub(crate) fn env_from_generic(
         calculate_gas_price_for_generic(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
     let block_excess_blob_gas = header.excess_blob_gas;
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
+    // A field whose EIP is not active at the target block makes the call invalid. Blocks
+    // never carry these transaction types before their fork, so only simulation needs the
+    // check. Pre-merge forks are scheduled by block number, and `config.fork` never goes
+    // below Paris, so the block number decides.
+    // A missing `berlin_block` or `london_block` means LEVM runs that fork's rules, so the field is accepted.
+    let before_block =
+        |fork_block: Option<u64>| fork_block.is_some_and(|block| header.number < block);
+    if !tx.access_list.is_empty() && before_block(chain_config.berlin_block) {
+        return Err(TxValidationError::Type1TxPreFork.into());
+    }
+    if (tx.max_fee_per_gas.is_some() || tx.max_priority_fee_per_gas.is_some())
+        && before_block(chain_config.london_block)
+    {
+        return Err(TxValidationError::Type2TxPreFork.into());
+    }
+    // The fields decide the type: blob hashes make the call a blob transaction, with a
+    // zero cap when the caller sets none, as geth does.
+    let max_fee_per_blob_gas = if tx.blob_versioned_hashes.is_empty() {
+        tx.max_fee_per_blob_gas
+    } else {
+        Some(tx.max_fee_per_blob_gas.unwrap_or_default())
+    };
+    // A zero cap zeroes the blob base fee, as geth does.
+    let base_blob_fee_per_gas = if max_fee_per_blob_gas.is_some_and(|cap| cap.is_zero()) {
+        U256::zero()
+    } else {
+        get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?
+    };
 
     // slot_number: default a missing value to zero exactly like
     // `setup_env_with_config` (the block-execution env builder) does, rather
@@ -4394,14 +4459,14 @@ pub(crate) fn env_from_generic(
         slot_number,
         chain_id: chain_config.chain_id.into(),
         base_fee_per_gas: header.base_fee_per_gas.unwrap_or_default().into(),
-        base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
+        base_blob_fee_per_gas,
         gas_price,
         block_excess_blob_gas,
         block_blob_gas_used: header.blob_gas_used,
         tx_blob_hashes: tx.blob_versioned_hashes.clone(),
         tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas.map(U256::from),
         tx_max_fee_per_gas: tx.max_fee_per_gas.map(U256::from),
-        tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,
+        tx_max_fee_per_blob_gas: max_fee_per_blob_gas,
         tx_nonce: tx.nonce.unwrap_or_default(),
         block_gas_limit: header.gas_limit,
         difficulty: header.difficulty,
