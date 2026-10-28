@@ -20,9 +20,9 @@ use ethrex_l2_rpc::clients::{
 };
 use ethrex_l2_rpc::signer::{LocalSigner, Signer};
 use ethrex_l2_sdk::{
-    COMMON_BRIDGE_L2_ADDRESS, bridge_address, calldata::encode_calldata,
-    claim_erc20withdraw, claim_withdraw, compile_contract, create_deploy, deposit_erc20,
-    get_address_alias, get_erc1967_slot, git_clone, wait_for_transaction_receipt,
+    COMMON_BRIDGE_L2_ADDRESS, bridge_address, calldata::encode_calldata, claim_erc20withdraw,
+    claim_withdraw, compile_contract, create_deploy, deposit_erc20, get_address_alias,
+    get_erc1967_slot, git_clone, wait_for_transaction_receipt,
 };
 use ethrex_l2_sdk::{
     FEE_TOKEN_REGISTRY_ADDRESS, L1ToL2TransactionData, L2_WITHDRAW_SIGNATURE,
@@ -1098,9 +1098,10 @@ async fn test_erc20_withdraw_l1_address_mismatch(
 /// Test sending an intent to L1 and consuming it there
 /// 1. Sends an intent from L2, carrying the payload an ETH withdrawal would have produced
 /// 2. Checks that an address other than the named consumer cannot consume it
-/// 3. Consumes the message on L1 once its batch is verified
-/// 4. Checks that consuming the same message again reverts
-/// 5. Checks that the payload cannot be claimed as a withdrawal
+/// 3. Checks that the payload cannot be claimed as a withdrawal
+/// 4. Consumes the message on L1 once its batch is verified
+/// 5. Checks that its message id is marked as consumed in claimedWithdrawalIDs
+/// 6. Checks that consuming the same message again reverts
 async fn test_send_intent_to_l1(
     l1_client: EthClient,
     l2_client: EthClient,
@@ -1185,39 +1186,8 @@ async fn test_send_intent_to_l1(
         "Expected revert reason to contain 'Invalid proof', got: {error_message}"
     );
 
-    println!("test_send_intent_to_l1: Consuming the message on L1");
-    let consume_receipt = test_send(
-        &l1_client,
-        &rich_wallet_private_key,
-        bridge_address()?,
-        consume_signature,
-        &consume_args,
-        "test_send_intent_to_l1",
-    )
-    .await?;
-    assert!(consume_receipt.receipt.status);
-
-    println!("test_send_intent_to_l1: Attempting to consume the message a second time");
-    let replay_result = l1_client
-        .call(
-            bridge_address()?,
-            encode_calldata(consume_signature, &consume_args)?.into(),
-            Overrides {
-                from: Some(rich_address),
-                ..Default::default()
-            },
-        )
-        .await;
-    assert!(
-        replay_result.is_err(),
-        "Expected eth_call to fail because the intent was already consumed"
-    );
-    let error_message = replay_result.unwrap_err().to_string();
-    assert!(
-        error_message.contains("already consumed"),
-        "Expected revert reason to contain 'already consumed', got: {error_message}"
-    );
-
+    // Must run before the intent is consumed: afterwards its message id is marked in
+    // claimedWithdrawalIDs and the claim would revert before reaching the proof check.
     println!("test_send_intent_to_l1: Attempting to claim the intent as a withdrawal");
     let claim_result = l1_client
         .call(
@@ -1246,6 +1216,56 @@ async fn test_send_intent_to_l1(
     assert!(
         error_message.contains("Invalid proof"),
         "Expected revert reason to contain 'Invalid proof', got: {error_message}"
+    );
+
+    println!("test_send_intent_to_l1: Consuming the message on L1");
+    let consume_receipt = test_send(
+        &l1_client,
+        &rich_wallet_private_key,
+        bridge_address()?,
+        consume_signature,
+        &consume_args,
+        "test_send_intent_to_l1",
+    )
+    .await?;
+    assert!(consume_receipt.receipt.status);
+
+    let consumed = l1_client
+        .call(
+            bridge_address()?,
+            encode_calldata(
+                "claimedWithdrawalIDs(uint256)",
+                &[Value::Uint(proof.message_id)],
+            )?
+            .into(),
+            Overrides::default(),
+        )
+        .await?;
+    assert_eq!(
+        U256::from_str_radix(consumed.trim_start_matches("0x"), 16)?,
+        U256::one(),
+        "Expected the intent's message id to be marked in claimedWithdrawalIDs"
+    );
+
+    println!("test_send_intent_to_l1: Attempting to consume the message a second time");
+    let replay_result = l1_client
+        .call(
+            bridge_address()?,
+            encode_calldata(consume_signature, &consume_args)?.into(),
+            Overrides {
+                from: Some(rich_address),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(
+        replay_result.is_err(),
+        "Expected eth_call to fail because the intent was already consumed"
+    );
+    let error_message = replay_result.unwrap_err().to_string();
+    assert!(
+        error_message.contains("already consumed"),
+        "Expected revert reason to contain 'already consumed', got: {error_message}"
     );
 
     println!("test_send_intent_to_l1: Intent consumed once and not claimable as a withdrawal");
