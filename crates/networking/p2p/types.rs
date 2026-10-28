@@ -339,7 +339,7 @@ pub struct NodeRecordPairs {
     pub secp256k1: Option<H264>,
     // https://github.com/ethereum/devp2p/blob/master/enr-entries/eth.md
     pub eth: Option<ForkId>,
-    // Snap entry is being used by some tests such as `test_encode_enr_response`.
+    // Served snap versions; an empty list means snap/1 only (ethereum/devp2p#286).
     pub snap: Option<Vec<u32>>,
     /// Entries outside the predefined dictionary, kept verbatim.
     ///
@@ -556,7 +556,8 @@ impl NodeRecord {
         let mut result: String = "enr:".into();
         let base64_encoded = String::from_utf8(base64_encoded)
             .map_err(|_| NodeError::ParseError("Could not base 64 encode enr record".into()))?;
-        result.push_str(&base64_encoded);
+        // ENR text uses unpadded URL-safe base64 (EIP-778).
+        result.push_str(base64_encoded.trim_end_matches('='));
         Ok(result)
     }
 

@@ -121,6 +121,9 @@ jobs:
           # not recoverable in place — it must fail on the PR that causes it.
           cargo test -p ethrex-test --features l2 --test ethrex_tests l2::native_rollup_sol_offsets
 
+      - name: Run L2 P2P block sync tests
+        run: cargo test -p ethrex-test --features l2 --test ethrex_tests l2::p2p_block_import
+
       - name: Run cargo fmt
         run: |
           cargo fmt --all -- --check

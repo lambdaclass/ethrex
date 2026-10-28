@@ -65,6 +65,30 @@ fn parse_node_from_enr_string() {
     assert_eq!(node, expected_node);
 }
 
+#[test]
+fn enr_url_omits_base64_padding() {
+    for (seq, remainder) in [(1, 2), (128, 0), (256, 1)] {
+        let record = NodeRecord::from_pairs(
+            seq,
+            &test_signer(),
+            NodeRecordPairs {
+                ip: Some(Ipv4Addr::LOCALHOST),
+                udp_port: Some(30303),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(record.encode_to_vec().len() % 3, remainder);
+
+        let url = record.enr_url().unwrap();
+        assert!(url.starts_with("enr:"));
+        assert!(!url.contains('='));
+        let decoded = through_enr_url(&record);
+        assert_eq!(decoded, record);
+        assert!(decoded.verify_signature());
+    }
+}
+
 #[tokio::test]
 async fn encode_node_record_to_enr_url() {
     // https://github.com/ethereum/devp2p/blob/master/enr.md#test-vectors
@@ -130,6 +154,14 @@ async fn encode_decode_node_record_with_forkid() {
     let pairs = parsed_record.pairs();
 
     assert_eq!(pairs.eth, Some(fork_id));
+}
+
+#[test]
+fn enr_url_is_unpadded() {
+    let enr_string = "enr:-I-4QFn4UMX2MSKTv3-_PFzSC7IOGZKbZYIgoWAnvraw4ltbU7Y7nrJh_o9KyuiNMF6uHLAHVX-wZhWWBg3vQVVr-COEatYhgoJpZIJ2NIJpcISsEAAKiXNlY3AyNTZrMaEDQ5E8xlrYGMHuvp9F-qV00UopOe0vGDmkQiXh9ymbkimDdGNwgnZfg3VkcIJ2Xw";
+    let base64_decoded = ethrex_common::base64::decode(&enr_string.as_bytes()[4..]);
+    let record = NodeRecord::decode(&base64_decoded).unwrap();
+    assert_eq!(record.enr_url().unwrap(), enr_string);
 }
 
 #[test]

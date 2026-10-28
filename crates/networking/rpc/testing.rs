@@ -27,6 +27,9 @@ pub struct BuildBlockV1Request {
     /// `slotNumber` from the payload attributes (EIP-7843). `None` when omitted;
     /// only applied to the built header when Amsterdam is active.
     pub slot_number: Option<u64>,
+    /// `targetGasLimit` from the payload attributes. `None` when omitted;
+    /// overrides the node's static gas ceiling only when Amsterdam is active.
+    pub target_gas_limit: Option<u64>,
 }
 
 /// Decodes a `0x`-prefixed hex string into raw bytes.
@@ -40,10 +43,10 @@ fn decode_hex_value(str_data: &str) -> Result<Bytes, RpcErr> {
 }
 
 /// Decodes a `0x`-prefixed hex string into a `u64`.
-fn decode_hex_u64(str_data: &str) -> Result<u64, RpcErr> {
+fn decode_hex_u64(str_data: &str, field: &str) -> Result<u64, RpcErr> {
     let str_data = str_data.strip_prefix("0x").unwrap_or(str_data);
     u64::from_str_radix(str_data, 16)
-        .map_err(|err| RpcErr::BadParams(format!("invalid slotNumber: {err}")))
+        .map_err(|err| RpcErr::BadParams(format!("invalid {field}: {err}")))
 }
 
 fn decode_transactions(param: &RawValue) -> Result<Option<Vec<Transaction>>, RpcErr> {
@@ -96,16 +99,22 @@ impl RpcHandler for BuildBlockV1Request {
                 extra_data.len()
             )));
         }
-        // `PayloadAttributesV3` has no `slotNumber`, so read it from the raw
-        // attributes object (EIP-7843, present from Amsterdam onwards).
+        // `PayloadAttributesV3` has no `slotNumber` or `targetGasLimit`, so read
+        // them from the raw attributes object (present from Amsterdam onwards).
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
-        struct SlotNumberField {
+        struct AmsterdamAttributeFields {
             slot_number: Option<String>,
+            target_gas_limit: Option<String>,
         }
-        let slot_number = serde_json::from_str::<SlotNumberField>(params[1].get())?
+        let amsterdam_fields = serde_json::from_str::<AmsterdamAttributeFields>(params[1].get())?;
+        let slot_number = amsterdam_fields
             .slot_number
-            .map(|hex_str| decode_hex_u64(&hex_str))
+            .map(|hex_str| decode_hex_u64(&hex_str, "slotNumber"))
+            .transpose()?;
+        let target_gas_limit = amsterdam_fields
+            .target_gas_limit
+            .map(|hex_str| decode_hex_u64(&hex_str, "targetGasLimit"))
             .transpose()?;
 
         Ok(Self {
@@ -114,6 +123,7 @@ impl RpcHandler for BuildBlockV1Request {
             transactions,
             extra_data,
             slot_number,
+            target_gas_limit,
         })
     }
 
@@ -143,12 +153,15 @@ impl RpcHandler for BuildBlockV1Request {
         }
 
         let chain_config = context.storage.get_chain_config();
+        let is_amsterdam = chain_config.is_amsterdam_activated(self.attributes.timestamp);
         // EIP-7843 requires the block header to carry a `slot_number` from
         // Amsterdam onwards; mirror genesis behaviour by defaulting to 0 when
         // the attribute is absent. Pre-Amsterdam blocks leave it unset.
-        let slot_number = chain_config
-            .is_amsterdam_activated(self.attributes.timestamp)
-            .then(|| self.slot_number.unwrap_or(0));
+        let slot_number = is_amsterdam.then(|| self.slot_number.unwrap_or(0));
+        let gas_ceil = is_amsterdam
+            .then_some(self.target_gas_limit)
+            .flatten()
+            .unwrap_or(context.gas_ceil);
 
         let args = BuildPayloadArgs {
             parent: self.parent_block_hash,
@@ -160,7 +173,7 @@ impl RpcHandler for BuildBlockV1Request {
             slot_number,
             version: 3,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
-            gas_ceil: context.gas_ceil,
+            gas_ceil,
         };
 
         let payload = match create_payload(&args, &context.storage, self.extra_data.clone()) {
@@ -218,7 +231,18 @@ impl RpcHandler for BuildBlockV1Request {
 mod tests {
     use super::*;
     use crate::test_utils::{default_context_with_storage, raw_params, setup_store};
+    use ethrex_blockchain::payload::calc_gas_limit;
+    use ethrex_common::types::Genesis;
+    use ethrex_storage::{EngineType, Store};
     use serde_json::json;
+
+    async fn setup_amsterdam_store() -> Store {
+        let genesis: Genesis =
+            serde_json::from_str(include_str!("../../../fixtures/genesis/l1-bal.json")).unwrap();
+        let mut store = Store::new("test-store", EngineType::InMemory).unwrap();
+        store.add_initial_state(genesis).await.unwrap();
+        store
+    }
 
     async fn head_hash_and_timestamp(context: &RpcApiContext) -> (H256, u64) {
         let hash = context
@@ -263,6 +287,7 @@ mod tests {
         assert_eq!(empty_req.transactions.as_ref().unwrap().len(), 0);
         assert!(empty_req.extra_data.is_empty());
         assert!(empty_req.slot_number.is_none());
+        assert!(empty_req.target_gas_limit.is_none());
     }
 
     #[test]
@@ -271,6 +296,14 @@ mod tests {
         params[1]["slotNumber"] = json!("0x2a");
         let req = BuildBlockV1Request::parse(&raw_params(&Some(params))).unwrap();
         assert_eq!(req.slot_number, Some(0x2a));
+    }
+
+    #[test]
+    fn parse_reads_target_gas_limit_from_attributes() {
+        let mut params = build_params(H256::zero(), 0x10, json!([])).unwrap();
+        params[1]["targetGasLimit"] = json!("0x1c9c380");
+        let req = BuildBlockV1Request::parse(&raw_params(&Some(params))).unwrap();
+        assert_eq!(req.target_gas_limit, Some(0x1c9c380));
     }
 
     #[tokio::test]
@@ -306,5 +339,65 @@ mod tests {
         assert_eq!(payload["blockNumber"], json!("0x1"));
         assert_eq!(payload["transactions"], json!([]));
         assert_eq!(response["shouldOverrideBuilder"], json!(false));
+    }
+
+    #[tokio::test]
+    async fn built_block_honors_target_gas_limit() {
+        let store = setup_amsterdam_store().await;
+        let context = default_context_with_storage(store).await;
+        let (head, timestamp) = head_hash_and_timestamp(&context).await;
+        let parent_gas_limit = context
+            .storage
+            .get_block_header_by_hash(head)
+            .unwrap()
+            .unwrap()
+            .gas_limit;
+
+        // Within one block's adjustment bound of the parent, and away from both
+        // the parent's limit and where the node's own ceiling would move it.
+        let target = parent_gas_limit - 1000;
+        assert_eq!(calc_gas_limit(parent_gas_limit, target), target);
+        assert_ne!(calc_gas_limit(parent_gas_limit, context.gas_ceil), target);
+
+        let mut params = build_params(head, timestamp + 12, json!([])).unwrap();
+        params[1]["targetGasLimit"] = json!(format!("{target:#x}"));
+        let response = BuildBlockV1Request::parse(&raw_params(&Some(params)))
+            .unwrap()
+            .handle(context.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response["executionPayload"]["gasLimit"],
+            json!(format!("{target:#x}"))
+        );
+    }
+
+    #[tokio::test]
+    async fn pre_amsterdam_ignores_target_gas_limit() {
+        let store = setup_store().await;
+        let context = default_context_with_storage(store).await;
+        let (head, timestamp) = head_hash_and_timestamp(&context).await;
+        let parent_gas_limit = context
+            .storage
+            .get_block_header_by_hash(head)
+            .unwrap()
+            .unwrap()
+            .gas_limit;
+        let expected = calc_gas_limit(parent_gas_limit, context.gas_ceil);
+        assert_ne!(expected, parent_gas_limit);
+
+        let mut params = build_params(head, timestamp + 12, json!([])).unwrap();
+        params[1]["targetGasLimit"] = json!(format!("{parent_gas_limit:#x}"));
+        let response = BuildBlockV1Request::parse(&raw_params(&Some(params)))
+            .unwrap()
+            .handle(context.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response["executionPayload"]["gasLimit"],
+            json!(format!("{expected:#x}"))
+        );
     }
 }

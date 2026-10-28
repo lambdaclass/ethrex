@@ -29,12 +29,13 @@ use crate::eth::client::Config;
 use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
-        GetTransactionCountRequest,
+        GetStorageValuesRequest, GetTransactionCountRequest,
     },
     block::{
         BlockNumberRequest, GetBlobBaseFee, GetBlockByHashRequest, GetBlockByNumberRequest,
-        GetBlockReceiptsRequest, GetBlockTransactionCountRequest, GetRawBlockRequest,
-        GetRawHeaderRequest, GetRawReceipts, GetUncleCountRequest,
+        GetBlockReceiptsRequest, GetBlockTransactionCountRequest, GetHeaderByHashRequest,
+        GetHeaderByNumberRequest, GetRawBlockRequest, GetRawHeaderRequest, GetRawReceipts,
+        GetUncleCountRequest,
     },
     block_access_list::{BlockAccessListRequest, RawBlockAccessListRequest},
     client::{ChainId, Syncing},
@@ -128,6 +129,15 @@ pub async fn handle_get_heap() -> Result<impl IntoResponse, (StatusCode, String)
     Ok(pprof)
 }
 
+// Feature-disabled stubs (no dependency on jemalloc_pprof)
+#[cfg(not(all(feature = "jemalloc_profiling", target_os = "linux")))]
+pub async fn handle_get_heap() -> Result<(), (StatusCode, String)> {
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        "jemalloc profiling is not available (build with `ethrex-rpc/jemalloc_profiling`, it only works on linux)".into(),
+    ))
+}
+
 /// Checks whether jemalloc profiling is activated an returns an error response if not.
 #[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
 fn require_profiling_activated(
@@ -164,15 +174,6 @@ pub async fn handle_get_heap_flamegraph() -> Result<impl IntoResponse, (StatusCo
         .header(CONTENT_TYPE, "image/svg+xml")
         .body(Body::from(svg))
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
-}
-
-// Feature-disabled stubs (no dependency on jemalloc_pprof)
-#[cfg(not(all(feature = "jemalloc_profiling", target_os = "linux")))]
-pub async fn handle_get_heap() -> Result<(), (StatusCode, String)> {
-    Err((
-        StatusCode::NOT_IMPLEMENTED,
-        "jemalloc profiling is not available (build with `ethrex-rpc/jemalloc_profiling`, it only works on linux)".into(),
-    ))
 }
 
 #[cfg(not(all(feature = "jemalloc_profiling", target_os = "linux")))]
@@ -1691,7 +1692,7 @@ pub async fn map_authrpc_requests(
 /// Routes `eth_*` namespace requests to their handlers.
 ///
 /// Handles all standard Ethereum JSON-RPC methods including:
-/// - Account queries: `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_getTransactionCount`
+/// - Account queries: `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_getStorageValues`, `eth_getTransactionCount`
 /// - Block queries: `eth_getBlockByNumber`, `eth_getBlockByHash`, `eth_blockNumber`
 /// - Transaction operations: `eth_sendRawTransaction`, `eth_getTransactionByHash`, `eth_getTransactionReceipt`
 /// - Gas estimation: `eth_estimateGas`, `eth_gasPrice`, `eth_maxPriorityFeePerGas`, `eth_feeHistory`
@@ -1703,9 +1704,12 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_syncing" => Syncing::call(req, context).await,
         "eth_getBlockByNumber" => GetBlockByNumberRequest::call(req, context).await,
         "eth_getBlockByHash" => GetBlockByHashRequest::call(req, context).await,
+        "eth_getHeaderByNumber" => GetHeaderByNumberRequest::call(req, context).await,
+        "eth_getHeaderByHash" => GetHeaderByHashRequest::call(req, context).await,
         "eth_getBalance" => GetBalanceRequest::call(req, context).await,
         "eth_getCode" => GetCodeRequest::call(req, context).await,
         "eth_getStorageAt" => GetStorageAtRequest::call(req, context).await,
+        "eth_getStorageValues" => GetStorageValuesRequest::call(req, context).await,
         "eth_getBlockTransactionCountByNumber" => {
             GetBlockTransactionCountRequest::call(req, context).await
         }
@@ -2074,6 +2078,53 @@ mod tests {
                 ),
                 "default allowlist should route {method}, got {result:?}"
             );
+        }
+    }
+
+    /// eth_getHeaderBy* returns the header with its hash and no size or body
+    /// fields, and null for unknown blocks, the pending tag, and safe or
+    /// finalized tags that no forkchoice update has set yet.
+    #[tokio::test]
+    async fn eth_get_header_by_number_and_hash() {
+        let storage = crate::test_utils::setup_store().await;
+        crate::test_utils::add_empty_blocks(&storage, 2).await;
+        let context = default_context_with_storage(storage).await;
+
+        let request: RpcRequest = serde_json::from_str(
+            r#"{"jsonrpc":"2.0","method":"eth_getHeaderByNumber","params":["latest"],"id":1}"#,
+        )
+        .unwrap();
+        let header = map_http_requests(&request, context.clone()).await.unwrap();
+        assert_eq!(header["number"], "0x2");
+        assert!(header.get("hash").is_some());
+        assert!(header.get("size").is_none());
+        assert!(header.get("transactions").is_none());
+        assert!(header.get("uncles").is_none());
+
+        let hash = header["hash"].as_str().unwrap().to_owned();
+        let request: RpcRequest = serde_json::from_str(&format!(
+            r#"{{"jsonrpc":"2.0","method":"eth_getHeaderByHash","params":["{hash}"],"id":1}}"#
+        ))
+        .unwrap();
+        let by_hash = map_http_requests(&request, context.clone()).await.unwrap();
+        assert_eq!(by_hash, header);
+
+        for (method, param) in [
+            ("eth_getHeaderByNumber", r#""0x3e8""#),
+            ("eth_getHeaderByNumber", r#""pending""#),
+            ("eth_getHeaderByNumber", r#""safe""#),
+            ("eth_getHeaderByNumber", r#""finalized""#),
+            (
+                "eth_getHeaderByHash",
+                r#""0x0000000000000000000000000000000000000000000000000000000000000000""#,
+            ),
+        ] {
+            let request: RpcRequest = serde_json::from_str(&format!(
+                r#"{{"jsonrpc":"2.0","method":"{method}","params":[{param}],"id":1}}"#
+            ))
+            .unwrap();
+            let result = map_http_requests(&request, context.clone()).await.unwrap();
+            assert_eq!(result, Value::Null, "{method} {param}");
         }
     }
 
@@ -2608,14 +2659,14 @@ mod tests {
                     }
                 },
                 "last": {
-                    "activationTime": 1793036568,
+                    "activationTime": 1762955544,
                     "blobSchedule": {
                         "baseFeeUpdateFraction": 11684671,
                         "max": 21,
                         "target": 14,
                     },
                     "chainId": "0x88bb0",
-                    "forkId": "0x3d068b59",
+                    "forkId": "0x23aa1351",
                     "precompiles": {
                         "BLAKE2F": "0x0000000000000000000000000000000000000009",
                         "BLS12_G1ADD": "0x000000000000000000000000000000000000000b",
@@ -2638,8 +2689,6 @@ mod tests {
                     },
                     "systemContracts": {
                         "BEACON_ROOTS_ADDRESS": "0x000f3df6d732807ef1319fb7b8bb8522d0beac02",
-                        "BUILDER_DEPOSIT_CONTRACT_ADDRESS": "0x0000bff46984e3725691fa540a8c7589300d8282",
-                        "BUILDER_EXIT_CONTRACT_ADDRESS": "0x000064d678505ad48f8ccb093bc65613800e8282",
                         "CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS": "0x0000bbddc7ce488642fb579f8b00f3a590007251",
                         "DEPOSIT_CONTRACT_ADDRESS": "0x00000000219ab540356cbb839cbe05303d7705fa",
                         "HISTORY_STORAGE_ADDRESS": "0x0000f90827f1c53a10cb7a02335b175320002935",

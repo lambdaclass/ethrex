@@ -10,6 +10,7 @@
 //! of a committed slot must still resolve to the committed value, not `0`.
 
 use bytes::Bytes;
+use ethrex_common::seeded_hash::SeededHashMap;
 use ethrex_common::{
     Address, H256, U256,
     constants::EMPTY_KECCAK_HASH,
@@ -129,7 +130,7 @@ fn dummy_tx() -> Transaction {
 /// A `DestroyedModified` account holding only the slots written after recreation,
 /// as the per-flush drain-back leaves it in `initial_accounts_state`.
 fn destroyed_modified_with(slot: H256, value: U256) -> LevmAccount {
-    let mut storage = FxHashMap::default();
+    let mut storage = SeededHashMap::default();
     storage.insert(slot, value);
     LevmAccount {
         info: AccountInfo {

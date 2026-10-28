@@ -48,6 +48,7 @@ COPY --link tooling/repl ./tooling/repl
 COPY --link tooling/monitor ./tooling/monitor
 COPY --link tooling/runner ./tooling/runner
 COPY --link tooling/history_validator ./tooling/history_validator
+COPY --link tooling/partial ./tooling/partial
 COPY --link Cargo.toml Cargo.lock ./
 COPY --link .cargo ./.cargo
 
@@ -98,6 +99,7 @@ COPY --link tooling/repl ./tooling/repl
 COPY --link tooling/monitor ./tooling/monitor
 COPY --link tooling/runner ./tooling/runner
 COPY --link tooling/history_validator ./tooling/history_validator
+COPY --link tooling/partial ./tooling/partial
 COPY --link Cargo.toml Cargo.lock ./
 COPY --link .cargo ./.cargo
 # Only these subdirs are referenced by include_str!/include_bytes! in workspace

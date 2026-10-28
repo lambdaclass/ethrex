@@ -120,7 +120,7 @@ impl OpcodeHandler for OpCallHandler {
                     .ok_or(ExceptionalHalt::OutOfGas)?,
             )?;
             vm.substate.add_accessed_address(auth_address);
-            vm.db.get_account_code(auth_address)?.clone()
+            Some(vm.db.get_account_code(auth_address)?.clone())
         } else {
             callee_code
         };
@@ -293,7 +293,7 @@ impl OpcodeHandler for OpCallCodeHandler {
                     .ok_or(ExceptionalHalt::OutOfGas)?,
             )?;
             vm.substate.add_accessed_address(auth_address);
-            vm.db.get_account_code(auth_address)?.clone()
+            Some(vm.db.get_account_code(auth_address)?.clone())
         } else {
             target_code
         };
@@ -416,7 +416,7 @@ impl OpcodeHandler for OpDelegateCallHandler {
                     .ok_or(ExceptionalHalt::OutOfGas)?,
             )?;
             vm.substate.add_accessed_address(auth_address);
-            vm.db.get_account_code(auth_address)?.clone()
+            Some(vm.db.get_account_code(auth_address)?.clone())
         } else {
             target_code
         };
@@ -540,7 +540,7 @@ impl OpcodeHandler for OpStaticCallHandler {
                     .ok_or(ExceptionalHalt::OutOfGas)?,
             )?;
             vm.substate.add_accessed_address(auth_address);
-            vm.db.get_account_code(auth_address)?.clone()
+            Some(vm.db.get_account_code(auth_address)?.clone())
         } else {
             target_code
         };
@@ -1211,7 +1211,7 @@ impl<'a> VM<'a> {
         calldata: CallData,
         ret_offset: usize,
         ret_size: usize,
-        bytecode: Code,
+        bytecode: Option<Code>,
         is_delegation_7702: bool,
         new_account_charged: bool,
     ) -> Result<OpcodeResult, VMError> {
@@ -1249,7 +1249,7 @@ impl<'a> VM<'a> {
 
             let mut gas_remaining = gas_limit;
             // The precompile reads the arguments in place in the caller's memory.
-            let ctx_result =
+            let mut ctx_result =
                 self.execute_precompile(code_address, &calldata, gas_limit, &mut gas_remaining)?;
 
             let call_frame = &mut self.current_call_frame;
@@ -1279,7 +1279,14 @@ impl<'a> VM<'a> {
                     &ctx_result.output
                 },
             )?;
-            call_frame.sub_return_data = ctx_result.output.clone();
+            // Move the output into the return-data buffer instead of cloning it:
+            // a `Vec`-backed `Bytes` allocates a shared header on its first clone.
+            // Only an active call tracer reads the output again, in `exit_context`.
+            call_frame.sub_return_data = if self.tracer.active {
+                ctx_result.output.clone()
+            } else {
+                std::mem::take(&mut ctx_result.output)
+            };
 
             // What to do, depending on TxResult
             call_frame.stack.push(match &ctx_result.result {
@@ -1318,7 +1325,7 @@ impl<'a> VM<'a> {
                 msg_sender,
                 to,
                 code_address,
-                bytecode,
+                bytecode.unwrap_or_default(),
                 value,
                 calldata,
                 is_static,
