@@ -90,11 +90,13 @@ contract CommonBridge is
     /// CommonBridgeL2.sendIntentToL1
     bytes32 public constant INTENT_DOMAIN = L2_TO_L1_INTENT_DOMAIN;
 
-    /// @notice Mapping of unclaimed withdrawals. A withdrawal is claimed if
-    /// there is a non-zero value in the mapping for the message id
-    /// of the L2 transaction that requested the withdrawal.
-    /// @dev The key is the message id of the L1Message of the transaction.
-    /// @dev The value is a boolean indicating if the withdrawal was claimed or not.
+    /// @notice Mapping of consumed L2 to L1 messages, both withdrawals and
+    /// intents. A message is consumed if there is a non-zero value in the mapping
+    /// for its message id, set when the withdrawal is claimed or the intent is
+    /// consumed through verifyAndConsume.
+    /// @dev The key is the message id of the L1Message. Message ids come from a
+    /// @dev single counter on L2, so withdrawals and intents never share one.
+    /// @dev The value is a boolean indicating if the message was consumed or not.
     mapping(uint256 => bool) public claimedWithdrawalIDs;
 
     /// @notice Maximum time the sequencer is allowed to take without processing a privileged transaction
@@ -130,13 +132,6 @@ contract CommonBridge is
     /// @notice The L2 block gas limit. Privileged transactions submitted via sendToL2
     /// must have a gasLimit at or below this value.
     uint256 public l2GasLimit;
-
-    /// @notice Mapping of consumed intents. Kept separate from
-    /// claimedWithdrawalIDs so that intents and withdrawals cannot mark each
-    /// other as spent.
-    /// @dev The key is the message leaf, not the message id, so that message
-    /// @dev types with their own id counters cannot collide.
-    mapping(bytes32 => bool) public consumedIntents;
 
     /// @notice Minimum allowed value for l2GasLimit. Must be at least as large as the
     /// highest hardcoded gas limit used by internal bridge functions.
@@ -665,23 +660,18 @@ contract CommonBridge is
                 IOnChainProposer(ON_CHAIN_PROPOSER).lastVerifiedBatch(),
             "CommonBridge: the batch that emitted the intent was not verified"
         );
+        require(
+            claimedWithdrawalIDs[messageId] == false,
+            "CommonBridge: the message was already consumed"
+        );
 
         bytes32 messageHash = intentHash(senderOnL2, msg.sender, payloadHash);
-        bytes32 leaf = _messageLeaf(messageHash, messageId);
         require(
-            consumedIntents[leaf] == false,
-            "CommonBridge: the intent was already consumed"
-        );
-        require(
-            MerkleProof.verify(
-                proof,
-                batchWithdrawalLogsMerkleRoots[batchNumber],
-                leaf
-            ),
+            _verifyMessageProof(messageHash, batchNumber, messageId, proof),
             "CommonBridge: Invalid proof"
         );
 
-        consumedIntents[leaf] = true;
+        claimedWithdrawalIDs[messageId] = true;
         emit IntentConsumed(batchNumber, messageId, messageHash);
     }
 
@@ -706,48 +696,24 @@ contract CommonBridge is
             );
     }
 
-    /// @inheritdoc ICommonBridge
-    function isIntentConsumed(
-        address senderOnL2,
-        address consumerOnL1,
-        bytes32 payloadHash,
-        uint256 messageId
-    ) external view override returns (bool) {
-        return
-            consumedIntents[
-                _messageLeaf(
-                    intentHash(senderOnL2, consumerOnL1, payloadHash),
-                    messageId
-                )
-            ];
-    }
-
     function _verifyMessageProof(
         bytes32 msgHash,
-        uint256 withdrawalBatchNumber,
-        uint256 withdrawalMessageId,
-        bytes32[] calldata withdrawalProof
+        uint256 batchNumber,
+        uint256 messageId,
+        bytes32[] calldata messageProof
     ) internal view returns (bool) {
         return
             MerkleProof.verify(
-                withdrawalProof,
-                batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber],
-                _messageLeaf(msgHash, withdrawalMessageId)
+                messageProof,
+                batchWithdrawalLogsMerkleRoots[batchNumber],
+                keccak256(abi.encodePacked(L2_BRIDGE_ADDRESS, msgHash, messageId))
             );
     }
 
-    /// @dev The leaf published in the batch's message root.
-    function _messageLeaf(
-        bytes32 msgHash,
-        uint256 messageId
-    ) private pure returns (bytes32) {
-        return
-            keccak256(abi.encodePacked(L2_BRIDGE_ADDRESS, msgHash, messageId));
-    }
-    
     function pendingTxHashesLength() private view returns (uint256) {
         return pendingTxHashes.length - pendingPrivilegedTxIndex;
     }
+
     function pendingL2MessagesLength(
         uint256 chainId
     ) private view returns (uint256) {
