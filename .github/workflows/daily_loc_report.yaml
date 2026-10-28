@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
@@ -38,7 +38,7 @@ jobs:
 
       - name: Restore cache
         id: cache-loc-report
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v5.1.0
         with:
           path: tooling/loc/loc_report.json
           key: loc-report-${{ github.ref_name }}-${{ github.run_id }}
@@ -54,7 +54,7 @@ jobs:
           cd tooling/loc && make loc
 
       - name: Tailscale
-        uses: tailscale/github-action@v4
+        uses: tailscale/github-action@v4.3.0
         with:
           oauth-client-id: ${{ vars.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
@@ -95,7 +95,7 @@ jobs:
 
       - name: Save new loc_report.json to cache
         if: success()
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v5.1.0
         with:
           path: tooling/loc/loc_report.json
           key: loc-report-${{ github.ref_name }}-${{ github.run_id }}

@@ -32,7 +32,7 @@ jobs:
     name: no_std build check (riscv64im_zicclsm)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
 
       # Pinned for reproducibility (build-std + json-target-spec are nightly-only);
       # bump the date deliberately. dtolnay has no per-date ref, so pass it as input.
@@ -58,7 +58,7 @@ jobs:
     name: stateless-validator feature check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
