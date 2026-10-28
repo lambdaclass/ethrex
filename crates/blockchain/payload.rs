@@ -515,6 +515,10 @@ impl Blockchain {
     /// `inclusion_list` carries the EIP-7805 (FOCIL) transactions sequenced
     /// before the priority-fee mempool fill phase. Empty slice = pre-FOCIL
     /// behavior (zero-iteration IL pre-pass).
+    ///
+    /// Cancelling also stops the build in progress: it stops adding mempool
+    /// transactions and seals the block with the ones it already has, so
+    /// `getPayload` never waits for a full build.
     pub async fn build_payload_loop(
         self: Arc<Blockchain>,
         payload: Block,
@@ -524,31 +528,35 @@ impl Blockchain {
         let start = Instant::now();
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
-        // TODO(#4997): start with an empty block
         // Snapshot the mempool sequence *before* the build so any tx that lands
         // during the build is seen as newer than the current `res`.
         let mut last_built_seq = self.mempool.tx_seq();
-        let mut res = self.build_payload_inner(payload.clone(), None, &inclusion_list)?;
+        // A `getPayload` arriving during this first build gets a block with only
+        // the transactions added before it arrived, possibly none.
+        let mut res = self.build_payload_until(payload.clone(), &inclusion_list, &cancel_token)?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             // Wait for new transactions, cancellation, or slot deadline before rebuilding
             let remaining = SECONDS_PER_SLOT.saturating_sub(start.elapsed());
             let notified = self.mempool.tx_added().notified();
             tokio::select! {
-                _ = notified => {}
+                // A tx landing together with `getPayload` must not start a
+                // rebuild that would only stop right away.
+                biased;
                 _ = cancel_token.cancelled() => break,
+                _ = notified => {}
                 _ = tokio::time::sleep(remaining) => break,
             }
-            let payload = payload.clone();
-            let self_clone = self.clone();
             let seq_before = self.mempool.tx_seq();
-            let il_clone = inclusion_list.to_vec();
-            let building_task = tokio::task::spawn_blocking(move || {
-                self_clone.build_payload_inner(payload, None, &il_clone)
-            });
-            // Cancel the current build process and return the previous payload if it is requested earlier
-            // TODO(#5011): this doesn't stop the building task, but only keeps it running in the background,
-            //   which wastes CPU resources.
-            match cancel_token.run_until_cancelled(building_task).await {
+            let wait_if_cancelled = res.payload.body.transactions.is_empty();
+            match self
+                .rebuild_payload(
+                    payload.clone(),
+                    &inclusion_list,
+                    &cancel_token,
+                    wait_if_cancelled,
+                )
+                .await
+            {
                 Some(Ok(current_res)) => {
                     res = current_res?;
                     last_built_seq = seq_before;
@@ -560,58 +568,79 @@ impl Blockchain {
             }
         }
 
-        // If a tx landed after the snapshot that produced `res`, do one final
-        // build before returning. Covers both races: (a) cancellation dropping
-        // an in-progress rebuild via `run_until_cancelled`, and (b) the slot-
-        // timeout `select!` arm winning over a simultaneous `tx_added`
-        // notification near the slot boundary.
-        //
-        // When the loop was cancelled, `engine_getPayload` is blocked on this
-        // task and must answer within the Engine API deadline (1s), while a
-        // full rebuild of a large block can exceed that deadline on its own —
-        // under sustained mempool inflow `tx_seq() > last_built_seq` is true
-        // on essentially every call, so an unconditional rebuild here puts one
-        // whole extra block build on the proposal critical path. In that case
-        // only rebuild when the payload we hold is empty: returning a slightly
-        // stale block is fine (geth/reth return best-so-far too), but
-        // proposing an empty block while the mempool has transactions is not
-        // (race (a) with no completed rebuild yet).
-        //
-        // TODO(#5011): two paths below can still put a full build on the
-        // critical path, so this narrows the exposure rather than removing it.
-        // First, the empty-payload case still rebuilds over the whole mempool;
-        // that has to stay correct (it is the race this guard exists for), but
-        // a large mempool of txs that never make it into a block — low-fee or
-        // nonce-gapped — can make even that approach the deadline. Second, this
-        // rebuild is not cancellable: unlike the in-loop build it runs as a
-        // plain `spawn_blocking(..).await`, so a `getPayload` arriving while a
-        // slot-timeout rebuild is in flight waits for it to finish. Bounding
-        // either needs a time-boxed or partial build, not a guard here.
-        if self.mempool.tx_seq() > last_built_seq
-            && (!cancel_token.is_cancelled() || res.payload.body.transactions.is_empty())
-        {
-            let blockchain = self.clone();
-            let il_clone = inclusion_list.clone();
-            match tokio::task::spawn_blocking(move || {
-                blockchain.build_payload_inner(payload, None, &il_clone)
-            })
-            .await
+        // The slot-timeout `select!` arm can win over a simultaneous `tx_added`
+        // notification near the slot boundary, so if a tx landed after the
+        // snapshot that produced `res`, do one final build. On cancellation
+        // there is nothing left to do: a build started now would stop before
+        // adding a mempool transaction, and the loop already waited for the
+        // in-flight rebuild when `res` was empty.
+        if !cancel_token.is_cancelled() && self.mempool.tx_seq() > last_built_seq {
+            let wait_if_cancelled = res.payload.body.transactions.is_empty();
+            match self
+                .rebuild_payload(payload, &inclusion_list, &cancel_token, wait_if_cancelled)
+                .await
             {
-                Ok(Ok(final_res)) => res = final_res,
-                Ok(Err(err)) => {
+                Some(Ok(Ok(final_res))) => res = final_res,
+                Some(Ok(Err(err))) => {
                     warn!(%err, "Final payload rebuild failed; returning previous result")
                 }
-                Err(err) => warn!(%err, "Final payload rebuild task panicked"),
+                Some(Err(err)) => warn!(%err, "Final payload rebuild task panicked"),
+                None => {}
             }
         }
 
         Ok(res)
     }
 
+    /// Rebuilds `payload` on a blocking thread. If `cancel_token` is cancelled
+    /// mid-rebuild, the rebuild stops adding transactions and seals what it has.
+    /// The caller waits for that only when `wait_if_cancelled` is set (the block
+    /// it already holds is empty); otherwise it returns `None` right away and
+    /// the stopped rebuild is discarded, keeping the seal off the `getPayload`
+    /// critical path.
+    async fn rebuild_payload(
+        self: &Arc<Blockchain>,
+        payload: Block,
+        inclusion_list: &[Transaction],
+        cancel_token: &CancellationToken,
+        wait_if_cancelled: bool,
+    ) -> Option<Result<Result<PayloadBuildResult, ChainError>, tokio::task::JoinError>> {
+        let blockchain = self.clone();
+        let inclusion_list = inclusion_list.to_vec();
+        let stop = cancel_token.clone();
+        let mut building_task = tokio::task::spawn_blocking(move || {
+            blockchain.build_payload_until(payload, &inclusion_list, &stop)
+        });
+        tokio::select! {
+            // Prefer a rebuild that finished at the same time as the cancellation.
+            biased;
+            joined = &mut building_task => Some(joined),
+            _ = cancel_token.cancelled() => {
+                if wait_if_cancelled {
+                    Some(building_task.await)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
     /// Completes the payload building process, return the block value.
     /// Transactions are pulled from the mempool.
     pub fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
-        self.build_payload_inner(payload, None, &[])
+        self.build_payload_inner(payload, None, &[], None)
+    }
+
+    /// Same as `build_payload_with_il`, but once `stop` is cancelled it stops
+    /// adding mempool transactions and seals the block with the ones it already
+    /// has. The inclusion-list transactions are still applied.
+    fn build_payload_until(
+        &self,
+        payload: Block,
+        inclusion_list: &[Transaction],
+        stop: &CancellationToken,
+    ) -> Result<PayloadBuildResult, ChainError> {
+        self.build_payload_inner(payload, None, inclusion_list, Some(stop))
     }
 
     /// Builds a payload from an explicit, ordered list of transactions instead of the
@@ -623,7 +652,7 @@ impl Blockchain {
         payload: Block,
         transactions: Vec<Transaction>,
     ) -> Result<PayloadBuildResult, ChainError> {
-        self.build_payload_inner(payload, Some(transactions), &[])
+        self.build_payload_inner(payload, Some(transactions), &[], None)
     }
 
     /// EIP-7805 (FOCIL) variant of [`build_payload`]: sequences the IL
@@ -633,7 +662,7 @@ impl Blockchain {
         payload: Block,
         inclusion_list: &[Transaction],
     ) -> Result<PayloadBuildResult, ChainError> {
-        self.build_payload_inner(payload, None, inclusion_list)
+        self.build_payload_inner(payload, None, inclusion_list, None)
     }
 
     /// Builds a payload for the t8n tool from an explicit, ordered list of
@@ -792,14 +821,16 @@ impl Blockchain {
     }
 
     /// Shared block-building pipeline. When `explicit_transactions` is `None` the
-    /// payload is filled from the mempool; otherwise the provided transactions are
-    /// applied verbatim. `inclusion_list` is `&[]` for non-FOCIL callers; in that
-    /// case the IL pre-pass is a zero-iteration loop.
+    /// payload is filled from the mempool, stopping early once `stop` is
+    /// cancelled; otherwise the provided transactions are applied verbatim.
+    /// `inclusion_list` is `&[]` for non-FOCIL callers; in that case the IL
+    /// pre-pass is a zero-iteration loop.
     fn build_payload_inner(
         &self,
         payload: Block,
         explicit_transactions: Option<Vec<Transaction>>,
         inclusion_list: &[Transaction],
+        stop: Option<&CancellationToken>,
     ) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
 
@@ -830,7 +861,10 @@ impl Blockchain {
                         &mut included,
                     )?;
                 }
-                self.fill_transactions(&mut context, &mut included)?;
+                // `stop` only cuts the mempool fill short. The IL passes always
+                // run: a block that leaves out an IL tx it had gas for fails the
+                // inclusion-list satisfaction check.
+                self.fill_transactions(&mut context, &mut included, stop)?;
                 // A mempool tx can make an IL tx valid that was not valid
                 // before it: the sender's previous nonce, or a transfer that
                 // funds the sender. The satisfaction check judges every IL tx
@@ -1079,12 +1113,16 @@ impl Blockchain {
         }
     }
 
+    /// Fills the payload with transactions taken from the mempool.
+    /// Stops early, between transactions, once `stop` is cancelled.
+    ///
     /// `included` holds the hashes of the txs already in the payload and
     /// gains the ones this call adds.
     pub fn fill_transactions(
         &self,
         context: &mut PayloadBuildContext,
         included: &mut FxHashSet<H256>,
+        stop: Option<&CancellationToken>,
     ) -> Result<(), ChainError> {
         let chain_config = context.chain_config();
         let max_blob_number_per_block = self.effective_max_blobs(context);
@@ -1094,6 +1132,12 @@ impl Blockchain {
         let (mut plain_txs, mut blob_txs) = self.fetch_mempool_transactions(context)?;
         // Execute and add transactions to payload (if suitable)
         loop {
+            // Checked before picking the next transaction, never mid-transaction,
+            // so the mempool bookkeeping below is never left half done.
+            if stop.is_some_and(CancellationToken::is_cancelled) {
+                debug!("Payload build stopped, sealing with the transactions added so far");
+                break;
+            }
             // Check if we have enough gas to run more transactions
             if context.remaining_gas < TX_GAS_COST {
                 debug!("No more gas to run transactions");
