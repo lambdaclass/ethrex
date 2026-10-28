@@ -143,6 +143,32 @@ jobs:
             cat docs/known_issues.md
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # The Test job runs the differential fuzzers' quick tests in the dev profile, where they check
+  # reduced case counts; this runs them once at the full counts of an optimized build.
+  difffuzz-release:
+    name: Differential fuzz tests (release)
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      # Its own pool: no other job builds the test crate at `release` without
+      # the `l2` feature, so the `l1` entry (dev profile) carries nothing it can
+      # link against.
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1-difffuzz
+          save-cache: 'true'
+
+      - name: Run the quick differential fuzz tests
+        run: cargo test --release -p ethrex-test --test ethrex_tests difffuzz_
+
   engine-ef-tests:
     name: Engine EF tests
     needs: detect-changes

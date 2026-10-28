@@ -29,7 +29,7 @@ use crate::eth::client::Config;
 use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
-        GetTransactionCountRequest,
+        GetStorageValuesRequest, GetTransactionCountRequest,
     },
     block::{
         BlockNumberRequest, GetBlobBaseFee, GetBlockByHashRequest, GetBlockByNumberRequest,
@@ -129,6 +129,15 @@ pub async fn handle_get_heap() -> Result<impl IntoResponse, (StatusCode, String)
     Ok(pprof)
 }
 
+// Feature-disabled stubs (no dependency on jemalloc_pprof)
+#[cfg(not(all(feature = "jemalloc_profiling", target_os = "linux")))]
+pub async fn handle_get_heap() -> Result<(), (StatusCode, String)> {
+    Err((
+        StatusCode::NOT_IMPLEMENTED,
+        "jemalloc profiling is not available (build with `ethrex-rpc/jemalloc_profiling`, it only works on linux)".into(),
+    ))
+}
+
 /// Checks whether jemalloc profiling is activated an returns an error response if not.
 #[cfg(all(feature = "jemalloc_profiling", target_os = "linux"))]
 fn require_profiling_activated(
@@ -165,15 +174,6 @@ pub async fn handle_get_heap_flamegraph() -> Result<impl IntoResponse, (StatusCo
         .header(CONTENT_TYPE, "image/svg+xml")
         .body(Body::from(svg))
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
-}
-
-// Feature-disabled stubs (no dependency on jemalloc_pprof)
-#[cfg(not(all(feature = "jemalloc_profiling", target_os = "linux")))]
-pub async fn handle_get_heap() -> Result<(), (StatusCode, String)> {
-    Err((
-        StatusCode::NOT_IMPLEMENTED,
-        "jemalloc profiling is not available (build with `ethrex-rpc/jemalloc_profiling`, it only works on linux)".into(),
-    ))
 }
 
 #[cfg(not(all(feature = "jemalloc_profiling", target_os = "linux")))]
@@ -1692,7 +1692,7 @@ pub async fn map_authrpc_requests(
 /// Routes `eth_*` namespace requests to their handlers.
 ///
 /// Handles all standard Ethereum JSON-RPC methods including:
-/// - Account queries: `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_getTransactionCount`
+/// - Account queries: `eth_getBalance`, `eth_getCode`, `eth_getStorageAt`, `eth_getStorageValues`, `eth_getTransactionCount`
 /// - Block queries: `eth_getBlockByNumber`, `eth_getBlockByHash`, `eth_blockNumber`
 /// - Transaction operations: `eth_sendRawTransaction`, `eth_getTransactionByHash`, `eth_getTransactionReceipt`
 /// - Gas estimation: `eth_estimateGas`, `eth_gasPrice`, `eth_maxPriorityFeePerGas`, `eth_feeHistory`
@@ -1709,6 +1709,7 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_getBalance" => GetBalanceRequest::call(req, context).await,
         "eth_getCode" => GetCodeRequest::call(req, context).await,
         "eth_getStorageAt" => GetStorageAtRequest::call(req, context).await,
+        "eth_getStorageValues" => GetStorageValuesRequest::call(req, context).await,
         "eth_getBlockTransactionCountByNumber" => {
             GetBlockTransactionCountRequest::call(req, context).await
         }

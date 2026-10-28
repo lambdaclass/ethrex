@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, HashMap};
+
 use serde_json::{Value, value::RawValue};
 use tracing::debug;
 
@@ -84,12 +86,17 @@ impl RpcHandler for GetBalanceRequest {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() != 2 {
-            return Err(RpcErr::BadParams("Expected 2 params".to_owned()));
+        // The block parameter is optional and defaults to "latest" (per execution-apis).
+        if params.len() != 1 && params.len() != 2 {
+            return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         };
         Ok(GetBalanceRequest {
             address: serde_json::from_str(params[0].get())?,
-            block: BlockIdentifierOrHash::parse_param(&params[1], 1)?,
+            block: params
+                .get(1)
+                .map(|param| BlockIdentifierOrHash::parse_param(param, 1))
+                .transpose()?
+                .unwrap_or_default(),
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -120,12 +127,17 @@ impl RpcHandler for GetCodeRequest {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() != 2 {
-            return Err(RpcErr::BadParams("Expected 2 params".to_owned()));
+        // The block parameter is optional and defaults to "latest" (per execution-apis).
+        if params.len() != 1 && params.len() != 2 {
+            return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         };
         Ok(GetCodeRequest {
             address: serde_json::from_str(params[0].get())?,
-            block: BlockIdentifierOrHash::parse_param(&params[1], 1)?,
+            block: params
+                .get(1)
+                .map(|param| BlockIdentifierOrHash::parse_param(param, 1))
+                .transpose()?
+                .unwrap_or_default(),
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -157,14 +169,19 @@ impl RpcHandler for GetStorageAtRequest {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() != 3 {
-            return Err(RpcErr::BadParams("Expected 3 params".to_owned()));
+        // The block parameter is optional and defaults to "latest" (per execution-apis).
+        if params.len() != 2 && params.len() != 3 {
+            return Err(RpcErr::BadParams("Expected 2 or 3 params".to_owned()));
         };
         let storage_slot_u256 = serde_utils::u256::deser_hex_or_dec_str(&*params[1])?;
         Ok(GetStorageAtRequest {
             address: serde_json::from_str(params[0].get())?,
             storage_slot: H256::from_uint(&storage_slot_u256),
-            block: BlockIdentifierOrHash::parse_param(&params[2], 2)?,
+            block: params
+                .get(2)
+                .map(|param| BlockIdentifierOrHash::parse_param(param, 2))
+                .transpose()?
+                .unwrap_or_default(),
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -194,12 +211,17 @@ impl RpcHandler for GetTransactionCountRequest {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() != 2 {
-            return Err(RpcErr::BadParams("Expected 2 params".to_owned()));
+        // The block parameter is optional and defaults to "latest" (per execution-apis).
+        if params.len() != 1 && params.len() != 2 {
+            return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         };
         Ok(GetTransactionCountRequest {
             address: serde_json::from_str(params[0].get())?,
-            block: BlockIdentifierOrHash::parse_param(&params[1], 1)?,
+            block: params
+                .get(1)
+                .map(|param| BlockIdentifierOrHash::parse_param(param, 1))
+                .transpose()?
+                .unwrap_or_default(),
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -242,8 +264,9 @@ impl RpcHandler for GetProofRequest {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() != 3 {
-            return Err(RpcErr::BadParams("Expected 3 params".to_owned()));
+        // The block parameter is optional and defaults to "latest" (per execution-apis).
+        if params.len() != 2 && params.len() != 3 {
+            return Err(RpcErr::BadParams("Expected 2 or 3 params".to_owned()));
         };
         let raw_keys: Vec<String> = serde_json::from_str(params[1].get())
             .map_err(|error| RpcErr::InvalidParams(format!("invalid storage keys: {error}")))?;
@@ -257,7 +280,11 @@ impl RpcHandler for GetProofRequest {
             address: serde_json::from_str(params[0].get())?,
             storage_keys,
             storage_key_echoes,
-            block: BlockIdentifierOrHash::parse_param(&params[2], 2)?,
+            block: params
+                .get(2)
+                .map(|param| BlockIdentifierOrHash::parse_param(param, 2))
+                .transpose()?
+                .unwrap_or_default(),
         })
     }
 
@@ -324,6 +351,108 @@ impl RpcHandler for GetProofRequest {
     }
 }
 
+/// Maximum number of storage slots that can be requested across all accounts in a
+/// single `eth_getStorageValues` call (matches go-ethereum's limit).
+const MAX_STORAGE_VALUES_SLOTS: usize = 1024;
+
+pub struct GetStorageValuesRequest {
+    pub requests: HashMap<Address, Vec<H256>>,
+    pub block: BlockIdentifierOrHash,
+}
+
+/// Parses a storage slot as the spec's `bytesMax32`: `0x` and at most 64 hex
+/// digits, where `0x` alone is slot 0.
+fn parse_storage_slot(slot: &str) -> Result<H256, RpcErr> {
+    let invalid =
+        || RpcErr::InvalidParams("storage slot must be 0x and at most 64 hex digits".to_owned());
+    let digits = slot.strip_prefix("0x").ok_or_else(invalid)?;
+    if digits.len() > 64 || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(invalid());
+    }
+    if digits.is_empty() {
+        return Ok(H256::zero());
+    }
+    let slot = U256::from_str_radix(digits, 16).map_err(|_| invalid())?;
+    Ok(H256::from_uint(&slot))
+}
+
+impl RpcHandler for GetStorageValuesRequest {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        // The block parameter is optional and defaults to "latest" (per execution-apis).
+        if params.len() != 1 && params.len() != 2 {
+            return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
+        };
+        // params[0] is an object mapping address -> array of storage slots. A
+        // BTreeMap reads it in a fixed order, so when two keys spell the same
+        // address the same one wins on every call.
+        let raw: BTreeMap<String, Vec<String>> = serde_json::from_str(params[0].get())?;
+        let mut requests = HashMap::with_capacity(raw.len());
+        let mut total_slots = 0usize;
+        for (address, slots) in raw {
+            total_slots += slots.len();
+            if total_slots > MAX_STORAGE_VALUES_SLOTS {
+                return Err(RpcErr::LimitExceeded(format!(
+                    "too many slots (max {MAX_STORAGE_VALUES_SLOTS})"
+                )));
+            }
+            let address: Address = serde_json::from_value(Value::String(address))?;
+            let slots = slots
+                .iter()
+                .map(|slot| parse_storage_slot(slot))
+                .collect::<Result<_, _>>()?;
+            requests.insert(address, slots);
+        }
+        if total_slots == 0 {
+            return Err(RpcErr::InvalidParams("empty request".to_owned()));
+        }
+        Ok(GetStorageValuesRequest {
+            requests,
+            block: params
+                .get(1)
+                .map(|param| BlockIdentifierOrHash::parse_param(param, 1))
+                .transpose()?
+                .unwrap_or_default(),
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        debug!(
+            "Requested storage values for {} accounts at block {}",
+            self.requests.len(),
+            self.block
+        );
+        let storage = &context.storage;
+        // Resolve the block once and read every slot from its state root. Going
+        // through the block number for each slot could read two blocks' states if
+        // the chain reorged mid-request, read the canonical block instead of the
+        // one a hash names, and answer zeros for a block above the head.
+        let header = match &self.block {
+            BlockIdentifierOrHash::Hash(hash) => storage.get_block_header_by_hash(*hash)?,
+            BlockIdentifierOrHash::Identifier(id) => id.resolve_block_header(storage).await?,
+        };
+        let Some(header) = header else {
+            return Err(RpcErr::Internal(
+                "Could not resolve block number".to_owned(),
+            ));
+        };
+        let mut result: HashMap<String, Vec<String>> = HashMap::with_capacity(self.requests.len());
+        for (address, slots) in &self.requests {
+            let mut values = Vec::with_capacity(slots.len());
+            for slot in slots {
+                let value = storage
+                    .get_storage_at_root(header.state_root, *address, *slot)?
+                    .unwrap_or_default();
+                values.push(format!("{:#x}", H256::from_uint(&value)));
+            }
+            result.insert(format!("{address:#x}"), values);
+        }
+        serde_json::to_value(result).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,6 +493,212 @@ mod tests {
         assert_eq!(request.address, expected_address);
         assert_eq!(request.storage_slot, H256::from_uint(&U256::from(1u64)));
         assert_eq!(request.block, BlockTag::Latest);
+    }
+
+    #[test]
+    fn test_state_methods_default_block_to_latest_when_omitted() {
+        // Per execution-apis the Block parameter is optional and defaults to
+        // "latest". Each state method must parse a request with the block omitted
+        // and resolve it to the latest tag.
+        let addr = json!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+        assert_eq!(
+            GetBalanceRequest::parse(&raw_params(&Some(vec![addr.clone()])))
+                .unwrap()
+                .block,
+            BlockTag::Latest
+        );
+        assert_eq!(
+            GetCodeRequest::parse(&raw_params(&Some(vec![addr.clone()])))
+                .unwrap()
+                .block,
+            BlockTag::Latest
+        );
+        assert_eq!(
+            GetTransactionCountRequest::parse(&raw_params(&Some(vec![addr.clone()])))
+                .unwrap()
+                .block,
+            BlockTag::Latest
+        );
+        assert_eq!(
+            GetStorageAtRequest::parse(&raw_params(&Some(vec![addr.clone(), json!("0x0")])))
+                .unwrap()
+                .block,
+            BlockTag::Latest
+        );
+        assert_eq!(
+            GetProofRequest::parse(&raw_params(&Some(vec![addr, json!([])])))
+                .unwrap()
+                .block,
+            BlockTag::Latest
+        );
+    }
+
+    #[test]
+    fn test_get_storage_values_request_parse_defaults_to_latest() {
+        let params = Some(vec![json!({
+            "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef": ["0x1"]
+        })]);
+        let request = GetStorageValuesRequest::parse(&raw_params(&params)).unwrap();
+        assert_eq!(request.block, BlockTag::Latest);
+        let addr: Address = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            request.requests.get(&addr).unwrap(),
+            &vec![H256::from_uint(&U256::from(1u64))]
+        );
+    }
+
+    #[test]
+    fn test_get_storage_values_request_rejects_empty() {
+        for requests in [
+            json!({}),
+            json!({"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef": []}),
+        ] {
+            assert!(matches!(
+                GetStorageValuesRequest::parse(&raw_params(&Some(vec![requests]))),
+                Err(RpcErr::InvalidParams(ref msg)) if msg == "empty request"
+            ));
+        }
+    }
+
+    #[test]
+    fn test_get_storage_values_request_slot_format() {
+        let parse = |slot: &str| {
+            GetStorageValuesRequest::parse(&raw_params(&Some(vec![json!({
+                "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef": [slot]
+            })])))
+        };
+        let addr: Address = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            .parse()
+            .unwrap();
+        for (slot, expected) in [
+            ("0x", U256::zero()),
+            ("0x10", U256::from(16u64)),
+            (
+                "0x0100000000000000000000000000000000000000000000000000000000000000",
+                U256::one() << 248,
+            ),
+        ] {
+            let request = parse(slot).unwrap();
+            assert_eq!(
+                request.requests.get(&addr).unwrap(),
+                &vec![H256::from_uint(&expected)],
+                "{slot}"
+            );
+        }
+        // Without 0x, `10` would read slot 16 where eth_getStorageAt reads slot 10.
+        let too_long = format!("0x{}", "0".repeat(65));
+        for slot in ["10", "0xzz", too_long.as_str()] {
+            assert!(
+                matches!(parse(slot), Err(RpcErr::InvalidParams(_))),
+                "{slot} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_storage_values_request_accepts_the_cap() {
+        let slots: Vec<_> = (0..MAX_STORAGE_VALUES_SLOTS)
+            .map(|slot| format!("{slot:#x}"))
+            .collect();
+        let params = Some(vec![json!({
+            "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef": slots
+        })]);
+        assert!(GetStorageValuesRequest::parse(&raw_params(&params)).is_ok());
+    }
+
+    #[test]
+    fn test_get_storage_values_request_rejects_single_account_over_cap() {
+        let slots: Vec<_> = (0..=MAX_STORAGE_VALUES_SLOTS)
+            .map(|slot| format!("{slot:#x}"))
+            .collect();
+        let params = Some(vec![json!({
+            "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef": slots
+        })]);
+
+        assert!(matches!(
+            GetStorageValuesRequest::parse(&raw_params(&params)),
+            Err(RpcErr::LimitExceeded(ref msg)) if msg.contains("too many slots")
+        ));
+    }
+
+    #[test]
+    fn test_get_storage_values_request_rejects_multi_account_over_cap() {
+        let first_slots: Vec<_> = (0..600).map(|slot| format!("{slot:#x}")).collect();
+        let second_slots: Vec<_> = (600..1200).map(|slot| format!("{slot:#x}")).collect();
+        let params = Some(vec![json!({
+            "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef": first_slots,
+            "0xfeedfeedfeedfeedfeedfeedfeedfeedfeedfeed": second_slots,
+        })]);
+
+        assert!(matches!(
+            GetStorageValuesRequest::parse(&raw_params(&params)),
+            Err(RpcErr::LimitExceeded(ref msg)) if msg.contains("too many slots")
+        ));
+    }
+
+    /// Values come from the requested block's state, keyed by the lowercase
+    /// address, with zeros for an absent account or slot. A block the node does
+    /// not have is an error rather than zeros.
+    #[tokio::test]
+    async fn test_get_storage_values_handle() {
+        use crate::test_utils::{TEST_GENESIS, default_context_with_storage};
+        use crate::types::block_identifier::BlockIdentifier;
+        use ethrex_common::types::{Genesis, GenesisAccount};
+        use ethrex_storage::{EngineType, Store};
+
+        let contract = Address::from_low_u64_be(0xabcd);
+        let mut genesis: Genesis = serde_json::from_str(TEST_GENESIS).unwrap();
+        genesis.alloc.insert(
+            contract,
+            GenesisAccount {
+                code: Default::default(),
+                storage: [(U256::from(1u64), U256::from(0x33u64))].into(),
+                balance: U256::zero(),
+                nonce: 1,
+            },
+        );
+        let mut store = Store::new("", EngineType::InMemory).unwrap();
+        store.add_initial_state(genesis).await.unwrap();
+        let context = default_context_with_storage(store).await;
+        let genesis_hash = context.storage.get_block_header(0).unwrap().unwrap().hash();
+
+        let absent = Address::from_low_u64_be(0xdead);
+        let requests: HashMap<Address, Vec<H256>> = [
+            (
+                contract,
+                vec![H256::from_low_u64_be(1), H256::from_low_u64_be(2)],
+            ),
+            (absent, vec![H256::from_low_u64_be(1)]),
+        ]
+        .into();
+        let word = |value: u64| format!("{:#x}", H256::from_low_u64_be(value));
+        let expected = json!({
+            format!("{contract:#x}"): [word(0x33), word(0)],
+            format!("{absent:#x}"): [word(0)],
+        });
+        for block in [
+            BlockIdentifierOrHash::default(),
+            BlockIdentifierOrHash::Hash(genesis_hash),
+        ] {
+            let result = GetStorageValuesRequest {
+                requests: requests.clone(),
+                block,
+            }
+            .handle(context.clone())
+            .await
+            .unwrap();
+            assert_eq!(result, expected);
+        }
+
+        let above_head = GetStorageValuesRequest {
+            requests,
+            block: BlockIdentifierOrHash::Identifier(BlockIdentifier::Number(5)),
+        }
+        .handle(context.clone())
+        .await;
+        assert!(matches!(above_head, Err(RpcErr::Internal(_))));
     }
 
     /// Builds an in-memory store whose genesis pre-sets `address`'s nonce, and a
