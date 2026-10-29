@@ -11,7 +11,7 @@ use ethrex_common::types::{
     AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction,
     Withdrawal,
 };
-use ethrex_common::{Address, types::fee_config::FeeConfig};
+use ethrex_common::{Address, U256, types::fee_config::FeeConfig};
 use ethrex_crypto::Crypto;
 pub use ethrex_levm::StatelessValidator;
 pub use ethrex_levm::call_frame::CallFrameBackup;
@@ -262,6 +262,11 @@ impl Evm {
     /// visible. Used by `eth_simulateV1` nonce auto-fill.
     pub fn get_account_nonce(&mut self, address: Address) -> Result<u64, EvmError> {
         Ok(self.db.get_account(address)?.info.nonce)
+    }
+
+    /// Current balance of `address`, through the EVM cache.
+    pub fn get_account_balance(&mut self, address: Address) -> Result<U256, EvmError> {
+        Ok(self.db.get_account(address)?.info.balance)
     }
 
     pub fn undo_last_tx(&mut self) -> Result<(), EvmError> {
