@@ -3349,12 +3349,32 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        let account_hash = hash_address_fixed(&address);
-
         // Pre-acquire shared resources once for both trie opens
         let read_view = self.backend.begin_read()?;
         let cache = self.gated_snapshot(state_root)?;
         let last_written = self.last_written()?;
+        self.storage_at_with(
+            state_root,
+            address,
+            storage_key,
+            read_view,
+            cache,
+            last_written,
+        )
+    }
+
+    /// [`Self::get_storage_at_root`] over resources the caller already holds,
+    /// such as a [`StateView`]'s.
+    fn storage_at_with(
+        &self,
+        state_root: H256,
+        address: Address,
+        storage_key: H256,
+        read_view: Arc<dyn StorageReadView>,
+        cache: Arc<TrieLayerCache>,
+        last_written: Vec<u8>,
+    ) -> Result<Option<U256>, StoreError> {
+        let account_hash = hash_address_fixed(&address);
         // While a deep-reorg overlay serves this root, flat-KV reads must
         // go through the trie: journal entries written while the FKV generator was
         // running lack pre-images for keys past the generator frontier, so disk
@@ -4432,14 +4452,39 @@ impl Store {
             return Ok(true);
         }
         let trie = self.open_state_trie(state_root)?;
-        // NOTE: here we hash the root because the trie doesn't check the state root is correct
-        let Some(root) = trie.db().get(Nibbles::default())? else {
-            return Ok(false);
-        };
-        let root_hash = ethrex_trie::Node::decode(&root)?
-            .compute_hash(&NativeCrypto)
-            .finalize(&NativeCrypto);
-        Ok(state_root == root_hash)
+        trie_holds_root(&trie, state_root)
+    }
+
+    /// Opens a [`StateView`] of `state_root`, or `None` when the node does not
+    /// hold that state.
+    pub fn state_view(&self, state_root: H256) -> Result<Option<StateView>, StoreError> {
+        // The order matters. The flat-key-value frontier only moves forward while
+        // it is generated, so reading it before the snapshot never has reads skip
+        // the trie for keys the snapshot has no flat value for yet. A commit
+        // writes the disk before it drops the committed layer from the cache, so
+        // taking the snapshot before the cache can pair an older disk with a newer
+        // cache, where the root then reads as not held, but never a newer disk with
+        // layers it has already absorbed, which would answer with newer state.
+        let last_written = self.last_written()?;
+        let read_view = self.backend.begin_snapshot_read()?;
+        let cache = self.gated_snapshot(state_root)?;
+        let state_trie = self.open_state_trie_shared(
+            state_root,
+            read_view.clone(),
+            cache.clone(),
+            last_written.clone(),
+        )?;
+        if state_root != EMPTY_TRIE_HASH && !trie_holds_root(&state_trie, state_root)? {
+            return Ok(None);
+        }
+        Ok(Some(StateView {
+            store: self.clone(),
+            state_root,
+            read_view,
+            cache,
+            last_written,
+            state_trie,
+        }))
     }
 
     // ===========================================================================
@@ -5196,6 +5241,59 @@ impl PendingTrieRoots {
             roots = self.ready.wait(roots).map_err(|_| StoreError::LockError)?;
         }
         Ok(())
+    }
+}
+
+/// Whether `trie`, opened at `state_root`, actually holds that root: opening a
+/// trie does not check it, and the path-keyed disk answers for any root.
+fn trie_holds_root(trie: &Trie, state_root: H256) -> Result<bool, StoreError> {
+    let Some(root) = trie.db().get(Nibbles::default())? else {
+        return Ok(false);
+    };
+    let root_hash = ethrex_trie::Node::decode(&root)?
+        .compute_hash(&NativeCrypto)
+        .finalize(&NativeCrypto);
+    Ok(state_root == root_hash)
+}
+
+/// One block's state, read from a database snapshot and trie layer cache taken
+/// together (see [`Store::state_view`]), so that a commit that lands while it is
+/// read can neither prune it nor show newer state through it.
+pub struct StateView {
+    store: Store,
+    state_root: H256,
+    read_view: Arc<dyn StorageReadView>,
+    cache: Arc<TrieLayerCache>,
+    last_written: Vec<u8>,
+    state_trie: Trie,
+}
+
+impl StateView {
+    /// The state root this view reads.
+    pub fn state_root(&self) -> H256 {
+        self.state_root
+    }
+
+    /// The account at `address`, or `None` if it does not exist in this state.
+    pub fn account_state(&self, address: Address) -> Result<Option<AccountState>, StoreError> {
+        self.store
+            .get_account_state_from_trie(&self.state_trie, address)
+    }
+
+    /// The value of `address`'s storage slot `storage_key`, or `None` if unset.
+    pub fn storage_at(
+        &self,
+        address: Address,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        self.store.storage_at_with(
+            self.state_root,
+            address,
+            storage_key,
+            self.read_view.clone(),
+            self.cache.clone(),
+            self.last_written.clone(),
+        )
     }
 }
 
@@ -8699,5 +8797,59 @@ mod witness_pruning_tests {
         assert!(kept(4, fork(1)));
         assert!(kept(MAX_WITNESSES + 1, fork(1)));
         assert!(kept(MAX_WITNESSES + 3, fork(1)));
+    }
+}
+
+#[cfg(test)]
+mod state_view_tests {
+    use super::*;
+
+    /// Writes `address` with `nonce` into the on-disk state trie at `root` and
+    /// returns the new root. Like a commit, it rewrites the path-keyed disk in
+    /// place, so the previous root's nodes are gone afterwards.
+    fn write_account_nonce(store: &Store, root: H256, address: Address, nonce: u64) -> H256 {
+        let mut trie = store.open_direct_state_trie(root).unwrap();
+        let account = AccountState {
+            nonce,
+            ..Default::default()
+        };
+        trie.insert(
+            hash_address_fixed(&address).as_bytes().to_vec(),
+            account.encode_to_vec(),
+        )
+        .unwrap();
+        trie.commit(&NativeCrypto).unwrap();
+        trie.hash_no_commit(&NativeCrypto)
+    }
+
+    /// A `StateView` keeps reading the state it was checked against after a commit
+    /// rewrites the disk under it, while the root itself is no longer held.
+    fn state_view_is_pinned_across_a_commit(store: Store) {
+        let address = Address::from_low_u64_be(0xabcd);
+        let root = write_account_nonce(&store, EMPTY_TRIE_HASH, address, 1);
+        let view = store
+            .state_view(root)
+            .unwrap()
+            .expect("the state was just written");
+
+        let newer_root = write_account_nonce(&store, root, address, 2);
+        assert_ne!(newer_root, root);
+        assert!(!store.has_state_root(root).unwrap());
+        assert!(store.state_view(root).unwrap().is_none());
+        assert_eq!(view.account_state(address).unwrap().unwrap().nonce, 1);
+        let newer = store.state_view(newer_root).unwrap().unwrap();
+        assert_eq!(newer.account_state(address).unwrap().unwrap().nonce, 2);
+    }
+
+    #[test]
+    fn state_view_is_pinned_across_a_commit_in_memory() {
+        state_view_is_pinned_across_a_commit(Store::new("", EngineType::InMemory).unwrap());
+    }
+
+    #[cfg(feature = "rocksdb")]
+    #[test]
+    fn state_view_is_pinned_across_a_commit_rocksdb() {
+        let dir = tempfile::tempdir().unwrap();
+        state_view_is_pinned_across_a_commit(Store::new(dir.path(), EngineType::RocksDB).unwrap());
     }
 }

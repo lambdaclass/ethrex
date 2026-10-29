@@ -9,6 +9,7 @@ use crate::types::block_identifier::{BlockIdentifierOrHash, BlockTag};
 use crate::utils::RpcErr;
 use ethrex_common::types::{AccountState, BlockHeader};
 use ethrex_common::{Address, BigEndianHash, H256, U256, serde_utils};
+use ethrex_storage::StateView;
 
 pub struct GetBalanceRequest {
     pub address: Address,
@@ -81,14 +82,16 @@ fn state_is_caught_up(context: &RpcApiContext, block_number: u64) -> Result<bool
     }
 }
 
-/// Resolves the header whose state a state read is answered from. A block the
-/// node does not know, and a known block whose state it does not hold, are
-/// errors: reading on would answer with default values or another block's
-/// state, which look like real data.
-async fn resolve_state_header(
+/// Resolves the block a state read is answered from, and a view of its state
+/// to read through. A block the node does not know, and a known block whose
+/// state it does not hold, are errors: reading on would answer with default
+/// values or another block's state, which look like real data. The view pins
+/// the state it was checked against, so a commit landing mid-request cannot
+/// swap it for newer state.
+async fn resolve_state(
     context: &RpcApiContext,
     block: &BlockIdentifierOrHash,
-) -> Result<BlockHeader, RpcErr> {
+) -> Result<(BlockHeader, StateView), RpcErr> {
     let storage = &context.storage;
     // A hash must resolve to its own header. Going through the block number
     // would return the canonical header at that height for a fork block.
@@ -99,7 +102,7 @@ async fn resolve_state_header(
     let Some(header) = header else {
         return Err(block.not_found());
     };
-    if !storage.has_state_root(header.state_root)? {
+    let Some(state) = storage.state_view(header.state_root)? else {
         if state_is_caught_up(context, header.number)? {
             return Err(RpcErr::PrunedHistoryUnavailable(format!(
                 "state for block {:#x} is unavailable",
@@ -110,8 +113,8 @@ async fn resolve_state_header(
             "state for block {:#x} is not available yet: the node is syncing",
             header.hash()
         )));
-    }
-    Ok(header)
+    };
+    Ok((header, state))
 }
 
 impl RpcHandler for GetBalanceRequest {
@@ -138,10 +141,9 @@ impl RpcHandler for GetBalanceRequest {
             self.address, self.block
         );
 
-        let header = resolve_state_header(&context, &self.block).await?;
-        let balance = context
-            .storage
-            .get_account_state_by_root(header.state_root, self.address)?
+        let (_, state) = resolve_state(&context, &self.block).await?;
+        let balance = state
+            .account_state(self.address)?
             .map(|acc| acc.balance)
             .unwrap_or_default();
 
@@ -174,11 +176,8 @@ impl RpcHandler for GetCodeRequest {
             self.address, self.block
         );
 
-        let header = resolve_state_header(&context, &self.block).await?;
-        let code = match context
-            .storage
-            .get_account_state_by_root(header.state_root, self.address)?
-        {
+        let (_, state) = resolve_state(&context, &self.block).await?;
+        let code = match state.account_state(self.address)? {
             Some(account) => context
                 .storage
                 .get_account_code(account.code_hash)?
@@ -218,10 +217,9 @@ impl RpcHandler for GetStorageAtRequest {
             self.storage_slot, self.address, self.block
         );
 
-        let header = resolve_state_header(&context, &self.block).await?;
-        let storage_value = context
-            .storage
-            .get_storage_at_root(header.state_root, self.address, self.storage_slot)?
+        let (_, state) = resolve_state(&context, &self.block).await?;
+        let storage_value = state
+            .storage_at(self.address, self.storage_slot)?
             .unwrap_or_default();
         let storage_value = H256::from_uint(&storage_value);
         serde_json::to_value(format!("{storage_value:#x}"))
@@ -255,10 +253,9 @@ impl RpcHandler for GetTransactionCountRequest {
 
         // Resolve the nonce for the requested block first. For the `Pending` tag
         // this resolves to the latest block.
-        let header = resolve_state_header(&context, &self.block).await?;
-        let account_nonce = context
-            .storage
-            .get_account_state_by_root(header.state_root, self.address)?
+        let (_, state) = resolve_state(&context, &self.block).await?;
+        let account_nonce = state
+            .account_state(self.address)?
             .map(|acc| acc.nonce)
             .unwrap_or_default();
 
@@ -314,7 +311,7 @@ impl RpcHandler for GetProofRequest {
             "Requested proof for account {} at block {} with storage keys: {:?}",
             self.address, self.block, self.storage_keys
         );
-        let header = resolve_state_header(&context, &self.block).await?;
+        let (header, _) = resolve_state(&context, &self.block).await?;
         let Some(account_proof) = storage
             .get_account_proof(header.state_root, self.address, &self.storage_keys)
             .await?
@@ -424,27 +421,17 @@ impl RpcHandler for GetStorageValuesRequest {
             self.requests.len(),
             self.block
         );
-        let storage = &context.storage;
-        // Resolve the block once and read every slot from its state root. Going
-        // through the block number for each slot could read two blocks' states if
-        // the chain reorged mid-request, read the canonical block instead of the
-        // one a hash names, and answer zeros for a block above the head.
-        let header = match &self.block {
-            BlockIdentifierOrHash::Hash(hash) => storage.get_block_header_by_hash(*hash)?,
-            BlockIdentifierOrHash::Identifier(id) => id.resolve_block_header(storage).await?,
-        };
-        let Some(header) = header else {
-            return Err(RpcErr::Internal(
-                "Could not resolve block number".to_owned(),
-            ));
-        };
+        // Resolve the block once and read every slot through one view of its state.
+        // Going through the block number for each slot could read two blocks' states
+        // if the chain reorged mid-request, read the canonical block instead of the
+        // one a hash names, and answer zeros for a block above the head or whose
+        // state is not held.
+        let (_, state) = resolve_state(&context, &self.block).await?;
         let mut result: HashMap<String, Vec<String>> = HashMap::with_capacity(self.requests.len());
         for (address, slots) in &self.requests {
             let mut values = Vec::with_capacity(slots.len());
             for slot in slots {
-                let value = storage
-                    .get_storage_at_root(header.state_root, *address, *slot)?
-                    .unwrap_or_default();
+                let value = state.storage_at(*address, *slot)?.unwrap_or_default();
                 values.push(format!("{:#x}", H256::from_uint(&value)));
             }
             result.insert(format!("{address:#x}"), values);
@@ -698,7 +685,7 @@ mod tests {
         }
         .handle(context.clone())
         .await;
-        assert!(matches!(above_head, Err(RpcErr::Internal(_))));
+        assert!(matches!(above_head, Err(RpcErr::ResourceNotFound(_))));
     }
 
     /// Builds an in-memory store whose genesis pre-sets `address`'s nonce, and a
@@ -1048,7 +1035,7 @@ mod tests {
     }
 
     /// The methods that read an account's state, each with `block` as its block
-    /// parameter. The first five read the state directly, the rest execute on it.
+    /// parameter. The first six read the state directly, the rest execute on it.
     fn state_reads(address: Address, block: Value) -> Vec<(&'static str, Value)> {
         let address = format!("{address:#x}");
         let call = json!({"from": address, "to": address});
@@ -1058,6 +1045,10 @@ mod tests {
             ("eth_getStorageAt", json!([address, "0x0", block])),
             ("eth_getTransactionCount", json!([address, block])),
             ("eth_getProof", json!([address, [], block])),
+            (
+                "eth_getStorageValues",
+                json!([{ address.as_str(): ["0x0"] }, block]),
+            ),
             ("eth_call", json!([call, block])),
             ("eth_estimateGas", json!([call, block])),
             ("eth_createAccessList", json!([call, block])),
@@ -1091,7 +1082,7 @@ mod tests {
         let (context, block_one, _) = context_with_stateless_block(address).await;
         let block = json!(format!("{:#x}", block_one.number));
 
-        for (method, params) in state_reads(address, block.clone()).into_iter().take(5) {
+        for (method, params) in state_reads(address, block.clone()).into_iter().take(6) {
             let result = dispatch(&context, method, params).await;
             assert!(
                 matches!(result, Err(RpcErr::Internal(_))),
@@ -1099,7 +1090,7 @@ mod tests {
             );
         }
         context.blockchain.set_synced();
-        for (method, params) in state_reads(address, block.clone()).into_iter().take(5) {
+        for (method, params) in state_reads(address, block.clone()).into_iter().take(6) {
             let result = dispatch(&context, method, params).await;
             assert!(
                 matches!(result, Err(RpcErr::PrunedHistoryUnavailable(_))),
@@ -1107,7 +1098,7 @@ mod tests {
             );
         }
         // The head's state is held, so it still answers.
-        for (method, params) in state_reads(address, json!("latest")).into_iter().take(5) {
+        for (method, params) in state_reads(address, json!("latest")).into_iter().take(6) {
             let result = dispatch(&context, method, params).await;
             assert!(result.is_ok(), "{method} at latest gave {result:?}");
         }
