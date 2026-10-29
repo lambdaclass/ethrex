@@ -206,7 +206,7 @@ impl RpcHandler for TraceTransactionRequest {
                     .into_iter()
                     .next()
                     .ok_or(RpcErr::Internal("Empty call trace".to_string()))?;
-                Ok(serde_json::to_value(top_frame)?)
+                serde_json::to_value(top_frame).map_err(|error| RpcErr::Internal(error.to_string()))
             }
             TracerType::PrestateTracer => {
                 let config: PrestateTracerConfig =
@@ -228,8 +228,10 @@ impl RpcHandler for TraceTransactionRequest {
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
                 match result {
-                    PrestateResult::Prestate(trace) => Ok(serde_json::to_value(trace)?),
-                    PrestateResult::Diff(diff) => Ok(serde_json::to_value(diff)?),
+                    PrestateResult::Prestate(trace) => serde_json::to_value(trace)
+                        .map_err(|error| RpcErr::Internal(error.to_string())),
+                    PrestateResult::Diff(diff) => serde_json::to_value(diff)
+                        .map_err(|error| RpcErr::Internal(error.to_string())),
                 }
             }
             TracerType::OpcodeTracer => {
@@ -251,10 +253,11 @@ impl RpcHandler for TraceTransactionRequest {
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
                 // `debug_traceTransaction` returns the geth-RPC structLogger shape.
-                Ok(serde_json::to_value(StructLoggerResult {
+                serde_json::to_value(StructLoggerResult {
                     result: &result,
                     emit,
-                })?)
+                })
+                .map_err(|error| RpcErr::Internal(error.to_string()))
             }
         }
     }
@@ -371,7 +374,7 @@ async fn trace_block(
                     Ok((hash, frame).into())
                 })
                 .collect::<Result<_, RpcErr>>()?;
-            Ok(serde_json::to_value(block_trace)?)
+            serde_json::to_value(block_trace).map_err(|error| RpcErr::Internal(error.to_string()))
         }
         TracerType::PrestateTracer => {
             let config: PrestateTracerConfig = if let Some(value) = &trace_config.tracer_config {
@@ -405,8 +408,9 @@ async fn trace_block(
                         result: trace_value,
                     })
                 })
-                .collect::<Result<_, serde_json::Error>>()?;
-            Ok(serde_json::to_value(block_trace)?)
+                .collect::<Result<_, serde_json::Error>>()
+                .map_err(|error| RpcErr::Internal(error.to_string()))?;
+            serde_json::to_value(block_trace).map_err(|error| RpcErr::Internal(error.to_string()))
         }
         TracerType::OpcodeTracer => {
             let cfg: OpcodeTracerConfig = trace_config
@@ -439,8 +443,9 @@ async fn trace_block(
                         result: wrapped,
                     })
                 })
-                .collect::<Result<_, serde_json::Error>>()?;
-            Ok(serde_json::to_value(block_trace)?)
+                .collect::<Result<_, serde_json::Error>>()
+                .map_err(|error| RpcErr::Internal(error.to_string()))?;
+            serde_json::to_value(block_trace).map_err(|error| RpcErr::Internal(error.to_string()))
         }
     }
 }
@@ -563,7 +568,7 @@ impl RpcHandler for TraceCallRequest {
         if let Some(i) = tx_index {
             let tx_count = block.body.transactions.len();
             if i >= tx_count && !(i == 0 && tx_count == 0) {
-                return Err(RpcErr::BadParams(format!(
+                return Err(RpcErr::ServerError(format!(
                     "txIndex {i} out of range for block with {tx_count} transactions"
                 )));
             }
@@ -634,7 +639,7 @@ impl RpcHandler for TraceCallRequest {
                     .into_iter()
                     .next()
                     .ok_or(RpcErr::Internal("Empty call trace".to_string()))?;
-                Ok(serde_json::to_value(top_frame)?)
+                serde_json::to_value(top_frame).map_err(|error| RpcErr::Internal(error.to_string()))
             }
             TracerType::PrestateTracer => {
                 let config: PrestateTracerConfig =
@@ -659,8 +664,10 @@ impl RpcHandler for TraceCallRequest {
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
                 match result {
-                    PrestateResult::Prestate(trace) => Ok(serde_json::to_value(trace)?),
-                    PrestateResult::Diff(diff) => Ok(serde_json::to_value(diff)?),
+                    PrestateResult::Prestate(trace) => serde_json::to_value(trace)
+                        .map_err(|error| RpcErr::Internal(error.to_string())),
+                    PrestateResult::Diff(diff) => serde_json::to_value(diff)
+                        .map_err(|error| RpcErr::Internal(error.to_string())),
                 }
             }
             TracerType::OpcodeTracer => {
@@ -691,10 +698,11 @@ impl RpcHandler for TraceCallRequest {
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
                 // `debug_traceCall` returns the geth-RPC structLogger shape.
-                Ok(serde_json::to_value(StructLoggerResult {
+                serde_json::to_value(StructLoggerResult {
                     result: &result,
                     emit,
-                })?)
+                })
+                .map_err(|error| RpcErr::Internal(error.to_string()))
             }
         }
     }

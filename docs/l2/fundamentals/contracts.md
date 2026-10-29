@@ -12,9 +12,10 @@ The `CommonBridge` is an upgradeable smart contract that facilitates cross-chain
 - **`pendingTxHashes`**: Array storing hashed pending privileged transactions
 - **`batchWithdrawalLogsMerkleRoots`**: Mapping of L2 batch numbers to merkle roots of withdrawal logs
 - **`deposits`**: Tracks how much of each L1 token was deposited for each L2 token (L1 → L2 → amount)
-- **`claimedWithdrawalIDs`**: Tracks which withdrawals have been claimed by message ID
+- **`claimedWithdrawalIDs`**: Tracks which L2 → L1 messages have been consumed by message ID, both claimed withdrawals and consumed intents
 - **`ON_CHAIN_PROPOSER`**: Address of the contract that can commit and verify batches
 - **`L2_BRIDGE_ADDRESS`**: Constant address (0xffff) representing the L2 bridge
+- **`INTENT_DOMAIN`**: Constant domain separator (`keccak256("ethrex.L2ToL1Intent.v1")`) used to hash intents, so an intent can never be read as a withdrawal
 
 #### **Core Functionality**
 
@@ -39,7 +40,10 @@ The `CommonBridge` is an upgradeable smart contract that facilitates cross-chain
     - **`claimWithdrawal()`**: Withdraw ETH from `CommonBridge` via Merkle proof
     - **`claimWithdrawalERC20()`**: Withdraw ERC20 tokens from `CommonBridge` via Merkle proof
     - **`publishWithdrawals()`**: Privileged function to add merkle root of L2 withdrawal logs to `batchWithdrawalLogsMerkleRoots` mapping to make them claimable
-3. **Transaction Management**
+3. **Intents (L2 → L1)**
+    - **`verifyAndConsume()`**: Verifies via Merkle proof that an intent sent with `sendIntentToL1()` belongs to a verified batch and marks its message ID as consumed in `claimedWithdrawalIDs`, without moving any value. The intent hash is rebuilt with the caller as consumer, so only the consumer named on L2 can consume it, and only once.
+    - **`intentHash()`**: Returns the hash `sendIntentToL1()` sends to L1 for a given L2 sender, L1 consumer and payload hash
+4. **Transaction Management**
     - **`getPendingTransactionHashes()`**: Returns pending privileged transaction hashes
     - **`removePendingTransactionHashes()`**: Removes processed privileged transactions (only callable by OnChainProposer)
     - **`getPendingTransactionsVersionedHash()`**: Returns a versioned hash of the first `number` of pending privileged transactions
@@ -74,6 +78,7 @@ The `CommonBridgeL2` is an L2 smart contract that facilitates cross-chain transf
 - **`L1_MESSENGER`**: Constant address (`0x000000000000000000000000000000000000FFFE`) representing the L2-to-L1 messenger contract
 - **`BURN_ADDRESS`**: Constant address (`0x0000000000000000000000000000000000000000`) used to burn ETH during withdrawals
 - **`ETH_TOKEN`**: Constant address (`0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE`) representing ETH as a token
+- **`INTENT_DOMAIN`**: Constant domain separator (`keccak256("ethrex.L2ToL1Intent.v1")`) used to hash intents
 
 #### **Core Functionality**
 
@@ -89,13 +94,14 @@ The `CommonBridgeL2` is an L2 smart contract that facilitates cross-chain transf
 3. **Cross-Chain Messaging**
     - **`_withdraw()`**: Private function that sends withdrawal messages to L1 via the L2-to-L1 messenger
     - Uses keccak256 hashing to encode withdrawal data for L1 processing
+    - **`sendIntentToL1()`**: Sends a value-free message (an intent) to L1. The bridge hashes the caller's payload hash together with `INTENT_DOMAIN`, the chain ID, the caller and the L1 address allowed to consume it, and sends that hash through the messenger. It is consumed on L1 with `verifyAndConsume()`.
 
 4. **Access Control**
     - **`onlySelf`**: Modifier ensuring only the bridge contract itself can call privileged functions
     - Validates that privileged operations (like minting) are only performed by the bridge
 
 ### `Messenger`
-The `Messenger` is a simple L2 smart contract that enables cross-chain communication. It supports L2 to L1 messaging by emitting `L1Message` events for sequencers to pick up (currently used exclusively for withdrawals), and L2 to L2 messaging by emitting `L2Message` events.
+The `Messenger` is a simple L2 smart contract that enables cross-chain communication. It supports L2 to L1 messaging by emitting `L1Message` events for sequencers to pick up (used for withdrawals and intents), and L2 to L2 messaging by emitting `L2Message` events.
 
 #### **State Variables**
 

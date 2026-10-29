@@ -276,7 +276,7 @@ impl RpcHandler for GetBlockReceiptsRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
-        let receipts = get_all_block_rpc_receipts(header, body, storage, None).await?;
+        let receipts = get_all_block_rpc_receipts(header, body, storage).await?;
 
         serde_json::to_value(&receipts).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -307,7 +307,7 @@ impl RpcHandler for GetRawHeaderRequest {
         let header = context
             .storage
             .get_block_header(block_number)?
-            .ok_or(RpcErr::BadParams("Header not found".to_owned()))?;
+            .ok_or(RpcErr::ServerError("Header not found".to_owned()))?;
 
         let str_encoded = format!("0x{}", hex::encode(header.encode_to_vec()));
         Ok(Value::String(str_encoded))
@@ -423,24 +423,8 @@ impl RpcHandler for GetBlobBaseFee {
     }
 }
 
-/// Fetches RPC receipts for a block, optionally stopping after `target_index`.
-///
-/// When `target_index` is `Some(n)`, only receipts 0..=n are fetched using a
-/// cursor pass — this is the fast path for `eth_getTransactionReceipt` which
-/// only needs one receipt but requires preceding cumulative gas values.
-///
-/// When `target_index` is `None`, all receipts are fetched (for `eth_getBlockReceipts`).
-pub async fn get_all_block_rpc_receipts(
-    header: BlockHeader,
-    body: BlockBody,
-    storage: &Store,
-    target_index: Option<u64>,
-) -> Result<Vec<RpcReceipt>, RpcErr> {
-    let mut receipts = Vec::new();
-    // Check if this is the genesis block
-    if header.parent_hash.is_zero() {
-        return Ok(receipts);
-    }
+/// The blob base fee of `header`'s block, as its receipts report it.
+fn receipt_blob_base_fee(header: &BlockHeader, storage: &Store) -> Result<u64, RpcErr> {
     let config = storage.get_chain_config();
     let blob_base_fee = calculate_base_fee_per_blob_gas(
         header.excess_blob_gas.unwrap_or_default(),
@@ -449,18 +433,29 @@ pub async fn get_all_block_rpc_receipts(
             .map(|schedule| schedule.base_fee_update_fraction)
             .unwrap_or_default(),
     );
-    let base_fee_per_gas = header.base_fee_per_gas;
-    let blob_base_fee_u64: u64 = blob_base_fee
+    blob_base_fee
         .try_into()
-        .map_err(|_| RpcErr::Internal("blob_base_fee does not fit in u64".to_owned()))?;
+        .map_err(|_| RpcErr::Internal("blob_base_fee does not fit in u64".to_owned()))
+}
+
+/// Fetches the RPC receipts of every transaction in a block (for `eth_getBlockReceipts`).
+pub async fn get_all_block_rpc_receipts(
+    header: BlockHeader,
+    body: BlockBody,
+    storage: &Store,
+) -> Result<Vec<RpcReceipt>, RpcErr> {
+    let mut receipts = Vec::new();
+    // Check if this is the genesis block
+    if header.parent_hash.is_zero() {
+        return Ok(receipts);
+    }
+    let blob_base_fee_u64 = receipt_blob_base_fee(&header, storage)?;
+    let base_fee_per_gas = header.base_fee_per_gas;
     // Fetch receipt info from block
     let block_hash = header.hash();
     let block_timestamp = header.timestamp;
     let block_info = RpcReceiptBlockInfo::from_block_header(header);
-    // Fetch receipts: only up to target_index+1 when set, otherwise all
-    let fetch_count = target_index
-        .map(|ti| (ti + 1) as usize)
-        .unwrap_or(body.transactions.len());
+    let fetch_count = body.transactions.len();
     let all_receipts = storage
         .get_receipts_for_block_from_index(&block_hash, 0, Some(fetch_count))
         .await?;
@@ -504,6 +499,74 @@ pub async fn get_all_block_rpc_receipts(
     Ok(receipts)
 }
 
+/// Fetches the RPC receipt of the transaction at `index` in a block (for
+/// `eth_getTransactionReceipt`), or `None` if the block has no such transaction.
+///
+/// The receipt's gas used and first log index depend on the receipts before it,
+/// so receipts `0..=index` are read, but only the target transaction's sender and
+/// hash are computed: the transactions before it contribute nothing else to the
+/// result, and recovering each of their senders made the cost of the call grow
+/// with the transaction's position in the block.
+pub async fn get_block_rpc_receipt(
+    header: BlockHeader,
+    mut body: BlockBody,
+    storage: &Store,
+    index: u64,
+) -> Result<Option<RpcReceipt>, RpcErr> {
+    // Check if this is the genesis block
+    if header.parent_hash.is_zero() {
+        return Ok(None);
+    }
+    let blob_base_fee_u64 = receipt_blob_base_fee(&header, storage)?;
+    let base_fee_per_gas = header.base_fee_per_gas;
+    let block_hash = header.hash();
+    let block_timestamp = header.timestamp;
+    let block_info = RpcReceiptBlockInfo::from_block_header(header);
+    let fetch_count = (index + 1) as usize;
+    let mut receipts = storage
+        .get_receipts_for_block_from_index(&block_hash, 0, Some(fetch_count))
+        .await?;
+    // Return 500 on receipt count mismatch — this indicates data corruption
+    // (missing receipts for a block that exists).
+    if receipts.len() != fetch_count {
+        return Err(RpcErr::Internal(format!(
+            "Expected {} receipts, got {}",
+            fetch_count,
+            receipts.len()
+        )));
+    }
+    let tx_position = index as usize;
+    if tx_position >= body.transactions.len() {
+        return Ok(None);
+    }
+    let tx = body.transactions.swap_remove(tx_position);
+    let Some(receipt) = receipts.pop() else {
+        return Ok(None);
+    };
+    let previous_cumulative_gas_used = receipts
+        .last()
+        .map_or(0, |previous| previous.cumulative_gas_used);
+    let first_log_index = receipts
+        .iter()
+        .map(|previous| previous.logs.len() as u64)
+        .sum();
+    let gas_used = receipt.cumulative_gas_used - previous_cumulative_gas_used;
+    let tx_info = RpcReceiptTxInfo::from_transaction(
+        tx,
+        index,
+        gas_used,
+        blob_base_fee_u64,
+        base_fee_per_gas,
+    )?;
+    Ok(Some(RpcReceipt::new(
+        receipt,
+        tx_info,
+        block_info,
+        first_log_index,
+        block_timestamp,
+    )))
+}
+
 pub async fn get_all_block_receipts(
     header: BlockHeader,
     storage: &Store,
@@ -536,4 +599,115 @@ pub async fn get_all_block_receipts(
         )));
     }
     Ok(receipts)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    use crate::test_utils::setup_store;
+    use ethrex_common::{
+        Address, Bytes, H256, U256,
+        types::{EIP1559Transaction, Log, Transaction, TxKind, TxType},
+    };
+    use ethrex_crypto::{Crypto, NativeCrypto};
+
+    fn signed_tx(secret: &secp256k1::SecretKey, nonce: u64) -> Transaction {
+        let mut tx = EIP1559Transaction {
+            chain_id: 1,
+            nonce,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: 2_000_000_000,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::repeat_byte(0xaa)),
+            value: U256::one(),
+            ..Default::default()
+        };
+        let (payload, _) = Transaction::EIP1559Transaction(tx.clone())
+            .signing_payload()
+            .unwrap()
+            .unwrap();
+        let msg = secp256k1::Message::from_digest(NativeCrypto.keccak256(&payload));
+        let (recovery_id, signature) = secp256k1::SECP256K1
+            .sign_ecdsa_recoverable(&msg, secret)
+            .serialize_compact();
+        tx.signature_r = U256::from_big_endian(&signature[..32]);
+        tx.signature_s = U256::from_big_endian(&signature[32..]);
+        tx.signature_y_parity = i32::from(recovery_id) != 0;
+        Transaction::EIP1559Transaction(tx)
+    }
+
+    /// Stores a block of `tx_count` signed transactions whose receipts carry
+    /// `index % 3` logs each and differing gas, and returns its header and body.
+    async fn store_block(store: &Store, tx_count: u64) -> (BlockHeader, BlockBody) {
+        let secret = secp256k1::SecretKey::from_byte_array(&[0x11; 32]).unwrap();
+        let transactions = (0..tx_count).map(|i| signed_tx(&secret, i)).collect();
+        let mut cumulative_gas_used = 0;
+        let receipts = (0..tx_count)
+            .map(|i| {
+                let logs = (0..i % 3)
+                    .map(|j| Log {
+                        address: Address::repeat_byte(j as u8),
+                        topics: vec![H256::repeat_byte(i as u8)],
+                        data: Bytes::from(vec![j as u8; 32]),
+                    })
+                    .collect();
+                cumulative_gas_used += 21_000 + i * 100;
+                Receipt::new(TxType::EIP1559, i % 4 != 0, cumulative_gas_used, logs)
+            })
+            .collect();
+        let header = BlockHeader {
+            parent_hash: H256::repeat_byte(1),
+            number: 1,
+            base_fee_per_gas: Some(1_000_000_000),
+            excess_blob_gas: Some(0),
+            blob_gas_used: Some(0),
+            timestamp: 1000,
+            gas_limit: 30_000_000,
+            ..Default::default()
+        };
+        let body = BlockBody {
+            transactions,
+            ommers: vec![],
+            withdrawals: None,
+        };
+        let block = Block::new(header.clone(), body.clone());
+        let hash = block.hash();
+        store.add_block(block).await.unwrap();
+        store.add_receipts(hash, receipts).await.unwrap();
+        (header, body)
+    }
+
+    #[tokio::test]
+    async fn single_receipt_matches_the_block_receipts() {
+        let store = setup_store().await;
+        let tx_count = 10;
+        let (header, body) = store_block(&store, tx_count).await;
+        let all = get_all_block_rpc_receipts(header.clone(), body.clone(), &store)
+            .await
+            .unwrap();
+        assert_eq!(all.len(), tx_count as usize);
+        for (index, expected) in all.iter().enumerate() {
+            let single = get_block_rpc_receipt(header.clone(), body.clone(), &store, index as u64)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(&single).unwrap(),
+                serde_json::to_value(expected).unwrap(),
+                "receipt {index}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn single_receipt_beyond_the_block_is_an_error() {
+        let store = setup_store().await;
+        let (header, body) = store_block(&store, 3).await;
+        assert!(
+            get_block_rpc_receipt(header, body, &store, 3)
+                .await
+                .is_err()
+        );
+    }
 }
