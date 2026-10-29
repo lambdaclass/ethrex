@@ -355,7 +355,7 @@ async fn handle_http_request(
         }
         Err(_) => ethrex_rpc::rpc_response(
             RpcRequestId::String("".to_string()),
-            Err(ethrex_rpc::RpcErr::BadParams(
+            Err(ethrex_rpc::RpcErr::ServerError(
                 "Invalid request body".to_string(),
             )),
         )
