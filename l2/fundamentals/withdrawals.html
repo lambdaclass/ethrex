@@ -34,7 +34,7 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-5ab75844.js";
+            window.path_to_searchindex_js = "../../searchindex-50097800.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../toc-ce2f25ba.js"></script>
@@ -394,6 +394,28 @@ To do this, they compute a merkle proof for the included batch and call the L1 <
 <li>Gives the funds to the user</li>
 <li>Marks the withdrawal as claimed</li>
 </ul>
+<h3 id="intents"><a class="header" href="#intents">Intents</a></h3>
+<p>A contract can also send a message to L1 without moving any value, to prove on L1 that something happened on L2.
+On the L2 side, it calls <code>sendIntentToL1(payloadHash, consumerOnL1)</code> on the <code>CommonBridgeL2</code>.
+The bridge doesn’t send the payload hash as-is, it sends:</p>
+<pre><code class="language-solidity">keccak256(abi.encode(INTENT_DOMAIN, chainId, sender, consumerOnL1, payloadHash))
+</code></pre>
+<ul>
+<li><code>INTENT_DOMAIN</code> keeps intents in their own hash space, so an intent can never be claimed as a withdrawal</li>
+<li><code>sender</code> is the L2 caller, so L1 can tell who sent the intent</li>
+<li><code>consumerOnL1</code> is the only L1 address that can consume it</li>
+</ul>
+<p>Once the batch containing the intent is verified, the consumer calls <code>verifyAndConsume(senderOnL2, payloadHash, batchNumber, messageId, proof)</code> on the L1 <code>CommonBridge</code>.</p>
+<p>This contract then:</p>
+<ul>
+<li>Checks that the batch is verified</li>
+<li>Ensures the message wasn’t already consumed</li>
+<li>Rebuilds the intent hash with the caller as consumer and computes the expected leaf</li>
+<li>Validates that the proof leads from the leaf to the root of the message tree</li>
+<li>Marks the message as consumed</li>
+</ul>
+<p>Withdrawals and intents are marked in the same <code>claimedWithdrawalIDs</code> mapping, keyed by message ID.
+Message IDs come from a single counter on L2, so each message can be consumed only once, either as a withdrawal or as an intent.</p>
 
                     </main>
 

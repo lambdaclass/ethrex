@@ -34,7 +34,7 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-5ab75844.js";
+            window.path_to_searchindex_js = "../../searchindex-50097800.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../toc-ce2f25ba.js"></script>
@@ -187,9 +187,10 @@
 <li><strong><code>pendingTxHashes</code></strong>: Array storing hashed pending privileged transactions</li>
 <li><strong><code>batchWithdrawalLogsMerkleRoots</code></strong>: Mapping of L2 batch numbers to merkle roots of withdrawal logs</li>
 <li><strong><code>deposits</code></strong>: Tracks how much of each L1 token was deposited for each L2 token (L1 → L2 → amount)</li>
-<li><strong><code>claimedWithdrawalIDs</code></strong>: Tracks which withdrawals have been claimed by message ID</li>
+<li><strong><code>claimedWithdrawalIDs</code></strong>: Tracks which L2 → L1 messages have been consumed by message ID, both claimed withdrawals and consumed intents</li>
 <li><strong><code>ON_CHAIN_PROPOSER</code></strong>: Address of the contract that can commit and verify batches</li>
 <li><strong><code>L2_BRIDGE_ADDRESS</code></strong>: Constant address (0xffff) representing the L2 bridge</li>
+<li><strong><code>INTENT_DOMAIN</code></strong>: Constant domain separator (<code>keccak256("ethrex.L2ToL1Intent.v1")</code>) used to hash intents, so an intent can never be read as a withdrawal</li>
 </ul>
 <h4 id="core-functionality"><a class="header" href="#core-functionality"><strong>Core Functionality</strong></a></h4>
 <ol>
@@ -217,6 +218,13 @@
 <li><strong><code>claimWithdrawal()</code></strong>: Withdraw ETH from <code>CommonBridge</code> via Merkle proof</li>
 <li><strong><code>claimWithdrawalERC20()</code></strong>: Withdraw ERC20 tokens from <code>CommonBridge</code> via Merkle proof</li>
 <li><strong><code>publishWithdrawals()</code></strong>: Privileged function to add merkle root of L2 withdrawal logs to <code>batchWithdrawalLogsMerkleRoots</code> mapping to make them claimable</li>
+</ul>
+</li>
+<li>
+<p><strong>Intents (L2 → L1)</strong></p>
+<ul>
+<li><strong><code>verifyAndConsume()</code></strong>: Verifies via Merkle proof that an intent sent with <code>sendIntentToL1()</code> belongs to a verified batch and marks its message ID as consumed in <code>claimedWithdrawalIDs</code>, without moving any value. The intent hash is rebuilt with the caller as consumer, so only the consumer named on L2 can consume it, and only once.</li>
+<li><strong><code>intentHash()</code></strong>: Returns the hash <code>sendIntentToL1()</code> sends to L1 for a given L2 sender, L1 consumer and payload hash</li>
 </ul>
 </li>
 <li>
@@ -262,6 +270,7 @@
 <li><strong><code>L1_MESSENGER</code></strong>: Constant address (<code>0x000000000000000000000000000000000000FFFE</code>) representing the L2-to-L1 messenger contract</li>
 <li><strong><code>BURN_ADDRESS</code></strong>: Constant address (<code>0x0000000000000000000000000000000000000000</code>) used to burn ETH during withdrawals</li>
 <li><strong><code>ETH_TOKEN</code></strong>: Constant address (<code>0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE</code>) representing ETH as a token</li>
+<li><strong><code>INTENT_DOMAIN</code></strong>: Constant domain separator (<code>keccak256("ethrex.L2ToL1Intent.v1")</code>) used to hash intents</li>
 </ul>
 <h4 id="core-functionality-2"><a class="header" href="#core-functionality-2"><strong>Core Functionality</strong></a></h4>
 <ol>
@@ -285,6 +294,7 @@
 <ul>
 <li><strong><code>_withdraw()</code></strong>: Private function that sends withdrawal messages to L1 via the L2-to-L1 messenger</li>
 <li>Uses keccak256 hashing to encode withdrawal data for L1 processing</li>
+<li><strong><code>sendIntentToL1()</code></strong>: Sends a value-free message (an intent) to L1. The bridge hashes the caller’s payload hash together with <code>INTENT_DOMAIN</code>, the chain ID, the caller and the L1 address allowed to consume it, and sends that hash through the messenger. It is consumed on L1 with <code>verifyAndConsume()</code>.</li>
 </ul>
 </li>
 <li>
@@ -296,7 +306,7 @@
 </li>
 </ol>
 <h3 id="messenger"><a class="header" href="#messenger"><code>Messenger</code></a></h3>
-<p>The <code>Messenger</code> is a simple L2 smart contract that enables cross-chain communication. It supports L2 to L1 messaging by emitting <code>L1Message</code> events for sequencers to pick up (currently used exclusively for withdrawals), and L2 to L2 messaging by emitting <code>L2Message</code> events.</p>
+<p>The <code>Messenger</code> is a simple L2 smart contract that enables cross-chain communication. It supports L2 to L1 messaging by emitting <code>L1Message</code> events for sequencers to pick up (used for withdrawals and intents), and L2 to L2 messaging by emitting <code>L2Message</code> events.</p>
 <h4 id="state-variables-3"><a class="header" href="#state-variables-3"><strong>State Variables</strong></a></h4>
 <ul>
 <li><strong><code>lastMessageId</code></strong>: Counter that tracks the ID of the last emitted message (incremented before each message is sent)</li>
