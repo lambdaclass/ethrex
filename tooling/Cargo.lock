@@ -830,6 +830,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
+name = "arc-swap"
+version = "1.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c049c0be4daef0b145cb3555416b3b8ef5b7888a38aea1a3a155801fe7b0810b"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "archive_sync"
 version = "4.0.0"
 dependencies = [
@@ -3640,6 +3649,7 @@ version = "30.0.1"
 dependencies = [
  "aes",
  "aes-gcm",
+ "arc-swap",
  "bytes",
  "concat-kdf",
  "crossbeam",

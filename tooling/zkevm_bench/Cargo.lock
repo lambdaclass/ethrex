@@ -3742,6 +3742,7 @@ version = "30.0.1"
 dependencies = [
  "aes",
  "aes-gcm",
+ "arc-swap",
  "bytes",
  "concat-kdf",
  "crossbeam",

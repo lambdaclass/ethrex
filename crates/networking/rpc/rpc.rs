@@ -2370,10 +2370,8 @@ mod tests {
             .unwrap();
         let context = default_context_with_storage(storage).await;
         let (local_p2p_node, enr_url) = {
-            let guard = context.node_data.shared_local_node.read().unwrap();
-            let node = guard.node.clone();
-            let enr_url = guard.record.enr_url().unwrap();
-            (node, enr_url)
+            let local = context.node_data.shared_local_node.load();
+            (local.node.clone(), local.record.enr_url().unwrap())
         };
         let result = map_http_requests(&request, context.clone()).await;
         let rpc_response = rpc_response(request.id, result).unwrap();

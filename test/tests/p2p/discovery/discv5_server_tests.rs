@@ -249,7 +249,7 @@ async fn test_enr_update_request_on_pong() {
 #[tokio::test]
 async fn test_ip_voting_updates_ip_on_threshold() {
     let mut server = test_server().await;
-    let original_ip = server.local_node.ip;
+    let original_ip = server.local_node.load().node.ip;
 
     let new_ip: IpAddr = "203.0.113.50".parse().unwrap();
     let voter1 = H256::from_low_u64_be(1);
@@ -257,10 +257,10 @@ async fn test_ip_voting_updates_ip_on_threshold() {
     let voter3 = H256::from_low_u64_be(3);
 
     assert_eq!(server.ip_predictor.record_ip_vote(new_ip, voter1), None);
-    assert_eq!(server.local_node.ip, original_ip);
+    assert_eq!(server.local_node.load().node.ip, original_ip);
 
     assert_eq!(server.ip_predictor.record_ip_vote(new_ip, voter2), None);
-    assert_eq!(server.local_node.ip, original_ip);
+    assert_eq!(server.local_node.load().node.ip, original_ip);
 
     // Vote 3 triggers round end and returns the winning IP
     let result = server.ip_predictor.record_ip_vote(new_ip, voter3);
@@ -269,8 +269,8 @@ async fn test_ip_voting_updates_ip_on_threshold() {
 
     // Applying the winner must update the local node IP (the point of the test).
     server.apply_predicted_ip(result.unwrap(), "test");
-    assert_eq!(server.local_node.ip, new_ip);
-    assert_ne!(server.local_node.ip, original_ip);
+    assert_eq!(server.local_node.load().node.ip, new_ip);
+    assert_ne!(server.local_node.load().node.ip, original_ip);
 }
 
 #[tokio::test]
@@ -293,7 +293,7 @@ async fn test_ip_voting_same_peer_votes_once() {
 #[tokio::test]
 async fn test_ip_voting_no_update_if_same_ip() {
     let mut server = test_server().await;
-    let original_ip = server.local_node.ip;
+    let original_ip = server.local_node.load().node.ip;
 
     let voter1 = H256::from_low_u64_be(1);
     let voter2 = H256::from_low_u64_be(2);
@@ -303,7 +303,7 @@ async fn test_ip_voting_no_update_if_same_ip() {
     server.ip_predictor.record_ip_vote(original_ip, voter2);
     server.ip_predictor.record_ip_vote(original_ip, voter3);
 
-    assert_eq!(server.local_node.ip, original_ip);
+    assert_eq!(server.local_node.load().node.ip, original_ip);
     assert!(server.ip_predictor.ip_votes.is_empty());
     assert!(server.ip_predictor.first_ip_vote_round_completed);
 }
@@ -311,8 +311,8 @@ async fn test_ip_voting_no_update_if_same_ip() {
 #[tokio::test]
 async fn test_handle_pong_same_ip_does_not_bump_enr_seq() {
     let mut server = test_server().await;
-    let original_ip = server.local_node.ip;
-    let original_seq = server.local_node_record.seq;
+    let original_ip = server.local_node.load().node.ip;
+    let original_seq = server.local_node.load().record.seq;
 
     let recipient_addr = SocketAddr::new(original_ip, 30303);
     let make_pong = || PongMessage {
@@ -334,14 +334,14 @@ async fn test_handle_pong_same_ip_does_not_bump_enr_seq() {
     assert!(server.ip_predictor.first_ip_vote_round_completed);
     // Voting round reached threshold with the local IP as winner; the guard at
     // apply_predicted_ip must skip update_local_ip and leave the ENR sequence intact.
-    assert_eq!(server.local_node.ip, original_ip);
-    assert_eq!(server.local_node_record.seq, original_seq);
+    assert_eq!(server.local_node.load().node.ip, original_ip);
+    assert_eq!(server.local_node.load().record.seq, original_seq);
 }
 
 #[tokio::test]
 async fn test_ip_voting_split_votes_no_update() {
     let mut server = test_server().await;
-    let original_ip = server.local_node.ip;
+    let original_ip = server.local_node.load().node.ip;
 
     let ip1: IpAddr = "203.0.113.50".parse().unwrap();
     let ip2: IpAddr = "203.0.113.51".parse().unwrap();
@@ -350,13 +350,13 @@ async fn test_ip_voting_split_votes_no_update() {
     let voter3 = H256::from_low_u64_be(3);
 
     server.ip_predictor.record_ip_vote(ip1, voter1);
-    assert_eq!(server.local_node.ip, original_ip);
+    assert_eq!(server.local_node.load().node.ip, original_ip);
 
     server.ip_predictor.record_ip_vote(ip2, voter2);
-    assert_eq!(server.local_node.ip, original_ip);
+    assert_eq!(server.local_node.load().node.ip, original_ip);
 
     server.ip_predictor.record_ip_vote(ip1, voter3);
-    assert_eq!(server.local_node.ip, original_ip);
+    assert_eq!(server.local_node.load().node.ip, original_ip);
     assert!(server.ip_predictor.ip_votes.is_empty());
     assert!(server.ip_predictor.first_ip_vote_round_completed);
 }
@@ -521,4 +521,41 @@ async fn a_predicate_query_walks_to_a_node_it_did_not_know() {
         .expect("the query must run");
     assert_eq!(result.outcome, QueryOutcome::Satisfied, "{result:?}");
     assert_eq!(result.records, vec![c_record]);
+}
+
+#[tokio::test]
+async fn a_consumer_edit_is_what_peers_fetch() {
+    // The consumer edits A's record through its own clone of the slot, after
+    // A's server is running. B then asks A for its ENR, and must get the edited
+    // record: discovery serves the slot, not a copy it took at startup.
+    let a_signer = SecretKey::new(&mut rand::rngs::OsRng);
+    let mut a = local_node(a_signer, false).await;
+    let mut b = local_node(SecretKey::new(&mut rand::rngs::OsRng), false).await;
+    knows(&mut a, &b).await;
+    knows(&mut b, &a).await;
+    let a_id = a.id;
+    let a_enr = a.server.local_node.clone();
+
+    let _a = a.server.start_for_test();
+    let b = b.server.start_for_test();
+
+    let edited = a_enr
+        .edit_record(&a_signer, |pairs| {
+            pairs.set_extra(MARKER, vec![1u8]);
+        })
+        .unwrap();
+    b.refresh_enr(a_id);
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let fetched = loop {
+        let fetched = b
+            .records_matching(|record| record.pairs().extra(MARKER).is_some())
+            .await;
+        if !fetched.is_empty() || Instant::now() > deadline {
+            break fetched;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    assert_eq!(fetched, vec![edited.record.clone()]);
+    assert!(fetched[0].verify_signature());
 }

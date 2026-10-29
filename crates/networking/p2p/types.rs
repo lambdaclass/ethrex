@@ -1,3 +1,4 @@
+use arc_swap::{ArcSwap, Guard};
 use bytes::{BufMut, Bytes};
 use ethrex_common::types::ForkId;
 use ethrex_common::{H256, H264, H512};
@@ -15,26 +16,109 @@ use std::{
     fmt::Display,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
-    sync::{Arc, OnceLock, RwLock},
+    sync::{Arc, OnceLock},
 };
 use thiserror::Error;
 
 use crate::utils::node_id;
 
-/// Holds the live, mutable copy of the local node identity.
-///
-/// Updated in-place whenever the IP predictor learns the public external IP
-/// (via discv4/discv5 PONG voting). All reads must clone the needed values
-/// out and drop the guard before any `.await`.
+/// One version of the local node identity: the endpoint discovery believes it
+/// is reachable at, and the ENR it serves.
 #[derive(Debug, Clone)]
 pub struct LocalNode {
     pub node: Node,
     pub record: NodeRecord,
 }
 
-/// Shared, live local-node identity. Guards are `!Send`, so callers must
-/// clone out values and drop the guard before crossing any `.await` point.
-pub type SharedLocalNode = Arc<RwLock<LocalNode>>;
+/// The live local node identity, and the only copy of it.
+///
+/// Discovery serves the record from here on every PING, PONG, NODES and
+/// handshake, and its consumers (RPC, shutdown, a consensus client that
+/// announces its own entries) read and edit the same slot. There are no
+/// locks: [`Self::load`] takes a snapshot, and every write swaps a whole new
+/// [`LocalNode`] in by compare-and-swap, retrying on top of whatever another
+/// writer got in first. Two edits racing each other, such as a consumer's and
+/// discovery's IP voting, therefore both land, instead of the later one
+/// overwriting the earlier.
+#[derive(Debug, Clone)]
+pub struct SharedLocalNode(Arc<ArcSwap<LocalNode>>);
+
+impl SharedLocalNode {
+    pub fn new(local_node: LocalNode) -> Self {
+        Self(Arc::new(ArcSwap::from_pointee(local_node)))
+    }
+
+    /// The current identity. A snapshot: later edits never show up in it.
+    pub fn load(&self) -> Arc<LocalNode> {
+        self.0.load_full()
+    }
+
+    /// Edit the served record's entries.
+    ///
+    /// Goes through [`NodeRecord::edit`], so the record is re-signed with
+    /// `seq` bumped once, and discovery advertises the new `seq` on its next
+    /// PING or PONG; peers then fetch the record. `signer` must be the key the
+    /// record is signed with. `id` and `secp256k1` are kept as they are, since
+    /// they are fixed by that key. Leave the endpoint entries (`ip`, `ip6`,
+    /// `tcp`, `udp`) to discovery: IP voting rewrites them, and
+    /// [`LocalNode::node`] does not follow a change made here.
+    ///
+    /// `edit` runs again on the newer record whenever another writer swaps
+    /// one in first, so it must give the same result every time it runs.
+    /// Returns the identity the edit produced.
+    pub fn edit_record<F>(
+        &self,
+        signer: &SecretKey,
+        mut edit: F,
+    ) -> Result<Arc<LocalNode>, NodeError>
+    where
+        F: FnMut(&mut NodeRecordPairs),
+    {
+        let signer_key =
+            H264::from_slice(&PublicKey::from_secret_key(secp256k1::SECP256K1, signer).serialize());
+        self.update(|current| {
+            let pairs = current.record.pairs();
+            if pairs.secp256k1 != Some(signer_key) {
+                return Err(NodeError::SignatureError(
+                    "signer does not own the local record".into(),
+                ));
+            }
+            let id = pairs.id.clone();
+            let mut next = current.clone();
+            next.record.edit(signer, |pairs| {
+                edit(pairs);
+                pairs.id = id;
+                pairs.secp256k1 = Some(signer_key);
+            })?;
+            Ok(next)
+        })
+    }
+
+    /// Swap in `update(current)`, retrying on top of a newer identity when
+    /// another writer gets in between the read and the swap. Returns the
+    /// identity swapped in.
+    pub(crate) fn update<F>(&self, mut update: F) -> Result<Arc<LocalNode>, NodeError>
+    where
+        F: FnMut(&LocalNode) -> Result<LocalNode, NodeError>,
+    {
+        let mut current = self.0.load_full();
+        loop {
+            let next = Arc::new(update(&current)?);
+            let previous = self.0.compare_and_swap(&current, Arc::clone(&next));
+            if Arc::ptr_eq(&previous, &current) {
+                return Ok(next);
+            }
+            current = Guard::into_inner(previous);
+        }
+    }
+
+    /// Overwrite the identity, whatever it holds. Only for seeding the slot
+    /// before discovery serves from it; anything later goes through
+    /// [`Self::update`] so it cannot erase a concurrent edit.
+    pub(crate) fn replace(&self, local_node: LocalNode) {
+        self.0.store(Arc::new(local_node));
+    }
+}
 
 /// Holds the local node's network addressing configuration, separating the
 /// socket bind address from the externally-announced address.
