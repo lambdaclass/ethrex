@@ -42,6 +42,8 @@ use crate::{
 /// timeout; geth's `--rpc.evmtimeout` defaults to 5s as well). It bounds the
 /// response, not the work: see where it is applied.
 const SIMULATE_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_SIMULATE_CALLS_PER_BLOCK: usize = 5000;
+const MAX_SIMULATE_TOTAL_CALLS: usize = 10000;
 
 #[derive(Debug)]
 pub struct EthSimulateRequest {
@@ -142,6 +144,29 @@ impl RpcHandler for EthSimulateRequest {
                 data: None,
             });
         }
+        let mut total_calls = 0usize;
+        for block in &payload.block_state_calls {
+            if block.calls.len() > MAX_SIMULATE_CALLS_PER_BLOCK {
+                return Err(RpcErr::EthSimulate {
+                    code: -38026,
+                    message: format!(
+                        "client limit exceeded: too many calls in block: {} > {MAX_SIMULATE_CALLS_PER_BLOCK}",
+                        block.calls.len()
+                    ),
+                    data: None,
+                });
+            }
+            total_calls = total_calls.saturating_add(block.calls.len());
+            if total_calls > MAX_SIMULATE_TOTAL_CALLS {
+                return Err(RpcErr::EthSimulate {
+                    code: -38026,
+                    message: format!(
+                        "client limit exceeded: too many calls: {total_calls} > {MAX_SIMULATE_TOTAL_CALLS}"
+                    ),
+                    data: None,
+                });
+            }
+        }
         let block = match params.get(1) {
             Some(value) if value.get() != "null" => BlockIdentifierOrHash::parse_param(value, 1)?,
             _ => BlockIdentifierOrHash::Identifier(BlockIdentifier::default()),
@@ -159,13 +184,12 @@ impl RpcHandler for EthSimulateRequest {
         let chain_config = context.storage.get_chain_config();
         let vm_type = context.blockchain.vm_type()?;
         let request = SimulationRequest {
-            blocks: self
-                .payload
-                .block_state_calls
-                .iter()
-                .cloned()
-                .map(|entry| block_state_call_to_spec(entry, &base_header, &chain_config, vm_type))
-                .collect::<Result<Vec<_>, _>>()?,
+            blocks: block_state_calls_to_specs(
+                &self.payload.block_state_calls,
+                &base_header,
+                &chain_config,
+                vm_type,
+            )?,
             base: base_header,
             validation: self.payload.validation,
             trace_transfers: self.payload.trace_transfers,
@@ -204,6 +228,65 @@ fn invalid_params(message: String) -> RpcErr {
     }
 }
 
+fn block_state_calls_to_specs(
+    entries: &[BlockStateCall],
+    base_header: &ethrex_common::types::BlockHeader,
+    chain_config: &ChainConfig,
+    vm_type: VMType,
+) -> Result<Vec<SimulationBlockSpec>, RpcErr> {
+    let mut specs = Vec::with_capacity(entries.len());
+    let mut prev_number = base_header.number;
+    let mut prev_timestamp = base_header.timestamp;
+    for entry in entries.iter().cloned() {
+        let number = entry
+            .block_overrides
+            .as_ref()
+            .and_then(|overrides| overrides.number)
+            .unwrap_or(prev_number + 1);
+        if number <= prev_number {
+            return Err(simulation_error_to_rpc(
+                SimulationError::BlockNumberNotAscending {
+                    given: number,
+                    prev: prev_number,
+                },
+            ));
+        }
+        if number - base_header.number > MAX_SIMULATE_BLOCKS {
+            return Err(simulation_error_to_rpc(SimulationError::TooManyBlocks));
+        }
+        for _ in (prev_number + 1)..number {
+            prev_timestamp += 12;
+        }
+        let time_override = entry
+            .block_overrides
+            .as_ref()
+            .and_then(|overrides| overrides.time);
+        let timestamp = match time_override {
+            Some(time) => {
+                if time <= prev_timestamp {
+                    return Err(simulation_error_to_rpc(
+                        SimulationError::TimestampNotAscending {
+                            given: time,
+                            prev: prev_timestamp,
+                        },
+                    ));
+                }
+                time
+            }
+            None => prev_timestamp + 12,
+        };
+        prev_number = number;
+        prev_timestamp = timestamp;
+        specs.push(block_state_call_to_spec(
+            entry,
+            timestamp,
+            chain_config,
+            vm_type,
+        )?);
+    }
+    Ok(specs)
+}
+
 /// Convert one JSON `blockStateCalls` entry into the engine's spec type.
 ///
 /// This is the only place a `blockStateCalls` entry's override sets are consumed, so it is
@@ -213,7 +296,7 @@ fn invalid_params(message: String) -> RpcErr {
 /// header, so it honors `withdrawals`, which `apply_to` rejects.
 fn block_state_call_to_spec(
     entry: BlockStateCall,
-    base_header: &ethrex_common::types::BlockHeader,
+    timestamp: u64,
     chain_config: &ChainConfig,
     vm_type: VMType,
 ) -> Result<SimulationBlockSpec, RpcErr> {
@@ -231,18 +314,8 @@ fn block_state_call_to_spec(
                 .to_string(),
         ));
     }
-    // Fork-schedule hint for the blobBaseFee inversion: the resolved block
-    // timestamp is not known until the engine sanitizes the chain, so the
-    // override (or the base-relative default) approximates it. Only matters
-    // for simulations crossing a blob-schedule fork boundary.
-    let timestamp_hint = block_overrides
-        .time
-        .unwrap_or(base_header.timestamp.saturating_add(12));
-    let excess_blob_gas = block_overrides.resolved_excess_blob_gas(chain_config, timestamp_hint);
-    // Precompile-ness depends on the fork, and a `time` override can cross a fork
-    // boundary, so resolve it against the effective timestamp rather than the base
-    // header's — same reasoning as `convert_state_overrides` on the eth_call path.
-    let fork = chain_config.fork(timestamp_hint);
+    let excess_blob_gas = block_overrides.resolved_excess_blob_gas(chain_config, timestamp);
+    let fork = chain_config.fork(timestamp);
     let state_overrides = entry
         .state_overrides
         .map(|set| set.into_overrides(fork, vm_type))
@@ -514,6 +587,60 @@ mod tests {
         let entries: Vec<Value> = (0..257).map(|_| json!({})).collect();
         let err = parse(vec![json!({"blockStateCalls": entries})]).unwrap_err();
         assert_eq!(error_code(err), -38026);
+    }
+
+    #[test]
+    fn parse_rejects_too_many_calls() {
+        let calls = vec![json!({}); MAX_SIMULATE_CALLS_PER_BLOCK + 1];
+        let err = parse(vec![json!({"blockStateCalls": [{"calls": calls}]})]).unwrap_err();
+        assert_eq!(error_code(err), -38026);
+
+        let err = parse(vec![json!({"blockStateCalls": [
+            {"calls": vec![json!({}); MAX_SIMULATE_CALLS_PER_BLOCK]},
+            {"calls": vec![json!({}); MAX_SIMULATE_CALLS_PER_BLOCK]},
+            {"calls": [{}]},
+        ]})])
+        .unwrap_err();
+        assert_eq!(error_code(err), -38026);
+    }
+
+    #[test]
+    fn overrides_use_each_blocks_effective_timestamp() {
+        let destination = Address::repeat_byte(0xaa);
+        let state_overrides = serde_json::from_value(json!({
+            "0x000000000000000000000000000000000000000b": {
+                "movePrecompileToAddress": destination,
+            }
+        }))
+        .unwrap();
+        let entries = vec![
+            BlockStateCall {
+                block_overrides: Some(BlockOverrideSet {
+                    time: Some(988),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            BlockStateCall {
+                state_overrides: Some(state_overrides),
+                ..Default::default()
+            },
+        ];
+        let base = BlockHeader {
+            timestamp: 976,
+            ..Default::default()
+        };
+        let chain_config = ChainConfig {
+            cancun_time: Some(0),
+            prague_time: Some(1000),
+            ..Default::default()
+        };
+        let specs = block_state_calls_to_specs(&entries, &base, &chain_config, VMType::L1)
+            .expect("the second block is at Prague activation");
+        assert_eq!(
+            specs[1].state_overrides[&Address::from_low_u64_be(0x0b)].move_precompile_to,
+            Some(destination)
+        );
     }
 
     #[test]
@@ -1033,6 +1160,81 @@ mod integration_tests {
         .await
         .unwrap_err();
         assert_eq!(error_code(err), -38012);
+    }
+
+    #[tokio::test]
+    async fn relaxed_base_fee_override_matches_geth() {
+        let result = simulate(json!([{
+            "blockStateCalls": [{
+                "blockOverrides": {"baseFeePerGas": "0x7"},
+                "stateOverrides": {FRESH_A: {"code": "0x4860005260206000f3"}},
+                "calls": [
+                    {"from": RICH, "to": FRESH_A},
+                    {"from": RICH, "to": FRESH_A, "maxFeePerGas": "0x1"},
+                ],
+            }],
+        }, "latest"]))
+        .await
+        .unwrap();
+        let calls = result[0]["calls"].as_array().unwrap();
+        assert_eq!(calls[0]["status"], "0x1", "{calls:?}");
+        assert_eq!(calls[1]["status"], "0x1", "{calls:?}");
+        assert_eq!(
+            calls[0]["returnData"],
+            json!("0x0000000000000000000000000000000000000000000000000000000000000000")
+        );
+        assert_eq!(
+            calls[1]["returnData"],
+            json!("0x0000000000000000000000000000000000000000000000000000000000000007")
+        );
+    }
+
+    #[tokio::test]
+    async fn gas_price_and_access_list_produce_eip2930() {
+        let result = simulate(json!([{
+            "returnFullTransactions": true,
+            "blockStateCalls": [{
+                "calls": [{
+                    "from": RICH,
+                    "to": FRESH_B,
+                    "value": "0x1",
+                    "gasPrice": "0x1",
+                    "accessList": [{
+                        "address": FRESH_B,
+                        "storageKeys": [
+                            "0x0000000000000000000000000000000000000000000000000000000000000001"
+                        ],
+                    }],
+                }],
+            }],
+        }, "latest"]))
+        .await
+        .unwrap();
+        assert_eq!(result[0]["calls"][0]["status"], "0x1");
+        let tx = &result[0]["transactions"][0];
+        assert_eq!(tx["type"], "0x1");
+        assert_eq!(tx["accessList"][0]["address"], FRESH_B);
+        assert_eq!(
+            tx["accessList"][0]["storageKeys"].as_array().unwrap().len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn mixed_legacy_and_dynamic_fees_are_rejected() {
+        let err = simulate(json!([{
+            "blockStateCalls": [{
+                "calls": [{
+                    "from": RICH,
+                    "to": FRESH_B,
+                    "gasPrice": "0x1",
+                    "maxFeePerGas": "0x2",
+                }],
+            }],
+        }, "latest"]))
+        .await
+        .unwrap_err();
+        assert_eq!(error_code(err), -32602);
     }
 
     #[tokio::test]

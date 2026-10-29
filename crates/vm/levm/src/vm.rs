@@ -608,6 +608,8 @@ pub struct VM<'a> {
     pub current_call_frame: CallFrame,
     /// Block and transaction environment.
     pub env: Environment,
+    /// Whether transaction fees must cover the block base fee.
+    pub validate_base_fee: bool,
     /// Execution substate (accessed addresses, logs, refunds, etc.).
     pub substate: Substate,
     /// Database for reading/writing account state.
@@ -1125,6 +1127,7 @@ impl<'a> VM<'a> {
                 root_memory,
             ),
             env,
+            validate_base_fee: true,
             frame_tx_context: None,
             opcode_table: VM::build_opcode_table(fork),
             crypto,
@@ -3621,6 +3624,7 @@ impl<'a> VM<'a> {
             call_frames: Vec::new(),
             current_call_frame,
             env,
+            validate_base_fee: true,
             substate: Substate::default(),
             db,
             tx,

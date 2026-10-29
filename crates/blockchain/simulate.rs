@@ -13,12 +13,14 @@ use std::sync::Arc;
 use bytes::Bytes;
 use ethrex_common::{
     Address, U256,
-    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB},
+    constants::{
+        DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, TX_MAX_GAS_LIMIT_AMSTERDAM,
+    },
     types::{
         AccountInfo, AccountUpdate, Block, BlockBody, BlockHeader, ChainConfig, EIP1559Transaction,
-        EIP4844Transaction, EIP7702Transaction, ELASTICITY_MULTIPLIER, Fork, GenericTransaction,
-        LegacyTransaction, Log, Receipt, Transaction, TxKind, Withdrawal, bloom_from_logs,
-        calc_excess_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
+        EIP2930Transaction, EIP4844Transaction, EIP7702Transaction, ELASTICITY_MULTIPLIER, Fork,
+        GenericTransaction, LegacyTransaction, Log, Receipt, Transaction, TxKind, Withdrawal,
+        bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_gas, compute_receipts_root,
         compute_transactions_root, compute_withdrawals_root, requests::compute_requests_hash,
         tx_fields::AuthorizationTuple,
     },
@@ -342,20 +344,14 @@ fn state_override_to_update(
 /// the variant is chosen by which fields are present (EIP-1559 when nothing
 /// disambiguates), the nonce is auto-filled from the live simulated state,
 /// missing gas gets the remaining block gas, and the signature is zeroed (the
-/// sender is carried out-of-band). Returns `(tx, sender, gas_capped)`;
-/// Running per-block gas totals.
-///
-/// EIP-8037 splits a block's allowance into a regular and a state dimension, each bounded
-/// by the block gas limit *independently*. That makes the room left for the next call
-/// `min(limit - regular, limit - state)`, which is strictly more than the pre-Amsterdam
-/// `limit - total` once both dimensions are non-zero — so the single running total is not
-/// enough to decide inclusion, and using it refuses calls a real Amsterdam block includes.
+/// sender is carried out-of-band). Returns `(tx, sender, gas_capped)`.
 #[derive(Clone, Copy, Default)]
 struct BlockGasTally {
     /// Σ `report.gas_used`: the pre-Amsterdam single budget.
     total: u64,
     regular: u64,
     state: u64,
+    validation: bool,
 }
 
 impl BlockGasTally {
@@ -379,14 +375,37 @@ impl BlockGasTally {
         }
     }
 
-    /// Gas available to the next call, per dimension from Amsterdam on.
+    /// Gas available to the next call. Strict calls reserve at most MaxTxGas in the
+    /// execution dimension; relaxed calls reserve their full limit there.
     fn remaining(&self, gas_limit: u64, fork: Fork) -> u64 {
-        if fork >= Fork::Amsterdam {
-            self.regular_available(gas_limit)
-                .min(self.state_available(gas_limit))
-        } else {
-            gas_limit.saturating_sub(self.total)
+        if fork < Fork::Amsterdam {
+            return gas_limit.saturating_sub(self.total);
         }
+        let regular = self.regular_available(gas_limit);
+        let state = self.state_available(gas_limit);
+        let available = if regular >= TX_MAX_GAS_LIMIT_AMSTERDAM {
+            state
+        } else {
+            regular.min(state)
+        };
+        if self.validation {
+            available
+        } else {
+            available.min(regular)
+        }
+    }
+
+    fn allows(&self, gas: u64, gas_limit: u64, fork: Fork) -> bool {
+        if fork < Fork::Amsterdam {
+            return gas <= gas_limit.saturating_sub(self.total);
+        }
+        let regular_contribution = if self.validation {
+            gas.min(TX_MAX_GAS_LIMIT_AMSTERDAM)
+        } else {
+            gas
+        };
+        regular_contribution <= self.regular_available(gas_limit)
+            && gas <= self.state_available(gas_limit)
     }
 
     fn regular_available(&self, gas_limit: u64) -> u64 {
@@ -415,6 +434,13 @@ fn build_sim_transaction(
             "invalid chain id: got {call_chain_id}, want {chain_id}"
         )));
     }
+    if !call.gas_price.is_zero()
+        && (call.max_fee_per_gas.is_some() || call.max_priority_fee_per_gas.is_some())
+    {
+        return Err(SimulationError::InvalidParams(
+            "both gasPrice and (maxFeePerGas or maxPriorityFeePerGas) specified".to_string(),
+        ));
+    }
     let sender = call.from;
     let nonce = match call.nonce {
         Some(nonce) => nonce,
@@ -423,18 +449,7 @@ fn build_sim_transaction(
     let remaining_block_gas = gas_tally.remaining(header.gas_limit, fork);
     let (gas_limit, gas_capped) = match call.gas {
         Some(gas) => {
-            // Mirrors `ethrex_vm::check_2d_gas_allowance`, which cannot be called here: it
-            // takes a built `Transaction`, and the gas limit being derived is what would go
-            // into one. The regular dimension's worst case is the whole tx gas, capped by
-            // EIP-7825; the state dimension has no such cap.
-            let exceeds = if fork >= Fork::Amsterdam {
-                let regular_contrib = gas.min(get_max_allowed_gas_limit(header.gas_limit, fork));
-                regular_contrib > gas_tally.regular_available(header.gas_limit)
-                    || gas > gas_tally.state_available(header.gas_limit)
-            } else {
-                gas > remaining_block_gas
-            };
-            if exceeds {
+            if !gas_tally.allows(gas, header.gas_limit, fork) {
                 return Err(SimulationError::BlockGasLimitReached {
                     requested: gas,
                     remaining: remaining_block_gas,
@@ -448,11 +463,6 @@ fn build_sim_transaction(
         }
     };
 
-    // No EIP-2930 branch: geth reaches `ToTransaction` with a type-2 default, whose
-    // `AccessListTxType` arm is therefore unreachable, and then downgrades to legacy
-    // whenever `gasPrice` is set. So a call carrying both `gasPrice` and `accessList`
-    // is a legacy transaction with the list dropped in geth too, and simulating it as
-    // type 1 instead would disagree on intrinsic gas, warm slots and the tx root.
     let access_list = call
         .access_list
         .iter()
@@ -497,19 +507,30 @@ fn build_sim_transaction(
             blob_versioned_hashes: call.blob_versioned_hashes.clone(),
             ..Default::default()
         })
-    } else if !call.gas_price.is_zero()
-        && call.max_fee_per_gas.is_none()
-        && call.max_priority_fee_per_gas.is_none()
-    {
-        Transaction::LegacyTransaction(LegacyTransaction {
-            nonce,
-            gas_price: call.gas_price,
-            gas: gas_limit,
-            to: call.to.clone(),
-            value: call.value,
-            data: call.input.clone(),
-            ..Default::default()
-        })
+    } else if !call.gas_price.is_zero() {
+        if call.access_list.is_empty() {
+            Transaction::LegacyTransaction(LegacyTransaction {
+                nonce,
+                gas_price: call.gas_price,
+                gas: gas_limit,
+                to: call.to.clone(),
+                value: call.value,
+                data: call.input.clone(),
+                ..Default::default()
+            })
+        } else {
+            Transaction::EIP2930Transaction(EIP2930Transaction {
+                chain_id,
+                nonce,
+                gas_price: call.gas_price,
+                gas_limit,
+                to: call.to.clone(),
+                value: call.value,
+                data: call.input.clone(),
+                access_list,
+                ..Default::default()
+            })
+        }
     } else {
         // Spec default: type 0x2.
         Transaction::EIP1559Transaction(EIP1559Transaction {
@@ -612,7 +633,10 @@ impl Blockchain {
             let mut receipts = Vec::with_capacity(call_count);
             let mut calls = Vec::with_capacity(call_count);
             let mut block_logs: Vec<Log> = Vec::new();
-            let mut gas_tally = BlockGasTally::default();
+            let mut gas_tally = BlockGasTally {
+                validation: request.validation,
+                ..Default::default()
+            };
             let mut blob_gas_used: u64 = 0;
             let mut cumulative_gas_spent: u64 = 0;
 
@@ -972,5 +996,42 @@ mod tests {
         assert_eq!(header.coinbase, Address::repeat_byte(0x01));
         assert_eq!(header.base_fee_per_gas, Some(7));
         assert_eq!(header.difficulty, U256::from(5));
+    }
+
+    #[test]
+    fn amsterdam_execution_reservation_depends_on_validation() {
+        let gas_limit = 25_000_000;
+        let strict = BlockGasTally {
+            total: 1_000_000,
+            regular: 1_000_000,
+            state: 0,
+            validation: true,
+        };
+        let relaxed = BlockGasTally {
+            validation: false,
+            ..strict
+        };
+        assert!(strict.allows(gas_limit, gas_limit, Fork::Amsterdam));
+        assert!(!relaxed.allows(gas_limit, gas_limit, Fork::Amsterdam));
+    }
+
+    #[test]
+    fn amsterdam_inferred_gas_uses_the_strict_reservation_cap() {
+        let gas_limit = 25_000_000;
+        let strict = BlockGasTally {
+            total: 1_000_000,
+            regular: 1_000_000,
+            state: 0,
+            validation: true,
+        };
+        let relaxed = BlockGasTally {
+            validation: false,
+            ..strict
+        };
+        assert_eq!(strict.remaining(gas_limit, Fork::Amsterdam), gas_limit);
+        assert_eq!(
+            relaxed.remaining(gas_limit, Fork::Amsterdam),
+            gas_limit - 1_000_000
+        );
     }
 }

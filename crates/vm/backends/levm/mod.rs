@@ -3582,6 +3582,9 @@ impl LEVM {
         // transaction. geth: `if !sim.validate { msg.SkipExecutionGasCapCheck() }`.
         env.disable_execution_gas_cap = !validate;
         env.trace_eth_transfers = trace_eth_transfers;
+        if !validate {
+            adjust_disabled_base_fee(&mut env);
+        }
         // With `validation: false` blob fees are zeroed unless the call prices
         // them explicitly (mirrors `adjust_disabled_base_fee`'s blob branch).
         if !validate && tx.max_fee_per_blob_gas().unwrap_or_default().is_zero() {
@@ -3599,6 +3602,7 @@ impl LEVM {
             crypto,
             None,
         )?;
+        vm.validate_base_fee = validate;
 
         vm.execute().map_err(SimulationTxError::from)
     }
@@ -4399,12 +4403,6 @@ pub fn calculate_gas_price_for_tx(
         && let Some(operator_fee_config) = &fee_config.operator_fee_config
     {
         fee_per_gas += operator_fee_config.operator_fee_per_gas;
-    }
-
-    if fee_per_gas > max_fee_per_gas {
-        return Err(VMError::TxValidation(
-            TxValidationError::InsufficientMaxFeePerGas,
-        ));
     }
 
     Ok(min(max_priority_fee + fee_per_gas, max_fee_per_gas).into())
