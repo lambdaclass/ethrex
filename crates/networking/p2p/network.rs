@@ -14,9 +14,7 @@ use crate::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
     tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
-    types::{
-        INITIAL_ENR_SEQ, LocalNode, NetworkConfig, Node, NodeError, NodeRecord, SharedLocalNode,
-    },
+    types::{NetworkConfig, Node, NodeError, NodeRecordPairs, SharedLocalNode},
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
@@ -132,8 +130,15 @@ pub enum NetworkError {
     LocalNodeRecordError(#[from] NodeError),
 }
 
-/// The ENR this node publishes: whatever `local_node` advertises, plus our own
-/// EIP-2124 fork id and the `snap` entry.
+/// Adds what this node announces about itself to the record in `local_node`:
+/// our own EIP-2124 fork id and the `snap` entry, on top of whatever the record
+/// already advertises.
+///
+/// The record is edited in place rather than rebuilt, so it keeps the `seq` the
+/// caller started it at. ethrex starts it above every `seq` it served before;
+/// a record rebuilt here would restart at [`INITIAL_ENR_SEQ`](crate::types::INITIAL_ENR_SEQ)
+/// on every boot, behind the copy peers already cached, and they would not
+/// fetch it again.
 ///
 /// Built here rather than inside discovery, which has no say in what this node
 /// announces about itself.
@@ -143,16 +148,19 @@ pub enum NetworkError {
 /// `eth` simply passes us over until we republish with it. A record we cannot
 /// sign is different, and is reported.
 ///
-/// Also returns the fork id the record was built with, so the refresh channel can
-/// be seeded with the exact value the ENR advertises: seeding from a second
-/// storage read could straddle a fork crossing, and a seed the ENR never carried
-/// is a change the refresh would never see.
-async fn build_local_node_record(
+/// Returns the fork id the record was built with, so the refresh channel can be
+/// seeded with the exact value the ENR advertises: seeding from a second storage
+/// read could straddle a fork crossing, and a seed the ENR never carried is a
+/// change the refresh would never see.
+async fn announce_local_entries(
     context: &P2PContext,
-) -> Result<(NodeRecord, Option<ForkId>), NodeError> {
+    local_node: &SharedLocalNode,
+) -> Result<Option<ForkId>, NodeError> {
     let fork_id = context.storage.get_fork_id().await.ok();
-    let record = local_node_record(&context.local_node, fork_id.clone(), &context.signer)?;
-    Ok((record, fork_id))
+    local_node.edit_record(&context.signer, |pairs| {
+        add_local_entries(pairs, fork_id.clone())
+    })?;
+    Ok(fork_id)
 }
 
 /// Every connection offers snap (see
@@ -160,17 +168,9 @@ async fn build_local_node_record(
 /// so the record always carries the `snap` entry, listing the served versions
 /// (ethereum/devp2p#286). DNS discovery lists such as the EIP-1459 `snap.*` trees
 /// select snap servers by this entry.
-pub(crate) fn local_node_record(
-    node: &Node,
-    fork_id: Option<ForkId>,
-    signer: &SecretKey,
-) -> Result<NodeRecord, NodeError> {
-    let mut record = NodeRecord::from_node(node, INITIAL_ENR_SEQ, signer)?;
-    record.edit(signer, |pairs| {
-        pairs.eth = fork_id;
-        pairs.snap = Some(vec![1, 2]);
-    })?;
-    Ok(record)
+pub(crate) fn add_local_entries(pairs: &mut NodeRecordPairs, fork_id: Option<ForkId>) {
+    pairs.eth = fork_id;
+    pairs.snap = Some(vec![1, 2]);
 }
 
 pub async fn start_network(
@@ -185,13 +185,7 @@ pub async fn start_network(
             .map_err(NetworkError::UdpSocketError)?,
     );
 
-    let (local_node_record, initial_fork_id) = build_local_node_record(&context).await?;
-    // Discovery serves straight from the shared slot, so this is the record
-    // peers get, and the one RPC and shutdown read back.
-    shared_local_node.replace(LocalNode {
-        node: context.local_node.clone(),
-        record: local_node_record,
-    });
+    let initial_fork_id = announce_local_entries(&context, &shared_local_node).await?;
 
     // The ENR's `eth` entry is only correct for the fork the chain is on. Nothing
     // recomputed it after startup, so once the chain crossed a fork we kept
