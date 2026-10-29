@@ -46,7 +46,7 @@ pub fn address_to_word(address: Address) -> U256 {
 /// address = keccak256(0xff || sender_address || salt || keccak256(initialization_code))[12:]
 pub fn calculate_create2_address(
     sender_address: Address,
-    initialization_code: &Bytes,
+    initialization_code: &[u8],
     salt: U256,
 ) -> Result<Address, InternalError> {
     let init_code_hash = keccak(initialization_code);
@@ -261,7 +261,7 @@ pub fn eip7702_get_code(
 ) -> Result<(bool, u64, Address, Code), VMError> {
     let (bytecode, delegation) = eip7702_peek_delegation(db, accrued_substate, address, fork)?;
     let Some((auth_address, access_cost)) = delegation else {
-        return Ok((false, 0, address, bytecode));
+        return Ok((false, 0, address, bytecode.unwrap_or_default()));
     };
 
     accrued_substate.add_accessed_address(auth_address);
@@ -269,6 +269,10 @@ pub fn eip7702_get_code(
 
     Ok((true, access_cost, auth_address, authorized_bytecode))
 }
+
+/// A call target's code (`None` when it has none) and, when it is an EIP-7702
+/// delegation, the delegate address with its access cost.
+pub type PeekedCode = (Option<Code>, Option<(Address, u64)>);
 
 /// First half of [`eip7702_get_code`]: read `address`'s code and detect a
 /// delegation designation WITHOUT touching the delegate account.
@@ -283,10 +287,19 @@ pub fn eip7702_peek_delegation(
     substate: &Substate,
     address: Address,
     fork: Fork,
-) -> Result<(Code, Option<(Address, u64)>), VMError> {
-    let bytecode = db.get_account_code(address)?.clone();
+) -> Result<PeekedCode, VMError> {
+    let account = db.get_account(address)?;
+    // An account without code (an EOA or a precompile) cannot carry a delegation
+    // designation. Calls to precompiles take this path every time, so skip the
+    // code-cache lookup and the clone and drop of the empty `Code` entry, and
+    // return no code at all.
+    if !account.has_code() {
+        return Ok((None, None));
+    }
+    let code_hash = account.info.code_hash;
+    let bytecode = db.get_code(code_hash)?.clone();
     if !code_has_delegation(bytecode.code())? {
-        return Ok((bytecode, None));
+        return Ok((Some(bytecode), None));
     }
     let auth_address = get_authorized_address_from_code(bytecode.code())?;
     let access_cost = if substate.is_address_accessed(&auth_address) {
@@ -297,7 +310,7 @@ pub fn eip7702_peek_delegation(
         // fork-dependent rather than the flat COLD_ADDRESS_ACCESS_COST.
         cold_account_access_cost(fork)
     };
-    Ok((bytecode, Some((auth_address, access_cost))))
+    Ok((Some(bytecode), Some((auth_address, access_cost))))
 }
 
 /// Precomputed intrinsic-gas components for a transaction.
@@ -573,7 +586,13 @@ impl<'a> VM<'a> {
                 let gas_limit = self.tx.gas_limit();
                 let execution_gas = gas_limit.saturating_sub(total_gas);
                 let regular_gas_budget = TX_MAX_GAS_LIMIT_AMSTERDAM.saturating_sub(regular_gas);
-                let gas_left = regular_gas_budget.min(execution_gas);
+                // A simulation that lifted the cap (eth_call, debug_traceCall) spends its
+                // whole gas limit on execution and funds no reservoir, as geth does.
+                let gas_left = if self.env.disable_execution_gas_cap {
+                    execution_gas
+                } else {
+                    regular_gas_budget.min(execution_gas)
+                };
                 let reservoir = execution_gas.saturating_sub(gas_left);
                 if reservoir > 0 {
                     // Pre-consume reservoir from gas_remaining so GAS opcode returns <= TX_MAX_GAS_LIMIT_AMSTERDAM
@@ -616,7 +635,10 @@ impl<'a> VM<'a> {
 
         // Calldata Cost
         // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-        let calldata_cost = gas_cost::tx_calldata(&self.current_call_frame.calldata)?;
+        let calldata_cost = self
+            .current_call_frame
+            .calldata
+            .with_slice(gas_cost::tx_calldata)??;
 
         regular_gas = regular_gas.checked_add(calldata_cost).ok_or(OutOfGas)?;
 
@@ -749,10 +771,13 @@ impl<'a> VM<'a> {
         let fork = self.env.config.fork;
 
         // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
+        let tx_calldata;
         let calldata = if self.is_create()? {
             self.current_call_frame.bytecode.code()
         } else {
-            self.current_call_frame.calldata.as_ref()
+            // A transaction's own data is owned, so this shares it rather than copying.
+            tx_calldata = self.current_call_frame.calldata.to_bytes()?;
+            tx_calldata.as_ref()
         };
 
         // EIP-7976 floor tokens: for the floor arm, all calldata bytes count unweighted.
@@ -1041,7 +1066,7 @@ pub fn account_to_levm_account(account: Account) -> (LevmAccount, Code) {
         LevmAccount {
             info: account.info,
             has_storage: !account.storage.is_empty(), // This is used in scenarios in which the storage is already all in the account. For the Levm Runner
-            storage: account.storage,
+            storage: account.storage.into_iter().collect(),
             status: AccountStatus::Unmodified,
             exists: true,
         },

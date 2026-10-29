@@ -35,6 +35,10 @@
 .endm
 
 
+    # Be explicit about the section: `global_asm!` blocks inherit the assembler's
+    # current section from whatever block was emitted before them in this codegen
+    # unit. See issue #7246.
+    .text
     .global _blake2b_f
     .type   _blake2b_f, @function
 _blake2b_f:

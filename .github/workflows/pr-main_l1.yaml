@@ -143,6 +143,32 @@ jobs:
             cat docs/known_issues.md
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # The Test job runs the differential fuzzers' quick tests in the dev profile, where they check
+  # reduced case counts; this runs them once at the full counts of an optimized build.
+  difffuzz-release:
+    name: Differential fuzz tests (release)
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      # Its own pool: no other job builds the test crate at `release` without
+      # the `l2` feature, so the `l1` entry (dev profile) carries nothing it can
+      # link against.
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+        with:
+          cache-pool: l1-difffuzz
+          save-cache: 'true'
+
+      - name: Run the quick differential fuzz tests
+        run: cargo test --release -p ethrex-test --test ethrex_tests difffuzz_
+
   engine-ef-tests:
     name: Engine EF tests
     needs: detect-changes
@@ -312,7 +338,13 @@ jobs:
             artifact_prefix: rpc_compat
           - name: "Devp2p tests"
             simulation: devp2p
-            limit: discv4|discv5|eth|snap
+            # `snap` is left out until go-ethereum's devp2p harness places snap
+            # messages after the negotiated eth version's range: it hard-codes
+            # the eth/72 message count, and ethrex only offers eth/72 with blob
+            # sampling on, so every snap request arrives on the wrong code and
+            # the suite has failed on every main push since 2026-09-02. Restore
+            # it once the upstream fix is in the harness (tracked in #7418).
+            limit: discv4|discv5|eth
             artifact_prefix: devp2p
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine

@@ -50,7 +50,6 @@ pub struct SszStatelessInput {
     pub new_payload_request: NewPayloadRequest,  // Full block as SSZ
     pub witness: SszExecutionWitness,            // State trie, storage tries, codes
     pub chain_id: u64,                           // #3278: the only config on the wire
-    pub public_keys: SszList<...>,               // One recovered tx public key per tx
 }
 ```
 
@@ -283,7 +282,6 @@ The 43-byte layout is pinned against `NativeRollup.sol` by
 | ZK variant | Specified (proof-carrying tx + PROOFROOT) | Not implemented (re-execution only) | **Gap (by design)** |
 | Forced transactions | WIP (FOCIL) | Not implemented | **Gap** |
 | DA cost pricing | WIP | Not implemented | **Both WIP** |
-| `public_keys` | Pre-recovered tx keys | Populated by the advancer, checked against recovered senders | **Aligned** |
 
 ### EIP-8079 divergences
 

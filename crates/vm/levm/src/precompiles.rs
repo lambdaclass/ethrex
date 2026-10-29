@@ -1,5 +1,6 @@
 use bytes::{Buf, Bytes};
 use ethrex_common::H160;
+use ethrex_common::seeded_hash::SeededHashMap;
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
     Address, H256, U256, types::Fork, types::Fork::*, utils::u256_from_big_endian,
@@ -7,14 +8,14 @@ use ethrex_common::{
 use ethrex_crypto::{Crypto, CryptoError};
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, hash_map::Entry};
 use std::sync::RwLock;
 
 use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
 use crate::vm::VMType;
 use crate::{
     constants::VERSIONED_HASH_VERSION_KZG,
-    errors::{InternalError, PrecompileError, VMError},
+    errors::{ExceptionalHalt, InternalError, PrecompileError, VMError},
     gas_cost::{
         self, BLAKE2F_ROUND_COST, BLS12_381_G1_K_DISCOUNT, BLS12_381_G1ADD_COST,
         BLS12_381_G2_K_DISCOUNT, BLS12_381_G2ADD_COST, BLS12_381_MAP_FP_TO_G1_COST,
@@ -371,16 +372,51 @@ pub fn effective_precompile_address(address: Address, moves: Option<&PrecompileM
         .unwrap_or(address)
 }
 
+/// Upper bound on the memory one [`PrecompileCache`] may hold. A cache lives for a
+/// single block, and a block's working set sits far below this, so in normal operation
+/// no result is ever turned away.
+pub const PRECOMPILE_CACHE_MAX_BYTES: usize = 128 * 1024 * 1024;
+
+/// Largest precompile input that is looked up in, or added to, the [`PrecompileCache`].
+/// A lookup hashes and compares the whole input, while a precompile may read only a small
+/// part of it (MODEXP with zero lengths reads 96 bytes of any input), so caching a large
+/// input would make a cheap call cost time in proportion to its size. Real calls, such as
+/// a pairing check over a few pairs or an RSA-sized MODEXP, are far smaller.
+pub const PRECOMPILE_CACHE_MAX_INPUT_BYTES: usize = 4096;
+
+#[derive(Default)]
+struct PrecompileCacheEntries {
+    /// Results by precompile, then by calldata. Two levels so a lookup can borrow the
+    /// caller's calldata as the key: a single `(Address, Bytes)` key needs an owned one.
+    /// The inner map is seeded like `TransientStorage`: contracts choose the calldata.
+    map: FxHashMap<Address, SeededHashMap<Bytes, (Bytes, u64)>>,
+    /// Sum of [`PrecompileCache::entry_size`] over `map`.
+    used_bytes: usize,
+}
+
+impl PrecompileCacheEntries {
+    fn contains(&self, address: &Address, calldata: &[u8]) -> bool {
+        self.map
+            .get(address)
+            .is_some_and(|calls| calls.contains_key(calldata))
+    }
+}
+
 /// Per-block cache for precompile results shared between warmer and executor.
+///
+/// Holds at most its budget, [`PRECOMPILE_CACHE_MAX_BYTES`] unless built with
+/// [`PrecompileCache::with_max_bytes`], as counted by [`PrecompileCache::entry_size`];
+/// once full, further results are simply not cached.
+/// Nothing is evicted: the cache is dropped with its block, so there is no recency worth
+/// tracking, and lookups stay on the shared read lock.
 pub struct PrecompileCache {
-    cache: RwLock<FxHashMap<(Address, Bytes), (Bytes, u64)>>,
+    cache: RwLock<PrecompileCacheEntries>,
+    max_bytes: usize,
 }
 
 impl Default for PrecompileCache {
     fn default() -> Self {
-        Self {
-            cache: RwLock::new(FxHashMap::default()),
-        }
+        Self::with_max_bytes(PRECOMPILE_CACHE_MAX_BYTES)
     }
 }
 
@@ -389,36 +425,88 @@ impl PrecompileCache {
         Self::default()
     }
 
-    pub fn get(&self, address: &Address, calldata: &Bytes) -> Option<(Bytes, u64)> {
+    /// A cache that holds at most `max_bytes`, as counted by [`PrecompileCache::entry_size`].
+    pub fn with_max_bytes(max_bytes: usize) -> Self {
+        Self {
+            cache: RwLock::default(),
+            max_bytes,
+        }
+    }
+
+    /// Bytes one entry is charged against the budget: its calldata and output, plus
+    /// the fixed size of the key and value it is stored as. Hash-table slack and the
+    /// per-precompile tables are not counted, so the budget is approximate, not an exact
+    /// resident size.
+    pub fn entry_size(calldata_len: usize, output_len: usize) -> usize {
+        calldata_len
+            .saturating_add(output_len)
+            .saturating_add(size_of::<(Bytes, (Bytes, u64))>())
+    }
+
+    pub fn get(&self, address: &Address, calldata: &[u8]) -> Option<(Bytes, u64)> {
         // Graceful degradation: if the lock is poisoned (a thread panicked while
         // holding it), skip the cache rather than propagating the panic. The cache
         // is a pure optimization — missing it only costs a recomputation.
-        self.cache
+        let entries = self
+            .cache
             .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(&(*address, calldata.clone()))
-            .cloned()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        entries.map.get(address)?.get(calldata).cloned()
     }
 
-    pub fn insert(&self, address: Address, calldata: Bytes, output: Bytes, gas_cost: u64) {
-        self.cache
+    /// Stores copies of `calldata` and `output`, never the caller's buffers: calldata can be
+    /// a view of a larger allocation (the calling frame's memory, or a slice of a
+    /// transaction's data), and keeping a reference would hold that whole allocation while
+    /// the budget counts only the length.
+    ///
+    /// The copies are made only for a call that is not cached yet and fits the budget, and
+    /// outside the write lock. The warmer and the executor often compute the same call, and
+    /// the second insert then costs a lookup under the shared read lock and nothing more.
+    pub fn insert(&self, address: Address, calldata: &[u8], output: &[u8], gas_cost: u64) {
+        let entry_size = Self::entry_size(calldata.len(), output.len());
+        {
+            let entries = self
+                .cache
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if entries.used_bytes.saturating_add(entry_size) > self.max_bytes
+                || entries.contains(&address, calldata)
+            {
+                return;
+            }
+        }
+        let calldata = Bytes::copy_from_slice(calldata);
+        let output = Bytes::copy_from_slice(output);
+        let mut guard = self
+            .cache
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert((address, calldata), (output, gas_cost));
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let entries = &mut *guard;
+        // Checked again: another thread may have inserted since the read lock was released.
+        let used_bytes = entries.used_bytes.saturating_add(entry_size);
+        if used_bytes > self.max_bytes {
+            return;
+        }
+        // The warmer and the executor can both compute the same call; the result is
+        // identical, so keep the first one and charge it once.
+        if let Entry::Vacant(slot) = entries.map.entry(address).or_default().entry(calldata) {
+            slot.insert((output, gas_cost));
+            entries.used_bytes = used_bytes;
+        }
     }
 }
 
 #[expect(clippy::as_conversions, clippy::indexing_slicing)]
 pub fn execute_precompile(
     address: Address,
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     fork: Fork,
     cache: Option<&PrecompileCache>,
     crypto: &dyn Crypto,
     _stateless_validator: Option<&dyn crate::StatelessValidator>,
 ) -> Result<Bytes, VMError> {
-    type PrecompileFn = fn(&Bytes, &mut u64, Fork, &dyn Crypto) -> Result<Bytes, VMError>;
+    type PrecompileFn = fn(&[u8], &mut u64, Fork, &dyn Crypto) -> Result<Bytes, VMError>;
 
     const PRECOMPILES: [Option<PrecompileFn>; 512] = const {
         let mut precompiles = [const { None }; 512];
@@ -472,10 +560,11 @@ pub fn execute_precompile(
         .flatten()
         .ok_or(VMError::Internal(InternalError::InvalidPrecompileAddress))?;
 
-    // Check cache (skip identity -- copy is cheaper than lookup)
-    if address != IDENTITY.address
-        && let Some((output, gas_cost)) = cache.and_then(|c| c.get(&address, calldata))
-    {
+    // Check cache (skip identity -- copy is cheaper than lookup -- and large inputs)
+    let cache = cache.filter(|_| {
+        address != IDENTITY.address && calldata.len() <= PRECOMPILE_CACHE_MAX_INPUT_BYTES
+    });
+    if let Some((output, gas_cost)) = cache.and_then(|c| c.get(&address, calldata)) {
         increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
         return Ok(output);
     }
@@ -493,13 +582,12 @@ pub fn execute_precompile(
         timings.update(address, time);
     }
 
-    // Cache result on success (skip identity)
-    if address != IDENTITY.address
-        && let Some(cache) = cache
+    // Cache result on success
+    if let Some(cache) = cache
         && let Ok(output) = &result
     {
         let gas_cost = gas_before.saturating_sub(*gas_remaining);
-        cache.insert(address, calldata.clone(), output.clone(), gas_cost);
+        cache.insert(address, calldata, output, gas_cost);
     }
 
     result
@@ -519,14 +607,13 @@ pub(crate) fn increase_precompile_consumed_gas(
 /// When slice length is less than `target_len`, the rest is filled with zeros. If slice length is
 /// more than `target_len`, the excess bytes are kept.
 #[inline(always)]
-pub(crate) fn fill_with_zeros(calldata: &Bytes, target_len: usize) -> Bytes {
+pub(crate) fn fill_with_zeros(calldata: &[u8], target_len: usize) -> Cow<'_, [u8]> {
     if calldata.len() >= target_len {
-        // this clone is cheap (Arc)
-        return calldata.clone();
+        return Cow::Borrowed(calldata);
     }
     let mut padded_calldata = calldata.to_vec();
     padded_calldata.resize(target_len, 0);
-    padded_calldata.into()
+    Cow::Owned(padded_calldata)
 }
 
 fn crypto_error_to_precompile(e: CryptoError) -> VMError {
@@ -583,7 +670,7 @@ fn bls12_msm_pairing_crypto_error(e: CryptoError) -> VMError {
 ///
 /// Returns the recovered address.
 pub fn ecrecover(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -641,7 +728,7 @@ pub fn ecrecover(
 
 /// Returns the calldata received
 pub fn identity(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     _crypto: &dyn Crypto,
@@ -650,12 +737,12 @@ pub fn identity(
 
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 
-    Ok(calldata.clone())
+    Ok(Bytes::copy_from_slice(calldata))
 }
 
 /// Returns the calldata hashed by sha2-256 algorithm
 pub fn sha2_256(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -670,7 +757,7 @@ pub fn sha2_256(
 
 /// Returns the calldata hashed by ripemd-160 algorithm, padded by zeros at left
 pub fn ripemd_160(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -686,7 +773,7 @@ pub fn ripemd_160(
 /// Returns the result of the module-exponentiation operation
 #[expect(clippy::indexing_slicing, reason = "bounds checked at start")]
 pub fn modexp(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     fork: Fork,
     crypto: &dyn Crypto,
@@ -732,6 +819,37 @@ pub fn modexp(
     let modulus_size =
         usize::try_from(modulus_size).map_err(|_| PrecompileError::ParsingInputError)?;
 
+    // Charge gas from the declared lengths BEFORE anything is sized by them. Pre-Osaka the
+    // lengths are uncapped, so a caller can declare operands far larger than any gas limit
+    // pays for; zero-padding them first would attempt that allocation (aborting the process
+    // when it cannot be satisfied) instead of failing the call with out-of-gas. Only the
+    // first 32 bytes of the exponent feed the cost (EIP-2565), so only those are read here.
+    // An exponent that starts past the end of the calldata (including a start offset that
+    // overflows) reads as zero, like any other missing operand bytes.
+    let exponent_start = base_size.saturating_add(96);
+    let exponent_head_size = exponent_size.min(32);
+    let exponent_head = get_slice_or_default(
+        &calldata,
+        exponent_start,
+        exponent_start.saturating_add(exponent_head_size),
+        exponent_head_size,
+    )?;
+
+    // Gas computation uses malachite Natural to compute bit length of exponent
+    use malachite::Natural;
+    use malachite::base::num::conversion::traits::*;
+    let exp_first_32 = Natural::from_power_of_2_digits_desc(8u64, exponent_head.iter().cloned())
+        .ok_or(InternalError::TypeConversion)?;
+
+    let gas_cost = gas_cost::modexp(&exp_first_32, base_size, exponent_size, modulus_size, fork)?;
+
+    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
+
+    if base_size == 0 && modulus_size == 0 {
+        return Ok(Bytes::new());
+    }
+
+    // The gas just charged bounds the declared lengths, so the operands can be materialized.
     let base_limit = base_size.checked_add(96).ok_or(InternalError::Overflow)?;
 
     let exponent_limit = exponent_size
@@ -742,25 +860,9 @@ pub fn modexp(
         .checked_add(exponent_limit)
         .ok_or(InternalError::Overflow)?;
 
-    let b = get_slice_or_default(&calldata, 96, base_limit, base_size);
-    let e = get_slice_or_default(&calldata, base_limit, exponent_limit, exponent_size);
-    let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, modulus_size);
-
-    // Gas computation uses malachite Natural to compute bit length of exponent
-    use malachite::Natural;
-    use malachite::base::num::conversion::traits::*;
-    let exp_first_32_bytes = e.get(0..32.min(exponent_size)).unwrap_or_default();
-    let exp_first_32 =
-        Natural::from_power_of_2_digits_desc(8u64, exp_first_32_bytes.iter().cloned())
-            .ok_or(InternalError::TypeConversion)?;
-
-    let gas_cost = gas_cost::modexp(&exp_first_32, base_size, exponent_size, modulus_size, fork)?;
-
-    increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
-
-    if base_size == 0 && modulus_size == 0 {
-        return Ok(Bytes::new());
-    }
+    let b = get_slice_or_default(&calldata, 96, base_limit, base_size)?;
+    let e = get_slice_or_default(&calldata, base_limit, exponent_limit, exponent_size)?;
+    let m = get_slice_or_default(&calldata, exponent_limit, modulus_limit, modulus_size)?;
 
     let result = crypto
         .modexp(&b, &e, &m)
@@ -774,27 +876,34 @@ pub fn modexp(
 /// This function returns the slice between the lower and upper limit of the calldata (as a vector),
 /// padding with zeros at the end if necessary.
 ///
-/// Uses Cow so that the best case of no resizing doesn't require an allocation.
+/// Uses Cow so that the best case of no resizing doesn't require an allocation. Fails with
+/// out-of-gas when the host cannot provide `size_to_expand` bytes: the gas charged for them
+/// bounds the size under any real gas limit, but a simulation run without one can pay for an
+/// operand no machine can allocate, and that must fail the call rather than abort the process.
 #[expect(clippy::indexing_slicing, reason = "bounds checked")]
 fn get_slice_or_default<'c>(
-    calldata: &'c Bytes,
+    calldata: &'c [u8],
     lower_limit: usize,
     upper_limit: usize,
     size_to_expand: usize,
-) -> Cow<'c, [u8]> {
+) -> Result<Cow<'c, [u8]>, VMError> {
     let upper_limit = calldata.len().min(upper_limit);
     if let Some(data) = calldata.get(lower_limit..upper_limit)
         && !data.is_empty()
     {
         if data.len() == size_to_expand {
-            return data.into();
+            return Ok(data.into());
         }
-        let mut extended = vec![0u8; size_to_expand];
+        let mut extended = Vec::new();
+        extended
+            .try_reserve_exact(size_to_expand)
+            .map_err(|_| ExceptionalHalt::OutOfGas)?;
         let copy_size = size_to_expand.min(data.len());
-        extended[..copy_size].copy_from_slice(&data[..copy_size]);
-        return extended.into();
+        extended.extend_from_slice(&data[..copy_size]);
+        extended.resize(size_to_expand, 0);
+        return Ok(extended.into());
     }
-    Vec::new().into()
+    Ok(Vec::new().into())
 }
 
 /// If the result size is less than needed, pads left with zeros.
@@ -819,7 +928,7 @@ pub fn increase_left_pad(result: &Bytes, m_size: usize) -> Bytes {
 
 /// Makes a point addition on the elliptic curve 'alt_bn128'
 pub fn ecadd(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -847,7 +956,7 @@ pub fn ecadd(
 
 /// Makes a scalar multiplication on the elliptic curve 'alt_bn128'
 pub fn ecmul(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -950,7 +1059,7 @@ fn validate_bn254_g2_coords(g2: &G2) -> Result<(), VMError> {
 
 /// Performs a bilinear pairing on points on the elliptic curve 'alt_bn128', returns 1 on success and 0 on failure
 pub fn ecpairing(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -990,7 +1099,7 @@ pub fn ecpairing(
 
 /// Returns the result of Blake2 hashing algorithm given a certain parameters from the calldata.
 pub fn blake2f(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -999,7 +1108,8 @@ pub fn blake2f(
         return Err(PrecompileError::ParsingInputError.into());
     }
 
-    let mut calldata = calldata.slice(0..213);
+    #[expect(clippy::indexing_slicing, reason = "length checked above")]
+    let mut calldata = &calldata[..213];
 
     let rounds = calldata.get_u32();
 
@@ -1027,9 +1137,11 @@ pub fn blake2f(
 
     crypto.blake2_compress(rounds, &mut h, m, t, f);
 
-    Ok(Bytes::from_iter(
-        h.into_iter().flat_map(|value| value.to_le_bytes()),
-    ))
+    let mut output = [0u8; 64];
+    for (chunk, value) in output.chunks_exact_mut(8).zip(h) {
+        chunk.copy_from_slice(&value.to_le_bytes());
+    }
+    Ok(Bytes::copy_from_slice(&output))
 }
 
 /// Converts the provided commitment to match the provided versioned_hash.
@@ -1050,7 +1162,7 @@ const POINT_EVALUATION_OUTPUT_BYTES: [u8; 64] = [
 
 /// Makes verifications on the received point, proof and commitment, if true returns a constant value
 fn point_evaluation(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -1118,7 +1230,7 @@ fn point_evaluation(
 /// If the verification fails, returns an empty `Bytes` object.
 /// Implemented following https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7951.md
 pub fn p_256_verify(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -1183,7 +1295,7 @@ fn parse_bls12_padded_fp(padded: &[u8; 64]) -> Result<[u8; 48], VMError> {
 }
 
 pub fn bls12_g1add(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -1236,7 +1348,7 @@ pub fn bls12_g1add(
 }
 
 pub fn bls12_g1msm(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -1294,7 +1406,7 @@ pub fn bls12_g1msm(
 }
 
 pub fn bls12_g2add(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -1373,7 +1485,7 @@ pub fn bls12_g2add(
 }
 
 pub fn bls12_g2msm(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -1444,7 +1556,7 @@ pub fn bls12_g2msm(
 }
 
 pub fn bls12_pairing_check(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -1530,7 +1642,7 @@ pub fn bls12_pairing_check(
 }
 
 pub fn bls12_map_fp_to_g1(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -1562,7 +1674,7 @@ pub fn bls12_map_fp_to_g1(
 }
 
 pub fn bls12_map_fp2_to_g2(
-    calldata: &Bytes,
+    calldata: &[u8],
     gas_remaining: &mut u64,
     _fork: Fork,
     crypto: &dyn Crypto,
@@ -1608,9 +1720,115 @@ pub fn bls12_map_fp2_to_g2(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::arithmetic_side_effects)]
 mod tests {
     use super::*;
+    use crate::errors::ExceptionalHalt;
     use ethrex_common::types::Fork;
+    use ethrex_crypto::NativeCrypto;
+
+    /// MODEXP calldata: the 96-byte header (base, exponent and modulus lengths as 32-byte
+    /// big-endian words) followed by `operands`, which may be shorter than the declared
+    /// lengths (the precompile zero-pads missing bytes).
+    fn modexp_calldata(base_len: u64, exp_len: u64, mod_len: u64, operands: &[u8]) -> Bytes {
+        let mut calldata = Vec::with_capacity(96 + operands.len());
+        for len in [base_len, exp_len, mod_len] {
+            calldata.extend_from_slice(&[0u8; 24]);
+            calldata.extend_from_slice(&len.to_be_bytes());
+        }
+        calldata.extend_from_slice(operands);
+        Bytes::from(calldata)
+    }
+
+    /// Pre-Osaka MODEXP has no cap on the declared operand lengths (EIP-7823 only applies
+    /// from Osaka), so a caller can declare a length the gas limit can never pay for. The
+    /// call must fail with out-of-gas before any operand is sized by that length: sizing
+    /// first would try to allocate the declared length, and an allocation of 2^62 bytes
+    /// aborts the process rather than returning an error.
+    #[test]
+    fn modexp_pre_osaka_huge_declared_length_halts_with_out_of_gas() {
+        // Both fit in a 64-bit usize, so they survive the length conversion and reach the
+        // padding step. 2^62 overflows the gas formula; 2^33 does not, but its cost is far
+        // above any gas limit. Neither must ever be allocated.
+        for huge in [1u64 << 62, 1u64 << 33] {
+            // One operand declared huge at a time, the other two one byte each. The three
+            // operand bytes make every operand region non-empty, which is the branch of the
+            // padding helper that allocates.
+            for (base_len, exp_len, mod_len) in [(huge, 1, 1), (1, huge, 1), (1, 1, huge)] {
+                let calldata = modexp_calldata(base_len, exp_len, mod_len, &[1, 1, 1]);
+                let mut gas_remaining = 30_000_000;
+                let result = modexp(&calldata, &mut gas_remaining, Fork::Prague, &NativeCrypto);
+                assert!(
+                    matches!(
+                        result,
+                        Err(VMError::ExceptionalHalt(
+                            ExceptionalHalt::OutOfGas
+                                | ExceptionalHalt::Precompile(PrecompileError::NotEnoughGas)
+                        ))
+                    ),
+                    "lengths ({base_len}, {exp_len}, {mod_len}) must halt with out-of-gas, got {result:?}"
+                );
+            }
+        }
+    }
+
+    /// EIP-198 worked example under EIP-2565 pricing: 3^(p-1) mod p for the secp256k1 field
+    /// prime p is 1 (Fermat), for 1360 gas. Pins the ordinary path: gas and output.
+    #[test]
+    fn modexp_eip198_example_gas_and_output() {
+        // p - 1 and p, 32 bytes each.
+        let mut exponent = [0xffu8; 32];
+        exponent[27..].copy_from_slice(&[0xfe, 0xff, 0xff, 0xfc, 0x2e]);
+        let mut modulus = [0xffu8; 32];
+        modulus[27..].copy_from_slice(&[0xfe, 0xff, 0xff, 0xfc, 0x2f]);
+        let mut operands = vec![0x03];
+        operands.extend_from_slice(&exponent);
+        operands.extend_from_slice(&modulus);
+        let calldata = modexp_calldata(1, 32, 32, &operands);
+
+        let mut gas_remaining = 100_000;
+        let output = modexp(&calldata, &mut gas_remaining, Fork::Prague, &NativeCrypto).unwrap();
+
+        let mut expected = [0u8; 32];
+        expected[31] = 1;
+        assert_eq!(output.as_ref(), expected);
+        assert_eq!(100_000 - gas_remaining, 1360);
+    }
+
+    /// The exponent head that prices the call is read straight from the calldata, so a
+    /// calldata that ends inside the exponent must still price it zero-padded on the right
+    /// (0x80 followed by 31 missing bytes is 2^255, 256 significant bits) and a missing
+    /// modulus must still read as zero, which yields a zero output of the declared length.
+    #[test]
+    fn modexp_truncated_calldata_prices_zero_padded_exponent_head() {
+        let calldata = modexp_calldata(1, 32, 32, &[0x03, 0x80]);
+
+        let mut gas_remaining = 100_000;
+        let output = modexp(&calldata, &mut gas_remaining, Fork::Prague, &NativeCrypto).unwrap();
+
+        // words(32) = 4, multiplication complexity 16, iteration count 255: 16 * 255 / 3.
+        assert_eq!(100_000 - gas_remaining, 1360);
+        assert_eq!(output.as_ref(), [0u8; 32]);
+    }
+
+    /// A simulation run without a gas cap can pay for an operand no host can allocate: with
+    /// the largest 64-bit gas limit, a 2^61-byte exponent (one-byte base and modulus) costs
+    /// about 6.1e18, so the charge succeeds and the padding step is reached. Reserving 2^61
+    /// bytes fails on every 64-bit machine (it exceeds the address space), and the call must
+    /// fail with out-of-gas there instead of aborting the process.
+    #[test]
+    fn modexp_unsatisfiable_operand_allocation_halts_with_out_of_gas() {
+        let calldata = modexp_calldata(1, 1 << 61, 1, &[1, 1, 1]);
+        let mut gas_remaining = u64::MAX;
+        let result = modexp(&calldata, &mut gas_remaining, Fork::Prague, &NativeCrypto);
+        assert!(
+            matches!(
+                result,
+                Err(VMError::ExceptionalHalt(ExceptionalHalt::OutOfGas))
+            ),
+            "an operand the host cannot allocate must halt with out-of-gas, got {result:?}"
+        );
+    }
 
     /// I3 gate test: EXECUTE precompile is L1-only and only active since LStar.
     #[test]
@@ -1626,5 +1844,27 @@ mod tests {
         ));
         // LStar on L1: is a precompile.
         assert!(is_precompile(&execute_addr, Fork::LStar, VMType::L1));
+    }
+}
+
+#[cfg(test)]
+mod seeded_calldata_tests {
+    use super::*;
+    use std::hash::BuildHasher;
+
+    /// Fails if `state` hashes a key like a fresh instance of its type does, as every
+    /// instance of an unseeded hasher does.
+    #[track_caller]
+    fn assert_seeded<S: BuildHasher + Default>(state: &S) {
+        let calldata = Bytes::from_static(&[0x5a; 32]);
+        assert_ne!(state.hash_one(&calldata), S::default().hash_one(&calldata));
+    }
+
+    /// Calldata is chosen by the calling contract, so the per-precompile result map must
+    /// not let crafted inputs share one bucket.
+    #[test]
+    fn precompile_results_are_seeded() {
+        let mut entries = PrecompileCacheEntries::default();
+        assert_seeded(entries.map.entry(Address::zero()).or_default().hasher());
     }
 }

@@ -15,7 +15,7 @@
 
 use blst::{
     blst_bendian_from_fp, blst_final_exp, blst_fp, blst_fp_from_bendian, blst_fp2, blst_fp12,
-    blst_fp12_is_one, blst_fp12_mul, blst_map_to_g1, blst_map_to_g2, blst_miller_loop, blst_p1,
+    blst_fp12_is_one, blst_map_to_g1, blst_map_to_g2, blst_miller_loop_n, blst_p1,
     blst_p1_add_or_double_affine, blst_p1_affine, blst_p1_affine_in_g1, blst_p1_affine_is_inf,
     blst_p1_affine_on_curve, blst_p1_from_affine, blst_p1_mult, blst_p1_to_affine,
     blst_p1s_mult_pippenger, blst_p1s_mult_pippenger_scratch_sizeof, blst_p2,
@@ -478,21 +478,14 @@ pub fn pairing_check(
     }
 
     // acc = prod miller_loop(g1_i, g2_i); pairing holds iff final_exp(acc) == 1.
+    // The multi-pair Miller loop shares the Fp12 squarings across all pairs
+    // instead of running one full loop per pair and multiplying the results.
+    let g2_ptrs: Vec<*const blst_p2_affine> = parsed.iter().map(|(_, g2)| g2 as *const _).collect();
+    let g1_ptrs: Vec<*const blst_p1_affine> = parsed.iter().map(|(g1, _)| g1 as *const _).collect();
     let mut acc = blst_fp12::default();
-    let (first_g1, first_g2) = &parsed[0];
-    // SAFETY: operands are initialized blst values; blst takes (g2, g1) order.
-    unsafe { blst_miller_loop(&mut acc, first_g2, first_g1) };
-
-    for (g1, g2) in parsed.iter().skip(1) {
-        let mut ml = blst_fp12::default();
-        let mut next = blst_fp12::default();
-        // SAFETY: operands are initialized blst values.
-        unsafe {
-            blst_miller_loop(&mut ml, g2, g1);
-            blst_fp12_mul(&mut next, &acc, &ml);
-        }
-        acc = next;
-    }
+    // SAFETY: both pointer arrays hold `parsed.len()` pointers to initialized
+    // affine points that outlive the call; blst takes the (g2, g1) order.
+    unsafe { blst_miller_loop_n(&mut acc, g2_ptrs.as_ptr(), g1_ptrs.as_ptr(), parsed.len()) };
 
     let mut result = blst_fp12::default();
     // SAFETY: `acc` and `result` are initialized blst values.

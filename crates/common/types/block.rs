@@ -124,8 +124,13 @@ pub struct BlockHeader {
     pub prev_randao: H256,
     #[serde(with = "crate::serde_utils::u64::hex_str_padding")]
     pub nonce: u64,
-    #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "crate::serde_utils::u64::hex_str_opt",
+        default = "Option::default"
+    )]
     pub base_fee_per_gas: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
     #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
     pub withdrawals_root: Option<H256>,
     #[serde(
@@ -140,6 +145,7 @@ pub struct BlockHeader {
         default = "Option::default"
     )]
     pub excess_blob_gas: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]
     #[rkyv(with=crate::rkyv_utils::OptionH256Wrapper)]
     pub parent_beacon_block_root: Option<H256>,
     #[serde(skip_serializing_if = "Option::is_none", default = "Option::default")]

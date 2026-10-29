@@ -16,14 +16,18 @@ use crate::{
     constants::{AMSTERDAM_INIT_CODE_MAX_SIZE, FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost,
-    memory::{self, calculate_memory_size},
+    memory::{self, CallData, calculate_memory_size},
     opcode_handlers::OpcodeHandler,
     utils::{address_to_word, word_to_address, *},
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{Address, H256, U256, evm::calculate_create_address, types::Fork};
-use ethrex_common::{tracing::CallType, types::Code};
+use ethrex_common::{Address, U256, evm::calculate_create_address, types::Fork};
+use ethrex_common::{
+    tracing::CallType,
+    types::{Code, InitcodeBuffer},
+};
+use std::mem;
 
 pub struct OpCallHandler;
 impl OpcodeHandler for OpCallHandler {
@@ -116,7 +120,7 @@ impl OpcodeHandler for OpCallHandler {
                     .ok_or(ExceptionalHalt::OutOfGas)?,
             )?;
             vm.substate.add_accessed_address(auth_address);
-            vm.db.get_account_code(auth_address)?.clone()
+            Some(vm.db.get_account_code(auth_address)?.clone())
         } else {
             callee_code
         };
@@ -198,7 +202,7 @@ impl OpcodeHandler for OpCallHandler {
             value,
             gas_limit,
             &data,
-        );
+        )?;
 
         // Generic call.
         vm.generic_call(
@@ -290,7 +294,7 @@ impl OpcodeHandler for OpCallCodeHandler {
                     .ok_or(ExceptionalHalt::OutOfGas)?,
             )?;
             vm.substate.add_accessed_address(auth_address);
-            vm.db.get_account_code(auth_address)?.clone()
+            Some(vm.db.get_account_code(auth_address)?.clone())
         } else {
             target_code
         };
@@ -335,7 +339,7 @@ impl OpcodeHandler for OpCallCodeHandler {
             value,
             gas_limit,
             &data,
-        );
+        )?;
 
         // Generic call.
         vm.generic_call(
@@ -414,7 +418,7 @@ impl OpcodeHandler for OpDelegateCallHandler {
                     .ok_or(ExceptionalHalt::OutOfGas)?,
             )?;
             vm.substate.add_accessed_address(auth_address);
-            vm.db.get_account_code(auth_address)?.clone()
+            Some(vm.db.get_account_code(auth_address)?.clone())
         } else {
             target_code
         };
@@ -460,7 +464,7 @@ impl OpcodeHandler for OpDelegateCallHandler {
             vm.current_call_frame.msg_value,
             gas_limit,
             &data,
-        );
+        )?;
 
         // Generic call.
         vm.generic_call(
@@ -539,7 +543,7 @@ impl OpcodeHandler for OpStaticCallHandler {
                     .ok_or(ExceptionalHalt::OutOfGas)?,
             )?;
             vm.substate.add_accessed_address(auth_address);
-            vm.db.get_account_code(auth_address)?.clone()
+            Some(vm.db.get_account_code(auth_address)?.clone())
         } else {
             target_code
         };
@@ -583,7 +587,7 @@ impl OpcodeHandler for OpStaticCallHandler {
             U256::zero(),
             gas_limit,
             &data,
-        );
+        )?;
 
         // Generic call.
         vm.generic_call(
@@ -838,7 +842,7 @@ impl OpcodeHandler for OpSelfDestructHandler {
             balance,
             0,
             &Default::default(),
-        );
+        )?;
         vm.tracer.exit_early(0, None)?;
 
         Ok(OpcodeResult::Halt)
@@ -875,6 +879,31 @@ impl<'a> VM<'a> {
         code_size_in_memory: usize,
         salt: Option<U256>,
     ) -> Result<OpcodeResult, VMError> {
+        // The initcode is copied into a reused buffer, which moves into the child frame's code
+        // when the CREATE starts one. On every other exit, an error included, it goes back to
+        // the pool here: a buffer dropped instead is never reclaimed by a bump allocator.
+        let mut initcode = self.initcode_pool.pop().unwrap_or_default();
+        let result = self.create_with_initcode_buffer(
+            &mut initcode,
+            value,
+            code_offset_in_memory,
+            code_size_in_memory,
+            salt,
+        );
+        self.pool_initcode(initcode);
+        result
+    }
+
+    /// [`VM::generic_create`] with `initcode`, a buffer to copy the initcode into. It is taken,
+    /// leaving an empty one with no allocation, only when the child frame starts.
+    fn create_with_initcode_buffer(
+        &mut self,
+        initcode: &mut InitcodeBuffer,
+        value: U256,
+        code_offset_in_memory: usize,
+        code_size_in_memory: usize,
+        salt: Option<U256>,
+    ) -> Result<OpcodeResult, VMError> {
         // [EIP-3860] / [EIP-7954] - Cant exceed init code max size
         let init_code_max = if self.env.config.fork >= Fork::Amsterdam {
             AMSTERDAM_INIT_CODE_MAX_SIZE
@@ -895,11 +924,12 @@ impl<'a> VM<'a> {
         // Clear callframe subreturn data
         current_call_frame.sub_return_data = Bytes::new();
 
-        // Load code from memory
-        let code = self
-            .current_call_frame
-            .memory
-            .load_range(code_offset_in_memory, code_size_in_memory)?;
+        // Copy the initcode out of memory, once, into the reused buffer.
+        self.current_call_frame.memory.with_range(
+            code_offset_in_memory,
+            code_size_in_memory,
+            |code| initcode.set(code),
+        )?;
 
         // Get account info of deployer
         let deployer = self.current_call_frame.to;
@@ -910,7 +940,7 @@ impl<'a> VM<'a> {
 
         // Calculate create address
         let new_address = match salt {
-            Some(salt) => calculate_create2_address(deployer, &code, salt)?,
+            Some(salt) => calculate_create2_address(deployer, initcode.initcode(), salt)?,
             None => calculate_create_address(deployer, deployer_nonce),
         };
 
@@ -943,8 +973,16 @@ impl<'a> VM<'a> {
                 // Child gas preview for the tracer only; no gas is reserved on this
                 // path (mirrors EELS `push(0); return`).
                 let preview_gas = gas_cost::max_message_call_gas(&self.current_call_frame)?;
-                self.tracer
-                    .enter(call_type, deployer, new_address, value, preview_gas, &code);
+                if self.tracer.active {
+                    self.tracer.enter(
+                        call_type,
+                        deployer,
+                        new_address,
+                        value,
+                        preview_gas,
+                        &Bytes::copy_from_slice(initcode.initcode()).into(),
+                    )?;
+                }
                 self.current_call_frame.stack.push(FAIL)?;
                 self.tracer.exit_early(0, Some(reason.to_string()))?;
                 return Ok(OpcodeResult::Continue);
@@ -988,8 +1026,16 @@ impl<'a> VM<'a> {
         self.current_call_frame.increase_consumed_gas(gas_limit)?;
 
         // Log CREATE in tracer (success path) with the reserved child gas.
-        self.tracer
-            .enter(call_type, deployer, new_address, value, gas_limit, &code);
+        if self.tracer.active {
+            self.tracer.enter(
+                call_type,
+                deployer,
+                new_address,
+                value,
+                gas_limit,
+                &Bytes::copy_from_slice(initcode.initcode()).into(),
+            )?;
+        }
 
         // Increment sender nonce (irreversible change)
         self.increment_account_nonce(deployer)?;
@@ -1021,10 +1067,9 @@ impl<'a> VM<'a> {
             deployer,
             new_address,
             new_address,
-            // SAFETY: init code hash is never used
-            Code::from_bytecode_unchecked(code, H256::zero()),
+            Code::from_initcode_buffer(mem::take(initcode)),
             value,
-            Bytes::new(),
+            CallData::default(),
             false,
             gas_limit,
             new_depth,
@@ -1170,10 +1215,10 @@ impl<'a> VM<'a> {
         code_address: Address,
         should_transfer_value: bool,
         is_static: bool,
-        calldata: Bytes,
+        calldata: CallData,
         ret_offset: usize,
         ret_size: usize,
-        bytecode: Code,
+        bytecode: Option<Code>,
         is_delegation_7702: bool,
         new_account_charged: bool,
         callcode_target: Option<Address>,
@@ -1211,17 +1256,9 @@ impl<'a> VM<'a> {
             }
 
             let mut gas_remaining = gas_limit;
-            let ctx_result = Self::execute_precompile(
-                // Resolve a relocation destination back to the precompile it hosts.
-                self.effective_precompile_address(code_address),
-                &calldata,
-                gas_limit,
-                &mut gas_remaining,
-                self.env.config.fork,
-                self.db.store.precompile_cache(),
-                self.crypto,
-                self.stateless_validator,
-            )?;
+            // The precompile reads the arguments in place in the caller's memory.
+            let mut ctx_result =
+                self.execute_precompile(code_address, &calldata, gas_limit, &mut gas_remaining)?;
 
             let call_frame = &mut self.current_call_frame;
 
@@ -1250,7 +1287,14 @@ impl<'a> VM<'a> {
                     &ctx_result.output
                 },
             )?;
-            call_frame.sub_return_data = ctx_result.output.clone();
+            // Move the output into the return-data buffer instead of cloning it:
+            // a `Vec`-backed `Bytes` allocates a shared header on its first clone.
+            // Only an active call tracer reads the output again, in `exit_context`.
+            call_frame.sub_return_data = if self.tracer.active {
+                ctx_result.output.clone()
+            } else {
+                std::mem::take(&mut ctx_result.output)
+            };
 
             // What to do, depending on TxResult
             call_frame.stack.push(match &ctx_result.result {
@@ -1285,7 +1329,7 @@ impl<'a> VM<'a> {
                 msg_sender,
                 to,
                 code_address,
-                bytecode,
+                bytecode.unwrap_or_default(),
                 value,
                 calldata,
                 is_static,
@@ -1473,6 +1517,7 @@ impl<'a> VM<'a> {
             frame_state_gas_spilled: child_frame_state_gas_spilled,
             target_alive,
             stack,
+            bytecode,
             ..
         } = executed_call_frame;
 
@@ -1547,12 +1592,29 @@ impl<'a> VM<'a> {
         let mut stack = stack;
         stack.clear();
         self.stack_pool.push(stack);
+        self.recycle_initcode(bytecode);
 
         Ok(())
     }
 
-    fn get_calldata(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {
-        self.current_call_frame.memory.load_range(offset, size)
+    /// A call's arguments, read in place in the caller's memory rather than copied.
+    fn get_calldata(&mut self, offset: usize, size: usize) -> Result<CallData, VMError> {
+        self.current_call_frame.memory.calldata_view(offset, size)
+    }
+
+    /// Returns a finished CREATE frame's initcode buffers to the pool, except those something
+    /// still references.
+    fn recycle_initcode(&mut self, code: Code) {
+        self.pool_initcode(code.into_initcode_buffer());
+    }
+
+    /// Keeps `buffer` for the next CREATE, emptied, so no CREATE can build another one's
+    /// initcode from the pool. A buffer holding no allocation is not worth keeping.
+    fn pool_initcode(&mut self, mut buffer: InitcodeBuffer) {
+        if buffer.is_allocated() {
+            buffer.clear();
+            self.initcode_pool.push(buffer);
+        }
     }
 
     #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
