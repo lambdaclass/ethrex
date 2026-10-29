@@ -200,11 +200,35 @@ impl NewBlockFilterRequest {
 /// parameters.
 pub struct NewPendingTransactionFilterRequest;
 
+/// The optional `fullTx` param of `eth_newPendingTransactionFilter` and
+/// `eth_subscribe("newPendingTransactions")`. Absent or `null` means hashes, as in
+/// geth. Only hashes are served, so `true` is an error naming `method`.
+pub(crate) fn parse_pending_full_txs(param: Option<&RawValue>, method: &str) -> Result<(), RpcErr> {
+    let full_txs = match param {
+        Some(param) => serde_json::from_str::<Option<bool>>(param.get())
+            .map_err(|e| RpcErr::BadParams(format!("Invalid fullTx parameter: {e}")))?
+            .unwrap_or(false),
+        None => false,
+    };
+    if full_txs {
+        return Err(RpcErr::BadParams(format!(
+            "{method} with full transactions is not supported"
+        )));
+    }
+    Ok(())
+}
+
 impl NewPendingTransactionFilterRequest {
     pub fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         match params.as_deref() {
             None | Some([]) => Ok(NewPendingTransactionFilterRequest),
-            Some(_) => Err(RpcErr::BadParams("Expected no params".to_string())),
+            Some([full_txs]) => {
+                parse_pending_full_txs(Some(full_txs), "eth_newPendingTransactionFilter")?;
+                Ok(NewPendingTransactionFilterRequest)
+            }
+            Some(_) => Err(RpcErr::BadParams(
+                "Expected at most one param, fullTx".to_string(),
+            )),
         }
     }
 
@@ -1090,24 +1114,65 @@ mod tests {
             json!(format!("{hash:#x}"))
         };
         add_tx(1);
-        let id = map_http_requests(
-            &rpc_call("eth_newPendingTransactionFilter", json!([])),
-            context.clone(),
-        )
-        .await
-        .unwrap();
-        let poll = || async {
-            map_http_requests(
-                &rpc_call("eth_getFilterChanges", json!([id])),
+        // Without params, and with `fullTx: false`, the hash-only form.
+        let mut ids = Vec::new();
+        for params in [json!([]), json!([false])] {
+            let id = map_http_requests(
+                &rpc_call("eth_newPendingTransactionFilter", params),
                 context.clone(),
             )
             .await
-            .unwrap()
+            .unwrap();
+            ids.push(id);
+        }
+        let poll = |id: Value| {
+            let context = context.clone();
+            async move {
+                map_http_requests(&rpc_call("eth_getFilterChanges", json!([id])), context)
+                    .await
+                    .unwrap()
+            }
         };
 
-        assert_eq!(poll().await, json!([]));
+        for id in &ids {
+            assert_eq!(poll(id.clone()).await, json!([]));
+        }
         let (second, third) = (add_tx(2), add_tx(3));
-        assert_eq!(poll().await, json!([second, third]));
-        assert_eq!(poll().await, json!([]));
+        for id in &ids {
+            assert_eq!(poll(id.clone()).await, json!([second, third]));
+            assert_eq!(poll(id.clone()).await, json!([]));
+        }
+    }
+
+    /// `fullTx` may be absent, `null` or `false`; `true` asks for full transactions,
+    /// which are not served, and anything else is malformed.
+    #[test]
+    fn pending_transaction_filter_parse_accepts_hash_only_forms() {
+        use super::NewPendingTransactionFilterRequest;
+        use crate::{test_utils::raw_params, utils::RpcErr};
+        for params in [
+            None,
+            Some(vec![]),
+            Some(vec![json!(false)]),
+            Some(vec![json!(null)]),
+        ] {
+            assert!(
+                NewPendingTransactionFilterRequest::parse(&raw_params(&params)).is_ok(),
+                "{params:?}"
+            );
+        }
+        for params in [
+            vec![json!(true)],
+            vec![json!("x")],
+            vec![json!(false), json!(false)],
+        ] {
+            let result =
+                NewPendingTransactionFilterRequest::parse(&raw_params(&Some(params.clone())));
+            assert!(
+                matches!(result, Err(RpcErr::BadParams(_))),
+                "{params:?} gave {:?}",
+                result.err()
+            );
+        }
     }
 }

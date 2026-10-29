@@ -1570,17 +1570,10 @@ pub async fn handle_eth_subscribe(
         "newHeads" => ws.subscription_manager.subscribe(out_tx.clone()).await,
         "newPendingTransactions" => {
             // geth's optional second param asks for full transaction objects.
-            let full_txs = params
-                .get(1)
-                .map(|v| serde_json::from_str::<bool>(v.get()))
-                .transpose()
-                .map_err(|e| RpcErr::BadParams(format!("Invalid fullTx parameter: {e}")))?
-                .unwrap_or(false);
-            if full_txs {
-                return Err(RpcErr::BadParams(
-                    "newPendingTransactions with full transactions is not supported".to_string(),
-                ));
-            }
+            crate::eth::filter::parse_pending_full_txs(
+                params.get(1).map(|v| &**v),
+                "newPendingTransactions",
+            )?;
             ws.subscription_manager
                 .subscribe_pending_transactions(out_tx.clone())
                 .await
