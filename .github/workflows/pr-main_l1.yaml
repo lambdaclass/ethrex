@@ -27,10 +27,10 @@ jobs:
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/detect-changes
+      - uses: actions/checkout@v6.1.0
+      - uses: $/.github/actions/detect-changes
         id: changes
-      - uses: dorny/paths-filter@v4
+      - uses: dorny/paths-filter@v4.0.3
         id: filter
         with:
           filters: |
@@ -61,13 +61,13 @@ jobs:
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1
           components: rustfmt, clippy
@@ -107,13 +107,13 @@ jobs:
         runner: [ubuntu-22.04, ubuntu-22.04-arm, macos-15]
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1
           save-cache: 'true'
@@ -152,16 +152,16 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       # Its own pool: no other job builds the test crate at `release` without
       # the `l2` feature, so the `l1` entry (dev profile) carries nothing it can
       # link against.
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1-difffuzz
           save-cache: 'true'
@@ -176,13 +176,13 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1
 
@@ -200,7 +200,7 @@ jobs:
       issues: write
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           sparse-checkout: |
@@ -233,7 +233,7 @@ jobs:
       - name: Find existing comment
         if: steps.check.outputs.exists == 'true'
         continue-on-error: true
-        uses: peter-evans/find-comment@v4
+        uses: peter-evans/find-comment@v4.0.0
         id: fc
         with:
           issue-number: ${{ github.event.pull_request.number }}
@@ -242,7 +242,7 @@ jobs:
 
       - name: Create or update comment
         if: steps.check.outputs.exists == 'true'
-        uses: peter-evans/create-or-update-comment@v5
+        uses: peter-evans/create-or-update-comment@v5.0.0
         with:
           comment-id: ${{ steps.fc.outputs.comment-id }}
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -256,14 +256,14 @@ jobs:
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - id: docker
         name: Build Ethrex Docker Image
-        uses: ./.github/actions/build-docker
+        uses: $/.github/actions/build-docker
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -273,7 +273,7 @@ jobs:
           variant: l1
           cache_write: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true }}
       - name: Upload artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: ethrex_image
           path: /tmp/ethrex_image.tar
@@ -299,10 +299,10 @@ jobs:
           #   ethereum_package_args: "./.github/config/assertoor/network_params_ethrex_multiple_cl.yaml"
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
 
       - name: Download etherex image artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v6.0.0
         with:
           name: ethrex_image
           path: /tmp
@@ -375,13 +375,13 @@ jobs:
           #   artifact_prefix: sync
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Download ethrex image artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v6.0.0
         with:
           name: ethrex_image
           path: /tmp
@@ -434,7 +434,7 @@ jobs:
 
       - name: Log in to the Container registry
         if: ${{ env.DOCKERHUB_TOKEN != '' }}
-        uses: docker/login-action@v4
+        uses: docker/login-action@v4.7.0
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ env.DOCKERHUB_TOKEN }}
@@ -459,7 +459,7 @@ jobs:
 
       - name: Upload Hive Failure Logs
         if: ${{ failure() && steps.verify-hive-results.conclusion == 'failure' }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: hive_failed_logs_${{ matrix.artifact_prefix }}
           path: src/results/failed_logs
@@ -488,10 +488,10 @@ jobs:
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       # If this fails you should run `make update-cargo-lock`
       - name: Check Cargo.lock files are committed
@@ -539,16 +539,16 @@ jobs:
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       # Its own pool: this is the only job on main that builds the root
       # workspace at `release-fast`, so the `l1` entry (dev profile) carries
       # nothing it can link against.
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1-reorg
           save-cache: 'true'
