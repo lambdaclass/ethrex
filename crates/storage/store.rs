@@ -39,6 +39,7 @@ use ethrex_crypto::{NativeCrypto, keccak::keccak_hash};
 use ethrex_rlp::{
     decode::{RLPDecode, decode_bytes, decode_rlp_item},
     encode::RLPEncode,
+    error::RLPDecodeError,
 };
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
 use ethrex_trie::{Node, NodeRLP};
@@ -1599,12 +1600,14 @@ impl Store {
         block_hash: H256,
         index: u64,
     ) -> Result<Option<Transaction>, StoreError> {
-        let block_body = match self.get_block_body_by_hash(block_hash).await? {
-            Some(body) => body,
-            None => return Ok(None),
-        };
         let index: usize = index.try_into()?;
-        Ok(block_body.transactions.get(index).cloned())
+        if let Some(transaction) = self.buffer()?.get_transaction(&block_hash, index) {
+            return Ok(transaction);
+        }
+        let Some(body) = self.read_async(BODIES, block_hash.encode_to_vec()).await? else {
+            return Ok(None);
+        };
+        Ok(decode_body_transaction(&body, index)?)
     }
 
     pub async fn get_block_by_hash(
@@ -6147,6 +6150,153 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     {
         let _ = path;
         None
+    }
+}
+
+/// Decodes only the transaction at `index` of an RLP-encoded block body, or
+/// `None` if the body has fewer transactions. The transactions before it are
+/// skipped over by their RLP length prefix rather than decoded, so reading one
+/// transaction does not cost decoding the whole body.
+fn decode_body_transaction(
+    body_rlp: &[u8],
+    index: usize,
+) -> Result<Option<Transaction>, RLPDecodeError> {
+    let (is_list, body, _) = decode_rlp_item(body_rlp)?;
+    if !is_list {
+        return Err(RLPDecodeError::UnexpectedString);
+    }
+    let (is_list, mut transactions, _) = decode_rlp_item(body)?;
+    if !is_list {
+        return Err(RLPDecodeError::UnexpectedString);
+    }
+    for _ in 0..index {
+        if transactions.is_empty() {
+            return Ok(None);
+        }
+        (_, _, transactions) = decode_rlp_item(transactions)?;
+    }
+    if transactions.is_empty() {
+        return Ok(None);
+    }
+    let (transaction, _) = Transaction::decode_unfinished(transactions)?;
+    Ok(Some(transaction))
+}
+
+#[cfg(test)]
+mod body_transaction_tests {
+    use super::*;
+    use ethrex_common::types::{EIP1559Transaction, LegacyTransaction, TxKind, Withdrawal};
+
+    fn transactions() -> Vec<Transaction> {
+        (0..6u64)
+            .map(|nonce| {
+                if nonce % 2 == 0 {
+                    // Legacy transactions are encoded as RLP lists in a body.
+                    Transaction::LegacyTransaction(LegacyTransaction {
+                        nonce,
+                        gas: 21_000,
+                        to: TxKind::Call(Address::repeat_byte(nonce as u8)),
+                        data: vec![nonce as u8; 60 * nonce as usize].into(),
+                        v: U256::from(27),
+                        r: U256::from(nonce + 1),
+                        s: U256::from(nonce + 2),
+                        ..Default::default()
+                    })
+                } else {
+                    // Typed transactions are encoded as RLP strings in a body.
+                    Transaction::EIP1559Transaction(EIP1559Transaction {
+                        chain_id: 1,
+                        nonce,
+                        gas_limit: 21_000,
+                        to: TxKind::Create,
+                        data: vec![nonce as u8; 60 * nonce as usize].into(),
+                        signature_r: U256::from(nonce + 1),
+                        signature_s: U256::from(nonce + 2),
+                        ..Default::default()
+                    })
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn decodes_the_same_transaction_as_the_whole_body() {
+        let withdrawal = Withdrawal {
+            index: 1,
+            validator_index: 2,
+            address: Address::repeat_byte(3),
+            amount: 4,
+        };
+        for withdrawals in [None, Some(vec![withdrawal])] {
+            let body = BlockBody {
+                transactions: transactions(),
+                ommers: vec![],
+                withdrawals,
+            };
+            let rlp = body.encode_to_vec();
+            let decoded = BlockBody::decode(&rlp).unwrap();
+            for (index, expected) in decoded.transactions.iter().enumerate() {
+                let transaction = decode_body_transaction(&rlp, index).unwrap().unwrap();
+                assert_eq!(transaction.encode_to_vec(), expected.encode_to_vec());
+                assert_eq!(
+                    transaction.hash(&NativeCrypto),
+                    expected.hash(&NativeCrypto)
+                );
+            }
+            assert!(
+                decode_body_transaction(&rlp, decoded.transactions.len())
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn a_body_without_transactions_has_none() {
+        let rlp = BlockBody::default().encode_to_vec();
+        assert!(decode_body_transaction(&rlp, 0).unwrap().is_none());
+        assert!(decode_body_transaction(&rlp, 3).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn reads_a_stored_transaction_by_location() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let block = Block::new(
+            BlockHeader {
+                number: 1,
+                ..Default::default()
+            },
+            BlockBody {
+                transactions: transactions(),
+                ommers: vec![],
+                withdrawals: None,
+            },
+        );
+        let hash = block.hash();
+        let expected = block.body.transactions.clone();
+        store.add_block(block).await.unwrap();
+        for (index, transaction) in expected.iter().enumerate() {
+            let stored = store
+                .get_transaction_by_location(hash, index as u64)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(stored.encode_to_vec(), transaction.encode_to_vec());
+        }
+        assert!(
+            store
+                .get_transaction_by_location(hash, expected.len() as u64)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .get_transaction_by_location(H256::repeat_byte(9), 0)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 }
 
