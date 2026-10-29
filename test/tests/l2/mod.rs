@@ -7,6 +7,8 @@ mod native_rollup;
 mod native_rollup_l1_messages_root;
 #[cfg(feature = "l2")]
 mod native_rollup_sol_offsets;
+#[cfg(feature = "l2")]
+mod p2p_block_import;
 mod sdk;
 #[cfg(feature = "l2")]
 mod shared_bridge;

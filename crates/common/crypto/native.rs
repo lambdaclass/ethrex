@@ -1,4 +1,4 @@
-use crate::provider::Crypto;
+use crate::provider::{Crypto, CryptoError};
 
 /// Native crypto implementation using system libraries.
 ///
@@ -10,18 +10,44 @@ use crate::provider::Crypto;
 /// host the BLS12-381 (EIP-2537) defaults likewise route through the
 /// assembly-optimized `blst` backend (the `blst` feature, default-on); zkVM
 /// guest builds compile both backends out and use their own `Crypto` providers
-/// instead of this type. This
+/// instead of this type. BN254 ECADD/ECMUL use the dedicated G1 code in
+/// [`crate::bn254`], which avoids the generic decoding, inversion and scalar
+/// multiplication paths of the trait defaults. This
 /// struct exists so callers outside zkVM contexts have a concrete type to
 /// instantiate.
 #[derive(Debug)]
 pub struct NativeCrypto;
 
-#[cfg(not(feature = "aws-lc-rs"))]
-impl Crypto for NativeCrypto {}
-
-#[cfg(feature = "aws-lc-rs")]
 impl Crypto for NativeCrypto {
+    #[cfg(feature = "aws-lc-rs")]
     fn secp256r1_verify(&self, msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> bool {
         crate::p256_awslc::secp256r1_verify(msg, sig, pk)
+    }
+
+    fn bn254_g1_add(&self, p1: &[u8], p2: &[u8]) -> Result<[u8; 64], CryptoError> {
+        crate::bn254::g1_add(p1, p2)
+    }
+
+    fn bn254_g1_mul(&self, point: &[u8], scalar: &[u8]) -> Result<[u8; 64], CryptoError> {
+        crate::bn254::g1_mul(point, scalar)
+    }
+
+    fn bn254_pairing_check(&self, pairs: &[(&[u8], &[u8])]) -> Result<bool, CryptoError> {
+        crate::bn254::pairing_check(pairs)
+    }
+
+    /// Odd moduli of up to 128 bytes take the fixed-width Montgomery path;
+    /// everything else uses the arbitrary-precision default.
+    #[cfg(feature = "std")]
+    fn modexp(
+        &self,
+        base: &[u8],
+        exp: &[u8],
+        modulus: &[u8],
+    ) -> Result<Vec<u8>, crate::provider::CryptoError> {
+        match crate::modexp_montgomery::modexp(base, exp, modulus) {
+            Some(result) => Ok(result),
+            None => crate::provider::modexp_arbitrary_precision(base, exp, modulus),
+        }
     }
 }

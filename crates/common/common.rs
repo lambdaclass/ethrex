@@ -10,13 +10,14 @@ pub mod evm;
 pub mod fd_limit;
 pub mod genesis_utils;
 pub mod rkyv_utils;
+pub mod seeded_hash;
 pub mod tracing;
 pub mod utils;
 
 pub use errors::InvalidBlockError;
 pub use ethrex_crypto::{CryptoError, NativeCrypto};
 pub use validation::{
-    get_total_blob_gas, validate_block_access_list_hash, validate_block_access_list_size,
-    validate_block_pre_execution, validate_gas_used, validate_header_bal_indices,
-    validate_receipts_root_and_logs_bloom, validate_requests_hash,
+    get_total_blob_gas, validate_bal_code_sizes, validate_block_access_list_hash,
+    validate_block_access_list_size, validate_block_pre_execution, validate_gas_used,
+    validate_header_bal_indices, validate_receipts_root_and_logs_bloom, validate_requests_hash,
 };

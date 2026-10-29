@@ -106,6 +106,7 @@ fn parity_env(fork: Fork, block_gas_limit: u64) -> Environment {
         trace_eth_transfers: false,
         disable_gas_allowance_check: false,
         disable_sender_eoa_check: false,
+        disable_execution_gas_cap: false,
         is_system_call: false,
     }
 }
@@ -335,6 +336,7 @@ fn exec_env(fork: Fork) -> Environment {
         trace_eth_transfers: false,
         disable_gas_allowance_check: false,
         disable_sender_eoa_check: false,
+        disable_execution_gas_cap: false,
         is_system_call: false,
     }
 }

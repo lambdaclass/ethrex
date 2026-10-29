@@ -5,5 +5,6 @@ pub const PERIODIC_BLOCK_BROADCAST_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(500);
 pub const PERIODIC_BATCH_BROADCAST_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(500);
+pub mod block_importer;
 pub mod l2_connection;
 pub mod messages;

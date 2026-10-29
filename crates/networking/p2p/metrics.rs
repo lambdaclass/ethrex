@@ -375,6 +375,12 @@ impl Metrics {
                     .and_modify(|e| *e += 1)
                     .or_insert(1);
             }
+            PeerConnectionError::AlreadyConnected => {
+                failures_grouped_by_reason
+                    .entry("AlreadyConnected".to_owned())
+                    .and_modify(|e| *e += 1)
+                    .or_insert(1);
+            }
             PeerConnectionError::OutboundSendTimeout => {
                 failures_grouped_by_reason
                     .entry("OutboundSendTimeout".to_owned())

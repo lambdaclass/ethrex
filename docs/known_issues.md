@@ -38,10 +38,11 @@ marks these cases `speconly` so they are type-checked instead of compared byte-f
 **Where:** `STATELESS_INPUT_SCHEMA_ID` in `crates/common/types/stateless_ssz.rs`.
 
 Upstream keeps the stateless input schema id at `0x1501`
-(`fork_index 0x15 << 8 | revision 0x01`) across incompatible body changes. Three
+(`fork_index 0x15 << 8 | revision 0x01`) across incompatible body changes. Four
 encodings have now shipped under it: `tests-zkevm@v0.6.2`, then #3248 + #3278,
 then #3356, which moved `state`, `codes` and `public_keys` from `SszList` to
-`ProgressiveList`. ethrex speaks the last one.
+`ProgressiveList`, then #3652 in `tests-zkevm@v21.0.1`, which removed
+`public_keys` outright without bumping the revision. ethrex speaks the last one.
 
 The consequence is that the 2-byte prefix cannot be used to detect a stale or
 mismatched bundle. A wrong-dialect input is accepted by the id check and then

@@ -21,7 +21,7 @@ use ethrex_crypto::NativeCrypto;
 use ethrex_vm::TxValidationError;
 use ethrex_vm::backends::VMType;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 
 use ethrex_rlp::encode::RLPEncode;
 
@@ -113,7 +113,7 @@ pub struct SimulateCallErrorJson {
 }
 
 impl RpcHandler for EthSimulateRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<EthSimulateRequest, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<EthSimulateRequest, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -125,7 +125,7 @@ impl RpcHandler for EthSimulateRequest {
         }
         // The method's spec pins invalid payloads to -32602; the blanket
         // serde_json conversion would yield BadParams (-32000).
-        let payload: SimulatePayload = serde_json::from_value(params[0].clone())
+        let payload: SimulatePayload = serde_json::from_str(params[0].get())
             .map_err(|error| invalid_params(format!("invalid simulate payload: {error}")))?;
         if payload.block_state_calls.is_empty() {
             return Err(invalid_params(
@@ -143,7 +143,7 @@ impl RpcHandler for EthSimulateRequest {
             });
         }
         let block = match params.get(1) {
-            Some(value) if !value.is_null() => BlockIdentifierOrHash::parse(value.clone(), 1)?,
+            Some(value) if value.get() != "null" => BlockIdentifierOrHash::parse_param(value, 1)?,
             _ => BlockIdentifierOrHash::Identifier(BlockIdentifier::default()),
         };
         Ok(EthSimulateRequest { payload, block })
@@ -436,7 +436,7 @@ mod tests {
     use serde_json::json;
 
     fn parse(params: Vec<Value>) -> Result<EthSimulateRequest, RpcErr> {
-        EthSimulateRequest::parse(&Some(params))
+        EthSimulateRequest::parse(&crate::test_utils::raw_params(&Some(params)))
     }
 
     fn error_code(err: RpcErr) -> i32 {

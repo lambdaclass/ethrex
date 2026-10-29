@@ -6,6 +6,7 @@ on:
       - Daily Hive Report
       - Daily Lines of Code Report
       - Daily Snapsync Check
+      - Docs Link Check
       - L1
       - L2 (SP1 Backend)
       - L2 (without proving)
