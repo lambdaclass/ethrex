@@ -29,8 +29,7 @@ use crate::{
 /// Returns `Ok(None)` for JSON null or absent param.
 ///
 /// A present but malformed value is `-32602: Invalid params`, which the Amsterdam
-/// Engine API specification requires for `engine_forkchoiceUpdatedV4`; hence
-/// `WrongParam` rather than `BadParams`, which ethrex maps to `-32000`.
+/// Engine API specification requires for `engine_forkchoiceUpdatedV4`.
 pub(crate) fn parse_custody_columns(value: &RawValue) -> Result<Option<u128>, RpcErr> {
     let Some(hex_str) = serde_json::from_str::<Option<String>>(value.get())
         .map_err(|_| RpcErr::WrongParam("custodyColumns".into()))?
