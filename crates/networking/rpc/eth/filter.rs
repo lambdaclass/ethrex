@@ -67,17 +67,10 @@ pub struct PollableFilter {
 
 impl NewFilterRequest {
     pub fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
+        // EIP-234 `blockHash` is accepted, as geth and reth do: eth_getFilterLogs
+        // answers with that block's logs (see `FilterChangesRequest::handle` for
+        // polling).
         let filter = LogsFilter::parse(params)?;
-        // EIP-234 defines `blockHash` for eth_newFilter too, but the only thing
-        // it does with such a filter is answer eth_getFilterLogs, which eth_getLogs
-        // with the hash answers directly. For eth_getFilterChanges, a moving range
-        // by definition, even geth ignores the hash. Reject it instead of accepting
-        // and ignoring.
-        if filter.block_hash.is_some() {
-            return Err(RpcErr::BadParams(
-                "`blockHash` is not a valid filter for eth_newFilter".to_string(),
-            ));
-        }
         Ok(NewFilterRequest {
             request_data: filter,
         })
@@ -299,7 +292,8 @@ impl FilterChangesRequest {
             // since the filter was created), from the filter's `fromBlock` when that is a
             // number past them, up to its `toBlock` when that is a number. A filter whose
             // `toBlock` is a tag other than `latest`, or a number already reported, has
-            // nothing left to report.
+            // nothing left to report. A `blockHash` is ignored here, as geth does: a poll
+            // is a moving range by definition.
             let mut from = filter.last_block_number.saturating_add(1);
             if let BlockIdentifier::Number(from_block) = filter_data.from_block {
                 from = from.max(from_block);
@@ -1112,5 +1106,31 @@ mod tests {
                 "{id} gave {result:?}"
             );
         }
+    }
+
+    /// A filter by `blockHash` is created, and eth_getFilterLogs answers with that
+    /// block's logs only.
+    #[tokio::test]
+    async fn filter_logs_by_block_hash() {
+        let storage = Store::new("in-mem", EngineType::InMemory).unwrap();
+        for number in 0..=3 {
+            add_head_block(&storage, number, 1).await;
+        }
+        let context = default_context_with_storage(storage.clone()).await;
+        let block_two = storage.get_canonical_block_hash(2).await.unwrap().unwrap();
+        let address = format!("{:#x}", ethrex_common::H160::from_low_u64_be(1));
+        let id = map_http_requests(
+            &rpc_call(
+                "eth_newFilter",
+                json!([{"address": address, "blockHash": format!("{block_two:#x}")}]),
+            ),
+            context.clone(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(filter_log_blocks(&context, &id).await, vec![2]);
+        add_head_block(&storage, 4, 1).await;
+        assert_eq!(filter_log_blocks(&context, &id).await, vec![2]);
     }
 }
