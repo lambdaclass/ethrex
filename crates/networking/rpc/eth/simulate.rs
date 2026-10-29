@@ -38,8 +38,9 @@ use crate::{
     utils::RpcErr,
 };
 
-/// Wall-clock budget for the whole simulation (mirrors the `debug_traceCall`
-/// timeout; geth's `--rpc.evmtimeout` defaults to 5s as well).
+/// How long a request waits for its simulation (mirrors the `debug_traceCall`
+/// timeout; geth's `--rpc.evmtimeout` defaults to 5s as well). It bounds the
+/// response, not the work: see where it is applied.
 const SIMULATE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
@@ -169,6 +170,7 @@ impl RpcHandler for EthSimulateRequest {
             base: base_header,
             validation: self.payload.validation,
             trace_transfers: self.payload.trace_transfers,
+            gas_cap: context.rpc_gas_cap,
         };
         let blockchain: Arc<Blockchain> = context.blockchain.clone();
         let return_full_transactions = self.payload.return_full_transactions;
@@ -186,7 +188,8 @@ impl RpcHandler for EthSimulateRequest {
         // Up to 256 blocks of EVM execution, so run it off the async runtime. The
         // timeout bounds the response, not the work: a `spawn_blocking` task has no
         // cancellation point, so an expired request leaves the simulation running until
-        // it exhausts SIMULATION_GAS_CAP, which is what actually bounds the CPU.
+        // it exhausts the request's gas budget (`--rpc.gascap`), which is what actually
+        // bounds the CPU.
         tokio::time::timeout(SIMULATE_TIMEOUT, tokio::task::spawn_blocking(operation))
             .await
             .map_err(|_| RpcErr::Internal("eth_simulateV1 timeout".to_string()))?
@@ -764,8 +767,14 @@ mod integration_tests {
     }
 
     async fn simulate(params: Value) -> Result<Value, RpcErr> {
+        simulate_with_gas_cap(params, crate::DEFAULT_RPC_GAS_CAP).await
+    }
+
+    /// Like `simulate`, on a node started with `--rpc.gascap <rpc_gas_cap>`.
+    async fn simulate_with_gas_cap(params: Value, rpc_gas_cap: u64) -> Result<Value, RpcErr> {
         let storage = setup_store().await;
-        let context = default_context_with_storage(storage).await;
+        let mut context = default_context_with_storage(storage).await;
+        context.rpc_gas_cap = rpc_gas_cap;
         let request: RpcRequest = serde_json::from_value(json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -944,6 +953,28 @@ mod integration_tests {
         .await
         .unwrap_err();
         assert_eq!(error_code(err), -38021);
+    }
+
+    /// The request's gas budget is the node's `--rpc.gascap`: a call without `gas` gets
+    /// at most what is left of it, so a cap below a transfer's 21000 starves it, and `0`
+    /// lifts the cap.
+    #[tokio::test]
+    async fn gas_budget_is_the_rpc_gas_cap() {
+        let transfer = json!([{
+            "blockStateCalls": [{
+                "calls": [{"from": RICH, "to": FRESH_B, "value": "0x1"}],
+            }],
+        }, "latest"]);
+        let err = simulate_with_gas_cap(transfer.clone(), 20_000)
+            .await
+            .unwrap_err();
+        assert_eq!(error_code(err), -38013);
+        for rpc_gas_cap in [0, 21_000] {
+            let result = simulate_with_gas_cap(transfer.clone(), rpc_gas_cap)
+                .await
+                .unwrap();
+            assert_eq!(result[0]["calls"][0]["status"], "0x1", "cap {rpc_gas_cap}");
+        }
     }
 
     #[tokio::test]

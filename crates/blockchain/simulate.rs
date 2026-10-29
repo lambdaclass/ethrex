@@ -42,9 +42,6 @@ use crate::{
 /// `maxSimulateBlocks`). Also the `BLOCKHASH` window, so every simulated block
 /// can resolve every other one.
 pub const MAX_SIMULATE_BLOCKS: u64 = 256;
-/// Cumulative gas allowance across all simulated blocks (geth's `RPCGasCap`
-/// default). TODO: wire to a node option once RPC exposes a gas-cap setting.
-pub const SIMULATION_GAS_CAP: u64 = 50_000_000;
 /// Timestamp increment for blocks without an explicit `time` override.
 const SIMULATED_BLOCK_TIME: u64 = 12;
 
@@ -83,6 +80,9 @@ pub struct SimulationRequest {
     pub blocks: Vec<SimulationBlockSpec>,
     pub validation: bool,
     pub trace_transfers: bool,
+    /// Cumulative gas allowance across all simulated blocks: the node's RPC gas
+    /// cap (`--rpc.gascap`), as geth's `RPCGasCap()`. `0` means no cap.
+    pub gas_cap: u64,
 }
 
 /// One simulated block plus its per-call results. `calls` and `senders` are
@@ -552,7 +552,11 @@ impl Blockchain {
         // `Arc::make_mut` then pays for at most one copy per block, and only while a
         // database built from the previous contents is still alive.
         let mut overlay = Arc::new(SimulationOverlay::new(base.number));
-        let mut budget_remaining = SIMULATION_GAS_CAP;
+        let mut budget_remaining = if request.gas_cap == 0 {
+            u64::MAX
+        } else {
+            request.gas_cap
+        };
         let mut parent = base;
         let mut results = Vec::with_capacity(blocks.len());
 
