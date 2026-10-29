@@ -80,7 +80,7 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 #[cfg(feature = "rayon")]
 use rayon::slice::ParallelSlice;
 #[cfg(feature = "rayon")]
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::cmp::min;
 use std::sync::Arc;
 #[cfg(feature = "rayon")]
@@ -531,7 +531,7 @@ pub fn carry_block_writes(mut entries: CarriedEntries) -> CarriedEntries {
     {
         entries = CarriedEntries::default();
     }
-    let mut cleared = rustc_hash::FxHashSet::default();
+    let mut cleared = ethrex_common::seeded_hash::SeededHashSet::default();
     for update in writes {
         let address = update.address;
         if update.removed_storage
@@ -804,10 +804,10 @@ impl WarmedTxs {
 #[cfg(feature = "rayon")]
 #[derive(Default)]
 struct WarmMisses {
-    accounts: FxHashSet<Address>,
-    slots: FxHashSet<(Address, H256)>,
-    codes: FxHashSet<H256>,
-    code_lengths: FxHashSet<H256>,
+    accounts: SeededHashSet<Address>,
+    slots: SeededHashSet<(Address, H256)>,
+    codes: SeededHashSet<H256>,
+    code_lengths: SeededHashSet<H256>,
 }
 
 #[cfg(feature = "rayon")]

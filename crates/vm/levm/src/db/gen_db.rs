@@ -26,7 +26,7 @@ use crate::utils::restore_cache_state;
 use crate::vm::VM;
 use ethrex_common::seeded_hash::{SeededHashMap, SeededHashSet};
 pub use ethrex_common::types::AccountUpdate;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 
 /// Accounts touched by execution, by address. Seeded: contracts choose which addresses
@@ -212,11 +212,11 @@ pub fn code_from_bal(new_code: &bytes::Bytes) -> (H256, Option<Code>) {
 /// same values gives the same result.
 #[derive(Clone, Debug, Default)]
 pub struct TxReads {
-    pub accounts: FxHashMap<Address, AccountSnapshot>,
-    pub slots: FxHashMap<(Address, H256), U256>,
+    pub accounts: SeededHashMap<Address, AccountSnapshot>,
+    pub slots: SeededHashMap<(Address, H256), U256>,
     /// Accounts whose exact balance the transaction used, rather than only whether it is zero
     /// or what it added to it.
-    pub balances: FxHashSet<Address>,
+    pub balances: SeededHashSet<Address>,
 }
 
 /// An account as a transaction can observe it, without its storage.
