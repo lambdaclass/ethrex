@@ -5214,7 +5214,7 @@ mod burned_fees_tests {
         Transaction::EIP1559Transaction(EIP1559Transaction {
             signature_r: U256::from_big_endian(&sig_bytes[..32]),
             signature_s: U256::from_big_endian(&sig_bytes[32..]),
-            signature_y_parity: rid.to_byte() != 0,
+            signature_y_parity: rid.to_byte().into(),
             ..tx
         })
     }
@@ -5309,7 +5309,7 @@ mod burned_fees_tests {
         Transaction::EIP1559Transaction(EIP1559Transaction {
             signature_r: U256::from_big_endian(&sig_bytes[..32]),
             signature_s: U256::from_big_endian(&sig_bytes[32..]),
-            signature_y_parity: rid.to_byte() != 0,
+            signature_y_parity: rid.to_byte().into(),
             ..tx
         })
     }
@@ -5596,7 +5596,7 @@ mod simulated_tx_encoding_tests {
             value: U256::from(1u64),
             data,
             access_list: vec![],
-            signature_y_parity: true,
+            signature_y_parity: 1u8.into(),
             signature_r: U256::MAX,
             signature_s: U256::MAX,
             ..Default::default()

@@ -801,3 +801,72 @@ async fn parallel_path_rejects_an_extra_system_address_change_at_the_post_block_
         "rejected for the wrong reason: {msg}"
     );
 }
+
+#[tokio::test]
+async fn bounded_sync_rejects_an_execution_invalid_served_bal() {
+    let build_store = setup_store().await;
+    let (mut block, bal) = build_valid_amsterdam_block(&build_store).await;
+    let mut accounts = bal.accounts().to_vec();
+    let change = accounts
+        .iter_mut()
+        .find_map(|account| account.storage_changes.first_mut())
+        .and_then(|slot| slot.slot_changes.first_mut())
+        .expect("block should have a storage change to corrupt");
+    change.post_value = if change.post_value.is_zero() {
+        U256::one()
+    } else {
+        U256::zero()
+    };
+    let served = BlockAccessList::from_accounts(accounts);
+    block.header.block_access_list_hash = Some(served.compute_hash(&NativeCrypto));
+
+    let store = setup_store().await;
+    let blockchain = Blockchain::new(store, BlockchainOptions::default());
+    let (error, failure) = blockchain
+        .add_blocks_in_batch(
+            vec![block.clone()],
+            &[Some(served)],
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .expect_err("an execution-invalid served BAL must reject the block");
+
+    assert!(matches!(
+        error,
+        ethrex_blockchain::error::ChainError::InvalidBlock(
+            ethrex_blockchain::error::InvalidBlockError::BlockAccessListHashMismatch
+        )
+    ));
+    let failure = failure.expect("block execution should report the failure");
+    assert_eq!(failure.failed_block_hash, block.hash());
+    assert_eq!(failure.last_valid_hash, block.header.parent_hash);
+}
+
+#[tokio::test]
+async fn bounded_sync_retries_a_non_canonical_served_bal_without_it() {
+    let build_store = setup_store().await;
+    let (block, bal) = build_valid_amsterdam_block(&build_store).await;
+    let mut accounts = bal.accounts().to_vec();
+    assert!(accounts.len() > 1);
+    accounts.swap(0, 1);
+    let served = BlockAccessList::from_accounts(accounts);
+    assert_eq!(
+        served.compute_hash(&NativeCrypto),
+        bal.compute_hash(&NativeCrypto)
+    );
+
+    let store = setup_store().await;
+    let blockchain = Blockchain::new(store, BlockchainOptions::default());
+    let result = blockchain
+        .add_blocks_in_batch(
+            vec![block],
+            &[Some(served)],
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "sequential retry should import the valid block: {result:?}"
+    );
+}

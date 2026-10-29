@@ -1152,13 +1152,14 @@ where
         );
     }
 
+    let listener = ctx.clone();
     spawn_listener(
         ctx.clone(),
-        stream.filter_map(|result| match result {
+        stream.filter_map(move |result| match result {
             Ok(msg) => Some(peer_connection_server_protocol::IncomingMessage { message: msg }),
             Err(e) => {
-                debug!(error=?e, "Error receiving RLPx message");
-                // Skipping invalid data
+                debug!(error=?e, "Error receiving RLPx message; closing connection");
+                listener.stop();
                 None
             }
         }),

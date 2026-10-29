@@ -2629,21 +2629,38 @@ impl Blockchain {
     /// bounding in-memory layers to ~`commit_depth`. Only sound because these paths extend
     /// a single canonical chain with no competing forks. Must NOT be used for live
     /// `newPayload`. Returns the BAL produced during execution (see
-    /// [`add_block_pipeline_bal`]).
+    /// [`add_block_pipeline_bal`]). A BAL validation failure is retried once without the
+    /// supplied list so the sequential path determines the block's verdict.
     pub fn add_block_pipeline_bounded(
         &self,
         block: Block,
         bal: Option<Arc<BlockAccessList>>,
         commit_depth: usize,
     ) -> Result<Option<BlockAccessList>, ChainError> {
-        let (produced_bal, _, result) = self.add_block_pipeline_inner(
+        let fallback_block = bal.as_ref().map(|_| block.clone());
+        let (produced_bal, _, result) = match self.add_block_pipeline_inner(
             block,
             bal,
             false,
             Some(commit_depth),
             None,
             BodyCheck::Verify,
-        )?;
+        ) {
+            Ok(outcome) => outcome,
+            Err(ChainError::EvmError(EvmError::Custom(_))) if fallback_block.is_some() => {
+                let (produced_bal, _, result) = self.add_block_pipeline_inner(
+                    fallback_block.expect("fallback block was checked above"),
+                    None,
+                    false,
+                    Some(commit_depth),
+                    None,
+                    BodyCheck::Verify,
+                )?;
+                result?;
+                return Ok(produced_bal);
+            }
+            Err(error) => return Err(error),
+        };
         result?;
         Ok(produced_bal)
     }
@@ -3191,7 +3208,10 @@ impl Blockchain {
             blocks.len(),
         );
 
-        let mut last_valid_hash = H256::default();
+        let mut last_valid_hash = blocks
+            .first()
+            .map(|block| block.header.parent_hash)
+            .unwrap_or_default();
         let blocks_len = blocks.len();
         let mut total_gas_used = 0u64;
         let mut transactions_count = 0usize;
