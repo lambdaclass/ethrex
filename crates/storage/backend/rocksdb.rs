@@ -15,6 +15,7 @@ use rocksdb::{
     SnapshotWithThreadMode, WriteBatch,
 };
 use std::collections::HashSet;
+use std::mem::ManuallyDrop;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -499,6 +500,13 @@ impl StorageBackend for RocksDBBackend {
         }))
     }
 
+    fn begin_snapshot_read(&self) -> Result<Arc<dyn StorageReadView>, StoreError> {
+        let db: &'static Arc<DBWithThreadMode<MultiThreaded>> =
+            Box::leak(Box::new(self.db.clone()));
+        let snapshot = ManuallyDrop::new(db.snapshot());
+        Ok(Arc::new(RocksDBSnapshotReadTx { db, snapshot }))
+    }
+
     fn begin_locked(
         &self,
         table_name: &'static str,
@@ -743,6 +751,107 @@ impl StorageWriteBatch for RocksDBWriteTx {
             .map_err(|e| StoreError::Custom(format!("Failed to commit batch: {}", e)))?;
         self.count_range_deletes();
         Ok(())
+    }
+}
+
+/// Read view over a RocksDB snapshot: every read sees the database as it was
+/// when the view was opened, across all tables.
+pub struct RocksDBSnapshotReadTx {
+    /// Leaked so `snapshot` can borrow it for `'static`; reclaimed in `Drop`.
+    db: &'static Arc<DBWithThreadMode<MultiThreaded>>,
+    /// Released in `Drop` before `db` is reclaimed.
+    snapshot: ManuallyDrop<SnapshotWithThreadMode<'static, DBWithThreadMode<MultiThreaded>>>,
+}
+
+impl RocksDBSnapshotReadTx {
+    fn cf(&self, table: &'static str) -> Result<Arc<rocksdb::BoundColumnFamily<'_>>, StoreError> {
+        self.db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {table} not found")))
+    }
+
+    fn first_key_in(
+        &self,
+        table: &'static str,
+        mode: rocksdb::IteratorMode,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let cf = self.cf(table)?;
+        match self.snapshot.iterator_cf(&cf, mode).next() {
+            Some(Ok((k, _))) => Ok(Some(k.to_vec())),
+            Some(Err(e)) => Err(StoreError::Custom(e.to_string())),
+            None => Ok(None),
+        }
+    }
+}
+
+impl StorageReadView for RocksDBSnapshotReadTx {
+    fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        let cf = self.cf(table)?;
+        self.snapshot
+            .get_cf(&cf, key)
+            .map_err(|e| StoreError::Custom(format!("Failed to get from {table}: {e}")))
+    }
+
+    fn multi_get(
+        &self,
+        table: &'static str,
+        keys: &[&[u8]],
+    ) -> Vec<Result<Option<Vec<u8>>, StoreError>> {
+        let cf = match self.cf(table) {
+            Ok(cf) => cf,
+            Err(e) => {
+                let err_msg = e.to_string();
+                return (0..keys.len())
+                    .map(|_| Err(StoreError::Custom(err_msg.clone())))
+                    .collect();
+            }
+        };
+        self.snapshot
+            .multi_get_cf(keys.iter().map(|key| (&cf, *key)))
+            .into_iter()
+            .map(|res| res.map_err(|e| StoreError::Custom(format!("multi_get {table}: {e}"))))
+            .collect()
+    }
+
+    fn prefix_iterator(
+        &self,
+        table: &'static str,
+        prefix: &[u8],
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
+        let cf = self.cf(table)?;
+        // A plain seek, as `RocksDBReadTx::prefix_iterator` (no prefix extractor).
+        let iter = self
+            .snapshot
+            .iterator_cf(
+                &cf,
+                rocksdb::IteratorMode::From(prefix, rocksdb::Direction::Forward),
+            )
+            .map(|result| {
+                result.map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
+            });
+        Ok(Box::new(iter))
+    }
+
+    fn first_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError> {
+        self.first_key_in(table, rocksdb::IteratorMode::Start)
+    }
+
+    fn last_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError> {
+        self.first_key_in(table, rocksdb::IteratorMode::End)
+    }
+}
+
+impl Drop for RocksDBSnapshotReadTx {
+    fn drop(&mut self) {
+        // SAFETY: the snapshot borrows `db`, so it is released first; `db` was
+        // leaked from a `Box` in `begin_snapshot_read` and is reclaimed only here.
+        unsafe {
+            ManuallyDrop::drop(&mut self.snapshot);
+            drop(Box::from_raw(
+                self.db as *const Arc<DBWithThreadMode<MultiThreaded>>
+                    as *mut Arc<DBWithThreadMode<MultiThreaded>>,
+            ));
+        }
     }
 }
 

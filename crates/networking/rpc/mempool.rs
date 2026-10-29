@@ -56,7 +56,7 @@ pub fn content(context: RpcApiContext) -> Result<Value, RpcErr> {
         // We have no concept of "queued" transactions yet so we will leave this empty
         queued: MempoolContentEntry::new(),
     };
-    Ok(serde_json::to_value(response)?)
+    serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
 pub fn status(context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -69,7 +69,7 @@ pub fn status(context: RpcApiContext) -> Result<Value, RpcErr> {
         queued: format!("{queued:#x}"),
     };
 
-    Ok(serde_json::to_value(response)?)
+    serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
 /// Handling of rpc endpoint `txpool_contentFrom`
@@ -99,7 +99,7 @@ pub fn content_from(
         // We have no concept of "queued" transactions yet so we will leave this empty
         queued: HashMap::new(),
     };
-    Ok(serde_json::to_value(response)?)
+    serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
 /// Handling of rpc endpoint `txpool_inspect`
@@ -133,5 +133,5 @@ pub fn inspect(context: RpcApiContext) -> Result<Value, RpcErr> {
         // We have no concept of "queued" transactions yet so we will leave this empty
         queued: HashMap::new(),
     };
-    Ok(serde_json::to_value(response)?)
+    serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
 }

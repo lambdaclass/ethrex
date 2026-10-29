@@ -33,6 +33,27 @@ marks these cases `speconly` so they are type-checked instead of compared byte-f
 
 ---
 
+### rpc-compat malformed storage key cases excluded
+
+**Where:** `KNOWN_EXCLUDED_TESTS` in `.github/scripts/check-hive-results.sh` counts out
+`eth_getStorageAt/get-storage-invalid-key` and `eth_getStorageAt/get-storage-invalid-key-too-large`.
+`daily_hive_report.yaml` runs the same pin without that list, so both show as failures there,
+as the log-bearing cases above do.
+
+**Why:** both cases send a storage key that does not decode (`0xasdf`, and a key of 65 hex
+digits). ethrex answers `-32602: Invalid params`, the code JSON-RPC 2.0 reserves for malformed
+params. The pinned recordings expect geth's `-32000`; execution-apis#712 (2025-12-04)
+re-recorded both as `-32602`. hive strips error messages but compares the code, so the pinned
+recordings cannot match. The pin cannot move, for the reason given in the section above.
+
+**Coverage:** the key decode error surfaces as `RpcErr::BadParams`, and the `BadParams` →
+`-32602` mapping is pinned by `eth_get_block_access_list_rejects_extra_params` in
+`test/tests/rpc/block_access_list_tests.rs`.
+
+**Removal:** delete the entries if the pin ever moves past execution-apis#712.
+
+---
+
 ### The stateless schema id does not identify the encoding
 
 **Where:** `STATELESS_INPUT_SCHEMA_ID` in `crates/common/types/stateless_ssz.rs`.

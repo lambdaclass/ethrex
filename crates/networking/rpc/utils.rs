@@ -42,15 +42,23 @@ pub enum RpcErr {
     MethodNotServedHere { method: String, reason: String },
     #[error("Wrong parameter: {0}")]
     WrongParam(String),
+    /// `-32602: Invalid params`: the parameters are missing, malformed, or fail
+    /// to decode. Use [`RpcErr::ServerError`] when the parameters are fine but
+    /// the request cannot be served.
     #[error("Invalid params: {0}")]
     BadParams(String),
-    /// Spec-compliant invalid params error (-32602). The message is used
-    /// verbatim, with no "Invalid params: " prefix, so error strings can
-    /// match other clients exactly. `BadParams`/`WrongParam` map to -32000.
+    /// Also `-32602`, but the message is used verbatim, with no
+    /// "Invalid params: " prefix, so error strings can match other clients
+    /// exactly.
     #[error("{0}")]
     InvalidParams(String),
     #[error("Missing parameter: {0}")]
     MissingParam(String),
+    /// `-32000: Server error`: a well-formed request the node cannot serve,
+    /// e.g. a transaction the mempool rejects or a block this node does not
+    /// have. The message is used verbatim.
+    #[error("{0}")]
+    ServerError(String),
     #[error("Too large request")]
     TooLargeRequest,
     #[error("Bad hex format: {0}")]
@@ -90,6 +98,16 @@ pub enum RpcErr {
     InvalidPayload(String),
     #[error("Proof generation unavailable: {0}")]
     ProofGenerationUnavailable(String),
+    /// `eth_simulateV1` request-level failure. Carries its JSON-RPC code
+    /// verbatim: the method has its own spec error-code table
+    /// (-38010..-38026 plus the standard -32xxx ones), so the variant stays
+    /// code-agnostic instead of enumerating them.
+    #[error("{message}")]
+    EthSimulate {
+        code: i32,
+        message: String,
+        data: Option<String>,
+    },
     /// `-32001: Resource not found`, e.g. a block-access-list getter asked
     /// about a block that predates the Amsterdam fork (execution-apis#851).
     #[error("Resource not found: {0}")]
@@ -127,7 +145,7 @@ impl From<RpcErr> for RpcErrorMetadata {
                 message: format!("Field '{field}' is incorrect or has an unknown format"),
             },
             RpcErr::BadParams(context) => RpcErrorMetadata {
-                code: -32000,
+                code: -32602,
                 data: None,
                 message: format!("Invalid params: {context}"),
             },
@@ -142,9 +160,14 @@ impl From<RpcErr> for RpcErrorMetadata {
                 message: format!("Invalid Request: {context}"),
             },
             RpcErr::MissingParam(parameter_name) => RpcErrorMetadata {
-                code: -32000,
+                code: -32602,
                 data: None,
                 message: format!("Expected parameter: {parameter_name} is missing"),
+            },
+            RpcErr::ServerError(context) => RpcErrorMetadata {
+                code: -32000,
+                data: None,
+                message: context,
             },
             RpcErr::TooLargeRequest => RpcErrorMetadata {
                 code: -38004,
@@ -206,6 +229,15 @@ impl From<RpcErr> for RpcErrorMetadata {
                     data: None,
                     message: "Auth failed: Missing authentication header".to_string(),
                 },
+            },
+            RpcErr::EthSimulate {
+                code,
+                message,
+                data,
+            } => RpcErrorMetadata {
+                code,
+                data,
+                message,
             },
             RpcErr::InvalidForkChoiceState(data) => RpcErrorMetadata {
                 code: -38002,
@@ -274,12 +306,12 @@ impl From<serde_json::Error> for RpcErr {
 }
 
 // TODO: Actually return different errors for each case
-// here we are returning a BadParams error
+// here we are returning a ServerError for every rejection
 impl From<MempoolError> for RpcErr {
     fn from(err: MempoolError) -> Self {
         match err {
             MempoolError::StoreError(err) => Self::Internal(err.to_string()),
-            other_err => Self::BadParams(other_err.to_string()),
+            other_err => Self::ServerError(other_err.to_string()),
         }
     }
 }

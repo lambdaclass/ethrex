@@ -136,7 +136,7 @@ impl RpcHandler for BuildBlockV1Request {
             .await?
             .ok_or_else(|| RpcErr::Internal("no canonical head block".to_string()))?;
         if head != self.parent_block_hash {
-            return Err(RpcErr::BadParams(
+            return Err(RpcErr::ServerError(
                 "parentBlockHash is not the current head".to_string(),
             ));
         }
@@ -145,7 +145,7 @@ impl RpcHandler for BuildBlockV1Request {
             .storage
             .get_block_header_by_hash(self.parent_block_hash)
             .map_err(|err| RpcErr::Internal(err.to_string()))?
-            .ok_or_else(|| RpcErr::BadParams("parent block not found".to_string()))?;
+            .ok_or_else(|| RpcErr::ServerError("parent block not found".to_string()))?;
         if self.attributes.timestamp <= parent_header.timestamp {
             return Err(RpcErr::InvalidPayloadAttributes(
                 "invalid timestamp".to_string(),
@@ -189,14 +189,14 @@ impl RpcHandler for BuildBlockV1Request {
                 .build_payload_with_transactions(payload, transactions),
         }
         // Failures from a caller-supplied transaction list are user input, not
-        // server bugs: map them to BadParams (-32000) so a JSON-RPC client can
+        // server bugs: map them to ServerError (-32000) so a JSON-RPC client can
         // distinguish a bad transaction from an internal failure (-32603).
         .map_err(|err| match err {
             ChainError::EvmError(error) => error.into(),
             ChainError::InvalidTransaction(msg) => {
-                RpcErr::BadParams(format!("invalid transaction: {msg}"))
+                RpcErr::ServerError(format!("invalid transaction: {msg}"))
             }
-            ChainError::Custom(msg) => RpcErr::BadParams(msg),
+            ChainError::Custom(msg) => RpcErr::ServerError(msg),
             other => RpcErr::Internal(other.to_string()),
         })?;
 
@@ -318,7 +318,7 @@ mod tests {
             .handle(context.clone())
             .await
             .unwrap_err();
-        assert!(matches!(err, RpcErr::BadParams(_)));
+        assert!(matches!(err, RpcErr::ServerError(_)));
     }
 
     #[tokio::test]
