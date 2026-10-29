@@ -102,7 +102,9 @@ pub use rpc::{
     handle_eth_subscribe, handle_eth_unsubscribe, handle_websocket, map_debug_requests,
     map_eth_requests, map_http_requests, rpc_response, shutdown_signal, validate_batch,
 };
-pub use subscription_manager::{SubscriptionManager, SubscriptionManagerProtocol};
+pub use subscription_manager::{
+    SubscriptionManager, SubscriptionManagerProtocol, spawn_pending_transactions_feed,
+};
 pub use utils::{RpcErr, RpcErrorMetadata, RpcNamespace};
 
 /// Default namespaces enabled on the public HTTP/WS RPC endpoint.

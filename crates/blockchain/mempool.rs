@@ -119,6 +119,11 @@ pub const RECENTLY_INCLUDED_TTL: Duration = Duration::from_secs(60);
 /// blobpool `datacap`) so memory is bounded regardless of blobs-per-tx.
 pub const MAX_BLOB_MEMPOOL_SIZE: usize = 512;
 
+/// Hashes [`Mempool::subscribe_new_transactions`] buffers for a subscriber that
+/// has not read them yet, the same as geth's `txChanSize`. A subscriber further
+/// behind skips the oldest ones.
+pub const NEW_TRANSACTIONS_CAPACITY: usize = 4096;
+
 /// Keccak-256 hash of the canonical paymaster bytecode (EIP-8141).
 ///
 /// OQ1 (canonical paymaster bytecode): UNRESOLVED. The draft EIP does not pin
@@ -719,6 +724,9 @@ pub struct Mempool {
     /// snapshotted the mempool, so it can decide whether a stale build is safe
     /// to return.
     tx_seq: AtomicU64,
+    /// The hash of every transaction added to the pool for broadcast. Private
+    /// transactions are left out, as they are from P2P.
+    new_transactions: tokio::sync::broadcast::Sender<H256>,
     /// When true, the EIP-8070 sampler/provider state machine is active.
     /// When false (default), the node always acts as provider (p=1.0).
     pub blob_sampling_enabled: bool,
@@ -747,6 +755,7 @@ impl Mempool {
             inner: RwLock::new(MempoolInner::new(max_mempool_size)),
             tx_added: tokio::sync::Notify::new(),
             tx_seq: AtomicU64::new(0),
+            new_transactions: tokio::sync::broadcast::channel(NEW_TRANSACTIONS_CAPACITY).0,
             blob_sampling_enabled: false,
             eager_provider: AtomicBool::new(false),
             custody_generation: AtomicU64::new(0),
@@ -809,6 +818,13 @@ impl Mempool {
             // are selected.
             self.custody_generation.fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    /// Receives the hash of every transaction added to the pool from now on,
+    /// except private ones. Backs `eth_newPendingTransactionFilter` and
+    /// `eth_subscribe("newPendingTransactions")`.
+    pub fn subscribe_new_transactions(&self) -> tokio::sync::broadcast::Receiver<H256> {
+        self.new_transactions.subscribe()
     }
 
     pub(crate) fn tx_added(&self) -> &tokio::sync::Notify {
@@ -1081,6 +1097,10 @@ impl Mempool {
         // already incorporated as "new since last build".
         self.tx_seq.fetch_add(1, Ordering::Release);
         self.tx_added.notify_waiters();
+        if broadcast {
+            // An error only means nobody is subscribed.
+            let _ = self.new_transactions.send(hash);
+        }
 
         Ok(())
     }
@@ -2383,6 +2403,22 @@ mod tests {
                 .add_transaction(hash, sender, dummy_mempool_tx(sender, 0), None, None)
                 .expect("Failed to add transaction");
         }
+    }
+
+    #[test]
+    fn new_transactions_announce_broadcast_txs_only() {
+        let mempool = Mempool::new(100);
+        let mut new_transactions = mempool.subscribe_new_transactions();
+        let sender = Address::from_low_u64_be(1);
+        let (public, private) = (H256::from_low_u64_be(1), H256::from_low_u64_be(2));
+        mempool
+            .add_transaction_no_broadcast(private, sender, dummy_mempool_tx(sender, 0), None, None)
+            .unwrap();
+        mempool
+            .add_transaction(public, sender, dummy_mempool_tx(sender, 1), None, None)
+            .unwrap();
+        assert_eq!(new_transactions.try_recv(), Ok(public));
+        assert!(new_transactions.try_recv().is_err());
     }
 
     #[test]
