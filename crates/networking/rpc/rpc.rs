@@ -1273,7 +1273,24 @@ pub fn validate_batch(wrapper: &RpcRequestWrapper) -> Option<Value> {
             "batch too large: more than {MAX_BATCH_SIZE} requests"
         ))));
     }
-    None
+    batch_proof_keys_error(requests).map(null_id_error)
+}
+
+/// The error for a batch whose `eth_getProof` calls ask for more storage keys in total
+/// than one call may. Each call is held to the cap on its own, but a batch runs every
+/// call and keeps every response, so without this one batch of individually valid calls
+/// could still ask for hundreds of thousands of proofs.
+fn batch_proof_keys_error(requests: &[RpcRequest]) -> Option<RpcErr> {
+    let keys = requests
+        .iter()
+        .map(eth::account::proof_storage_key_count)
+        .fold(0usize, usize::saturating_add);
+    (keys > eth::account::MAX_PROOF_STORAGE_KEYS).then(|| {
+        RpcErr::LimitExceeded(format!(
+            "too many eth_getProof storage keys in one batch (max {} in total)",
+            eth::account::MAX_PROOF_STORAGE_KEYS
+        ))
+    })
 }
 
 pub(crate) async fn handle_http_request(
@@ -1454,6 +1471,10 @@ where
             // rejected rather than served partially.
             if reqs.is_empty() || reqs.len() > MAX_BATCH_SIZE {
                 return Some(ws_error_response(None, -32600, "Invalid Request"));
+            }
+            if let Some(err) = batch_proof_keys_error(&reqs) {
+                let error = RpcErrorMetadata::from(err);
+                return Some(ws_error_response(None, error.code, &error.message));
             }
             let mut responses = Vec::with_capacity(reqs.len());
             for req in reqs {
@@ -2220,6 +2241,77 @@ mod tests {
         .expect("an oversize batch must get an error response");
         let response: Value = serde_json::from_str(&response).unwrap();
         assert_eq!(response["error"]["code"], -32600);
+    }
+
+    /// A JSON-RPC batch of `eth_getProof` calls, one per entry of `keys_per_call`, each
+    /// asking for that many storage keys.
+    fn proof_batch(keys_per_call: &[usize]) -> String {
+        let calls: Vec<Value> = keys_per_call
+            .iter()
+            .enumerate()
+            .map(|(id, &keys)| {
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "method": "eth_getProof",
+                    "params": ["0x0000000000000000000000000000000000000001", vec!["0x"; keys], "latest"],
+                })
+            })
+            .collect();
+        Value::Array(calls).to_string()
+    }
+
+    /// Each call within the per-call cap, but more keys than the cap in total: the batch is
+    /// refused before any call runs. Exactly the cap in total still goes through.
+    #[test]
+    fn batch_of_get_proofs_is_held_to_the_key_cap_in_total() {
+        use crate::eth::account::MAX_PROOF_STORAGE_KEYS;
+        let half = MAX_PROOF_STORAGE_KEYS / 2;
+        let over: RpcRequestWrapper =
+            serde_json::from_str(&proof_batch(&[half + 1, half])).unwrap();
+        let error = validate_batch(&over).expect("over the cap in total");
+        assert_eq!(error["error"]["code"], -32005, "{error}");
+
+        let at_cap: RpcRequestWrapper = serde_json::from_str(&proof_batch(&[half, half])).unwrap();
+        assert!(validate_batch(&at_cap).is_none());
+    }
+
+    #[tokio::test]
+    async fn http_batch_over_the_proof_key_cap_is_refused() {
+        use crate::eth::account::MAX_PROOF_STORAGE_KEYS;
+        let storage = Store::new("temp.db", EngineType::InMemory).expect("in-memory store");
+        let context = default_context_with_storage(storage).await;
+        let body = proof_batch(&[MAX_PROOF_STORAGE_KEYS, 1]);
+        let Json(response) = handle_http_request(State(context.clone()), body)
+            .await
+            .unwrap();
+        assert_eq!(response["error"]["code"], -32005, "{response}");
+    }
+
+    #[tokio::test]
+    async fn ws_batch_over_the_proof_key_cap_is_refused() {
+        use crate::eth::account::MAX_PROOF_STORAGE_KEYS;
+        let storage = Store::new("temp.db", EngineType::InMemory).expect("in-memory store");
+        let context = default_context_with_storage(storage).await;
+        let (out_tx, _out_rx) = tokio::sync::mpsc::channel::<String>(1);
+        let mut subscription_ids: Vec<String> = Vec::new();
+        let route_request = |_req: RpcRequest| async move {
+            panic!("no call of a refused batch may run");
+            #[allow(unreachable_code)]
+            Ok::<Value, RpcErr>(Value::Null)
+        };
+        let body = proof_batch(&[MAX_PROOF_STORAGE_KEYS, 1]);
+        let response = handle_ws_request(
+            &body,
+            &context,
+            &out_tx,
+            &mut subscription_ids,
+            &route_request,
+        )
+        .await
+        .expect("a refused batch gets an error response");
+        let response: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(response["error"]["code"], -32005, "{response}");
     }
 
     /// Malformed JSON gets -32700 and valid JSON that is not a request gets -32600, also

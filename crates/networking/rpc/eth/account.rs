@@ -264,7 +264,21 @@ impl RpcHandler for GetTransactionCountRequest {
 /// walk and a multi-kilobyte proof in the response, and a key can be as short as
 /// `"0x"`, so without a cap one request body could ask for hundreds of thousands
 /// of proofs and have them all held in memory at once.
-const MAX_PROOF_STORAGE_KEYS: usize = 1024;
+pub(crate) const MAX_PROOF_STORAGE_KEYS: usize = 1024;
+
+/// The storage keys an `eth_getProof` request asks for, 0 for any other method or
+/// for keys that do not parse (the call itself then fails). Batches use it to hold
+/// all their proofs to [`MAX_PROOF_STORAGE_KEYS`] together, not just each call.
+pub(crate) fn proof_storage_key_count(req: &crate::utils::RpcRequest) -> usize {
+    if req.method != "eth_getProof" {
+        return 0;
+    }
+    req.params
+        .as_deref()
+        .and_then(|params| params.get(1))
+        .and_then(|keys| serde_json::from_str::<Vec<serde::de::IgnoredAny>>(keys.get()).ok())
+        .map_or(0, |keys| keys.len())
+}
 
 impl RpcHandler for GetProofRequest {
     fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
