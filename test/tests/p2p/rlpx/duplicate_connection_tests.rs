@@ -62,7 +62,7 @@ async fn spawn_node(key_byte: u8, target_peers: usize) -> TestNode<impl RlpxInit
         .add_initial_state(genesis())
         .await
         .expect("add genesis state");
-    let table = PeerTableServer::spawn(node.node_id(), target_peers, store.clone());
+    let table = PeerTableServer::spawn(target_peers);
     let blockchain = Arc::new(Blockchain::default_with_store(store.clone()));
     let context = P2PContext::new(
         node.clone(),

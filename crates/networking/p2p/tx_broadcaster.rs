@@ -488,7 +488,7 @@ mod tests {
     fn broadcaster() -> TxBroadcaster {
         let store = Store::new("memory", EngineType::InMemory).expect("in-memory store");
         TxBroadcaster {
-            peer_table: PeerTableServer::spawn(H256::zero(), 10, store.clone()),
+            peer_table: PeerTableServer::spawn(10),
             blockchain: Arc::new(Blockchain::default_with_store(store)),
             known_txs: HashMap::new(),
             peer_indexer: HashMap::new(),
