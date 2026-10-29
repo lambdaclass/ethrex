@@ -955,6 +955,35 @@ mod integration_tests {
         assert_eq!(error_code(err), -38021);
     }
 
+    /// Like geth, a call without `validation` may spend its whole gas limit on execution
+    /// after Amsterdam, as `eth_call` may; with it, the EIP-8037 cap of 2^24 holds as for a
+    /// real transaction. The callee returns the gas left at entry when that is at least
+    /// 20M and reverts otherwise.
+    #[tokio::test]
+    async fn execution_gas_cap_is_lifted_only_without_validation() {
+        const CONTRACT: &str = "0x000000000000000000000000000000000000c0de";
+        const NEEDS_20M_CODE: &str = "0x5a6301312d0081106011575f5260205ff35b5f5ffd";
+        let request = |validation: bool| {
+            json!([{
+                "validation": validation,
+                "blockStateCalls": [{
+                    "stateOverrides": {CONTRACT: {"code": NEEDS_20M_CODE}},
+                    "calls": [{
+                        "from": RICH,
+                        "to": CONTRACT,
+                        "nonce": "0x0",
+                        "gas": "0x17d7840", // 25,000,000, the block gas limit
+                        "maxFeePerGas": "0x77359400",
+                    }],
+                }],
+            }, "latest"])
+        };
+        let lifted = simulate_amsterdam(request(false)).await.unwrap();
+        assert_eq!(lifted[0]["calls"][0]["status"], "0x1", "{lifted}");
+        let capped = simulate_amsterdam(request(true)).await.unwrap();
+        assert_eq!(capped[0]["calls"][0]["status"], "0x0", "{capped}");
+    }
+
     /// The request's gas budget is the node's `--rpc.gascap`: a call without `gas` gets
     /// at most what is left of it, so a cap below a transfer's 21000 starves it, and `0`
     /// lifts the cap.

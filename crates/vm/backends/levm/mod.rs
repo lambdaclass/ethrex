@@ -3577,6 +3577,10 @@ impl LEVM {
         // enforcement only applies with `validation: true`.
         env.disable_sender_eoa_check = true;
         env.disable_nonce_check = !validate;
+        // Without `validation` a call may spend its whole gas limit on execution after
+        // Amsterdam, as `eth_call` may; with it, the EIP-8037 cap holds as for a real
+        // transaction. geth: `if !sim.validate { msg.SkipExecutionGasCapCheck() }`.
+        env.disable_execution_gas_cap = !validate;
         env.trace_eth_transfers = trace_eth_transfers;
         // With `validation: false` blob fees are zeroed unless the call prices
         // them explicitly (mirrors `adjust_disabled_base_fee`'s blob branch).
