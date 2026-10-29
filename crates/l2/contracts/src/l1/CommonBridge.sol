@@ -86,11 +86,17 @@ contract CommonBridge is
     address public constant L2_PROXY_ADMIN =
         0x000000000000000000000000000000000000f000;
 
-    /// @notice Mapping of unclaimed withdrawals. A withdrawal is claimed if
-    /// there is a non-zero value in the mapping for the message id
-    /// of the L2 transaction that requested the withdrawal.
-    /// @dev The key is the message id of the L1Message of the transaction.
-    /// @dev The value is a boolean indicating if the withdrawal was claimed or not.
+    /// @notice Domain separator for messages sent through
+    /// CommonBridgeL2.sendIntentToL1
+    bytes32 public constant INTENT_DOMAIN = L2_TO_L1_INTENT_DOMAIN;
+
+    /// @notice Mapping of consumed L2 to L1 messages, both withdrawals and
+    /// intents. A message is consumed if there is a non-zero value in the mapping
+    /// for its message id, set when the withdrawal is claimed or the intent is
+    /// consumed through verifyAndConsume.
+    /// @dev The key is the message id of the L1Message. Message ids come from a
+    /// @dev single counter on L2, so withdrawals and intents never share one.
+    /// @dev The value is a boolean indicating if the message was consumed or not.
     mapping(uint256 => bool) public claimedWithdrawalIDs;
 
     /// @notice Maximum time the sequencer is allowed to take without processing a privileged transaction
@@ -637,25 +643,77 @@ contract CommonBridge is
         );
     }
 
-    function _verifyMessageProof(
-        bytes32 msgHash,
-        uint256 withdrawalBatchNumber,
-        uint256 withdrawalMessageId,
-        bytes32[] calldata withdrawalProof
-    ) internal view returns (bool) {
-        bytes32 withdrawalLeaf = keccak256(
-            abi.encodePacked(L2_BRIDGE_ADDRESS, msgHash, withdrawalMessageId)
+    /// @inheritdoc ICommonBridge
+    function verifyAndConsume(
+        address senderOnL2,
+        bytes32 payloadHash,
+        uint256 batchNumber,
+        uint256 messageId,
+        bytes32[] calldata proof
+    ) external override whenNotPaused {
+        require(
+            batchWithdrawalLogsMerkleRoots[batchNumber] != bytes32(0),
+            "CommonBridge: the batch that emitted the intent was not committed"
         );
+        require(
+            batchNumber <=
+                IOnChainProposer(ON_CHAIN_PROPOSER).lastVerifiedBatch(),
+            "CommonBridge: the batch that emitted the intent was not verified"
+        );
+        require(
+            claimedWithdrawalIDs[messageId] == false,
+            "CommonBridge: the message was already consumed"
+        );
+
+        bytes32 messageHash = intentHash(senderOnL2, msg.sender, payloadHash);
+        require(
+            _verifyMessageProof(messageHash, batchNumber, messageId, proof),
+            "CommonBridge: Invalid proof"
+        );
+
+        claimedWithdrawalIDs[messageId] = true;
+        emit IntentConsumed(batchNumber, messageId, messageHash);
+    }
+
+    /// @inheritdoc ICommonBridge
+    function intentHash(
+        address senderOnL2,
+        address consumerOnL1,
+        bytes32 payloadHash
+    ) public view override returns (bytes32) {
+        // An intent hash built with a zero chain id matches nothing, so the call
+        // would fail on the proof and hide the real problem. Better caught here.
+        require(CHAIN_ID != 0, "CommonBridge: chain id not set");
         return
-            MerkleProof.verify(
-                withdrawalProof,
-                batchWithdrawalLogsMerkleRoots[withdrawalBatchNumber],
-                withdrawalLeaf
+            keccak256(
+                abi.encode(
+                    INTENT_DOMAIN,
+                    CHAIN_ID,
+                    senderOnL2,
+                    consumerOnL1,
+                    payloadHash
+                )
             );
     }
+
+    function _verifyMessageProof(
+        bytes32 msgHash,
+        uint256 batchNumber,
+        uint256 messageId,
+        bytes32[] calldata messageProof
+    ) internal view returns (bool) {
+        return
+            MerkleProof.verify(
+                messageProof,
+                batchWithdrawalLogsMerkleRoots[batchNumber],
+                keccak256(abi.encodePacked(L2_BRIDGE_ADDRESS, msgHash, messageId))
+            );
+    }
+
     function pendingTxHashesLength() private view returns (uint256) {
         return pendingTxHashes.length - pendingPrivilegedTxIndex;
     }
+
     function pendingL2MessagesLength(
         uint256 chainId
     ) private view returns (uint256) {
