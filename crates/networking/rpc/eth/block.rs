@@ -307,7 +307,7 @@ impl RpcHandler for GetRawHeaderRequest {
         let header = context
             .storage
             .get_block_header(block_number)?
-            .ok_or(RpcErr::BadParams("Header not found".to_owned()))?;
+            .ok_or(RpcErr::ServerError("Header not found".to_owned()))?;
 
         let str_encoded = format!("0x{}", hex::encode(header.encode_to_vec()));
         Ok(Value::String(str_encoded))

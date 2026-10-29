@@ -124,8 +124,7 @@ impl RpcHandler for EthSimulateRequest {
                 params.len()
             )));
         }
-        // The method's spec pins invalid payloads to -32602; the blanket
-        // serde_json conversion would yield BadParams (-32000).
+        // The method's spec pins invalid payloads to -32602.
         let payload: SimulatePayload = serde_json::from_str(params[0].get())
             .map_err(|error| invalid_params(format!("invalid simulate payload: {error}")))?;
         if payload.block_state_calls.is_empty() {
@@ -155,7 +154,7 @@ impl RpcHandler for EthSimulateRequest {
             Some(header) => header,
             // The result schema is an array, so eth_call's `Null` convention
             // does not apply; unresolvable base blocks are an error.
-            None => return Err(RpcErr::BadParams("header not found".to_owned())),
+            None => return Err(RpcErr::ServerError("header not found".to_owned())),
         };
         let chain_config = context.storage.get_chain_config();
         let vm_type = context.blockchain.vm_type()?;

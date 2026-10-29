@@ -41,7 +41,8 @@ impl StateOverrideSet {
     /// function every override-carrying endpoint has to call to get a usable map — the
     /// same reason `Blockchain::new_overlaid_evm` is the only way to build the overlay.
     /// Both checks mirror geth's `StateOverride.Apply`, and both are caller mistakes, so
-    /// they surface as bad parameters rather than as VM or internal errors:
+    /// they surface as `-32000` server errors, as in geth and the execution-apis
+    /// `eth_simulateV1` fixtures, rather than as VM or internal errors:
     ///
     /// - the source must actually be a precompile at `fork` (geth: `"account %s is not a
     ///   precompile"`), which is why the fork and [`VMType`] have to be known here;
@@ -58,13 +59,13 @@ impl StateOverrideSet {
                 continue;
             };
             if !is_precompile(address, fork, vm_type) {
-                return Err(RpcErr::BadParams(format!(
+                return Err(RpcErr::ServerError(format!(
                     "account {address:#x} is not a precompile, so movePrecompileToAddress \
                      cannot relocate it"
                 )));
             }
             if self.0.contains_key(&destination) {
-                return Err(RpcErr::BadParams(format!(
+                return Err(RpcErr::ServerError(format!(
                     "account {destination:#x} is already overridden, so a precompile \
                      cannot be moved onto it"
                 )));
