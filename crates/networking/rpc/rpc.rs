@@ -41,8 +41,8 @@ use crate::eth::{
     client::{ChainId, Syncing},
     fee_market::FeeHistoryRequest,
     filter::{
-        self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, NewBlockFilterRequest,
-        NewFilterRequest,
+        self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, FilterLogsRequest,
+        NewBlockFilterRequest, NewFilterRequest,
     },
     gas_price::GasPrice,
     gas_tip_estimator::GasTipEstimator,
@@ -1763,6 +1763,15 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         }
         "eth_getFilterChanges" => {
             FilterChangesRequest::stateful_call(
+                req,
+                context.storage,
+                context.active_filters,
+                &context.log_query_limits,
+            )
+            .await
+        }
+        "eth_getFilterLogs" => {
+            FilterLogsRequest::stateful_call(
                 req,
                 context.storage,
                 context.active_filters,

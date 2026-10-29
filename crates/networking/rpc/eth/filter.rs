@@ -18,7 +18,7 @@ use crate::{
 };
 use serde_json::{Value, json, value::RawValue};
 
-use super::logs::{LogQueryLimits, LogsFilter, fetch_logs_for_poll};
+use super::logs::{LogQueryLimits, LogsFilter, fetch_logs_for_poll, fetch_logs_with_filter};
 
 #[derive(Debug, Clone)]
 pub struct NewFilterRequest {
@@ -69,9 +69,10 @@ impl NewFilterRequest {
     pub fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let filter = LogsFilter::parse(params)?;
         // EIP-234 defines `blockHash` for eth_newFilter too, but the only thing
-        // it does with such a filter is answer eth_getFilterLogs, which we don't
-        // implement. For eth_getFilterChanges, a moving range by definition, even
-        // geth ignores the hash. Reject it instead of accepting and ignoring.
+        // it does with such a filter is answer eth_getFilterLogs, which eth_getLogs
+        // with the hash answers directly. For eth_getFilterChanges, a moving range
+        // by definition, even geth ignores the hash. Reject it instead of accepting
+        // and ignoring.
         if filter.block_hash.is_some() {
             return Err(RpcErr::BadParams(
                 "`blockHash` is not a valid filter for eth_newFilter".to_string(),
@@ -346,6 +347,65 @@ impl FilterChangesRequest {
             ))
         }
     }
+    pub async fn stateful_call(
+        req: &RpcRequest,
+        storage: ethrex_storage::Store,
+        filters: ActiveFilters,
+        limits: &LogQueryLimits,
+    ) -> Result<serde_json::Value, crate::utils::RpcErr> {
+        let request = Self::parse(&req.params)?;
+        request.handle(storage, filters, limits).await
+    }
+}
+
+/// `eth_getFilterLogs`: every log matching a log filter, over the filter's whole
+/// `fromBlock`..`toBlock` range, as `eth_getLogs` answers it. It leaves the
+/// filter's `eth_getFilterChanges` position where it is.
+pub struct FilterLogsRequest {
+    pub id: u64,
+}
+
+impl FilterLogsRequest {
+    pub fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
+        FilterChangesRequest::parse(params).map(|request| FilterLogsRequest { id: request.id })
+    }
+
+    pub async fn handle(
+        &self,
+        storage: ethrex_storage::Store,
+        filters: ActiveFilters,
+        limits: &LogQueryLimits,
+    ) -> Result<serde_json::Value, crate::utils::RpcErr> {
+        let filter_data = {
+            let active_filters_guard = filters.lock().unwrap_or_else(|mut poisoned_guard| {
+                error!("THREAD CRASHED WITH MUTEX TAKEN; SYSTEM MIGHT BE UNSTABLE");
+                **poisoned_guard.get_mut() = HashMap::new();
+                filters.clear_poison();
+                poisoned_guard.into_inner()
+            });
+            // Like geth, a block filter has no logs to report: it is not found here.
+            match active_filters_guard.get(&self.id) {
+                Some((
+                    _,
+                    PollableFilter {
+                        kind: FilterKind::Logs(filter_data),
+                        ..
+                    },
+                )) => filter_data.clone(),
+                _ => {
+                    return Err(RpcErr::BadParams(
+                        "No matching filter for given id".to_string(),
+                    ));
+                }
+            }
+        };
+        let logs = fetch_logs_with_filter(&filter_data, storage, limits).await?;
+        serde_json::to_value(logs).map_err(|error| {
+            tracing::error!("Log filtering request failed with: {error}");
+            RpcErr::Internal("Failed to filter logs".to_string())
+        })
+    }
+
     pub async fn stateful_call(
         req: &RpcRequest,
         storage: ethrex_storage::Store,
@@ -982,5 +1042,75 @@ mod tests {
         storage.add_receipts(hash, receipts).await.unwrap();
         assert_eq!(poll_log_blocks(&context, &id).await, vec![2]);
         assert_eq!(poll_log_blocks(&context, &id).await, Vec::<u64>::new());
+    }
+
+    /// The block numbers of the logs `eth_getFilterLogs` returns.
+    async fn filter_log_blocks(context: &crate::rpc::RpcApiContext, id: &Value) -> Vec<u64> {
+        let logs = map_http_requests(&rpc_call("eth_getFilterLogs", json!([id])), context.clone())
+            .await
+            .unwrap();
+        logs.as_array()
+            .unwrap()
+            .iter()
+            .map(|log| {
+                u64::from_str_radix(
+                    log["blockNumber"]
+                        .as_str()
+                        .unwrap()
+                        .trim_start_matches("0x"),
+                    16,
+                )
+                .unwrap()
+            })
+            .collect()
+    }
+
+    /// eth_getFilterLogs answers with every matching log over the filter's range, the
+    /// blocks before the filter was created too, and does not move its poll position.
+    #[tokio::test]
+    async fn filter_logs_return_every_matching_log_in_range() {
+        let storage = Store::new("in-mem", EngineType::InMemory).unwrap();
+        add_head_block(&storage, 0, 1).await;
+        add_head_block(&storage, 1, 1).await;
+        add_head_block(&storage, 2, 2).await;
+        add_head_block(&storage, 3, 1).await;
+        let context = default_context_with_storage(storage.clone()).await;
+        let address = format!("{:#x}", ethrex_common::H160::from_low_u64_be(1));
+        let id = map_http_requests(
+            &rpc_call(
+                "eth_newFilter",
+                json!([{"address": address, "fromBlock": "0x1"}]),
+            ),
+            context.clone(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(filter_log_blocks(&context, &id).await, vec![1, 3]);
+        add_head_block(&storage, 4, 1).await;
+        assert_eq!(filter_log_blocks(&context, &id).await, vec![1, 3, 4]);
+        assert_eq!(poll_log_blocks(&context, &id).await, vec![4]);
+        assert_eq!(filter_log_blocks(&context, &id).await, vec![1, 3, 4]);
+    }
+
+    /// A block filter has no logs, so, like an unknown id, it is not found.
+    #[tokio::test]
+    async fn filter_logs_reject_block_filters_and_unknown_ids() {
+        let storage = Store::new("in-mem", EngineType::InMemory).unwrap();
+        add_head_block(&storage, 0, 1).await;
+        let context = default_context_with_storage(storage.clone()).await;
+        let block_filter =
+            map_http_requests(&rpc_call("eth_newBlockFilter", json!([])), context.clone())
+                .await
+                .unwrap();
+        for id in [block_filter, json!("0x1234")] {
+            let result =
+                map_http_requests(&rpc_call("eth_getFilterLogs", json!([id])), context.clone())
+                    .await;
+            assert!(
+                matches!(result, Err(crate::utils::RpcErr::BadParams(_))),
+                "{id} gave {result:?}"
+            );
+        }
     }
 }
