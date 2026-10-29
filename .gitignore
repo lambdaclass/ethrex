@@ -22,6 +22,7 @@ tooling/reorgs/data
 
 tooling/sync/logs/
 tooling/sync/multisync_logs/
+tooling/sync/docker-compose.multisync.json
 
 # Repos checked out by make target
 /hive/
