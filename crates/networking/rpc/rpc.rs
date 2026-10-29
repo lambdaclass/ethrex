@@ -41,8 +41,8 @@ use crate::eth::{
     client::{ChainId, Syncing},
     fee_market::FeeHistoryRequest,
     filter::{
-        self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, NewBlockFilterRequest,
-        NewFilterRequest,
+        self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, FilterLogsRequest,
+        NewBlockFilterRequest, NewFilterRequest,
     },
     gas_price::GasPrice,
     gas_tip_estimator::GasTipEstimator,
@@ -1774,6 +1774,15 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
             )
             .await
         }
+        "eth_getFilterLogs" => {
+            FilterLogsRequest::stateful_call(
+                req,
+                context.storage,
+                context.active_filters,
+                &context.log_query_limits,
+            )
+            .await
+        }
         "eth_sendRawTransaction" => SendRawTransactionRequest::call(req, context).await,
         "eth_getProof" => GetProofRequest::call(req, context).await,
         "eth_gasPrice" => GasPrice::call(req, context).await,
@@ -1915,8 +1924,29 @@ pub async fn map_admin_requests(
 pub fn map_web3_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "web3_clientVersion" => Ok(Value::String(context.node_data.client_version.to_string())),
+        "web3_sha3" => web3_sha3(req),
         unknown_web3_method => Err(RpcErr::MethodNotFound(unknown_web3_method.to_owned())),
     }
+}
+
+/// `web3_sha3`: the Keccak-256 hash (not the standardized SHA3-256) of the given
+/// `0x`-prefixed hex data.
+fn web3_sha3(req: &RpcRequest) -> Result<Value, RpcErr> {
+    let [param] = req.params.as_deref().unwrap_or_default() else {
+        return Err(RpcErr::InvalidParams(
+            "web3_sha3 expects exactly 1 param".to_owned(),
+        ));
+    };
+    let invalid = |reason: String| RpcErr::InvalidParams(format!("invalid argument 0: {reason}"));
+    let data: String = serde_json::from_str(param.get()).map_err(|e| invalid(e.to_string()))?;
+    let digits = data
+        .strip_prefix("0x")
+        .ok_or_else(|| invalid("hex string without 0x prefix".to_owned()))?;
+    let data = hex::decode(digits).map_err(|e| invalid(e.to_string()))?;
+    Ok(Value::String(format!(
+        "0x{}",
+        hex::encode(ethrex_crypto::keccak::keccak_hash(&data))
+    )))
 }
 
 pub async fn map_net_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<Value, RpcErr> {
@@ -2703,5 +2733,50 @@ mod tests {
         });
         let expected_response = to_rpc_response_success_value(&json.to_string());
         assert_eq!(rpc_response.to_string(), expected_response.to_string())
+    }
+
+    fn web3_sha3_request(params: &str) -> RpcRequest {
+        serde_json::from_str(&format!(
+            r#"{{"jsonrpc":"2.0","method":"web3_sha3","params":{params},"id":1}}"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn web3_sha3_hashes_with_keccak() {
+        for (params, hash) in [
+            (
+                r#"["0x68656c6c6f20776f726c64"]"#,
+                "0x47173285a8d7341e5e972fc677286384f802f8ef42a5ec5f03bbfa254cb01fad",
+            ),
+            (
+                r#"["0x"]"#,
+                "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+            ),
+        ] {
+            assert_eq!(
+                web3_sha3(&web3_sha3_request(params)).unwrap(),
+                Value::String(hash.to_owned()),
+                "{params}"
+            );
+        }
+    }
+
+    #[test]
+    fn web3_sha3_rejects_invalid_params() {
+        for params in [
+            "[]",
+            r#"["0x00","0x00"]"#,
+            r#"["68656c6c6f"]"#,
+            r#"["0x123"]"#,
+            r#"["0xzz"]"#,
+            "[1]",
+        ] {
+            let result = web3_sha3(&web3_sha3_request(params));
+            assert!(
+                matches!(result, Err(RpcErr::InvalidParams(_))),
+                "{params} gave {result:?}"
+            );
+        }
     }
 }
