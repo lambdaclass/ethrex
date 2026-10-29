@@ -831,6 +831,91 @@ mod tests {
         server_handle.abort();
     }
 
+    /// A pending transaction filter reports each transaction added to the mempool
+    /// since the previous poll, once.
+    #[tokio::test]
+    async fn pending_transaction_filter_reports_each_new_tx_once() {
+        use ethrex_common::types::{MempoolTransaction, Transaction};
+        let storage = Store::new("in-mem", EngineType::InMemory).unwrap();
+        add_head_block(&storage, 0, 1).await;
+        let context = default_context_with_storage(storage.clone()).await;
+        let add_tx = |n: u64| {
+            let sender = ethrex_common::H160::from_low_u64_be(n);
+            let hash = ethrex_common::H256::from_low_u64_be(n);
+            let tx = MempoolTransaction::new(
+                Transaction::EIP1559Transaction(Default::default()),
+                sender,
+            );
+            context
+                .blockchain
+                .mempool
+                .add_transaction(hash, sender, tx, None, None)
+                .unwrap();
+            json!(format!("{hash:#x}"))
+        };
+        add_tx(1);
+        // Without params, and with `fullTx: false`, the hash-only form.
+        let mut ids = Vec::new();
+        for params in [json!([]), json!([false])] {
+            let id = map_http_requests(
+                &rpc_call("eth_newPendingTransactionFilter", params),
+                context.clone(),
+            )
+            .await
+            .unwrap();
+            ids.push(id);
+        }
+        let poll = |id: Value| {
+            let context = context.clone();
+            async move {
+                map_http_requests(&rpc_call("eth_getFilterChanges", json!([id])), context)
+                    .await
+                    .unwrap()
+            }
+        };
+
+        for id in &ids {
+            assert_eq!(poll(id.clone()).await, json!([]));
+        }
+        let (second, third) = (add_tx(2), add_tx(3));
+        for id in &ids {
+            assert_eq!(poll(id.clone()).await, json!([second, third]));
+            assert_eq!(poll(id.clone()).await, json!([]));
+        }
+    }
+
+    /// `fullTx` may be absent, `null` or `false`; `true` asks for full transactions,
+    /// which are not served, and anything else is malformed.
+    #[test]
+    fn pending_transaction_filter_parse_accepts_hash_only_forms() {
+        use super::NewPendingTransactionFilterRequest;
+        use crate::{test_utils::raw_params, utils::RpcErr};
+        for params in [
+            None,
+            Some(vec![]),
+            Some(vec![json!(false)]),
+            Some(vec![json!(null)]),
+        ] {
+            assert!(
+                NewPendingTransactionFilterRequest::parse(&raw_params(&params)).is_ok(),
+                "{params:?}"
+            );
+        }
+        for params in [
+            vec![json!(true)],
+            vec![json!("x")],
+            vec![json!(false), json!(false)],
+        ] {
+            let result =
+                NewPendingTransactionFilterRequest::parse(&raw_params(&Some(params.clone())));
+            assert!(
+                matches!(result, Err(RpcErr::BadParams(_))),
+                "{params:?} gave {:?}",
+                result.err()
+            );
+        }
+    }
+
     /// Block `number` with one transaction whose receipt logs once from the address
     /// `log_from`, and that receipt; block 0 gets no transaction.
     fn head_block(
@@ -1089,90 +1174,5 @@ mod tests {
         storage.add_receipts(hash, receipts).await.unwrap();
         assert_eq!(poll_log_blocks(&context, &id).await, vec![2]);
         assert_eq!(poll_log_blocks(&context, &id).await, Vec::<u64>::new());
-    }
-
-    /// A pending transaction filter reports each transaction added to the mempool
-    /// since the previous poll, once.
-    #[tokio::test]
-    async fn pending_transaction_filter_reports_each_new_tx_once() {
-        use ethrex_common::types::{MempoolTransaction, Transaction};
-        let storage = Store::new("in-mem", EngineType::InMemory).unwrap();
-        add_head_block(&storage, 0, 1).await;
-        let context = default_context_with_storage(storage.clone()).await;
-        let add_tx = |n: u64| {
-            let sender = ethrex_common::H160::from_low_u64_be(n);
-            let hash = ethrex_common::H256::from_low_u64_be(n);
-            let tx = MempoolTransaction::new(
-                Transaction::EIP1559Transaction(Default::default()),
-                sender,
-            );
-            context
-                .blockchain
-                .mempool
-                .add_transaction(hash, sender, tx, None, None)
-                .unwrap();
-            json!(format!("{hash:#x}"))
-        };
-        add_tx(1);
-        // Without params, and with `fullTx: false`, the hash-only form.
-        let mut ids = Vec::new();
-        for params in [json!([]), json!([false])] {
-            let id = map_http_requests(
-                &rpc_call("eth_newPendingTransactionFilter", params),
-                context.clone(),
-            )
-            .await
-            .unwrap();
-            ids.push(id);
-        }
-        let poll = |id: Value| {
-            let context = context.clone();
-            async move {
-                map_http_requests(&rpc_call("eth_getFilterChanges", json!([id])), context)
-                    .await
-                    .unwrap()
-            }
-        };
-
-        for id in &ids {
-            assert_eq!(poll(id.clone()).await, json!([]));
-        }
-        let (second, third) = (add_tx(2), add_tx(3));
-        for id in &ids {
-            assert_eq!(poll(id.clone()).await, json!([second, third]));
-            assert_eq!(poll(id.clone()).await, json!([]));
-        }
-    }
-
-    /// `fullTx` may be absent, `null` or `false`; `true` asks for full transactions,
-    /// which are not served, and anything else is malformed.
-    #[test]
-    fn pending_transaction_filter_parse_accepts_hash_only_forms() {
-        use super::NewPendingTransactionFilterRequest;
-        use crate::{test_utils::raw_params, utils::RpcErr};
-        for params in [
-            None,
-            Some(vec![]),
-            Some(vec![json!(false)]),
-            Some(vec![json!(null)]),
-        ] {
-            assert!(
-                NewPendingTransactionFilterRequest::parse(&raw_params(&params)).is_ok(),
-                "{params:?}"
-            );
-        }
-        for params in [
-            vec![json!(true)],
-            vec![json!("x")],
-            vec![json!(false), json!(false)],
-        ] {
-            let result =
-                NewPendingTransactionFilterRequest::parse(&raw_params(&Some(params.clone())));
-            assert!(
-                matches!(result, Err(RpcErr::BadParams(_))),
-                "{params:?} gave {:?}",
-                result.err()
-            );
-        }
     }
 }

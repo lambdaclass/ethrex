@@ -26,6 +26,7 @@ use crate::engine::{
     },
 };
 use crate::eth::client::Config;
+use crate::eth::filter::NewPendingTransactionFilterRequest;
 use crate::eth::{
     account::{
         GetBalanceRequest, GetCodeRequest, GetProofRequest, GetStorageAtRequest,
@@ -42,7 +43,7 @@ use crate::eth::{
     fee_market::FeeHistoryRequest,
     filter::{
         self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, NewBlockFilterRequest,
-        NewFilterRequest, NewPendingTransactionFilterRequest,
+        NewFilterRequest,
     },
     gas_price::GasPrice,
     gas_tip_estimator::GasTipEstimator,
