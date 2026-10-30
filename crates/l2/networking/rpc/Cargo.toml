@@ -44,6 +44,7 @@ path = "./lib.rs"
 [dev-dependencies]
 # Pulls in ethrex-rpc's `test_utils` for this crate's tests only (stripped on publish).
 ethrex-rpc = { workspace = true, features = ["test-utils"] }
+ethrex-trie.workspace = true
 
 [lints.clippy]
 unwrap_used = "deny"

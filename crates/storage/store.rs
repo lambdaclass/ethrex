@@ -9016,7 +9016,7 @@ mod state_view_tests {
 
     /// Validate nonce 1, rewrite/prune disk to nonce 2, then construct both
     /// proofs through the old view. Storage is first opened after the rewrite.
-    fn state_view_is_pinned_across_a_commit(store: Store) {
+    async fn state_view_is_pinned_across_a_commit(store: Store) {
         let address = Address::from_low_u64_be(0xabcd);
         let key = H256::from_low_u64_be(1);
         let missing_key = H256::from_low_u64_be(2);
@@ -9035,6 +9035,13 @@ mod state_view_tests {
         assert_ne!(newer_storage_root, storage_root);
         assert!(!store.has_state_root(root).unwrap());
         assert!(store.state_view(root).unwrap().is_none());
+        assert!(
+            store
+                .get_account_proof(root, address, &keys)
+                .await
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(view.account_state(address).unwrap().unwrap().nonce, 1);
         let newer = store.state_view(newer_root).unwrap().unwrap();
         assert_eq!(newer.account_state(address).unwrap().unwrap().nonce, 2);
@@ -9106,15 +9113,205 @@ mod state_view_tests {
         assert_eq!(proof.storage_proof[0].value, U256::from(22));
     }
 
+    #[tokio::test]
+    async fn state_view_is_pinned_across_a_commit_in_memory() {
+        state_view_is_pinned_across_a_commit(Store::new("", EngineType::InMemory).unwrap()).await;
+    }
+
+    #[cfg(feature = "rocksdb")]
+    #[tokio::test]
+    async fn state_view_is_pinned_across_a_commit_rocksdb() {
+        let dir = tempfile::tempdir().unwrap();
+        state_view_is_pinned_across_a_commit(Store::new(dir.path(), EngineType::RocksDB).unwrap())
+            .await;
+    }
+
+    fn assert_proof_matches(view: &StateView, address: Address, key: H256, nonce: u64, value: u64) {
+        let proof = view.account_proof(address, &[key]).unwrap();
+        let account = AccountState::decode(
+            &proof_value(
+                view.state_root(),
+                &proof.proof,
+                hash_address_fixed(&address).as_bytes(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(account.nonce, nonce);
+        assert_eq!(
+            proof.account.unwrap().encode_to_vec(),
+            account.encode_to_vec()
+        );
+        let slot = &proof.storage_proof[0];
+        assert_eq!(slot.key, key);
+        assert_eq!(slot.value, U256::from(value));
+        assert_eq!(
+            proof_value(account.storage_root, &slot.proof, &hash_key(&key)),
+            Some(U256::from(value).encode_to_vec())
+        );
+    }
+
+    fn write_flat_values(
+        store: &Store,
+        address: Address,
+        key: H256,
+        nonce: u64,
+        storage_root: H256,
+        value: u64,
+    ) {
+        let account_hash = hash_address_fixed(&address);
+        let account = AccountState {
+            nonce,
+            storage_root,
+            ..Default::default()
+        };
+        let mut tx = store.backend.begin_write().unwrap();
+        tx.put(
+            ACCOUNT_FLATKEYVALUE,
+            Nibbles::from_bytes(account_hash.as_bytes()).as_ref(),
+            &account.encode_to_vec(),
+        )
+        .unwrap();
+        tx.put(
+            STORAGE_FLATKEYVALUE,
+            apply_prefix(Some(account_hash), Nibbles::from_bytes(&hash_key(&key))).as_ref(),
+            &U256::from(value).encode_to_vec(),
+        )
+        .unwrap();
+        tx.put(MISC_VALUES, b"last_written", &[0xff]).unwrap();
+        tx.commit().unwrap();
+    }
+
+    fn state_view_proof_pins_flat_values_and_nodes(store: Store) {
+        let address = Address::from_low_u64_be(0xabcd);
+        let key = H256::from_low_u64_be(1);
+        let storage_root = write_storage(&store, EMPTY_TRIE_HASH, address, key, 11);
+        let root = write_account(&store, EMPTY_TRIE_HASH, address, 1, storage_root);
+        write_flat_values(&store, address, key, 1, storage_root, 11);
+        *store.last_computed_flatkeyvalue.write().unwrap() = vec![0xff; 131];
+        let view = store.state_view(root).unwrap().unwrap();
+        assert!(
+            view.state_trie
+                .db()
+                .flatkeyvalue_computed(Nibbles::from_bytes(
+                    hash_address_fixed(&address).as_bytes()
+                ))
+        );
+
+        let newer_storage_root = write_storage(&store, storage_root, address, key, 22);
+        let newer_root = write_account(&store, root, address, 2, newer_storage_root);
+        write_flat_values(&store, address, key, 2, newer_storage_root, 22);
+        assert!(store.state_view(root).unwrap().is_none());
+
+        // Values use the flat tables and proofs use node tables. Both must
+        // retain the old snapshot after all four tables have been rewritten.
+        assert_proof_matches(&view, address, key, 1, 11);
+        let newer = store.state_view(newer_root).unwrap().unwrap();
+        assert_proof_matches(&newer, address, key, 2, 22);
+    }
+
     #[test]
-    fn state_view_is_pinned_across_a_commit_in_memory() {
-        state_view_is_pinned_across_a_commit(Store::new("", EngineType::InMemory).unwrap());
+    fn state_view_proof_pins_flat_values_and_nodes_in_memory() {
+        state_view_proof_pins_flat_values_and_nodes(Store::new("", EngineType::InMemory).unwrap());
     }
 
     #[cfg(feature = "rocksdb")]
     #[test]
-    fn state_view_is_pinned_across_a_commit_rocksdb() {
+    fn state_view_proof_pins_flat_values_and_nodes_rocksdb() {
         let dir = tempfile::tempdir().unwrap();
-        state_view_is_pinned_across_a_commit(Store::new(dir.path(), EngineType::RocksDB).unwrap());
+        state_view_proof_pins_flat_values_and_nodes(
+            Store::new(dir.path(), EngineType::RocksDB).unwrap(),
+        );
+    }
+
+    fn state_view_proof_keeps_a_committed_layer(store: Store) {
+        let address = Address::from_low_u64_be(0xabcd);
+        let account_hash = hash_address_fixed(&address);
+        let key = H256::from_low_u64_be(1);
+        let changed_key = H256::from_low_u64_be(2);
+        let storage_root = write_storage(&store, EMPTY_TRIE_HASH, address, key, 11);
+        let storage_root = write_storage(&store, storage_root, address, changed_key, 21);
+        let base_root = write_account(&store, EMPTY_TRIE_HASH, address, 0, storage_root);
+
+        let mut storage_trie = store
+            .open_storage_trie(account_hash, base_root, storage_root)
+            .unwrap();
+        storage_trie
+            .insert(hash_key(&changed_key), U256::from(22).encode_to_vec())
+            .unwrap();
+        let (storage_root, storage_nodes) =
+            storage_trie.collect_changes_since_last_hash(&NativeCrypto);
+        let mut state_trie = store.open_state_trie(base_root).unwrap();
+        state_trie
+            .insert(
+                account_hash.as_bytes().to_vec(),
+                AccountState {
+                    nonce: 1,
+                    storage_root,
+                    ..Default::default()
+                }
+                .encode_to_vec(),
+            )
+            .unwrap();
+        let (root, account_nodes) = state_trie.collect_changes_since_last_hash(&NativeCrypto);
+        apply_trie_phase1(
+            &store.trie_cache,
+            &store.pending_trie_roots,
+            base_root,
+            root,
+            1,
+            H256::from_low_u64_be(1),
+            account_nodes,
+            vec![(account_hash, storage_nodes)],
+        )
+        .unwrap();
+        let view = store.state_view(root).unwrap().unwrap();
+        assert_eq!(view.account_state(address).unwrap().unwrap().nonce, 1);
+
+        let cache = store.trie_cache.read().unwrap().clone();
+        // Keep the FKV worker idle while this fixture rewrites disk directly.
+        // commit_to_disk also supports running without a generator to notify.
+        let (fkv_ctl, fkv_rx) = sync_channel(0);
+        drop(fkv_rx);
+        commit_to_disk(
+            store.backend.as_ref(),
+            &fkv_ctl,
+            &store.trie_cache,
+            &cache,
+            root,
+            false,
+        )
+        .unwrap();
+        assert!(!store.is_state_in_layer_cache(root).unwrap());
+        assert!(view.cache.has_layer(root));
+
+        let newer_storage_root = write_storage(&store, storage_root, address, key, 33);
+        let newer_root = write_account(&store, root, address, 2, newer_storage_root);
+        assert!(store.state_view(root).unwrap().is_none());
+        // The changed slot is in the pinned layer; the untouched slot falls
+        // through its updated storage root to the pinned disk snapshot.
+        assert_proof_matches(&view, address, key, 1, 11);
+        assert_proof_matches(&view, address, changed_key, 1, 22);
+        assert_proof_matches(
+            &store.state_view(newer_root).unwrap().unwrap(),
+            address,
+            key,
+            2,
+            33,
+        );
+    }
+
+    #[test]
+    fn state_view_proof_keeps_a_committed_layer_in_memory() {
+        state_view_proof_keeps_a_committed_layer(Store::new("", EngineType::InMemory).unwrap());
+    }
+
+    #[cfg(feature = "rocksdb")]
+    #[test]
+    fn state_view_proof_keeps_a_committed_layer_rocksdb() {
+        let dir = tempfile::tempdir().unwrap();
+        state_view_proof_keeps_a_committed_layer(
+            Store::new(dir.path(), EngineType::RocksDB).unwrap(),
+        );
     }
 }

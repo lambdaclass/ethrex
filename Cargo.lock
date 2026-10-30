@@ -3926,6 +3926,7 @@ dependencies = [
  "ethrex-rpc",
  "ethrex-storage",
  "ethrex-storage-rollup",
+ "ethrex-trie",
  "hex",
  "reqwest 0.12.28",
  "rustc-hex",

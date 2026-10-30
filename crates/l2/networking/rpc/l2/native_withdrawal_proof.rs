@@ -165,14 +165,19 @@ impl RpcHandler for GetNativeWithdrawalProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethrex_common::types::{BlockHeader, Genesis, GenesisAccount, Log, Receipt, TxType};
+    use ethrex_common::types::{
+        AccountState, BlockHeader, Genesis, GenesisAccount, Log, Receipt, TxType,
+    };
+    use ethrex_crypto::NativeCrypto;
+    use ethrex_rlp::decode::RLPDecode;
     use ethrex_rpc::test_utils::{TEST_GENESIS, default_context_with_storage};
     use ethrex_storage::{EngineType, Store};
     use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
+    use ethrex_trie::{Node, Trie};
     use secp256k1::SecretKey;
     use std::path::Path;
 
-    async fn withdrawal_proof(available: bool) -> (Result<Value, RpcErr>, H256, H256) {
+    async fn withdrawal_proof(available: bool) -> (Result<Value, RpcErr>, H256, H256, H256) {
         let from = Address::from_low_u64_be(1);
         let receiver = Address::from_low_u64_be(2);
         let amount = U256::from(4);
@@ -267,28 +272,56 @@ mod tests {
         let response = GetNativeWithdrawalProof { transaction_hash }
             .handle(context)
             .await;
-        (response, header.state_root, storage_root)
+        (response, header.state_root, storage_root, slot)
+    }
+
+    fn proof_value(root: H256, proof: &Value, path: &[u8]) -> Option<Vec<u8>> {
+        let nodes = proof
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|node| {
+                let rlp = hex::decode(node.as_str().unwrap().strip_prefix("0x").unwrap()).unwrap();
+                (keccak(&rlp), Node::decode(&rlp).unwrap())
+            })
+            .collect();
+        let trie = Trie::from_nodes(root, &nodes).unwrap();
+        assert_eq!(trie.hash_no_commit(&NativeCrypto), root);
+        trie.get(path).unwrap()
     }
 
     #[tokio::test]
     async fn native_withdrawal_proof_uses_the_requested_roots() {
-        let (response, state_root, storage_root) = withdrawal_proof(true).await;
+        let (response, state_root, storage_root, slot) = withdrawal_proof(true).await;
         let response = response.unwrap();
         assert_eq!(response["amount"], "0x4");
         assert_eq!(response["messageId"], "0x3");
         assert_eq!(response["blockNumber"], "0x1");
-        for (field, root) in [("accountProof", state_root), ("storageProof", storage_root)] {
-            let node = response[field][0].as_str().unwrap();
-            assert_eq!(
-                keccak(hex::decode(node.strip_prefix("0x").unwrap()).unwrap()),
-                root
-            );
-        }
+        let account = AccountState::decode(
+            &proof_value(
+                state_root,
+                &response["accountProof"],
+                keccak(NATIVE_ROLLUP_L2_BRIDGE.as_bytes()).as_bytes(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(account.storage_root, storage_root);
+        let value = U256::decode(
+            &proof_value(
+                account.storage_root,
+                &response["storageProof"],
+                keccak(slot.as_bytes()).as_bytes(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(value, U256::one());
     }
 
     #[tokio::test]
     async fn native_withdrawal_proof_errors_when_state_is_unavailable() {
-        let (response, _, _) = withdrawal_proof(false).await;
+        let (response, _, _, _) = withdrawal_proof(false).await;
         assert!(matches!(
             response,
             Err(RpcErr::Internal(message))
