@@ -399,9 +399,9 @@ fn exception_in_rlp_decoding(block_fixture: &BlockWithRLP) -> bool {
         .iter()
         .any(|case| matches!(case, BlockChainExpectedException::RLPException));
 
-    // A typed transaction whose `y_parity` byte isn't a valid bool (0/1) is rejected
-    // at RLP decoding (MalformedBoolean), so `INVALID_SIGNATURE_VRS` is a legitimate
-    // reason for the block to fail decoding as well.
+    // A typed transaction whose `y_parity` is outside {0, 1} is rejected during
+    // sender recovery, so `INVALID_SIGNATURE_VRS` is a legitimate reason for the
+    // block to be rejected.
     let expects_invalid_signature = block_fixture
         .expect_exception
         .as_ref()

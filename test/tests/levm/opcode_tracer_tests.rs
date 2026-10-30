@@ -53,7 +53,7 @@ fn make_tx(contract: Address, sender: Address, gas_limit: u64) -> Transaction {
         value: U256::zero(),
         data: Bytes::new(),
         access_list: vec![],
-        signature_y_parity: false,
+        signature_y_parity: 0u8.into(),
         signature_r: U256::one(),
         signature_s: U256::one(),
         inner_hash: OnceCell::new(),

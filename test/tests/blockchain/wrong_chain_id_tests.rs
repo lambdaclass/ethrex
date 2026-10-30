@@ -64,7 +64,7 @@ fn foreign_chain_tx(recipient: Address) -> (Transaction, Address) {
         .serialize_compact();
     tx.signature_r = U256::from_big_endian(&signature[..32]);
     tx.signature_s = U256::from_big_endian(&signature[32..]);
-    tx.signature_y_parity = Into::<i32>::into(recovery_id) != 0;
+    tx.signature_y_parity = (Into::<i32>::into(recovery_id) as u8).into();
 
     (Transaction::EIP1559Transaction(tx), sender)
 }

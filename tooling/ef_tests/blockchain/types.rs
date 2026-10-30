@@ -465,7 +465,7 @@ impl From<Transaction> for EIP1559Transaction {
                 .into_iter()
                 .map(|item| (item.address, item.storage_keys))
                 .collect(),
-            signature_y_parity: !val.v.is_zero(),
+            signature_y_parity: val.v,
             signature_r: val.r,
             signature_s: val.s,
             ..Default::default()
@@ -506,7 +506,7 @@ impl From<Transaction> for EIP4844Transaction {
                 .collect(),
             max_fee_per_blob_gas: val.max_fee_per_blob_gas.unwrap(),
             blob_versioned_hashes: val.blob_versioned_hashes.unwrap_or_default(),
-            signature_y_parity: !val.v.is_zero(),
+            signature_y_parity: val.v,
             signature_r: val.r,
             signature_s: val.s,
             ..Default::default()
@@ -558,7 +558,7 @@ impl From<Transaction> for EIP7702Transaction {
                     s_signature: a.s,
                 })
                 .collect(),
-            signature_y_parity: !val.v.is_zero(),
+            signature_y_parity: val.v,
             signature_r: val.r,
             signature_s: val.s,
             ..Default::default()
@@ -610,7 +610,7 @@ impl From<Transaction> for EIP2930Transaction {
                 .into_iter()
                 .map(|a| (a.address, a.storage_keys))
                 .collect(),
-            signature_y_parity: !val.v.is_zero(),
+            signature_y_parity: val.v,
             signature_r: val.r,
             signature_s: val.s,
             ..Default::default()
@@ -652,10 +652,9 @@ pub enum BlockChainExpectedException {
     TxtException(String),
     BlockException(BlockExpectedException),
     RLPException,
-    /// A malformed transaction signature (out-of-range legacy `v`, non-bool typed
-    /// `y_parity`, or out-of-range `r`/`s`). Depending on tx type this surfaces either
-    /// at block RLP decoding (typed tx with a non-bool `y_parity` byte) or during
-    /// execution (legacy tx sender recovery rejects the signature).
+    /// A malformed transaction signature (out-of-range legacy `v`, typed `y_parity`
+    /// outside {0, 1}, or out-of-range `r`/`s`). The signature is rejected during
+    /// sender recovery while executing the block.
     InvalidSignature,
     Other,
 }

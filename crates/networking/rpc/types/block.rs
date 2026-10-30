@@ -206,7 +206,7 @@ mod test {
                 16,
             )
             .unwrap(),
-            signature_y_parity: false,
+            signature_y_parity: 0u8.into(),
             chain_id: 3151908,
             gas_limit: 63000,
             access_list: vec![(
