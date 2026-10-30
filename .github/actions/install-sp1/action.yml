@@ -6,7 +6,7 @@ runs:
   steps:
     # SP1 6's build scripts (sp1-prover-types) compile protobuf definitions.
     - name: Install protoc
-      uses: arduino/setup-protoc@v3
+      uses: arduino/setup-protoc@v3.0.0
       with:
         repo-token: ${{ github.token }}
 

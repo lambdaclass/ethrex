@@ -27,8 +27,8 @@ jobs:
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/detect-changes
+      - uses: actions/checkout@v6.1.0
+      - uses: $/.github/actions/detect-changes
         id: changes
       - name: finish
         id: finish
@@ -44,18 +44,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l2
 
       - name: Install solc
-        uses: ./.github/actions/install-solc
+        uses: $/.github/actions/install-solc
 
       # Both binaries are built up front, in their own steps: a compile error
       # fails the job here instead of after the wait loop below times out, the

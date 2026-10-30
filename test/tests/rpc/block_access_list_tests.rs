@@ -361,7 +361,7 @@ async fn eth_get_block_access_list_rejects_extra_params() {
     let err = map_eth_requests(&request, context.clone())
         .await
         .expect_err("extra params must be rejected");
-    assert_eq!(RpcErrorMetadata::from(err).code, -32000);
+    assert_eq!(RpcErrorMetadata::from(err).code, -32602);
 }
 
 // engine_getPayloadBodiesByHashV2 must serve the persisted BAL straight from the

@@ -23,14 +23,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1
 
       - name: Benchmarks
-        uses: boa-dev/criterion-compare-action@v3
+        uses: boa-dev/criterion-compare-action@v3.2.4
         with:
           cwd: "benches/benches"
           benchName: "build_block_benchmark"

@@ -231,6 +231,12 @@ async fn l2_integration_test() -> Result<(), Box<dyn std::error::Error>> {
         private_keys.pop().unwrap(),
     ));
 
+    set.spawn(test_send_intent_to_l1(
+        l1_client.clone(),
+        l2_client.clone(),
+        private_keys.pop().unwrap(),
+    ));
+
     set.spawn(test_ecmul_precompile(
         l2_client.clone(),
         private_keys.pop().unwrap(),
@@ -1087,6 +1093,245 @@ async fn test_erc20_withdraw_l1_address_mismatch(
 
     println!("test_erc20_withdraw_l1_address_mismatch: Withdrawal correctly reverted");
     Ok(deploy_fees + approve_fees + withdraw_fees)
+}
+
+/// Test sending an intent to L1 and consuming it there
+/// 1. Sends an intent from L2, carrying the payload an ETH withdrawal would have produced
+/// 2. Checks that the L1 bridge computes the same intent hash the L2 bridge sent
+/// 3. Checks that an address other than the named consumer cannot consume it
+/// 4. Checks that the intent cannot be consumed under a different L2 sender
+/// 5. Checks that the payload cannot be claimed as a withdrawal
+/// 6. Consumes the message on L1 once its batch is verified
+/// 7. Checks that its message id is marked as consumed in claimedWithdrawalIDs
+/// 8. Checks that consuming the same message again reverts
+async fn test_send_intent_to_l1(
+    l1_client: EthClient,
+    l2_client: EthClient,
+    rich_wallet_private_key: SecretKey,
+) -> Result<FeesDetails> {
+    let rich_address = get_address_from_secret_key(&rich_wallet_private_key.secret_bytes())
+        .expect("Failed to get address");
+    let claimed_amount = U256::from(1);
+    let eth_token = Address::from_slice(&hex::decode("EeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE")?);
+
+    // The payload a withdrawal to rich_address would commit to. The bridge has to keep an intent
+    // carrying it from ever being spent as that withdrawal.
+    let mut withdrawal_payload = eth_token.as_bytes().to_vec();
+    withdrawal_payload.extend_from_slice(eth_token.as_bytes());
+    withdrawal_payload.extend_from_slice(rich_address.as_bytes());
+    withdrawal_payload.extend_from_slice(&claimed_amount.to_big_endian());
+    let payload_hash = keccak(&withdrawal_payload);
+
+    println!("test_send_intent_to_l1: Sending intent on L2");
+    let intent_signature = "sendIntentToL1(bytes32,address)";
+    let intent_args = [
+        Value::FixedBytes(payload_hash.0.to_vec().into()),
+        Value::Address(rich_address),
+    ];
+    let intent_receipt = test_send(
+        &l2_client,
+        &rich_wallet_private_key,
+        COMMON_BRIDGE_L2_ADDRESS,
+        intent_signature,
+        &intent_args,
+        "test_send_intent_to_l1",
+    )
+    .await?;
+    assert!(intent_receipt.receipt.status);
+
+    let transaction_size =
+        calculate_transaction_size(encode_calldata(intent_signature, &intent_args)?.into());
+    let intent_fees = get_fees_details_l2(&intent_receipt, &l2_client, transaction_size).await?;
+
+    println!("test_send_intent_to_l1: Checking that L1 computes the intent hash sent from L2");
+    let intent_initiated_topic = keccak(b"IntentInitiated(address,address,bytes32,bytes32)");
+    let l2_intent_hash = intent_receipt
+        .logs
+        .iter()
+        .find(|log| {
+            log.log.address == COMMON_BRIDGE_L2_ADDRESS
+                && log.log.topics.first() == Some(&intent_initiated_topic)
+        })
+        .and_then(|log| log.log.topics.get(3).copied())
+        .context("IntentInitiated event not found in the intent receipt")?;
+    let l1_intent_hash = l1_client
+        .call(
+            bridge_address()?,
+            encode_calldata(
+                "intentHash(address,address,bytes32)",
+                &[
+                    Value::Address(rich_address),
+                    Value::Address(rich_address),
+                    Value::FixedBytes(payload_hash.0.to_vec().into()),
+                ],
+            )?
+            .into(),
+            Overrides::default(),
+        )
+        .await?;
+    assert_eq!(
+        H256::from_slice(&hex::decode(l1_intent_hash.trim_start_matches("0x"))?),
+        l2_intent_hash,
+        "Expected the L1 bridge to compute the same intent hash the L2 bridge sent"
+    );
+
+    println!("test_send_intent_to_l1: Waiting for message proof on L2");
+    let proof = wait_for_verified_proof(
+        &l1_client,
+        &l2_client,
+        intent_receipt.tx_info.transaction_hash,
+    )
+    .await;
+
+    let merkle_proof = Value::Array(
+        proof
+            .merkle_proof
+            .iter()
+            .map(|hash| Value::FixedBytes(hash.as_fixed_bytes().to_vec().into()))
+            .collect(),
+    );
+
+    println!("test_send_intent_to_l1: Attempting to consume the message as another address");
+    let consume_signature = "verifyAndConsume(address,bytes32,uint256,uint256,bytes32[])";
+    let consume_args = [
+        Value::Address(rich_address),
+        Value::FixedBytes(payload_hash.0.to_vec().into()),
+        Value::Uint(proof.batch_number.into()),
+        Value::Uint(proof.message_id),
+        merkle_proof.clone(),
+    ];
+    let stranger_result = l1_client
+        .call(
+            bridge_address()?,
+            encode_calldata(consume_signature, &consume_args)?.into(),
+            Overrides {
+                from: Some(Address::random()),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(
+        stranger_result.is_err(),
+        "Expected eth_call to fail because the caller is not the consumer the intent named"
+    );
+    let error_message = stranger_result.unwrap_err().to_string();
+    assert!(
+        error_message.contains("Invalid proof"),
+        "Expected revert reason to contain 'Invalid proof', got: {error_message}"
+    );
+
+    println!("test_send_intent_to_l1: Attempting to consume the message under another L2 sender");
+    let wrong_sender_args = [
+        Value::Address(Address::random()),
+        Value::FixedBytes(payload_hash.0.to_vec().into()),
+        Value::Uint(proof.batch_number.into()),
+        Value::Uint(proof.message_id),
+        merkle_proof.clone(),
+    ];
+    let wrong_sender_result = l1_client
+        .call(
+            bridge_address()?,
+            encode_calldata(consume_signature, &wrong_sender_args)?.into(),
+            Overrides {
+                from: Some(rich_address),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(
+        wrong_sender_result.is_err(),
+        "Expected eth_call to fail because the intent was not sent by that L2 address"
+    );
+    let error_message = wrong_sender_result.unwrap_err().to_string();
+    assert!(
+        error_message.contains("Invalid proof"),
+        "Expected revert reason to contain 'Invalid proof', got: {error_message}"
+    );
+
+    // Must run before the intent is consumed: afterwards its message id is marked in
+    // claimedWithdrawalIDs and the claim would revert before reaching the proof check.
+    println!("test_send_intent_to_l1: Attempting to claim the intent as a withdrawal");
+    let claim_result = l1_client
+        .call(
+            bridge_address()?,
+            encode_calldata(
+                "claimWithdrawal(uint256,uint256,uint256,bytes32[])",
+                &[
+                    Value::Uint(claimed_amount),
+                    Value::Uint(proof.batch_number.into()),
+                    Value::Uint(proof.message_id),
+                    merkle_proof,
+                ],
+            )?
+            .into(),
+            Overrides {
+                from: Some(rich_address),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(
+        claim_result.is_err(),
+        "Expected eth_call to fail because an intent is not a withdrawal"
+    );
+    let error_message = claim_result.unwrap_err().to_string();
+    assert!(
+        error_message.contains("Invalid proof"),
+        "Expected revert reason to contain 'Invalid proof', got: {error_message}"
+    );
+
+    println!("test_send_intent_to_l1: Consuming the message on L1");
+    let consume_receipt = test_send(
+        &l1_client,
+        &rich_wallet_private_key,
+        bridge_address()?,
+        consume_signature,
+        &consume_args,
+        "test_send_intent_to_l1",
+    )
+    .await?;
+    assert!(consume_receipt.receipt.status);
+
+    let consumed = l1_client
+        .call(
+            bridge_address()?,
+            encode_calldata(
+                "claimedWithdrawalIDs(uint256)",
+                &[Value::Uint(proof.message_id)],
+            )?
+            .into(),
+            Overrides::default(),
+        )
+        .await?;
+    assert_eq!(
+        U256::from_str_radix(consumed.trim_start_matches("0x"), 16)?,
+        U256::one(),
+        "Expected the intent's message id to be marked in claimedWithdrawalIDs"
+    );
+
+    println!("test_send_intent_to_l1: Attempting to consume the message a second time");
+    let replay_result = l1_client
+        .call(
+            bridge_address()?,
+            encode_calldata(consume_signature, &consume_args)?.into(),
+            Overrides {
+                from: Some(rich_address),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(
+        replay_result.is_err(),
+        "Expected eth_call to fail because the intent was already consumed"
+    );
+    let error_message = replay_result.unwrap_err().to_string();
+    assert!(
+        error_message.contains("already consumed"),
+        "Expected revert reason to contain 'already consumed', got: {error_message}"
+    );
+
+    println!("test_send_intent_to_l1: Intent consumed once and not claimable as a withdrawal");
+    Ok(intent_fees)
 }
 
 /// Tests that the aliasing is done correctly when calling from L1 to L2

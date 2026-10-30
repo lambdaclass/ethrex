@@ -25,8 +25,8 @@ jobs:
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/detect-changes
+      - uses: actions/checkout@v6.1.0
+      - uses: $/.github/actions/detect-changes
         id: changes
       - name: finish
         id: finish
@@ -49,32 +49,32 @@ jobs:
         backend: ["sp1", "zisk"]
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Add Rust Cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@v2.9.3
 
       - name: Install RISC0
         if: matrix.backend == 'risc0'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        uses: ./.github/actions/install-risc0
+        uses: $/.github/actions/install-risc0
 
       - name: Install SP1
         if: matrix.backend == 'sp1'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        uses: ./.github/actions/install-sp1
+        uses: $/.github/actions/install-sp1
 
       - name: Install ZisK
         if: matrix.backend == 'zisk'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SETUP_KEY: none
-        uses: ./.github/actions/install-zisk
+        uses: $/.github/actions/install-zisk
 
       - name: RISC-V OpenVM toolchain install
         if: matrix.backend == 'openvm'
@@ -118,9 +118,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
       - name: Add Rust Cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@v2.9.3
 
       - name: Check exec
         run: |
@@ -136,9 +136,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
       - name: Add Rust Cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@v2.9.3
       - name: Check tdx
         run: |
           cd crates/l2/tee/quote-gen
