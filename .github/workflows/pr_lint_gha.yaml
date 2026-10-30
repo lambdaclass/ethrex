@@ -5,8 +5,11 @@ on:
     branches: ["**"]
     paths:
       - ".github/**.yaml"
-      - ".github/*.yml"
+      # `*` doesn't cross `/`, so `.github/*.yml` missed every `.yml` workflow.
+      - ".github/**.yml"
       - ".github/actions/**"
+      # A relock that only touches the lockfile must still be verified.
+      - ".github/workflows/actions.lock"
       # Without this, editing a script under .github/scripts would not run the
       # jobs below that exercise those scripts.
       - ".github/scripts/**"
@@ -27,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Install actionlint
         run: bash <(curl -s https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
@@ -35,12 +38,33 @@ jobs:
       - name: Run actionlint
         run: ./actionlint -ignore SC2086 -ignore SC2006 -ignore SC2046
 
+  actions-lock:
+    name: Verify actions lockfile
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install gh-actions-lock
+        run: gh extension install github/gh-actions-lock --pin v0.4.0
+
+      # The runner refuses any action missing from actions.lock, so a `uses:`
+      # change without a relock fails that workflow at job start. This catches
+      # it on the PR instead, along with locked pins that no longer verify
+      # upstream. Fix locally with `gh actions-lock` and commit the result.
+      - name: Verify actions.lock
+        run: gh actions-lock --verify
+
   image-meta:
     name: build-docker image-meta
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Assert image-meta derivation across ref types
         env:
@@ -76,7 +100,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Install minisign
         run: |

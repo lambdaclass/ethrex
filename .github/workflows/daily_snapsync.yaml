@@ -94,7 +94,7 @@ jobs:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Set start timestamp
         id: start
@@ -108,7 +108,7 @@ jobs:
           docker image prune -f
 
       - name: Run Snapsync Test
-        uses: ./.github/actions/snapsync-run
+        uses: $/.github/actions/snapsync-run
         id: snapsync
         with:
           network: ${{ matrix.network }}
@@ -148,7 +148,7 @@ jobs:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Set start timestamp
         id: start
@@ -162,7 +162,7 @@ jobs:
           docker image prune -f
 
       - name: Run Snapsync Test
-        uses: ./.github/actions/snapsync-run
+        uses: $/.github/actions/snapsync-run
         id: snapsync
         with:
           network: ${{ matrix.network }}

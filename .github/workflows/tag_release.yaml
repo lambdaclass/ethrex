@@ -76,14 +76,14 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
         if: ${{ matrix.os == 'linux' }}
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l2
 
@@ -92,10 +92,10 @@ jobs:
         env:
           SHELL: /bin/bash
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        uses: ./.github/actions/install-sp1
+        uses: $/.github/actions/install-sp1
       - name: Set up QEMU (only Linux ARM)
         if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
-        uses: docker/setup-qemu-action@v4
+        uses: docker/setup-qemu-action@v4.4.0
         with:
           platforms: amd64
 
@@ -103,7 +103,7 @@ jobs:
         if: ${{ matrix.platform == 'ubuntu-22.04' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        uses: ./.github/actions/install-risc0
+        uses: $/.github/actions/install-risc0
 
       - name: Install CUDA (only Linux x86 GPU)
         uses: Jimver/cuda-toolkit@v0.2.35
@@ -115,12 +115,12 @@ jobs:
           sub-packages: '["nvcc"]'
 
       - name: Install Protoc
-        uses: arduino/setup-protoc@v3
+        uses: arduino/setup-protoc@v3.0.0
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install solc
-        uses: ./.github/actions/install-solc
+        uses: $/.github/actions/install-solc
 
       - name: Build ethrex
         run: |
@@ -137,14 +137,14 @@ jobs:
           mv crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32 verification_keys/ethrex-riscv32im-succinct-zkvm-vk-u32
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: ethrex${{ matrix.l2_suffix }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.gpu_suffix }}
           path: ethrex${{ matrix.l2_suffix }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.gpu_suffix }}
 
       - name: Upload verification keys
         if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: verification_keys
           path: verification_keys/
@@ -169,7 +169,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       # Derived rather than hardcoded: the guests are compiled by ere's compiler
       # image and then executed under ere's server image, so both have to be the
@@ -180,10 +180,10 @@ jobs:
         run: echo "ERE_TAG=$(.github/scripts/zkvm-version.sh --ere-tag --docker)" >> "$GITHUB_ENV"
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
 
       - name: Install uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -353,7 +353,7 @@ jobs:
           echo "statelessOutputBytes match ($expected_len bytes, plus $padding bytes of runtime zero padding)"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: ${{ steps.artifact.outputs.name }}
           path: |
@@ -367,10 +367,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Download verification keys artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v6.0.0
         with:
           name: verification_keys
           path: crates/l2/contracts/src/
@@ -381,7 +381,7 @@ jobs:
           tar -czvf ../../../../ethrex-contracts.tar.gz .
 
       - name: Upload contracts artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: ethrex-contracts.tar.gz
           path: ethrex-contracts.tar.gz
@@ -409,10 +409,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Determine tag version
         id: tag_version
@@ -433,7 +433,7 @@ jobs:
 
       - name: Build L1 Docker image
         id: build_l1
-        uses: ./.github/actions/build-docker
+        uses: $/.github/actions/build-docker
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -454,7 +454,7 @@ jobs:
 
       - name: Build L2 Docker image
         id: build_l2
-        uses: ./.github/actions/build-docker
+        uses: $/.github/actions/build-docker
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -481,7 +481,7 @@ jobs:
 
     steps:
       - name: Login to Docker registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@v4.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -515,7 +515,7 @@ jobs:
       HAS_MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY != '' }}
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       # Only the guest artifacts are signed, so only those are needed here. An
       # unanchored `*ethrex*` would also pull the docker jobs' `.dockerbuild`
@@ -523,7 +523,7 @@ jobs:
       # wait on the docker jobs, so it usually runs before those records exist —
       # which is exactly why the rehearsal passed while finalize-release failed.
       - name: Download stateless-validator artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v6.0.0
         with:
           path: ./bin
           pattern: "stateless-validator-ethrex-*"
@@ -535,7 +535,7 @@ jobs:
 
       - name: Sign stateless-validator artifacts
         if: env.HAS_MINISIGN_SECRET_KEY == 'true'
-        uses: ./.github/actions/sign-stateless
+        uses: $/.github/actions/sign-stateless
         with:
           artifact-dir: ./bin
           secret-key: ${{ secrets.MINISIGN_SECRET_KEY }}
@@ -589,7 +589,7 @@ jobs:
 
       - name: Upload the signed set
         if: env.HAS_MINISIGN_SECRET_KEY == 'true'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: dry-run-signed-release-assets
           path: ./bin
@@ -610,7 +610,7 @@ jobs:
       HAS_MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY != '' }}
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
         with:
           fetch-depth: 0
 
@@ -621,13 +621,13 @@ jobs:
       # archives, so download-artifact cannot extract them and fails the job —
       # taking the whole release down before anything is published.
       - name: Download release binaries
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v6.0.0
         with:
           path: ./bin
           pattern: "ethrex*"
 
       - name: Download stateless-validator artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v6.0.0
         with:
           path: ./bin
           pattern: "stateless-validator-ethrex-*"
@@ -641,7 +641,7 @@ jobs:
       # upload on the conformance check, so an ELF that failed it never gets here.
       - name: Sign stateless-validator artifacts
         if: env.HAS_MINISIGN_SECRET_KEY == 'true'
-        uses: ./.github/actions/sign-stateless
+        uses: $/.github/actions/sign-stateless
         with:
           artifact-dir: ./bin
           secret-key: ${{ secrets.MINISIGN_SECRET_KEY }}
@@ -707,7 +707,7 @@ jobs:
 
       - name: Update CHANGELOG
         id: changelog
-        uses: requarks/changelog-action@v1
+        uses: requarks/changelog-action@v1.10.3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fromTag: ${{ github.ref_name }}
@@ -717,7 +717,7 @@ jobs:
           excludeTypes: build,docs,other,style,chore
 
       - name: Finalize Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v3.0.3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

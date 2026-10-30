@@ -42,6 +42,7 @@
 //! blockchain.add_transaction_to_mempool(tx).await?;
 //! ```
 
+pub mod call_bundle;
 pub mod constants;
 pub mod error;
 pub mod fork_choice;
@@ -50,6 +51,7 @@ pub mod mempool;
 pub mod payload;
 pub mod prewarm;
 pub mod sampling;
+pub mod simulate;
 pub mod stateless;
 pub mod tracing;
 pub mod vm;
@@ -3503,34 +3505,39 @@ impl Blockchain {
         self.mempool.note_included_txs(hashes)
     }
 
-    /// Drop blob txs with nonce below the sender's on-chain nonce at `head_hash`.
-    /// Per-block pruning only covers the head block, so stale blob txs from
-    /// non-head canonical blocks leak in and are never evicted (value/nonce
-    /// eviction pins low nonces). Resetting against on-chain nonces clears them.
-    pub async fn remove_stale_blob_txs(&self, head_hash: BlockHash) -> Result<(), StoreError> {
-        let blob_txs = self.mempool.blob_txs()?;
-        if blob_txs.is_empty() {
+    /// Drop pool txs with nonce below the sender's on-chain nonce at `head`.
+    /// Per-block pruning only removes the head block's txs by hash, so txs mined
+    /// in non-head canonical blocks (the head jumped more than one block) and
+    /// txs that lost to a same-nonce replacement stay pooled, can never be
+    /// included, and fill the pool until it rejects gapped-nonce txs (blob txs
+    /// are also pinned by value/nonce eviction). Resetting against on-chain
+    /// nonces clears them.
+    ///
+    /// L1 only: L2 privileged txs don't use the account nonce, so their nonce
+    /// says nothing about whether they are stale.
+    pub fn remove_stale_txs(&self, head: &BlockHeader) -> Result<(), StoreError> {
+        let lowest_nonces = self.mempool.lowest_nonce_by_sender()?;
+        if lowest_nonces.is_empty() {
             return Ok(());
         }
-        // Cache on-chain nonce per sender to avoid repeated state reads.
-        let mut nonce_by_sender: HashMap<Address, u64> = HashMap::new();
-        for (hash, sender, tx_nonce) in blob_txs {
-            let state_nonce = match nonce_by_sender.entry(sender) {
-                Entry::Occupied(e) => *e.get(),
-                Entry::Vacant(e) => {
-                    let nonce = self
-                        .storage
-                        .get_account_info_by_hash(head_hash, sender)?
-                        .map(|info| info.nonce)
-                        .unwrap_or(0);
-                    *e.insert(nonce)
-                }
-            };
-            if tx_nonce < state_nonce {
-                self.mempool.remove_transaction(&hash)?;
-            }
+        let senders: Vec<Address> = lowest_nonces.iter().map(|(sender, _)| *sender).collect();
+        let accounts = self
+            .storage
+            .get_account_states_batch_by_root(head.state_root, &senders)?;
+        // Only take the pool's write lock for senders that hold stale txs. A
+        // missing account has nonce 0, so none of its txs are stale.
+        let stale: Vec<(Address, u64)> = lowest_nonces
+            .into_iter()
+            .zip(accounts)
+            .filter_map(|((sender, lowest_nonce), account)| {
+                let account_nonce = account?.nonce;
+                (lowest_nonce < account_nonce).then_some((sender, account_nonce))
+            })
+            .collect();
+        if stale.is_empty() {
+            return Ok(());
         }
-        Ok(())
+        self.mempool.remove_txs_below_nonce(&stale)
     }
 
     /// Re-simulate pending frame transactions (EIP-8141) whose validity may have

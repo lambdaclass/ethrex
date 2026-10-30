@@ -60,14 +60,15 @@ mkdir -p "${failed_logs_root}"
 # Tests excluded from the failure count (substring match against test case
 # name).
 #
-# The rpc-compat cases below are the ones whose recorded response contains at
-# least one log object. That corpus is pinned to execution-apis d08382ae, which
-# predates `blockTimestamp` on log objects, and rpc-compat compares byte-exactly,
-# so emitting the field (as every other client does) cannot match. The pin cannot
-# move: the field only reaches those fixtures in revisions that also carry a
-# pre-merge test chain, which ethrex does not support by design. See
-# docs/known_issues.md.
+# The rpc-compat corpus is pinned to execution-apis d08382ae. The pin cannot
+# move: later revisions carry a pre-merge test chain, which ethrex does not
+# support by design. Each group below is a case whose pinned recording is stale.
+# See docs/known_issues.md.
 KNOWN_EXCLUDED_TESTS=(
+  # Cases whose recorded response contains at least one log object. The pin
+  # predates `blockTimestamp` on log objects, and rpc-compat compares
+  # byte-exactly, so emitting the field (as every other client does) cannot
+  # match.
   "eth_getLogs/contract-addr"
   "eth_getLogs/no-topics"
   "eth_getLogs/topic-exact-match"
@@ -76,6 +77,11 @@ KNOWN_EXCLUDED_TESTS=(
   "eth_getTransactionReceipt/get-access-list"
   "eth_getTransactionReceipt/get-blob-tx"
   "eth_getTransactionReceipt/get-dynamic-fee"
+  # Cases that send a storage key that does not decode. The pin records geth's
+  # -32000; execution-apis#712 re-recorded them as -32602 (Invalid params),
+  # which is what ethrex returns.
+  "eth_getStorageAt/get-storage-invalid-key-too-large"
+  "eth_getStorageAt/get-storage-invalid-key"
 )
 
 # Build a jq filter that excludes the known-excluded tests.
