@@ -379,6 +379,9 @@ fn call_bundle_error_to_rpc(error: CallBundleError) -> RpcErr {
             RpcErr::ServerError(error.to_string())
         }
         CallBundleError::InvalidTx(error) => invalid_tx_error(&error),
+        CallBundleError::BlockGasLimitReached { .. } => {
+            RpcErr::ServerError("intrinsic gas too high".to_string())
+        }
         CallBundleError::Internal(message) => RpcErr::Internal(message),
     }
 }
@@ -488,6 +491,9 @@ mod tests {
     /// Returns NUMBER, TIMESTAMP, BASEFEE, COINBASE and GASLIMIT as five words.
     const ENV: Address = Address::repeat_byte(0xa3);
     const ENV_CODE: &str = "436000524260205248604052416060524560805260a06000f3";
+    /// Returns `BLOCKHASH(NUMBER - 1)`.
+    const HASHER: Address = Address::repeat_byte(0xa4);
+    const HASHER_CODE: &str = "600143034060005260206000f3";
     const FRESH: Address = Address::repeat_byte(0xb1);
 
     fn key(byte: u8) -> SecretKey {
@@ -523,6 +529,7 @@ mod tests {
             (PAYER, PAYER_CODE),
             (REVERTER, REVERTER_CODE),
             (ENV, ENV_CODE),
+            (HASHER, HASHER_CODE),
         ] {
             genesis.alloc.insert(
                 address,
@@ -946,6 +953,62 @@ mod tests {
             .await,
             (-32000, "intrinsic gas too high".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn the_bundle_has_to_fit_the_block_gas_limit() {
+        let first = Tx::default().signed(&rich());
+        let second = Tx {
+            nonce: 1,
+            ..Default::default()
+        }
+        .signed(&rich());
+        // Each transaction fits the block on its own; together they do not.
+        assert_eq!(
+            call_bundle_err(json!({
+                "txs": [raw(&first), raw(&second)], "blockNumber": "0x1",
+                "stateBlockNumber": "latest", "gasLimit": 30_000,
+            }))
+            .await,
+            (-32000, "intrinsic gas too high".to_string())
+        );
+        let response = call_bundle(json!({
+            "txs": [raw(&first), raw(&second)], "blockNumber": "0x1",
+            "stateBlockNumber": "latest", "gasLimit": 42_000,
+        }))
+        .await
+        .unwrap();
+        assert_eq!(response["totalGasUsed"], 42_000);
+    }
+
+    #[tokio::test]
+    async fn blockhash_resolves_up_to_the_state_block_and_is_zero_past_it() {
+        let store = store().await;
+        let block_1 = add_block_1(&store).await;
+        let tx = Tx {
+            to: TxKind::Call(HASHER),
+            gas: 100_000,
+            ..Default::default()
+        }
+        .signed(&rich());
+        let previous_hash = |block_number: &str| {
+            let store = store.clone();
+            let bundle = json!({
+                "txs": [raw(&tx)], "blockNumber": block_number, "stateBlockNumber": "latest",
+            });
+            async move {
+                let response = call_bundle_on(store, bundle).await.unwrap();
+                response["results"][0]["value"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            }
+        };
+        // Right after the state block, BLOCKHASH(1) is the state block's hash.
+        assert_eq!(previous_hash("0x2").await, format!("{:#x}", block_1.hash()));
+        // Further ahead, BLOCKHASH(29) is a block that does not exist yet: zero, not an
+        // error.
+        assert_eq!(previous_hash("0x1e").await, format!("{:#x}", H256::zero()));
     }
 
     async fn env_words(store: Store, overrides: Value) -> (Value, [U256; 5]) {
