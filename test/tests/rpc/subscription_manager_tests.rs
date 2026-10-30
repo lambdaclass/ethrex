@@ -1,4 +1,4 @@
-use ethrex_common::types::BlockHeader;
+use ethrex_common::{H256, types::BlockHeader};
 use ethrex_rpc::subscription_manager::{
     MAX_TOTAL_SUBSCRIPTIONS, SUBSCRIBER_CHANNEL_CAPACITY, SubscriptionManager,
     SubscriptionManagerProtocol,
@@ -163,4 +163,36 @@ async fn subscribe_returns_none_at_global_cap() {
     let (tx_overflow, _rx_overflow) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
     let result = manager.subscribe(tx_overflow).await.unwrap();
     assert!(result.is_none(), "expected None at MAX_TOTAL_SUBSCRIPTIONS");
+}
+
+#[tokio::test]
+async fn new_pending_transaction_reaches_only_its_subscribers() {
+    let manager = SubscriptionManager::spawn();
+
+    let (heads_tx, mut heads_rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    let (pending_tx, mut pending_rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    let _heads_id = manager.subscribe(heads_tx).await.unwrap().unwrap();
+    let pending_id = manager
+        .subscribe_pending_transactions(pending_tx)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let hash = H256::from_low_u64_be(0xabc);
+    manager.new_pending_transaction(hash).unwrap();
+
+    let msg = tokio::time::timeout(std::time::Duration::from_secs(2), pending_rx.recv())
+        .await
+        .expect("timed out")
+        .expect("channel closed");
+    let v: serde_json::Value = serde_json::from_str(&msg).unwrap();
+    assert_eq!(v["params"]["subscription"], pending_id);
+    assert_eq!(v["params"]["result"], format!("{hash:#x}"));
+    assert!(
+        heads_rx.try_recv().is_err(),
+        "newHeads subscriber got a tx hash"
+    );
+
+    assert!(manager.unsubscribe(pending_id.clone()).await.unwrap());
+    assert!(!manager.unsubscribe(pending_id).await.unwrap());
 }

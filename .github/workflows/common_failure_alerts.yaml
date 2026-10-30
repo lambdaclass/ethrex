@@ -37,11 +37,11 @@ jobs:
            github.event.workflow_run.event == 'schedule') }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Collect failed jobs
         id: failed_jobs
-        uses: actions/github-script@v8
+        uses: actions/github-script@v8.0.0
         with:
           result-encoding: string
           script: |

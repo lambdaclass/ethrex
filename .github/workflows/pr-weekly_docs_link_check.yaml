@@ -29,19 +29,19 @@ jobs:
     name: Link Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
 
       # Persist lychee's per-URL result cache so unchanged links aren't
       # re-fetched on every run (config lives in lychee.toml).
       - name: Restore lychee cache
-        uses: actions/cache@v4
+        uses: actions/cache@v4.3.0
         with:
           path: .lycheecache
           key: lychee-${{ github.sha }}
           restore-keys: lychee-
 
       - name: Check links
-        uses: lycheeverse/lychee-action@v2
+        uses: lycheeverse/lychee-action@v2.9.0
         with:
           # lychee renamed its release tags to a `lychee-` prefix; the action's
           # floating v2 tag now handles the prefix itself (pass the PLAIN

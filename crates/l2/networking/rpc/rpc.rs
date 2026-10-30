@@ -162,6 +162,19 @@ pub async fn bind_api(
         }
     });
 
+    // Feed `eth_subscribe("newPendingTransactions")` from the mempool, as on L1.
+    if let Some(ws) = &ws {
+        ethrex_rpc::spawn_pending_transactions_feed(
+            service_context
+                .l1_ctx
+                .blockchain
+                .mempool
+                .subscribe_new_transactions(),
+            ws.subscription_manager.clone(),
+            cancel_token.clone(),
+        );
+    }
+
     // All request headers allowed.
     // All methods allowed.
     // All origins allowed.
@@ -342,7 +355,7 @@ async fn handle_http_request(
         }
         Err(_) => ethrex_rpc::rpc_response(
             RpcRequestId::String("".to_string()),
-            Err(ethrex_rpc::RpcErr::BadParams(
+            Err(ethrex_rpc::RpcErr::ServerError(
                 "Invalid request body".to_string(),
             )),
         )
