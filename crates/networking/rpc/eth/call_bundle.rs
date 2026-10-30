@@ -461,7 +461,7 @@ mod tests {
 
     use super::*;
     use crate::rpc::{DEFAULT_RPC_GAS_CAP, map_http_requests};
-    use crate::test_utils::{TEST_GENESIS, default_context_with_storage};
+    use crate::test_utils::{TEST_GENESIS, context_without_p2p};
     use crate::utils::{RpcErrorMetadata, RpcRequest};
     use ethrex_common::types::{
         Block, BlockBody, EIP1559Transaction, EIP4844Transaction, Genesis, GenesisAccount,
@@ -645,7 +645,7 @@ mod tests {
     }
 
     async fn call_bundle_on(store: Store, bundle: Value) -> Result<Value, RpcErr> {
-        let context = default_context_with_storage(store).await;
+        let context = context_without_p2p(store);
         let request: RpcRequest = serde_json::from_value(json!({
             "jsonrpc": "2.0", "id": 1, "method": "eth_callBundle", "params": [bundle],
         }))
