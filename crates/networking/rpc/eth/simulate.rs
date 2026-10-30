@@ -135,7 +135,7 @@ impl RpcHandler for EthSimulateRequest {
             ));
         }
         if payload.block_state_calls.len() as u64 > MAX_SIMULATE_BLOCKS {
-            return Err(RpcErr::EthSimulate {
+            return Err(RpcErr::MethodError {
                 code: -38026,
                 message: format!(
                     "client limit exceeded: too many blocks: {} > {MAX_SIMULATE_BLOCKS}",
@@ -147,7 +147,7 @@ impl RpcHandler for EthSimulateRequest {
         let mut total_calls = 0usize;
         for block in &payload.block_state_calls {
             if block.calls.len() > MAX_SIMULATE_CALLS_PER_BLOCK {
-                return Err(RpcErr::EthSimulate {
+                return Err(RpcErr::MethodError {
                     code: -38026,
                     message: format!(
                         "client limit exceeded: too many calls in block: {} > {MAX_SIMULATE_CALLS_PER_BLOCK}",
@@ -158,7 +158,7 @@ impl RpcHandler for EthSimulateRequest {
             }
             total_calls = total_calls.saturating_add(block.calls.len());
             if total_calls > MAX_SIMULATE_TOTAL_CALLS {
-                return Err(RpcErr::EthSimulate {
+                return Err(RpcErr::MethodError {
                     code: -38026,
                     message: format!(
                         "client limit exceeded: too many calls: {total_calls} > {MAX_SIMULATE_TOTAL_CALLS}"
@@ -221,7 +221,7 @@ impl RpcHandler for EthSimulateRequest {
 }
 
 fn invalid_params(message: String) -> RpcErr {
-    RpcErr::EthSimulate {
+    RpcErr::MethodError {
         code: -32602,
         message,
         data: None,
@@ -459,7 +459,7 @@ fn simulation_error_to_rpc(error: SimulationError) -> RpcErr {
         SimulationError::InvalidParams(_) => -32602,
         SimulationError::Internal(_) => -32603,
     };
-    RpcErr::EthSimulate {
+    RpcErr::MethodError {
         code,
         message,
         data: None,
