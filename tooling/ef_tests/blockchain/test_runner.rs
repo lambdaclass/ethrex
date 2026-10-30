@@ -184,8 +184,7 @@ async fn run(
     for block_fixture in test.blocks.iter() {
         let expects_exception = block_fixture.expect_exception.is_some();
 
-        // Won't panic because test has been validated
-        let block: CoreBlock = block_fixture.block().unwrap().clone().into();
+        let block = block_fixture.decoded_block()?;
         let hash = block.hash();
 
         // Attempt to add the block as the head of the chain
@@ -251,7 +250,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
             return Ok(());
         }
 
-        let block: CoreBlock = block_fixture.block().unwrap().clone().into();
+        let block = block_fixture.decoded_block()?;
         let hash = block.hash();
 
         let produced_bal = blockchain1
@@ -276,7 +275,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
     let blockchain2 = Blockchain::for_test_harness_with_pool(store2.clone(), merkle_pool());
 
     for (block_fixture, bal) in test.blocks.iter().zip(bals.iter()) {
-        let block: CoreBlock = block_fixture.block().unwrap().clone().into();
+        let block = block_fixture.decoded_block()?;
         let hash = block.hash();
 
         blockchain2
@@ -511,10 +510,7 @@ pub async fn blocks_and_witness_for_test(
                     .to_string(),
             );
         }
-        let block_data = block_fixture
-            .block()
-            .ok_or_else(|| "block fixture has no decodable block (RLP-only test)".to_string())?;
-        let block: CoreBlock = block_data.clone().into();
+        let block = block_fixture.decoded_block()?;
         let hash = block.hash();
 
         blockchain
@@ -638,8 +634,8 @@ async fn re_run_stateless(
     let blocks = test
         .blocks
         .iter()
-        .map(|block_fixture| block_fixture.block().unwrap().clone().into())
-        .collect::<Vec<CoreBlock>>();
+        .map(|block_fixture| block_fixture.decoded_block())
+        .collect::<Result<Vec<CoreBlock>, String>>()?;
 
     let test_should_fail = test.blocks.iter().any(|t| t.expect_exception.is_some());
 
@@ -698,7 +694,7 @@ async fn run_stateless_from_fixture(test: &TestUnit, test_key: &str) -> Result<(
             continue;
         };
 
-        let block: CoreBlock = block_data.clone().into();
+        let block = block_fixture.decoded_block()?;
         let block_number = block.header.number;
 
         // Absent bytes means "expected to succeed"; malformed bytes are a hard error.
@@ -821,7 +817,7 @@ async fn check_witness_generation_against_fixture(
         let expected: RpcExecutionWitness = serde_json::from_value(witness_json.clone())
             .map_err(|e| format!("executionWitness parse failed for {test_key}: {e}"))?;
 
-        let block: CoreBlock = block_data.clone().into();
+        let block = block_fixture.decoded_block()?;
         let block_number = block.header.number;
         let generated_witness = blockchain
             .generate_witness_for_blocks(std::slice::from_ref(&block))
