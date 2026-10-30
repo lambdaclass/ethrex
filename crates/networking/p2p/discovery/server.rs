@@ -240,8 +240,13 @@ impl DiscoveryHandle {
 }
 
 pub struct DiscoveryServer {
-    pub local_node: Node,
-    pub local_node_record: NodeRecord,
+    /// The live local identity, shared with the consumer. Every packet that
+    /// carries our record or its `seq` reads it from here, so an edit made
+    /// through any clone of the slot is what peers see next.
+    pub local_node: SharedLocalNode,
+    /// The identity key never changes, and packet decoding needs the id on
+    /// every packet, so it is kept outside the slot.
+    pub(crate) local_node_id: H256,
     pub(crate) signer: SecretKey,
     pub(crate) udp_socket: Arc<UdpSocket>,
     /// Everything known about nodes we have merely heard of. Plain state: the
@@ -254,8 +259,6 @@ pub struct DiscoveryServer {
     pub ip_predictor: IpPredictor,
     /// When true the user supplied `--nat extip:<addr>` and we must not override it.
     pub(crate) ip_override_locked: bool,
-    /// Live-updated local node identity shared with the RPC layer.
-    pub shared_local_node: SharedLocalNode,
     /// Current EIP-2124 fork id, published by the network layer. `None` inside the
     /// channel means the chain could not supply one yet.
     ///
@@ -281,31 +284,31 @@ impl std::fmt::Debug for DiscoveryServer {
 
 #[actor(protocol = DiscoveryServerProtocol)]
 impl DiscoveryServer {
-    ////// Starts the discovery actor, advertising `local_node_record` as this
-    /// node's ENR, and returns a handle on the running server.
+    /// Starts the discovery actor, advertising the record in `local_node` as
+    /// this node's ENR, and returns a handle on the running server.
+    ///
+    /// `local_node` stays live: the server serves whatever the slot holds when
+    /// a packet goes out, and writes its own changes (IP voting, fork id) back
+    /// into it, so the caller keeps a clone to read or edit the record.
+    /// `signer` must be the key that record is signed with.
     ///
     /// `filter` is what this consumer requires of a discovered peer: every ENR
     /// discovery sees is judged by it. A contact discovered without an ENR is
     /// never screened and stays dialable, so bootnodes are usable before they
     /// have published anything.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "caller-supplied values; bundling them would only hide the call site"
-    )]
     pub async fn spawn(
-        local_node: Node,
-        local_node_record: NodeRecord,
+        local_node: SharedLocalNode,
         signer: SecretKey,
         udp_socket: Arc<UdpSocket>,
         filter: Box<dyn PeerFilter>,
         bootnodes: Vec<Node>,
         config: DiscoveryConfig,
-        shared_local_node: SharedLocalNode,
         fork_id: watch::Receiver<Option<ForkId>>,
     ) -> Result<ActorRef<DiscoveryServer>, DiscoveryServerError> {
         debug!("Starting discovery server");
 
-        let mut contacts = ContactTable::new(local_node.node_id(), config.target_peers, filter);
+        let local_node_id = local_node.load().node.node_id();
+        let mut contacts = ContactTable::new(local_node_id, config.target_peers, filter);
 
         let discv4 = if config.discv4_enabled {
             info!(
@@ -337,8 +340,8 @@ impl DiscoveryServer {
 
         let ip_override_locked = config.nat_extip_set;
         let mut server = Self {
-            local_node: local_node.clone(),
-            local_node_record,
+            local_node,
+            local_node_id,
             signer,
             udp_socket: udp_socket.clone(),
             contacts,
@@ -347,7 +350,6 @@ impl DiscoveryServer {
             config,
             discv4,
             discv5,
-            shared_local_node,
             fork_id,
         };
 
@@ -605,7 +607,7 @@ impl DiscoveryServer {
         if self.discv5.is_none() {
             return;
         }
-        match Discv5Packet::decode(&self.local_node.node_id(), data) {
+        match Discv5Packet::decode(&self.local_node_id, data) {
             Ok(packet) => {
                 let msg = Discv5Message::from(packet, from);
                 let _ = self.discv5_handle_packet(msg).await.inspect_err(
@@ -657,36 +659,31 @@ impl DiscoveryServer {
         if self.ip_override_locked {
             return;
         }
-        if winning_ip == self.local_node.ip {
+        let local_ip = self.local_node.load().node.ip;
+        if winning_ip == local_ip {
             return;
         }
-        if winning_ip.is_ipv4() != self.local_node.ip.is_ipv4() {
+        if winning_ip.is_ipv4() != local_ip.is_ipv4() {
             warn!(
                 predicted_ip = %winning_ip,
-                local_ip = %self.local_node.ip,
+                %local_ip,
                 "Predicted external IP has different address family than local IP, ignoring"
             );
             return;
         }
         info!(
             source,
-            old_ip = %self.local_node.ip,
+            old_ip = %local_ip,
             new_ip = %winning_ip,
             "External IP detected via PONG voting, updating local ENR"
         );
-        update_local_ip(
-            &mut self.local_node,
-            &mut self.local_node_record,
-            &self.signer,
-            winning_ip,
-        );
-        // Propagate to the shared Arc so RPC and shutdown see the current identity.
-        let mut guard = self
-            .shared_local_node
-            .write()
-            .expect("shared_local_node poisoned");
-        guard.node = self.local_node.clone();
-        guard.record = self.local_node_record.clone();
+        // Swapped in, not written over: the consumer may be editing the record
+        // through its own clone of the slot, and neither edit may erase the other.
+        let _ = self.local_node.update(|current| {
+            let mut next = current.clone();
+            update_local_ip(&mut next.node, &mut next.record, &self.signer, winning_ip);
+            Ok(next)
+        });
     }
 
     /// Schedule the next query tick while any predicate query runs. The tick
@@ -728,20 +725,17 @@ impl DiscoveryServer {
         let Some(fork_id) = self.fork_id.borrow_and_update().clone() else {
             return;
         };
-        match self.local_node_record.set_fork_id(fork_id, &self.signer) {
-            Ok(()) => {
+        let updated = self.local_node.update(|current| {
+            let mut next = current.clone();
+            next.record.set_fork_id(fork_id.clone(), &self.signer)?;
+            Ok(next)
+        });
+        match updated {
+            Ok(local) => {
                 info!(
-                    seq = self.local_node_record.seq,
+                    seq = local.record.seq,
                     "Chain crossed a fork; republished the local ENR with the new fork id"
                 );
-                // Mirror the re-signed record into the shared identity, as
-                // apply_predicted_ip does: RPC serves the record from there, and
-                // without this it would keep answering with the pre-fork ENR.
-                let mut guard = self
-                    .shared_local_node
-                    .write()
-                    .expect("shared_local_node poisoned");
-                guard.record = self.local_node_record.clone();
             }
             // A record we cannot sign is worth surfacing: peers that require an `eth`
             // entry keep skipping us until this succeeds.
@@ -788,16 +782,14 @@ impl DiscoveryServer {
         filter: Box<dyn PeerFilter>,
     ) -> Self {
         use crate::types::LocalNode;
-        use std::sync::{Arc, RwLock};
 
         let local_node_id = local_node.node_id();
-        let shared_local_node = Arc::new(RwLock::new(LocalNode {
-            node: local_node.clone(),
-            record: local_node_record.clone(),
-        }));
         Self {
-            local_node,
-            local_node_record,
+            local_node: SharedLocalNode::new(LocalNode {
+                node: local_node,
+                record: local_node_record,
+            }),
+            local_node_id,
             signer,
             udp_socket,
             contacts: ContactTable::new(local_node_id, 10, filter),
@@ -811,7 +803,6 @@ impl DiscoveryServer {
             discv5: Some(Discv5State::default()),
             ip_predictor: IpPredictor::default(),
             ip_override_locked: false,
-            shared_local_node,
             // Tests drive the ENR directly; there is no publisher to listen to. The
             // sender is dropped, so `has_changed` errs and the refresh is a no-op.
             fork_id: watch::channel(None).1,
@@ -829,10 +820,7 @@ mod tests {
     };
     use ethrex_common::H256;
     use secp256k1::SecretKey;
-    use std::{
-        net::Ipv4Addr,
-        sync::{Arc, RwLock},
-    };
+    use std::{net::Ipv4Addr, sync::Arc};
     use tokio::net::UdpSocket;
 
     async fn make_server(ip: IpAddr, ip_override_locked: bool) -> DiscoveryServer {
@@ -842,14 +830,13 @@ mod tests {
         let local_node_id = local_node.node_id();
         let local_node_record =
             NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer).unwrap();
-        let shared_local_node = Arc::new(RwLock::new(LocalNode {
-            node: local_node.clone(),
-            record: local_node_record.clone(),
-        }));
         let udp_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
         DiscoveryServer {
-            local_node,
-            local_node_record,
+            local_node: SharedLocalNode::new(LocalNode {
+                node: local_node,
+                record: local_node_record,
+            }),
+            local_node_id,
             signer,
             udp_socket,
             contacts: ContactTable::new(local_node_id, TARGET_PEERS, Box::new(AcceptAllFilter)),
@@ -865,7 +852,6 @@ mod tests {
             ip_override_locked,
             // No publisher in these tests; the dropped sender makes refresh a no-op.
             fork_id: tokio::sync::watch::channel(None).1,
-            shared_local_node,
         }
     }
 
@@ -889,36 +875,22 @@ mod tests {
         assert!(handle.next_dial_candidate().await.is_none());
     }
 
-    /// apply_predicted_ip from unspecified -> public must update local_node, bump ENR seq,
-    /// and propagate the new identity into the shared Arc.
+    /// apply_predicted_ip from unspecified -> public must update the node, bump ENR seq,
+    /// and land in the shared slot, where every clone of it sees the new identity.
     #[tokio::test]
     async fn apply_predicted_ip_updates_shared_arc() {
         let unspecified = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
         let public_ip: IpAddr = "1.2.3.4".parse().unwrap();
 
         let mut server = make_server(unspecified, false).await;
-        let original_seq = server.local_node_record.seq;
+        let shared = server.local_node.clone();
+        let original_seq = shared.load().record.seq;
 
         server.apply_predicted_ip(public_ip, "test");
 
-        assert_eq!(
-            server.local_node.ip, public_ip,
-            "local_node.ip must be updated"
-        );
-        assert!(
-            server.local_node_record.seq > original_seq,
-            "ENR seq must be bumped"
-        );
-
-        let guard = server.shared_local_node.read().unwrap();
-        assert_eq!(
-            guard.node.ip, public_ip,
-            "shared Arc node.ip must be updated"
-        );
-        assert_eq!(
-            guard.record.seq, server.local_node_record.seq,
-            "shared Arc record.seq must match"
-        );
+        let local = shared.load();
+        assert_eq!(local.node.ip, public_ip, "shared node.ip must be updated");
+        assert!(local.record.seq > original_seq, "ENR seq must be bumped");
     }
 
     /// With ip_override_locked=true (--nat.extip set), apply_predicted_ip is a no-op.
@@ -928,23 +900,53 @@ mod tests {
         let public_ip: IpAddr = "1.2.3.4".parse().unwrap();
 
         let mut server = make_server(unspecified, true).await;
-        let original_seq = server.local_node_record.seq;
+        let original_seq = server.local_node.load().record.seq;
 
         server.apply_predicted_ip(public_ip, "test");
 
+        let local = server.local_node.load();
         assert_eq!(
-            server.local_node.ip, unspecified,
-            "local_node.ip must not change when locked"
+            local.node.ip, unspecified,
+            "node.ip must not change when locked"
         );
         assert_eq!(
-            server.local_node_record.seq, original_seq,
+            local.record.seq, original_seq,
             "ENR seq must not change when locked"
         );
+    }
 
-        let guard = server.shared_local_node.read().unwrap();
+    /// A consumer edit and IP voting both write the slot. Whichever swaps in
+    /// second must build on the first, or the first is silently lost.
+    #[tokio::test]
+    async fn consumer_edit_racing_an_ip_update_keeps_both() {
+        let public_ip: IpAddr = "1.2.3.4".parse().unwrap();
+        let mut server = make_server(IpAddr::V4(Ipv4Addr::UNSPECIFIED), false).await;
+        let signer = server.signer;
+        let consumer = server.local_node.clone();
+        let original_seq = consumer.load().record.seq;
+
+        let mut runs = 0;
+        consumer
+            .edit_record(&signer, |pairs| {
+                runs += 1;
+                // IP voting swaps a record in after the consumer read the slot
+                // and before its own swap, so that swap must fail and retry.
+                if runs == 1 {
+                    server.apply_predicted_ip(public_ip, "test");
+                }
+                pairs.set_extra(b"eth2", vec![0xab; 16]);
+            })
+            .unwrap();
+
+        assert_eq!(runs, 2, "the edit must be retried on the newer record");
+        let local = consumer.load();
+        assert_eq!(local.node.ip, public_ip);
+        assert_eq!(local.record.pairs().ip, Some(Ipv4Addr::new(1, 2, 3, 4)));
         assert_eq!(
-            guard.node.ip, unspecified,
-            "shared Arc must not be updated when locked"
+            local.record.pairs().extra(b"eth2"),
+            Some(vec![0xab; 16].into())
         );
+        assert_eq!(local.record.seq, original_seq + 2, "one bump per edit");
+        assert!(local.record.verify_signature());
     }
 }

@@ -34,12 +34,7 @@ use eyre::OptionExt;
 use secp256k1::SecretKey;
 
 use spawned_concurrency::tasks::ActorRef;
-use std::{
-    fs::read_to_string,
-    path::Path,
-    sync::{Arc, RwLock},
-    time::Duration,
-};
+use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
 use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{info, warn};
@@ -290,10 +285,10 @@ pub async fn init_l2(
     let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
 
     // Build the shared live identity Arc once; threaded into RPC, discovery, and shutdown.
-    let shared_local_node: SharedLocalNode = Arc::new(RwLock::new(LocalNode {
+    let shared_local_node: SharedLocalNode = SharedLocalNode::new(LocalNode {
         node: local_p2p_node.clone(),
         record: local_node_record,
-    }));
+    });
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -469,13 +464,8 @@ pub async fn init_l2(
     cancel_token.cancel();
     if !opts.node_opts.p2p_disabled {
         let peer_handler = peer_handler.ok_or_eyre("Peer handler not initialized")?;
-        // Clone the current (possibly updated) record out and drop the guard.
-        let record = {
-            let guard = shared_local_node
-                .read()
-                .expect("shared_local_node poisoned");
-            guard.record.clone()
-        };
+        // The current record, including any update discovery made since startup.
+        let record = shared_local_node.load().record.clone();
         let node_config = NodeConfigFile::new(peer_handler.peer_table, record).await;
         store_node_config_file(node_config, node_config_path);
     }
@@ -541,10 +531,10 @@ pub async fn init_native_rollup_l2(
     let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
     // No discovery runs on this devnet path, so the shared identity never changes
     // after construction; RPC still reads it through the same Arc as the full node.
-    let shared_local_node: SharedLocalNode = Arc::new(RwLock::new(LocalNode {
+    let shared_local_node: SharedLocalNode = SharedLocalNode::new(LocalNode {
         node: local_p2p_node,
         record: local_node_record,
-    }));
+    });
 
     let tracker = TaskTracker::new();
 

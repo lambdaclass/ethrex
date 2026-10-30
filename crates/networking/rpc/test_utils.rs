@@ -43,7 +43,7 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use secp256k1::SecretKey;
 use serde_json::{Value, value::RawValue};
 use spawned_concurrency::tasks::ActorRef;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashSet, net::SocketAddr, str::FromStr};
 use tokio::sync::Mutex as TokioMutex;
@@ -240,7 +240,7 @@ pub fn example_local_node_record() -> NodeRecord {
 pub fn example_shared_local_node() -> SharedLocalNode {
     let node = example_p2p_node();
     let record = example_local_node_record();
-    Arc::new(RwLock::new(LocalNode { node, record }))
+    SharedLocalNode::new(LocalNode { node, record })
 }
 
 // Util to start an api for testing on ports 8500 and 8501,

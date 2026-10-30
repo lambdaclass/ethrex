@@ -57,6 +57,7 @@ lru.workspace = true
 
 rayon = "1.10.0"
 crossbeam.workspace = true
+arc-swap = "1.9.2"
 
 [dev-dependencies]
 hex-literal.workspace = true
