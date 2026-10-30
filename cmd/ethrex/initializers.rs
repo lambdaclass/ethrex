@@ -718,25 +718,29 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
     (node, network_config)
 }
 
+/// The record this node starts serving from, at a `seq` above every one it
+/// served before: peers only fetch a record again once its `seq` grows.
+///
+/// The record saved at shutdown covers a clean restart. An abrupt one (a crash,
+/// `docker restart -t 0`) skips that save and leaves an older `seq` on disk, so
+/// the current time in milliseconds is the floor: the previous run would have
+/// had to change its record more than once per millisecond of uptime to get
+/// past it. The saved `seq` still wins when the clock is behind it.
 pub fn get_local_node_record(
     datadir: &Path,
     local_p2p_node: &Node,
     signer: &SecretKey,
 ) -> NodeRecord {
-    match read_node_config_file(datadir) {
-        Ok(Some(ref mut config)) => {
-            NodeRecord::from_node(local_p2p_node, config.node_record.seq + 1, signer)
-                .expect("Node record could not be created from local node")
-        }
-        _ => {
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            NodeRecord::from_node(local_p2p_node, timestamp, signer)
-                .expect("Node record could not be created from local node")
-        }
-    }
+    let after_saved = match read_node_config_file(datadir) {
+        Ok(Some(config)) => config.node_record.seq.saturating_add(1),
+        _ => 0,
+    };
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or_default();
+    NodeRecord::from_node(local_p2p_node, after_saved.max(now_ms), signer)
+        .expect("Node record could not be created from local node")
 }
 
 pub fn get_authrpc_socket_addr(opts: &Options) -> SocketAddr {

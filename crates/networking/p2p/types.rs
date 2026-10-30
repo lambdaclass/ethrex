@@ -111,13 +111,6 @@ impl SharedLocalNode {
             current = Guard::into_inner(previous);
         }
     }
-
-    /// Overwrite the identity, whatever it holds. Only for seeding the slot
-    /// before discovery serves from it; anything later goes through
-    /// [`Self::update`] so it cannot erase a concurrent edit.
-    pub(crate) fn replace(&self, local_node: LocalNode) {
-        self.0.store(Arc::new(local_node));
-    }
 }
 
 /// Holds the local node's network addressing configuration, separating the
