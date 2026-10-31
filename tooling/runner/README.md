@@ -2,7 +2,9 @@
 
 You can send a transaction directly to the EVM specifying things like `fork`, `bytecode`, `pre-state` and setting an initial `stack` and `memory` for testing/benchmarking purposes. After execution it will print the final stack and memory, state diff and execution result.
 
-Example Run: `cargo run -- --input input_example.json --code mnemonics_example.txt`
+Example Run, from the repository root: `cargo run -p runner -- --input tooling/runner/input_example.json --code tooling/runner/mnemonics_example.txt`
+
+Paths are relative to the directory you invoke `cargo run` from, not to the package, so keep the `tooling/runner/` prefix when running from the root.
 
 The main runner typically expects 2 inputs:
 - One JSON with fields like the Transaction, Fork, etc. These are all specified in `input_example.json`, you can copy that for you input and make changes.
