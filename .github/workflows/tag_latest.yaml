@@ -92,14 +92,14 @@ jobs:
       NEW_TAG: ${{ needs.resolve.outputs.new_tag }}
     steps:
       - name: Login to Docker registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@v4.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@v4.4.1
 
       - name: Promote RC images to release tags
         run: |
@@ -150,7 +150,7 @@ jobs:
       NEW_TAG: ${{ needs.resolve.outputs.new_tag }}
     steps:
       - name: Login to Docker registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@v4.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -195,7 +195,7 @@ jobs:
       RELEASE_TAG: ${{ github.event.release.tag_name }}
     steps:
       - name: Login to Docker registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@v4.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
