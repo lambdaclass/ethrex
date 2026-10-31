@@ -584,7 +584,7 @@ mod tests {
             Transaction::EIP1559Transaction(eip1559) => {
                 eip1559.signature_r = r;
                 eip1559.signature_s = s;
-                eip1559.signature_y_parity = parity;
+                eip1559.signature_y_parity = U256::from(u8::from(parity));
             }
             _ => unreachable!("only legacy and EIP-1559 test transactions"),
         }
