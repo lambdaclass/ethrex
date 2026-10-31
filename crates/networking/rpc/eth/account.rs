@@ -332,18 +332,12 @@ impl RpcHandler for GetProofRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let storage = &context.storage;
         debug!(
             "Requested proof for account {} at block {} with storage keys: {:?}",
             self.address, self.block, self.storage_keys
         );
-        let (header, _) = resolve_state(&context, &self.block).await?;
-        let Some(account_proof) = storage
-            .get_account_proof(header.state_root, self.address, &self.storage_keys)
-            .await?
-        else {
-            return Err(RpcErr::Internal("Could not get account proof".to_owned()));
-        };
+        let (_, state) = resolve_state(&context, &self.block).await?;
+        let account_proof = state.account_proof(self.address, &self.storage_keys)?;
         let storage_proof = account_proof
             .storage_proof
             .into_iter()
