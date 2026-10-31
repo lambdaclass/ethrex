@@ -98,6 +98,13 @@ pub enum RpcErr {
     InvalidPayload(String),
     #[error("Proof generation unavailable: {0}")]
     ProofGenerationUnavailable(String),
+    /// An error whose code and message the method defines (`eth_simulateV1`, `eth_callBundle`).
+    #[error("{message}")]
+    MethodError {
+        code: i32,
+        message: String,
+        data: Option<String>,
+    },
     /// `-32001: Resource not found`, e.g. a block-access-list getter asked
     /// about a block that predates the Amsterdam fork (execution-apis#851).
     #[error("Resource not found: {0}")]
@@ -219,6 +226,15 @@ impl From<RpcErr> for RpcErrorMetadata {
                     data: None,
                     message: "Auth failed: Missing authentication header".to_string(),
                 },
+            },
+            RpcErr::MethodError {
+                code,
+                message,
+                data,
+            } => RpcErrorMetadata {
+                code,
+                data,
+                message,
             },
             RpcErr::InvalidForkChoiceState(data) => RpcErrorMetadata {
                 code: -38002,

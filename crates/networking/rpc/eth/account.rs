@@ -276,6 +276,27 @@ impl RpcHandler for GetTransactionCountRequest {
     }
 }
 
+/// Maximum number of storage keys accepted in a single `eth_getProof` call, the same
+/// bound `eth_getStorageValues` puts on its slots. Every key costs a storage-trie
+/// walk and a multi-kilobyte proof in the response, and a key can be as short as
+/// `"0x"`, so without a cap one request body could ask for hundreds of thousands
+/// of proofs and have them all held in memory at once.
+pub(crate) const MAX_PROOF_STORAGE_KEYS: usize = 1024;
+
+/// The storage keys an `eth_getProof` request asks for, 0 for any other method or
+/// for keys that do not parse (the call itself then fails). Batches use it to hold
+/// all their proofs to [`MAX_PROOF_STORAGE_KEYS`] together, not just each call.
+pub(crate) fn proof_storage_key_count(req: &crate::utils::RpcRequest) -> usize {
+    if req.method != "eth_getProof" {
+        return 0;
+    }
+    req.params
+        .as_deref()
+        .and_then(|params| params.get(1))
+        .and_then(|keys| serde_json::from_str::<Vec<serde::de::IgnoredAny>>(keys.get()).ok())
+        .map_or(0, |keys| keys.len())
+}
+
 impl RpcHandler for GetProofRequest {
     fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
@@ -287,6 +308,11 @@ impl RpcHandler for GetProofRequest {
         };
         let raw_keys: Vec<String> = serde_json::from_str(params[1].get())
             .map_err(|error| RpcErr::InvalidParams(format!("invalid storage keys: {error}")))?;
+        if raw_keys.len() > MAX_PROOF_STORAGE_KEYS {
+            return Err(RpcErr::LimitExceeded(format!(
+                "too many storage keys (max {MAX_PROOF_STORAGE_KEYS})"
+            )));
+        }
         let (storage_keys, storage_key_echoes) = raw_keys
             .iter()
             .map(|key| parse_storage_key(key))
@@ -841,6 +867,24 @@ mod tests {
                 padded_ab
             ]
         );
+    }
+
+    #[test]
+    fn get_proof_parse_accepts_the_storage_key_cap() {
+        let keys = vec!["0x"; MAX_PROOF_STORAGE_KEYS];
+        let request = GetProofRequest::parse(&proof_params(json!(keys))).unwrap();
+        assert_eq!(request.storage_keys.len(), MAX_PROOF_STORAGE_KEYS);
+    }
+
+    #[test]
+    fn get_proof_parse_rejects_more_storage_keys_than_the_cap() {
+        // `"0x"` is a valid key, so a request body this size could otherwise
+        // carry hundreds of thousands of them.
+        let keys = vec!["0x"; MAX_PROOF_STORAGE_KEYS + 1];
+        assert!(matches!(
+            GetProofRequest::parse(&proof_params(json!(keys))),
+            Err(RpcErr::LimitExceeded(ref msg)) if msg.contains("too many storage keys")
+        ));
     }
 
     #[test]

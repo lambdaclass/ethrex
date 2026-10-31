@@ -3,3 +3,10 @@ self-hosted-runner:
   labels:
     - gpu
     - ethrex-sync
+paths:
+  .github/workflows/**/*.{yml,yaml}:
+    ignore:
+      # Same-repository actions (`uses: $/…`, from `gh actions-lock`) run at
+      # the workflow's own commit, so they take no `@ref`. actionlint 1.7.12
+      # doesn't know the syntax yet and reports a missing ref.
+      - 'specifying action "\$/.+" in invalid format because ref is missing'

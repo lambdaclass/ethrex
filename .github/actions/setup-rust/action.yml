@@ -94,7 +94,7 @@ runs:
     # `workspaces` covers only the repo root, so the ef_tests, reorgs, loc and
     # hive_report builds were never cached at all.
     - name: Add Rust Cache
-      uses: Swatinem/rust-cache@v2
+      uses: Swatinem/rust-cache@v2.9.3
       with:
         shared-key: ${{ steps.rustver.outputs.shared_key }}
         key: ${{ steps.rustver.outputs.image_family }}

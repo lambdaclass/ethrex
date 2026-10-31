@@ -139,6 +139,7 @@ fn environment() -> Environment {
         disable_gas_allowance_check: false,
         disable_sender_eoa_check: false,
         disable_execution_gas_cap: false,
+        trace_eth_transfers: false,
         is_system_call: false,
     }
 }
