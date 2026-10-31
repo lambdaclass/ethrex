@@ -23,7 +23,8 @@ LEGACYTEST_ARCHIVE_ROOT := legacytests-$(LEGACYTEST_COMMIT)/Cancun/BlockchainTes
 # and that base must match `.fixtures_url` above: when the two drift, the bundles
 # describe slightly different chains. The zkevm line shares the base's major and
 # minor numbers but ships patch releases of its own, so a zkevm-only bump such as
-# v21.0.1, on the unchanged tests@v21.0.0 base, leaves `.fixtures_url` alone.
+# v21.0.1, on the unchanged tests@v21.0.0 base, leaves `.fixtures_url` alone,
+# while v21.0.6, filled from tests@v21.0.1, moves both pins together.
 # Both bundles extract a `for_amsterdam/` subtree, so we keep the zkevm bundle in
 # a separate root that only the stateless harness reads, to avoid overlaying the
 # regular Amsterdam fixtures.

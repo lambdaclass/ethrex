@@ -312,7 +312,7 @@ Contents:
 
 ```
 # .fixtures_url
-https://github.com/ethereum/execution-specs/releases/download/tests%40v21.0.0/fixtures.tar.gz
+https://github.com/ethereum/execution-specs/releases/download/tests%40v21.0.1/fixtures.tar.gz
 ```
 
 The CI hive config lives in `.github/config/hive/{mainnet,amsterdam}.yaml`, each pinning a `fixtures` URL and an `eels_commit` (the execution-specs commit used to build the hive consumer).

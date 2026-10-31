@@ -420,19 +420,24 @@ impl Blockchain {
     /// Attempts to fetch a payload given it's id. If the payload is still being built, it will be finished.
     /// Fails if there is no payload or active payload build task for the given id.
     pub async fn get_payload(&self, payload_id: u64) -> Result<PayloadBuildResult, ChainError> {
-        let mut payloads = self.payloads.lock().await;
-        // Find the given payload and finish the active build process if needed
-        let idx = payloads
-            .iter()
-            .position(|(id, _)| id == &payload_id)
-            .ok_or(ChainError::UnknownPayload)?;
-        let finished_payload = (payload_id, payloads.remove(idx).1.to_payload().await?);
-        payloads.insert(idx, finished_payload);
-        // Return the held payload
-        match &payloads[idx].1 {
-            PayloadOrTask::Payload(payload) => Ok(*payload.clone()),
-            _ => unreachable!("we already converted the payload into a finished version"),
-        }
+        let payloads = self.payloads.clone();
+        tokio::spawn(async move {
+            let mut payloads = payloads.lock().await;
+            // Find the given payload and finish the active build process if needed
+            let idx = payloads
+                .iter()
+                .position(|(id, _)| id == &payload_id)
+                .ok_or(ChainError::UnknownPayload)?;
+            let finished_payload = (payload_id, payloads.remove(idx).1.to_payload().await?);
+            payloads.insert(idx, finished_payload);
+            // Return the held payload
+            match &payloads[idx].1 {
+                PayloadOrTask::Payload(payload) => Ok(*payload.clone()),
+                _ => unreachable!("we already converted the payload into a finished version"),
+            }
+        })
+        .await
+        .map_err(|_| ChainError::Custom("Failed to join get_payload task".to_string()))?
     }
 
     /// Starts a payload build process. The built payload can be retrieved by calling `get_payload`.
@@ -715,8 +720,9 @@ impl Blockchain {
             }
         }
 
-        // EIP-7928: Post-tx phase uses index n+1 for both requests and withdrawals.
-        // Order must match geth: requests (system calls) BEFORE withdrawals.
+        // EIP-7928: Post-tx phase uses index n+1 for both withdrawals and requests.
+        // Withdrawals precede the request system calls, as on block import; see the
+        // ordering note in `LEVM::execute_block`.
         if !state_test
             && context
                 .chain_config()
@@ -738,6 +744,7 @@ impl Blockchain {
         // set matching EELS, and reports the failure as a block exception.
         let mut block_exception = None;
         if !state_test {
+            self.apply_withdrawals(&mut context)?;
             if let Err(error) = self.extract_requests(&mut context) {
                 block_exception = Some(error.to_string());
                 context.requests = context
@@ -745,7 +752,6 @@ impl Blockchain {
                     .is_prague_activated(context.payload.header.timestamp)
                     .then_some(Vec::new());
             }
-            self.apply_withdrawals(&mut context)?;
         }
         self.finalize_payload(&mut context)?;
 
@@ -774,8 +780,9 @@ impl Blockchain {
             None => self.fill_transactions(&mut context)?,
             Some(transactions) => self.fill_explicit_transactions(&mut context, transactions)?,
         }
-        // EIP-7928: Post-tx phase uses index n+1 for both requests and withdrawals.
-        // Order must match geth: requests (system calls) BEFORE withdrawals.
+        // EIP-7928: Post-tx phase uses index n+1 for both withdrawals and requests.
+        // Withdrawals precede the request system calls, as on block import; see the
+        // ordering note in `LEVM::execute_block`.
         if context
             .chain_config()
             .is_amsterdam_activated(context.payload.header.timestamp)
@@ -790,8 +797,8 @@ impl Blockchain {
                 recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
             }
         }
-        self.extract_requests(&mut context)?;
         self.apply_withdrawals(&mut context)?;
+        self.extract_requests(&mut context)?;
         self.finalize_payload(&mut context)?;
 
         let interval = Instant::now().duration_since(since).as_millis();

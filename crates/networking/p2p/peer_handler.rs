@@ -1008,7 +1008,7 @@ impl PeerHandler {
             }
         }
 
-        warn!("[SYNCING] no snap/2 peer served block access lists");
+        debug!("[SYNCING] no snap/2 peer served block access lists");
         Ok(None)
     }
 

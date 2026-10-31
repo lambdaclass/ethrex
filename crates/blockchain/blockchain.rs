@@ -42,6 +42,7 @@
 //! blockchain.add_transaction_to_mempool(tx).await?;
 //! ```
 
+pub mod call_bundle;
 pub mod constants;
 pub mod error;
 pub mod fork_choice;
@@ -50,6 +51,7 @@ pub mod mempool;
 pub mod payload;
 pub mod prewarm;
 pub mod sampling;
+pub mod simulate;
 pub mod stateless;
 pub mod tracing;
 pub mod vm;
@@ -69,6 +71,7 @@ use ethrex_common::constants::{
 use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
 use crate::vm::{OverlaidVmDatabase, StateOverride, precompile_moves};
+use ethrex_common::seeded_hash::{SeededHashMap, SeededHashSet};
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::EIP4844Transaction;
 #[cfg(feature = "c-kzg")]
@@ -496,7 +499,7 @@ enum WorkerRequest {
     ProcessAccount {
         prefix: H256,
         info: Option<AccountInfo>,
-        storage: FxHashMap<H256, U256>,
+        storage: SeededHashMap<H256, U256>,
         removed: bool,
         removed_storage: bool,
     },
@@ -939,7 +942,7 @@ impl Blockchain {
         // executor (see `bal_parallel_exec_enabled` below) streams per-tx
         // updates over the channel, which only the streaming merkleizer
         // consumes — the synthesized path would leave the receiver dropped.
-        let optimistic_updates: Option<FxHashMap<Address, BalSynthesisItem>> =
+        let optimistic_updates: Option<SeededHashMap<Address, BalSynthesisItem>> =
             if self.options.bal_parallel_trie_enabled && !collect_witness {
                 bal.as_deref().map(synthesize_bal_updates)
             } else {
@@ -1439,11 +1442,11 @@ impl Blockchain {
 
             // Coordination runs on the calling thread, concurrently with pool tasks.
             let mut code_updates: Vec<(H256, Code)> = vec![];
-            let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
+            let mut hashed_address_cache: SeededHashMap<Address, H256> = Default::default();
             let mut has_storage: FxHashSet<H256> = Default::default();
 
-            let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
-                collect_witness.then(FxHashMap::default);
+            let mut accumulator: Option<SeededHashMap<Address, AccountUpdate>> =
+                collect_witness.then(SeededHashMap::default);
 
             for updates in rx {
                 let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
@@ -1594,7 +1597,7 @@ impl Blockchain {
     )]
     fn handle_merkleization_bal_from_updates(
         &self,
-        prepared: FxHashMap<Address, BalSynthesisItem>,
+        prepared: SeededHashMap<Address, BalSynthesisItem>,
         parent_header: &BlockHeader,
     ) -> Result<AccountUpdatesList, StoreError> {
         const NUM_WORKERS: usize = 16;
@@ -2122,22 +2125,11 @@ impl Blockchain {
                 }
             }
 
-            // Store all the accessed evm bytecodes. `code_accessed` records one entry
-            // per read, and a contract read for both its bytecode and its length is
-            // recorded twice, so dedup before embedding: a repeated hash would put the
-            // same (up to 24KB) bytecode in the witness more than once.
-            let accessed_codes: Vec<H256> = {
-                let accessed = logger.code_accessed.lock().map_err(|_e| {
+            // Store all the accessed evm bytecodes, each once.
+            let accessed_codes =
+                unique_code_hashes(&logger.code_accessed.lock().map_err(|_e| {
                     ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
-                })?;
-                let mut seen =
-                    FxHashSet::with_capacity_and_hasher(accessed.len(), Default::default());
-                accessed
-                    .iter()
-                    .copied()
-                    .filter(|h| seen.insert(*h))
-                    .collect()
-            };
+                })?);
             for code_hash in &accessed_codes {
                 let code = self
                     .storage
@@ -2395,21 +2387,10 @@ impl Blockchain {
             }
         }
 
-        // Store all the accessed evm bytecodes. `code_accessed` records one entry
-        // per read, and a contract read for both its bytecode and its length is
-        // recorded twice, so dedup before embedding: a repeated hash would put the
-        // same (up to 24KB) bytecode in the witness more than once.
-        let accessed_codes: Vec<H256> = {
-            let accessed = logger.code_accessed.lock().map_err(|_e| {
-                ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
-            })?;
-            let mut seen = FxHashSet::with_capacity_and_hasher(accessed.len(), Default::default());
-            accessed
-                .iter()
-                .copied()
-                .filter(|h| seen.insert(*h))
-                .collect()
-        };
+        // Store all the accessed evm bytecodes, each once.
+        let accessed_codes = unique_code_hashes(&logger.code_accessed.lock().map_err(|_e| {
+            ChainError::WitnessGeneration("Failed to gather used bytecodes".to_string())
+        })?);
         for code_hash in &accessed_codes {
             let code = self
                 .storage
@@ -3509,42 +3490,54 @@ impl Blockchain {
         self.mempool.remove_transaction(hash)
     }
 
-    /// Remove all transactions in the executed block from the pool (if we have them)
+    /// Remove all transactions in the executed block from the pool (if we have them), and note
+    /// them as included so peers that announced them are not expected to still serve them.
     pub fn remove_block_transactions_from_pool(&self, block: &Block) -> Result<(), StoreError> {
-        for tx in &block.body.transactions {
-            self.mempool.remove_transaction(&tx.hash(&NativeCrypto))?;
+        let hashes: Vec<H256> = block
+            .body
+            .transactions
+            .iter()
+            .map(|tx| tx.hash(&NativeCrypto))
+            .collect();
+        for hash in &hashes {
+            self.mempool.remove_transaction(hash)?;
         }
-        Ok(())
+        self.mempool.note_included_txs(hashes)
     }
 
-    /// Drop blob txs with nonce below the sender's on-chain nonce at `head_hash`.
-    /// Per-block pruning only covers the head block, so stale blob txs from
-    /// non-head canonical blocks leak in and are never evicted (value/nonce
-    /// eviction pins low nonces). Resetting against on-chain nonces clears them.
-    pub async fn remove_stale_blob_txs(&self, head_hash: BlockHash) -> Result<(), StoreError> {
-        let blob_txs = self.mempool.blob_txs()?;
-        if blob_txs.is_empty() {
+    /// Drop pool txs with nonce below the sender's on-chain nonce at `head`.
+    /// Per-block pruning only removes the head block's txs by hash, so txs mined
+    /// in non-head canonical blocks (the head jumped more than one block) and
+    /// txs that lost to a same-nonce replacement stay pooled, can never be
+    /// included, and fill the pool until it rejects gapped-nonce txs (blob txs
+    /// are also pinned by value/nonce eviction). Resetting against on-chain
+    /// nonces clears them.
+    ///
+    /// L1 only: L2 privileged txs don't use the account nonce, so their nonce
+    /// says nothing about whether they are stale.
+    pub fn remove_stale_txs(&self, head: &BlockHeader) -> Result<(), StoreError> {
+        let lowest_nonces = self.mempool.lowest_nonce_by_sender()?;
+        if lowest_nonces.is_empty() {
             return Ok(());
         }
-        // Cache on-chain nonce per sender to avoid repeated state reads.
-        let mut nonce_by_sender: HashMap<Address, u64> = HashMap::new();
-        for (hash, sender, tx_nonce) in blob_txs {
-            let state_nonce = match nonce_by_sender.entry(sender) {
-                Entry::Occupied(e) => *e.get(),
-                Entry::Vacant(e) => {
-                    let nonce = self
-                        .storage
-                        .get_account_info_by_hash(head_hash, sender)?
-                        .map(|info| info.nonce)
-                        .unwrap_or(0);
-                    *e.insert(nonce)
-                }
-            };
-            if tx_nonce < state_nonce {
-                self.mempool.remove_transaction(&hash)?;
-            }
+        let senders: Vec<Address> = lowest_nonces.iter().map(|(sender, _)| *sender).collect();
+        let accounts = self
+            .storage
+            .get_account_states_batch_by_root(head.state_root, &senders)?;
+        // Only take the pool's write lock for senders that hold stale txs. A
+        // missing account has nonce 0, so none of its txs are stale.
+        let stale: Vec<(Address, u64)> = lowest_nonces
+            .into_iter()
+            .zip(accounts)
+            .filter_map(|((sender, lowest_nonce), account)| {
+                let account_nonce = account?.nonce;
+                (lowest_nonce < account_nonce).then_some((sender, account_nonce))
+            })
+            .collect();
+        if stale.is_empty() {
+            return Ok(());
         }
-        Ok(())
+        self.mempool.remove_txs_below_nonce(&stale)
     }
 
     /// Re-simulate pending frame transactions (EIP-8141) whose validity may have
@@ -4993,6 +4986,19 @@ pub fn new_evm<D: VmDatabase + 'static>(
     Ok(evm)
 }
 
+/// The code hashes in `accessed`, each once, in the order they were first read. The logger
+/// records one entry per read, and a contract read for both its bytecode and its length is
+/// recorded twice; a repeated hash would put the same (up to 24KB) bytecode in a witness more
+/// than once. Seeded: a deployer can grind its code hash into a chosen bucket.
+fn unique_code_hashes(accessed: &[H256]) -> Vec<H256> {
+    let mut seen = SeededHashSet::with_capacity_and_hasher(accessed.len(), Default::default());
+    accessed
+        .iter()
+        .copied()
+        .filter(|hash| seen.insert(*hash))
+        .collect()
+}
+
 /// Attach the stateless validator to an `Evm` so its `EXECUTE` precompile
 /// can delegate to `verify_stateless_new_payload` when processing native-rollup
 /// `advance()` calls.
@@ -5003,7 +5009,6 @@ pub fn new_evm<D: VmDatabase + 'static>(
 /// callers that build `Evm::new_for_l1` without blockchain access (the
 /// guest-program crate, the stateless verifier itself, witness generation,
 /// the prover backend) also rely on the constructor staying validator-less.
-///
 fn attach_stateless_validator(evm: &mut Evm) {
     evm.stateless_validator = Some(Arc::new(stateless::StatelessExecutor {
         crypto: Arc::new(NativeCrypto),
@@ -5315,6 +5320,13 @@ mod tests {
     };
     use ethrex_storage::EngineType;
     use std::path::Path;
+
+    #[test]
+    fn unique_code_hashes_keeps_the_first_read_of_each_hash() {
+        let [a, b, c] = [1, 2, 3].map(H256::from_low_u64_be);
+        assert_eq!(unique_code_hashes(&[b, a, b, c, a, b]), vec![b, a, c]);
+        assert!(unique_code_hashes(&[]).is_empty());
+    }
 
     async fn build_test_blockchain_with_one_block() -> (Blockchain, Vec<Block>) {
         let genesis_path = Path::new(concat!(

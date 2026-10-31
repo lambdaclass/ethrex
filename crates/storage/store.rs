@@ -25,6 +25,7 @@ use crate::{
 
 use ethrex_common::{
     Address, H256, U256,
+    seeded_hash::{SeededHashSet, SeededState},
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
         BlockNumber, ChainConfig, Code, CodeMetadata, ForkId, Genesis, GenesisAccount, Index,
@@ -38,13 +39,13 @@ use ethrex_crypto::{NativeCrypto, keccak::keccak_hash};
 use ethrex_rlp::{
     decode::{RLPDecode, decode_bytes, decode_rlp_item},
     encode::RLPEncode,
+    error::RLPDecodeError,
 };
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
 use ethrex_trie::{Node, NodeRLP};
 use indexmap::IndexMap;
 use lru::LruCache;
 use rayon::prelude::*;
-use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, HashSet, hash_map::Entry},
@@ -337,8 +338,11 @@ const CODE_CACHE_ENTRY_OVERHEAD: u64 = 160;
 /// use, so the hit rate collapses to zero. A random victim has no such pathology: with
 /// a set 1.25x the budget about 62% of the reads still hit, and the hit rate shrinks
 /// gradually as the set grows instead of falling off a cliff.
+///
+/// Seeded: entries outlive the block that loaded them, and a deployer can grind its code
+/// hash into a chosen bucket (see `ethrex_common::seeded_hash`).
 struct CodeCache {
-    entries: IndexMap<H256, Code, FxBuildHasher>,
+    entries: IndexMap<H256, Code, SeededState>,
     cache_size: u64,
     max_size: u64,
     /// xorshift64* state; seeded per process so the victims cannot be predicted.
@@ -466,8 +470,9 @@ pub struct Store {
     ///
     /// Bounded: `EXTCODESIZE` reads this on the execution path, so an unbounded map
     /// would grow by one entry per distinct contract ever asked for a length and never
-    /// give the memory back. See [`CODE_METADATA_CACHE_MAX_ENTRIES`].
-    code_metadata_cache: Arc<Mutex<LruCache<H256, CodeMetadata, FxBuildHasher>>>,
+    /// give the memory back. See [`CODE_METADATA_CACHE_MAX_ENTRIES`]. Seeded, like
+    /// [`CodeCache`].
+    code_metadata_cache: Arc<Mutex<LruCache<H256, CodeMetadata, SeededState>>>,
 
     /// Serializes concurrent `forkchoice_update` callers so that the cache
     /// update and the DB write transaction remain mutually ordered.
@@ -1595,12 +1600,14 @@ impl Store {
         block_hash: H256,
         index: u64,
     ) -> Result<Option<Transaction>, StoreError> {
-        let block_body = match self.get_block_body_by_hash(block_hash).await? {
-            Some(body) => body,
-            None => return Ok(None),
-        };
         let index: usize = index.try_into()?;
-        Ok(block_body.transactions.get(index).cloned())
+        if let Some(transaction) = self.buffer()?.get_transaction(&block_hash, index) {
+            return Ok(transaction);
+        }
+        let Some(body) = self.read_async(BODIES, block_hash.encode_to_vec()).await? else {
+            return Ok(None);
+        };
+        Ok(decode_body_transaction(&body, index)?)
     }
 
     pub async fn get_block_by_hash(
@@ -2511,7 +2518,7 @@ impl Store {
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(LruCache::with_hasher(
                 NonZeroUsize::new(CODE_METADATA_CACHE_MAX_ENTRIES).unwrap_or(NonZeroUsize::MIN),
-                FxBuildHasher,
+                SeededState::default(),
             ))),
             fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
             safe_commit_root,
@@ -2903,7 +2910,14 @@ impl Store {
 
         let state_root = state_trie.hash_no_commit(&NativeCrypto);
 
-        for update in account_updates.iter() {
+        // Apply in address order. The guest replays these same updates on the nodes recorded
+        // here, and the nodes a removal reads depend on what was inserted before it: a branch
+        // left with one child loads that child. Both lists are built from seeded maps, so
+        // only a sort keeps the two sides touching the same nodes.
+        let mut ordered: Vec<&AccountUpdate> = account_updates.iter().collect();
+        ordered.sort_unstable_by_key(|update| update.address);
+
+        for update in ordered {
             let hashed_address = hash_address(&update.address);
 
             if update.removed {
@@ -3338,12 +3352,32 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        let account_hash = hash_address_fixed(&address);
-
         // Pre-acquire shared resources once for both trie opens
         let read_view = self.backend.begin_read()?;
         let cache = self.gated_snapshot(state_root)?;
         let last_written = self.last_written()?;
+        self.storage_at_with(
+            state_root,
+            address,
+            storage_key,
+            read_view,
+            cache,
+            last_written,
+        )
+    }
+
+    /// [`Self::get_storage_at_root`] over resources the caller already holds,
+    /// such as a [`StateView`]'s.
+    fn storage_at_with(
+        &self,
+        state_root: H256,
+        address: Address,
+        storage_key: H256,
+        read_view: Arc<dyn StorageReadView>,
+        cache: Arc<TrieLayerCache>,
+        last_written: Vec<u8>,
+    ) -> Result<Option<U256>, StoreError> {
+        let account_hash = hash_address_fixed(&address);
         // While a deep-reorg overlay serves this root, flat-KV reads must
         // go through the trie: journal entries written while the FKV generator was
         // running lack pre-images for keys past the generator frontier, so disk
@@ -4100,10 +4134,9 @@ impl Store {
                 value: U256::zero(),
             }));
         }
-        let account = account_opt.unwrap_or_default();
         let account_proof = AccountProof {
             proof,
-            account,
+            account: account_opt,
             storage_proof,
         };
         Ok(Some(account_proof))
@@ -4422,14 +4455,39 @@ impl Store {
             return Ok(true);
         }
         let trie = self.open_state_trie(state_root)?;
-        // NOTE: here we hash the root because the trie doesn't check the state root is correct
-        let Some(root) = trie.db().get(Nibbles::default())? else {
-            return Ok(false);
-        };
-        let root_hash = ethrex_trie::Node::decode(&root)?
-            .compute_hash(&NativeCrypto)
-            .finalize(&NativeCrypto);
-        Ok(state_root == root_hash)
+        trie_holds_root(&trie, state_root)
+    }
+
+    /// Opens a [`StateView`] of `state_root`, or `None` when the node does not
+    /// hold that state.
+    pub fn state_view(&self, state_root: H256) -> Result<Option<StateView>, StoreError> {
+        // The order matters. The flat-key-value frontier only moves forward while
+        // it is generated, so reading it before the snapshot never has reads skip
+        // the trie for keys the snapshot has no flat value for yet. A commit
+        // writes the disk before it drops the committed layer from the cache, so
+        // taking the snapshot before the cache can pair an older disk with a newer
+        // cache, where the root then reads as not held, but never a newer disk with
+        // layers it has already absorbed, which would answer with newer state.
+        let last_written = self.last_written()?;
+        let read_view = self.backend.begin_snapshot_read()?;
+        let cache = self.gated_snapshot(state_root)?;
+        let state_trie = self.open_state_trie_shared(
+            state_root,
+            read_view.clone(),
+            cache.clone(),
+            last_written.clone(),
+        )?;
+        if state_root != EMPTY_TRIE_HASH && !trie_holds_root(&state_trie, state_root)? {
+            return Ok(None);
+        }
+        Ok(Some(StateView {
+            store: self.clone(),
+            state_root,
+            read_view,
+            cache,
+            last_written,
+            state_trie,
+        }))
     }
 
     // ===========================================================================
@@ -5189,6 +5247,59 @@ impl PendingTrieRoots {
     }
 }
 
+/// Whether `trie`, opened at `state_root`, actually holds that root: opening a
+/// trie does not check it, and the path-keyed disk answers for any root.
+fn trie_holds_root(trie: &Trie, state_root: H256) -> Result<bool, StoreError> {
+    let Some(root) = trie.db().get(Nibbles::default())? else {
+        return Ok(false);
+    };
+    let root_hash = ethrex_trie::Node::decode(&root)?
+        .compute_hash(&NativeCrypto)
+        .finalize(&NativeCrypto);
+    Ok(state_root == root_hash)
+}
+
+/// One block's state, read from a database snapshot and trie layer cache taken
+/// together (see [`Store::state_view`]), so that a commit that lands while it is
+/// read can neither prune it nor show newer state through it.
+pub struct StateView {
+    store: Store,
+    state_root: H256,
+    read_view: Arc<dyn StorageReadView>,
+    cache: Arc<TrieLayerCache>,
+    last_written: Vec<u8>,
+    state_trie: Trie,
+}
+
+impl StateView {
+    /// The state root this view reads.
+    pub fn state_root(&self) -> H256 {
+        self.state_root
+    }
+
+    /// The account at `address`, or `None` if it does not exist in this state.
+    pub fn account_state(&self, address: Address) -> Result<Option<AccountState>, StoreError> {
+        self.store
+            .get_account_state_from_trie(&self.state_trie, address)
+    }
+
+    /// The value of `address`'s storage slot `storage_key`, or `None` if unset.
+    pub fn storage_at(
+        &self,
+        address: Address,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        self.store.storage_at_with(
+            self.state_root,
+            address,
+            storage_key,
+            self.read_view.clone(),
+            self.cache.clone(),
+            self.last_written.clone(),
+        )
+    }
+}
+
 /// Build the trie diff-layer, RCU-swap it into `trie_cache`, then clear the
 /// pending root. Swap MUST precede the clear so a woken reader sees the layer.
 /// On swap failure the root is still cleared so gated readers error, not deadlock.
@@ -5407,7 +5518,7 @@ fn commit_to_disk(
     // "absent at pivot" semantics.
     let extra_writes: Vec<(Vec<u8>, Vec<u8>)> = match &overlay_for_reconciliation {
         Some(overlay) => {
-            let layer_keys: rustc_hash::FxHashSet<&Vec<u8>> = committed_layers
+            let layer_keys: SeededHashSet<&Vec<u8>> = committed_layers
                 .iter()
                 .flat_map(|l| l.nodes.iter().map(|(k, _)| k))
                 .collect();
@@ -5865,7 +5976,8 @@ fn state_trie_locked_backend(
 
 pub struct AccountProof {
     pub proof: Vec<NodeRLP>,
-    pub account: AccountState,
+    /// `None` when the account is absent from the state trie.
+    pub account: Option<AccountState>,
     pub storage_proof: Vec<StorageSlotProof>,
 }
 
@@ -6136,6 +6248,153 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     {
         let _ = path;
         None
+    }
+}
+
+/// Decodes only the transaction at `index` of an RLP-encoded block body, or
+/// `None` if the body has fewer transactions. The transactions before it are
+/// skipped over by their RLP length prefix rather than decoded, so reading one
+/// transaction does not cost decoding the whole body.
+fn decode_body_transaction(
+    body_rlp: &[u8],
+    index: usize,
+) -> Result<Option<Transaction>, RLPDecodeError> {
+    let (is_list, body, _) = decode_rlp_item(body_rlp)?;
+    if !is_list {
+        return Err(RLPDecodeError::UnexpectedString);
+    }
+    let (is_list, mut transactions, _) = decode_rlp_item(body)?;
+    if !is_list {
+        return Err(RLPDecodeError::UnexpectedString);
+    }
+    for _ in 0..index {
+        if transactions.is_empty() {
+            return Ok(None);
+        }
+        (_, _, transactions) = decode_rlp_item(transactions)?;
+    }
+    if transactions.is_empty() {
+        return Ok(None);
+    }
+    let (transaction, _) = Transaction::decode_unfinished(transactions)?;
+    Ok(Some(transaction))
+}
+
+#[cfg(test)]
+mod body_transaction_tests {
+    use super::*;
+    use ethrex_common::types::{EIP1559Transaction, LegacyTransaction, TxKind, Withdrawal};
+
+    fn transactions() -> Vec<Transaction> {
+        (0..6u64)
+            .map(|nonce| {
+                if nonce % 2 == 0 {
+                    // Legacy transactions are encoded as RLP lists in a body.
+                    Transaction::LegacyTransaction(LegacyTransaction {
+                        nonce,
+                        gas: 21_000,
+                        to: TxKind::Call(Address::repeat_byte(nonce as u8)),
+                        data: vec![nonce as u8; 60 * nonce as usize].into(),
+                        v: U256::from(27),
+                        r: U256::from(nonce + 1),
+                        s: U256::from(nonce + 2),
+                        ..Default::default()
+                    })
+                } else {
+                    // Typed transactions are encoded as RLP strings in a body.
+                    Transaction::EIP1559Transaction(EIP1559Transaction {
+                        chain_id: 1,
+                        nonce,
+                        gas_limit: 21_000,
+                        to: TxKind::Create,
+                        data: vec![nonce as u8; 60 * nonce as usize].into(),
+                        signature_r: U256::from(nonce + 1),
+                        signature_s: U256::from(nonce + 2),
+                        ..Default::default()
+                    })
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn decodes_the_same_transaction_as_the_whole_body() {
+        let withdrawal = Withdrawal {
+            index: 1,
+            validator_index: 2,
+            address: Address::repeat_byte(3),
+            amount: 4,
+        };
+        for withdrawals in [None, Some(vec![withdrawal])] {
+            let body = BlockBody {
+                transactions: transactions(),
+                ommers: vec![],
+                withdrawals,
+            };
+            let rlp = body.encode_to_vec();
+            let decoded = BlockBody::decode(&rlp).unwrap();
+            for (index, expected) in decoded.transactions.iter().enumerate() {
+                let transaction = decode_body_transaction(&rlp, index).unwrap().unwrap();
+                assert_eq!(transaction.encode_to_vec(), expected.encode_to_vec());
+                assert_eq!(
+                    transaction.hash(&NativeCrypto),
+                    expected.hash(&NativeCrypto)
+                );
+            }
+            assert!(
+                decode_body_transaction(&rlp, decoded.transactions.len())
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn a_body_without_transactions_has_none() {
+        let rlp = BlockBody::default().encode_to_vec();
+        assert!(decode_body_transaction(&rlp, 0).unwrap().is_none());
+        assert!(decode_body_transaction(&rlp, 3).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn reads_a_stored_transaction_by_location() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let block = Block::new(
+            BlockHeader {
+                number: 1,
+                ..Default::default()
+            },
+            BlockBody {
+                transactions: transactions(),
+                ommers: vec![],
+                withdrawals: None,
+            },
+        );
+        let hash = block.hash();
+        let expected = block.body.transactions.clone();
+        store.add_block(block).await.unwrap();
+        for (index, transaction) in expected.iter().enumerate() {
+            let stored = store
+                .get_transaction_by_location(hash, index as u64)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(stored.encode_to_vec(), transaction.encode_to_vec());
+        }
+        assert!(
+            store
+                .get_transaction_by_location(hash, expected.len() as u64)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .get_transaction_by_location(H256::repeat_byte(9), 0)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 }
 
@@ -8688,5 +8947,59 @@ mod witness_pruning_tests {
         assert!(kept(4, fork(1)));
         assert!(kept(MAX_WITNESSES + 1, fork(1)));
         assert!(kept(MAX_WITNESSES + 3, fork(1)));
+    }
+}
+
+#[cfg(test)]
+mod state_view_tests {
+    use super::*;
+
+    /// Writes `address` with `nonce` into the on-disk state trie at `root` and
+    /// returns the new root. Like a commit, it rewrites the path-keyed disk in
+    /// place, so the previous root's nodes are gone afterwards.
+    fn write_account_nonce(store: &Store, root: H256, address: Address, nonce: u64) -> H256 {
+        let mut trie = store.open_direct_state_trie(root).unwrap();
+        let account = AccountState {
+            nonce,
+            ..Default::default()
+        };
+        trie.insert(
+            hash_address_fixed(&address).as_bytes().to_vec(),
+            account.encode_to_vec(),
+        )
+        .unwrap();
+        trie.commit(&NativeCrypto).unwrap();
+        trie.hash_no_commit(&NativeCrypto)
+    }
+
+    /// A `StateView` keeps reading the state it was checked against after a commit
+    /// rewrites the disk under it, while the root itself is no longer held.
+    fn state_view_is_pinned_across_a_commit(store: Store) {
+        let address = Address::from_low_u64_be(0xabcd);
+        let root = write_account_nonce(&store, EMPTY_TRIE_HASH, address, 1);
+        let view = store
+            .state_view(root)
+            .unwrap()
+            .expect("the state was just written");
+
+        let newer_root = write_account_nonce(&store, root, address, 2);
+        assert_ne!(newer_root, root);
+        assert!(!store.has_state_root(root).unwrap());
+        assert!(store.state_view(root).unwrap().is_none());
+        assert_eq!(view.account_state(address).unwrap().unwrap().nonce, 1);
+        let newer = store.state_view(newer_root).unwrap().unwrap();
+        assert_eq!(newer.account_state(address).unwrap().unwrap().nonce, 2);
+    }
+
+    #[test]
+    fn state_view_is_pinned_across_a_commit_in_memory() {
+        state_view_is_pinned_across_a_commit(Store::new("", EngineType::InMemory).unwrap());
+    }
+
+    #[cfg(feature = "rocksdb")]
+    #[test]
+    fn state_view_is_pinned_across_a_commit_rocksdb() {
+        let dir = tempfile::tempdir().unwrap();
+        state_view_is_pinned_across_a_commit(Store::new(dir.path(), EngineType::RocksDB).unwrap());
     }
 }

@@ -12,9 +12,31 @@
 
 ## Perf
 
+### 2026-10-22
+
+- Answer MODEXP inversions modulo well-known 256-bit primes (base^(p − 2) mod p for the BN254 base and scalar fields, the secp256k1 and P-256 base fields and group orders, and the BLS12-381 scalar field) with a safegcd inversion, and build the Montgomery constants with 8 squarings instead of 512 doublings: the dominant mainnet MODEXP call 4.09 → 0.73 µs [#7456](https://github.com/lambdaclass/ethrex/pull/7456)
+
+### 2026-10-20
+
+- Warm block access list accounts on a dedicated I/O pool that keeps more reads in flight: on the stateful repricing benchmarks, cold accesses to existing accounts −78% and the 9 account-access tests 47.8 → 16.4 s [#7451](https://github.com/lambdaclass/ethrex/pull/7451)
+- Skip rehashing the last touched address in the block access list recorder: SELFBALANCE −29% and IDENTITY calls −16% in loops [#7450](https://github.com/lambdaclass/ethrex/pull/7450)
+- Look an already-loaded account up once in `load_account`: a SELFBALANCE loop 21.1 → 17.1 ms (−19%) [#7449](https://github.com/lambdaclass/ethrex/pull/7449)
+- Move a precompile's output into the caller's return-data buffer instead of cloning it: IDENTITY calls returning 256 B to 1 KiB −8% to −14% [#7448](https://github.com/lambdaclass/ethrex/pull/7448)
+- Skip the code lookup for calls to precompiles and other code-less targets, and keep the empty jump destination bitmap per thread so parallel transactions stop contending on its reference count: IDENTITY calls −21% to −33% and calls to EOAs −13% with 6 threads [#7447](https://github.com/lambdaclass/ethrex/pull/7447)
+- Share the Miller loop across pairs in the BLS12-381 pairing check: −8% with 2 pairs up to −23% with 24 [#7446](https://github.com/lambdaclass/ethrex/pull/7446)
+- Fixed-width Montgomery MODEXP for odd moduli of up to 128 bytes: a 32-byte inversion 12.5 → 3.4 µs, 64-byte operands −42% and 128-byte operands −15% [#7445](https://github.com/lambdaclass/ethrex/pull/7445)
+- Shift and extract bytes limb by limb with constant indexes, and write comparison results to the stack with a single store: SAR −38%, SHL −20%, BYTE −16% and SHR −12% per opcode [#7444](https://github.com/lambdaclass/ethrex/pull/7444)
+- Return the popped operand of binary opcodes by reference, so it is no longer copied through a temporary that the next load cannot forward from: EQ −31%, LT, GT and SLT −10% per opcode [#7443](https://github.com/lambdaclass/ethrex/pull/7443)
+- Faster DIV, SDIV, MOD, SMOD, ADDMOD, MULMOD, EXP and SIGNEXTEND: Knuth division over fixed-size words with one hardware `div` per digit on x86-64, closed-form EXP powers, and results built limb by limb with constant indexes: DIV 48.0 → 17.2 ns, MOD of a 127-bit value 54.7 → 25.1 ns, ADDMOD 65.3 → 27.6 ns and MULMOD 118.0 → 76.1 ns per opcode [#7442](https://github.com/lambdaclass/ethrex/pull/7442)
+
 ### 2026-10-14
 
 - Commit trie layers that are already final without a `STATE_HISTORY` journal entry and without the pre-image read per trie node that entry needs: on an L2 and on a finalizing L1 the journal stays empty and finality pruning writes no range deletes, where before every commit wrote an entry only for the next finality advance to range-delete it [#7377](https://github.com/lambdaclass/ethrex/pull/7377)
+
+### 2026-10-13
+
+- Faster BN254 precompiles: ECADD in affine form with a safegcd inversion, ECMUL with GLV and wNAF (double-and-add for scalars of at most 16 bits), ECPAIRING with a 63-bit G2 subgroup check, its own Miller loop and final exponentiation, and a branch-free field tower on x86-64 CPUs with BMI2 and ADX: ECADD 2.13 → 0.84 µs, full-width ECMUL 47.9 → 20.8 µs, two random pairs 688 → 382 µs, and the 220 BN254 tests of the benchmarkoor compute-repricing suite 125.3 → 57.4 s [#7397](https://github.com/lambdaclass/ethrex/pull/7397)
+- Faster keccak on x86-64: `keccak_hash` absorbs one-shot inputs without building the streaming state, and CPUs with AVX-512F and AVX-512VL run a permutation that keeps all 25 lanes in 128-bit registers, picked at runtime: cycles per chained hash −14..−16% on Intel (Emerald Rapids) and −2..−6% on AMD Zen 5, criterion 32 B 198 → 172 ns on Zen 5 [#7398](https://github.com/lambdaclass/ethrex/pull/7398)
 
 ### 2026-09-30
 

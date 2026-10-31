@@ -47,6 +47,36 @@ fn pairing_infinity() {
     assert_eq!(result.unwrap(), zero);
 }
 
+/// blst runs the multi-pair Miller loop in batches of 16 pairs, so check pair counts on both
+/// sides of one and two batches. Two pairs from the EIP-2537 vector "bls_pairing_e(G1,-G2)=e(-G1,G2)"
+/// multiply to one; an odd count leaves one pair over, whose pairing is not one.
+#[test]
+fn pairing_across_the_miller_loop_batches() {
+    let one = {
+        let mut out = [0u8; 32];
+        out[31] = 1;
+        Bytes::copy_from_slice(&out)
+    };
+    let zero = Bytes::copy_from_slice(&[0u8; 32]);
+    let two_pairs = hex::decode("0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e100000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e100000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000d1b3cc2c7027888be51d9ef691d77bcb679afda66c73f17f9ee3837a55024f78c71363275a75d75d86bab79f74782aa0000000000000000000000000000000013fa4d4a0ad8b1ce186ed5061789213d993923066dddaf1040bc3ff59f825c78df74f2d75467e25e0f55f8a00fa030ed").unwrap();
+    let first_pair = &two_pairs[..384];
+    for pairs in [15usize, 16, 17, 18, 31, 32, 33, 34] {
+        let mut calldata = two_pairs.repeat(pairs / 2);
+        if pairs % 2 == 1 {
+            calldata.extend_from_slice(first_pair);
+        }
+        let mut remaining_gas = u64::MAX;
+        let result = bls12_pairing_check(
+            &Bytes::from(calldata),
+            &mut remaining_gas,
+            Fork::Prague,
+            &NativeCrypto,
+        );
+        let expected = if pairs % 2 == 0 { &one } else { &zero };
+        assert_eq!(&result.unwrap(), expected, "{pairs} pairs");
+    }
+}
+
 // ── blst backend (host BLS12-381 / EIP-2537) ─────────────────────────────────
 //
 // `NativeCrypto` routes BLS12-381 through the blst backend (the `blst` feature,

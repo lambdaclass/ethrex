@@ -3471,7 +3471,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "29.0.1"
+version = "30.0.1"
 dependencies = [
  "bytes",
  "crossbeam",
@@ -3495,7 +3495,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "29.0.1"
+version = "30.0.1"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -3503,6 +3503,7 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-rlp",
  "ethrex-trie",
+ "foldhash 0.2.0",
  "hex",
  "hex-literal",
  "hex-simd",
@@ -3528,7 +3529,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-config"
-version = "29.0.1"
+version = "30.0.1"
 dependencies = [
  "ethrex-common",
  "ethrex-p2p",
@@ -3539,7 +3540,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "29.0.1"
+version = "30.0.1"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -3563,7 +3564,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "29.0.1"
+version = "30.0.1"
 dependencies = [
  "blake3",
  "bls12_381 0.8.0",
@@ -3591,7 +3592,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2"
-version = "29.0.1"
+version = "30.0.1"
 dependencies = [
  "agg_mode_sdk",
  "alloy",
@@ -3644,7 +3645,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "29.0.1"
+version = "30.0.1"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -3661,7 +3662,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-rpc"
-version = "29.0.1"
+version = "30.0.1"
 dependencies = [
  "axum 0.8.9",
  "bytes",
@@ -3692,14 +3693,13 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "29.0.1"
+version = "30.0.1"
 dependencies = [
  "bytes",
  "derive_more 1.0.0",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
- "foldhash 0.2.0",
  "libssz",
  "malachite",
  "rayon",
@@ -3711,7 +3711,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "29.0.1"
+version = "30.0.1"
 dependencies = [
  "axum 0.8.9",
  "ethrex-common",
@@ -3755,7 +3755,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-p2p"
-version = "29.0.1"
+version = "30.0.1"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -3798,7 +3798,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-prover"
-version = "29.0.1"
+version = "30.0.1"
 dependencies = [
  "bincode 1.3.3",
  "bytes",
@@ -3820,7 +3820,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "29.0.1"
+version = "30.0.1"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -3829,7 +3829,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rpc"
-version = "29.0.1"
+version = "30.0.1"
 dependencies = [
  "axum 0.8.9",
  "axum-extra",
@@ -3869,7 +3869,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk"
-version = "29.0.1"
+version = "30.0.1"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -3893,7 +3893,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk-contract-utils"
-version = "29.0.1"
+version = "30.0.1"
 dependencies = [
  "thiserror 2.0.18",
  "tracing",
@@ -3901,7 +3901,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "29.0.1"
+version = "30.0.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3923,7 +3923,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage-rollup"
-version = "29.0.1"
+version = "30.0.1"
 dependencies = [
  "async-trait",
  "bincode 1.3.3",
@@ -3938,7 +3938,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "29.0.1"
+version = "30.0.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3957,7 +3957,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "29.0.1"
+version = "30.0.1"
 dependencies = [
  "bytes",
  "derive_more 1.0.0",

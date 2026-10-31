@@ -1262,25 +1262,23 @@ impl Transaction {
     pub fn signing_payload(&self) -> Result<Option<SigningPayload>, CryptoError> {
         let (buf, sig) = match self {
             Transaction::LegacyTransaction(tx) => {
-                let v = u64::try_from(tx.v).map_err(|_| CryptoError::InvalidSignature)?;
                 // EIP-155: valid legacy `v` is 27/28 (pre-155) or
                 // {35,36} + chain_id * 2. Any other value is a malformed
                 // signature and must be rejected rather than coerced into a
-                // parity bit (which would recover a bogus sender).
-                let signature_y_parity = match self.chain_id() {
-                    Some(chain_id) => match v.checked_sub(35 + chain_id * 2) {
-                        Some(0) => false,
-                        Some(1) => true,
-                        _ => return Err(CryptoError::InvalidSignature),
-                    },
-                    None => match v {
-                        27 => false,
-                        28 => true,
-                        _ => return Err(CryptoError::InvalidSignature),
-                    },
+                // parity bit (which would recover a bogus sender). `v` is taken
+                // at its full width: a chain id near 2^64 still fits in 64 bits,
+                // but its `v` does not.
+                let chain_id = self.chain_id();
+                let signature_y_parity = match chain_id {
+                    // The chain id is derived from this `v` as (v - 35) / 2, so `v` is
+                    // 35 + chain_id * 2 + parity, which is odd exactly when the parity is 0.
+                    Some(_) => !tx.v.bit(0),
+                    None if tx.v == U256::from(27) => false,
+                    None if tx.v == U256::from(28) => true,
+                    None => return Err(CryptoError::InvalidSignature),
                 };
                 let mut buf = vec![];
-                match self.chain_id() {
+                match chain_id {
                     None => Encoder::new(&mut buf)
                         .encode_field(&tx.nonce)
                         .encode_field(&tx.gas_price)
@@ -1695,12 +1693,15 @@ impl Transaction {
 }
 
 fn derive_legacy_chain_id(v: U256) -> Option<u64> {
-    let v = u64::try_from(v).ok()?;
     // EIP-155 encodes the chain id as `v = chain_id * 2 + 35` (or 36), so any
     // replay-protected `v` is >= 35. Pre-EIP-155 txs use v=27/28, and malformed
     // signatures (e.g. v=0 from an unsigned IL transaction) are < 35 too; none
     // carry a chain id. Guard the subtraction to avoid an underflow panic.
-    if v < 35 { None } else { Some((v - 35) / 2) }
+    // The chain id is derived from the whole `v` and must fit in 64 bits. A
+    // larger one leaves the transaction without a chain id, so its `v`, which
+    // is neither 27 nor 28, fails signature recovery as an invalid `v`.
+    let chain_id = v.checked_sub(U256::from(35))? >> 1;
+    u64::try_from(chain_id).ok()
 }
 
 impl TxType {
@@ -3754,7 +3755,7 @@ mod serde_impl {
     #[derive(Deserialize, Debug, PartialEq, Clone, Default)]
     #[serde(rename_all = "camelCase")]
     pub struct GenericTransaction {
-        #[serde(default)]
+        #[serde(default, deserialize_with = "deserialize_generic_tx_type")]
         pub r#type: TxType,
         #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
         pub nonce: Option<u64>,
@@ -3794,6 +3795,19 @@ mod serde_impl {
         )]
         pub input: Bytes,
     }
+
+    /// Calls ignore `type`, so any byte is accepted and a value that is not a known type falls back to the default.
+    /// See https://github.com/ethereum/execution-apis/pull/939
+    fn deserialize_generic_tx_type<'de, D>(deserializer: D) -> Result<TxType, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let str = String::deserialize(deserializer)?;
+        let tx_num = u8::from_str_radix(str.trim_start_matches("0x"), 16)
+            .map_err(|_| D::Error::custom(format!("Failed to deserialize hex value {str}")))?;
+        Ok(TxType::from_u8(tx_num).unwrap_or_default())
+    }
+
     /// Custom deserialization function to parse either `data` or `input` fields, or both as long as they have the same value
     pub fn deserialize_input<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
     where
@@ -4458,6 +4472,55 @@ mod tests {
         assert_eq!(legacy_chain_id(37), Some(1));
     }
 
+    /// EIP-155 at the 64-bit boundary. Signed for chain id 2^64 - 1, a legacy
+    /// transaction's `v` no longer fits in 64 bits but its chain id does: the
+    /// transaction reports that chain id and recovers its signer, so a chain that
+    /// is not 2^64 - 1 rejects it for its chain id. One chain id further, the chain
+    /// id does not fit: the transaction has none and its `v` is invalid.
+    #[test]
+    fn legacy_chain_id_at_the_64_bit_boundary() {
+        let secret = secp256k1::SecretKey::from_byte_array(&[0x11; 32]).unwrap();
+        let signed_for = |chain_id: U256| {
+            let mut tx = LegacyTransaction {
+                nonce: 7,
+                gas_price: U256::from(1_000_000_000u64),
+                gas: 21_000,
+                to: TxKind::Call(Address::repeat_byte(0xde)),
+                value: U256::one(),
+                v: U256::from(35) + chain_id * 2,
+                ..Default::default()
+            };
+            let (payload, _) = Transaction::LegacyTransaction(tx.clone())
+                .signing_payload()
+                .unwrap()
+                .unwrap();
+            let msg = secp256k1::Message::from_digest(NativeCrypto.keccak256(&payload));
+            let (recovery_id, signature) = secp256k1::SECP256K1
+                .sign_ecdsa_recoverable(&msg, &secret)
+                .serialize_compact();
+            tx.r = U256::from_big_endian(&signature[..32]);
+            tx.s = U256::from_big_endian(&signature[32..]);
+            tx.v += U256::from(i32::from(recovery_id));
+            Transaction::LegacyTransaction(tx)
+        };
+        let signer = signed_for(U256::one()).sender(&NativeCrypto).unwrap();
+
+        let largest = signed_for(U256::from(u64::MAX));
+        let Transaction::LegacyTransaction(legacy) = &largest else {
+            unreachable!("signed_for builds legacy transactions");
+        };
+        assert!(legacy.v > U256::from(u64::MAX), "the case under test");
+        assert_eq!(largest.chain_id(), Some(u64::MAX));
+        assert_eq!(largest.sender(&NativeCrypto).unwrap(), signer);
+
+        let too_large = Transaction::LegacyTransaction(LegacyTransaction {
+            v: U256::from(35) + (U256::from(u64::MAX) + 1) * 2,
+            ..Default::default()
+        });
+        assert_eq!(too_large.chain_id(), None);
+        assert!(too_large.sender(&NativeCrypto).is_err());
+    }
+
     #[test]
     fn test_compute_transactions_root() {
         let mut body = BlockBody::empty();
@@ -4686,6 +4749,21 @@ mod tests {
             deserialized_generic_transaction,
             serde_json::from_str(generic_transaction).unwrap()
         )
+    }
+
+    #[test]
+    fn deserialize_generic_transaction_with_unknown_type() {
+        let generic_transaction: GenericTransaction = serde_json::from_str(
+            r#"{"type":"0x7f","to":"0x6177843db3138ae69679A54b95cf345ED759450d"}"#,
+        )
+        .unwrap();
+        assert_eq!(generic_transaction.r#type, TxType::default());
+        assert!(
+            serde_json::from_str::<GenericTransaction>(
+                r#"{"type":"0x100","to":"0x6177843db3138ae69679A54b95cf345ED759450d"}"#
+            )
+            .is_err()
+        );
     }
 
     #[test]

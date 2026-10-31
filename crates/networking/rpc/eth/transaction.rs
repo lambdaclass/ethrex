@@ -157,10 +157,8 @@ impl RpcHandler for CallRequest {
             .clone()
             .unwrap_or(BlockIdentifierOrHash::Identifier(BlockIdentifier::default()));
         debug!("Requested call on block: {}", block);
-        let header = match block.resolve_block_header(&context.storage).await? {
-            Some(header) => header,
-            // Block not found
-            _ => return Ok(Value::Null),
+        let Some(header) = block.resolve_block_header(&context.storage).await? else {
+            return Err(block.not_found());
         };
         let chain_config = context.storage.get_chain_config();
         // Built once and handed down. `None` means the call runs against the real header.
@@ -381,12 +379,10 @@ impl RpcHandler for GetTransactionReceiptRequest {
             Some(block) => block,
             None => return Ok(Value::Null),
         };
-        let receipts =
-            block::get_all_block_rpc_receipts(block.header, block.body, storage, Some(index))
-                .await?;
+        let receipt =
+            block::get_block_rpc_receipt(block.header, block.body, storage, index).await?;
 
-        serde_json::to_value(receipts.get(index as usize))
-            .map_err(|error| RpcErr::Internal(error.to_string()))
+        serde_json::to_value(receipt).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
@@ -425,14 +421,8 @@ impl RpcHandler for CreateAccessListRequest {
             .clone()
             .unwrap_or(BlockIdentifierOrHash::Identifier(BlockIdentifier::default()));
         debug!("Requested access list creation for tx on block: {}", block);
-        let block_number = match block.resolve_block_number(&context.storage).await? {
-            Some(block_number) => block_number,
-            _ => return Ok(Value::Null),
-        };
-        let header = match context.storage.get_block_header(block_number)? {
-            Some(header) => header,
-            // Block not found
-            _ => return Ok(Value::Null),
+        let Some(header) = block.resolve_block_header(&context.storage).await? else {
+            return Err(block.not_found());
         };
         // Build the Evm with optional override wrapper. createAccessList does not
         // accept a Block Override Set, so the header is always the real one.
@@ -613,10 +603,8 @@ impl RpcHandler for EstimateGasRequest {
         let chain_config = storage.get_chain_config();
 
         debug!("Requested estimate on block: {}", block);
-        let block_header = match block.resolve_block_header(storage).await? {
-            Some(header) => header,
-            // Block not found
-            _ => return Ok(Value::Null),
+        let Some(block_header) = block.resolve_block_header(storage).await? else {
+            return Err(block.not_found());
         };
         // Fork and the search ceiling have to come from the header the transaction will
         // actually execute against: a `time` override can cross a fork boundary and a
