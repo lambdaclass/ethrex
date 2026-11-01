@@ -633,7 +633,7 @@ mod tests {
             .serialize_compact();
         tx.signature_r = U256::from_big_endian(&signature[..32]);
         tx.signature_s = U256::from_big_endian(&signature[32..]);
-        tx.signature_y_parity = i32::from(recovery_id) != 0;
+        tx.signature_y_parity = U256::from(u8::from(i32::from(recovery_id) != 0));
         Transaction::EIP1559Transaction(tx)
     }
 

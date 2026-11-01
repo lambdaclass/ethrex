@@ -154,7 +154,7 @@ fn eip1559_tx_for_test(nonce: u64) -> Transaction {
         value: 100.into(),
         data: Default::default(),
         access_list: vec![],
-        signature_y_parity: true,
+        signature_y_parity: 1u8.into(),
         signature_r: U256::default(),
         signature_s: U256::default(),
         ..Default::default()
