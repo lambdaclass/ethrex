@@ -701,8 +701,9 @@ impl Blockchain {
         }
     }
 
-    /// Completes the payload building process, return the block value.
-    /// Transactions are pulled from the mempool.
+    /// Builds and seals a payload in one pass, returning the sealed block with
+    /// its value, receipts, requests and blobs bundle. Transactions are pulled
+    /// from the mempool.
     pub fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
         self.build_payload_inner(payload, None, None)
     }
