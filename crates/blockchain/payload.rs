@@ -551,35 +551,46 @@ impl Blockchain {
         let start = Instant::now();
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
-        // Snapshot the mempool sequence *before* the build so any tx that lands
-        // during the build is seen as newer than the current `best`.
+        // The mempool sequence the latest build started from. Snapshot it
+        // *before* the build so any tx that lands during the build is seen as
+        // newer than that build.
         let mut last_built_seq = self.mempool.tx_seq();
         // A `getPayload` arriving during this first build gets a block with only
         // the transactions added before it arrived, possibly none.
         let mut best = self.build_unsealed_until(payload.clone(), &cancel_token)?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
-            // Wait for new transactions, cancellation, or slot deadline before rebuilding
-            let remaining = SECONDS_PER_SLOT.saturating_sub(start.elapsed());
+            // `notify_waiters` only reaches `Notified` futures that already
+            // exist, so create it before checking the sequence: a tx that lands
+            // after the check still wakes the wait below.
             let notified = self.mempool.tx_added().notified();
-            tokio::select! {
-                // A tx landing together with `getPayload` must not start a
-                // rebuild that would only stop right away.
-                biased;
-                _ = cancel_token.cancelled() => break,
-                _ = notified => {}
-                _ = tokio::time::sleep(remaining) => break,
+            // A tx that landed since the latest build started, while that build
+            // ran, sent its notification when nothing was waiting, so rebuild
+            // right away instead.
+            if self.mempool.tx_seq() <= last_built_seq {
+                // Wait for new transactions, cancellation, or slot deadline before rebuilding
+                let remaining = SECONDS_PER_SLOT.saturating_sub(start.elapsed());
+                tokio::select! {
+                    // A tx landing together with `getPayload` must not start a
+                    // rebuild that would only stop right away.
+                    biased;
+                    _ = cancel_token.cancelled() => break,
+                    _ = notified => {}
+                    _ = tokio::time::sleep(remaining) => break,
+                }
             }
             let seq_before = self.mempool.tx_seq();
             let wait_if_cancelled = best.transactions().is_empty();
-            match self
+            let rebuilt = self
                 .rebuild_payload(payload.clone(), &cancel_token, wait_if_cancelled)
-                .await
-            {
+                .await;
+            // Every attempt counts as built, kept or not. A rebuild that fails
+            // the same way each time must not be retried without a new tx.
+            last_built_seq = seq_before;
+            match rebuilt {
                 Some(Ok(Ok(candidate))) => {
                     if candidate.beats(&best) {
                         best = candidate;
                     }
-                    last_built_seq = seq_before;
                 }
                 Some(Ok(Err(err))) => {
                     warn!(%err, "Payload rebuild failed; keeping the best payload so far");
@@ -593,7 +604,7 @@ impl Blockchain {
 
         // The slot-timeout `select!` arm can win over a simultaneous `tx_added`
         // notification near the slot boundary, so if a tx landed after the
-        // snapshot that produced `best`, do one final build. On cancellation
+        // latest build's snapshot, do one final build. On cancellation
         // there is nothing left to do: a build started now would stop before
         // adding a transaction, and the loop already waited for the in-flight
         // rebuild when `best` was empty.
