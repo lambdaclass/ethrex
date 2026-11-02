@@ -54,7 +54,7 @@ use tracing::{debug, warn};
 
 #[derive(Debug)]
 pub struct PayloadBuildTask {
-    task: tokio::task::JoinHandle<Result<PayloadBuildResult, ChainError>>,
+    task: tokio::task::JoinHandle<Result<UnsealedPayload, ChainError>>,
     cancel: CancellationToken,
 }
 
@@ -65,8 +65,8 @@ pub enum PayloadOrTask {
 }
 
 impl PayloadBuildTask {
-    /// Finishes the current payload build process and returns its result
-    pub async fn finish(self) -> Result<PayloadBuildResult, ChainError> {
+    /// Stops the build loop and returns the best payload it built, unsealed.
+    pub async fn finish(self) -> Result<UnsealedPayload, ChainError> {
         self.cancel.cancel();
         self.task
             .await
@@ -75,13 +75,18 @@ impl PayloadBuildTask {
 }
 
 impl PayloadOrTask {
-    /// Converts self into a `PayloadOrTask::Payload` by finishing the current build task
-    /// If self is already a `PayloadOrTask::Payload` this is a NoOp
-    pub async fn to_payload(self) -> Result<Self, ChainError> {
-        Ok(match self {
-            PayloadOrTask::Payload(_) => self,
-            PayloadOrTask::Task(task) => PayloadOrTask::Payload(Box::new(task.finish().await?)),
-        })
+    /// Converts self into a `PayloadOrTask::Payload`, stopping the build task
+    /// and sealing its best payload. If self is already a
+    /// `PayloadOrTask::Payload` this is a NoOp.
+    pub async fn to_payload(self, blockchain: &Arc<Blockchain>) -> Result<Self, ChainError> {
+        let unsealed = match self {
+            PayloadOrTask::Payload(_) => return Ok(self),
+            PayloadOrTask::Task(task) => task.finish().await?,
+        };
+        let sealed = blockchain.clone().seal_on_blocking_thread(unsealed).await?;
+        // The banner names the block by its hash, which only the sealed header has.
+        blockchain.log_glamsterdam_banner_if_first_amsterdam_block(&sealed.payload.header);
+        Ok(PayloadOrTask::Payload(Box::new(sealed)))
     }
 }
 
@@ -426,6 +431,16 @@ pub struct UnsealedPayload {
 }
 
 impl UnsealedPayload {
+    /// Whether this build should replace `held` as the build loop's best.
+    /// Higher value wins. On equal value, more gas used wins: when candidates
+    /// are worth the same, as with zero-tip traffic where every build is worth
+    /// 0, the held block is kept over a rebuild that lost transactions to the
+    /// pool. On a full tie the newer build wins, which is what the loop did
+    /// before it compared builds.
+    fn beats(&self, held: &UnsealedPayload) -> bool {
+        (self.block_value(), self.gas_used()) >= (held.block_value(), held.gas_used())
+    }
+
     pub fn block_value(&self) -> U256 {
         self.context.block_value
     }
@@ -449,18 +464,25 @@ impl std::fmt::Debug for UnsealedPayload {
 }
 
 impl Blockchain {
-    /// Attempts to fetch a payload given it's id. If the payload is still being built, it will be finished.
-    /// Fails if there is no payload or active payload build task for the given id.
-    pub async fn get_payload(&self, payload_id: u64) -> Result<PayloadBuildResult, ChainError> {
-        let payloads = self.payloads.clone();
+    /// Attempts to fetch a payload given its id. If the payload is still being
+    /// built, the build is stopped and its best payload sealed. Fails if there
+    /// is no payload or active payload build task for the given id.
+    pub async fn get_payload(
+        self: &Arc<Self>,
+        payload_id: u64,
+    ) -> Result<PayloadBuildResult, ChainError> {
+        let blockchain = self.clone();
         tokio::spawn(async move {
-            let mut payloads = payloads.lock().await;
+            let mut payloads = blockchain.payloads.lock().await;
             // Find the given payload and finish the active build process if needed
             let idx = payloads
                 .iter()
                 .position(|(id, _)| id == &payload_id)
                 .ok_or(ChainError::UnknownPayload)?;
-            let finished_payload = (payload_id, payloads.remove(idx).1.to_payload().await?);
+            let finished_payload = (
+                payload_id,
+                payloads.remove(idx).1.to_payload(&blockchain).await?,
+            );
             payloads.insert(idx, finished_payload);
             // Return the held payload
             match &payloads[idx].1 {
@@ -470,6 +492,17 @@ impl Blockchain {
         })
         .await
         .map_err(|_| ChainError::Custom("Failed to join get_payload task".to_string()))?
+    }
+
+    /// Seals `unsealed` on a blocking thread: the state root is CPU-bound work
+    /// that must not stall a tokio worker.
+    async fn seal_on_blocking_thread(
+        self: Arc<Self>,
+        unsealed: UnsealedPayload,
+    ) -> Result<PayloadBuildResult, ChainError> {
+        tokio::task::spawn_blocking(move || self.seal_payload(unsealed))
+            .await
+            .map_err(|_| ChainError::Custom("Failed to join payload seal task".to_string()))?
     }
 
     /// Starts a payload build process. The built payload can be retrieved by calling `get_payload`.
@@ -504,23 +537,26 @@ impl Blockchain {
     /// Build the given payload and keep on rebuilding it until either the time slot
     /// given by `SECONDS_PER_SLOT` is up or the `cancel_token` is cancelled.
     ///
+    /// The loop keeps its best build (see `UnsealedPayload::beats`) and
+    /// returns it unsealed; [`Blockchain::get_payload`] seals it.
+    ///
     /// Cancelling also stops the build in progress: it stops adding transactions
-    /// and seals the block with the ones it already has, so `getPayload` never
-    /// waits for a full build.
+    /// and returns the ones it already has, so `getPayload` never waits for a
+    /// full build.
     pub async fn build_payload_loop(
         self: Arc<Blockchain>,
         payload: Block,
         cancel_token: CancellationToken,
-    ) -> Result<PayloadBuildResult, ChainError> {
+    ) -> Result<UnsealedPayload, ChainError> {
         let start = Instant::now();
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
         // Snapshot the mempool sequence *before* the build so any tx that lands
-        // during the build is seen as newer than the current `res`.
+        // during the build is seen as newer than the current `best`.
         let mut last_built_seq = self.mempool.tx_seq();
         // A `getPayload` arriving during this first build gets a block with only
         // the transactions added before it arrived, possibly none.
-        let mut res = self.build_payload_until(payload.clone(), &cancel_token)?;
+        let mut best = self.build_unsealed_until(payload.clone(), &cancel_token)?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             // Wait for new transactions, cancellation, or slot deadline before rebuilding
             let remaining = SECONDS_PER_SLOT.saturating_sub(start.elapsed());
@@ -534,14 +570,19 @@ impl Blockchain {
                 _ = tokio::time::sleep(remaining) => break,
             }
             let seq_before = self.mempool.tx_seq();
-            let wait_if_cancelled = res.payload.body.transactions.is_empty();
+            let wait_if_cancelled = best.transactions().is_empty();
             match self
                 .rebuild_payload(payload.clone(), &cancel_token, wait_if_cancelled)
                 .await
             {
-                Some(Ok(current_res)) => {
-                    res = current_res?;
+                Some(Ok(Ok(candidate))) => {
+                    if candidate.beats(&best) {
+                        best = candidate;
+                    }
                     last_built_seq = seq_before;
+                }
+                Some(Ok(Err(err))) => {
+                    warn!(%err, "Payload rebuild failed; keeping the best payload so far");
                 }
                 Some(Err(err)) => {
                     warn!(%err, "Payload-building task panicked");
@@ -552,17 +593,21 @@ impl Blockchain {
 
         // The slot-timeout `select!` arm can win over a simultaneous `tx_added`
         // notification near the slot boundary, so if a tx landed after the
-        // snapshot that produced `res`, do one final build. On cancellation
+        // snapshot that produced `best`, do one final build. On cancellation
         // there is nothing left to do: a build started now would stop before
         // adding a transaction, and the loop already waited for the in-flight
-        // rebuild when `res` was empty.
+        // rebuild when `best` was empty.
         if !cancel_token.is_cancelled() && self.mempool.tx_seq() > last_built_seq {
-            let wait_if_cancelled = res.payload.body.transactions.is_empty();
+            let wait_if_cancelled = best.transactions().is_empty();
             match self
                 .rebuild_payload(payload, &cancel_token, wait_if_cancelled)
                 .await
             {
-                Some(Ok(Ok(final_res))) => res = final_res,
+                Some(Ok(Ok(candidate))) => {
+                    if candidate.beats(&best) {
+                        best = candidate;
+                    }
+                }
                 Some(Ok(Err(err))) => {
                     warn!(%err, "Final payload rebuild failed; returning previous result")
                 }
@@ -571,27 +616,25 @@ impl Blockchain {
             }
         }
 
-        self.log_glamsterdam_banner_if_first_amsterdam_block(&res.payload.header);
-
-        Ok(res)
+        Ok(best)
     }
 
-    /// Rebuilds `payload` on a blocking thread. If `cancel_token` is cancelled
-    /// mid-rebuild, the rebuild stops adding transactions and seals what it has.
-    /// The caller waits for that only when `wait_if_cancelled` is set (the block
-    /// it already holds is empty); otherwise it returns `None` right away and
-    /// the stopped rebuild is discarded, keeping the seal off the `getPayload`
-    /// critical path.
+    /// Rebuilds `payload` on a blocking thread, unsealed. If `cancel_token` is
+    /// cancelled mid-rebuild, the rebuild stops adding transactions and returns
+    /// what it has. The caller waits for that only when `wait_if_cancelled` is
+    /// set (the block it already holds is empty); otherwise it returns `None`
+    /// right away and the stopped rebuild is discarded, keeping it off the
+    /// `getPayload` critical path.
     async fn rebuild_payload(
         self: &Arc<Blockchain>,
         payload: Block,
         cancel_token: &CancellationToken,
         wait_if_cancelled: bool,
-    ) -> Option<Result<Result<PayloadBuildResult, ChainError>, tokio::task::JoinError>> {
+    ) -> Option<Result<Result<UnsealedPayload, ChainError>, tokio::task::JoinError>> {
         let blockchain = self.clone();
         let stop = cancel_token.clone();
         let mut building_task =
-            tokio::task::spawn_blocking(move || blockchain.build_payload_until(payload, &stop));
+            tokio::task::spawn_blocking(move || blockchain.build_unsealed_until(payload, &stop));
         tokio::select! {
             // Prefer a rebuild that finished at the same time as the cancellation.
             biased;
@@ -638,14 +681,14 @@ impl Blockchain {
         self.build_payload_inner(payload, None, None)
     }
 
-    /// Same as `build_payload`, but once `stop` is cancelled it stops adding
-    /// transactions and seals the block with the ones it already has.
-    fn build_payload_until(
+    /// Same as `build_payload`, but unsealed, and once `stop` is cancelled it
+    /// stops adding transactions and returns the ones it already has.
+    fn build_unsealed_until(
         &self,
         payload: Block,
         stop: &CancellationToken,
-    ) -> Result<PayloadBuildResult, ChainError> {
-        self.build_payload_inner(payload, None, Some(stop))
+    ) -> Result<UnsealedPayload, ChainError> {
+        self.build_unsealed(payload, None, Some(stop))
     }
 
     /// Builds a payload from an explicit, ordered list of transactions instead of the
@@ -1004,7 +1047,7 @@ impl Blockchain {
             // Checked before picking the next transaction, never mid-transaction,
             // so the mempool bookkeeping below is never left half done.
             if stop.is_some_and(CancellationToken::is_cancelled) {
-                debug!("Payload build stopped, sealing with the transactions added so far");
+                debug!("Payload build stopped, keeping the transactions added so far");
                 break;
             }
             // Check if we have enough gas to run more transactions

@@ -39,7 +39,7 @@ use tokio_util::sync::CancellationToken;
 
 const L1_CHAIN_ID: u64 = 9;
 
-fn read_private_keys(amount: usize) -> Vec<SecretKey> {
+pub(super) fn read_private_keys(amount: usize) -> Vec<SecretKey> {
     let file = include_str!("../../../fixtures/keys/private_keys_l1.txt");
     file.lines()
         .take(amount)
@@ -50,11 +50,11 @@ fn read_private_keys(amount: usize) -> Vec<SecretKey> {
         .collect()
 }
 
-fn address_for(sk: &SecretKey) -> Address {
+pub(super) fn address_for(sk: &SecretKey) -> Address {
     Signer::Local(LocalSigner::new(*sk)).address()
 }
 
-async fn setup_store(accounts: &[Address]) -> Store {
+pub(super) async fn setup_store(accounts: &[Address]) -> Store {
     let genesis_file = include_bytes!("../../../fixtures/genesis/l1.json");
     let mut genesis: Genesis = serde_json::from_slice(genesis_file).unwrap();
     for address in accounts {
@@ -73,7 +73,7 @@ async fn setup_store(accounts: &[Address]) -> Store {
     store
 }
 
-fn blockchain_for(store: &Store) -> Arc<Blockchain> {
+pub(super) fn blockchain_for(store: &Store) -> Arc<Blockchain> {
     Arc::new(Blockchain::new(
         store.clone(),
         BlockchainOptions {
@@ -84,7 +84,7 @@ fn blockchain_for(store: &Store) -> Arc<Blockchain> {
     ))
 }
 
-fn payload_block(store: &Store) -> Block {
+pub(super) fn payload_block(store: &Store) -> Block {
     let genesis_header = store.get_block_header(0).unwrap().unwrap();
     let args = BuildPayloadArgs {
         parent: genesis_header.hash(),
@@ -164,9 +164,7 @@ async fn cancelled_loop_returns_held_payload_without_final_rebuild() {
 
     let res = fut.await.unwrap();
     let hashes: Vec<_> = res
-        .payload
-        .body
-        .transactions
+        .transactions()
         .iter()
         .map(|tx| tx.hash(&NativeCrypto))
         .collect();
