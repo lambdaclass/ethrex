@@ -34,10 +34,10 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-429c06ce.js";
+            window.path_to_searchindex_js = "../../searchindex-e34685b4.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../../toc-a8baa880.js"></script>
+        <script src="../../toc-a6a3d26a.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -183,19 +183,40 @@
 <li>A node running the <strong>previous release</strong> (<code>&lt;VERSION_FROM&gt;</code>) can be cleanly stopped.</li>
 <li>The L1 contracts can be upgraded following the per-release migration guide.</li>
 <li>The <strong>new release</strong> (<code>&lt;VERSION_TO&gt;</code>) sequencer and prover resume operation against the upgraded contracts without re-deploying from scratch.</li>
+<li>Batches produced by <code>&lt;VERSION_FROM&gt;</code> and committed by <code>&lt;VERSION_TO&gt;</code> are <strong>proved and verified on L1</strong> under the new release’s verification key.</li>
 </ol>
+<p>It runs twice, once for each way to move the nodes to the new release:</p>
+<ul>
+<li><strong>With downtime</strong> (Steps 1 to 5): the <code>$VERSION_FROM</code> sequencer stops, and the <code>$VERSION_TO</code> one restarts on its data directory.</li>
+<li><strong>Without downtime</strong> (<a href="#step-6-upgrade-without-downtime">Step 6</a>): a <code>$VERSION_TO</code> sequencer follows the <code>$VERSION_FROM</code> one over p2p and takes over block production at a chosen block, so the L2 never stops producing blocks.</li>
+</ul>
 <p>The commands below are ready to copy-paste. The only thing you need to substitute is the version tags. Every other value (private keys, addresses, ports, fee parameters) is taken from the defaults in <code>crates/l2/Makefile</code>; feel free to override them, but the values below give you a working baseline.</p>
 <h2 id="placeholders"><a class="header" href="#placeholders">Placeholders</a></h2>
 <p>Replace these once at the top of your shell session:</p>
 <pre><code class="language-bash">export VERSION_FROM=&lt;previous release tag, e.g. v11.0.0&gt;
 export VERSION_TO=&lt;new release tag, e.g. v12.0.0-rc.2&gt;
-export ARCH=linux-x86_64       # or linux-aarch64, macos-aarch64
+export ARCH=linux-x86_64
 export WORK=$HOME/upgrade-test  # workspace
 mkdir -p "$WORK"
 </code></pre>
+<blockquote class="blockquote-tag blockquote-tag-important">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path></svg>Important</p>
+<p>Run this on the GPU server (<code>l2-gpu</code>) with the <strong>SP1</strong> prover, not locally with
+<code>--backend exec</code>. The <code>exec</code> backend produces no proof, so it never consults a
+verification key — and the verification key is the thing an upgrade changes.
+Batches are committed under <code>keccak(VERGEN_GIT_SHA)</code>, baked into the binary at
+build time, and <code>commitBatch</code> refuses a commit hash it holds no key for. Until
+<code>$VERSION_TO</code>’s key is registered
+(<a href="#36-register-the-version_to-verification-key">Step 3.6</a>) the upgraded
+sequencer cannot commit <strong>anything</strong>: every <code>commitBatch</code> reverts with
+<code>MissingVerificationKeyForCommit()</code> (selector <code>0xf6b9798e</code>) and the L2 keeps
+producing blocks locally while nothing reaches L1. Under <code>exec</code> that failure is
+invisible — the test passes and the real upgrade stops at the first batch.</p>
+</blockquote>
 <h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
 <ul>
-<li><a href="https://github.com/lambdaclass/rex"><code>rex</code></a> on <code>$PATH</code> (used to call <code>upgradeToAndCall</code> and read contract state)</li>
+<li>A CUDA-capable GPU (this is why it runs on <code>l2-gpu</code>), and the <code>ethrex-l2-$ARCH-gpu</code> release asset</li>
+<li><a href="https://github.com/lambdaclass/rex"><code>rex</code></a> on <code>$PATH</code> (used to call <code>upgradeToAndCall</code> and read contract state), built from its <code>main</code> branch with <code>cargo install --git https://github.com/lambdaclass/rex --locked</code>: <code>rex l2 register-vk</code> (Step 3.6) is not in a rex release yet</li>
 <li><code>curl</code>, <code>jq</code></li>
 <li><code>git</code> (to fetch genesis / fixture files for each version)</li>
 </ul>
@@ -238,16 +259,26 @@ mkdir -p "$WORK"
 git clone --branch "$VERSION_FROM" --depth 1 https://github.com/lambdaclass/ethrex.git "ethrex-$VERSION_FROM"
 git clone --branch "$VERSION_TO"   --depth 1 https://github.com/lambdaclass/ethrex.git "ethrex-$VERSION_TO"
 
-# Binaries
-curl -L "https://github.com/lambdaclass/ethrex/releases/download/$VERSION_FROM/ethrex-l2-$ARCH" -o "ethrex-$VERSION_FROM/ethrex"
-curl -L "https://github.com/lambdaclass/ethrex/releases/download/$VERSION_TO/ethrex-l2-$ARCH"   -o "ethrex-$VERSION_TO/ethrex"
-chmod +x "ethrex-$VERSION_FROM/ethrex" "ethrex-$VERSION_TO/ethrex"
+# Binaries. The `-gpu` asset is the one that can prove with SP1 on a GPU.
+# Remove before downloading: curl-ing over a binary that is currently running
+# reuses the inode and gets the live process killed.
+for V in "$VERSION_FROM" "$VERSION_TO"; do
+  rm -f "ethrex-$V/ethrex"
+  curl -fL "https://github.com/lambdaclass/ethrex/releases/download/$V/ethrex-l2-$ARCH-gpu" -o "ethrex-$V/ethrex"
+  chmod +x "ethrex-$V/ethrex"
+  "ethrex-$V/ethrex" --version
+done
 
-"ethrex-$VERSION_FROM/ethrex" --version
-"ethrex-$VERSION_TO/ethrex"   --version
+# Verification keys ship in each release's contracts tarball; both versions'
+# keys are needed — VERSION_FROM's to deploy, VERSION_TO's for Step 3.6.
+for V in "$VERSION_FROM" "$VERSION_TO"; do
+  mkdir -p "contracts-$V"
+  curl -fL "https://github.com/lambdaclass/ethrex/releases/download/$V/ethrex-contracts.tar.gz" \
+    | tar xz -C "contracts-$V"
+done
 </code></pre>
 <blockquote>
-<p>Use the <code>ethrex-l2-*</code> asset (the plain <code>ethrex-*</code> asset is an L1-only build and does not have the <code>l2</code> subcommand).</p>
+<p>Use an <code>ethrex-l2-*</code> asset (the plain <code>ethrex-*</code> asset is an L1-only build and does not have the <code>l2</code> subcommand), and specifically the <code>-gpu</code> variant — the others carry no CUDA support, so <code>--backend sp1</code> falls back to CPU proving and a batch takes long enough to look like a hang.</p>
 </blockquote>
 <h3 id="01-save-the-version_from-l2-genesis"><a class="header" href="#01-save-the-version_from-l2-genesis">0.1 Save the <code>$VERSION_FROM</code> L2 genesis</a></h3>
 <p>The L2 chain is initialized <strong>once</strong>, from the genesis file shipped by <code>$VERSION_FROM</code>. The genesis embeds the runtime code of every L2 system contract at its fixed address (<code>0x...ffff</code>, <code>0x...fffe</code>, …). Once the chain is running, that state lives in the L2 datadir.</p>
@@ -277,12 +308,19 @@ COMPILE_CONTRACTS=true ./ethrex l2 deploy \
   --on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
   --bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
   --bridge-owner-pk 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
+  --sp1 true \
+  --sp1-vk-path "$WORK/contracts-$VERSION_FROM/ethrex-riscv32im-succinct-zkvm-vk-bn254" \
   --deposit-rich \
   --private-keys-file-path fixtures/keys/private_keys_l1.txt \
   --genesis-l1-path fixtures/genesis/l1.json \
   --genesis-l2-path fixtures/genesis/l2.json \
   --env-file-path cmd/.env
 </code></pre>
+<p><code>--sp1 true</code> is what makes the OnChainProposer require a real proof, and
+<code>--sp1-vk-path</code> registers <code>$VERSION_FROM</code>’s verification key against
+<code>$VERSION_FROM</code>’s commit hash. Both matter: without them the deployment accepts
+anything and <a href="#36-register-the-version_to-verification-key">Step 3.6</a> has nothing
+to prove.</p>
 <p>After this finishes, capture the addresses we’ll need later:</p>
 <pre><code class="language-bash">set -a; source "$WORK/ethrex-$VERSION_FROM/cmd/.env"; set +a
 echo "BRIDGE   = $ETHREX_WATCHER_BRIDGE_ADDRESS"
@@ -321,7 +359,7 @@ set -a; source cmd/.env; set +a
 <pre><code class="language-bash">cd "$WORK/ethrex-$VERSION_FROM"
 ./ethrex l2 prover \
   --proof-coordinators tcp://127.0.0.1:3900 \
-  --backend exec
+  --backend sp1
 </code></pre>
 <h3 id="15-confirm-the-stack-is-healthy"><a class="header" href="#15-confirm-the-stack-is-healthy">1.5 Confirm the stack is healthy</a></h3>
 <p>In a fourth terminal, wait until at least one batch has been committed:</p>
@@ -477,6 +515,46 @@ rex send "$ETHREX_WATCHER_BRIDGE_ADDRESS" \
   --private-key 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
   --rpc-url http://localhost:8545
 </code></pre>
+<h3 id="36-register-the-version_to-verification-key"><a class="header" href="#36-register-the-version_to-verification-key">3.6 Register the <code>$VERSION_TO</code> verification key</a></h3>
+<p>Required on every release bump, not just the ones that change contracts.</p>
+<p>Each batch carries <code>keccak(VERGEN_GIT_SHA)</code> of the binary that committed it, and
+<code>commitBatch</code> rejects a commit hash with no registered key before it stores
+anything. The <code>$VERSION_FROM</code> deployer registered only <code>$VERSION_FROM</code>’s key, so
+until this step runs the upgraded sequencer commits nothing at all — the
+committer logs</p>
+<pre><code>Failed to send commitment for batch N ... execution reverted: 0xf6b9798e
+</code></pre>
+<p>which is <code>MissingVerificationKeyForCommit()</code>. Both <code>lastCommittedBatch</code> and
+<code>lastVerifiedBatch</code> sit still while the L2 keeps producing blocks, so the symptom
+looks like a stuck committer rather than a key problem.</p>
+<p>Both arguments come from the release you are upgrading to:</p>
+<pre><code class="language-bash"># The hashed value is the ASCII sha the binary reports, not the tag.
+TO_SHA=$("$WORK/ethrex-$VERSION_TO/ethrex" --version | sed 's|.*HEAD-||; s|/.*||')
+TO_COMMIT_HASH=$(cast keccak "$TO_SHA")
+
+# The vk is the same hex-text file the deployer takes via --sp1-vk-path,
+# from $VERSION_TO's ethrex-contracts.tar.gz.
+TO_VK=0x$(tr -d '\n' &lt; "$WORK/contracts-$VERSION_TO/ethrex-riscv32im-succinct-zkvm-vk-bn254" | sed 's/^0x//')
+</code></pre>
+<p><code>rex l2 register-vk</code> derives the commit hash, routes the call through the
+Timelock, and reads the key back afterwards:</p>
+<pre><code class="language-bash">rex l2 register-vk \
+  --commit "$TO_SHA" \
+  --vk "$TO_VK" \
+  --on-chain-proposer "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" \
+  --timelock "$ETHREX_TIMELOCK_ADDRESS" \
+  --private-key 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
+  --rpc-url http://localhost:8545
+</code></pre>
+<p>The <code>--timelock</code> flag is what makes this work: <code>upgradeSP1VerificationKey</code> is
+<code>onlyOwner</code>, that owner is the Timelock, and the command routes through
+<code>emergencyExecute</code> — which needs no delay because in this test the Security
+Council is the account passed as <code>--on-chain-proposer-owner</code>. Sending straight to
+the OnChainProposer instead reverts with <code>OwnableUnauthorizedAccount</code>. See
+<a href="../../l2/fundamentals/timelock.html">Timelock</a> for the Governance
+<code>schedule</code> + <code>execute</code> route.</p>
+<p>Run it with <code>--dry-run</code> first if you want to see the derived commit hash and the
+key currently on chain without sending anything.</p>
 <hr>
 <h2 id="step-4--run-the-version_to-stack"><a class="header" href="#step-4--run-the-version_to-stack">Step 4 — Run the <code>$VERSION_TO</code> stack</a></h2>
 <p>The L1, the L1 datadir, and the L2 datadir are all reused. The only thing that changes is the binary.</p>
@@ -512,7 +590,7 @@ set -a; source cmd/.env; set +a
 </ul>
 <h3 id="42-restart-the-prover-terminal-c"><a class="header" href="#42-restart-the-prover-terminal-c">4.2 Restart the prover (Terminal C)</a></h3>
 <pre><code class="language-bash">cd "$WORK/ethrex-$VERSION_TO"
-./ethrex l2 prover --proof-coordinators tcp://127.0.0.1:3900 --backend exec
+./ethrex l2 prover --proof-coordinators tcp://127.0.0.1:3900 --backend sp1
 </code></pre>
 <hr>
 <h3 id="43-check-the-first-version_to-batch-over-version_from-blocks-gets-verified"><a class="header" href="#43-check-the-first-version_to-batch-over-version_from-blocks-gets-verified">4.3 Check the first <code>$VERSION_TO</code> batch over <code>$VERSION_FROM</code> blocks gets verified</a></h3>
@@ -528,7 +606,7 @@ surfaces here, as a proof failure inside the zkVM.</p>
   COMMITTED=$(rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'lastCommittedBatch()' --rpc-url http://localhost:8545)
   VERIFIED=$(rex call  "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'lastVerifiedBatch()'  --rpc-url http://localhost:8545)
   echo "committed=$COMMITTED verified=$VERIFIED (need a verified batch covering L2 block $LEGACY_HEAD)"
-  [ "$VERIFIED" -gt "$FIRST_UNCOMMITTED" ] &amp;&amp; break
+  [ $((VERIFIED)) -gt "$FIRST_UNCOMMITTED" ] &amp;&amp; break  # rex prints a 32-byte hex word
   sleep 10
 done
 </code></pre>
@@ -554,6 +632,83 @@ make test
 <li>the first 100 lines of the sequencer log after the Step 4 restart,</li>
 <li>the failing test name from the <code>make test</code> output.</li>
 </ul>
+<hr>
+<h2 id="step-6-upgrade-without-downtime"><a class="header" href="#step-6-upgrade-without-downtime">Step 6: Upgrade without downtime</a></h2>
+<p>Steps 2 to 4 stop the sequencer for the upgrade. This step runs the same upgrade while the L2 keeps producing blocks: a <code>$VERSION_TO</code> sequencer, with its own data directory and ports, follows the <code>$VERSION_FROM</code> one over p2p and takes over block production at a block chosen in advance (<code>--admin.start-at</code> on the new sequencer, <code>POST /state-updater/stop-at/&lt;N&gt;</code> on the old one).</p>
+<p>Two constraints shape the order of the steps:</p>
+<ul>
+<li>A proof coordinator only hands a batch to a prover of the version that committed it, and a sequencer that stops sequencing also stops sending proofs. So the <code>$VERSION_FROM</code> batches are all verified before the handover, as in Step 2, but only the prover stops: the <code>$VERSION_FROM</code> sequencer keeps producing blocks, and <code>$VERSION_TO</code> commits them after the handover.</li>
+<li>The <code>$VERSION_TO</code> sequencer cannot commit anything before its verification key is registered, so Step 3 runs before the handover.</li>
+</ul>
+<h3 id="61-start-over-from-version_from"><a class="header" href="#61-start-over-from-version_from">6.1 Start over from <code>$VERSION_FROM</code></a></h3>
+<p>Stop the <code>$VERSION_TO</code> sequencer and prover (Terminals B and C) and the L1 (Terminal A) with <code>Ctrl-C</code>, and remove the data directories, so Step 1 deploys from scratch:</p>
+<pre><code class="language-bash">rm -rf "$WORK/ethrex-$VERSION_FROM/dev_ethrex_l1" "$WORK/ethrex-$VERSION_FROM/dev_ethrex_l2" "$WORK/dev_ethrex_l2_new"
+</code></pre>
+<p>Then run Step 1 again in new terminals. The deployer reads <code>ETHREX_DEPLOYER_*</code> variables from the environment, and <code>cmd/.env</code> sets some of them, such as <code>ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS</code>: in a terminal that sourced it, the new deployment points at the previous run’s SP1 verifier, which has no code on the new L1, and every proof fails to verify. Make one change to Step 1.3: end the sequencer command with <code>2&gt;&amp;1 | tee "$WORK/sequencer-from.log"</code>. Step 6.4 needs the enode the sequencer logs at startup (<code>Local node initialized enode=...</code>); the L2 RPC does not serve <code>admin_nodeInfo</code>.</p>
+<h3 id="62-drain-the-version_from-prover-keep-its-sequencer-running"><a class="header" href="#62-drain-the-version_from-prover-keep-its-sequencer-running">6.2 Drain the <code>$VERSION_FROM</code> prover, keep its sequencer running</a></h3>
+<p>Run Steps 2.1 and 2.2, which stop the committer, record <code>FIRST_UNCOMMITTED</code> and wait until every committed batch is verified. Then stop only the prover, with <code>Ctrl-C</code> in Terminal C. The <code>$VERSION_FROM</code> sequencer keeps producing blocks. The ones it produces from here on are committed by <code>$VERSION_TO</code> after the handover.</p>
+<h3 id="63-upgrade-the-contracts-and-register-the-key"><a class="header" href="#63-upgrade-the-contracts-and-register-the-key">6.3 Upgrade the contracts and register the key</a></h3>
+<p>Run Step 3 with the <code>$VERSION_FROM</code> sequencer still running. Skip any database migration Step 3.1 lists: the <code>$VERSION_TO</code> sequencer starts from an empty data directory and gets the chain from the <code>$VERSION_FROM</code> one.</p>
+<h3 id="64-start-the-version_to-sequencer-next-to-the-old-one-terminal-d"><a class="header" href="#64-start-the-version_to-sequencer-next-to-the-old-one-terminal-d">6.4 Start the <code>$VERSION_TO</code> sequencer next to the old one (Terminal D)</a></h3>
+<p>Pick the handover block, far enough ahead for the new sequencer to sync the chain first (raise the margin on a long chain), and save it together with the old sequencer’s enode:</p>
+<pre><code class="language-bash">grep -m1 -oE 'enode://[0-9a-f]+@[0-9.]+:[0-9]+' "$WORK/sequencer-from.log" &gt; "$WORK/enode-from"
+echo $(( $(rex block-number --rpc-url http://localhost:1729) + 30 )) &gt; "$WORK/handover-block"
+cat "$WORK/enode-from" "$WORK/handover-block"
+</code></pre>
+<p>Start the <code>$VERSION_TO</code> sequencer with its own data directory, HTTP, p2p, admin and proof coordinator ports:</p>
+<pre><code class="language-bash">cd "$WORK/ethrex-$VERSION_TO"
+cp "$WORK/ethrex-$VERSION_FROM/cmd/.env" cmd/.env
+set -a; source cmd/.env; set +a
+./ethrex l2 \
+  --watcher.block-delay 0 \
+  --network "$WORK/l2-genesis-pinned.json" \
+  --http.port 1730 \
+  --http.addr 0.0.0.0 \
+  --datadir "$WORK/dev_ethrex_l2_new" \
+  --p2p.port 30304 \
+  --discovery.port 30304 \
+  --admin-server.port 5556 \
+  --proof-coordinator.port 3901 \
+  --bootnodes "$(cat "$WORK/enode-from")" \
+  --admin.start-at "$(cat "$WORK/handover-block")" \
+  --admin.l2-head-check-rpc-url http://localhost:1729 \
+  --l1.bridge-address "$ETHREX_WATCHER_BRIDGE_ADDRESS" \
+  --l1.on-chain-proposer-address "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" \
+  --l1.timelock-address "$ETHREX_TIMELOCK_ADDRESS" \
+  --eth.rpc-url http://localhost:8545 \
+  --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
+  --block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+  --block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+  --block-producer.operator-fee-per-gas 1000000000 \
+  --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+  --proof-coordinator.addr 127.0.0.1 \
+  --no-monitor
+</code></pre>
+<p>As in Step 4.1, <code>--network</code> is the pinned <code>$VERSION_FROM</code> genesis. The new sequencer follows the old one until the handover block.</p>
+<h3 id="65-start-the-version_to-prover-terminal-e"><a class="header" href="#65-start-the-version_to-prover-terminal-e">6.5 Start the <code>$VERSION_TO</code> prover (Terminal E)</a></h3>
+<pre><code class="language-bash">cd "$WORK/ethrex-$VERSION_TO"
+./ethrex l2 prover --proof-coordinators tcp://127.0.0.1:3901 --backend sp1
+</code></pre>
+<h3 id="66-hand-over"><a class="header" href="#66-hand-over">6.6 Hand over</a></h3>
+<pre><code class="language-bash">curl -sf -X POST "http://localhost:5555/state-updater/stop-at/$(cat "$WORK/handover-block")"
+</code></pre>
+<p>The <code>$VERSION_FROM</code> sequencer produces the handover block and logs <code>The sequencer is now Following</code>; the <code>$VERSION_TO</code> one produces the next block and logs <code>The sequencer is now Sequencing</code>. The old sequencer stays at the handover block, so query the new one on port <code>1730</code> from here on.</p>
+<p>Check that block production did not pause: the timestamps around the handover block are as far apart as the rest.</p>
+<pre><code class="language-bash">N=$(cat "$WORK/handover-block")
+for B in $(seq $((N - 3)) $((N + 3))); do
+  TS=$(curl -s http://localhost:1730 -H 'Content-Type: application/json' \
+    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getBlockByNumber\",\"params\":[\"$(printf '0x%x' "$B")\",false]}" | jq -r .result.timestamp)
+  echo "block $B timestamp $((TS))"
+done
+</code></pre>
+<h3 id="67-check-the-version_from-blocks-get-verified"><a class="header" href="#67-check-the-version_from-blocks-get-verified">6.7 Check the <code>$VERSION_FROM</code> blocks get verified</a></h3>
+<p>Run the loop of Step 4.3. The first batch <code>$VERSION_TO</code> commits holds the blocks the <code>$VERSION_FROM</code> sequencer produced after its committer stopped, and it has to be proven by the <code>$VERSION_TO</code> prover and verified on L1.</p>
+<h3 id="68-run-the-integration-tests-against-the-new-sequencer"><a class="header" href="#68-run-the-integration-tests-against-the-new-sequencer">6.8 Run the integration tests against the new sequencer</a></h3>
+<pre><code class="language-bash">cd "$WORK/ethrex-$VERSION_TO/crates/l2"
+INTEGRATION_TEST_L2_RPC=http://localhost:1730 make test
+</code></pre>
+<p>If the suite goes green, the upgrade without downtime is successful. Stop the <code>$VERSION_FROM</code> sequencer (Terminal B); in a real deployment, move RPC traffic to the new sequencer first, since the old one no longer advances.</p>
 
                     </main>
 

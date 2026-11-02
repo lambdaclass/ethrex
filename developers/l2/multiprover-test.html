@@ -1,0 +1,422 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Multiprover test (SP1 GPU + TDX) - Ethrex</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="shortcut icon" href="../../favicon-65f98953.png">
+        <link rel="stylesheet" href="../../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../../css/general-2459343d.css">
+        <link rel="stylesheet" href="../../css/chrome-ae938929.css">
+        <link rel="stylesheet" href="../../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../../searchindex-e34685b4.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../../toc-a6a3d26a.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Ethrex</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<h1 id="multiprover-test-sp1-gpu--tdx"><a class="header" href="#multiprover-test-sp1-gpu--tdx">Multiprover test (SP1 GPU + TDX)</a></h1>
+<p>A per-release acceptance test for the configuration a real rollup runs: an <code>OnChainProposer</code> that requires <strong>both</strong> an SP1 proof and a TDX proof before it will verify a batch.</p>
+<p>The other L2 checks each exercise one prover. This one is the only place where a batch has to satisfy two independent provers, running on two machines, before <code>lastVerifiedBatch</code> moves — and the only place a TDX quote is verified on chain, against real TDX hardware, rather than trusted.</p>
+<h2 id="real-attestation-and-what-it-needs"><a class="header" href="#real-attestation-and-what-it-needs">Real attestation, and what it needs</a></h2>
+<p>Deploy with <code>ETHREX_TDX_DEV_MODE=false</code> and boot the prover VM as a <strong>real TDX guest</strong>. <code>TDXVerifier.register()</code> then calls <code>verifyAndAttestOnChain</code>, so the quote is checked against the on-chain PCCS collateral and its measurements compared to the ones the verifier was deployed with.</p>
+<p>Dev mode (<code>ETHREX_TDX_DEV_MODE=true</code>) is what CI uses, and it is not equivalent: <code>register()</code> short-circuits, taking the signing address from the quote’s first 20 bytes and skipping verification entirely. That only works with a <em>plain</em> QEMU guest, whose dev quote begins with that address. Booting a real TDX guest in dev mode registers quote-header bytes as the signer and every <code>verifyBatch</code> then reverts with <code>InvalidTdxProof()</code> (<code>0x62013a95</code>) while registration appears to have succeeded. Dev mode is the fallback when no TDX host is available; it does not exercise the verifier.</p>
+<p>Three things must be on chain before a real quote will verify. The deploy handles none of them, and <code>ethrex</code> normally loads the collateral by shelling out to <code>automata-dcap-qpl-tool</code> — which cannot work here, because it resolves contract addresses from a registry keyed by chain id and rejects the dev L1 with <code>Unsupported chain_id: 9</code>. Its failure is silent: <code>prepare_quote_prerequisites</code> discards the tool’s exit status, so the first symptom is an unrelated revert later. Load the collateral directly instead, as <a href="#3-load-this-platforms-tdx-collateral">step 3</a> does.</p>
+<h3 id="the-verifiers-expected-measurements"><a class="header" href="#the-verifiers-expected-measurements">The verifier’s expected measurements</a></h3>
+<p><code>_validateReport</code> requires MRTD and RTMR0-2 in the quote to equal the values compiled into <code>TDXVerifier.sol</code>. Those constants pin one specific image build, so they will not match the image of the release under test — a mismatch reverts with <code>MRTD mismatch</code>. Since the contracts are compiled at deploy time, pin them to the image being released, which is what this test should be asserting.</p>
+<h3 id="the-tcb-signing-ca"><a class="header" href="#the-tcb-signing-ca">The TCB Signing CA</a></h3>
+<p>The deploy upserts the root CA (<code>CA.ROOT</code>) and platform CA (<code>CA.PLATFORM</code>), but not <code>CA.SIGNING</code> — the Intel SGX TCB Signing certificate that signs the TCB info and QE identity. Without it the DAO has nothing to validate signatures against and rejects the upsert with <code>TCB_Cert_Expired</code> (<code>0xea8cd522</code>), which is misleading: nothing has expired.</p>
+<h3 id="this-platforms-tcb-info-and-qe-identity"><a class="header" href="#this-platforms-tcb-info-and-qe-identity">This platform’s TCB info and QE identity</a></h3>
+<p>Fetched from the host’s PCCS service and upserted into <code>AutomataFmspcTcbDao</code> and <code>AutomataEnclaveIdentityDao</code>.</p>
+<h2 id="where-to-run-it"><a class="header" href="#where-to-run-it">Where to run it</a></h2>
+<p>Two hosts, with the SP1 prover reaching the proof coordinator over the tailnet:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Host</th><th>Runs</th><th>Requires</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ethrex-tdx-baremetal</code></td><td>L1, contract deploy, sequencer + proof coordinator, TDX prover VM</td><td>TDX-capable CPU, <code>qgsd</code> and <code>pccs</code> services, the nix-built TDX QEMU</td></tr>
+<tr><td><code>l2-gpu</code></td><td>SP1 prover</td><td>CUDA GPU</td></tr>
+</tbody>
+</table>
+</div>
+<p>The TDX host really is required: a quote signed by real hardware is what <code>verifyAndAttestOnChain</code> checks. Confirm it before starting, because the VM boots on a non-TDX machine and only fails later, at quote generation:</p>
+<pre><code class="language-bash">cat /sys/module/kvm_intel/parameters/tdx     # must print Y
+systemctl is-active qgsd pccs                # both active; pccs serves the collateral
+</code></pre>
+<p>Both are shared machines running other people’s work, so keep the footprint small: check that ports 8545, 1729 and 3900 are free before starting, and tear the stack down afterwards. On <code>l2-gpu</code>, this test and the <a href="sp1-gpu-integration-test.html">SP1 GPU integration test</a> contend for the same GPU, ports and datadirs — run them one after the other, never concurrently.</p>
+<h2 id="environment-pins"><a class="header" href="#environment-pins">Environment pins</a></h2>
+<p>Four things must be right, and each fails in a way that does not point at its cause:</p>
+<ul>
+<li><strong>solc must be exactly 0.8.31.</strong> <code>TDXVerifier.sol</code> declares <code>pragma solidity =0.8.31</code>, so 0.8.30 fails with “Source file requires different compiler version”. Install it locally rather than changing the system compiler on a shared host.</li>
+<li><strong>Deploy onto a fresh chain.</strong> The deploy is not idempotent: CREATE2 puts the dependency contracts at fixed addresses, so re-running against a chain that already has them reverts in <code>deploy-p256</code> with no reason string. Wipe the L1 datadir between attempts.</li>
+<li><strong>Set <code>--watcher.watch-interval 1000</code>.</strong> At the 12000 ms default, on a <code>--dev</code> L1 that mines instantly, the deposits the sequencer has processed drift out of step with the bridge’s pending queue, and every commit reverts with <code>InvalidPrivilegedTransactionLogs()</code> (<code>0x9e6e5638</code>). CI sets 1000 ms for the same reason.</li>
+<li><strong>Attach both provers before the first batch is committed, and reset the L1 and L2 datadirs together.</strong> The coordinator hands out work starting at <code>1 + lastVerifiedBatch</code>, and prover inputs for old batches are eventually pruned. A prover that joins after batches have accumulated — or a sequencer restarted against an L1 that already has committed batches — asks forever for a batch whose input no longer exists, reports <code>No blocks to prove</code>, and nothing advances: verification needs both proofs, so <code>lastVerifiedBatch</code> never moves and the request never changes. Wiping only one of the two datadirs reproduces this reliably.</li>
+</ul>
+<p>The TDX prover image (<code>image.raw</code>) is built with nix from <code>crates/l2/tee/quote-gen</code>. If the host has no nix, build it on another host and copy it over — it is ~700 MB and depends only on the release, not the host.</p>
+<h2 id="procedure"><a class="header" href="#procedure">Procedure</a></h2>
+<p>Set the release under test once:</p>
+<pre><code class="language-bash">export TAG=vX.Y.Z-rc.W
+</code></pre>
+<h3 id="1-prepare-ethrex-tdx-baremetal"><a class="header" href="#1-prepare-ethrex-tdx-baremetal">1. Prepare <code>ethrex-tdx-baremetal</code></a></h3>
+<pre><code class="language-bash"># release binaries and contracts (the vk the deployer registers)
+mkdir -p ~/multiprover/$TAG &amp;&amp; cd ~/multiprover/$TAG
+for a in ethrex-linux-x86_64 ethrex-l2-linux-x86_64; do
+  curl -fsSL -o $a "https://github.com/lambdaclass/ethrex/releases/download/$TAG/$a" &amp;&amp; chmod +x $a
+done
+mkdir -p contracts &amp;&amp; curl -fsSL \
+  "https://github.com/lambdaclass/ethrex/releases/download/$TAG/ethrex-contracts.tar.gz" | tar xz -C contracts
+
+# source at the tag, for genesis, keys and the contract build
+git clone --depth 1 --branch $TAG https://github.com/lambdaclass/ethrex.git src
+
+# pinned solc, local to the test
+curl -fsSL -o bin/solc https://github.com/ethereum/solidity/releases/download/v0.8.31/solc-static-linux
+chmod +x bin/solc &amp;&amp; export PATH=$PWD/bin:$PATH
+</code></pre>
+<p>The TDX deploy also needs <code>automata-dcap-qpl-tool</code> built from <code>crates/l2/tee/contracts</code>. If the host has no Rust toolchain, build it elsewhere and copy the binary into <code>src/crates/l2/tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/</code>.</p>
+<h3 id="2-measure-the-image-and-pin-the-verifier-to-it"><a class="header" href="#2-measure-the-image-and-pin-the-verifier-to-it">2. Measure the image and pin the verifier to it</a></h3>
+<p>Boot the real TDX guest once, take a quote, and write its measurements into <code>TDXVerifier.sol</code> before the contracts are compiled. <code>run-qemu</code> from <code>hypervisor.nix</code> hardcodes <code>-serial mon:stdio</code>, so it dies when detached; the invocation below is the same TDX configuration with a file sink.</p>
+<pre><code class="language-bash">QEMU=$(nix-build --no-out-link crates/l2/tee/quote-gen/hypervisor.nix)/bin/run-qemu   # for reference
+# daemonized equivalent:
+qemu-system-x86_64 -daemonize -serial file:$PWD/tdx.log -name guest=ethrex_tdx_prover \
+  -machine q35,kernel_irqchip=split,confidential-guest-support=tdx,hpet=off -smp 2 -m 2G \
+  -accel kvm -cpu host -nographic -nodefaults -bios &lt;OVMF from the nix store&gt; -no-user-config \
+  -netdev user,id=net0,net=192.168.76.0/24 -device e1000,netdev=net0 \
+  -device ide-hd,bus=ide.0,drive=main,bootindex=0 \
+  -drive "if=none,media=disk,id=main,file.filename=$PWD/image.raw,discard=unmap,detect-zeroes=unmap" \
+  -object '{"qom-type":"tdx-guest","id":"tdx","quote-generation-socket":{"type":"vsock","cid":"2","port":"4050"}}'
+</code></pre>
+<p>The VM cannot reach a coordinator yet, so it logs <code>Error sending quote</code> — that is expected, and the quote it prints is what we need. Take it from the serial log and read the measurements out of it. In a v4 TDX quote the report body starts at byte 48; MRTD is at body offset 136 and RTMR0-2 follow at 328, 376 and 424, 48 bytes each.</p>
+<pre><code class="language-bash">QUOTE=$(grep -ao 'Sending quote [0-9a-f]*' tdx.log | head -1 | sed 's/Sending quote //')
+python3 - "$QUOTE" &lt;&lt;'PYEOF'
+import sys
+b = bytes.fromhex(sys.argv[1])[48:]
+for name, off in (("MRTD",136), ("RTMR0",328), ("RTMR1",376), ("RTMR2",424)):
+    print(name, b[off:off+48].hex())
+PYEOF
+</code></pre>
+<p>Replace the four <code>bytes public MRTD/RTMR0/RTMR1/RTMR2</code> initialisers in <code>crates/l2/tee/contracts/src/TDXVerifier.sol</code> with those values, then shut the VM down (<code>pkill -f 'guest=ethrex_tdx_prover'</code>) — it is started again in step 5, once the coordinator exists.</p>
+<h3 id="3-start-l1-and-deploy-with-both-provers-required"><a class="header" href="#3-start-l1-and-deploy-with-both-provers-required">3. Start L1 and deploy with both provers required</a></h3>
+<pre><code class="language-bash">./ethrex-linux-x86_64 --network src/fixtures/genesis/l1.json \
+  --http.addr 0.0.0.0 --http.port 8545 --authrpc.port 8551 --dev --datadir dev_l1 &amp;
+
+cd src/crates/l2          # the deployer resolves tee/contracts relative to cwd
+COMPILE_CONTRACTS=true ETHREX_TDX_DEV_MODE=false \
+  ~/multiprover/$TAG/ethrex-l2-linux-x86_64 l2 deploy \
+    --eth-rpc-url http://localhost:8545 \
+    --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+    --sp1 true --sp1-vk-path ~/multiprover/$TAG/contracts/ethrex-riscv32im-succinct-zkvm-vk-bn254 \
+    --tdx true \
+    --on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+    --bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+    --bridge-owner-pk 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
+    --deposit-rich --private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
+    --genesis-l1-path ../../fixtures/genesis/l1.json \
+    --genesis-l2-path ../../fixtures/genesis/l2.json \
+    --inclusion-max-wait 86400 \
+    --env-file-path ~/multiprover/$TAG/.env
+</code></pre>
+<p><code>--sp1 true --tdx true</code> together are what make this a multiprover test: the <code>OnChainProposer</code> then requires a proof of each kind per batch.</p>
+<h3 id="4-load-this-platforms-tdx-collateral"><a class="header" href="#4-load-this-platforms-tdx-collateral">4. Load this platform’s TDX collateral</a></h3>
+<p>The DAOs take <code>(string json, bytes signature)</code>. <code>cast</code> cannot pass these on the command line — its tuple parser splits on the commas inside the JSON — so encode the calldata and send it raw. Addresses come from <code>crates/l2/tee/contracts/deploydeps/automata-on-chain-pccs/deployment/</code>.</p>
+<p>First the TCB Signing CA, which the deploy does not load. It is the leaf of the issuer chain the PCCS returns alongside the TCB info (<code>TCB-Info-Issuer-Chain</code> header, URL-encoded PEM):</p>
+<pre><code class="language-bash">cast send "$PCS_DAO" 'upsertPcsCertificates(uint8,bytes)' 3 "0x&lt;signing cert DER&gt;" \
+  --private-key "$PK" --rpc-url http://localhost:8545
+</code></pre>
+<p>Then the TCB info and QE identity for this platform. The FMSPC is in the PCK certificate embedded in the quote, under OID <code>1.2.840.113741.1.13.1.4</code>:</p>
+<pre><code class="language-bash">curl -sk "https://localhost:8081/tdx/certification/v4/tcb?fmspc=$FMSPC" -o tcb.json
+curl -sk "https://localhost:8081/tdx/certification/v4/qe/identity"      -o qeid.json
+</code></pre>
+<p>Each response is <code>{"&lt;object&gt;": {...}, "signature": "&lt;hex&gt;"}</code>; the DAO wants the inner object as a compact JSON string and the signature as bytes. Encode <code>upsertFmspcTcb((string,bytes))</code> and <code>upsertEnclaveIdentity(uint256,uint256,(string,bytes))</code> and send the calldata directly. For the identity, pass id <code>2</code> (<code>EnclaveId.TD_QE</code>) and version <strong>4</strong> — the DAO requires 4 or 5 for TD_QE and rejects the <code>version: 2</code> carried inside the JSON with <code>Incorrect_Enclave_Id_Version</code> (<code>0x4e0f5696</code>).</p>
+<h3 id="5-start-the-sequencer"><a class="header" href="#5-start-the-sequencer">5. Start the sequencer</a></h3>
+<p>The proof coordinator must bind <code>0.0.0.0</code> so the SP1 prover on the other host can reach it, and the qpl tool path must be passed even in dev mode.</p>
+<p><code>--committer.commit-time</code> must not outpace proof generation. Both proofs are required per batch, so the pipeline advances at the slower prover’s rate: an SP1 proof on <code>l2-gpu</code> measured a steady 106s, which is why 120s is used here. At 15s the committer outruns proving by about 7x, and the gap never closes — a 63-hour run reached batch 10983 committed against 2127 verified. Step 9 cannot pass in that state, however long it is left running.</p>
+<pre><code class="language-bash">set -a; . ~/multiprover/$TAG/.env; set +a
+~/multiprover/$TAG/ethrex-l2-linux-x86_64 l2 --no-monitor \
+  --watcher.block-delay 0 --watcher.watch-interval 1000 \
+  --network ../../fixtures/genesis/l2.json \
+  --http.addr 0.0.0.0 --http.port 1729 --datadir ~/multiprover/$TAG/dev_l2 \
+  --l1.bridge-address "$ETHREX_WATCHER_BRIDGE_ADDRESS" \
+  --l1.on-chain-proposer-address "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" \
+  --l1.timelock-address "$ETHREX_TIMELOCK_ADDRESS" \
+  --eth.rpc-url http://localhost:8545 --committer.commit-time 120000 \
+  --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
+  --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+  --proof-coordinator.tdx-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+  --proof-coordinator.addr 0.0.0.0 \
+  --proof-coordinator.qpl-tool-path &lt;path to automata-dcap-qpl-tool&gt; &amp;
+</code></pre>
+<h3 id="6-start-the-tdx-prover-vm"><a class="header" href="#6-start-the-tdx-prover-vm">6. Start the TDX prover VM</a></h3>
+<p>Boot the real TDX guest again, exactly as in <a href="#2-measure-the-image-and-pin-the-verifier-to-it">step 2</a> — the coordinator now exists, so the quote it sends is registered instead of erroring.</p>
+<p>Registration has succeeded when the sequencer logs <code>ProverSetup received for TDX</code> followed by <code>ProverSetupACK sent</code>, with no <code>Failed to handle ProverSetup</code> between them. That ACK is the real result: with dev mode off, it means the quote passed <code>verifyAndAttestOnChain</code> against the collateral loaded in step 4 and its measurements matched the ones pinned in step 2.</p>
+<h3 id="7-start-the-sp1-prover-on-l2-gpu"><a class="header" href="#7-start-the-sp1-prover-on-l2-gpu">7. Start the SP1 prover on <code>l2-gpu</code></a></h3>
+<pre><code class="language-bash">ssh l2-gpu
+./ethrex-l2 l2 prover --backend sp1 \
+  --proof-coordinators tcp://&lt;tdx-host-tailscale-ip&gt;:3900 --log.level info
+</code></pre>
+<h3 id="8-wait-for-a-batch-verified-by-both-proofs"><a class="header" href="#8-wait-for-a-batch-verified-by-both-proofs">8. Wait for a batch verified by both proofs</a></h3>
+<p>This is the assertion the test exists for. <code>lastVerifiedBatch</code> only advances once both an SP1 and a TDX proof have been submitted for the same batch.</p>
+<pre><code class="language-bash">while :; do
+  C=$(rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'lastCommittedBatch()' http://localhost:8545)
+  V=$(rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'lastVerifiedBatch()'  http://localhost:8545)
+  echo "committed=$((C)) verified=$((V))"
+  [ "$((V))" -ge 1 ] &amp;&amp; break
+  sleep 30
+done
+</code></pre>
+<h3 id="9-run-the-integration-suite"><a class="header" href="#9-run-the-integration-suite">9. Run the integration suite</a></h3>
+<p>The withdrawal tests block in <code>wait_for_verified_proof</code> until <code>lastVerifiedBatch</code> reaches the batch holding the withdrawal, so verification has to be keeping pace before this starts. Confirm <code>lastVerifiedBatch</code> is climbing and within a few batches of <code>lastCommittedBatch</code> rather than thousands behind; if it is falling behind, fix the commit time in step 5 and restart from a fresh L1 and L2.</p>
+<pre><code class="language-bash">cd src
+INTEGRATION_TEST_L1_RPC=http://localhost:8545 \
+INTEGRATION_TEST_L2_RPC=http://localhost:1729 \
+INTEGRATION_TEST_PRIVATE_KEYS_FILE_PATH=$PWD/fixtures/keys/private_keys_l1.txt \
+INTEGRATION_TEST_BRIDGE_OWNER_PRIVATE_KEY=0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
+cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture --test-threads=1
+</code></pre>
+<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Symptom</th><th>Cause</th></tr>
+</thead>
+<tbody>
+<tr><td><code>execution reverted: 0x9e6e5638</code> on commit</td><td><code>InvalidPrivilegedTransactionLogs()</code> — watcher interval left at the default; set <code>--watcher.watch-interval 1000</code></td></tr>
+<tr><td><code>execution reverted</code> in <code>deploy-p256</code></td><td>deploying onto a chain that already has the CREATE2 contracts; start from a fresh L1 datadir</td></tr>
+<tr><td><code>Source file requires different compiler version</code></td><td>solc is not exactly 0.8.31</td></tr>
+<tr><td>VM loops on <code>Error sending quote: Failed to get ProverSetupAck</code></td><td>the coordinator rejected registration; check the sequencer log for the error behind <code>Failed to handle ProverSetup</code></td></tr>
+<tr><td><code>MRTD mismatch</code> on registration</td><td>the verifier was deployed with the committed measurements; pin them to the image under test (step 2)</td></tr>
+<tr><td><code>TCB_Cert_Expired</code> (<code>0xea8cd522</code>) on upsert</td><td>nothing has expired: <code>CA.SIGNING</code> was never loaded, so signatures cannot be checked (step 4)</td></tr>
+<tr><td><code>Incorrect_Enclave_Id_Version</code> (<code>0x4e0f5696</code>)</td><td>TD_QE needs version 4 or 5, not the <code>version</code> inside the JSON</td></tr>
+<tr><td><code>Unsupported chain_id: 9</code></td><td><code>automata-dcap-qpl-tool</code> cannot serve a dev chain; load the collateral directly (step 4)</td></tr>
+<tr><td><code>verifyBatch</code> reverts <code>0x62013a95</code></td><td><code>InvalidTdxProof()</code> — a real quote was registered while dev mode was on, so the signer is quote-header bytes; deploy with <code>ETHREX_TDX_DEV_MODE=false</code></td></tr>
+<tr><td>Suite hangs in a withdrawal test and later fails on an unreachable L2 RPC</td><td>verification is thousands of batches behind commits; <code>--committer.commit-time</code> is below the SP1 proof time (step 5)</td></tr>
+<tr><td>VM sits on <code>No blocks to prove</code> while batches are committed</td><td>the prover is asking for a batch whose input was pruned; restart from a fresh L1 <strong>and</strong> L2 with both provers attached before the first batch</td></tr>
+<tr><td>VM sits on <code>No blocks to prove</code> with nothing committed</td><td>normal; if it persists, the committer is failing — check the sequencer log</td></tr>
+</tbody>
+</table>
+</div>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../developers/l2/sp1-gpu-integration-test.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../../developers/l2/prover.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../developers/l2/sp1-gpu-integration-test.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../../developers/l2/prover.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../../mark-09e88c2c.min.js"></script>
+        <script src="../../searcher-c2a407aa.js"></script>
+
+        <script src="../../clipboard-1626706a.min.js"></script>
+        <script src="../../highlight-abc7f01d.js"></script>
+        <script src="../../book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../../mermaid-eefea253.min.js"></script>
+        <script src="../../mermaid-init-ccf746f1.js"></script>
+
+
+
+    </div>
+    </body>
+</html>

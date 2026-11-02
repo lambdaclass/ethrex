@@ -34,10 +34,10 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-429c06ce.js";
+            window.path_to_searchindex_js = "../searchindex-e34685b4.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-a8baa880.js"></script>
+        <script src="../toc-a6a3d26a.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -263,8 +263,9 @@ git push origin &lt;release_version&gt;
 <li><input disabled="" type="checkbox"> Upgrade <code>ethrex-teku</code></li>
 <li><input disabled="" type="checkbox"> Upgrade <code>ethrex-grandine</code></li>
 <li><input disabled="" type="checkbox"> Launch multisync on <code>ethrex-multisync-main</code></li>
-<li><input disabled="" type="checkbox"> Upgrade a local L2 created with the previous version and run the integration tests</li>
+<li><input disabled="" type="checkbox"> Upgrade an L2 created with the previous version, with and without downtime, and run the integration tests, on the GPU server (<code>l2-gpu</code>) with the SP1 prover</li>
 <li><input disabled="" type="checkbox"> Run the L2 integration tests with a SP1 prover on the GPU server (<code>l2-gpu</code>)</li>
+<li><input disabled="" type="checkbox"> Run the multiprover test: SP1 prover on the GPU server (<code>l2-gpu</code>), TDX prover and the rest of the stack on <code>ethrex-tdx-baremetal</code></li>
 </ul>
 <p>The commands for each target follow. The host roster changes between releases — fill in the ones you run and leave the placeholders for the rest. Replace <code>vX.Y.Z-rc.W</code> / <code>release/vX.Y.Z</code> with the version under test.</p>
 <h4 id="ethrex-ethdocker-mainnet"><a class="header" href="#ethrex-ethdocker-mainnet"><code>ethrex-ethdocker-mainnet</code></a></h4>
@@ -307,10 +308,32 @@ tmux kill-session -t sync 2&gt;/dev/null || true   # drop a leftover sync sessio
 tmux new-session -d -s sync "make multisync-loop-auto MULTISYNC_BRANCH=release/vX.Y.Z 2&gt;&amp;1"
 </code></pre>
 <p>Check progress later with <code>tmux attach -t sync</code> (detach with <code>Ctrl-b</code> then <code>d</code>).</p>
-<h4 id="local-l2-upgrade--integration-tests"><a class="header" href="#local-l2-upgrade--integration-tests">Local L2 upgrade + integration tests</a></h4>
+<h4 id="l2-upgrade--integration-tests-l2-gpu"><a class="header" href="#l2-upgrade--integration-tests-l2-gpu">L2 upgrade + integration tests (<code>l2-gpu</code>)</a></h4>
 <p>See <a href="l2/upgrade-test.html">Upgrade test</a> for the full procedure.</p>
+<p>It upgrades twice from the previous release: with downtime, restarting the sequencer on the new release over the old data directory, and without downtime, handing block production over to a new-release sequencer at a chosen block. Run both: the restart is the only path that opens an old data directory with the new release, and the handover is the only one where a new-release sequencer syncs the chain over p2p and commits blocks the old release produced.</p>
+<p>Run it on <code>l2-gpu</code> with <code>--backend sp1</code>, not locally with <code>--backend exec</code>. The
+<code>exec</code> backend produces no proof, so it never consults a verification key — and
+the verification key is exactly what an upgrade changes. Batches are committed
+under <code>keccak(VERGEN_GIT_SHA)</code>, baked into the binary at build time, and
+<code>commitBatch</code> rejects a commit hash the deployment holds no key for, so an
+upgraded sequencer commits nothing at all until the new release’s key is
+registered. Under <code>exec</code> that whole class of upgrade failure is invisible.</p>
+<p>Both L2 checks share the ports and datadirs on <code>l2-gpu</code>, so run them one after
+the other, not concurrently.</p>
 <h4 id="l2-integration-tests-with-a-sp1-prover-l2-gpu"><a class="header" href="#l2-integration-tests-with-a-sp1-prover-l2-gpu">L2 integration tests with a SP1 prover (<code>l2-gpu</code>)</a></h4>
 <p>See <a href="l2/sp1-gpu-integration-test.html">L2 integration tests with a SP1 GPU prover</a> for the full procedure.</p>
+<p>This one deploys the new version from scratch; the upgrade test above covers the
+path from the previous release. Keep both: a release can deploy cleanly and still
+fail to upgrade, and the reverse.</p>
+<h4 id="multiprover-test-sp1-gpu--tdx"><a class="header" href="#multiprover-test-sp1-gpu--tdx">Multiprover test (SP1 GPU + TDX)</a></h4>
+<p>See <a href="l2/multiprover-test.html">Multiprover test</a> for the full procedure. It runs across two hosts: the SP1 prover on <code>l2-gpu</code>, and the L1, deploy, sequencer and TDX prover VM on <code>ethrex-tdx-baremetal</code>, with the SP1 prover reaching the proof coordinator over the tailnet.</p>
+<p>The single-prover checks above each exercise one prover against an <code>OnChainProposer</code> that requires only that one. This is the only check where a batch must satisfy <strong>two</strong> provers before <code>lastVerifiedBatch</code> moves, which is the configuration a production rollup runs.</p>
+<p>Confirm on-chain that the deployment really requires both, rather than trusting the deploy flags — a batch verifying under a single-prover deployment would prove nothing:</p>
+<pre><code class="language-bash">rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'REQUIRE_SP1_PROOF()' "$L1_RPC"   # 0x..01
+rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'REQUIRE_TDX_PROOF()' "$L1_RPC"   # 0x..01
+</code></pre>
+<p>The check passes when <code>lastVerifiedBatch</code> advances past zero with both flags set.</p>
+<p>Run it with <code>ETHREX_TDX_DEV_MODE=false</code>, so the TDX quote is verified on chain by <code>verifyAndAttestOnChain</code> rather than trusted. That is the point of running on TDX hardware, and it is what CI cannot do — CI uses dev mode, where registration skips verification entirely. It needs two extra steps the runbook covers: pinning the verifier’s expected measurements to the image being released, and loading this platform’s TCB collateral, since the tool <code>ethrex</code> normally shells out to cannot serve a dev chain.</p>
 <h3 id="publish"><a class="header" href="#publish">Publish</a></h3>
 <p>Once the pre-release is created and you want to publish the release, go to the <a href="https://github.com/lambdaclass/ethrex/releases">release page</a> and follow the next steps:</p>
 <ol>

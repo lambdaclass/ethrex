@@ -34,10 +34,10 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-429c06ce.js";
+            window.path_to_searchindex_js = "../../searchindex-e34685b4.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../../toc-a8baa880.js"></script>
+        <script src="../../toc-a6a3d26a.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -178,6 +178,29 @@
                     <main>
                         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="upgrades"><a class="header" href="#upgrades">Upgrades</a></h1>
+<h2 id="every-release--register-the-new-verification-key"><a class="header" href="#every-release--register-the-new-verification-key">Every release — register the new verification key</a></h2>
+<p>Applies to any deployment that verifies real proofs (<code>--sp1 true</code> at deploy
+time), whether or not the release changes a contract.</p>
+<p>A batch is committed under the git sha of the binary that committed it, and
+<code>commitBatch</code> rejects a commit hash the deployment holds no key for. Your
+deployment only holds the key of the version that deployed it, so an upgraded
+sequencer commits <strong>nothing</strong> until the new key is registered — every commit
+reverts with <code>MissingVerificationKeyForCommit()</code> (<code>0xf6b9798e</code>), surfacing as:</p>
+<pre><code>Failed to send commitment for batch N ... execution reverted: 0xf6b9798e
+</code></pre>
+<p>The L2 keeps producing blocks throughout, so it reads as a stuck committer
+rather than a missing key. Nothing is lost: register the key and the pending
+batch commits on the next attempt.</p>
+<pre><code>rex l2 register-vk --commit &lt;GIT_SHA&gt; --vk &lt;VERIFICATION_KEY&gt; \
+  --on-chain-proposer &lt;OCP&gt; --timelock &lt;TIMELOCK&gt; --private-key &lt;SECURITY_COUNCIL_PK&gt;
+</code></pre>
+<p>The sha is the one the new binary prints after <code>HEAD-</code> in <code>ethrex --version</code>; the
+key is the <code>ethrex-riscv32im-succinct-zkvm-vk-bn254</code> file from the new release’s
+<code>ethrex-contracts.tar.gz</code>. “Registering a new verification key” in
+<code>docs/l2/fundamentals/upgrades.md</code> explains what the command does and why the
+Timelock is in the path.</p>
+<p>Keys are stored per commit hash, not per version, so the old key stays valid —
+which is what lets a rollback keep verifying.</p>
 <h2 id="from-v7-to-v8"><a class="header" href="#from-v7-to-v8">From v7 to v8</a></h2>
 <h3 id="database-migration-local-node"><a class="header" href="#database-migration-local-node">Database migration (local node)</a></h3>
 <p>This migration applies to the L2 node database only (SQL-backed store). It does not change any on-chain contracts.</p>

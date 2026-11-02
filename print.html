@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-429c06ce.js";
+            window.path_to_searchindex_js = "searchindex-e34685b4.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-a8baa880.js"></script>
+        <script src="toc-a6a3d26a.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -5541,6 +5541,29 @@ And <code>ROUTER_ADDRESS</code> with the outputs of the first deploy</p>
 <p>For an overview of how fee tokens work in ethrex L2, see <a href="#fee-token-overview">Fee Token</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="upgrades"><a class="header" href="#upgrades">Upgrades</a></h1>
+<h2 id="every-release--register-the-new-verification-key"><a class="header" href="#every-release--register-the-new-verification-key">Every release — register the new verification key</a></h2>
+<p>Applies to any deployment that verifies real proofs (<code>--sp1 true</code> at deploy
+time), whether or not the release changes a contract.</p>
+<p>A batch is committed under the git sha of the binary that committed it, and
+<code>commitBatch</code> rejects a commit hash the deployment holds no key for. Your
+deployment only holds the key of the version that deployed it, so an upgraded
+sequencer commits <strong>nothing</strong> until the new key is registered — every commit
+reverts with <code>MissingVerificationKeyForCommit()</code> (<code>0xf6b9798e</code>), surfacing as:</p>
+<pre><code>Failed to send commitment for batch N ... execution reverted: 0xf6b9798e
+</code></pre>
+<p>The L2 keeps producing blocks throughout, so it reads as a stuck committer
+rather than a missing key. Nothing is lost: register the key and the pending
+batch commits on the next attempt.</p>
+<pre><code>rex l2 register-vk --commit &lt;GIT_SHA&gt; --vk &lt;VERIFICATION_KEY&gt; \
+  --on-chain-proposer &lt;OCP&gt; --timelock &lt;TIMELOCK&gt; --private-key &lt;SECURITY_COUNCIL_PK&gt;
+</code></pre>
+<p>The sha is the one the new binary prints after <code>HEAD-</code> in <code>ethrex --version</code>; the
+key is the <code>ethrex-riscv32im-succinct-zkvm-vk-bn254</code> file from the new release’s
+<code>ethrex-contracts.tar.gz</code>. “Registering a new verification key” in
+<code>docs/l2/fundamentals/upgrades.md</code> explains what the command does and why the
+Timelock is in the path.</p>
+<p>Keys are stored per commit hash, not per version, so the old key stays valid —
+which is what lets a rollback keep verifying.</p>
 <h2 id="from-v7-to-v8"><a class="header" href="#from-v7-to-v8">From v7 to v8</a></h2>
 <h3 id="database-migration-local-node"><a class="header" href="#database-migration-local-node">Database migration (local node)</a></h3>
 <p>This migration applies to the L2 node database only (SQL-backed store). It does not change any on-chain contracts.</p>
@@ -11533,19 +11556,40 @@ Please report any issues you encounter while running the integration tests to he
 <li>A node running the <strong>previous release</strong> (<code>&lt;VERSION_FROM&gt;</code>) can be cleanly stopped.</li>
 <li>The L1 contracts can be upgraded following the per-release migration guide.</li>
 <li>The <strong>new release</strong> (<code>&lt;VERSION_TO&gt;</code>) sequencer and prover resume operation against the upgraded contracts without re-deploying from scratch.</li>
+<li>Batches produced by <code>&lt;VERSION_FROM&gt;</code> and committed by <code>&lt;VERSION_TO&gt;</code> are <strong>proved and verified on L1</strong> under the new release’s verification key.</li>
 </ol>
+<p>It runs twice, once for each way to move the nodes to the new release:</p>
+<ul>
+<li><strong>With downtime</strong> (Steps 1 to 5): the <code>$VERSION_FROM</code> sequencer stops, and the <code>$VERSION_TO</code> one restarts on its data directory.</li>
+<li><strong>Without downtime</strong> (<a href="#step-6-upgrade-without-downtime">Step 6</a>): a <code>$VERSION_TO</code> sequencer follows the <code>$VERSION_FROM</code> one over p2p and takes over block production at a chosen block, so the L2 never stops producing blocks.</li>
+</ul>
 <p>The commands below are ready to copy-paste. The only thing you need to substitute is the version tags. Every other value (private keys, addresses, ports, fee parameters) is taken from the defaults in <code>crates/l2/Makefile</code>; feel free to override them, but the values below give you a working baseline.</p>
 <h2 id="placeholders"><a class="header" href="#placeholders">Placeholders</a></h2>
 <p>Replace these once at the top of your shell session:</p>
 <pre><code class="language-bash">export VERSION_FROM=&lt;previous release tag, e.g. v11.0.0&gt;
 export VERSION_TO=&lt;new release tag, e.g. v12.0.0-rc.2&gt;
-export ARCH=linux-x86_64       # or linux-aarch64, macos-aarch64
+export ARCH=linux-x86_64
 export WORK=$HOME/upgrade-test  # workspace
 mkdir -p "$WORK"
 </code></pre>
+<blockquote class="blockquote-tag blockquote-tag-important">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.06l-2.573 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25Zm1.75-.25a.25.25 0 0 0-.25.25v9.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-9.5a.25.25 0 0 0-.25-.25Zm7 2.25v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 9a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"></path></svg>Important</p>
+<p>Run this on the GPU server (<code>l2-gpu</code>) with the <strong>SP1</strong> prover, not locally with
+<code>--backend exec</code>. The <code>exec</code> backend produces no proof, so it never consults a
+verification key — and the verification key is the thing an upgrade changes.
+Batches are committed under <code>keccak(VERGEN_GIT_SHA)</code>, baked into the binary at
+build time, and <code>commitBatch</code> refuses a commit hash it holds no key for. Until
+<code>$VERSION_TO</code>’s key is registered
+(<a href="#36-register-the-version_to-verification-key">Step 3.6</a>) the upgraded
+sequencer cannot commit <strong>anything</strong>: every <code>commitBatch</code> reverts with
+<code>MissingVerificationKeyForCommit()</code> (selector <code>0xf6b9798e</code>) and the L2 keeps
+producing blocks locally while nothing reaches L1. Under <code>exec</code> that failure is
+invisible — the test passes and the real upgrade stops at the first batch.</p>
+</blockquote>
 <h2 id="prerequisites-24"><a class="header" href="#prerequisites-24">Prerequisites</a></h2>
 <ul>
-<li><a href="https://github.com/lambdaclass/rex"><code>rex</code></a> on <code>$PATH</code> (used to call <code>upgradeToAndCall</code> and read contract state)</li>
+<li>A CUDA-capable GPU (this is why it runs on <code>l2-gpu</code>), and the <code>ethrex-l2-$ARCH-gpu</code> release asset</li>
+<li><a href="https://github.com/lambdaclass/rex"><code>rex</code></a> on <code>$PATH</code> (used to call <code>upgradeToAndCall</code> and read contract state), built from its <code>main</code> branch with <code>cargo install --git https://github.com/lambdaclass/rex --locked</code>: <code>rex l2 register-vk</code> (Step 3.6) is not in a rex release yet</li>
 <li><code>curl</code>, <code>jq</code></li>
 <li><code>git</code> (to fetch genesis / fixture files for each version)</li>
 </ul>
@@ -11588,16 +11632,26 @@ mkdir -p "$WORK"
 git clone --branch "$VERSION_FROM" --depth 1 https://github.com/lambdaclass/ethrex.git "ethrex-$VERSION_FROM"
 git clone --branch "$VERSION_TO"   --depth 1 https://github.com/lambdaclass/ethrex.git "ethrex-$VERSION_TO"
 
-# Binaries
-curl -L "https://github.com/lambdaclass/ethrex/releases/download/$VERSION_FROM/ethrex-l2-$ARCH" -o "ethrex-$VERSION_FROM/ethrex"
-curl -L "https://github.com/lambdaclass/ethrex/releases/download/$VERSION_TO/ethrex-l2-$ARCH"   -o "ethrex-$VERSION_TO/ethrex"
-chmod +x "ethrex-$VERSION_FROM/ethrex" "ethrex-$VERSION_TO/ethrex"
+# Binaries. The `-gpu` asset is the one that can prove with SP1 on a GPU.
+# Remove before downloading: curl-ing over a binary that is currently running
+# reuses the inode and gets the live process killed.
+for V in "$VERSION_FROM" "$VERSION_TO"; do
+  rm -f "ethrex-$V/ethrex"
+  curl -fL "https://github.com/lambdaclass/ethrex/releases/download/$V/ethrex-l2-$ARCH-gpu" -o "ethrex-$V/ethrex"
+  chmod +x "ethrex-$V/ethrex"
+  "ethrex-$V/ethrex" --version
+done
 
-"ethrex-$VERSION_FROM/ethrex" --version
-"ethrex-$VERSION_TO/ethrex"   --version
+# Verification keys ship in each release's contracts tarball; both versions'
+# keys are needed — VERSION_FROM's to deploy, VERSION_TO's for Step 3.6.
+for V in "$VERSION_FROM" "$VERSION_TO"; do
+  mkdir -p "contracts-$V"
+  curl -fL "https://github.com/lambdaclass/ethrex/releases/download/$V/ethrex-contracts.tar.gz" \
+    | tar xz -C "contracts-$V"
+done
 </code></pre>
 <blockquote>
-<p>Use the <code>ethrex-l2-*</code> asset (the plain <code>ethrex-*</code> asset is an L1-only build and does not have the <code>l2</code> subcommand).</p>
+<p>Use an <code>ethrex-l2-*</code> asset (the plain <code>ethrex-*</code> asset is an L1-only build and does not have the <code>l2</code> subcommand), and specifically the <code>-gpu</code> variant — the others carry no CUDA support, so <code>--backend sp1</code> falls back to CPU proving and a batch takes long enough to look like a hang.</p>
 </blockquote>
 <h3 id="01-save-the-version_from-l2-genesis"><a class="header" href="#01-save-the-version_from-l2-genesis">0.1 Save the <code>$VERSION_FROM</code> L2 genesis</a></h3>
 <p>The L2 chain is initialized <strong>once</strong>, from the genesis file shipped by <code>$VERSION_FROM</code>. The genesis embeds the runtime code of every L2 system contract at its fixed address (<code>0x...ffff</code>, <code>0x...fffe</code>, …). Once the chain is running, that state lives in the L2 datadir.</p>
@@ -11627,12 +11681,19 @@ COMPILE_CONTRACTS=true ./ethrex l2 deploy \
   --on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
   --bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
   --bridge-owner-pk 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
+  --sp1 true \
+  --sp1-vk-path "$WORK/contracts-$VERSION_FROM/ethrex-riscv32im-succinct-zkvm-vk-bn254" \
   --deposit-rich \
   --private-keys-file-path fixtures/keys/private_keys_l1.txt \
   --genesis-l1-path fixtures/genesis/l1.json \
   --genesis-l2-path fixtures/genesis/l2.json \
   --env-file-path cmd/.env
 </code></pre>
+<p><code>--sp1 true</code> is what makes the OnChainProposer require a real proof, and
+<code>--sp1-vk-path</code> registers <code>$VERSION_FROM</code>’s verification key against
+<code>$VERSION_FROM</code>’s commit hash. Both matter: without them the deployment accepts
+anything and <a href="#36-register-the-version_to-verification-key">Step 3.6</a> has nothing
+to prove.</p>
 <p>After this finishes, capture the addresses we’ll need later:</p>
 <pre><code class="language-bash">set -a; source "$WORK/ethrex-$VERSION_FROM/cmd/.env"; set +a
 echo "BRIDGE   = $ETHREX_WATCHER_BRIDGE_ADDRESS"
@@ -11671,7 +11732,7 @@ set -a; source cmd/.env; set +a
 <pre><code class="language-bash">cd "$WORK/ethrex-$VERSION_FROM"
 ./ethrex l2 prover \
   --proof-coordinators tcp://127.0.0.1:3900 \
-  --backend exec
+  --backend sp1
 </code></pre>
 <h3 id="15-confirm-the-stack-is-healthy"><a class="header" href="#15-confirm-the-stack-is-healthy">1.5 Confirm the stack is healthy</a></h3>
 <p>In a fourth terminal, wait until at least one batch has been committed:</p>
@@ -11827,6 +11888,46 @@ rex send "$ETHREX_WATCHER_BRIDGE_ADDRESS" \
   --private-key 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
   --rpc-url http://localhost:8545
 </code></pre>
+<h3 id="36-register-the-version_to-verification-key"><a class="header" href="#36-register-the-version_to-verification-key">3.6 Register the <code>$VERSION_TO</code> verification key</a></h3>
+<p>Required on every release bump, not just the ones that change contracts.</p>
+<p>Each batch carries <code>keccak(VERGEN_GIT_SHA)</code> of the binary that committed it, and
+<code>commitBatch</code> rejects a commit hash with no registered key before it stores
+anything. The <code>$VERSION_FROM</code> deployer registered only <code>$VERSION_FROM</code>’s key, so
+until this step runs the upgraded sequencer commits nothing at all — the
+committer logs</p>
+<pre><code>Failed to send commitment for batch N ... execution reverted: 0xf6b9798e
+</code></pre>
+<p>which is <code>MissingVerificationKeyForCommit()</code>. Both <code>lastCommittedBatch</code> and
+<code>lastVerifiedBatch</code> sit still while the L2 keeps producing blocks, so the symptom
+looks like a stuck committer rather than a key problem.</p>
+<p>Both arguments come from the release you are upgrading to:</p>
+<pre><code class="language-bash"># The hashed value is the ASCII sha the binary reports, not the tag.
+TO_SHA=$("$WORK/ethrex-$VERSION_TO/ethrex" --version | sed 's|.*HEAD-||; s|/.*||')
+TO_COMMIT_HASH=$(cast keccak "$TO_SHA")
+
+# The vk is the same hex-text file the deployer takes via --sp1-vk-path,
+# from $VERSION_TO's ethrex-contracts.tar.gz.
+TO_VK=0x$(tr -d '\n' &lt; "$WORK/contracts-$VERSION_TO/ethrex-riscv32im-succinct-zkvm-vk-bn254" | sed 's/^0x//')
+</code></pre>
+<p><code>rex l2 register-vk</code> derives the commit hash, routes the call through the
+Timelock, and reads the key back afterwards:</p>
+<pre><code class="language-bash">rex l2 register-vk \
+  --commit "$TO_SHA" \
+  --vk "$TO_VK" \
+  --on-chain-proposer "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" \
+  --timelock "$ETHREX_TIMELOCK_ADDRESS" \
+  --private-key 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
+  --rpc-url http://localhost:8545
+</code></pre>
+<p>The <code>--timelock</code> flag is what makes this work: <code>upgradeSP1VerificationKey</code> is
+<code>onlyOwner</code>, that owner is the Timelock, and the command routes through
+<code>emergencyExecute</code> — which needs no delay because in this test the Security
+Council is the account passed as <code>--on-chain-proposer-owner</code>. Sending straight to
+the OnChainProposer instead reverts with <code>OwnableUnauthorizedAccount</code>. See
+<a href="#timelock-contract">Timelock</a> for the Governance
+<code>schedule</code> + <code>execute</code> route.</p>
+<p>Run it with <code>--dry-run</code> first if you want to see the derived commit hash and the
+key currently on chain without sending anything.</p>
 <hr>
 <h2 id="step-4--run-the-version_to-stack"><a class="header" href="#step-4--run-the-version_to-stack">Step 4 — Run the <code>$VERSION_TO</code> stack</a></h2>
 <p>The L1, the L1 datadir, and the L2 datadir are all reused. The only thing that changes is the binary.</p>
@@ -11862,7 +11963,7 @@ set -a; source cmd/.env; set +a
 </ul>
 <h3 id="42-restart-the-prover-terminal-c"><a class="header" href="#42-restart-the-prover-terminal-c">4.2 Restart the prover (Terminal C)</a></h3>
 <pre><code class="language-bash">cd "$WORK/ethrex-$VERSION_TO"
-./ethrex l2 prover --proof-coordinators tcp://127.0.0.1:3900 --backend exec
+./ethrex l2 prover --proof-coordinators tcp://127.0.0.1:3900 --backend sp1
 </code></pre>
 <hr>
 <h3 id="43-check-the-first-version_to-batch-over-version_from-blocks-gets-verified"><a class="header" href="#43-check-the-first-version_to-batch-over-version_from-blocks-gets-verified">4.3 Check the first <code>$VERSION_TO</code> batch over <code>$VERSION_FROM</code> blocks gets verified</a></h3>
@@ -11878,7 +11979,7 @@ surfaces here, as a proof failure inside the zkVM.</p>
   COMMITTED=$(rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'lastCommittedBatch()' --rpc-url http://localhost:8545)
   VERIFIED=$(rex call  "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'lastVerifiedBatch()'  --rpc-url http://localhost:8545)
   echo "committed=$COMMITTED verified=$VERIFIED (need a verified batch covering L2 block $LEGACY_HEAD)"
-  [ "$VERIFIED" -gt "$FIRST_UNCOMMITTED" ] &amp;&amp; break
+  [ $((VERIFIED)) -gt "$FIRST_UNCOMMITTED" ] &amp;&amp; break  # rex prints a 32-byte hex word
   sleep 10
 done
 </code></pre>
@@ -11904,6 +12005,83 @@ make test
 <li>the first 100 lines of the sequencer log after the Step 4 restart,</li>
 <li>the failing test name from the <code>make test</code> output.</li>
 </ul>
+<hr>
+<h2 id="step-6-upgrade-without-downtime"><a class="header" href="#step-6-upgrade-without-downtime">Step 6: Upgrade without downtime</a></h2>
+<p>Steps 2 to 4 stop the sequencer for the upgrade. This step runs the same upgrade while the L2 keeps producing blocks: a <code>$VERSION_TO</code> sequencer, with its own data directory and ports, follows the <code>$VERSION_FROM</code> one over p2p and takes over block production at a block chosen in advance (<code>--admin.start-at</code> on the new sequencer, <code>POST /state-updater/stop-at/&lt;N&gt;</code> on the old one).</p>
+<p>Two constraints shape the order of the steps:</p>
+<ul>
+<li>A proof coordinator only hands a batch to a prover of the version that committed it, and a sequencer that stops sequencing also stops sending proofs. So the <code>$VERSION_FROM</code> batches are all verified before the handover, as in Step 2, but only the prover stops: the <code>$VERSION_FROM</code> sequencer keeps producing blocks, and <code>$VERSION_TO</code> commits them after the handover.</li>
+<li>The <code>$VERSION_TO</code> sequencer cannot commit anything before its verification key is registered, so Step 3 runs before the handover.</li>
+</ul>
+<h3 id="61-start-over-from-version_from"><a class="header" href="#61-start-over-from-version_from">6.1 Start over from <code>$VERSION_FROM</code></a></h3>
+<p>Stop the <code>$VERSION_TO</code> sequencer and prover (Terminals B and C) and the L1 (Terminal A) with <code>Ctrl-C</code>, and remove the data directories, so Step 1 deploys from scratch:</p>
+<pre><code class="language-bash">rm -rf "$WORK/ethrex-$VERSION_FROM/dev_ethrex_l1" "$WORK/ethrex-$VERSION_FROM/dev_ethrex_l2" "$WORK/dev_ethrex_l2_new"
+</code></pre>
+<p>Then run Step 1 again in new terminals. The deployer reads <code>ETHREX_DEPLOYER_*</code> variables from the environment, and <code>cmd/.env</code> sets some of them, such as <code>ETHREX_DEPLOYER_SP1_VERIFIER_ADDRESS</code>: in a terminal that sourced it, the new deployment points at the previous run’s SP1 verifier, which has no code on the new L1, and every proof fails to verify. Make one change to Step 1.3: end the sequencer command with <code>2&gt;&amp;1 | tee "$WORK/sequencer-from.log"</code>. Step 6.4 needs the enode the sequencer logs at startup (<code>Local node initialized enode=...</code>); the L2 RPC does not serve <code>admin_nodeInfo</code>.</p>
+<h3 id="62-drain-the-version_from-prover-keep-its-sequencer-running"><a class="header" href="#62-drain-the-version_from-prover-keep-its-sequencer-running">6.2 Drain the <code>$VERSION_FROM</code> prover, keep its sequencer running</a></h3>
+<p>Run Steps 2.1 and 2.2, which stop the committer, record <code>FIRST_UNCOMMITTED</code> and wait until every committed batch is verified. Then stop only the prover, with <code>Ctrl-C</code> in Terminal C. The <code>$VERSION_FROM</code> sequencer keeps producing blocks. The ones it produces from here on are committed by <code>$VERSION_TO</code> after the handover.</p>
+<h3 id="63-upgrade-the-contracts-and-register-the-key"><a class="header" href="#63-upgrade-the-contracts-and-register-the-key">6.3 Upgrade the contracts and register the key</a></h3>
+<p>Run Step 3 with the <code>$VERSION_FROM</code> sequencer still running. Skip any database migration Step 3.1 lists: the <code>$VERSION_TO</code> sequencer starts from an empty data directory and gets the chain from the <code>$VERSION_FROM</code> one.</p>
+<h3 id="64-start-the-version_to-sequencer-next-to-the-old-one-terminal-d"><a class="header" href="#64-start-the-version_to-sequencer-next-to-the-old-one-terminal-d">6.4 Start the <code>$VERSION_TO</code> sequencer next to the old one (Terminal D)</a></h3>
+<p>Pick the handover block, far enough ahead for the new sequencer to sync the chain first (raise the margin on a long chain), and save it together with the old sequencer’s enode:</p>
+<pre><code class="language-bash">grep -m1 -oE 'enode://[0-9a-f]+@[0-9.]+:[0-9]+' "$WORK/sequencer-from.log" &gt; "$WORK/enode-from"
+echo $(( $(rex block-number --rpc-url http://localhost:1729) + 30 )) &gt; "$WORK/handover-block"
+cat "$WORK/enode-from" "$WORK/handover-block"
+</code></pre>
+<p>Start the <code>$VERSION_TO</code> sequencer with its own data directory, HTTP, p2p, admin and proof coordinator ports:</p>
+<pre><code class="language-bash">cd "$WORK/ethrex-$VERSION_TO"
+cp "$WORK/ethrex-$VERSION_FROM/cmd/.env" cmd/.env
+set -a; source cmd/.env; set +a
+./ethrex l2 \
+  --watcher.block-delay 0 \
+  --network "$WORK/l2-genesis-pinned.json" \
+  --http.port 1730 \
+  --http.addr 0.0.0.0 \
+  --datadir "$WORK/dev_ethrex_l2_new" \
+  --p2p.port 30304 \
+  --discovery.port 30304 \
+  --admin-server.port 5556 \
+  --proof-coordinator.port 3901 \
+  --bootnodes "$(cat "$WORK/enode-from")" \
+  --admin.start-at "$(cat "$WORK/handover-block")" \
+  --admin.l2-head-check-rpc-url http://localhost:1729 \
+  --l1.bridge-address "$ETHREX_WATCHER_BRIDGE_ADDRESS" \
+  --l1.on-chain-proposer-address "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" \
+  --l1.timelock-address "$ETHREX_TIMELOCK_ADDRESS" \
+  --eth.rpc-url http://localhost:8545 \
+  --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
+  --block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+  --block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+  --block-producer.operator-fee-per-gas 1000000000 \
+  --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+  --proof-coordinator.addr 127.0.0.1 \
+  --no-monitor
+</code></pre>
+<p>As in Step 4.1, <code>--network</code> is the pinned <code>$VERSION_FROM</code> genesis. The new sequencer follows the old one until the handover block.</p>
+<h3 id="65-start-the-version_to-prover-terminal-e"><a class="header" href="#65-start-the-version_to-prover-terminal-e">6.5 Start the <code>$VERSION_TO</code> prover (Terminal E)</a></h3>
+<pre><code class="language-bash">cd "$WORK/ethrex-$VERSION_TO"
+./ethrex l2 prover --proof-coordinators tcp://127.0.0.1:3901 --backend sp1
+</code></pre>
+<h3 id="66-hand-over"><a class="header" href="#66-hand-over">6.6 Hand over</a></h3>
+<pre><code class="language-bash">curl -sf -X POST "http://localhost:5555/state-updater/stop-at/$(cat "$WORK/handover-block")"
+</code></pre>
+<p>The <code>$VERSION_FROM</code> sequencer produces the handover block and logs <code>The sequencer is now Following</code>; the <code>$VERSION_TO</code> one produces the next block and logs <code>The sequencer is now Sequencing</code>. The old sequencer stays at the handover block, so query the new one on port <code>1730</code> from here on.</p>
+<p>Check that block production did not pause: the timestamps around the handover block are as far apart as the rest.</p>
+<pre><code class="language-bash">N=$(cat "$WORK/handover-block")
+for B in $(seq $((N - 3)) $((N + 3))); do
+  TS=$(curl -s http://localhost:1730 -H 'Content-Type: application/json' \
+    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getBlockByNumber\",\"params\":[\"$(printf '0x%x' "$B")\",false]}" | jq -r .result.timestamp)
+  echo "block $B timestamp $((TS))"
+done
+</code></pre>
+<h3 id="67-check-the-version_from-blocks-get-verified"><a class="header" href="#67-check-the-version_from-blocks-get-verified">6.7 Check the <code>$VERSION_FROM</code> blocks get verified</a></h3>
+<p>Run the loop of Step 4.3. The first batch <code>$VERSION_TO</code> commits holds the blocks the <code>$VERSION_FROM</code> sequencer produced after its committer stopped, and it has to be proven by the <code>$VERSION_TO</code> prover and verified on L1.</p>
+<h3 id="68-run-the-integration-tests-against-the-new-sequencer"><a class="header" href="#68-run-the-integration-tests-against-the-new-sequencer">6.8 Run the integration tests against the new sequencer</a></h3>
+<pre><code class="language-bash">cd "$WORK/ethrex-$VERSION_TO/crates/l2"
+INTEGRATION_TEST_L2_RPC=http://localhost:1730 make test
+</code></pre>
+<p>If the suite goes green, the upgrade without downtime is successful. Stop the <code>$VERSION_FROM</code> sequencer (Terminal B); in a real deployment, move RPC traffic to the new sequencer first, since the old one no longer advances.</p>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="sp1-version-upgrade-test"><a class="header" href="#sp1-version-upgrade-test">SP1 version upgrade test</a></h1>
 <p>This test checks that an L2 running a release with one SP1 version can move to a release with a newer one, such as SP1 5 to SP1 6, without redeploying. It runs on the GPU host (<code>l2-gpu</code>) with real proofs: the verification key and the verifier contract are what an SP1 upgrade changes, and the <code>exec</code> backend never consults either.</p>
@@ -12224,6 +12402,190 @@ pkill -f sp1-gpu-server
 </code></pre>
 </li>
 </ol>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<h1 id="multiprover-test-sp1-gpu--tdx"><a class="header" href="#multiprover-test-sp1-gpu--tdx">Multiprover test (SP1 GPU + TDX)</a></h1>
+<p>A per-release acceptance test for the configuration a real rollup runs: an <code>OnChainProposer</code> that requires <strong>both</strong> an SP1 proof and a TDX proof before it will verify a batch.</p>
+<p>The other L2 checks each exercise one prover. This one is the only place where a batch has to satisfy two independent provers, running on two machines, before <code>lastVerifiedBatch</code> moves — and the only place a TDX quote is verified on chain, against real TDX hardware, rather than trusted.</p>
+<h2 id="real-attestation-and-what-it-needs"><a class="header" href="#real-attestation-and-what-it-needs">Real attestation, and what it needs</a></h2>
+<p>Deploy with <code>ETHREX_TDX_DEV_MODE=false</code> and boot the prover VM as a <strong>real TDX guest</strong>. <code>TDXVerifier.register()</code> then calls <code>verifyAndAttestOnChain</code>, so the quote is checked against the on-chain PCCS collateral and its measurements compared to the ones the verifier was deployed with.</p>
+<p>Dev mode (<code>ETHREX_TDX_DEV_MODE=true</code>) is what CI uses, and it is not equivalent: <code>register()</code> short-circuits, taking the signing address from the quote’s first 20 bytes and skipping verification entirely. That only works with a <em>plain</em> QEMU guest, whose dev quote begins with that address. Booting a real TDX guest in dev mode registers quote-header bytes as the signer and every <code>verifyBatch</code> then reverts with <code>InvalidTdxProof()</code> (<code>0x62013a95</code>) while registration appears to have succeeded. Dev mode is the fallback when no TDX host is available; it does not exercise the verifier.</p>
+<p>Three things must be on chain before a real quote will verify. The deploy handles none of them, and <code>ethrex</code> normally loads the collateral by shelling out to <code>automata-dcap-qpl-tool</code> — which cannot work here, because it resolves contract addresses from a registry keyed by chain id and rejects the dev L1 with <code>Unsupported chain_id: 9</code>. Its failure is silent: <code>prepare_quote_prerequisites</code> discards the tool’s exit status, so the first symptom is an unrelated revert later. Load the collateral directly instead, as <a href="#3-load-this-platforms-tdx-collateral">step 3</a> does.</p>
+<h3 id="the-verifiers-expected-measurements"><a class="header" href="#the-verifiers-expected-measurements">The verifier’s expected measurements</a></h3>
+<p><code>_validateReport</code> requires MRTD and RTMR0-2 in the quote to equal the values compiled into <code>TDXVerifier.sol</code>. Those constants pin one specific image build, so they will not match the image of the release under test — a mismatch reverts with <code>MRTD mismatch</code>. Since the contracts are compiled at deploy time, pin them to the image being released, which is what this test should be asserting.</p>
+<h3 id="the-tcb-signing-ca"><a class="header" href="#the-tcb-signing-ca">The TCB Signing CA</a></h3>
+<p>The deploy upserts the root CA (<code>CA.ROOT</code>) and platform CA (<code>CA.PLATFORM</code>), but not <code>CA.SIGNING</code> — the Intel SGX TCB Signing certificate that signs the TCB info and QE identity. Without it the DAO has nothing to validate signatures against and rejects the upsert with <code>TCB_Cert_Expired</code> (<code>0xea8cd522</code>), which is misleading: nothing has expired.</p>
+<h3 id="this-platforms-tcb-info-and-qe-identity"><a class="header" href="#this-platforms-tcb-info-and-qe-identity">This platform’s TCB info and QE identity</a></h3>
+<p>Fetched from the host’s PCCS service and upserted into <code>AutomataFmspcTcbDao</code> and <code>AutomataEnclaveIdentityDao</code>.</p>
+<h2 id="where-to-run-it"><a class="header" href="#where-to-run-it">Where to run it</a></h2>
+<p>Two hosts, with the SP1 prover reaching the proof coordinator over the tailnet:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Host</th><th>Runs</th><th>Requires</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ethrex-tdx-baremetal</code></td><td>L1, contract deploy, sequencer + proof coordinator, TDX prover VM</td><td>TDX-capable CPU, <code>qgsd</code> and <code>pccs</code> services, the nix-built TDX QEMU</td></tr>
+<tr><td><code>l2-gpu</code></td><td>SP1 prover</td><td>CUDA GPU</td></tr>
+</tbody>
+</table>
+</div>
+<p>The TDX host really is required: a quote signed by real hardware is what <code>verifyAndAttestOnChain</code> checks. Confirm it before starting, because the VM boots on a non-TDX machine and only fails later, at quote generation:</p>
+<pre><code class="language-bash">cat /sys/module/kvm_intel/parameters/tdx     # must print Y
+systemctl is-active qgsd pccs                # both active; pccs serves the collateral
+</code></pre>
+<p>Both are shared machines running other people’s work, so keep the footprint small: check that ports 8545, 1729 and 3900 are free before starting, and tear the stack down afterwards. On <code>l2-gpu</code>, this test and the <a href="#l2-integration-tests-with-a-sp1-gpu-prover">SP1 GPU integration test</a> contend for the same GPU, ports and datadirs — run them one after the other, never concurrently.</p>
+<h2 id="environment-pins"><a class="header" href="#environment-pins">Environment pins</a></h2>
+<p>Four things must be right, and each fails in a way that does not point at its cause:</p>
+<ul>
+<li><strong>solc must be exactly 0.8.31.</strong> <code>TDXVerifier.sol</code> declares <code>pragma solidity =0.8.31</code>, so 0.8.30 fails with “Source file requires different compiler version”. Install it locally rather than changing the system compiler on a shared host.</li>
+<li><strong>Deploy onto a fresh chain.</strong> The deploy is not idempotent: CREATE2 puts the dependency contracts at fixed addresses, so re-running against a chain that already has them reverts in <code>deploy-p256</code> with no reason string. Wipe the L1 datadir between attempts.</li>
+<li><strong>Set <code>--watcher.watch-interval 1000</code>.</strong> At the 12000 ms default, on a <code>--dev</code> L1 that mines instantly, the deposits the sequencer has processed drift out of step with the bridge’s pending queue, and every commit reverts with <code>InvalidPrivilegedTransactionLogs()</code> (<code>0x9e6e5638</code>). CI sets 1000 ms for the same reason.</li>
+<li><strong>Attach both provers before the first batch is committed, and reset the L1 and L2 datadirs together.</strong> The coordinator hands out work starting at <code>1 + lastVerifiedBatch</code>, and prover inputs for old batches are eventually pruned. A prover that joins after batches have accumulated — or a sequencer restarted against an L1 that already has committed batches — asks forever for a batch whose input no longer exists, reports <code>No blocks to prove</code>, and nothing advances: verification needs both proofs, so <code>lastVerifiedBatch</code> never moves and the request never changes. Wiping only one of the two datadirs reproduces this reliably.</li>
+</ul>
+<p>The TDX prover image (<code>image.raw</code>) is built with nix from <code>crates/l2/tee/quote-gen</code>. If the host has no nix, build it on another host and copy it over — it is ~700 MB and depends only on the release, not the host.</p>
+<h2 id="procedure"><a class="header" href="#procedure">Procedure</a></h2>
+<p>Set the release under test once:</p>
+<pre><code class="language-bash">export TAG=vX.Y.Z-rc.W
+</code></pre>
+<h3 id="1-prepare-ethrex-tdx-baremetal"><a class="header" href="#1-prepare-ethrex-tdx-baremetal">1. Prepare <code>ethrex-tdx-baremetal</code></a></h3>
+<pre><code class="language-bash"># release binaries and contracts (the vk the deployer registers)
+mkdir -p ~/multiprover/$TAG &amp;&amp; cd ~/multiprover/$TAG
+for a in ethrex-linux-x86_64 ethrex-l2-linux-x86_64; do
+  curl -fsSL -o $a "https://github.com/lambdaclass/ethrex/releases/download/$TAG/$a" &amp;&amp; chmod +x $a
+done
+mkdir -p contracts &amp;&amp; curl -fsSL \
+  "https://github.com/lambdaclass/ethrex/releases/download/$TAG/ethrex-contracts.tar.gz" | tar xz -C contracts
+
+# source at the tag, for genesis, keys and the contract build
+git clone --depth 1 --branch $TAG https://github.com/lambdaclass/ethrex.git src
+
+# pinned solc, local to the test
+curl -fsSL -o bin/solc https://github.com/ethereum/solidity/releases/download/v0.8.31/solc-static-linux
+chmod +x bin/solc &amp;&amp; export PATH=$PWD/bin:$PATH
+</code></pre>
+<p>The TDX deploy also needs <code>automata-dcap-qpl-tool</code> built from <code>crates/l2/tee/contracts</code>. If the host has no Rust toolchain, build it elsewhere and copy the binary into <code>src/crates/l2/tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/</code>.</p>
+<h3 id="2-measure-the-image-and-pin-the-verifier-to-it"><a class="header" href="#2-measure-the-image-and-pin-the-verifier-to-it">2. Measure the image and pin the verifier to it</a></h3>
+<p>Boot the real TDX guest once, take a quote, and write its measurements into <code>TDXVerifier.sol</code> before the contracts are compiled. <code>run-qemu</code> from <code>hypervisor.nix</code> hardcodes <code>-serial mon:stdio</code>, so it dies when detached; the invocation below is the same TDX configuration with a file sink.</p>
+<pre><code class="language-bash">QEMU=$(nix-build --no-out-link crates/l2/tee/quote-gen/hypervisor.nix)/bin/run-qemu   # for reference
+# daemonized equivalent:
+qemu-system-x86_64 -daemonize -serial file:$PWD/tdx.log -name guest=ethrex_tdx_prover \
+  -machine q35,kernel_irqchip=split,confidential-guest-support=tdx,hpet=off -smp 2 -m 2G \
+  -accel kvm -cpu host -nographic -nodefaults -bios &lt;OVMF from the nix store&gt; -no-user-config \
+  -netdev user,id=net0,net=192.168.76.0/24 -device e1000,netdev=net0 \
+  -device ide-hd,bus=ide.0,drive=main,bootindex=0 \
+  -drive "if=none,media=disk,id=main,file.filename=$PWD/image.raw,discard=unmap,detect-zeroes=unmap" \
+  -object '{"qom-type":"tdx-guest","id":"tdx","quote-generation-socket":{"type":"vsock","cid":"2","port":"4050"}}'
+</code></pre>
+<p>The VM cannot reach a coordinator yet, so it logs <code>Error sending quote</code> — that is expected, and the quote it prints is what we need. Take it from the serial log and read the measurements out of it. In a v4 TDX quote the report body starts at byte 48; MRTD is at body offset 136 and RTMR0-2 follow at 328, 376 and 424, 48 bytes each.</p>
+<pre><code class="language-bash">QUOTE=$(grep -ao 'Sending quote [0-9a-f]*' tdx.log | head -1 | sed 's/Sending quote //')
+python3 - "$QUOTE" &lt;&lt;'PYEOF'
+import sys
+b = bytes.fromhex(sys.argv[1])[48:]
+for name, off in (("MRTD",136), ("RTMR0",328), ("RTMR1",376), ("RTMR2",424)):
+    print(name, b[off:off+48].hex())
+PYEOF
+</code></pre>
+<p>Replace the four <code>bytes public MRTD/RTMR0/RTMR1/RTMR2</code> initialisers in <code>crates/l2/tee/contracts/src/TDXVerifier.sol</code> with those values, then shut the VM down (<code>pkill -f 'guest=ethrex_tdx_prover'</code>) — it is started again in step 5, once the coordinator exists.</p>
+<h3 id="3-start-l1-and-deploy-with-both-provers-required"><a class="header" href="#3-start-l1-and-deploy-with-both-provers-required">3. Start L1 and deploy with both provers required</a></h3>
+<pre><code class="language-bash">./ethrex-linux-x86_64 --network src/fixtures/genesis/l1.json \
+  --http.addr 0.0.0.0 --http.port 8545 --authrpc.port 8551 --dev --datadir dev_l1 &amp;
+
+cd src/crates/l2          # the deployer resolves tee/contracts relative to cwd
+COMPILE_CONTRACTS=true ETHREX_TDX_DEV_MODE=false \
+  ~/multiprover/$TAG/ethrex-l2-linux-x86_64 l2 deploy \
+    --eth-rpc-url http://localhost:8545 \
+    --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+    --sp1 true --sp1-vk-path ~/multiprover/$TAG/contracts/ethrex-riscv32im-succinct-zkvm-vk-bn254 \
+    --tdx true \
+    --on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+    --bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+    --bridge-owner-pk 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
+    --deposit-rich --private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
+    --genesis-l1-path ../../fixtures/genesis/l1.json \
+    --genesis-l2-path ../../fixtures/genesis/l2.json \
+    --inclusion-max-wait 86400 \
+    --env-file-path ~/multiprover/$TAG/.env
+</code></pre>
+<p><code>--sp1 true --tdx true</code> together are what make this a multiprover test: the <code>OnChainProposer</code> then requires a proof of each kind per batch.</p>
+<h3 id="4-load-this-platforms-tdx-collateral"><a class="header" href="#4-load-this-platforms-tdx-collateral">4. Load this platform’s TDX collateral</a></h3>
+<p>The DAOs take <code>(string json, bytes signature)</code>. <code>cast</code> cannot pass these on the command line — its tuple parser splits on the commas inside the JSON — so encode the calldata and send it raw. Addresses come from <code>crates/l2/tee/contracts/deploydeps/automata-on-chain-pccs/deployment/</code>.</p>
+<p>First the TCB Signing CA, which the deploy does not load. It is the leaf of the issuer chain the PCCS returns alongside the TCB info (<code>TCB-Info-Issuer-Chain</code> header, URL-encoded PEM):</p>
+<pre><code class="language-bash">cast send "$PCS_DAO" 'upsertPcsCertificates(uint8,bytes)' 3 "0x&lt;signing cert DER&gt;" \
+  --private-key "$PK" --rpc-url http://localhost:8545
+</code></pre>
+<p>Then the TCB info and QE identity for this platform. The FMSPC is in the PCK certificate embedded in the quote, under OID <code>1.2.840.113741.1.13.1.4</code>:</p>
+<pre><code class="language-bash">curl -sk "https://localhost:8081/tdx/certification/v4/tcb?fmspc=$FMSPC" -o tcb.json
+curl -sk "https://localhost:8081/tdx/certification/v4/qe/identity"      -o qeid.json
+</code></pre>
+<p>Each response is <code>{"&lt;object&gt;": {...}, "signature": "&lt;hex&gt;"}</code>; the DAO wants the inner object as a compact JSON string and the signature as bytes. Encode <code>upsertFmspcTcb((string,bytes))</code> and <code>upsertEnclaveIdentity(uint256,uint256,(string,bytes))</code> and send the calldata directly. For the identity, pass id <code>2</code> (<code>EnclaveId.TD_QE</code>) and version <strong>4</strong> — the DAO requires 4 or 5 for TD_QE and rejects the <code>version: 2</code> carried inside the JSON with <code>Incorrect_Enclave_Id_Version</code> (<code>0x4e0f5696</code>).</p>
+<h3 id="5-start-the-sequencer"><a class="header" href="#5-start-the-sequencer">5. Start the sequencer</a></h3>
+<p>The proof coordinator must bind <code>0.0.0.0</code> so the SP1 prover on the other host can reach it, and the qpl tool path must be passed even in dev mode.</p>
+<p><code>--committer.commit-time</code> must not outpace proof generation. Both proofs are required per batch, so the pipeline advances at the slower prover’s rate: an SP1 proof on <code>l2-gpu</code> measured a steady 106s, which is why 120s is used here. At 15s the committer outruns proving by about 7x, and the gap never closes — a 63-hour run reached batch 10983 committed against 2127 verified. Step 9 cannot pass in that state, however long it is left running.</p>
+<pre><code class="language-bash">set -a; . ~/multiprover/$TAG/.env; set +a
+~/multiprover/$TAG/ethrex-l2-linux-x86_64 l2 --no-monitor \
+  --watcher.block-delay 0 --watcher.watch-interval 1000 \
+  --network ../../fixtures/genesis/l2.json \
+  --http.addr 0.0.0.0 --http.port 1729 --datadir ~/multiprover/$TAG/dev_l2 \
+  --l1.bridge-address "$ETHREX_WATCHER_BRIDGE_ADDRESS" \
+  --l1.on-chain-proposer-address "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" \
+  --l1.timelock-address "$ETHREX_TIMELOCK_ADDRESS" \
+  --eth.rpc-url http://localhost:8545 --committer.commit-time 120000 \
+  --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
+  --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+  --proof-coordinator.tdx-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+  --proof-coordinator.addr 0.0.0.0 \
+  --proof-coordinator.qpl-tool-path &lt;path to automata-dcap-qpl-tool&gt; &amp;
+</code></pre>
+<h3 id="6-start-the-tdx-prover-vm"><a class="header" href="#6-start-the-tdx-prover-vm">6. Start the TDX prover VM</a></h3>
+<p>Boot the real TDX guest again, exactly as in <a href="#2-measure-the-image-and-pin-the-verifier-to-it">step 2</a> — the coordinator now exists, so the quote it sends is registered instead of erroring.</p>
+<p>Registration has succeeded when the sequencer logs <code>ProverSetup received for TDX</code> followed by <code>ProverSetupACK sent</code>, with no <code>Failed to handle ProverSetup</code> between them. That ACK is the real result: with dev mode off, it means the quote passed <code>verifyAndAttestOnChain</code> against the collateral loaded in step 4 and its measurements matched the ones pinned in step 2.</p>
+<h3 id="7-start-the-sp1-prover-on-l2-gpu"><a class="header" href="#7-start-the-sp1-prover-on-l2-gpu">7. Start the SP1 prover on <code>l2-gpu</code></a></h3>
+<pre><code class="language-bash">ssh l2-gpu
+./ethrex-l2 l2 prover --backend sp1 \
+  --proof-coordinators tcp://&lt;tdx-host-tailscale-ip&gt;:3900 --log.level info
+</code></pre>
+<h3 id="8-wait-for-a-batch-verified-by-both-proofs"><a class="header" href="#8-wait-for-a-batch-verified-by-both-proofs">8. Wait for a batch verified by both proofs</a></h3>
+<p>This is the assertion the test exists for. <code>lastVerifiedBatch</code> only advances once both an SP1 and a TDX proof have been submitted for the same batch.</p>
+<pre><code class="language-bash">while :; do
+  C=$(rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'lastCommittedBatch()' http://localhost:8545)
+  V=$(rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'lastVerifiedBatch()'  http://localhost:8545)
+  echo "committed=$((C)) verified=$((V))"
+  [ "$((V))" -ge 1 ] &amp;&amp; break
+  sleep 30
+done
+</code></pre>
+<h3 id="9-run-the-integration-suite"><a class="header" href="#9-run-the-integration-suite">9. Run the integration suite</a></h3>
+<p>The withdrawal tests block in <code>wait_for_verified_proof</code> until <code>lastVerifiedBatch</code> reaches the batch holding the withdrawal, so verification has to be keeping pace before this starts. Confirm <code>lastVerifiedBatch</code> is climbing and within a few batches of <code>lastCommittedBatch</code> rather than thousands behind; if it is falling behind, fix the commit time in step 5 and restart from a fresh L1 and L2.</p>
+<pre><code class="language-bash">cd src
+INTEGRATION_TEST_L1_RPC=http://localhost:8545 \
+INTEGRATION_TEST_L2_RPC=http://localhost:1729 \
+INTEGRATION_TEST_PRIVATE_KEYS_FILE_PATH=$PWD/fixtures/keys/private_keys_l1.txt \
+INTEGRATION_TEST_BRIDGE_OWNER_PRIVATE_KEY=0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e \
+cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture --test-threads=1
+</code></pre>
+<h2 id="troubleshooting-5"><a class="header" href="#troubleshooting-5">Troubleshooting</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Symptom</th><th>Cause</th></tr>
+</thead>
+<tbody>
+<tr><td><code>execution reverted: 0x9e6e5638</code> on commit</td><td><code>InvalidPrivilegedTransactionLogs()</code> — watcher interval left at the default; set <code>--watcher.watch-interval 1000</code></td></tr>
+<tr><td><code>execution reverted</code> in <code>deploy-p256</code></td><td>deploying onto a chain that already has the CREATE2 contracts; start from a fresh L1 datadir</td></tr>
+<tr><td><code>Source file requires different compiler version</code></td><td>solc is not exactly 0.8.31</td></tr>
+<tr><td>VM loops on <code>Error sending quote: Failed to get ProverSetupAck</code></td><td>the coordinator rejected registration; check the sequencer log for the error behind <code>Failed to handle ProverSetup</code></td></tr>
+<tr><td><code>MRTD mismatch</code> on registration</td><td>the verifier was deployed with the committed measurements; pin them to the image under test (step 2)</td></tr>
+<tr><td><code>TCB_Cert_Expired</code> (<code>0xea8cd522</code>) on upsert</td><td>nothing has expired: <code>CA.SIGNING</code> was never loaded, so signatures cannot be checked (step 4)</td></tr>
+<tr><td><code>Incorrect_Enclave_Id_Version</code> (<code>0x4e0f5696</code>)</td><td>TD_QE needs version 4 or 5, not the <code>version</code> inside the JSON</td></tr>
+<tr><td><code>Unsupported chain_id: 9</code></td><td><code>automata-dcap-qpl-tool</code> cannot serve a dev chain; load the collateral directly (step 4)</td></tr>
+<tr><td><code>verifyBatch</code> reverts <code>0x62013a95</code></td><td><code>InvalidTdxProof()</code> — a real quote was registered while dev mode was on, so the signer is quote-header bytes; deploy with <code>ETHREX_TDX_DEV_MODE=false</code></td></tr>
+<tr><td>Suite hangs in a withdrawal test and later fails on an unreachable L2 RPC</td><td>verification is thousands of batches behind commits; <code>--committer.commit-time</code> is below the SP1 proof time (step 5)</td></tr>
+<tr><td>VM sits on <code>No blocks to prove</code> while batches are committed</td><td>the prover is asking for a batch whose input was pruned; restart from a fresh L1 <strong>and</strong> L2 with both provers attached before the first batch</td></tr>
+<tr><td>VM sits on <code>No blocks to prove</code> with nothing committed</td><td>normal; if it persists, the committer is failing — check the sequencer log</td></tr>
+</tbody>
+</table>
+</div>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="running-the-prover"><a class="header" href="#running-the-prover">Running the Prover</a></h1>
 <p>This guide provides instructions for setting up and running the Ethrex L2 prover for development and testing purposes.</p>
@@ -14439,8 +14801,9 @@ git push origin &lt;release_version&gt;
 <li><input disabled="" type="checkbox"> Upgrade <code>ethrex-teku</code></li>
 <li><input disabled="" type="checkbox"> Upgrade <code>ethrex-grandine</code></li>
 <li><input disabled="" type="checkbox"> Launch multisync on <code>ethrex-multisync-main</code></li>
-<li><input disabled="" type="checkbox"> Upgrade a local L2 created with the previous version and run the integration tests</li>
+<li><input disabled="" type="checkbox"> Upgrade an L2 created with the previous version, with and without downtime, and run the integration tests, on the GPU server (<code>l2-gpu</code>) with the SP1 prover</li>
 <li><input disabled="" type="checkbox"> Run the L2 integration tests with a SP1 prover on the GPU server (<code>l2-gpu</code>)</li>
+<li><input disabled="" type="checkbox"> Run the multiprover test: SP1 prover on the GPU server (<code>l2-gpu</code>), TDX prover and the rest of the stack on <code>ethrex-tdx-baremetal</code></li>
 </ul>
 <p>The commands for each target follow. The host roster changes between releases — fill in the ones you run and leave the placeholders for the rest. Replace <code>vX.Y.Z-rc.W</code> / <code>release/vX.Y.Z</code> with the version under test.</p>
 <h4 id="ethrex-ethdocker-mainnet"><a class="header" href="#ethrex-ethdocker-mainnet"><code>ethrex-ethdocker-mainnet</code></a></h4>
@@ -14483,10 +14846,32 @@ tmux kill-session -t sync 2&gt;/dev/null || true   # drop a leftover sync sessio
 tmux new-session -d -s sync "make multisync-loop-auto MULTISYNC_BRANCH=release/vX.Y.Z 2&gt;&amp;1"
 </code></pre>
 <p>Check progress later with <code>tmux attach -t sync</code> (detach with <code>Ctrl-b</code> then <code>d</code>).</p>
-<h4 id="local-l2-upgrade--integration-tests"><a class="header" href="#local-l2-upgrade--integration-tests">Local L2 upgrade + integration tests</a></h4>
+<h4 id="l2-upgrade--integration-tests-l2-gpu"><a class="header" href="#l2-upgrade--integration-tests-l2-gpu">L2 upgrade + integration tests (<code>l2-gpu</code>)</a></h4>
 <p>See <a href="#upgrade-test">Upgrade test</a> for the full procedure.</p>
+<p>It upgrades twice from the previous release: with downtime, restarting the sequencer on the new release over the old data directory, and without downtime, handing block production over to a new-release sequencer at a chosen block. Run both: the restart is the only path that opens an old data directory with the new release, and the handover is the only one where a new-release sequencer syncs the chain over p2p and commits blocks the old release produced.</p>
+<p>Run it on <code>l2-gpu</code> with <code>--backend sp1</code>, not locally with <code>--backend exec</code>. The
+<code>exec</code> backend produces no proof, so it never consults a verification key — and
+the verification key is exactly what an upgrade changes. Batches are committed
+under <code>keccak(VERGEN_GIT_SHA)</code>, baked into the binary at build time, and
+<code>commitBatch</code> rejects a commit hash the deployment holds no key for, so an
+upgraded sequencer commits nothing at all until the new release’s key is
+registered. Under <code>exec</code> that whole class of upgrade failure is invisible.</p>
+<p>Both L2 checks share the ports and datadirs on <code>l2-gpu</code>, so run them one after
+the other, not concurrently.</p>
 <h4 id="l2-integration-tests-with-a-sp1-prover-l2-gpu"><a class="header" href="#l2-integration-tests-with-a-sp1-prover-l2-gpu">L2 integration tests with a SP1 prover (<code>l2-gpu</code>)</a></h4>
 <p>See <a href="#l2-integration-tests-with-a-sp1-gpu-prover">L2 integration tests with a SP1 GPU prover</a> for the full procedure.</p>
+<p>This one deploys the new version from scratch; the upgrade test above covers the
+path from the previous release. Keep both: a release can deploy cleanly and still
+fail to upgrade, and the reverse.</p>
+<h4 id="multiprover-test-sp1-gpu--tdx-1"><a class="header" href="#multiprover-test-sp1-gpu--tdx-1">Multiprover test (SP1 GPU + TDX)</a></h4>
+<p>See <a href="#multiprover-test-sp1-gpu--tdx">Multiprover test</a> for the full procedure. It runs across two hosts: the SP1 prover on <code>l2-gpu</code>, and the L1, deploy, sequencer and TDX prover VM on <code>ethrex-tdx-baremetal</code>, with the SP1 prover reaching the proof coordinator over the tailnet.</p>
+<p>The single-prover checks above each exercise one prover against an <code>OnChainProposer</code> that requires only that one. This is the only check where a batch must satisfy <strong>two</strong> provers before <code>lastVerifiedBatch</code> moves, which is the configuration a production rollup runs.</p>
+<p>Confirm on-chain that the deployment really requires both, rather than trusting the deploy flags — a batch verifying under a single-prover deployment would prove nothing:</p>
+<pre><code class="language-bash">rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'REQUIRE_SP1_PROOF()' "$L1_RPC"   # 0x..01
+rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" 'REQUIRE_TDX_PROOF()' "$L1_RPC"   # 0x..01
+</code></pre>
+<p>The check passes when <code>lastVerifiedBatch</code> advances past zero with both flags set.</p>
+<p>Run it with <code>ETHREX_TDX_DEV_MODE=false</code>, so the TDX quote is verified on chain by <code>verifyAndAttestOnChain</code> rather than trusted. That is the point of running on TDX hardware, and it is what CI cannot do — CI uses dev mode, where registration skips verification entirely. It needs two extra steps the runbook covers: pinning the verifier’s expected measurements to the image being released, and loading this platform’s TCB collateral, since the tool <code>ethrex</code> normally shells out to cannot serve a dev chain.</p>
 <h3 id="publish"><a class="header" href="#publish">Publish</a></h3>
 <p>Once the pre-release is created and you want to publish the release, go to the <a href="https://github.com/lambdaclass/ethrex/releases">release page</a> and follow the next steps:</p>
 <ol>
@@ -14616,7 +15001,7 @@ shasum -a 256 "ethrex-$V.arm64_sonoma.bottle.tar.gz"
 <p>Once the release is verified, <strong>merge the branch via PR</strong>.</p>
 <h2 id="dealing-with-hotfixes"><a class="header" href="#dealing-with-hotfixes">Dealing with hotfixes</a></h2>
 <p>If hotfixes are needed before the final release, commit them to <code>release/vX.Y.Z</code>, push, and create a new pre-release tag. The final tag <code>vX.Y.Z</code> should always point to the exact commit you will merge via PR.</p>
-<h2 id="troubleshooting-5"><a class="header" href="#troubleshooting-5">Troubleshooting</a></h2>
+<h2 id="troubleshooting-6"><a class="header" href="#troubleshooting-6">Troubleshooting</a></h2>
 <h3 id="failure-on-latest-release-workflow"><a class="header" href="#failure-on-latest-release-workflow">Failure on “latest release” workflow</a></h3>
 <p>If the <code>latest</code> / <code>l2</code> Docker tags don’t get updated after step 5 (the <code>Ethrex Latest Release</code> run skipped the retag, or its <code>assert-latest-promoted</code> job failed), recover with the workflow’s manual path — no local Docker or PAT needed:</p>
 <ul>
