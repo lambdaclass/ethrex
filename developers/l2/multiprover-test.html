@@ -34,7 +34,7 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-e34685b4.js";
+            window.path_to_searchindex_js = "../../searchindex-c1a19e76.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../toc-a6a3d26a.js"></script>
@@ -331,7 +331,10 @@ done
 </code></pre>
 <h3 id="9-run-the-integration-suite"><a class="header" href="#9-run-the-integration-suite">9. Run the integration suite</a></h3>
 <p>The withdrawal tests block in <code>wait_for_verified_proof</code> until <code>lastVerifiedBatch</code> reaches the batch holding the withdrawal, so verification has to be keeping pace before this starts. Confirm <code>lastVerifiedBatch</code> is climbing and within a few batches of <code>lastCommittedBatch</code> rather than thousands behind; if it is falling behind, fix the commit time in step 5 and restart from a fresh L1 and L2.</p>
+<p>The suite reads the deployed addresses from <code>cmd/.env</code> in the source checkout, while step 3 wrote them to <code>~/multiprover/$TAG/.env</code>, so copy that file over first. It also compiles example contracts while it runs, so the pinned solc 0.8.31 has to be first on <code>PATH</code> in this shell too.</p>
 <pre><code class="language-bash">cd src
+cp ~/multiprover/$TAG/.env cmd/.env
+export PATH=~/multiprover/$TAG/bin:$PATH
 INTEGRATION_TEST_L1_RPC=http://localhost:8545 \
 INTEGRATION_TEST_L2_RPC=http://localhost:1729 \
 INTEGRATION_TEST_PRIVATE_KEYS_FILE_PATH=$PWD/fixtures/keys/private_keys_l1.txt \
@@ -347,7 +350,8 @@ cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocap
 <tbody>
 <tr><td><code>execution reverted: 0x9e6e5638</code> on commit</td><td><code>InvalidPrivilegedTransactionLogs()</code> — watcher interval left at the default; set <code>--watcher.watch-interval 1000</code></td></tr>
 <tr><td><code>execution reverted</code> in <code>deploy-p256</code></td><td>deploying onto a chain that already has the CREATE2 contracts; start from a fresh L1 datadir</td></tr>
-<tr><td><code>Source file requires different compiler version</code></td><td>solc is not exactly 0.8.31</td></tr>
+<tr><td><code>Source file requires different compiler version</code></td><td>solc is not exactly 0.8.31; in step 9 the suite compiles with whichever solc is first on <code>PATH</code></td></tr>
+<tr><td>Suite prints <code>.env file not found, skipping</code>, then fails in seconds with <code>contains no valid logs</code></td><td><code>cmd/.env</code> is missing from the source checkout, so the suite sends to default addresses; copy <code>~/multiprover/$TAG/.env</code> there (step 9)</td></tr>
 <tr><td>VM loops on <code>Error sending quote: Failed to get ProverSetupAck</code></td><td>the coordinator rejected registration; check the sequencer log for the error behind <code>Failed to handle ProverSetup</code></td></tr>
 <tr><td><code>MRTD mismatch</code> on registration</td><td>the verifier was deployed with the committed measurements; pin them to the image under test (step 2)</td></tr>
 <tr><td><code>TCB_Cert_Expired</code> (<code>0xea8cd522</code>) on upsert</td><td>nothing has expired: <code>CA.SIGNING</code> was never loaded, so signatures cannot be checked (step 4)</td></tr>

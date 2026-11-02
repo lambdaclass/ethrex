@@ -34,7 +34,7 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-e34685b4.js";
+            window.path_to_searchindex_js = "../../searchindex-c1a19e76.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../toc-a6a3d26a.js"></script>
@@ -354,6 +354,29 @@ cast send &lt;TIMELOCK_ADDRESS&gt; 'emergencyExecute(address,uint256,bytes)' \
 <h4 id="prover"><a class="header" href="#prover">Prover</a></h4>
 <p>The SP1 GPU prover now runs on a local <code>sp1-gpu-server</code> that the SDK downloads, so <code>--sp1-server</code> is ignored; see the <a href="./prover/sp1.html#troubleshooting">SP1 prover guide</a> for GPU persistence mode and host memory.</p>
 <p>Aligned mode is not available in v30: the Aligned SDK still verifies SP1 5 proofs.</p>
+<h2 id="from-v30-to-v31"><a class="header" href="#from-v30-to-v31">From v30 to v31</a></h2>
+<h3 id="l2l1-intents-commonbridge-and-commonbridgel2"><a class="header" href="#l2l1-intents-commonbridge-and-commonbridgel2">L2→L1 intents (CommonBridge and CommonBridgeL2)</a></h3>
+<p>v31 adds value-free L2→L1 <a href="../fundamentals/withdrawals.html#intents">intents</a>: an L2 contract calls <code>sendIntentToL1(payloadHash, consumerOnL1)</code> on <code>CommonBridgeL2</code>, and once the batch holding it is verified, <code>consumerOnL1</code> consumes it on L1 with <code>verifyAndConsume</code> on <code>CommonBridge</code>. New deployments have them from genesis. Existing deployments get them by upgrading both bridges to their v31 implementations. Neither upgrade adds storage or needs an initialization call, and there is no database migration.</p>
+<p>The bridge upgrades do not depend on the node upgrade: they can run before or after the nodes move to v31, with or without downtime. The L2 one goes through a privileged transaction, so a sequencer has to be running to include it.</p>
+<ol>
+<li>
+<p><strong>CommonBridge (L1).</strong> Deploy the v31 <code>CommonBridge</code> implementation, then upgrade the proxy from the bridge owner:</p>
+<pre><code class="language-shell">rex send &lt;BRIDGE_ADDRESS&gt; 'upgradeToAndCall(address,bytes)' &lt;NEW_BRIDGE_IMPLEMENTATION&gt; 0x \
+  --private-key &lt;BRIDGE_OWNER_PK&gt; --rpc-url &lt;L1_RPC_URL&gt;
+</code></pre>
+</li>
+<li>
+<p><strong>CommonBridgeL2 (L2 proxy at <code>0x000000000000000000000000000000000000ffff</code>).</strong> Deploy the v31 <code>CommonBridgeL2</code> implementation on L2, then have the L1 bridge upgrade the L2 proxy:</p>
+<pre><code class="language-shell">rex send &lt;BRIDGE_ADDRESS&gt; 'upgradeL2Contract(address,address,uint256,bytes)' \
+  0x000000000000000000000000000000000000ffff &lt;NEW_BRIDGE_L2_IMPLEMENTATION&gt; 1000000 0x \
+  --private-key &lt;BRIDGE_OWNER_PK&gt; --rpc-url &lt;L1_RPC_URL&gt;
+</code></pre>
+</li>
+<li>
+<p><strong>Check</strong> that each proxy’s ERC-1967 implementation slot (<code>0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc</code>) holds the new implementation, on L1 for <code>CommonBridge</code> and on L2 for <code>0x…ffff</code>, and that <code>INTENT_DOMAIN()</code> returns the same value on both.</p>
+</li>
+</ol>
+<p>As in every release, also <a href="#every-release--register-the-new-verification-key">register the v31 verification key</a>.</p>
 
                     </main>
 
