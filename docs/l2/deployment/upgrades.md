@@ -218,3 +218,30 @@ The [SP1 version upgrade test](../../developers/l2/sp1-upgrade-test.md) runs bot
 The SP1 GPU prover now runs on a local `sp1-gpu-server` that the SDK downloads, so `--sp1-server` is ignored; see the [SP1 prover guide](./prover/sp1.md#troubleshooting) for GPU persistence mode and host memory.
 
 Aligned mode is not available in v30: the Aligned SDK still verifies SP1 5 proofs.
+
+## From v30 to v31
+
+### L2→L1 intents (CommonBridge and CommonBridgeL2)
+
+v31 adds value-free L2→L1 [intents](../fundamentals/withdrawals.md#intents): an L2 contract calls `sendIntentToL1(payloadHash, consumerOnL1)` on `CommonBridgeL2`, and once the batch holding it is verified, `consumerOnL1` consumes it on L1 with `verifyAndConsume` on `CommonBridge`. New deployments have them from genesis. Existing deployments get them by upgrading both bridges to their v31 implementations. Neither upgrade adds storage or needs an initialization call, and there is no database migration.
+
+The bridge upgrades do not depend on the node upgrade: they can run before or after the nodes move to v31, with or without downtime. The L2 one goes through a privileged transaction, so a sequencer has to be running to include it.
+
+1. **CommonBridge (L1).** Deploy the v31 `CommonBridge` implementation, then upgrade the proxy from the bridge owner:
+
+   ```shell
+   rex send <BRIDGE_ADDRESS> 'upgradeToAndCall(address,bytes)' <NEW_BRIDGE_IMPLEMENTATION> 0x \
+     --private-key <BRIDGE_OWNER_PK> --rpc-url <L1_RPC_URL>
+   ```
+
+2. **CommonBridgeL2 (L2 proxy at `0x000000000000000000000000000000000000ffff`).** Deploy the v31 `CommonBridgeL2` implementation on L2, then have the L1 bridge upgrade the L2 proxy:
+
+   ```shell
+   rex send <BRIDGE_ADDRESS> 'upgradeL2Contract(address,address,uint256,bytes)' \
+     0x000000000000000000000000000000000000ffff <NEW_BRIDGE_L2_IMPLEMENTATION> 1000000 0x \
+     --private-key <BRIDGE_OWNER_PK> --rpc-url <L1_RPC_URL>
+   ```
+
+3. **Check** that each proxy's ERC-1967 implementation slot (`0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc`) holds the new implementation, on L1 for `CommonBridge` and on L2 for `0x…ffff`, and that `INTENT_DOMAIN()` returns the same value on both.
+
+As in every release, also [register the v31 verification key](#every-release--register-the-new-verification-key).
