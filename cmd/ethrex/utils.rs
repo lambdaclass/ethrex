@@ -38,7 +38,10 @@ impl NodeConfigFile {
 pub fn read_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
     match File::open(jwt_secret_path) {
         Ok(mut file) => decode::jwtsecret_file(&mut file),
-        Err(_) => write_jwtsecret_file(jwt_secret_path),
+        // Only a missing file is replaced by a fresh secret. Any other error (say, a
+        // permissions problem) must not overwrite the secret the consensus client uses.
+        Err(err) if err.kind() == io::ErrorKind::NotFound => write_jwtsecret_file(jwt_secret_path),
+        Err(err) => panic!("Failed to open JWT secret file {jwt_secret_path}: {err}"),
     }
 }
 
@@ -51,7 +54,17 @@ pub fn write_jwtsecret_file(jwt_secret_path: &str) -> Bytes {
         std::fs::create_dir_all(parent_dir).expect("Failed to create parent dir");
     }
 
-    std::fs::write(jwt_secret_path, &secret).expect("Unable to write JWT secret file");
+    // The secret is what authenticates the Engine API, so the file is created
+    // readable by its owner only (other local users could otherwise read it and
+    // drive the node's fork choice), and never through an existing file or symlink.
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options
+        .open(jwt_secret_path)
+        .expect("Unable to create JWT secret file");
+    io::Write::write_all(&mut file, secret.as_bytes()).expect("Unable to write JWT secret file");
     hex::decode(secret)
         .map(Bytes::from)
         .expect("Failed to decode generated JWT secret")

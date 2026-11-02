@@ -11,7 +11,7 @@ use crate::system_contracts::{
     EXPIRY_VERIFIER_PREDEPLOY, EXPIRY_VERIFIER_RUNTIME_BYTECODE, HISTORY_STORAGE_ADDRESS,
     PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use crate::{EvmError, ExecutionResult};
+use crate::{EvmError, ExecutionResult, SimulationTxError};
 use bytes::Bytes;
 use ethrex_common::H256;
 #[cfg(feature = "rayon")]
@@ -93,6 +93,40 @@ use std::sync::mpsc::Sender;
 /// to keep the per-chunk batch read worthwhile.
 #[cfg(feature = "rayon")]
 const BAL_WARM_CHUNK_ACCOUNTS: usize = 64;
+
+/// Block access lists with at most this many accounts are warmed on the calling
+/// thread instead of the pool, see [`LEVM::warm_block_from_bal`].
+#[cfg(feature = "rayon")]
+const BAL_WARM_INLINE_ACCOUNTS: usize = 2 * BAL_WARM_CHUNK_ACCOUNTS;
+
+/// Floor on the BAL warmer's thread count, and its size when the host does not
+/// report its parallelism, see [`bal_warm_pool`].
+#[cfg(feature = "rayon")]
+const BAL_WARM_MIN_THREADS: usize = 64;
+
+/// Thread pool for [`LEVM::warm_block_from_bal`].
+///
+/// Warming is a stream of point reads that block on storage, not on CPU. On the
+/// global pool (one thread per core) it kept at most one read in flight per core
+/// and competed with the parallel transaction execution for those same threads,
+/// so a block touching tens of thousands of cold accounts was bound by read
+/// latency at a queue depth of a handful. A dedicated pool wider than the core
+/// count keeps enough reads in flight to use the device's parallelism; when the
+/// data is already cached the chunks finish in microseconds either way.
+#[cfg(feature = "rayon")]
+fn bal_warm_pool() -> &'static rayon::ThreadPool {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let threads = std::thread::available_parallelism()
+            .map_or(BAL_WARM_MIN_THREADS, |cpus| cpus.get().saturating_mul(2))
+            .max(BAL_WARM_MIN_THREADS);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|i| format!("bal-warmer-{i}"))
+            .build()
+            .expect("Failed to create BAL warmer thread pool")
+    })
+}
 
 /// EIP-7928 `block_access_index` of the pre-block system calls.
 /// Only the parallel BAL path reads it, and that path is rayon-gated.
@@ -786,7 +820,7 @@ impl LEVM {
             // Mark pure-access accounts touched during the withdrawal/request phase.
             // All withdrawal recipients (including 0-amount) are marked because the
             // BAL recorder calls extend_touched_addresses for them, even though
-            // process_withdrawals only calls get_account_mut for amount > 0.
+            // process_withdrawals only records a balance change for amount > 0.
             if !unaccessed_pure_accounts.is_empty() {
                 if let Some(withdrawals) = &block.body.withdrawals {
                     for w in withdrawals {
@@ -812,7 +846,7 @@ impl LEVM {
             )?;
 
             // EIP-7928 records withdrawal recipients regardless of amount, but
-            // `process_withdrawals` only loads the account for amount > 0.
+            // `process_withdrawals` only records a balance change for amount > 0.
             if let Some(withdrawals) = &block.body.withdrawals {
                 for w in withdrawals {
                     if !validation_index.addr_to_idx.contains_key(&w.address) {
@@ -3240,13 +3274,7 @@ impl LEVM {
             return Ok(());
         }
 
-        for withdrawal in block
-            .body
-            .withdrawals
-            .iter()
-            .flatten()
-            .filter(|withdrawal| withdrawal.amount > 0)
-        {
+        for withdrawal in block.body.withdrawals.iter().flatten() {
             db.get_account_mut(withdrawal.address).map_err(|_| {
                 EvmError::DB(format!(
                     "Withdrawal account {} not found",
@@ -3372,28 +3400,39 @@ impl LEVM {
         // warmer read the same data in the background, and both finished together.
         // Storage slots are prefetched synchronously before the executor starts (see
         // `bal_storage_slots` at the call site), so only states and code are left here.
-        accounts
-            .par_chunks(BAL_WARM_CHUNK_ACCOUNTS)
-            .try_for_each(|chunk| -> Result<(), EvmError> {
+        let warm_chunk = |chunk: &[AccountChanges]| -> Result<(), EvmError> {
+            if cancelled.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+            let addresses: Vec<Address> = chunk.iter().map(|ac| ac.address).collect();
+            store
+                .prefetch_accounts(&addresses)
+                .map_err(|e| EvmError::Custom(format!("prefetch_accounts: {e}")))?;
+            for address in addresses {
                 if cancelled.load(Ordering::Relaxed) {
                     return Ok(());
                 }
-                let addresses: Vec<Address> = chunk.iter().map(|ac| ac.address).collect();
-                store
-                    .prefetch_accounts(&addresses)
-                    .map_err(|e| EvmError::Custom(format!("prefetch_accounts: {e}")))?;
-                for address in addresses {
-                    if cancelled.load(Ordering::Relaxed) {
-                        return Ok(());
-                    }
-                    if let Ok(state) = store.get_account_state(address)
-                        && state.code_hash != *EMPTY_KECCAK_HASH
-                    {
-                        let _ = store.get_account_code(state.code_hash);
-                    }
+                if let Ok(state) = store.get_account_state(address)
+                    && state.code_hash != *EMPTY_KECCAK_HASH
+                {
+                    let _ = store.get_account_code(state.code_hash);
                 }
-                Ok(())
-            })
+            }
+            Ok(())
+        };
+
+        // A short list is read on this thread: waking dozens of pool threads costs
+        // more than the handful of reads, and on a short block that wake-up shows.
+        if accounts.len() <= BAL_WARM_INLINE_ACCOUNTS {
+            return accounts
+                .chunks(BAL_WARM_CHUNK_ACCOUNTS)
+                .try_for_each(warm_chunk);
+        }
+        bal_warm_pool().install(|| {
+            accounts
+                .par_chunks(BAL_WARM_CHUNK_ACCOUNTS)
+                .try_for_each(warm_chunk)
+        })
     }
 
     fn send_state_transitions_tx(
@@ -3415,7 +3454,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &GeneralizedDatabase,
         vm_type: VMType,
-    ) -> Result<Environment, EvmError> {
+    ) -> Result<Environment, VMError> {
         // `chain_config` (a dyn-dispatch copy) and `EVMConfig`/fork/blob-schedule are
         // block-invariant; in a block loop, compute them once and use
         // `setup_env_with_config` instead. This single-tx entry point computes them here.
@@ -3445,7 +3484,7 @@ impl LEVM {
         chain_id: u64,
         vm_type: VMType,
         base_blob_fee_per_gas: U256,
-    ) -> Result<Environment, EvmError> {
+    ) -> Result<Environment, VMError> {
         let gas_price: U256 = calculate_gas_price_for_tx(
             tx,
             block_header.base_fee_per_gas.unwrap_or_default(),
@@ -3482,6 +3521,7 @@ impl LEVM {
             fee_token: tx.fee_token(),
             disable_balance_check: false,
             disable_nonce_check: false,
+            trace_eth_transfers: false,
             disable_gas_allowance_check: false,
             disable_sender_eoa_check: false,
             disable_execution_gas_cap: false,
@@ -3515,6 +3555,56 @@ impl LEVM {
         )?;
 
         vm.execute().map_err(VMError::into)
+    }
+
+    /// Like [`LEVM::execute_tx`] but for `eth_simulateV1`: validation failures
+    /// come back as structured [`SimulationTxError::Validation`] (the caller
+    /// maps each variant to its spec error code and aborts the request), and
+    /// the simulation relaxations are applied to the environment.
+    #[allow(clippy::too_many_arguments)]
+    pub fn execute_tx_for_simulation(
+        tx: &Transaction,
+        tx_sender: Address,
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+        validate: bool,
+        trace_eth_transfers: bool,
+    ) -> Result<ExecutionReport, SimulationTxError> {
+        let mut env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        // The sender-is-EOA check is always skipped in eth_simulateV1; nonce
+        // enforcement only applies with `validation: true`.
+        env.disable_sender_eoa_check = true;
+        env.disable_nonce_check = !validate;
+        // Without `validation` a call may spend its whole gas limit on execution after
+        // Amsterdam, as `eth_call` may; with it, the EIP-8037 cap holds as for a real
+        // transaction. geth: `if !sim.validate { msg.SkipExecutionGasCapCheck() }`.
+        env.disable_execution_gas_cap = !validate;
+        env.trace_eth_transfers = trace_eth_transfers;
+        if !validate {
+            adjust_disabled_base_fee(&mut env);
+        }
+        // With `validation: false` blob fees are zeroed unless the call prices
+        // them explicitly (mirrors `adjust_disabled_base_fee`'s blob branch).
+        if !validate && tx.max_fee_per_blob_gas().unwrap_or_default().is_zero() {
+            env.base_blob_fee_per_gas = U256::zero();
+            env.block_excess_blob_gas = None;
+        }
+        // No stateless validator: simulation answers a query and produces no
+        // EIP-8025 execution proof, matching every other simulation and tracing path.
+        let mut vm = VM::new(
+            env,
+            db,
+            tx,
+            LevmCallTracer::disabled(),
+            vm_type,
+            crypto,
+            None,
+        )?;
+        vm.validate_base_fee = validate;
+
+        vm.execute().map_err(SimulationTxError::from)
     }
 
     // Like execute_tx but reuses the caller's pools of stacks, memory and initcode buffers,
@@ -3801,11 +3891,20 @@ impl LEVM {
         withdrawals: &[Withdrawal],
     ) -> Result<(), EvmError> {
         // For every withdrawal we increment the target account's balance
-        for (address, increment) in withdrawals
-            .iter()
-            .filter(|withdrawal| withdrawal.amount > 0)
-            .map(|w| (w.address, u128::from(w.amount) * u128::from(GWEI_TO_WEI)))
-        {
+        for withdrawal in withdrawals {
+            let address = withdrawal.address;
+            // A zero withdrawal changes nothing, but the spec still reads its recipient
+            // (`create_ether`), so a stateless witness has to carry that account's
+            // proof. Reading it here is what makes a witness that leaves the proof out
+            // fail, as `validation_state_unchanged_account_read` requires; without the
+            // read the block validates against an incomplete witness.
+            if withdrawal.amount == 0 {
+                db.get_account(address).map_err(|_| {
+                    EvmError::DB(format!("Withdrawal account {address} could not be read"))
+                })?;
+                continue;
+            }
+            let increment = u128::from(withdrawal.amount) * u128::from(GWEI_TO_WEI);
             let account = db
                 .get_account_mut(address)
                 .map_err(|_| EvmError::DB(format!("Withdrawal account {address} not found")))?;
@@ -4044,6 +4143,12 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<(ExecutionResult, AccessList), VMError> {
+        // The result is an EIP-2930 access list, so the request is invalid on a block
+        // before Berlin, whatever fields the call sets.
+        let berlin_block = db.store.get_chain_config()?.berlin_block;
+        if berlin_block.is_some_and(|block| header.number < block) {
+            return Err(TxValidationError::Type1TxPreFork.into());
+        }
         let mut env = env_from_generic(&tx, header, db, vm_type)?;
 
         adjust_disabled_base_fee(&mut env);
@@ -4300,12 +4405,6 @@ pub fn calculate_gas_price_for_tx(
         fee_per_gas += operator_fee_config.operator_fee_per_gas;
     }
 
-    if fee_per_gas > max_fee_per_gas {
-        return Err(VMError::TxValidation(
-            TxValidationError::InsufficientMaxFeePerGas,
-        ));
-    }
-
     Ok(min(max_priority_fee + fee_per_gas, max_fee_per_gas).into())
 }
 
@@ -4315,20 +4414,6 @@ pub fn calculate_gas_price_for_tx(
 pub(crate) fn adjust_disabled_base_fee(env: &mut Environment) {
     if env.gas_price == U256::zero() {
         env.base_fee_per_gas = U256::zero();
-    }
-    // Same for the blob fee: a call object that opts out by passing `maxFeePerBlobGas: 0`
-    // must not be rejected for undercutting the block's blob base fee.
-    // `base_blob_fee_per_gas` is the field the validation and the up-front cost both read
-    // (`validate_max_fee_per_blob_gas`, `deduct_caller`), and it is computed in
-    // `env_from_generic` before this runs, so it is what has to be lowered. Clearing
-    // `block_excess_blob_gas` instead had no effect: nothing reads that field, and the
-    // blob base fee derived from a zero excess still has a floor of 1, which a zero fee
-    // cap undercuts just the same.
-    if env
-        .tx_max_fee_per_blob_gas
-        .is_some_and(|v| v == U256::zero())
-    {
-        env.base_blob_fee_per_gas = U256::zero();
     }
 }
 
@@ -4358,6 +4443,34 @@ pub(crate) fn env_from_generic(
         calculate_gas_price_for_generic(tx, header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE));
     let block_excess_blob_gas = header.excess_blob_gas;
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
+    // A field whose EIP is not active at the target block makes the call invalid. Blocks
+    // never carry these transaction types before their fork, so only simulation needs the
+    // check. Pre-merge forks are scheduled by block number, and `config.fork` never goes
+    // below Paris, so the block number decides.
+    // A missing `berlin_block` or `london_block` means LEVM runs that fork's rules, so the field is accepted.
+    let before_block =
+        |fork_block: Option<u64>| fork_block.is_some_and(|block| header.number < block);
+    if !tx.access_list.is_empty() && before_block(chain_config.berlin_block) {
+        return Err(TxValidationError::Type1TxPreFork.into());
+    }
+    if (tx.max_fee_per_gas.is_some() || tx.max_priority_fee_per_gas.is_some())
+        && before_block(chain_config.london_block)
+    {
+        return Err(TxValidationError::Type2TxPreFork.into());
+    }
+    // The fields decide the type: blob hashes make the call a blob transaction, with a
+    // zero cap when the caller sets none, as geth does.
+    let max_fee_per_blob_gas = if tx.blob_versioned_hashes.is_empty() {
+        tx.max_fee_per_blob_gas
+    } else {
+        Some(tx.max_fee_per_blob_gas.unwrap_or_default())
+    };
+    // A zero cap zeroes the blob base fee, as geth does.
+    let base_blob_fee_per_gas = if max_fee_per_blob_gas.is_some_and(|cap| cap.is_zero()) {
+        U256::zero()
+    } else {
+        get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?
+    };
 
     // slot_number: default a missing value to zero exactly like
     // `setup_env_with_config` (the block-execution env builder) does, rather
@@ -4391,14 +4504,14 @@ pub(crate) fn env_from_generic(
         slot_number,
         chain_id: chain_config.chain_id.into(),
         base_fee_per_gas: header.base_fee_per_gas.unwrap_or_default().into(),
-        base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
+        base_blob_fee_per_gas,
         gas_price,
         block_excess_blob_gas,
         block_blob_gas_used: header.blob_gas_used,
         tx_blob_hashes: tx.blob_versioned_hashes.clone(),
         tx_max_priority_fee_per_gas: tx.max_priority_fee_per_gas.map(U256::from),
         tx_max_fee_per_gas: tx.max_fee_per_gas.map(U256::from),
-        tx_max_fee_per_blob_gas: tx.max_fee_per_blob_gas,
+        tx_max_fee_per_blob_gas: max_fee_per_blob_gas,
         tx_nonce: tx.nonce.unwrap_or_default(),
         block_gas_limit: header.gas_limit,
         difficulty: header.difficulty,
@@ -4420,6 +4533,10 @@ pub(crate) fn env_from_generic(
         // Same reasoning: a simulated call carries no signature, so EIP-3607 has nothing
         // to protect, and a contract as `from` is a normal thing to simulate.
         disable_sender_eoa_check: true,
+        // The eth_call family emits no traceTransfers logs; that relaxation exists for
+        // `eth_simulateV1`, which builds its environment through `setup_env` and opts
+        // in there.
+        trace_eth_transfers: false,
         // Lifted per caller: `eth_call` and `debug_traceCall` may spend their whole gas
         // limit on execution after Amsterdam, `eth_estimateGas` and `eth_createAccessList`
         // keep the transaction rule so their answers hold for a real transaction.
@@ -5146,7 +5263,7 @@ mod burned_fees_tests {
         Transaction::EIP1559Transaction(EIP1559Transaction {
             signature_r: U256::from_big_endian(&sig_bytes[..32]),
             signature_s: U256::from_big_endian(&sig_bytes[32..]),
-            signature_y_parity: rid.to_byte() != 0,
+            signature_y_parity: rid.to_byte().into(),
             ..tx
         })
     }
@@ -5241,7 +5358,7 @@ mod burned_fees_tests {
         Transaction::EIP1559Transaction(EIP1559Transaction {
             signature_r: U256::from_big_endian(&sig_bytes[..32]),
             signature_s: U256::from_big_endian(&sig_bytes[32..]),
-            signature_y_parity: rid.to_byte() != 0,
+            signature_y_parity: rid.to_byte().into(),
             ..tx
         })
     }
@@ -5528,7 +5645,7 @@ mod simulated_tx_encoding_tests {
             value: U256::from(1u64),
             data,
             access_list: vec![],
-            signature_y_parity: true,
+            signature_y_parity: 1u8.into(),
             signature_r: U256::MAX,
             signature_s: U256::MAX,
             ..Default::default()

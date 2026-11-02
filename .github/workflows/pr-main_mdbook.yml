@@ -22,10 +22,10 @@ jobs:
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
 
       - name: Setup mdBook
-        uses: peaceiris/actions-mdbook@v2
+        uses: peaceiris/actions-mdbook@v2.0.0
         with:
           mdbook-version: "0.5.2"
 
@@ -37,7 +37,7 @@ jobs:
 
       - name: Upload docs artifact
         if: ${{ github.ref == 'refs/heads/main' }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: docs
           path: book/html
@@ -55,13 +55,13 @@ jobs:
       group: ${{ github.workflow }}-${{ github.ref }}
     steps:
       - name: Download docs artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v6.0.0
         with:
           name: docs
           path: book/html
 
       - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
+        uses: peaceiris/actions-gh-pages@v4.1.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: book/html

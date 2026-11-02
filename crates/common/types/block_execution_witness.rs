@@ -229,8 +229,12 @@ impl RpcExecutionWitness {
 
         // get state trie root and embed the rest of the trie into it
         let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
-            Trie::get_embedded_root_committed(&nodes, initial_state_root, crypto)?
-        {
+            Trie::get_embedded_root_committed(
+                &nodes,
+                initial_state_root,
+                crypto,
+                SECURED_TRIE_KEY_NIBBLES,
+            )? {
             Some((*state_trie_root).clone())
         } else {
             None
@@ -256,7 +260,12 @@ impl RpcExecutionWitness {
                 if !nodes.contains_key(&storage_root_hash) {
                     continue;
                 }
-                let node = Trie::get_embedded_root_committed(&nodes, storage_root_hash, crypto)?;
+                let node = Trie::get_embedded_root_committed(
+                    &nodes,
+                    storage_root_hash,
+                    crypto,
+                    SECURED_TRIE_KEY_NIBBLES,
+                )?;
                 let NodeRef::Node(node, _) = node else {
                     return Err(GuestProgramStateError::Custom(
                         "execution witness does not contain non-empty storage trie".to_string(),
@@ -363,8 +372,12 @@ where
     // reuses the known value instead of re-encoding and re-hashing the whole trie.
     // Sound here because `nodes` is keyed by the hash of the very bytes it decodes.
     let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
-        Trie::get_embedded_root_committed(&nodes, initial_state_root, crypto)?
-    {
+        Trie::get_embedded_root_committed(
+            &nodes,
+            initial_state_root,
+            crypto,
+            SECURED_TRIE_KEY_NIBBLES,
+        )? {
         Some((*state_trie_root).clone())
     } else {
         None
@@ -380,7 +393,12 @@ where
             if storage_root_hash == EMPTY_TRIE_HASH || !nodes.contains_key(&storage_root_hash) {
                 continue;
             }
-            let node = Trie::get_embedded_root_committed(&nodes, storage_root_hash, crypto)?;
+            let node = Trie::get_embedded_root_committed(
+                &nodes,
+                storage_root_hash,
+                crypto,
+                SECURED_TRIE_KEY_NIBBLES,
+            )?;
             let NodeRef::Node(node, _) = node else {
                 return Err(GuestProgramStateError::Custom(
                     "execution witness does not contain non-empty storage trie".to_string(),
@@ -515,6 +533,11 @@ fn collect_accounts_from_trie(
         }
     }
 }
+
+/// Nibbles in a secured trie key: the keccak of an address or of a storage slot.
+/// Embedding rejects a witness trie whose paths do not end there
+/// (`test_witness_state_rejects_overlength_secured_trie_path`).
+const SECURED_TRIE_KEY_NIBBLES: usize = 64;
 
 #[derive(thiserror::Error, Debug)]
 pub enum GuestProgramStateError {
@@ -1269,5 +1292,85 @@ mod storage_leaf_decoding_tests {
                 hex::encode(leaf)
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod secured_trie_path_tests {
+    use super::*;
+    use ethrex_crypto::NativeCrypto;
+
+    /// Builds a trie mapping every key to an empty account and returns its root plus
+    /// the nodes on the keys' paths, which is what a witness carries for them.
+    fn trie_over(keys: &[Vec<u8>]) -> (H256, BTreeSet<Vec<u8>>) {
+        let mut trie = Trie::new_temp();
+        for key in keys {
+            trie.insert(key.clone(), AccountState::default().encode_to_vec())
+                .expect("insert");
+        }
+        let mut nodes = BTreeSet::new();
+        for key in keys {
+            nodes.extend(trie.get_proof(key).expect("proof"));
+        }
+        (trie.hash_no_commit(&NativeCrypto), nodes)
+    }
+
+    fn rebuild(root: H256, nodes: BTreeSet<Vec<u8>>) -> Result<(), GuestProgramStateError> {
+        rebuild_state_and_storage_tries(nodes, root, &NativeCrypto).map(|_| ())
+    }
+
+    fn assert_rejected(result: Result<(), GuestProgramStateError>) {
+        assert!(
+            matches!(
+                result,
+                Err(GuestProgramStateError::Trie(TrieError::KeyLengthMismatch))
+            ),
+            "expected the secured-path check to reject the trie, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_a_trie_keyed_by_hashes() {
+        let (root, nodes) = trie_over(&[vec![0x11; 32], vec![0x22; 32]]);
+        rebuild(root, nodes).expect("64-nibble keys are the secured key length");
+    }
+
+    #[test]
+    fn rejects_a_leaf_past_the_key_length() {
+        // One key, so the root itself is a 66-nibble leaf.
+        let (root, nodes) = trie_over(&[vec![0x11; 33]]);
+        assert_rejected(rebuild(root, nodes));
+    }
+
+    #[test]
+    fn rejects_leaves_that_run_past_the_key_length_below_a_branch() {
+        // The keys split at the first nibble, so a branch holds two 65-nibble leaves
+        // that each end one nibble past the key.
+        let (root, nodes) = trie_over(&[vec![0x11; 33], vec![0x22; 33]]);
+        assert_rejected(rebuild(root, nodes));
+    }
+
+    #[test]
+    fn rejects_a_leaf_short_of_the_key_length() {
+        let (root, nodes) = trie_over(&[vec![0x11; 31]]);
+        assert_rejected(rebuild(root, nodes));
+    }
+
+    #[test]
+    fn rejects_an_overlength_storage_trie() {
+        let crypto = &NativeCrypto;
+        let (storage_root, storage_nodes) = trie_over(&[vec![0x33; 33]]);
+        let mut state_trie = Trie::new_temp();
+        let hashed_address = vec![0x44; 32];
+        let account = AccountState {
+            storage_root,
+            ..Default::default()
+        };
+        state_trie
+            .insert(hashed_address.clone(), account.encode_to_vec())
+            .expect("insert account");
+        let mut nodes = storage_nodes;
+        nodes.extend(state_trie.get_proof(&hashed_address).expect("proof"));
+        assert_rejected(rebuild(state_trie.hash_no_commit(crypto), nodes));
     }
 }

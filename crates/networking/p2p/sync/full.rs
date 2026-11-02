@@ -799,7 +799,10 @@ async fn run_blocks_pipeline(
     bals: Vec<Option<BlockAccessList>>,
 ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
     tokio::task::spawn_blocking(move || {
-        let mut last_valid_hash = H256::default();
+        let mut last_valid_hash = blocks
+            .first()
+            .map(|block| block.header.parent_hash)
+            .unwrap_or_default();
         for (block, bal) in blocks.into_iter().zip(bals.into_iter()) {
             let block_hash = block.hash();
             blockchain

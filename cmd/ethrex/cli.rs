@@ -850,6 +850,13 @@ pub enum Subcommand {
     #[cfg(feature = "l2")]
     #[command(name = "l2")]
     L2(crate::l2::L2Command),
+    #[cfg(feature = "partial")]
+    #[command(
+        name = "partial-stateful-node",
+        visible_alias = "psn",
+        about = "Run a partial stateful node: proven partial state kept current with block access lists"
+    )]
+    PartialStatefulNode(crate::partial::PartialCommand),
 }
 
 impl Subcommand {
@@ -858,6 +865,9 @@ impl Subcommand {
         let _guard = match &self {
             #[cfg(feature = "l2")]
             Self::L2(_) => None,
+            // The partial stateful node initializes tracing from its own flattened options.
+            #[cfg(feature = "partial")]
+            Self::PartialStatefulNode(_) => None,
             _ => {
                 let (_, guard) = init_tracing(opts);
                 guard
@@ -979,6 +989,8 @@ impl Subcommand {
             }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
+            #[cfg(feature = "partial")]
+            Subcommand::PartialStatefulNode(command) => command.run().await?,
         }
 
         Ok(())

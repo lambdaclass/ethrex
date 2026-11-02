@@ -204,10 +204,13 @@ pub enum SignerError {
     Web3SignerError(String),
 }
 
-fn parse_signature(signature: Signature) -> (U256, U256, bool) {
+fn parse_signature(signature: Signature) -> (U256, U256, U256) {
     let r = U256::from_big_endian(&signature[..32]);
     let s = U256::from_big_endian(&signature[32..64]);
-    let y_parity = signature[64] != 0 && signature[64] != 27;
+    let y_parity = match signature[64] {
+        27 | 28 => U256::from(signature[64] - 27),
+        value => U256::from(value),
+    };
 
     (r, s, y_parity)
 }

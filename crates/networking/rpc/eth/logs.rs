@@ -400,7 +400,9 @@ pub(crate) async fn fetch_logs_with_filter(
         Some(block_hash) => {
             let block_header = storage
                 .get_block_header_by_hash(block_hash)?
-                .ok_or_else(|| RpcErr::BadParams(format!("Unknown block hash {block_hash:#x}")))?;
+                .ok_or_else(|| {
+                    RpcErr::ServerError(format!("Unknown block hash {block_hash:#x}"))
+                })?;
             let work = LogQueryWork::new(1, &address_filter, &filter.topics);
             limits.check_work(&work)?;
             let _reservation = limits.reserve(&work)?;
@@ -1035,7 +1037,7 @@ mod tests {
         let unknown = H256::repeat_byte(0xff);
         assert!(matches!(
             fetch_logs_with_filter(&filter_for(unknown), storage, &LogQueryLimits::default()).await,
-            Err(RpcErr::BadParams(_))
+            Err(RpcErr::ServerError(_))
         ));
     }
 

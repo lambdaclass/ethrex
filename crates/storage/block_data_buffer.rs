@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use ethrex_common::H256;
 use ethrex_common::seeded_hash::SeededHashMap;
-use ethrex_common::types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Code, Receipt};
+use ethrex_common::types::{
+    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Code, Receipt, Transaction,
+};
 use ethrex_crypto::NativeCrypto;
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -95,6 +97,14 @@ impl BlockDataBuffer {
 
     pub fn get_body(&self, hash: &BlockHash) -> Option<BlockBody> {
         self.by_hash.get(hash).map(|b| b.body.clone())
+    }
+
+    /// The transaction at `index` of a buffered block's body: `None` if the block
+    /// is not buffered, `Some(None)` if its body has no such transaction.
+    pub fn get_transaction(&self, hash: &BlockHash, index: usize) -> Option<Option<Transaction>> {
+        self.by_hash
+            .get(hash)
+            .map(|b| b.body.transactions.get(index).cloned())
     }
 
     pub fn get_number(&self, hash: &BlockHash) -> Option<BlockNumber> {

@@ -22,7 +22,7 @@ jobs:
     if: github.event.pull_request.head.repo.fork == false
     steps:
       - name: Checkout PR Code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
@@ -38,13 +38,13 @@ jobs:
           echo "merge_base=$MERGE_BASE" >> $GITHUB_OUTPUT
       
       - name: Checkout merge base commit
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
         with:
           fetch-depth: 0
           ref: ${{ steps.find_merge_base.outputs.merge_base }}
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1
           components: rustfmt, clippy
@@ -57,13 +57,13 @@ jobs:
         run: mv tooling/loc/current_detailed_loc_report.json tooling/loc/previous_detailed_loc_report.json
 
       - name: Checkout PR
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
         with:
           clean: "false" # Don't clean the workspace, so we can keep the previous report
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1
           components: rustfmt, clippy
@@ -89,7 +89,7 @@ jobs:
       - name: Find comment
         if: steps.check_report.outputs.report_exists == 'true'
         continue-on-error: true
-        uses: peter-evans/find-comment@v4
+        uses: peter-evans/find-comment@v4.0.0
         id: fc
         with:
           issue-number: ${{ github.event.pull_request.number }}
@@ -98,7 +98,7 @@ jobs:
 
       - name: Create Comment
         if: steps.check_report.outputs.report_exists == 'true'
-        uses: peter-evans/create-or-update-comment@v5
+        uses: peter-evans/create-or-update-comment@v5.0.0
         with:
           comment-id: ${{ steps.fc.outputs.comment-id }}
           token: ${{ secrets.GITHUB_TOKEN }}
