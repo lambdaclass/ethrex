@@ -90,6 +90,24 @@ impl PayloadOrTask {
     }
 }
 
+/// Installs an in-flight build task into the payload pool, evicting the oldest
+/// entry if at capacity.
+fn register_payload_build_task(
+    payloads: &mut Vec<(u64, PayloadOrTask)>,
+    payload_id: u64,
+    task: PayloadBuildTask,
+) {
+    if payloads.len() >= MAX_PAYLOADS {
+        // Remove oldest unclaimed payload. A build still running there would
+        // keep rebuilding for the rest of its slot, holding its build context,
+        // with nobody left to collect it.
+        if let (_, PayloadOrTask::Task(evicted)) = payloads.remove(0) {
+            evicted.cancel.cancel();
+        }
+    }
+    payloads.push((payload_id, PayloadOrTask::Task(task)));
+}
+
 pub struct BuildPayloadArgs {
     pub parent: BlockHash,
     pub timestamp: u64,
@@ -521,17 +539,14 @@ impl Blockchain {
                 .await
         });
         let mut payloads = self.payloads.lock().await;
-        if payloads.len() >= MAX_PAYLOADS {
-            // Remove oldest unclaimed payload
-            payloads.remove(0);
-        }
-        payloads.push((
+        register_payload_build_task(
+            &mut payloads,
             payload_id,
-            PayloadOrTask::Task(PayloadBuildTask {
+            PayloadBuildTask {
                 task: payload_build_task,
                 cancel: cancel_token,
-            }),
-        ));
+            },
+        );
     }
 
     /// Build the given payload and keep on rebuilding it until either the time slot
@@ -2127,5 +2142,32 @@ mod tests {
             "L1GasReservationTooLow and IntrinsicGasTooLow must not share a Display \
              string, or the transient case becomes unclassifiable"
         );
+    }
+
+    /// Evicting the oldest entry at `MAX_PAYLOADS` must stop its build loop:
+    /// dropping the `JoinHandle` alone detaches the task and leaves it running.
+    #[tokio::test]
+    async fn evicted_build_task_is_cancelled() {
+        let tokens: Vec<CancellationToken> = (0..=MAX_PAYLOADS)
+            .map(|_| CancellationToken::new())
+            .collect();
+        let mut payloads = Vec::new();
+        for (payload_id, token) in (0u64..).zip(&tokens) {
+            let task = PayloadBuildTask {
+                task: tokio::spawn(async { Err(ChainError::Custom("unused".to_string())) }),
+                cancel: token.clone(),
+            };
+            register_payload_build_task(&mut payloads, payload_id, task);
+        }
+
+        assert!(
+            tokens[0].is_cancelled(),
+            "the evicted build task was not cancelled"
+        );
+        assert!(
+            tokens[1..].iter().all(|token| !token.is_cancelled()),
+            "a build task still registered was cancelled"
+        );
+        assert_eq!(payloads.len(), MAX_PAYLOADS);
     }
 }
