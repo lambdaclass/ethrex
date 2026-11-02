@@ -1,0 +1,480 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>L2 TPS Benchmarking - Ethrex</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="shortcut icon" href="../favicon-65f98953.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-2459343d.css">
+        <link rel="stylesheet" href="../css/chrome-ae938929.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-429c06ce.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-a8baa880.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Ethrex</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<h1 id="l2-tps-benchmarking-guide"><a class="header" href="#l2-tps-benchmarking-guide">L2 TPS Benchmarking Guide</a></h1>
+<p>How to measure the transactions per second (TPS) an ethrex L2 settles under a synthetic load. The headline figure is the settled TPS: transactions whose batch has been proved and verified on L1, per second of wall time, so it accounts for the whole settlement path (block production, batch sealing and commitment, proving, L1 verification) and is bounded by its slowest stage. The per-stage figures are measured alongside to show which stage that is. The procedure was written for a single machine with one GPU and two proving backends (SP1 and ZisK), but every step works for any backend the prover supports.</p>
+<p>For proving time alone, without the sequencer side, see the <a href="https://github.com/lambdaclass/ethrex/blob/main/docs/l2/prover-benchmarking.md">Prover Benchmarking Guide</a>.</p>
+<h2 id="what-is-measured"><a class="header" href="#what-is-measured">What is measured</a></h2>
+<p>An L2 transaction goes through four stages, and each one has its own throughput:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Stage</th><th>Component</th><th>Where the figure comes from</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td>Block production</td><td>Block producer</td><td><code>Stored new block …, transaction_count N, tps T</code> log line and the <code>transactions_per_second</code> gauge</td><td>Transactions included per second of real block interval. This is the execution ceiling of the sequencer for the workload.</td></tr>
+<tr><td>Batch sealing</td><td>Committer</td><td><code>Batch B holds blocks F..=L: N transactions in S s, tps T</code> log line, plus the <code>batch_tx_count</code>, <code>batch_size</code> and <code>batch_gas_used</code> gauges</td><td>Sustained rate over a whole batch, from block timestamps. Batches are also capped by what fits in one blob, so this shows the batch size the prover will see. Blocks are capped by the blob or by the L2 block gas limit, whichever binds first.</td></tr>
+<tr><td>Proving</td><td>Prover (<code>--timed</code>)</td><td><code>Proved payload #B … proving_time_ms=M</code> log line</td><td>Proven TPS of a batch is its transaction count divided by its proving time. The aggregate over a run (sum of transactions divided by sum of proving times) is the throughput one GPU can prove.</td></tr>
+<tr><td>L1 verification (headline)</td><td>OnChainProposer</td><td>L1 block timestamps of the <code>verifyBatches</code> transactions (the sequencer logs each <code>verify_tx_hash</code>), plus the per-batch transaction counts</td><td>Settled TPS: transactions in the batches verified between the first and the last verification of the run, divided by the wall time between those two L1 timestamps. It is the end-to-end rate the whole pipeline sustains; with one GPU it is set by proving, and it includes the proof coordinator queue and the L1 transactions.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Settled TPS is computed as a ratio of totals over a window, never as a mean of per-batch ratios: <code>sum of transactions in the batches verified inside the window / (timestamp of the last verification - timestamp of the first verification)</code>. The first verification opens the window and its own batches are excluded, since the time they took is not inside it. The window must be long enough for the pipeline to reach steady state, that is, for the prover to be working on a backlog rather than waiting for batches.</p>
+<p>The block producer schedules the next block <code>block_time_ms</code> after the previous one is stored, so the real block period is the build and store time plus the block time; the per-block TPS is measured against that interval. Block timestamps have second resolution, so the batch figure is a sustained rate, not a per-block one. The committer seals at most one batch per commit interval, whatever the backlog, so the commit interval is a cap on settlement of its own: it is set to one block interval here so that the prover, not the committer, sets the pace.</p>
+<p>A run is sized so that the load always exceeds what the sequencer includes: the load test sends every account’s transactions as fast as the RPC accepts them, the mempool limit is raised so nothing is evicted, and the test restarts as soon as a round is included. Blocks are then full for the whole measurement window, and the per-block TPS is the sequencer’s capacity for that workload rather than the load generator’s pace.</p>
+<h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
+<ul>
+<li>A Linux x86-64 host with an NVIDIA GPU. SP1 6.x downloads and runs its own <code>sp1-gpu-server</code>, which needs the CUDA 12 runtime; ZisK v1.3.2-alpha needs more than 24 GB of VRAM for GPU proving (the ZisK L2 backend and its guide arrive with the ZisK prover pull request).</li>
+<li>The backend’s toolchain installed: <code>sp1up</code> for SP1, the ZisK bundle with the STARK and PLONK keys for ZisK.</li>
+<li><code>rex</code> (for the L1 contract calls) and <code>solc</code> (for the ZisK verifier) on the <code>PATH</code>.</li>
+<li>The ethrex repository checked out at the commit under test.</li>
+</ul>
+<h2 id="scripts"><a class="header" href="#scripts">Scripts</a></h2>
+<p><code>scripts/l2_tps/</code> automates steps 2 to 6 below and produces the summaries this guide quotes:</p>
+<ul>
+<li><code>run.sh &lt;backend&gt; &lt;workload&gt;</code> runs one measurement from a fresh L1 to a run directory (<code>tps-runs/&lt;timestamp&gt;-&lt;backend&gt;-&lt;workload&gt;/</code> by default) holding the node, prover and load-test logs, <code>metrics.txt</code>, <code>blocks.csv</code> (per block: timestamp, transactions, gas, base fee), <code>gpu.csv</code> (GPU memory, utilization and power every 30 s), <code>l1-progress.csv</code>, <code>verifications.csv</code> (L1 timestamp of every verification) and <code>summary.md</code>. It also records <code>commits.csv</code> (L1 timestamp, gas and blob gas of every commit transaction). It takes the binaries, window, block time, commit interval, load, L2 block gas limit (<code>L2_GAS_LIMIT</code>, applied to the bridge and the L2 genesis), extra sequencer flags (<code>EXTRA_L2_FLAGS</code>) and a run label (<code>TAG</code>) from environment variables documented at its top; the prover’s extra environment (for example the CUDA 12 runtime path for SP1, or the glibc tunable ZisK needs) goes in <code>PROVER_ENV</code>.</li>
+<li><code>collect.py &lt;run_dir&gt;</code> recomputes a run’s summary; <code>compare.py &lt;run_dir&gt;...</code> prints one table across runs with the rows shown under Results, including the operator’s L1 fee per million transactions priced at <code>L1_GAS_PRICE_GWEI</code> (default 10) and <code>L1_BLOB_GAS_PRICE_GWEI</code> (default 1) from the environment, plus committed TPS on L1, settlement latency (L1 verification time minus the L2 timestamp of the batch’s last block), L1 gas and blob gas per transaction and the committer’s cycle time when the run recorded them; <code>dump_blocks.py</code> is the per-block RPC dump <code>run.sh</code> calls at the end.</li>
+</ul>
+<pre><code class="language-bash">COMPILE_CONTRACTS=true cargo build --release --features l2,l2-sql,gpu,sp1 --bin ethrex
+cargo build --release --manifest-path tooling/load_test/Cargo.toml
+PROVER_ENV="LD_LIBRARY_PATH=/path/to/cuda-12/lib" scripts/l2_tps/run.sh sp1 eth-transfers
+scripts/l2_tps/run.sh sp1 erc20
+scripts/l2_tps/compare.py tps-runs/*-sp1-*
+</code></pre>
+<p>Run the pairs you want to compare one after the other with the same settings; the backend binary differs per backend, so set <code>ETHREX_BIN</code> when switching.</p>
+<h2 id="step-by-step"><a class="header" href="#step-by-step">Step by step</a></h2>
+<p>All commands run from the repository root unless noted. The examples use the default test keys from <code>fixtures/</code>, which have no value outside the local devnet.</p>
+<h3 id="1-build-the-binaries"><a class="header" href="#1-build-the-binaries">1. Build the binaries</a></h3>
+<p>Build one <code>ethrex</code> binary per backend with GPU proving, and the load test, once:</p>
+<pre><code class="language-bash">COMPILE_CONTRACTS=true cargo build --release --features l2,l2-sql,gpu,sp1 --bin ethrex
+cp target/release/ethrex /somewhere/ethrex-sp1
+COMPILE_CONTRACTS=true cargo build --release --features l2,l2-sql,gpu,zisk --bin ethrex
+cp target/release/ethrex /somewhere/ethrex-zisk
+cargo build --release --manifest-path tooling/load_test/Cargo.toml
+</code></pre>
+<p>Each build compiles the backend’s guest program, so the first one takes a while. Record the commit hash: proving times and guest cycle counts change between commits.</p>
+<h3 id="2-start-a-fresh-l1-and-deploy-the-contracts-requiring-the-backends-proofs"><a class="header" href="#2-start-a-fresh-l1-and-deploy-the-contracts-requiring-the-backends-proofs">2. Start a fresh L1 and deploy the contracts requiring the backend’s proofs</a></h3>
+<p>Every run starts from an empty L1 so that batch numbers, contract addresses and the timeline are comparable between runs. From <code>crates/l2</code>:</p>
+<pre><code class="language-bash">rm -rf dev_ethrex_l1 dev_ethrex_l2 ../../cmd/.env
+ethrex-&lt;backend&gt; --network ../../fixtures/genesis/l1.json --http.port 8545 --http.addr 0.0.0.0 \
+  --authrpc.port 8551 --dev --datadir dev_ethrex_l1 &gt; l1.log 2&gt;&amp;1 &amp;
+</code></pre>
+<p>For ZisK, deploy the verifier from the pinned release first and keep its address (<code>make deploy-zisk-verifier</code> prints it). Then deploy the L1 contracts with the flag that requires the backend’s proofs, <code>--sp1 true</code> or <code>--zisk true --zisk.verifier-address &lt;address&gt;</code>:</p>
+<pre><code class="language-bash">ethrex-&lt;backend&gt; l2 deploy \
+  --eth-rpc-url http://localhost:8545 --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  &lt;verifier flags&gt; \
+  --on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 --bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+  --bridge-owner-pk 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e --deposit-rich \
+  --private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
+  --genesis-l1-path ../../fixtures/genesis/l1.json --genesis-l2-path ../../fixtures/genesis/l2.json
+</code></pre>
+<p>The deployer writes the contract addresses to <code>cmd/.env</code>.</p>
+<h3 id="3-start-the-l2-sequencer-with-a-mempool-large-enough-for-the-load"><a class="header" href="#3-start-the-l2-sequencer-with-a-mempool-large-enough-for-the-load">3. Start the L2 sequencer with a mempool large enough for the load</a></h3>
+<pre><code class="language-bash">set -a; . ../../cmd/.env; set +a
+ETHREX_NO_MONITOR=true ethrex-&lt;backend&gt; l2 \
+  --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json \
+  --http.port 1729 --http.addr 0.0.0.0 --metrics --metrics.port 3702 --datadir dev_ethrex_l2 \
+  --mempool.maxsize 1000000 \
+  --l1.bridge-address "$ETHREX_WATCHER_BRIDGE_ADDRESS" \
+  --l1.on-chain-proposer-address "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" \
+  --eth.rpc-url http://localhost:8545 --osaka-activation-time 1761677592 \
+  --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
+  --block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+  --block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+  --block-producer.operator-fee-per-gas 1000000000 \
+  --block-producer.block-time 5000 --committer.commit-time 5000 \
+  --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+  --proof-coordinator.addr 127.0.0.1 &gt; l2.log 2&gt;&amp;1 &amp;
+</code></pre>
+<p><code>--mempool.maxsize</code> matters: the default of 10,000 transactions is below one load-test round, and an eviction drops the lowest nonces of an account, which leaves all of its later transactions stuck. The commit interval equals the block interval so that every block is batched as soon as it exists; a longer interval caps settlement at one batch per interval regardless of how fast the prover is. Keep the block time and commit time fixed across the runs you want to compare; they define the block gas budget per second and the batch size.</p>
+<h3 id="4-start-the-load-then-the-prover"><a class="header" href="#4-start-the-load-then-the-prover">4. Start the load, then the prover</a></h3>
+<p>Start the load test before the prover so that the first proved batches already contain transactions. The mempool admits a transaction only while the sender’s cumulative pending cost (gas limit times fee cap, over its pending transactions) fits its balance, so the fee cap the load test puts on its transactions bounds how many each account can have in flight; the tool uses one million gwei, which keeps hundreds of transactions per account admissible against the devnet balances while leaving room for the base fee to climb. <code>-t eth-transfers</code> sends plain value transfers; <code>-t erc20</code> deploys a token, mints to every account and sends token transfers. <code>LOAD_TEST_ENDLESS=true</code> starts a new round as soon as the previous one is fully included:</p>
+<pre><code class="language-bash">LOAD_TEST_RPC_URL=http://localhost:1729 LOAD_TEST_TX_AMOUNT=300 LOAD_TEST_ENDLESS=true \
+  ./tooling/target/release/load_test -k ./fixtures/keys/private_keys.txt -t eth-transfers &gt; loadtest.log 2&gt;&amp;1 &amp;
+</code></pre>
+<p>Then the prover, with timing enabled. From <code>crates/l2</code>:</p>
+<pre><code class="language-bash">ethrex-&lt;backend&gt; l2 prover --backend &lt;backend&gt; --proof-coordinators tcp://127.0.0.1:3900 --timed &gt; prover.log 2&gt;&amp;1 &amp;
+</code></pre>
+<p>ZisK on a glibc 2.41 host needs <code>GLIBC_TUNABLES=glibc.rtld.execstack=2</code> in the prover’s environment; SP1 needs <code>libcudart.so.12</code> on the library path if the host ships a newer CUDA.</p>
+<h3 id="5-let-it-run-sampling-the-l1"><a class="header" href="#5-let-it-run-sampling-the-l1">5. Let it run, sampling the L1</a></h3>
+<p>Leave the run for a fixed window (15 minutes gives about a dozen batches with the settings above) and sample the OnChainProposer every 30 seconds:</p>
+<pre><code class="language-bash">echo "utc,committed,verified" &gt; l1-progress.csv
+while true; do
+  V=$(rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" "lastVerifiedBatch()" --rpc-url http://localhost:8545 | tail -1)
+  C=$(rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" "lastCommittedBatch()" --rpc-url http://localhost:8545 | tail -1)
+  echo "$(date -u +%FT%TZ),$((C)),$((V))" &gt;&gt; l1-progress.csv
+  sleep 30
+done
+</code></pre>
+<p>At the end, dump the metrics before stopping anything, since the batch gauges live in the sequencer process:</p>
+<pre><code class="language-bash">curl -s localhost:3702/metrics &gt; metrics.txt
+</code></pre>
+<h3 id="6-read-the-results"><a class="header" href="#6-read-the-results">6. Read the results</a></h3>
+<p>The sequencer log carries the first two stages:</p>
+<pre><code>2026-10-16T02:10:05.120Z  INFO Stored new block 9c…, transaction_count 1412, tps 268.3
+2026-10-16T02:11:02.441Z  INFO Batch 7 holds blocks 61..=72: 16944 transactions in 63 s, tps 269.0
+</code></pre>
+<p>The prover log carries the third:</p>
+<pre><code>2026-10-16T02:12:40.003Z  INFO Proved payload #7 in 41.20s id=7 proving_time_s=41 proving_time_ms=41203
+</code></pre>
+<p>Proven TPS for batch 7 is <code>16944 / 41.2 = 411</code>. The settled TPS comes from the L1: for every <code>Sent batch verification transaction … verify_tx_hash=…</code> line in the sequencer log, fetch the receipt and its block’s timestamp; then divide the transactions of the batches verified after the first verification by the seconds between the first and the last verification timestamps. The 30-second <code>lastVerifiedBatch()</code> samples give the same figure at coarser resolution and show whether the verified count was still climbing when the run ended.</p>
+<p>Discard the first blocks (the mempool is still filling) and the last ones (the load test was stopped) when averaging the per-block TPS. Report the aggregate figures (transactions over time) rather than the mean of per-batch ratios, which weights small batches as much as full ones.</p>
+<h3 id="7-repeat-per-backend-and-workload"><a class="header" href="#7-repeat-per-backend-and-workload">7. Repeat per backend and workload</a></h3>
+<p>Stop the prover, the load test and both nodes, wipe the datadirs and go back to step 2 for the next combination. Everything else (binaries, block time, commit time, mempool size, transactions per account, window length) stays the same, so the only variable between two runs is the backend or the workload. One prover at a time: two provers sharing a GPU would measure contention, not throughput.</p>
+<h2 id="results"><a class="header" href="#results">Results</a></h2>
+<p>Measured on 2026-10-16 on one machine: AMD Ryzen 9 9950X3D (16 cores), 60 GB RAM, NVIDIA RTX 5090 (32 GB), Debian 13, CUDA 13.0 with the CUDA 12.8 runtime for SP1’s GPU server, SP1 6.9.0 (Groth16 proofs), ZisK v1.3.2-alpha (PLONK proofs), ethrex main at <code>4afa894e6</code> with the ZisK L2 backend (pull request #7423) and the sequencer, committer and load-test fixes from this guide’s pull request applied. Settings for every run: 5-second blocks, 5-second commit interval, mempool limit 1,000,000, 170 accounts sending 300 transactions per round without pause, 15-minute window, one prover on the GPU, L1 dev node on the same host.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Metric</th><th>ZisK, ETH transfers</th><th>ZisK, ERC20 transfers</th><th>SP1, ETH transfers</th><th>SP1, ERC20 transfers</th></tr>
+</thead>
+<tbody>
+<tr><td>Settled TPS on L1 (headline)</td><td>49.7</td><td>25.9</td><td>19.5</td><td>11.3</td></tr>
+<tr><td>Settlement window (s)</td><td>864</td><td>854</td><td>832</td><td>821</td></tr>
+<tr><td>Committed TPS on L1</td><td>108.4</td><td>55.7</td><td>96.4</td><td>49.6</td></tr>
+<tr><td>Sequencer TPS (steady window)</td><td>204.9</td><td>105.6</td><td>198.9</td><td>105.5</td></tr>
+<tr><td>Transactions per block</td><td>1,055</td><td>533</td><td>1,061</td><td>533</td></tr>
+<tr><td>Gas per block</td><td>22,139,741</td><td>27,688,118</td><td>22,287,831</td><td>27,688,114</td></tr>
+<tr><td>Gas per transaction</td><td>21,000</td><td>52,114</td><td>21,000</td><td>52,114</td></tr>
+<tr><td>Batches proved in the window (the deposit batch excluded)</td><td>40</td><td>43</td><td>15</td><td>18</td></tr>
+<tr><td>Transactions per batch</td><td>1,075</td><td>528</td><td>1,079</td><td>516</td></tr>
+<tr><td>Proving time per batch (s)</td><td>16.5</td><td>15.3</td><td>50.2</td><td>40.5</td></tr>
+<tr><td>Proven TPS (transactions / proving time)</td><td>65.0</td><td>34.4</td><td>21.5</td><td>12.7</td></tr>
+<tr><td>Proving seconds per Mgas</td><td>0.73</td><td>0.56</td><td>2.21</td><td>1.51</td></tr>
+<tr><td>L1 commit gas per batch</td><td>185,482</td><td>185,479</td><td>185,478</td><td>185,479</td></tr>
+<tr><td>L1 blob gas per batch</td><td>131,072</td><td>131,072</td><td>131,072</td><td>131,072</td></tr>
+<tr><td>L1 verify gas per batch</td><td>413,486</td><td>413,688</td><td>349,337</td><td>349,345</td></tr>
+<tr><td>L1 execution gas per transaction (commit + verify)</td><td>558</td><td>1,136</td><td>496</td><td>1,037</td></tr>
+<tr><td>L1 blob gas per transaction</td><td>122</td><td>248</td><td>121</td><td>254</td></tr>
+<tr><td>L1 fee per million transactions (ETH, at 10 gwei gas and 1 gwei blob gas)</td><td>5.70</td><td>11.61</td><td>5.08</td><td>10.62</td></tr>
+<tr><td>Prover GPU time per transaction (ms, 1 / settled TPS)</td><td>20.1</td><td>38.6</td><td>51.4</td><td>88.4</td></tr>
+<tr><td>GPU memory, max (MiB)</td><td>30,330</td><td>29,948</td><td>26,038</td><td>26,102</td></tr>
+<tr><td>GPU utilization, mean (%)</td><td>61</td><td>51</td><td>34</td><td>37</td></tr>
+<tr><td>GPU power, mean (W)</td><td>398</td><td>433</td><td>230</td><td>211</td></tr>
+</tbody>
+</table>
+</div>
+<p>GPU sampling was added after the first ZisK run had started, so ZisK with ETH transfers was measured a second time with every sample in place; the GPU rows of that column come from the repeat. The repeat reproduced the first run within noise: settled TPS 49.7 in both, sequencer 205.2 against 204.9 TPS, proving 16.5 s per batch in both, the same 40 batches proved in the window.</p>
+<p>How to read it:</p>
+<ul>
+<li>Every batch is one full block, but the two workloads fill it differently. ETH-transfer blocks are full by bytes: about 1,060 transfers of 117 bytes fill the blob that publishes the batch, at 22.3M gas. ERC20-transfer blocks are full by gas: the deployer stores a 30M L2 block gas limit by default (<code>--l2-gas-limit</code>) and the load test gives every transaction a 2.1M gas limit, so the builder stops at 27.9M gas, 536 transfers and about 99 KB, which leaves no room for a second block in the batch’s blob. The sequencer figures are therefore the blob capacity per block time for ETH transfers and the gas limit per block time for ERC20 transfers.</li>
+<li>The settled TPS is below the proven TPS by the time the prover spends between proofs (fetching the next batch input, the coordinator round trip, submitting the proof): the GPU sits idle roughly a quarter to a half of the time with one prover per GPU, which the GPU utilization row shows. Running two prover processes per GPU, or pipelining input fetch with proving, would recover most of it.</li>
+<li>Behind the prover sits the committer, which also falls short of the sequencer. After each commit it waits a full commit interval before the next one, and a commit cycle (L1 reads, batch preparation and witness, sending the transaction and polling its receipt every 2 s) takes about 4 to 6 s, so with one block per batch it publishes one batch every 9 to 11 s at 5-second intervals: 108 ETH transfers per second against the sequencer’s 205. A faster prover alone would therefore settle at most about 108 TPS of ETH transfers with these settings.</li>
+<li>Proving seconds per Mgas is the figure to use for capacity planning; it depends on the workload (ERC20 transfers cost more gas per transaction but prove faster per gas than plain transfers, whose cost is dominated by signature recovery and state writes). Neither backend proves a block within the 5-second block time on this GPU: a full ETH-transfer block takes 3.3 block times on ZisK and 10 on SP1, so settlement is prover-bound and throughput parity would take about four ZisK provers or ten SP1 provers, each on its own GPU; a proof landing before the next block would need one batch split across GPUs, which the ethrex prover does not do.</li>
+<li>L1 cost per batch is independent of the workload: one blob, a commit transaction of about 185k gas, and a verification of about 413k gas for a ZisK PLONK proof or about 349k gas for an SP1 Groth16 proof.</li>
+<li>The operator’s L1 cost per transaction is the batch’s commit and verification execution gas, plus its blob gas, divided by the transactions in the batch. Both are fixed per batch, so the cost per transaction falls as batches hold more transactions: an ERC20 batch holds half as many transfers as an ETH one, so it costs twice as much per transfer. The fee row prices it at 10 gwei per execution gas and 1 gwei per blob gas, which are example prices rather than market data; the cost scales linearly with both, and the scripts take other prices (see Scripts). Execution gas dominates at these prices, so a cheaper proof to verify (SP1’s Groth16 against ZisK’s PLONK) shows up directly. The prover’s cost per transaction is its GPU time, 1 / settled TPS when the GPU proves nonstop; multiply by a GPU-hour price to compare it with the L1 fee.</li>
+</ul>
+<h3 id="sensitivity-1-second-blocks"><a class="header" href="#sensitivity-1-second-blocks">Sensitivity: 1-second blocks</a></h3>
+<p>ETH transfers with the block time and the commit interval at 1 second instead of 5 (12-minute windows, everything else equal), for both backends:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Metric</th><th>ZisK, 5 s blocks</th><th>ZisK, 1 s blocks</th><th>SP1, 5 s blocks</th><th>SP1, 1 s blocks</th></tr>
+</thead>
+<tbody>
+<tr><td>Settled TPS on L1</td><td>49.7</td><td>50.0</td><td>19.5</td><td>19.5</td></tr>
+<tr><td>Committed TPS on L1</td><td>108.4</td><td>177.5</td><td>96.4</td><td>152.8</td></tr>
+<tr><td>Sequencer TPS (steady window)</td><td>204.9</td><td>989.9</td><td>198.9</td><td>968.0</td></tr>
+<tr><td>Transactions per block</td><td>1,055</td><td>1,062</td><td>1,061</td><td>1,062</td></tr>
+<tr><td>Transactions per batch</td><td>1,075</td><td>1,076</td><td>1,079</td><td>1,079</td></tr>
+<tr><td>Proving time per batch (s)</td><td>16.5</td><td>16.5</td><td>50.2</td><td>50.7</td></tr>
+<tr><td>Proven TPS</td><td>65.0</td><td>65.1</td><td>21.5</td><td>21.3</td></tr>
+<tr><td>GPU utilization, mean (%)</td><td>61</td><td>63</td><td>34</td><td>35</td></tr>
+<tr><td>L1 execution gas per transaction (commit + verify)</td><td>558</td><td>557</td><td>496</td><td>496</td></tr>
+<tr><td>L1 blob gas per transaction</td><td>122</td><td>122</td><td>121</td><td>121</td></tr>
+<tr><td>L1 fee per million transactions (ETH, at 10 gwei gas and 1 gwei blob gas)</td><td>5.70</td><td>5.69</td><td>5.08</td><td>5.08</td></tr>
+<tr><td>Prover GPU time per transaction (ms, 1 / settled TPS)</td><td>20.1</td><td>20.0</td><td>51.4</td><td>51.4</td></tr>
+</tbody>
+</table>
+</div>
+<p>The block builder fills a blob-sized block in well under a second, so block production scales with the block time (about 1,000 ETH transfers per second at 1-second blocks) while the settled figure does not move for either backend: it is set by the prover, which still takes 16.5 s (ZisK) or 50 s (SP1) per blob-sized batch. The runs also show the next cap behind the prover: the committer waits a full commit interval after each commit and its own cycle takes about 6 seconds here, so at 1-second intervals it publishes about 180 ETH transfers per second (177.5 and 152.8 TPS committed), and at 5-second intervals about 100, however many provers there were. Raising sequencer throughput past that needs fewer bytes per transaction in the blob (state diffs or compression) or several blobs per batch, and a committer that pipelines its commit transactions.</p>
+<h3 id="settlement-cost-and-batch-shape"><a class="header" href="#settlement-cost-and-batch-shape">Settlement cost and batch shape</a></h3>
+<p>What the operator pays L1 per transaction is set almost entirely by how many transactions a batch carries. Settling a batch costs a near-fixed amount of execution gas, about 600k on ZisK (a commit of about 185k gas plus a PLONK verification of about 413k) and about 535k on SP1 (its Groth16 verification costs about 349k), plus 131,072 blob gas per blob the batch uses. Nothing in that depends on the transactions inside, so execution gas per transaction falls in proportion to the batch size, and blob gas per transaction falls only when more transactions fit in each blob.</p>
+<p>The table below measures that with the batch shape changed through prototypes on the same host and load (ETH transfers and ERC20 transfers, GPU prover, 1,500 transactions per account per round): batches spanning up to six blobs of one commit transaction (a six-blob batch adds only about 2,500 gas for hashing the extra blob hashes), batch data published zstd-compressed, commit transactions pipelined instead of waiting for each receipt, and 1-second blocks. Every prototype row raises the L2 block gas limit to 1 billion so blocks are bounded by blob space for both workloads; the first row is the configuration of the results above and the second row isolates the raised gas limit. SP1 cells are filled for the configurations that change what a batch contains, plus the all-ideas row; the others would not change its per-transaction cost. These prototypes are not part of ethrex; the rows show what each change to the batch shape is worth, in gas units and so independent of prices.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Configuration</th><th>Transactions per batch, ETH / ERC20</th><th>Blobs per batch, ETH / ERC20</th><th>Execution gas per transaction, ZisK ETH / ZisK ERC20 / SP1 ETH / SP1 ERC20</th><th>Blob gas per transaction, ZisK ETH / ZisK ERC20 / SP1 ETH / SP1 ERC20</th></tr>
+</thead>
+<tbody>
+<tr><td>One blob per batch, 30M L2 gas limit (the results above)</td><td>1,075 / 528</td><td>1.0 / 1.0</td><td>558 / 1,136 / 496 / 1,037</td><td>122 / 248 / 121 / 254</td></tr>
+<tr><td>One blob per batch, gas limit raised</td><td>1,079 / 629</td><td>1.0 / 1.0</td><td>557 / 939 / 497 / 825</td><td>122 / 199 / 122 / 194</td></tr>
+<tr><td>1 s blocks</td><td>1,079 / 661</td><td>1.0 / 1.0</td><td>557 / 899 / - / -</td><td>123 / 194 / - / -</td></tr>
+<tr><td>Pipelined commits</td><td>1,079 / 629</td><td>1.0 / 1.0</td><td>557 / 937 / - / -</td><td>123 / 197 / - / -</td></tr>
+<tr><td>6-blob batches</td><td>6,488 / 3,392</td><td>6.0 / 5.8</td><td>93 / 170 / 83 / 144</td><td>123 / 193 / 123 / 192</td></tr>
+<tr><td>Compression</td><td>1,307 / 1,110</td><td>1.0 / 1.0</td><td>458 / 526 / 409 / 464</td><td>100 / 109 / 100 / 106</td></tr>
+<tr><td>1 s blocks + pipelined commits</td><td>1,079 / 660</td><td>1.0 / 1.0</td><td>557 / 900 / - / -</td><td>123 / 193 / - / -</td></tr>
+<tr><td>1 s blocks + 6-blob batches</td><td>6,362 / 3,732</td><td>6.0 / 5.9</td><td>95 / 157 / - / -</td><td>124 / 192 / - / -</td></tr>
+<tr><td>1 s blocks + compression</td><td>1,308 / 1,184</td><td>1.0 / 1.0</td><td>458 / 499 / - / -</td><td>100 / 110 / - / -</td></tr>
+<tr><td>Pipelined commits + 6-blob batches</td><td>6,452 / 3,392</td><td>6.0 / 5.8</td><td>93 / 170 / - / -</td><td>123 / 193 / - / -</td></tr>
+<tr><td>Pipelined commits + compression</td><td>1,307 / 1,112</td><td>1.0 / 1.0</td><td>458 / 525 / - / -</td><td>100 / 108 / - / -</td></tr>
+<tr><td>6-blob batches + compression</td><td>7,875 / 6,546</td><td>6.0 / 5.9</td><td>76 / 89 / 68 / 86</td><td>100 / 104 / 100 / 104</td></tr>
+<tr><td>1 s blocks + pipelined commits + 6-blob batches</td><td>6,452 / 3,766</td><td>6.0 / 5.9</td><td>94 / 156 / - / -</td><td>123 / 192 / - / -</td></tr>
+<tr><td>1 s blocks + pipelined commits + compression</td><td>1,309 / 1,184</td><td>1.0 / 1.0</td><td>458 / 498 / - / -</td><td>100 / 105 / - / -</td></tr>
+<tr><td>1 s blocks + 6-blob batches + compression</td><td>7,758 / 7,661</td><td>5.9 / 6.0</td><td>78 / 79 / - / -</td><td>101 / 104 / - / -</td></tr>
+<tr><td>Pipelined commits + 6-blob batches + compression</td><td>7,874 / 5,736</td><td>6.0 / 5.8</td><td>76 / 98 / - / -</td><td>100 / 104 / - / -</td></tr>
+<tr><td>1 s blocks + pipelined commits + 6-blob batches + compression</td><td>7,875 / 6,563</td><td>6.0 / 5.9</td><td>76 / 88 / 70 / 86</td><td>100 / 104 / 100 / 104</td></tr>
+</tbody>
+</table>
+</div>
+<p>How to read it:</p>
+<ul>
+<li>Execution gas per transaction follows the batch size: six-blob batches cut it by six, compression by what it adds to the batch (about 20% more ETH transfers per blob, twice as many ERC20 transfers), and the two together by 7 to 13 times.</li>
+<li>Blob gas per transaction only moves with bytes per transaction: compression takes an ETH transfer from 122 to 97 blob gas and an ERC20 transfer from 248 to 104. Raising the gas limit also lowers it for ERC20 transfers, because their blocks then fill the blob instead of stopping at 30M gas.</li>
+<li>1-second blocks and pipelined commits leave the cost per transaction unchanged under saturation, since every block still fills a blob. Under light traffic they work against the operator: a block is produced every interval even when nearly empty, every batch still costs its fixed execution gas and a blob, so the floor is about 17,280 batches a day at 5-second commits and 86,400 at 1-second commits, each at the per-batch cost above.</li>
+<li>The prover’s cost per transaction moves the same way: its GPU time per ETH transfer on ZisK falls from 20 ms with one blob per batch to about 9 ms with six-blob batches and compression, because the fixed per-proof cost is spread over more transactions.</li>
+</ul>
+<h2 id="design-notes"><a class="header" href="#design-notes">Design notes</a></h2>
+<ul>
+<li><strong>Per-block TPS uses the measured interval, not the configured block time.</strong> The producer schedules the next block after the previous one is stored, so under load the period is the block time plus the build time, and dividing by the configured block time overstates throughput.</li>
+<li><strong>Batch TPS uses block timestamps</strong>, from the parent of the first block to the last block of the batch, which covers every block interval the batch spans. It is a sustained figure with one-second resolution.</li>
+<li><strong>Settled TPS is the headline</strong> because it is the only figure that accounts for the whole settlement path; the others locate the bottleneck. Proven TPS divides by proving time only: witness generation, queueing in the proof coordinator and the L1 transactions are not in it, but they are in the settled TPS.</li>
+<li><strong>The commit interval is a settlement cap of its own.</strong> The committer seals at most one batch per interval; the default 60 s would bound settlement at one batch per minute whatever the prover does, so the runs use one block interval.</li>
+<li><strong>The blob caps the block, and so the sequencer.</strong> The block builder stops adding transactions when the block’s encoding would exceed <code>SAFE_BYTES_PER_BLOB</code>, because a batch is published as one blob holding its blocks in full, and the committer stops adding blocks to a batch for the same reason. A block of plain ETH transfers tops out around 1,080 transactions, so with 5-second blocks the sequencer cannot settle more than about 215 TPS of them whatever the prover does. ERC20 transfers hit the L2 block gas limit first (30M by default, set at deployment), at 536 transfers and about 99 KB; raising that limit lets them fill the blob too, at about 680 transfers. Shorter blocks raise both caps, bigger blobs or compressed batch data would raise the blob one.</li>
+<li><strong>Two defects found by the first runs are fixed alongside this guide.</strong> The block builder’s blob-space check ignored the framing the committer adds around a block in the batch blob (the 8-byte block count, the RLP list prefixes that grow as the block fills, the header’s <code>gas_used</code>), so under sustained load a block landed a few bytes over the blob within the first twenty-odd blocks and the committer, which cannot split a block, stopped committing for good; the builder now reserves that margin. The committer also counted a block’s transactions and gas toward a batch before checking whether the block fit, so every batch closed by a block that did not fit reported twice its transactions in the <code>batch_tx_count</code> gauge; the counters now move with the block’s acceptance. Older figures derived from that gauge should be treated as suspect.</li>
+<li><strong>Why a fresh L1 per run.</strong> Contract addresses, batch numbers and the L1 block timeline are then comparable across runs, and no batch from a previous run is left for the new prover.</li>
+</ul>
+<h2 id="references"><a class="header" href="#references">References</a></h2>
+<ul>
+<li><a href="https://github.com/lambdaclass/ethrex/blob/main/docs/l2/prover-benchmarking.md">Prover Benchmarking Guide</a> and the <a href="https://github.com/lambdaclass/ethrex/blob/main/docs/workflows/prover_benchmarking.md">agent workflow</a> it comes from, which this guide extends with the sequencer and L1 stages.</li>
+<li><a href="https://github.com/lambdaclass/ethrex/tree/main/tooling/load_test">Load test tool</a> (<code>tooling/load_test/README.md</code>).</li>
+<li><a href="https://github.com/lambdaclass/ethrex/blob/main/scripts/bench_metrics.sh"><code>scripts/bench_metrics.sh</code></a>, which tabulates proving times with the batch gauges.</li>
+<li><a href="./deployment/prover/sp1.html">SP1 prover guide</a> and <a href="../developers/l2/sp1-upgrade-test.html">SP1 upgrade notes</a> for the backend prerequisites; the ZisK guide ships with the ZisK L2 backend pull request.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../l2/bench/zkvm_comparison.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../l2/bench/prover_performance.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../l2/bench/zkvm_comparison.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../l2/bench/prover_performance.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-c2a407aa.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-a0b12cfe.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid-eefea253.min.js"></script>
+        <script src="../mermaid-init-ccf746f1.js"></script>
+
+
+
+    </div>
+    </body>
+</html>

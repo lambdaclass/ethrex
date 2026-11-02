@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-50097800.js";
+            window.path_to_searchindex_js = "searchindex-429c06ce.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ce2f25ba.js"></script>
+        <script src="toc-a8baa880.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -15128,6 +15128,248 @@ Long-term research directions and second-order ideas are intentionally out of sc
 </table>
 </div>
 <p>GPU proving is significantly faster and recommended for production workloads. All modern NVIDIA GPUs with 24GB+ VRAM are supported.</p>
+<div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<h1 id="l2-tps-benchmarking-guide"><a class="header" href="#l2-tps-benchmarking-guide">L2 TPS Benchmarking Guide</a></h1>
+<p>How to measure the transactions per second (TPS) an ethrex L2 settles under a synthetic load. The headline figure is the settled TPS: transactions whose batch has been proved and verified on L1, per second of wall time, so it accounts for the whole settlement path (block production, batch sealing and commitment, proving, L1 verification) and is bounded by its slowest stage. The per-stage figures are measured alongside to show which stage that is. The procedure was written for a single machine with one GPU and two proving backends (SP1 and ZisK), but every step works for any backend the prover supports.</p>
+<p>For proving time alone, without the sequencer side, see the <a href="https://github.com/lambdaclass/ethrex/blob/main/docs/l2/prover-benchmarking.md">Prover Benchmarking Guide</a>.</p>
+<h2 id="what-is-measured"><a class="header" href="#what-is-measured">What is measured</a></h2>
+<p>An L2 transaction goes through four stages, and each one has its own throughput:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Stage</th><th>Component</th><th>Where the figure comes from</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td>Block production</td><td>Block producer</td><td><code>Stored new block …, transaction_count N, tps T</code> log line and the <code>transactions_per_second</code> gauge</td><td>Transactions included per second of real block interval. This is the execution ceiling of the sequencer for the workload.</td></tr>
+<tr><td>Batch sealing</td><td>Committer</td><td><code>Batch B holds blocks F..=L: N transactions in S s, tps T</code> log line, plus the <code>batch_tx_count</code>, <code>batch_size</code> and <code>batch_gas_used</code> gauges</td><td>Sustained rate over a whole batch, from block timestamps. Batches are also capped by what fits in one blob, so this shows the batch size the prover will see. Blocks are capped by the blob or by the L2 block gas limit, whichever binds first.</td></tr>
+<tr><td>Proving</td><td>Prover (<code>--timed</code>)</td><td><code>Proved payload #B … proving_time_ms=M</code> log line</td><td>Proven TPS of a batch is its transaction count divided by its proving time. The aggregate over a run (sum of transactions divided by sum of proving times) is the throughput one GPU can prove.</td></tr>
+<tr><td>L1 verification (headline)</td><td>OnChainProposer</td><td>L1 block timestamps of the <code>verifyBatches</code> transactions (the sequencer logs each <code>verify_tx_hash</code>), plus the per-batch transaction counts</td><td>Settled TPS: transactions in the batches verified between the first and the last verification of the run, divided by the wall time between those two L1 timestamps. It is the end-to-end rate the whole pipeline sustains; with one GPU it is set by proving, and it includes the proof coordinator queue and the L1 transactions.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Settled TPS is computed as a ratio of totals over a window, never as a mean of per-batch ratios: <code>sum of transactions in the batches verified inside the window / (timestamp of the last verification - timestamp of the first verification)</code>. The first verification opens the window and its own batches are excluded, since the time they took is not inside it. The window must be long enough for the pipeline to reach steady state, that is, for the prover to be working on a backlog rather than waiting for batches.</p>
+<p>The block producer schedules the next block <code>block_time_ms</code> after the previous one is stored, so the real block period is the build and store time plus the block time; the per-block TPS is measured against that interval. Block timestamps have second resolution, so the batch figure is a sustained rate, not a per-block one. The committer seals at most one batch per commit interval, whatever the backlog, so the commit interval is a cap on settlement of its own: it is set to one block interval here so that the prover, not the committer, sets the pace.</p>
+<p>A run is sized so that the load always exceeds what the sequencer includes: the load test sends every account’s transactions as fast as the RPC accepts them, the mempool limit is raised so nothing is evicted, and the test restarts as soon as a round is included. Blocks are then full for the whole measurement window, and the per-block TPS is the sequencer’s capacity for that workload rather than the load generator’s pace.</p>
+<h2 id="prerequisites-25"><a class="header" href="#prerequisites-25">Prerequisites</a></h2>
+<ul>
+<li>A Linux x86-64 host with an NVIDIA GPU. SP1 6.x downloads and runs its own <code>sp1-gpu-server</code>, which needs the CUDA 12 runtime; ZisK v1.3.2-alpha needs more than 24 GB of VRAM for GPU proving (the ZisK L2 backend and its guide arrive with the ZisK prover pull request).</li>
+<li>The backend’s toolchain installed: <code>sp1up</code> for SP1, the ZisK bundle with the STARK and PLONK keys for ZisK.</li>
+<li><code>rex</code> (for the L1 contract calls) and <code>solc</code> (for the ZisK verifier) on the <code>PATH</code>.</li>
+<li>The ethrex repository checked out at the commit under test.</li>
+</ul>
+<h2 id="scripts"><a class="header" href="#scripts">Scripts</a></h2>
+<p><code>scripts/l2_tps/</code> automates steps 2 to 6 below and produces the summaries this guide quotes:</p>
+<ul>
+<li><code>run.sh &lt;backend&gt; &lt;workload&gt;</code> runs one measurement from a fresh L1 to a run directory (<code>tps-runs/&lt;timestamp&gt;-&lt;backend&gt;-&lt;workload&gt;/</code> by default) holding the node, prover and load-test logs, <code>metrics.txt</code>, <code>blocks.csv</code> (per block: timestamp, transactions, gas, base fee), <code>gpu.csv</code> (GPU memory, utilization and power every 30 s), <code>l1-progress.csv</code>, <code>verifications.csv</code> (L1 timestamp of every verification) and <code>summary.md</code>. It also records <code>commits.csv</code> (L1 timestamp, gas and blob gas of every commit transaction). It takes the binaries, window, block time, commit interval, load, L2 block gas limit (<code>L2_GAS_LIMIT</code>, applied to the bridge and the L2 genesis), extra sequencer flags (<code>EXTRA_L2_FLAGS</code>) and a run label (<code>TAG</code>) from environment variables documented at its top; the prover’s extra environment (for example the CUDA 12 runtime path for SP1, or the glibc tunable ZisK needs) goes in <code>PROVER_ENV</code>.</li>
+<li><code>collect.py &lt;run_dir&gt;</code> recomputes a run’s summary; <code>compare.py &lt;run_dir&gt;...</code> prints one table across runs with the rows shown under Results, including the operator’s L1 fee per million transactions priced at <code>L1_GAS_PRICE_GWEI</code> (default 10) and <code>L1_BLOB_GAS_PRICE_GWEI</code> (default 1) from the environment, plus committed TPS on L1, settlement latency (L1 verification time minus the L2 timestamp of the batch’s last block), L1 gas and blob gas per transaction and the committer’s cycle time when the run recorded them; <code>dump_blocks.py</code> is the per-block RPC dump <code>run.sh</code> calls at the end.</li>
+</ul>
+<pre><code class="language-bash">COMPILE_CONTRACTS=true cargo build --release --features l2,l2-sql,gpu,sp1 --bin ethrex
+cargo build --release --manifest-path tooling/load_test/Cargo.toml
+PROVER_ENV="LD_LIBRARY_PATH=/path/to/cuda-12/lib" scripts/l2_tps/run.sh sp1 eth-transfers
+scripts/l2_tps/run.sh sp1 erc20
+scripts/l2_tps/compare.py tps-runs/*-sp1-*
+</code></pre>
+<p>Run the pairs you want to compare one after the other with the same settings; the backend binary differs per backend, so set <code>ETHREX_BIN</code> when switching.</p>
+<h2 id="step-by-step"><a class="header" href="#step-by-step">Step by step</a></h2>
+<p>All commands run from the repository root unless noted. The examples use the default test keys from <code>fixtures/</code>, which have no value outside the local devnet.</p>
+<h3 id="1-build-the-binaries"><a class="header" href="#1-build-the-binaries">1. Build the binaries</a></h3>
+<p>Build one <code>ethrex</code> binary per backend with GPU proving, and the load test, once:</p>
+<pre><code class="language-bash">COMPILE_CONTRACTS=true cargo build --release --features l2,l2-sql,gpu,sp1 --bin ethrex
+cp target/release/ethrex /somewhere/ethrex-sp1
+COMPILE_CONTRACTS=true cargo build --release --features l2,l2-sql,gpu,zisk --bin ethrex
+cp target/release/ethrex /somewhere/ethrex-zisk
+cargo build --release --manifest-path tooling/load_test/Cargo.toml
+</code></pre>
+<p>Each build compiles the backend’s guest program, so the first one takes a while. Record the commit hash: proving times and guest cycle counts change between commits.</p>
+<h3 id="2-start-a-fresh-l1-and-deploy-the-contracts-requiring-the-backends-proofs"><a class="header" href="#2-start-a-fresh-l1-and-deploy-the-contracts-requiring-the-backends-proofs">2. Start a fresh L1 and deploy the contracts requiring the backend’s proofs</a></h3>
+<p>Every run starts from an empty L1 so that batch numbers, contract addresses and the timeline are comparable between runs. From <code>crates/l2</code>:</p>
+<pre><code class="language-bash">rm -rf dev_ethrex_l1 dev_ethrex_l2 ../../cmd/.env
+ethrex-&lt;backend&gt; --network ../../fixtures/genesis/l1.json --http.port 8545 --http.addr 0.0.0.0 \
+  --authrpc.port 8551 --dev --datadir dev_ethrex_l1 &gt; l1.log 2&gt;&amp;1 &amp;
+</code></pre>
+<p>For ZisK, deploy the verifier from the pinned release first and keep its address (<code>make deploy-zisk-verifier</code> prints it). Then deploy the L1 contracts with the flag that requires the backend’s proofs, <code>--sp1 true</code> or <code>--zisk true --zisk.verifier-address &lt;address&gt;</code>:</p>
+<pre><code class="language-bash">ethrex-&lt;backend&gt; l2 deploy \
+  --eth-rpc-url http://localhost:8545 --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  &lt;verifier flags&gt; \
+  --on-chain-proposer-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 --bridge-owner 0x4417092b70a3e5f10dc504d0947dd256b965fc62 \
+  --bridge-owner-pk 0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e --deposit-rich \
+  --private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
+  --genesis-l1-path ../../fixtures/genesis/l1.json --genesis-l2-path ../../fixtures/genesis/l2.json
+</code></pre>
+<p>The deployer writes the contract addresses to <code>cmd/.env</code>.</p>
+<h3 id="3-start-the-l2-sequencer-with-a-mempool-large-enough-for-the-load"><a class="header" href="#3-start-the-l2-sequencer-with-a-mempool-large-enough-for-the-load">3. Start the L2 sequencer with a mempool large enough for the load</a></h3>
+<pre><code class="language-bash">set -a; . ../../cmd/.env; set +a
+ETHREX_NO_MONITOR=true ethrex-&lt;backend&gt; l2 \
+  --watcher.block-delay 0 --network ../../fixtures/genesis/l2.json \
+  --http.port 1729 --http.addr 0.0.0.0 --metrics --metrics.port 3702 --datadir dev_ethrex_l2 \
+  --mempool.maxsize 1000000 \
+  --l1.bridge-address "$ETHREX_WATCHER_BRIDGE_ADDRESS" \
+  --l1.on-chain-proposer-address "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" \
+  --eth.rpc-url http://localhost:8545 --osaka-activation-time 1761677592 \
+  --block-producer.coinbase-address 0x0007a881CD95B1484fca47615B64803dad620C8d \
+  --block-producer.base-fee-vault-address 0x000c0d6b7c4516a5b274c51ea331a9410fe69127 \
+  --block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
+  --block-producer.operator-fee-per-gas 1000000000 \
+  --block-producer.block-time 5000 --committer.commit-time 5000 \
+  --committer.l1-private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --proof-coordinator.l1-private-key 0x39725efee3fb28614de3bacaffe4cc4bd8c436257e2c8bb887c4b5c4be45e76d \
+  --proof-coordinator.addr 127.0.0.1 &gt; l2.log 2&gt;&amp;1 &amp;
+</code></pre>
+<p><code>--mempool.maxsize</code> matters: the default of 10,000 transactions is below one load-test round, and an eviction drops the lowest nonces of an account, which leaves all of its later transactions stuck. The commit interval equals the block interval so that every block is batched as soon as it exists; a longer interval caps settlement at one batch per interval regardless of how fast the prover is. Keep the block time and commit time fixed across the runs you want to compare; they define the block gas budget per second and the batch size.</p>
+<h3 id="4-start-the-load-then-the-prover"><a class="header" href="#4-start-the-load-then-the-prover">4. Start the load, then the prover</a></h3>
+<p>Start the load test before the prover so that the first proved batches already contain transactions. The mempool admits a transaction only while the sender’s cumulative pending cost (gas limit times fee cap, over its pending transactions) fits its balance, so the fee cap the load test puts on its transactions bounds how many each account can have in flight; the tool uses one million gwei, which keeps hundreds of transactions per account admissible against the devnet balances while leaving room for the base fee to climb. <code>-t eth-transfers</code> sends plain value transfers; <code>-t erc20</code> deploys a token, mints to every account and sends token transfers. <code>LOAD_TEST_ENDLESS=true</code> starts a new round as soon as the previous one is fully included:</p>
+<pre><code class="language-bash">LOAD_TEST_RPC_URL=http://localhost:1729 LOAD_TEST_TX_AMOUNT=300 LOAD_TEST_ENDLESS=true \
+  ./tooling/target/release/load_test -k ./fixtures/keys/private_keys.txt -t eth-transfers &gt; loadtest.log 2&gt;&amp;1 &amp;
+</code></pre>
+<p>Then the prover, with timing enabled. From <code>crates/l2</code>:</p>
+<pre><code class="language-bash">ethrex-&lt;backend&gt; l2 prover --backend &lt;backend&gt; --proof-coordinators tcp://127.0.0.1:3900 --timed &gt; prover.log 2&gt;&amp;1 &amp;
+</code></pre>
+<p>ZisK on a glibc 2.41 host needs <code>GLIBC_TUNABLES=glibc.rtld.execstack=2</code> in the prover’s environment; SP1 needs <code>libcudart.so.12</code> on the library path if the host ships a newer CUDA.</p>
+<h3 id="5-let-it-run-sampling-the-l1"><a class="header" href="#5-let-it-run-sampling-the-l1">5. Let it run, sampling the L1</a></h3>
+<p>Leave the run for a fixed window (15 minutes gives about a dozen batches with the settings above) and sample the OnChainProposer every 30 seconds:</p>
+<pre><code class="language-bash">echo "utc,committed,verified" &gt; l1-progress.csv
+while true; do
+  V=$(rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" "lastVerifiedBatch()" --rpc-url http://localhost:8545 | tail -1)
+  C=$(rex call "$ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS" "lastCommittedBatch()" --rpc-url http://localhost:8545 | tail -1)
+  echo "$(date -u +%FT%TZ),$((C)),$((V))" &gt;&gt; l1-progress.csv
+  sleep 30
+done
+</code></pre>
+<p>At the end, dump the metrics before stopping anything, since the batch gauges live in the sequencer process:</p>
+<pre><code class="language-bash">curl -s localhost:3702/metrics &gt; metrics.txt
+</code></pre>
+<h3 id="6-read-the-results"><a class="header" href="#6-read-the-results">6. Read the results</a></h3>
+<p>The sequencer log carries the first two stages:</p>
+<pre><code>2026-10-16T02:10:05.120Z  INFO Stored new block 9c…, transaction_count 1412, tps 268.3
+2026-10-16T02:11:02.441Z  INFO Batch 7 holds blocks 61..=72: 16944 transactions in 63 s, tps 269.0
+</code></pre>
+<p>The prover log carries the third:</p>
+<pre><code>2026-10-16T02:12:40.003Z  INFO Proved payload #7 in 41.20s id=7 proving_time_s=41 proving_time_ms=41203
+</code></pre>
+<p>Proven TPS for batch 7 is <code>16944 / 41.2 = 411</code>. The settled TPS comes from the L1: for every <code>Sent batch verification transaction … verify_tx_hash=…</code> line in the sequencer log, fetch the receipt and its block’s timestamp; then divide the transactions of the batches verified after the first verification by the seconds between the first and the last verification timestamps. The 30-second <code>lastVerifiedBatch()</code> samples give the same figure at coarser resolution and show whether the verified count was still climbing when the run ended.</p>
+<p>Discard the first blocks (the mempool is still filling) and the last ones (the load test was stopped) when averaging the per-block TPS. Report the aggregate figures (transactions over time) rather than the mean of per-batch ratios, which weights small batches as much as full ones.</p>
+<h3 id="7-repeat-per-backend-and-workload"><a class="header" href="#7-repeat-per-backend-and-workload">7. Repeat per backend and workload</a></h3>
+<p>Stop the prover, the load test and both nodes, wipe the datadirs and go back to step 2 for the next combination. Everything else (binaries, block time, commit time, mempool size, transactions per account, window length) stays the same, so the only variable between two runs is the backend or the workload. One prover at a time: two provers sharing a GPU would measure contention, not throughput.</p>
+<h2 id="results"><a class="header" href="#results">Results</a></h2>
+<p>Measured on 2026-10-16 on one machine: AMD Ryzen 9 9950X3D (16 cores), 60 GB RAM, NVIDIA RTX 5090 (32 GB), Debian 13, CUDA 13.0 with the CUDA 12.8 runtime for SP1’s GPU server, SP1 6.9.0 (Groth16 proofs), ZisK v1.3.2-alpha (PLONK proofs), ethrex main at <code>4afa894e6</code> with the ZisK L2 backend (pull request #7423) and the sequencer, committer and load-test fixes from this guide’s pull request applied. Settings for every run: 5-second blocks, 5-second commit interval, mempool limit 1,000,000, 170 accounts sending 300 transactions per round without pause, 15-minute window, one prover on the GPU, L1 dev node on the same host.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Metric</th><th>ZisK, ETH transfers</th><th>ZisK, ERC20 transfers</th><th>SP1, ETH transfers</th><th>SP1, ERC20 transfers</th></tr>
+</thead>
+<tbody>
+<tr><td>Settled TPS on L1 (headline)</td><td>49.7</td><td>25.9</td><td>19.5</td><td>11.3</td></tr>
+<tr><td>Settlement window (s)</td><td>864</td><td>854</td><td>832</td><td>821</td></tr>
+<tr><td>Committed TPS on L1</td><td>108.4</td><td>55.7</td><td>96.4</td><td>49.6</td></tr>
+<tr><td>Sequencer TPS (steady window)</td><td>204.9</td><td>105.6</td><td>198.9</td><td>105.5</td></tr>
+<tr><td>Transactions per block</td><td>1,055</td><td>533</td><td>1,061</td><td>533</td></tr>
+<tr><td>Gas per block</td><td>22,139,741</td><td>27,688,118</td><td>22,287,831</td><td>27,688,114</td></tr>
+<tr><td>Gas per transaction</td><td>21,000</td><td>52,114</td><td>21,000</td><td>52,114</td></tr>
+<tr><td>Batches proved in the window (the deposit batch excluded)</td><td>40</td><td>43</td><td>15</td><td>18</td></tr>
+<tr><td>Transactions per batch</td><td>1,075</td><td>528</td><td>1,079</td><td>516</td></tr>
+<tr><td>Proving time per batch (s)</td><td>16.5</td><td>15.3</td><td>50.2</td><td>40.5</td></tr>
+<tr><td>Proven TPS (transactions / proving time)</td><td>65.0</td><td>34.4</td><td>21.5</td><td>12.7</td></tr>
+<tr><td>Proving seconds per Mgas</td><td>0.73</td><td>0.56</td><td>2.21</td><td>1.51</td></tr>
+<tr><td>L1 commit gas per batch</td><td>185,482</td><td>185,479</td><td>185,478</td><td>185,479</td></tr>
+<tr><td>L1 blob gas per batch</td><td>131,072</td><td>131,072</td><td>131,072</td><td>131,072</td></tr>
+<tr><td>L1 verify gas per batch</td><td>413,486</td><td>413,688</td><td>349,337</td><td>349,345</td></tr>
+<tr><td>L1 execution gas per transaction (commit + verify)</td><td>558</td><td>1,136</td><td>496</td><td>1,037</td></tr>
+<tr><td>L1 blob gas per transaction</td><td>122</td><td>248</td><td>121</td><td>254</td></tr>
+<tr><td>L1 fee per million transactions (ETH, at 10 gwei gas and 1 gwei blob gas)</td><td>5.70</td><td>11.61</td><td>5.08</td><td>10.62</td></tr>
+<tr><td>Prover GPU time per transaction (ms, 1 / settled TPS)</td><td>20.1</td><td>38.6</td><td>51.4</td><td>88.4</td></tr>
+<tr><td>GPU memory, max (MiB)</td><td>30,330</td><td>29,948</td><td>26,038</td><td>26,102</td></tr>
+<tr><td>GPU utilization, mean (%)</td><td>61</td><td>51</td><td>34</td><td>37</td></tr>
+<tr><td>GPU power, mean (W)</td><td>398</td><td>433</td><td>230</td><td>211</td></tr>
+</tbody>
+</table>
+</div>
+<p>GPU sampling was added after the first ZisK run had started, so ZisK with ETH transfers was measured a second time with every sample in place; the GPU rows of that column come from the repeat. The repeat reproduced the first run within noise: settled TPS 49.7 in both, sequencer 205.2 against 204.9 TPS, proving 16.5 s per batch in both, the same 40 batches proved in the window.</p>
+<p>How to read it:</p>
+<ul>
+<li>Every batch is one full block, but the two workloads fill it differently. ETH-transfer blocks are full by bytes: about 1,060 transfers of 117 bytes fill the blob that publishes the batch, at 22.3M gas. ERC20-transfer blocks are full by gas: the deployer stores a 30M L2 block gas limit by default (<code>--l2-gas-limit</code>) and the load test gives every transaction a 2.1M gas limit, so the builder stops at 27.9M gas, 536 transfers and about 99 KB, which leaves no room for a second block in the batch’s blob. The sequencer figures are therefore the blob capacity per block time for ETH transfers and the gas limit per block time for ERC20 transfers.</li>
+<li>The settled TPS is below the proven TPS by the time the prover spends between proofs (fetching the next batch input, the coordinator round trip, submitting the proof): the GPU sits idle roughly a quarter to a half of the time with one prover per GPU, which the GPU utilization row shows. Running two prover processes per GPU, or pipelining input fetch with proving, would recover most of it.</li>
+<li>Behind the prover sits the committer, which also falls short of the sequencer. After each commit it waits a full commit interval before the next one, and a commit cycle (L1 reads, batch preparation and witness, sending the transaction and polling its receipt every 2 s) takes about 4 to 6 s, so with one block per batch it publishes one batch every 9 to 11 s at 5-second intervals: 108 ETH transfers per second against the sequencer’s 205. A faster prover alone would therefore settle at most about 108 TPS of ETH transfers with these settings.</li>
+<li>Proving seconds per Mgas is the figure to use for capacity planning; it depends on the workload (ERC20 transfers cost more gas per transaction but prove faster per gas than plain transfers, whose cost is dominated by signature recovery and state writes). Neither backend proves a block within the 5-second block time on this GPU: a full ETH-transfer block takes 3.3 block times on ZisK and 10 on SP1, so settlement is prover-bound and throughput parity would take about four ZisK provers or ten SP1 provers, each on its own GPU; a proof landing before the next block would need one batch split across GPUs, which the ethrex prover does not do.</li>
+<li>L1 cost per batch is independent of the workload: one blob, a commit transaction of about 185k gas, and a verification of about 413k gas for a ZisK PLONK proof or about 349k gas for an SP1 Groth16 proof.</li>
+<li>The operator’s L1 cost per transaction is the batch’s commit and verification execution gas, plus its blob gas, divided by the transactions in the batch. Both are fixed per batch, so the cost per transaction falls as batches hold more transactions: an ERC20 batch holds half as many transfers as an ETH one, so it costs twice as much per transfer. The fee row prices it at 10 gwei per execution gas and 1 gwei per blob gas, which are example prices rather than market data; the cost scales linearly with both, and the scripts take other prices (see Scripts). Execution gas dominates at these prices, so a cheaper proof to verify (SP1’s Groth16 against ZisK’s PLONK) shows up directly. The prover’s cost per transaction is its GPU time, 1 / settled TPS when the GPU proves nonstop; multiply by a GPU-hour price to compare it with the L1 fee.</li>
+</ul>
+<h3 id="sensitivity-1-second-blocks"><a class="header" href="#sensitivity-1-second-blocks">Sensitivity: 1-second blocks</a></h3>
+<p>ETH transfers with the block time and the commit interval at 1 second instead of 5 (12-minute windows, everything else equal), for both backends:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Metric</th><th>ZisK, 5 s blocks</th><th>ZisK, 1 s blocks</th><th>SP1, 5 s blocks</th><th>SP1, 1 s blocks</th></tr>
+</thead>
+<tbody>
+<tr><td>Settled TPS on L1</td><td>49.7</td><td>50.0</td><td>19.5</td><td>19.5</td></tr>
+<tr><td>Committed TPS on L1</td><td>108.4</td><td>177.5</td><td>96.4</td><td>152.8</td></tr>
+<tr><td>Sequencer TPS (steady window)</td><td>204.9</td><td>989.9</td><td>198.9</td><td>968.0</td></tr>
+<tr><td>Transactions per block</td><td>1,055</td><td>1,062</td><td>1,061</td><td>1,062</td></tr>
+<tr><td>Transactions per batch</td><td>1,075</td><td>1,076</td><td>1,079</td><td>1,079</td></tr>
+<tr><td>Proving time per batch (s)</td><td>16.5</td><td>16.5</td><td>50.2</td><td>50.7</td></tr>
+<tr><td>Proven TPS</td><td>65.0</td><td>65.1</td><td>21.5</td><td>21.3</td></tr>
+<tr><td>GPU utilization, mean (%)</td><td>61</td><td>63</td><td>34</td><td>35</td></tr>
+<tr><td>L1 execution gas per transaction (commit + verify)</td><td>558</td><td>557</td><td>496</td><td>496</td></tr>
+<tr><td>L1 blob gas per transaction</td><td>122</td><td>122</td><td>121</td><td>121</td></tr>
+<tr><td>L1 fee per million transactions (ETH, at 10 gwei gas and 1 gwei blob gas)</td><td>5.70</td><td>5.69</td><td>5.08</td><td>5.08</td></tr>
+<tr><td>Prover GPU time per transaction (ms, 1 / settled TPS)</td><td>20.1</td><td>20.0</td><td>51.4</td><td>51.4</td></tr>
+</tbody>
+</table>
+</div>
+<p>The block builder fills a blob-sized block in well under a second, so block production scales with the block time (about 1,000 ETH transfers per second at 1-second blocks) while the settled figure does not move for either backend: it is set by the prover, which still takes 16.5 s (ZisK) or 50 s (SP1) per blob-sized batch. The runs also show the next cap behind the prover: the committer waits a full commit interval after each commit and its own cycle takes about 6 seconds here, so at 1-second intervals it publishes about 180 ETH transfers per second (177.5 and 152.8 TPS committed), and at 5-second intervals about 100, however many provers there were. Raising sequencer throughput past that needs fewer bytes per transaction in the blob (state diffs or compression) or several blobs per batch, and a committer that pipelines its commit transactions.</p>
+<h3 id="settlement-cost-and-batch-shape"><a class="header" href="#settlement-cost-and-batch-shape">Settlement cost and batch shape</a></h3>
+<p>What the operator pays L1 per transaction is set almost entirely by how many transactions a batch carries. Settling a batch costs a near-fixed amount of execution gas, about 600k on ZisK (a commit of about 185k gas plus a PLONK verification of about 413k) and about 535k on SP1 (its Groth16 verification costs about 349k), plus 131,072 blob gas per blob the batch uses. Nothing in that depends on the transactions inside, so execution gas per transaction falls in proportion to the batch size, and blob gas per transaction falls only when more transactions fit in each blob.</p>
+<p>The table below measures that with the batch shape changed through prototypes on the same host and load (ETH transfers and ERC20 transfers, GPU prover, 1,500 transactions per account per round): batches spanning up to six blobs of one commit transaction (a six-blob batch adds only about 2,500 gas for hashing the extra blob hashes), batch data published zstd-compressed, commit transactions pipelined instead of waiting for each receipt, and 1-second blocks. Every prototype row raises the L2 block gas limit to 1 billion so blocks are bounded by blob space for both workloads; the first row is the configuration of the results above and the second row isolates the raised gas limit. SP1 cells are filled for the configurations that change what a batch contains, plus the all-ideas row; the others would not change its per-transaction cost. These prototypes are not part of ethrex; the rows show what each change to the batch shape is worth, in gas units and so independent of prices.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Configuration</th><th>Transactions per batch, ETH / ERC20</th><th>Blobs per batch, ETH / ERC20</th><th>Execution gas per transaction, ZisK ETH / ZisK ERC20 / SP1 ETH / SP1 ERC20</th><th>Blob gas per transaction, ZisK ETH / ZisK ERC20 / SP1 ETH / SP1 ERC20</th></tr>
+</thead>
+<tbody>
+<tr><td>One blob per batch, 30M L2 gas limit (the results above)</td><td>1,075 / 528</td><td>1.0 / 1.0</td><td>558 / 1,136 / 496 / 1,037</td><td>122 / 248 / 121 / 254</td></tr>
+<tr><td>One blob per batch, gas limit raised</td><td>1,079 / 629</td><td>1.0 / 1.0</td><td>557 / 939 / 497 / 825</td><td>122 / 199 / 122 / 194</td></tr>
+<tr><td>1 s blocks</td><td>1,079 / 661</td><td>1.0 / 1.0</td><td>557 / 899 / - / -</td><td>123 / 194 / - / -</td></tr>
+<tr><td>Pipelined commits</td><td>1,079 / 629</td><td>1.0 / 1.0</td><td>557 / 937 / - / -</td><td>123 / 197 / - / -</td></tr>
+<tr><td>6-blob batches</td><td>6,488 / 3,392</td><td>6.0 / 5.8</td><td>93 / 170 / 83 / 144</td><td>123 / 193 / 123 / 192</td></tr>
+<tr><td>Compression</td><td>1,307 / 1,110</td><td>1.0 / 1.0</td><td>458 / 526 / 409 / 464</td><td>100 / 109 / 100 / 106</td></tr>
+<tr><td>1 s blocks + pipelined commits</td><td>1,079 / 660</td><td>1.0 / 1.0</td><td>557 / 900 / - / -</td><td>123 / 193 / - / -</td></tr>
+<tr><td>1 s blocks + 6-blob batches</td><td>6,362 / 3,732</td><td>6.0 / 5.9</td><td>95 / 157 / - / -</td><td>124 / 192 / - / -</td></tr>
+<tr><td>1 s blocks + compression</td><td>1,308 / 1,184</td><td>1.0 / 1.0</td><td>458 / 499 / - / -</td><td>100 / 110 / - / -</td></tr>
+<tr><td>Pipelined commits + 6-blob batches</td><td>6,452 / 3,392</td><td>6.0 / 5.8</td><td>93 / 170 / - / -</td><td>123 / 193 / - / -</td></tr>
+<tr><td>Pipelined commits + compression</td><td>1,307 / 1,112</td><td>1.0 / 1.0</td><td>458 / 525 / - / -</td><td>100 / 108 / - / -</td></tr>
+<tr><td>6-blob batches + compression</td><td>7,875 / 6,546</td><td>6.0 / 5.9</td><td>76 / 89 / 68 / 86</td><td>100 / 104 / 100 / 104</td></tr>
+<tr><td>1 s blocks + pipelined commits + 6-blob batches</td><td>6,452 / 3,766</td><td>6.0 / 5.9</td><td>94 / 156 / - / -</td><td>123 / 192 / - / -</td></tr>
+<tr><td>1 s blocks + pipelined commits + compression</td><td>1,309 / 1,184</td><td>1.0 / 1.0</td><td>458 / 498 / - / -</td><td>100 / 105 / - / -</td></tr>
+<tr><td>1 s blocks + 6-blob batches + compression</td><td>7,758 / 7,661</td><td>5.9 / 6.0</td><td>78 / 79 / - / -</td><td>101 / 104 / - / -</td></tr>
+<tr><td>Pipelined commits + 6-blob batches + compression</td><td>7,874 / 5,736</td><td>6.0 / 5.8</td><td>76 / 98 / - / -</td><td>100 / 104 / - / -</td></tr>
+<tr><td>1 s blocks + pipelined commits + 6-blob batches + compression</td><td>7,875 / 6,563</td><td>6.0 / 5.9</td><td>76 / 88 / 70 / 86</td><td>100 / 104 / 100 / 104</td></tr>
+</tbody>
+</table>
+</div>
+<p>How to read it:</p>
+<ul>
+<li>Execution gas per transaction follows the batch size: six-blob batches cut it by six, compression by what it adds to the batch (about 20% more ETH transfers per blob, twice as many ERC20 transfers), and the two together by 7 to 13 times.</li>
+<li>Blob gas per transaction only moves with bytes per transaction: compression takes an ETH transfer from 122 to 97 blob gas and an ERC20 transfer from 248 to 104. Raising the gas limit also lowers it for ERC20 transfers, because their blocks then fill the blob instead of stopping at 30M gas.</li>
+<li>1-second blocks and pipelined commits leave the cost per transaction unchanged under saturation, since every block still fills a blob. Under light traffic they work against the operator: a block is produced every interval even when nearly empty, every batch still costs its fixed execution gas and a blob, so the floor is about 17,280 batches a day at 5-second commits and 86,400 at 1-second commits, each at the per-batch cost above.</li>
+<li>The prover’s cost per transaction moves the same way: its GPU time per ETH transfer on ZisK falls from 20 ms with one blob per batch to about 9 ms with six-blob batches and compression, because the fixed per-proof cost is spread over more transactions.</li>
+</ul>
+<h2 id="design-notes-1"><a class="header" href="#design-notes-1">Design notes</a></h2>
+<ul>
+<li><strong>Per-block TPS uses the measured interval, not the configured block time.</strong> The producer schedules the next block after the previous one is stored, so under load the period is the block time plus the build time, and dividing by the configured block time overstates throughput.</li>
+<li><strong>Batch TPS uses block timestamps</strong>, from the parent of the first block to the last block of the batch, which covers every block interval the batch spans. It is a sustained figure with one-second resolution.</li>
+<li><strong>Settled TPS is the headline</strong> because it is the only figure that accounts for the whole settlement path; the others locate the bottleneck. Proven TPS divides by proving time only: witness generation, queueing in the proof coordinator and the L1 transactions are not in it, but they are in the settled TPS.</li>
+<li><strong>The commit interval is a settlement cap of its own.</strong> The committer seals at most one batch per interval; the default 60 s would bound settlement at one batch per minute whatever the prover does, so the runs use one block interval.</li>
+<li><strong>The blob caps the block, and so the sequencer.</strong> The block builder stops adding transactions when the block’s encoding would exceed <code>SAFE_BYTES_PER_BLOB</code>, because a batch is published as one blob holding its blocks in full, and the committer stops adding blocks to a batch for the same reason. A block of plain ETH transfers tops out around 1,080 transactions, so with 5-second blocks the sequencer cannot settle more than about 215 TPS of them whatever the prover does. ERC20 transfers hit the L2 block gas limit first (30M by default, set at deployment), at 536 transfers and about 99 KB; raising that limit lets them fill the blob too, at about 680 transfers. Shorter blocks raise both caps, bigger blobs or compressed batch data would raise the blob one.</li>
+<li><strong>Two defects found by the first runs are fixed alongside this guide.</strong> The block builder’s blob-space check ignored the framing the committer adds around a block in the batch blob (the 8-byte block count, the RLP list prefixes that grow as the block fills, the header’s <code>gas_used</code>), so under sustained load a block landed a few bytes over the blob within the first twenty-odd blocks and the committer, which cannot split a block, stopped committing for good; the builder now reserves that margin. The committer also counted a block’s transactions and gas toward a batch before checking whether the block fit, so every batch closed by a block that did not fit reported twice its transactions in the <code>batch_tx_count</code> gauge; the counters now move with the block’s acceptance. Older figures derived from that gauge should be treated as suspect.</li>
+<li><strong>Why a fresh L1 per run.</strong> Contract addresses, batch numbers and the L1 block timeline are then comparable across runs, and no batch from a previous run is left for the new prover.</li>
+</ul>
+<h2 id="references-7"><a class="header" href="#references-7">References</a></h2>
+<ul>
+<li><a href="https://github.com/lambdaclass/ethrex/blob/main/docs/l2/prover-benchmarking.md">Prover Benchmarking Guide</a> and the <a href="https://github.com/lambdaclass/ethrex/blob/main/docs/workflows/prover_benchmarking.md">agent workflow</a> it comes from, which this guide extends with the sequencer and L1 stages.</li>
+<li><a href="https://github.com/lambdaclass/ethrex/tree/main/tooling/load_test">Load test tool</a> (<code>tooling/load_test/README.md</code>).</li>
+<li><a href="https://github.com/lambdaclass/ethrex/blob/main/scripts/bench_metrics.sh"><code>scripts/bench_metrics.sh</code></a>, which tabulates proving times with the batch gauges.</li>
+<li><a href="#run-an-ethrex-l2-sp1-prover">SP1 prover guide</a> and <a href="#sp1-version-upgrade-test">SP1 upgrade notes</a> for the backend prerequisites; the ZisK guide ships with the ZisK L2 backend pull request.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
 <h1 id="ethrex-prover-performance"><a class="header" href="#ethrex-prover-performance">ethrex-prover performance</a></h1>
 <h2 id="latest-benchmarks-against-rsp"><a class="header" href="#latest-benchmarks-against-rsp">Latest benchmarks against rsp</a></h2>
