@@ -98,9 +98,9 @@ fn register_payload_build_task(
     task: PayloadBuildTask,
 ) {
     if payloads.len() >= MAX_PAYLOADS {
-        // Remove oldest unclaimed payload. A build still running there would
-        // keep rebuilding for the rest of its slot, holding its build context,
-        // with nobody left to collect it.
+        // Remove the oldest entry. A build still running there would keep
+        // rebuilding for the rest of its slot, holding its build context, with
+        // nobody left to collect it.
         if let (_, PayloadOrTask::Task(evicted)) = payloads.remove(0) {
             evicted.cancel.cancel();
         }
@@ -442,8 +442,8 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
 /// A payload whose transaction phase is done but which is not sealed: the
 /// post-transaction phase (withdrawals, request system calls) and
 /// `finalize_payload` have not run yet. Builds can be compared in this state
-/// before paying for their state root.
-#[derive(Clone)]
+/// before paying for their state root. It is not `Clone`: sealing consumes it,
+/// so a build is sealed at most once.
 pub struct UnsealedPayload {
     context: PayloadBuildContext,
 }
