@@ -125,6 +125,7 @@
   - [Upgrade test](./developers/l2/upgrade-test.md)
   - [SP1 version upgrade test](./developers/l2/sp1-upgrade-test.md)
   - [L2 integration tests with a SP1 GPU prover](./developers/l2/sp1-gpu-integration-test.md)
+  - [Multiprover test (SP1 GPU + TDX)](./developers/l2/multiprover-test.md)
   - [Running the Prover](./developers/l2/prover.md)
   - [Generate blobs for the state reconstruction test](./developers/l2/state-reconstruction-blobs.md)
 - [Prover](./prover/prover.md)
