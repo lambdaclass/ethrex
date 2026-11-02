@@ -416,6 +416,38 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
     }
 }
 
+/// A payload whose transaction phase is done but which is not sealed: the
+/// post-transaction phase (withdrawals, request system calls) and
+/// `finalize_payload` have not run yet. Builds can be compared in this state
+/// before paying for their state root.
+#[derive(Clone)]
+pub struct UnsealedPayload {
+    context: PayloadBuildContext,
+}
+
+impl UnsealedPayload {
+    pub fn block_value(&self) -> U256 {
+        self.context.block_value
+    }
+
+    pub fn gas_used(&self) -> u64 {
+        self.context.gas_used()
+    }
+
+    pub fn transactions(&self) -> &[Transaction] {
+        &self.context.payload.body.transactions
+    }
+}
+
+impl std::fmt::Debug for UnsealedPayload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UnsealedPayload")
+            .field("transactions", &self.transactions().len())
+            .field("block_value", &self.block_value())
+            .finish()
+    }
+}
+
 impl Blockchain {
     /// Attempts to fetch a payload given it's id. If the payload is still being built, it will be finished.
     /// Fails if there is no payload or active payload build task for the given id.
@@ -784,15 +816,28 @@ impl Blockchain {
         Ok((context.into(), rejected, block_exception))
     }
 
-    /// Shared block-building pipeline. When `explicit_transactions` is `None` the
-    /// payload is filled from the mempool, stopping early once `stop` is
-    /// cancelled; otherwise the provided transactions are applied verbatim.
+    /// Shared block-building pipeline: [`Self::build_unsealed`], then
+    /// [`Self::seal_payload`].
     fn build_payload_inner(
         &self,
         payload: Block,
         explicit_transactions: Option<Vec<Transaction>>,
         stop: Option<&CancellationToken>,
     ) -> Result<PayloadBuildResult, ChainError> {
+        let unsealed = self.build_unsealed(payload, explicit_transactions, stop)?;
+        self.seal_payload(unsealed)
+    }
+
+    /// Runs the transaction phase of a build. When `explicit_transactions` is
+    /// `None` the payload is filled from the mempool, stopping early once
+    /// `stop` is cancelled; otherwise the provided transactions are applied
+    /// verbatim. The result is not sealed: see [`Self::seal_payload`].
+    fn build_unsealed(
+        &self,
+        payload: Block,
+        explicit_transactions: Option<Vec<Transaction>>,
+        stop: Option<&CancellationToken>,
+    ) -> Result<UnsealedPayload, ChainError> {
         let since = Instant::now();
 
         debug!("Building payload");
@@ -807,26 +852,6 @@ impl Blockchain {
             None => self.fill_transactions(&mut context, stop)?,
             Some(transactions) => self.fill_explicit_transactions(&mut context, transactions)?,
         }
-        // EIP-7928: Post-tx phase uses index n+1 for both withdrawals and requests.
-        // Withdrawals precede the request system calls, as on block import; see the
-        // ordering note in `LEVM::execute_block`.
-        if context
-            .chain_config()
-            .is_amsterdam_activated(context.payload.header.timestamp)
-        {
-            let post_tx_index =
-                u32::try_from(context.payload.body.transactions.len() + 1).unwrap_or(u32::MAX);
-            context.vm.set_bal_index(post_tx_index);
-            // Record withdrawal recipients as touched addresses per EIP-7928
-            if let Some(recorder) = context.vm.db.bal_recorder_mut()
-                && let Some(withdrawals) = &context.payload.body.withdrawals
-            {
-                recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
-            }
-        }
-        self.apply_withdrawals(&mut context)?;
-        self.extract_requests(&mut context)?;
-        self.finalize_payload(&mut context)?;
 
         let interval = Instant::now().duration_since(since).as_millis();
 
@@ -850,6 +875,42 @@ impl Blockchain {
             }
         }
 
+        Ok(UnsealedPayload { context })
+    }
+
+    /// Seals a payload: runs the post-transaction phase (withdrawals, then the
+    /// request system calls, as EELS `apply_body` orders them) and computes the
+    /// header roots. Consumes the payload, since `finalize_payload` drains the
+    /// VM's state.
+    pub fn seal_payload(
+        &self,
+        unsealed: UnsealedPayload,
+    ) -> Result<PayloadBuildResult, ChainError> {
+        let since = Instant::now();
+        let UnsealedPayload { mut context } = unsealed;
+        // EIP-7928: Post-tx phase uses index n+1 for both withdrawals and requests.
+        // Withdrawals precede the request system calls, as on block import; see the
+        // ordering note in `LEVM::execute_block`.
+        if context
+            .chain_config()
+            .is_amsterdam_activated(context.payload.header.timestamp)
+        {
+            let post_tx_index =
+                u32::try_from(context.payload.body.transactions.len() + 1).unwrap_or(u32::MAX);
+            context.vm.set_bal_index(post_tx_index);
+            // Record withdrawal recipients as touched addresses per EIP-7928
+            if let Some(recorder) = context.vm.db.bal_recorder_mut()
+                && let Some(withdrawals) = &context.payload.body.withdrawals
+            {
+                recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
+            }
+        }
+        self.apply_withdrawals(&mut context)?;
+        self.extract_requests(&mut context)?;
+        self.finalize_payload(&mut context)?;
+
+        let interval = Instant::now().duration_since(since).as_millis();
+        tracing::debug!("[METRIC] SEALING PAYLOAD TOOK: {interval} ms");
         Ok(context.into())
     }
 
