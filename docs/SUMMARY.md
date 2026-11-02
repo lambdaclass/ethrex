@@ -147,6 +147,7 @@
 
 - [zkVM Integrations](./zkvm-integrations.md)
 - [Benchmark Comparisons](./l2/bench/zkvm_comparison.md)
+  - [L2 TPS Benchmarking](./l2/tps-benchmarking.md)
   - [Prover Performance](./l2/bench/prover_performance.md)
 - [Case Studies](./case-studies.md)
 

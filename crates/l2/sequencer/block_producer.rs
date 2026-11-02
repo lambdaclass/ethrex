@@ -1,7 +1,7 @@
 mod payload_builder;
 use std::{
     sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use bytes::Bytes;
@@ -66,6 +66,8 @@ pub struct BlockProducer {
     router_address: Address,
     /// Actor handle for sending new block headers to WS subscribers.
     subscription_manager: Option<ActorRef<SubscriptionManager>>,
+    /// When the previous block was stored, to measure the real block interval.
+    last_block_stored_at: Option<Instant>,
 }
 
 #[derive(Clone, Serialize)]
@@ -127,6 +129,7 @@ impl BlockProducer {
             eth_client,
             router_address,
             subscription_manager,
+            last_block_stored_at: None,
         })
     }
 
@@ -213,10 +216,27 @@ impl BlockProducer {
         self.store_fee_config_by_block(block.header.number).await?;
         self.blockchain
             .store_block(block, account_updates_list, execution_result)?;
-        info!(
-            "Stored new block {:x}, transaction_count {}",
-            block_hash, transactions_count
-        );
+        // The next block is scheduled `block_time_ms` after this one is stored, so
+        // the real block period is the build and store time plus the block time.
+        // Throughput is measured against that interval, not the configured one.
+        let now = Instant::now();
+        #[allow(clippy::as_conversions)]
+        let tps = self
+            .last_block_stored_at
+            .map(|previous| now.duration_since(previous).as_secs_f64())
+            .filter(|seconds| *seconds > 0.0)
+            .map(|seconds| transactions_count as f64 / seconds);
+        self.last_block_stored_at = Some(now);
+        match tps {
+            Some(tps) => info!(
+                "Stored new block {:x}, transaction_count {}, tps {:.1}",
+                block_hash, transactions_count, tps
+            ),
+            None => info!(
+                "Stored new block {:x}, transaction_count {}",
+                block_hash, transactions_count
+            ),
+        }
         // WARN: We're not storing the payload into the Store because there's no use to it by the L2 for now.
 
         self.rollup_store
@@ -233,9 +253,9 @@ impl BlockProducer {
 
         metrics!(
             METRICS_BLOCKS.set_block_number(block_number);
-            #[allow(clippy::as_conversions)]
-            let tps = transactions_count as f64 / (self.block_time_ms as f64 / 1000_f64);
-            METRICS_TX.set_transactions_per_second(tps);
+            if let Some(tps) = tps {
+                METRICS_TX.set_transactions_per_second(tps);
+            }
         );
 
         Ok(())
