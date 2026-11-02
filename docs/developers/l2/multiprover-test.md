@@ -213,8 +213,12 @@ done
 
 The withdrawal tests block in `wait_for_verified_proof` until `lastVerifiedBatch` reaches the batch holding the withdrawal, so verification has to be keeping pace before this starts. Confirm `lastVerifiedBatch` is climbing and within a few batches of `lastCommittedBatch` rather than thousands behind; if it is falling behind, fix the commit time in step 5 and restart from a fresh L1 and L2.
 
+The suite reads the deployed addresses from `cmd/.env` in the source checkout, while step 3 wrote them to `~/multiprover/$TAG/.env`, so copy that file over first. It also compiles example contracts while it runs, so the pinned solc 0.8.31 has to be first on `PATH` in this shell too.
+
 ```bash
 cd src
+cp ~/multiprover/$TAG/.env cmd/.env
+export PATH=~/multiprover/$TAG/bin:$PATH
 INTEGRATION_TEST_L1_RPC=http://localhost:8545 \
 INTEGRATION_TEST_L2_RPC=http://localhost:1729 \
 INTEGRATION_TEST_PRIVATE_KEYS_FILE_PATH=$PWD/fixtures/keys/private_keys_l1.txt \
@@ -228,7 +232,8 @@ cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocap
 | --- | --- |
 | `execution reverted: 0x9e6e5638` on commit | `InvalidPrivilegedTransactionLogs()` — watcher interval left at the default; set `--watcher.watch-interval 1000` |
 | `execution reverted` in `deploy-p256` | deploying onto a chain that already has the CREATE2 contracts; start from a fresh L1 datadir |
-| `Source file requires different compiler version` | solc is not exactly 0.8.31 |
+| `Source file requires different compiler version` | solc is not exactly 0.8.31; in step 9 the suite compiles with whichever solc is first on `PATH` |
+| Suite prints `.env file not found, skipping`, then fails in seconds with `contains no valid logs` | `cmd/.env` is missing from the source checkout, so the suite sends to default addresses; copy `~/multiprover/$TAG/.env` there (step 9) |
 | VM loops on `Error sending quote: Failed to get ProverSetupAck` | the coordinator rejected registration; check the sequencer log for the error behind `Failed to handle ProverSetup` |
 | `MRTD mismatch` on registration | the verifier was deployed with the committed measurements; pin them to the image under test (step 2) |
 | `TCB_Cert_Expired` (`0xea8cd522`) on upsert | nothing has expired: `CA.SIGNING` was never loaded, so signatures cannot be checked (step 4) |
