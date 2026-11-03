@@ -11,6 +11,7 @@ consensus
 discv4
 eels/consume-engine
 eels/consume-rlp
+eels/consume-wirex
 engine-api
 engine-auth
 engine-cancun
