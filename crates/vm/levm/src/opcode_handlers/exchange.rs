@@ -10,7 +10,6 @@ use crate::{
     opcode_handlers::OpcodeHandler,
     vm::VM,
 };
-use std::mem;
 
 /// Implementation for the `SWAPn` opcodes.
 pub struct OpSwapHandler<const N: usize>;
@@ -70,12 +69,9 @@ impl OpcodeHandler for OpSwapNHandler {
 
         #[expect(unsafe_code, reason = "bound already checked")]
         unsafe {
-            let [x, y] = vm
-                .current_call_frame
+            vm.current_call_frame
                 .stack
-                .values
-                .get_disjoint_unchecked_mut([top_offset, absolute_offset]);
-            mem::swap(x, y);
+                .swap_distinct_unchecked(top_offset, absolute_offset);
         }
 
         vm.current_call_frame.pc = vm.current_call_frame.pc.wrapping_add(1);
@@ -149,12 +145,9 @@ impl OpcodeHandler for OpExchangeHandler {
 
         #[expect(unsafe_code, reason = "bound already checked")]
         unsafe {
-            let [x, y] = vm
-                .current_call_frame
+            vm.current_call_frame
                 .stack
-                .values
-                .get_disjoint_unchecked_mut([absolute_offset.0, absolute_offset.1]);
-            mem::swap(x, y);
+                .swap_distinct_unchecked(absolute_offset.0, absolute_offset.1);
         }
 
         vm.current_call_frame.pc = vm.current_call_frame.pc.wrapping_add(1);
