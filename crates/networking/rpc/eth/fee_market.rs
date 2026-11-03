@@ -3,7 +3,7 @@ use ethrex_common::{
     U256,
     constants::GAS_PER_BLOB,
     types::{
-        Block, BlockHeader, ELASTICITY_MULTIPLIER, Fork, ForkBlobSchedule, Transaction,
+        Block, BlockHeader, ELASTICITY_MULTIPLIER, Fork, ForkBlobSchedule, Receipt, Transaction,
         calc_excess_blob_gas, calculate_base_fee_per_blob_gas, calculate_base_fee_per_gas,
     },
 };
@@ -106,7 +106,7 @@ impl RpcHandler for FeeHistoryRequest {
         let mut base_fee_per_blob_gas = vec![U256::zero(); block_count + 1];
         let mut gas_used_ratio = vec![0_f64; block_count];
         let mut blob_gas_used_ratio = vec![0_f64; block_count];
-        let mut reward = Vec::<Vec<u64>>::with_capacity(block_count);
+        let mut reward = Vec::<Vec<U256>>::with_capacity(block_count);
 
         for block_number in start_block..=end_block {
             let idx: usize = (block_number - start_block) as usize;
@@ -149,8 +149,8 @@ impl RpcHandler for FeeHistoryRequest {
                         context.gas_ceil,
                     )?;
             }
-            // Only the rewards need the block's transactions, so its body is read
-            // only when percentiles are requested.
+            // Only the rewards need the block's transactions and receipts, so they
+            // are read only when percentiles are requested.
             if !self.reward_percentiles.is_empty() {
                 let body = storage
                     .get_block_body(block_number)
@@ -158,8 +158,10 @@ impl RpcHandler for FeeHistoryRequest {
                     .ok_or(RpcErr::Internal(format!(
                         "Could not get body for block {block_number}"
                     )))?;
+                let receipts = storage.get_receipts_for_block(&header.hash()).await?;
                 reward.push(calculate_percentiles_for_block(
                     Block::new(header, body),
+                    &receipts,
                     &self.reward_percentiles,
                 ));
             }
@@ -178,7 +180,7 @@ impl RpcHandler for FeeHistoryRequest {
             blob_gas_used_ratio,
             reward: reward
                 .into_iter()
-                .map(|v| v.into_iter().map(u64_to_hex_str).collect())
+                .map(|v| v.into_iter().map(u256_to_hex_str).collect())
                 .collect(),
         };
         serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -237,43 +239,65 @@ async fn get_range(
     Ok((start_block_num, finish_block_num))
 }
 
-fn calculate_percentiles_for_block(block: Block, percentiles: &[f32]) -> Vec<u64> {
-    let base_fee_per_gas = block.header.base_fee_per_gas.unwrap_or_default();
-    let mut effective_priority_fees: Vec<u64> = block
-        .body
-        .transactions
-        .into_iter()
-        .map(|t: Transaction| match t {
-            Transaction::LegacyTransaction(_) | Transaction::EIP2930Transaction(_) => 0,
-            Transaction::EIP1559Transaction(t) => t
-                .max_priority_fee_per_gas
-                .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
-            Transaction::EIP4844Transaction(t) => t
-                .max_priority_fee_per_gas
-                .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
-            Transaction::EIP7702Transaction(t) => t
-                .max_priority_fee_per_gas
-                .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
-            Transaction::PrivilegedL2Transaction(t) => t
-                .max_priority_fee_per_gas
-                .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
-            Transaction::FeeTokenTransaction(t) => t
-                .max_priority_fee_per_gas
-                .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
-            Transaction::FrameTransaction(t) => t
-                .max_priority_fee_per_gas
-                .min(t.max_fee_per_gas.saturating_sub(base_fee_per_gas)),
+/// Samples the block's effective priority fees per gas at the given percentiles, as
+/// execution-apis specifies for `eth_feeHistory`: the transactions are sorted by
+/// effective tip and each percentile picks the tip of the transaction at which the
+/// cumulative gas used reaches that share of the block's gas, so the samples are
+/// weighted by gas used. An empty block samples zeroes.
+///
+/// A block whose receipts are not stored (a snap pivot that was never executed)
+/// weights each transaction by its gas limit instead.
+fn calculate_percentiles_for_block(
+    block: Block,
+    receipts: &[Receipt],
+    percentiles: &[f32],
+) -> Vec<U256> {
+    let base_fee_per_gas = block.header.base_fee_per_gas;
+    let transactions = &block.body.transactions;
+    let gas_used: Vec<u64> = if receipts.len() == transactions.len() {
+        let mut previous_cumulative_gas = 0;
+        receipts
+            .iter()
+            .map(|receipt| {
+                let gas_used = receipt
+                    .cumulative_gas_used
+                    .saturating_sub(previous_cumulative_gas);
+                previous_cumulative_gas = receipt.cumulative_gas_used;
+                gas_used
+            })
+            .collect()
+    } else {
+        transactions.iter().map(Transaction::gas_limit).collect()
+    };
+    // (effective tip, gas used) per transaction. A legacy or EIP-2930 transaction
+    // tips its gas price minus the base fee (EIP-1559).
+    let mut tips_and_gas: Vec<(U256, u64)> = transactions
+        .iter()
+        .zip(gas_used)
+        .map(|(tx, gas_used)| {
+            (
+                tx.effective_gas_tip(base_fee_per_gas).unwrap_or_default(),
+                gas_used,
+            )
         })
         .collect();
+    let Some(last_index) = tips_and_gas.len().checked_sub(1) else {
+        return vec![U256::zero(); percentiles.len()];
+    };
+    tips_and_gas.sort_by_key(|(tip, _)| *tip);
+    let total_gas_used: u64 = tips_and_gas.iter().map(|(_, gas)| gas).sum();
 
-    effective_priority_fees.sort();
-    let t_len = effective_priority_fees.len() as f32;
-
+    let mut index = 0;
+    let mut sum_gas_used = tips_and_gas[0].1;
     percentiles
         .iter()
-        .map(|x: &f32| {
-            let i = (x * t_len / 100_f32) as usize;
-            effective_priority_fees.get(i).cloned().unwrap_or_default()
+        .map(|percentile| {
+            let threshold = (total_gas_used as f64 * f64::from(*percentile) / 100.0) as u64;
+            while sum_gas_used < threshold && index < last_index {
+                index += 1;
+                sum_gas_used += tips_and_gas[index].1;
+            }
+            tips_and_gas[index].0
         })
         .collect()
 }
@@ -330,5 +354,128 @@ mod tests {
         );
         assert_eq!(without_rewards, with_rewards);
         assert_eq!(without_rewards["gasUsedRatio"].as_array().unwrap().len(), 5);
+    }
+
+    const GWEI: u64 = 1_000_000_000;
+
+    fn legacy_tx(gas_price_gwei: u64) -> Transaction {
+        Transaction::LegacyTransaction(ethrex_common::types::LegacyTransaction {
+            gas_price: U256::from(gas_price_gwei * GWEI),
+            gas: 1_000_000,
+            ..Default::default()
+        })
+    }
+
+    fn eip1559_tx(max_fee_gwei: u64, tip_gwei: u64) -> Transaction {
+        Transaction::EIP1559Transaction(ethrex_common::types::EIP1559Transaction {
+            max_fee_per_gas: max_fee_gwei * GWEI,
+            max_priority_fee_per_gas: tip_gwei * GWEI,
+            gas_limit: 1_000_000,
+            ..Default::default()
+        })
+    }
+
+    /// Stores block 1 (base fee 1 gwei) with `txs` and, unless `gas_used` is empty,
+    /// receipts whose per-transaction gas used is `gas_used`, makes it the head and
+    /// returns its `reward` entry.
+    async fn block_rewards(
+        txs: Vec<Transaction>,
+        gas_used: &[u64],
+        percentiles: Vec<f32>,
+    ) -> Vec<String> {
+        use ethrex_common::types::{BlockBody, Receipt};
+        let storage = setup_store().await;
+        let genesis = storage.get_block_header(0).unwrap().unwrap();
+        let mut cumulative = 0;
+        let receipts: Vec<Receipt> = txs
+            .iter()
+            .zip(gas_used)
+            .map(|(tx, gas)| {
+                cumulative += gas;
+                Receipt::new(tx.tx_type(), true, cumulative, vec![])
+            })
+            .collect();
+        let header = BlockHeader {
+            parent_hash: genesis.hash(),
+            number: 1,
+            timestamp: genesis.timestamp + 12,
+            gas_limit: 30_000_000,
+            gas_used: cumulative,
+            base_fee_per_gas: Some(GWEI),
+            ..Default::default()
+        };
+        let block = Block::new(
+            header,
+            BlockBody {
+                transactions: txs,
+                ommers: vec![],
+                withdrawals: None,
+            },
+        );
+        let hash = block.hash();
+        storage.add_block(block).await.unwrap();
+        if !receipts.is_empty() {
+            storage.add_receipts(hash, receipts).await.unwrap();
+        }
+        storage
+            .forkchoice_update(vec![], 1, hash, None, None)
+            .await
+            .unwrap();
+        let context = default_context_with_storage(storage).await;
+        let context: &RpcApiContext = &context;
+        let response = FeeHistoryRequest {
+            block_count: 1,
+            newest_block: BlockIdentifier::Number(1),
+            reward_percentiles: percentiles,
+        }
+        .handle(context.clone())
+        .await
+        .unwrap();
+        serde_json::from_value::<Vec<Vec<String>>>(response["reward"].clone())
+            .unwrap()
+            .remove(0)
+    }
+
+    /// The 100th percentile is the highest tip in the block, not zero.
+    #[tokio::test]
+    async fn hundredth_percentile_is_the_highest_tip() {
+        let txs = vec![eip1559_tx(10, 1), eip1559_tx(10, 2), eip1559_tx(10, 3)];
+        let rewards = block_rewards(txs, &[21_000, 21_000, 21_000], vec![0.0, 100.0]).await;
+        assert_eq!(rewards, ["0x3b9aca00", "0xb2d05e00"]);
+    }
+
+    /// A legacy transaction tips its gas price minus the base fee (EIP-1559), so a
+    /// block of 3 gwei legacy transactions over a 1 gwei base fee rewards 2 gwei.
+    #[tokio::test]
+    async fn legacy_transactions_reward_their_effective_tip() {
+        let txs = vec![legacy_tx(3), legacy_tx(3)];
+        let rewards = block_rewards(txs, &[21_000, 21_000], vec![50.0]).await;
+        assert_eq!(rewards, ["0x77359400"]);
+    }
+
+    /// Percentiles are weighted by gas used: a transaction that used most of the
+    /// block's gas sets the median tip, however few transactions sit around it.
+    #[tokio::test]
+    async fn rewards_are_weighted_by_gas_used() {
+        let txs = vec![eip1559_tx(10, 1), eip1559_tx(10, 2), eip1559_tx(10, 3)];
+        let rewards = block_rewards(txs, &[21_000, 21_000, 1_000_000], vec![50.0]).await;
+        assert_eq!(rewards, ["0xb2d05e00"]);
+    }
+
+    /// Without stored receipts, each transaction is weighted by its gas limit.
+    #[tokio::test]
+    async fn rewards_fall_back_to_gas_limits_without_receipts() {
+        let small = |tip| match eip1559_tx(10, tip) {
+            Transaction::EIP1559Transaction(tx) => {
+                Transaction::EIP1559Transaction(ethrex_common::types::EIP1559Transaction {
+                    gas_limit: 21_000,
+                    ..tx
+                })
+            }
+            _ => unreachable!(),
+        };
+        let txs = vec![small(1), small(2), eip1559_tx(10, 3)];
+        let rewards = block_rewards(txs, &[], vec![50.0]).await;
+        assert_eq!(rewards, ["0xb2d05e00"]);
     }
 }
