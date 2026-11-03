@@ -1529,7 +1529,7 @@ mod simulation_gas_cap_tests {
 
     use crate::rpc::{DEFAULT_RPC_GAS_CAP, map_http_requests};
     use crate::test_utils::default_context_with_storage;
-    use crate::utils::{RpcErr, RpcRequest};
+    use crate::utils::{RpcErr, RpcErrorMetadata, RpcRequest};
     use ethrex_common::U256;
     use ethrex_common::types::Genesis;
     use ethrex_storage::{EngineType, Store};
@@ -1777,5 +1777,41 @@ mod simulation_gas_cap_tests {
             result.get("error").is_some(),
             "the capped run must revert: {result}"
         );
+    }
+
+    async fn eth_call_error(code: &str) -> RpcErrorMetadata {
+        run(
+            OSAKA_GENESIS,
+            DEFAULT_RPC_GAS_CAP,
+            "eth_call",
+            vec![call_object(None), json!("latest"), overrides(code)],
+        )
+        .await
+        .unwrap_err()
+        .into()
+    }
+
+    /// A revert is code 3 with the raw revert output as a single-prefixed hex string,
+    /// `"0x"` when the output is empty.
+    #[tokio::test]
+    async fn eth_call_revert_carries_the_raw_output_as_data() {
+        // PUSH2 0xbeef PUSH0 MSTORE PUSH1 2 PUSH1 30 REVERT
+        let error = eth_call_error("0x61beef5f526002601efd").await;
+        assert_eq!(error.code, 3);
+        assert_eq!(error.data.as_deref(), Some("0xbeef"));
+
+        // PUSH0 PUSH0 REVERT
+        let error = eth_call_error("0x5f5ffd").await;
+        assert_eq!(error.code, 3);
+        assert_eq!(error.data.as_deref(), Some("0x"));
+    }
+
+    /// A halt is not a revert: like geth, it is a -32000 error without data.
+    #[tokio::test]
+    async fn eth_call_halt_is_a_server_error_without_data() {
+        // INVALID
+        let error = eth_call_error("0xfe").await;
+        assert_eq!(error.code, -32000);
+        assert_eq!(error.data, None);
     }
 }
