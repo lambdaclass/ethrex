@@ -1,0 +1,87 @@
+# Multisync matrix: which EL+CL pairs run, and on which networks.
+#
+# Each [[pair]] runs one EL and one CL against each other on one network.
+#   network: mainnet | sepolia | hoodi | plataberget
+#   el:      ethrex | geth | nethermind
+#   cl:      lighthouse | prysm | ethlambda
+# Optional keys:
+#   name                       defaults to the network; required when a network repeats
+#   enabled                    false: runs only when named in MULTISYNC_NETWORKS
+#   sync_timeout               minutes; overrides SYNC_TIMEOUT
+#   block_processing_duration  seconds; overrides BLOCK_PROCESSING_DURATION (at least two epochs)
+#   el_rpc_port, el_metrics_port, cl_api_port, cl_metrics_port   host ports
+#
+# Host ports are pinned here so reordering pairs never moves them: mainnet's EL
+# metrics stay on 3701 for the central Prometheus. Unset RPC and Beacon API
+# ports are assigned from the pair's position (8545 + i, 5052 + i); metrics
+# ports are published only when set.
+
+[[pair]]
+network = "hoodi"
+el = "ethrex"
+cl = "lighthouse"
+el_rpc_port = 8545
+el_metrics_port = 3702
+cl_api_port = 5052
+
+[[pair]]
+network = "sepolia"
+el = "ethrex"
+cl = "lighthouse"
+el_rpc_port = 8546
+el_metrics_port = 3703
+cl_api_port = 5053
+
+[[pair]]
+network = "mainnet"
+el = "ethrex"
+cl = "lighthouse"
+el_rpc_port = 8547
+el_metrics_port = 3701
+cl_api_port = 5054
+
+# A second Hoodi pair for additional testing.
+[[pair]]
+name = "hoodi-2"
+network = "hoodi"
+el = "ethrex"
+cl = "lighthouse"
+enabled = false
+el_rpc_port = 8548
+cl_api_port = 5055
+
+# Platåberget, the public Glamsterdam testnet (glamsterdam-devnet-8 spec).
+# Prysm rather than Lodestar: Lodestar range sync wedges whenever its first
+# finalized batch contains an ePBS empty-payload slot (ChainSafe/lodestar#9937),
+# which would fail cycles as ethrex block stalls. Prysm is also the pairing the
+# EF runs with ethrex on this network.
+[[pair]]
+network = "plataberget"
+el = "ethrex"
+cl = "prysm"
+enabled = false
+el_rpc_port = 8549
+cl_api_port = 5056
+
+# Examples with ethlambda as the CL:
+#
+# [[pair]]
+# name = "hoodi-ethlambda"
+# network = "hoodi"
+# el = "ethrex"
+# cl = "ethlambda"
+#
+# [[pair]]
+# name = "mainnet-geth-ethlambda"
+# network = "mainnet"
+# el = "geth"
+# cl = "ethlambda"
+# sync_timeout = 720
+
+# Per-client overrides apply to every pair using that client, on every network.
+#
+# [clients.ethlambda]
+# image = "ghcr.io/lambdaclass/ethlambda:beacon"
+# pull_policy = "always"
+# extra_args = ["--custody-group-count", "8"]
+# env = { RUST_LOG = "info" }

@@ -4,7 +4,8 @@ flamegraph-hoodi start-lighthouse start-ethrex backup-db start-mainnet-metrics-d
 start-sepolia-metrics-docker start-holesky-metrics-docker start-hoodi-metrics-docker \
 start-metrics-docker tail-syncing-logs tail-metrics-logs copy_flamegraph import-with-metrics \
 multisync-up multisync-down multisync-clean multisync-logs multisync-status \
-multisync-restart multisync-monitor multisync-run multisync-loop multisync-loop-auto
+multisync-restart multisync-monitor multisync-run multisync-loop multisync-loop-auto \
+multisync-compose multisync-test
 
 ETHREX_DIR ?= "../.."
 
@@ -238,12 +239,18 @@ server-sync:
 # ==============================================================================
 # Docker Compose Multi-Network Snapsync
 # ==============================================================================
+# Pairs come from MULTISYNC_CONFIG (see multisync.toml); the compose file is
+# generated from it. MULTISYNC_NETWORKS optionally names the pairs to run.
 
-MULTISYNC_COMPOSE = docker compose -f docker-compose.multisync.yaml
-MULTISYNC_NETWORKS ?= hoodi,sepolia,mainnet
-comma := ,
-MULTISYNC_NETWORK_LIST := $(subst $(comma), ,$(MULTISYNC_NETWORKS))
-MULTISYNC_SERVICES := $(foreach n,$(MULTISYNC_NETWORK_LIST),setup-jwt-$(n) ethrex-$(n) consensus-$(n))
+MULTISYNC_CONFIG ?= multisync.toml
+MULTISYNC_COMPOSE_FILE := docker-compose.multisync.json
+MULTISYNC_COMPOSE = docker compose -f $(MULTISYNC_COMPOSE_FILE)
+# Comma-separated pair names; empty runs every pair the config enables.
+MULTISYNC_NETWORKS ?=
+MULTISYNC_GENERATE = python3 -m multisync.compose generate --config $(MULTISYNC_CONFIG) --out $(MULTISYNC_COMPOSE_FILE) $(if $(MULTISYNC_NETWORKS),--only $(MULTISYNC_NETWORKS))
+MULTISYNC_MONITOR_ARGS = --config $(MULTISYNC_CONFIG) --compose-file $(MULTISYNC_COMPOSE_FILE) $(if $(MULTISYNC_NETWORKS),--networks $(MULTISYNC_NETWORKS))
+# A pair's service names: $(call multisync_services,<pair>,<--role el|--role cl|empty>)
+multisync_services = python3 -m multisync.compose services --config $(MULTISYNC_CONFIG) --pair $(1) $(2)
 
 # Auto-update configuration (for multisync-loop-auto)
 # Build profile: 'release-with-debug-assertions' enables state trie validation
@@ -256,45 +263,63 @@ MULTISYNC_BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
 # Empty by default (no extra tracing). Example: MULTISYNC_WATCHED_PHASES=healing
 MULTISYNC_WATCHED_PHASES ?=
 
-multisync-up: ## Start all networks specified in MULTISYNC_NETWORKS via Docker Compose.
-	$(MULTISYNC_COMPOSE) up -d $(MULTISYNC_SERVICES)
+multisync-compose: ## Generate docker-compose.multisync.json from MULTISYNC_CONFIG.
+	$(MULTISYNC_GENERATE)
 
-multisync-down: ## Stop and remove all snapsync containers.
-	$(MULTISYNC_COMPOSE) down
+# The running pairs' compose file, generated only when missing, so down and
+# logs address what was started rather than what the config says now.
+$(MULTISYNC_COMPOSE_FILE):
+	$(MULTISYNC_GENERATE)
 
-multisync-clean: ## Stop, remove containers AND volumes (full reset).
-	$(MULTISYNC_COMPOSE) down -v
+multisync-up: multisync-compose ## Start the selected pairs via Docker Compose.
+	$(MULTISYNC_COMPOSE) up -d --remove-orphans
 
-multisync-logs: ## Tail logs from all networks.
+multisync-down: $(MULTISYNC_COMPOSE_FILE) ## Stop and remove all multisync containers.
+	$(MULTISYNC_COMPOSE) down --remove-orphans
+
+multisync-clean: $(MULTISYNC_COMPOSE_FILE) ## Stop, remove containers AND volumes (full reset).
+	$(MULTISYNC_COMPOSE) down -v --remove-orphans
+
+multisync-logs: $(MULTISYNC_COMPOSE_FILE) ## Tail logs from all pairs.
 	$(MULTISYNC_COMPOSE) logs -f
 
-multisync-logs-%: ## Tail logs for a specific network (e.g., multisync-logs-hoodi).
-	$(MULTISYNC_COMPOSE) logs -f ethrex-$* consensus-$*
+# Specific patterns first: GNU Make 3.81 (macOS) takes the first matching
+# pattern rule, so multisync-logs-% would otherwise swallow these.
+multisync-logs-el-%: $(MULTISYNC_COMPOSE_FILE) ## Tail only a pair's EL logs (e.g., multisync-logs-el-hoodi).
+	@svcs="$$($(call multisync_services,$*,--role el))" && $(MULTISYNC_COMPOSE) logs -f $$svcs
 
-multisync-logs-ethrex-%: ## Tail only ethrex logs for a network (e.g., multisync-logs-ethrex-hoodi).
-	$(MULTISYNC_COMPOSE) logs -f ethrex-$*
+multisync-logs-cl-%: $(MULTISYNC_COMPOSE_FILE) ## Tail only a pair's CL logs (e.g., multisync-logs-cl-hoodi).
+	@svcs="$$($(call multisync_services,$*,--role cl))" && $(MULTISYNC_COMPOSE) logs -f $$svcs
 
-multisync-logs-consensus-%: ## Tail only consensus logs for a network (e.g., multisync-logs-consensus-hoodi).
-	$(MULTISYNC_COMPOSE) logs -f consensus-$*
+multisync-logs-ethrex-%: $(MULTISYNC_COMPOSE_FILE) ## Same as multisync-logs-el-%.
+	@svcs="$$($(call multisync_services,$*,--role el))" && $(MULTISYNC_COMPOSE) logs -f $$svcs
 
-multisync-restart: ## Restart the cycle (clean volumes + start fresh).
-	$(MULTISYNC_COMPOSE) down -v
-	$(MULTISYNC_COMPOSE) up -d $(MULTISYNC_SERVICES)
+multisync-logs-consensus-%: $(MULTISYNC_COMPOSE_FILE) ## Same as multisync-logs-cl-%.
+	@svcs="$$($(call multisync_services,$*,--role cl))" && $(MULTISYNC_COMPOSE) logs -f $$svcs
 
-multisync-monitor: ## Monitor all networks (one-shot, exits on completion).
-	python3 docker_monitor.py --networks $(MULTISYNC_NETWORKS) --exit-on-success
+multisync-logs-%: $(MULTISYNC_COMPOSE_FILE) ## Tail a pair's EL and CL logs (e.g., multisync-logs-hoodi).
+	@svcs="$$($(call multisync_services,$*,))" && $(MULTISYNC_COMPOSE) logs -f $$svcs
 
-multisync-run: ## Full run: start + monitor (one-shot, exits on completion).
-	$(MULTISYNC_COMPOSE) up -d $(MULTISYNC_SERVICES)
+multisync-restart: $(MULTISYNC_COMPOSE_FILE) ## Restart the cycle (clean volumes + start fresh).
+	$(MULTISYNC_COMPOSE) down -v --remove-orphans
+	$(MULTISYNC_GENERATE)
+	$(MULTISYNC_COMPOSE) up -d
+
+multisync-monitor: ## Monitor all pairs (one-shot, exits on completion).
+	python3 docker_monitor.py $(MULTISYNC_MONITOR_ARGS) --exit-on-success
+
+multisync-run: multisync-up ## Full run: start + monitor (one-shot, exits on completion).
 	@echo "Waiting 10s for containers to start..."
 	@sleep 10
-	python3 docker_monitor.py --networks $(MULTISYNC_NETWORKS) --exit-on-success
+	python3 docker_monitor.py $(MULTISYNC_MONITOR_ARGS) --exit-on-success
 
-multisync-loop: ## Continuous loop: sync all networks, restart on success, repeat forever.
-	$(MULTISYNC_COMPOSE) up -d $(MULTISYNC_SERVICES)
+multisync-loop: multisync-up ## Continuous loop: sync all pairs, restart on success, repeat forever.
 	@echo "Waiting 10s for containers to start..."
 	@sleep 10
-	python3 docker_monitor.py --networks $(MULTISYNC_NETWORKS) --compose-file docker-compose.multisync.yaml --compose-dir $(CURDIR)
+	python3 docker_monitor.py $(MULTISYNC_MONITOR_ARGS) --compose-dir $(CURDIR)
+
+multisync-test: ## Run the multisync tooling's unit tests.
+	python3 -m unittest discover -s tests -t .
 
 multisync-history: ## View the run history log.
 	@if [ -f multisync_logs/run_history.log ]; then \
@@ -322,9 +347,10 @@ multisync-list-logs: ## List all saved run logs.
 # ==============================================================================
 # Multisync with Auto-Update and Validation
 # ==============================================================================
-# The multisync-loop-auto target pulls latest code and rebuilds before each run.
-# When using 'release-with-debug-assertions' profile, state trie validation is
-# enabled (same as daily snapsync CI checks). The validation verifies:
+# The multisync-loop-auto target pulls latest code and rebuilds the ethrex image
+# before each run; pairs whose EL is ethrex run it. When using the
+# 'release-with-debug-assertions' profile, state trie validation is enabled
+# (same as daily snapsync CI checks). The validation verifies:
 #   - State root: traverses entire account trie, validates all node hashes
 #   - Storage roots: validates each account's storage trie (parallelized)
 #   - Bytecodes: verifies code exists for all accounts with code
@@ -338,8 +364,7 @@ multisync-loop-auto: ## Continuous loop with auto-update: pull latest, build, an
 	@echo "Build profile: $(MULTISYNC_BUILD_PROFILE)"
 	@echo "Image tag: $(MULTISYNC_LOCAL_IMAGE)"
 	python3 docker_monitor.py \
-		--networks $(MULTISYNC_NETWORKS) \
-		--compose-file docker-compose.multisync.yaml \
+		$(MULTISYNC_MONITOR_ARGS) \
 		--compose-dir $(CURDIR) \
 		--auto-update \
 		--branch "$(MULTISYNC_BRANCH)" \
