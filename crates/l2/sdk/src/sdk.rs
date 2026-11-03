@@ -1088,8 +1088,8 @@ fn fee_bid(tx: &GenericTransaction) -> FeeBid {
 
 /// Build a GenericTransaction with the given parameters.
 /// Either `overrides.nonce` or `overrides.from` must be provided.
-/// If `overrides.gas_price`, `overrides.chain_id` or `overrides.gas_price`
-/// are not provided, the client will fetch them from the network.
+/// If `overrides.max_fee_per_gas`, `overrides.max_priority_fee_per_gas` or
+/// `overrides.chain_id` are not provided, the client will fetch them from the network.
 /// If `overrides.gas_limit` is not provided, the client will estimate the tx cost.
 pub async fn build_generic_tx(
     client: &EthClient,
@@ -1147,7 +1147,12 @@ pub async fn build_generic_tx(
         authorization_list: overrides.authorization_list,
         ..Default::default()
     };
-    tx.gas_price = U256::from(tx.max_fee_per_gas.unwrap_or_default());
+    // `gas_price` is deliberately left at zero: this builder only accepts typed
+    // transactions, whose `TryFrom<GenericTransaction>` impls read the legacy field
+    // solely as `max_fee_per_gas.unwrap_or(gas_price)`, and the cap above is always
+    // `Some`. Mirroring the cap into it changed nothing on the signing path and made
+    // the estimate call object name both fee modes at once, which nodes holding to
+    // geth's rule reject outright.
     if let Some(blobs_bundle) = &overrides.blobs_bundle {
         tx.blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
         add_blobs_to_generic_tx(&mut tx, blobs_bundle);
