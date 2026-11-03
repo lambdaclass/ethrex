@@ -18,6 +18,8 @@ contract TDXVerifier {
     address public authorizedSignature = address(0);
     bool public isDevMode = false;
 
+    address public authorizedSequencer = address(0);
+
     bytes public RTMR0 =
         hex"4f3d617a1c89bd9a89ea146c15b04383b7db7318f41a851802bba8eace5a6cf71050e65f65fd50176e4f006764a42643";
     bytes public RTMR1 =
@@ -30,17 +32,23 @@ contract TDXVerifier {
     /// @notice Initializes the contract
     /// @param _dcap DCAP contract.
     /// @param _timelock Timelock contract, used for permission checks
+    /// @param _authorizedSequencer Address allowed to register TDX quotes
     /// @param _isDevMode Disables quote verification
-    constructor(address _dcap, address _timelock, bool _isDevMode) {
+    constructor(address _dcap, address _timelock, address _authorizedSequencer, bool _isDevMode) {
         require(_dcap != address(0), "TDXVerifier: DCAP address can't be null");
         require(
             _timelock != address(0),
             "TDXVerifier: Timelock address can't be null"
         );
+        require(
+            _authorizedSequencer != address(0),
+            "TDXVerifier: sequencer address can't be null"
+        );
 
         quoteVerifier = IAttestation(_dcap);
         timelock = ITimelock(_timelock);
         isDevMode = _isDevMode;
+        authorizedSequencer = _authorizedSequencer;
     }
 
     /// @notice Verifies a proof with given payload and signature
@@ -62,15 +70,26 @@ contract TDXVerifier {
         );
     }
 
+    /// @notice Sets the authorized sequencer address
+    /// @dev Can only be called by the timelock
+    /// @param _authorizedSequencer The new authorized sequencer address
+    function setAuthorizedSequencer(address _authorizedSequencer) external {
+        require(
+            msg.sender == address(timelock),
+            "TDXVerifier: only timelock can set sequencer"
+        );
+        require(_authorizedSequencer != address(0), "TDXVerifier: sequencer can't be null");
+        authorizedSequencer = _authorizedSequencer;
+    }
+
     /// @notice Registers the quote
     /// @dev The data required to verify the quote must be loaded to the PCCS contracts beforehand
     /// @param quote The TDX quote, which includes the address being registered
     function register(bytes calldata quote) external {
         require(
-            timelock.isSequencer(msg.sender),
-            "TDXVerifier: only sequencer can update keys"
+            msg.sender == authorizedSequencer,
+            "TDXVerifier: only authorized sequencer can update keys"
         );
-        // TODO: only allow the owner to update the key, to avoid DoS
         if (isDevMode) {
             authorizedSignature = _getAddress(quote, 0);
             return;
