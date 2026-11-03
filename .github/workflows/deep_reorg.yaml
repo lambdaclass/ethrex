@@ -15,7 +15,7 @@ env:
 jobs:
   deep-reorg:
     name: Deep reorg partition test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0
