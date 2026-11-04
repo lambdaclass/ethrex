@@ -856,6 +856,17 @@ impl Store {
         blocks: Vec<BackfilledBlock>,
         new_earliest: BlockNumber,
     ) -> Result<(), StoreError> {
+        let unindexed_top = blocks
+            .iter()
+            .filter(|block| !block.index_transactions)
+            .map(|block| block.header.number)
+            .max();
+        let mut tx_index_floor = None;
+        if let Some(top) = unindexed_top {
+            let floor = top.saturating_add(1);
+            let current = self.get_tx_index_floor().await?;
+            tx_index_floor = Some(current.map_or(floor, |current| current.max(floor)));
+        }
         let backend = self.backend.clone();
         tokio::task::spawn_blocking(move || {
             let mut txn = backend.begin_write()?;
@@ -889,6 +900,13 @@ impl Store {
                 &chain_data_key(ChainDataIndex::EarliestBlockNumber),
                 &new_earliest.to_le_bytes(),
             )?;
+            if let Some(floor) = tx_index_floor {
+                txn.put(
+                    CHAIN_DATA,
+                    &chain_data_key(ChainDataIndex::TxIndexFloor),
+                    &floor.to_le_bytes(),
+                )?;
+            }
             txn.commit()
         })
         .await
@@ -1697,6 +1715,12 @@ impl Store {
         self.read_chain_data_block_number(ChainDataIndex::EarliestBlockNumber)
             .await?
             .ok_or(StoreError::MissingEarliestBlockNumber)
+    }
+
+    /// Lowest block from which every stored block is in the transaction index, if backfill skipped any.
+    pub async fn get_tx_index_floor(&self) -> Result<Option<BlockNumber>, StoreError> {
+        self.read_chain_data_block_number(ChainDataIndex::TxIndexFloor)
+            .await
     }
 
     /// Obtain finalized block number
@@ -8493,6 +8517,45 @@ mod backfill_write_tests {
             None,
             "transaction index must be skipped when index_transactions is false"
         );
+        assert_eq!(
+            store.get_tx_index_floor().await.unwrap(),
+            Some(100),
+            "the tx index floor must rise above the unindexed block"
+        );
+    }
+
+    #[tokio::test]
+    async fn tx_index_floor_tracks_highest_unindexed_block() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        store.update_earliest_block_number(100).await.unwrap();
+        let backfilled = |number: u64, index_transactions: bool| BackfilledBlock {
+            header: test_header(number),
+            body: BlockBody {
+                transactions: vec![test_tx(number)],
+                ommers: vec![],
+                withdrawals: Some(vec![]),
+            },
+            receipts: vec![test_receipt()],
+            index_transactions,
+        };
+
+        store
+            .add_backfilled_blocks(vec![backfilled(99, true), backfilled(98, true)], 98)
+            .await
+            .unwrap();
+        assert_eq!(store.get_tx_index_floor().await.unwrap(), None);
+
+        store
+            .add_backfilled_blocks(vec![backfilled(97, true), backfilled(96, false)], 96)
+            .await
+            .unwrap();
+        assert_eq!(store.get_tx_index_floor().await.unwrap(), Some(97));
+
+        store
+            .add_backfilled_blocks(vec![backfilled(95, false)], 95)
+            .await
+            .unwrap();
+        assert_eq!(store.get_tx_index_floor().await.unwrap(), Some(97));
     }
 
     /// End-to-end at the storage/RPC boundary: the getters the RPC handlers use

@@ -40,6 +40,7 @@ use crate::eth::{
     },
     block_access_list::{BlockAccessListRequest, RawBlockAccessListRequest},
     call_bundle::CallBundleRequest,
+    capabilities::CapabilitiesRequest,
     client::{ChainId, Syncing},
     fee_market::FeeHistoryRequest,
     filter::{
@@ -1839,6 +1840,7 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
             eth::max_priority_fee::MaxPriorityFee::call(req, context).await
         }
         "eth_config" => Config::call(req, context).await,
+        "eth_capabilities" => CapabilitiesRequest::call(req, context).await,
         unknown_eth_method => Err(RpcErr::MethodNotFound(unknown_eth_method.to_owned())),
     }
 }
