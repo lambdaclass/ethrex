@@ -36,7 +36,7 @@ use spawned_concurrency::error::ActorError;
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{
-    Arc,
+    Arc, OnceLock,
     atomic::{AtomicBool, Ordering},
 };
 use tokio::sync::mpsc::error::SendError;
@@ -192,6 +192,16 @@ impl SyncDiagnostics {
     }
 }
 
+/// Irrecoverable sync error that stopped the node, set by [`Syncer::start_sync`] before it
+/// cancels the node's token.
+static FATAL_SYNC_ERROR: OnceLock<String> = OnceLock::new();
+
+/// Returns the irrecoverable sync error that initiated the node shutdown, if any.
+/// The node's `main` checks it after the shutdown sequence to exit non-zero.
+pub fn fatal_sync_error() -> Option<&'static str> {
+    FATAL_SYNC_ERROR.get().map(String::as_str)
+}
+
 /// Manager in charge the sync process
 #[derive(Debug)]
 pub struct Syncer {
@@ -236,6 +246,11 @@ impl Syncer {
         }
     }
 
+    /// Whether the node is shutting down, so no further sync cycle should start.
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancel_token.is_cancelled()
+    }
+
     /// Starts a sync cycle, updating the state with all blocks between the current head and the sync head
     /// Will perform either full or snap sync depending on the manager's `snap_mode`
     /// In full mode, all blocks will be fetched via p2p eth requests and executed to rebuild the state
@@ -276,14 +291,24 @@ impl Syncer {
                     recoverable,
                 });
                 match recoverable {
+                    false if self.cancel_token.is_cancelled() => {
+                        // The node is already shutting down (a stopped peer table
+                        // actor is the usual cause), so this error is a symptom of
+                        // the shutdown, not a new reason for it.
+                        debug!(%error, "Sync cycle aborted during shutdown");
+                    }
                     false => {
-                        // We exit the node, as we can't recover this error
+                        // We can't recover this error, so we shut the node down. Cancel
+                        // the node's token instead of exiting the process: the shutdown
+                        // sequence then flushes the database and stores the known peers
+                        // before the node exits non-zero.
                         error!(
                             time_elapsed_s = start_time.elapsed().as_secs(),
                             %sync_head,
-                            %error, "Sync cycle failed, exiting as the error is irrecoverable",
+                            %error, "Sync cycle failed, shutting down as the error is irrecoverable",
                         );
-                        std::process::exit(2);
+                        let _ = FATAL_SYNC_ERROR.set(error.to_string());
+                        self.cancel_token.cancel();
                     }
                     true => {
                         // We do nothing, as the error is recoverable
