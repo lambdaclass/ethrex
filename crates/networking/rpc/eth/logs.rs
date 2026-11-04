@@ -3,6 +3,7 @@
 // - Go-Ethereum, specifically: https://github.com/ethereum/go-ethereum/blob/368e16f39d6c7e5cce72a92ec289adbfbaed4854/eth/filters/filter.go
 // - Ethereum's reference: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_newfilter
 use crate::{
+    eth::block::{ensure_history_retained, ensure_receipts_retained},
     rpc::{RpcApiContext, RpcHandler},
     types::{
         block_identifier::{BlockIdentifier, BlockTag},
@@ -403,17 +404,17 @@ pub(crate) async fn fetch_logs_with_filter(
                 .ok_or_else(|| {
                     RpcErr::ServerError(format!("Unknown block hash {block_hash:#x}"))
                 })?;
+            // Before the bloom check, as geth does.
+            ensure_history_retained(&storage, block_header.number).await?;
             let work = LogQueryWork::new(1, &address_filter, &filter.topics);
             limits.check_work(&work)?;
             let _reservation = limits.reserve(&work)?;
             if bloom_matcher.matches(&block_header.logs_bloom) {
-                let block_body =
-                    storage
-                        .get_block_body_by_hash(block_hash)
-                        .await?
-                        .ok_or(RpcErr::Internal(format!(
-                            "Could not get body for block {block_hash:#x}"
-                        )))?;
+                let Some(block_body) = storage.get_block_body_by_hash(block_hash).await? else {
+                    return Err(RpcErr::Internal(format!(
+                        "Could not get body for block {block_hash:#x}"
+                    )));
+                };
                 collect_block_logs(
                     &storage,
                     &block_header,
@@ -551,12 +552,13 @@ async fn scan_block_range(
             // transactions. Read it by the header's hash, like the receipts,
             // not by number: a reorg after the header chunk was read would
             // otherwise pair another block's transactions with these receipts.
-            let block_body = storage
-                .get_block_body_by_hash(block_header.hash())
-                .await?
-                .ok_or(RpcErr::Internal(format!(
+            let Some(block_body) = storage.get_block_body_by_hash(block_header.hash()).await?
+            else {
+                ensure_history_retained(storage, block_num).await?;
+                return Err(RpcErr::Internal(format!(
                     "Could not get body for block {block_num}"
-                )))?;
+                )));
+            };
             let logs_before_block = logs.len();
             collect_block_logs(
                 storage,
@@ -639,9 +641,12 @@ async fn collect_block_logs(
     // Transactions share indices with their receipts; pair them by index.
     for (tx_index, tx) in block_body.transactions.iter().enumerate() {
         let tx_hash = tx.hash(&NativeCrypto);
-        let receipt = receipts.get(tx_index).ok_or(RpcErr::Internal(format!(
-            "Missing receipt for block {block_num} tx {tx_index}"
-        )))?;
+        let Some(receipt) = receipts.get(tx_index) else {
+            ensure_receipts_retained(storage, block_num).await?;
+            return Err(RpcErr::Internal(format!(
+                "Missing receipt for block {block_num} tx {tx_index}"
+            )));
+        };
 
         if receipt.succeeded {
             for log in &receipt.logs {
@@ -943,6 +948,7 @@ mod tests {
 
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        storage.update_earliest_block_number(0).await.unwrap();
 
         // Two competing blocks at height 1, distinguished by their extra_data
         // and by the address their single log comes from.
@@ -1219,6 +1225,7 @@ mod tests {
 
         let storage =
             Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        storage.update_earliest_block_number(0).await.unwrap();
         let mut canonical = Vec::new();
         for (number, txs) in blocks.iter().enumerate() {
             let number = number as u64;
