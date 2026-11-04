@@ -319,6 +319,10 @@ impl SyncManager {
                 // Start the sync cycle
                 diagnostics.write().await.sync_cycles_started += 1;
                 syncer.start_sync(sync_head, store.clone()).await;
+                // An irrecoverable error (or a shutdown) cancels the node: start no new cycle.
+                if syncer.is_cancelled() {
+                    break;
+                }
                 // Continue to the next sync cycle if we have an ongoing snap sync (aka if we still have snap sync checkpoints stored)
                 if store
                     .get_header_download_checkpoint()
