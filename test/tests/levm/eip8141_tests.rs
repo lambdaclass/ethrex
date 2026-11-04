@@ -2619,6 +2619,68 @@ mod frame_validation_prefix_tests {
         assert_eq!(outcome.accessed_paymaster, Some((sender, false)));
     }
 
+    /// The paymaster checks that the sender's execution-approval frame succeeded.
+    /// This must work in admission just as it does in full frame execution.
+    #[test]
+    fn prefix_paymaster_can_read_previous_frame_status() {
+        assert_status_read_prefix(0, true);
+    }
+
+    #[test]
+    fn prefix_paymaster_cannot_read_current_frame_status() {
+        assert_status_read_prefix(1, false);
+    }
+
+    fn assert_status_read_prefix(status_index: u8, should_pass: bool) {
+        let sender = addr(0x5E_12_01);
+        let payer = addr(0x5E_12_02);
+        // FRAMEPARAM(status, index); require status == SUCCESS. Jumping to 0
+        // (not a JUMPDEST) halts when the comparison fails; otherwise APPROVE(1).
+        let mut code = vec![
+            0x60,
+            0x05,
+            0x60,
+            status_index,
+            0xb3,
+            0x60,
+            0x01,
+            0x14,
+            0x15,
+            0x5f,
+            0x57,
+        ];
+        code.extend_from_slice(&approve_code(0x01));
+        let tx = frame_tx_prefix(
+            sender,
+            vec![
+                frame(1, 0x02, sender, 50_000),
+                frame(1, 0x01, payer, 50_000),
+            ],
+        );
+        let mut db = db_with(vec![
+            (sender, account(0, approve_code(0x02))),
+            (payer, account(0, Bytes::from(code))),
+        ]);
+        let Transaction::FrameTransaction(ref frame_tx) = tx else {
+            unreachable!()
+        };
+        let prefix = frame_tx.validation_prefix().unwrap();
+        let outcome = LEVM::simulate_frame_validation_prefix(
+            &tx,
+            &header(),
+            &mut db,
+            VMType::L1,
+            &NativeCrypto,
+            &prefix,
+            None,
+        )
+        .expect("simulation runs");
+        assert_eq!(outcome.passed, should_pass, "{:?}", outcome.violation);
+        if should_pass {
+            assert_eq!(outcome.accessed_paymaster, Some((payer, false)));
+        }
+    }
+
     /// The paymaster reservation bounds the blob fee at the transaction's declared
     /// `max_fee_per_blob_gas`, not at the head block's `blob_base_fee`. Admission
     /// simulates against the current head while execution charges the base fee of
