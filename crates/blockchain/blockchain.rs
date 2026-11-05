@@ -50,6 +50,7 @@ pub mod mempool;
 pub mod payload;
 pub mod prewarm;
 pub mod sampling;
+pub mod sharded_trie;
 pub mod stateless;
 pub mod tracing;
 pub mod vm;
@@ -4423,7 +4424,7 @@ fn load_trie(
 
 /// Collapse a root branch node into an extension or leaf if it has only one valid child.
 /// Returns `None` if there are no valid children.
-fn collapse_root_node(
+pub(crate) fn collapse_root_node(
     storage: &Store,
     parent_state_root: H256,
     prefix: Option<H256>,
@@ -5062,7 +5063,7 @@ pub async fn is_canonical(
     }
 }
 
-fn branchify(node: Node) -> Box<BranchNode> {
+pub(crate) fn branchify(node: Node) -> Box<BranchNode> {
     match node {
         Node::Branch(branch_node) => branch_node,
         Node::Extension(extension_node) => {

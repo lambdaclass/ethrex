@@ -1,0 +1,587 @@
+//! A state trie kept open across updates and split into 16 shards by the first
+//! nibble of the hashed address, so its root is recomputed after each change
+//! by re-hashing only the changed paths, on 16 threads.
+//!
+//! Import's BAL merkleizer uses it one-shot (`apply` once, then `finish`).
+//! Payload building keeps one per held build and calls `apply` and `root`
+//! repeatedly (see `crate::preseal`).
+//!
+//! It never touches `Blockchain`'s merkle pool: that pool's 16 workers must
+//! all run together, so a second concurrent user deadlocks it. Each call here
+//! spawns scoped threads instead.
+
+use std::collections::hash_map::Entry;
+
+use ethrex_common::{
+    H256, U256,
+    constants::EMPTY_TRIE_HASH,
+    types::{AccountState, AccountUpdate, Code},
+};
+use ethrex_crypto::NativeCrypto;
+use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+use ethrex_storage::{Store, error::StoreError};
+use ethrex_trie::{
+    Nibbles, Node, NodeRef, OnceLock, Trie, TrieError,
+    node::{BranchNode, ExtensionNode, LeafNode},
+};
+use rustc_hash::FxHashMap;
+
+use crate::{STATE_SHARD_PREFETCH_THRESHOLD, STORAGE_PREFETCH_THRESHOLD, collapse_root_node};
+
+/// Shards of the state trie, one per first nibble of the hashed address.
+pub const SHARDS: usize = 16;
+/// An account whose storage trie is first opened with at least this many slot
+/// writes gets it split in 16 by slot nibble (same threshold as import's
+/// `STORAGE_SHARD_THRESHOLD`).
+pub const HOT_STORAGE_SLOTS: usize = 2048;
+/// Below this many dirty accounts plus slots, `root()` runs inline: spawning
+/// 16 threads costs more than hashing a few paths.
+const INLINE_THRESHOLD: usize = 64;
+
+/// One account write with absolute values: the last write to a field wins.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AccountWrite {
+    pub hashed_address: H256,
+    /// The account stops existing. Its fields and storage are kept for a
+    /// later write that makes it exist again, as `AccountUpdate::merge` keeps
+    /// them.
+    pub removed: bool,
+    /// Clear the storage before applying `storage`.
+    pub removed_storage: bool,
+    pub nonce: Option<u64>,
+    pub balance: Option<U256>,
+    pub code_hash: Option<H256>,
+    /// New code to persist, keyed by its hash (`finish()` returns it in
+    /// `code_updates`; `root()` ignores it).
+    pub code: Option<(H256, Code)>,
+    /// Keyed by hashed slot. Zero deletes the slot.
+    pub storage: Vec<(H256, U256)>,
+}
+
+impl AccountWrite {
+    /// The write equivalent to `update` as `Store::apply_account_updates_batch`
+    /// applies it.
+    pub fn from_update(update: &AccountUpdate) -> Self {
+        Self {
+            hashed_address: ethrex_common::utils::keccak(update.address),
+            removed: update.removed,
+            removed_storage: update.removed_storage,
+            nonce: update.info.as_ref().map(|i| i.nonce),
+            balance: update.info.as_ref().map(|i| i.balance),
+            code_hash: update.info.as_ref().map(|i| i.code_hash),
+            // Same rule as `apply_account_updates_from_trie_batch`: code is
+            // stored only alongside an info change.
+            code: update
+                .info
+                .as_ref()
+                .and_then(|i| update.code.clone().map(|c| (i.code_hash, c))),
+            storage: update
+                .added_storage
+                .iter()
+                .map(|(k, v)| (ethrex_common::utils::keccak(k), *v))
+                .collect(),
+        }
+    }
+}
+
+/// The state of one block over its parent, kept open so that `apply` and
+/// `root` can alternate and each `root()` re-hashes only what changed since
+/// the previous one.
+///
+/// Every account a pending write names gets its leaf written by the next
+/// `root()`, even when the value did not change. Import's node set, which
+/// `finish()` must reproduce, includes such paths, and the payload rebase
+/// never sends a write that changes nothing, so `root()` loses nothing by it.
+///
+/// `root()` memoizes node hashes, and `NodeRef::commit` stops at a memoized
+/// node, so a node collection after a `root()` would miss every node that
+/// `root()` hashed. `hashed` records that a `root()` ran so `finish()` can
+/// refuse to follow one.
+///
+/// After an error the tree is in an unknown state; drop it.
+pub struct ShardedStateTrie {
+    store: Store,
+    parent_state_root: H256,
+    /// Shard `i` is the parent state trie, only ever written under nibble `i`.
+    state: Vec<Trie>,
+    /// Per shard, the accounts this tree has touched.
+    accounts: Vec<FxHashMap<H256, TouchedAccount>>,
+    /// Per shard, writes applied since the last `root()`, folded into
+    /// `accounts` and `state` by `root()`.
+    pending: Vec<FxHashMap<H256, PendingWrite>>,
+    /// A `root()` has run (see the type docs).
+    hashed: bool,
+}
+
+impl ShardedStateTrie {
+    /// Opens the tree at `parent_state_root`. Nothing is read until `root()`.
+    pub fn open(store: Store, parent_state_root: H256) -> Result<Self, StoreError> {
+        let state = (0..SHARDS)
+            .map(|_| store.open_state_trie(parent_state_root))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            store,
+            parent_state_root,
+            state,
+            accounts: (0..SHARDS).map(|_| FxHashMap::default()).collect(),
+            pending: (0..SHARDS).map(|_| FxHashMap::default()).collect(),
+            hashed: false,
+        })
+    }
+
+    /// Queues `writes` for the next `root()`, in order: the last write to a
+    /// field or slot wins.
+    pub fn apply(&mut self, writes: impl IntoIterator<Item = AccountWrite>) {
+        for write in writes {
+            let shard = usize::from(write.hashed_address.as_bytes()[0] >> 4);
+            self.pending[shard]
+                .entry(write.hashed_address)
+                .or_default()
+                .merge(write);
+        }
+    }
+
+    /// The state root with every write applied so far.
+    pub fn root(&mut self) -> Result<H256, StoreError> {
+        self.hashed = true;
+        let work: usize = self
+            .pending
+            .iter()
+            .flat_map(|shard| shard.values())
+            .map(|write| 1 + write.slots.len())
+            .sum();
+        let inline = work < INLINE_THRESHOLD;
+        // Storage first: the state step writes each account's storage root.
+        self.update_storage(inline)?;
+        let root = BranchNode::new(self.update_state(inline)?);
+        Ok(
+            match collapse_root_node(&self.store, self.parent_state_root, None, root)? {
+                Some(node) => node.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+                None => *EMPTY_TRIE_HASH,
+            },
+        )
+    }
+
+    /// Applies the queued slot writes and stores each written account's new
+    /// storage root in its `TouchedAccount`.
+    fn update_storage(&mut self, inline: bool) -> Result<(), StoreError> {
+        // Each job takes its account out of the shard map, so jobs can run on
+        // separate threads without sharing the maps.
+        let mut jobs = Vec::new();
+        for (shard, pending) in self.pending.iter_mut().enumerate() {
+            for (hashed_address, write) in pending.iter_mut() {
+                if !write.has_storage_work() {
+                    continue;
+                }
+                jobs.push(StorageJob {
+                    shard,
+                    hashed_address: *hashed_address,
+                    account: self.accounts[shard].remove(hashed_address),
+                    reset: write.removed_storage,
+                    slots: last_write_per_slot(std::mem::take(&mut write.slots)),
+                });
+            }
+        }
+        let done = if inline || jobs.len() <= 1 {
+            let mut reader = None;
+            jobs.into_iter()
+                .map(|job| job.run(&self.store, self.parent_state_root, &mut reader))
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            run_storage_jobs(&self.store, self.parent_state_root, jobs)?
+        };
+        for (shard, hashed_address, account) in done {
+            self.accounts[shard].insert(hashed_address, account);
+        }
+        Ok(())
+    }
+
+    /// Writes every pending account's leaf into its shard and returns each
+    /// shard's child of the root branch.
+    fn update_state(&mut self, inline: bool) -> Result<[NodeRef; SHARDS], StoreError> {
+        let mut children = BranchNode::EMPTY_CHOICES;
+        let shards = self
+            .state
+            .iter_mut()
+            .zip(self.accounts.iter_mut())
+            .zip(self.pending.iter_mut().map(std::mem::take))
+            .enumerate();
+        if inline {
+            for (index, ((trie, accounts), pending)) in shards {
+                children[index] = update_shard(index, trie, accounts, pending)?;
+            }
+            return Ok(children);
+        }
+        std::thread::scope(|s| -> Result<(), StoreError> {
+            let mut handles = Vec::new();
+            for (index, ((trie, accounts), pending)) in shards {
+                // A shard without writes only reads its memoized child.
+                if pending.is_empty() {
+                    children[index] = update_shard(index, trie, accounts, pending)?;
+                    continue;
+                }
+                let handle = std::thread::Builder::new()
+                    .name(format!("sharded_trie_state_{index}"))
+                    .spawn_scoped(s, move || update_shard(index, trie, accounts, pending))
+                    .map_err(|e| StoreError::Custom(format!("spawn failed: {e}")))?;
+                handles.push((index, handle));
+            }
+            for (index, handle) in handles {
+                children[index] = handle.join().map_err(|_| {
+                    StoreError::Custom("sharded trie state worker panicked".to_string())
+                })??;
+            }
+            Ok(())
+        })?;
+        Ok(children)
+    }
+}
+
+/// An account the tree has touched.
+struct TouchedAccount {
+    /// Fields as last written over the parent's (the empty account's when the
+    /// parent has none). `storage_root` is the parent's until `storage` opens,
+    /// then the root `root()` last computed for it. Kept while the account is
+    /// removed, so a later write that makes it exist again starts from them.
+    state: AccountState,
+    /// The last write did not remove the account.
+    exists: bool,
+    /// Where `storage` opens, unless a reset opens it empty.
+    parent_storage_root: H256,
+    storage: Option<StorageTrie>,
+}
+
+impl TouchedAccount {
+    fn new(parent: Option<AccountState>) -> Self {
+        Self {
+            exists: parent.is_some(),
+            parent_storage_root: parent.map_or(*EMPTY_TRIE_HASH, |p| p.storage_root),
+            state: parent.unwrap_or_default(),
+            storage: None,
+        }
+    }
+
+    fn apply(&mut self, write: &PendingWrite) {
+        self.exists = !write.removed;
+        if let Some(nonce) = write.nonce {
+            self.state.nonce = nonce;
+        }
+        if let Some(balance) = write.balance {
+            self.state.balance = balance;
+        }
+        if let Some(code_hash) = write.code_hash {
+            self.state.code_hash = code_hash;
+        }
+    }
+
+    /// The leaf the account has in the state trie, if any. An account left
+    /// empty is removed (EIP-161), as import's Stage C does.
+    fn leaf(&self) -> Option<&AccountState> {
+        (self.exists && self.state != AccountState::default()).then_some(&self.state)
+    }
+}
+
+/// Every write to one account since the last `root()`, merged.
+#[derive(Default)]
+struct PendingWrite {
+    /// The last write's `removed`.
+    removed: bool,
+    /// Some write reset the storage; `slots` holds only later writes.
+    removed_storage: bool,
+    nonce: Option<u64>,
+    balance: Option<U256>,
+    code_hash: Option<H256>,
+    /// In write order, so the last write to a slot wins.
+    slots: Vec<(H256, U256)>,
+}
+
+impl PendingWrite {
+    fn merge(&mut self, write: AccountWrite) {
+        self.removed = write.removed;
+        if write.removed_storage {
+            self.removed_storage = true;
+            self.slots.clear();
+        }
+        self.nonce = write.nonce.or(self.nonce);
+        self.balance = write.balance.or(self.balance);
+        self.code_hash = write.code_hash.or(self.code_hash);
+        self.slots.extend(write.storage);
+    }
+
+    fn has_storage_work(&self) -> bool {
+        self.removed_storage || !self.slots.is_empty()
+    }
+}
+
+/// An account's storage trie, opened on its first slot write.
+enum StorageTrie {
+    Single(Trie),
+}
+
+impl StorageTrie {
+    fn open(
+        store: &Store,
+        parent_state_root: H256,
+        hashed_address: H256,
+        storage_root: H256,
+    ) -> Result<Self, StoreError> {
+        Ok(Self::Single(store.open_storage_trie(
+            hashed_address,
+            parent_state_root,
+            storage_root,
+        )?))
+    }
+
+    /// Applies `slots` (sorted by key, one write per key) and returns the new
+    /// storage root.
+    fn apply(&mut self, slots: &[(H256, U256)]) -> Result<H256, StoreError> {
+        match self {
+            Self::Single(trie) => {
+                if slots.len() >= STORAGE_PREFETCH_THRESHOLD {
+                    trie.prefetch_sorted(&paths(slots))?;
+                }
+                write_slots(trie, slots)?;
+                Ok(trie.hash_no_commit(&NativeCrypto))
+            }
+        }
+    }
+}
+
+/// Storage work for one account in one `root()`.
+struct StorageJob {
+    shard: usize,
+    hashed_address: H256,
+    /// `None` on the account's first touch: the job reads its parent leaf.
+    account: Option<TouchedAccount>,
+    reset: bool,
+    /// Sorted by key, one write per key.
+    slots: Vec<(H256, U256)>,
+}
+
+impl StorageJob {
+    /// Bin-packing weight. At least 1, so a reset without slots still counts.
+    fn weight(&self) -> usize {
+        self.slots.len().max(1)
+    }
+
+    /// Applies the job and returns the account to put back in its shard.
+    fn run(
+        self,
+        store: &Store,
+        parent_state_root: H256,
+        reader: &mut Option<Trie>,
+    ) -> Result<(usize, H256, TouchedAccount), StoreError> {
+        let mut account = match self.account {
+            Some(account) => account,
+            None => TouchedAccount::new(read_parent(
+                store,
+                parent_state_root,
+                reader,
+                self.hashed_address,
+            )?),
+        };
+        let mut storage = match account.storage.take() {
+            Some(storage) if !self.reset => storage,
+            // A reset replaces the trie: nothing in the old one survives it.
+            _ => {
+                let root = if self.reset {
+                    *EMPTY_TRIE_HASH
+                } else {
+                    account.parent_storage_root
+                };
+                StorageTrie::open(store, parent_state_root, self.hashed_address, root)?
+            }
+        };
+        account.state.storage_root = storage.apply(&self.slots)?;
+        account.storage = Some(storage);
+        Ok((self.shard, self.hashed_address, account))
+    }
+}
+
+/// Runs storage jobs on up to `SHARDS` scoped threads, bin-packed greedily by
+/// slot count as import's Stage B does.
+fn run_storage_jobs(
+    store: &Store,
+    parent_state_root: H256,
+    mut jobs: Vec<StorageJob>,
+) -> Result<Vec<(usize, H256, TouchedAccount)>, StoreError> {
+    jobs.sort_unstable_by_key(|job| std::cmp::Reverse(job.weight()));
+    let mut bins: Vec<Vec<StorageJob>> = (0..SHARDS).map(|_| Vec::new()).collect();
+    let mut weights = [0usize; SHARDS];
+    for job in jobs {
+        let lightest = weights
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, weight)| **weight)
+            .map_or(0, |(bin, _)| bin);
+        weights[lightest] += job.weight();
+        bins[lightest].push(job);
+    }
+    std::thread::scope(|s| {
+        let handles = bins
+            .into_iter()
+            .enumerate()
+            .filter(|(_, bin)| !bin.is_empty())
+            .map(|(worker, bin)| {
+                std::thread::Builder::new()
+                    .name(format!("sharded_trie_storage_{worker}"))
+                    .spawn_scoped(s, move || {
+                        let mut reader = None;
+                        bin.into_iter()
+                            .map(|job| job.run(store, parent_state_root, &mut reader))
+                            .collect::<Result<Vec<_>, _>>()
+                    })
+                    .map_err(|e| StoreError::Custom(format!("spawn failed: {e}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut done = Vec::new();
+        for handle in handles {
+            done.extend(handle.join().map_err(|_| {
+                StoreError::Custom("sharded trie storage worker panicked".to_string())
+            })??);
+        }
+        Ok(done)
+    })
+}
+
+/// Writes `pending` into shard `index` and returns the shard's child of the
+/// root branch.
+fn update_shard(
+    index: usize,
+    trie: &mut Trie,
+    accounts: &mut FxHashMap<H256, TouchedAccount>,
+    pending: FxHashMap<H256, PendingWrite>,
+) -> Result<NodeRef, StoreError> {
+    let mut writes: Vec<(H256, PendingWrite)> = pending.into_iter().collect();
+    // Path order, so neighbouring writes reuse the nodes just loaded.
+    writes.sort_unstable_by_key(|(hashed_address, _)| *hashed_address);
+    // Loads the paths level by level instead of one read per node. Only the
+    // first `root()` gains: once the shard root is resolved it is a no-op.
+    if writes.len() >= STATE_SHARD_PREFETCH_THRESHOLD {
+        let paths: Vec<Nibbles> = writes
+            .iter()
+            .map(|(hashed_address, _)| Nibbles::from_bytes(hashed_address.as_bytes()))
+            .collect();
+        trie.prefetch_sorted(&paths)?;
+    }
+    for (hashed_address, write) in writes {
+        let path = hashed_address.as_bytes();
+        let account = match accounts.entry(hashed_address) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            // First touch: this shard never wrote the leaf, so it still holds
+            // the parent's.
+            Entry::Vacant(entry) => {
+                entry.insert(TouchedAccount::new(decode_account(trie.get(path)?)?))
+            }
+        };
+        account.apply(&write);
+        match account.leaf() {
+            Some(leaf) => trie.insert(path.to_vec(), leaf.encode_to_vec())?,
+            None => {
+                trie.remove(path)?;
+            }
+        }
+    }
+    Ok(shard_child(trie, index)?)
+}
+
+/// Child `index` of the root branch as `trie` holds it, with its hash
+/// memoized. `trie` only ever has writes under nibble `index`, so that child
+/// is current and the others are stale.
+///
+/// The root is read, not rewritten in branch form as `collect_trie` does: on a
+/// trie whose root is a leaf or extension that would leave a branch with one
+/// child, which `Trie::remove` does not collapse when that child goes.
+fn shard_child(trie: &mut Trie, index: usize) -> Result<NodeRef, TrieError> {
+    // Resolve a root still held as a hash, keeping the hash memoized, so later
+    // calls do not read it from the database again.
+    if let NodeRef::Hash(hash) = trie.root
+        && hash.is_valid()
+    {
+        let node = trie.get_root_node(Nibbles::default())?;
+        trie.root = NodeRef::Node(node, OnceLock::from(hash));
+    }
+    let NodeRef::Node(root, _) = &trie.root else {
+        // An empty trie.
+        return Ok(NodeRef::default());
+    };
+    // Hash an existing child in place before cloning it, so the trie keeps
+    // the hash for the next call.
+    let existing = |child: &NodeRef| {
+        child.compute_hash(&NativeCrypto);
+        child.clone()
+    };
+    let child = match root.as_ref() {
+        Node::Branch(branch) => existing(&branch.choices[index]),
+        Node::Extension(extension) if extension.prefix.at(0) == index => {
+            if extension.prefix.len() == 1 {
+                existing(&extension.child)
+            } else {
+                Node::from(ExtensionNode::new(
+                    extension.prefix.offset(1),
+                    extension.child.clone(),
+                ))
+                .into()
+            }
+        }
+        Node::Leaf(leaf) if leaf.partial.at(0) == index => {
+            Node::from(LeafNode::new(leaf.partial.offset(1), leaf.value.clone())).into()
+        }
+        Node::Extension(_) | Node::Leaf(_) => NodeRef::default(),
+    };
+    child.compute_hash(&NativeCrypto);
+    Ok(child)
+}
+
+/// Reads `hashed_address`'s leaf in the parent state, opening `reader` on
+/// first use.
+fn read_parent(
+    store: &Store,
+    parent_state_root: H256,
+    reader: &mut Option<Trie>,
+    hashed_address: H256,
+) -> Result<Option<AccountState>, StoreError> {
+    let trie = match reader.take() {
+        Some(trie) => trie,
+        None => store.open_state_trie(parent_state_root)?,
+    };
+    let leaf = trie.get(hashed_address.as_bytes());
+    *reader = Some(trie);
+    decode_account(leaf?)
+}
+
+fn decode_account(rlp: Option<Vec<u8>>) -> Result<Option<AccountState>, StoreError> {
+    Ok(rlp.map(|rlp| AccountState::decode(&rlp)).transpose()?)
+}
+
+/// Sorts `slots` by key and keeps the last write to each key.
+fn last_write_per_slot(mut slots: Vec<(H256, U256)>) -> Vec<(H256, U256)> {
+    // Stable, so writes to one key keep their order.
+    slots.sort_by_key(|(key, _)| *key);
+    let mut last: Vec<(H256, U256)> = Vec::with_capacity(slots.len());
+    for (key, value) in slots {
+        match last.last_mut() {
+            Some(previous) if previous.0 == key => previous.1 = value,
+            _ => last.push((key, value)),
+        }
+    }
+    last
+}
+
+fn paths(slots: &[(H256, U256)]) -> Vec<Nibbles> {
+    slots
+        .iter()
+        .map(|(key, _)| Nibbles::from_bytes(key.as_bytes()))
+        .collect()
+}
+
+fn write_slots(trie: &mut Trie, slots: &[(H256, U256)]) -> Result<(), StoreError> {
+    for (key, value) in slots {
+        if value.is_zero() {
+            trie.remove(key.as_bytes())?;
+        } else {
+            trie.insert(key.as_bytes().to_vec(), value.encode_to_vec())?;
+        }
+    }
+    Ok(())
+}

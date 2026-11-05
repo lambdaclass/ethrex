@@ -23,6 +23,7 @@ mod payload_body_check_tests;
 mod payload_build_loop_tests;
 mod payload_tests;
 mod sampling_tests;
+mod sharded_trie_tests;
 mod smoke_tests;
 mod storage_sharding_tests;
 mod trace_call_log_index_tests;
