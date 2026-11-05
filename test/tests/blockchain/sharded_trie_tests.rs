@@ -27,33 +27,33 @@ use super::payload_build_loop_tests::{
 };
 
 /// Deterministic generator, so a failure is reproducible from its seed.
-struct Rng(u64);
+pub(super) struct Rng(pub(super) u64);
 
 impl Rng {
-    fn next(&mut self) -> u64 {
+    pub(super) fn next(&mut self) -> u64 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;
         self.0
     }
 
-    fn below(&mut self, n: u64) -> u64 {
+    pub(super) fn below(&mut self, n: u64) -> u64 {
         self.next() % n
     }
 
-    fn chance(&mut self, percent: u64) -> bool {
+    pub(super) fn chance(&mut self, percent: u64) -> bool {
         self.below(100) < percent
     }
 }
 
 /// Generated account `i`. Indices at or above the generated count are
 /// accounts the parent does not have.
-fn address(i: u64) -> Address {
+pub(super) fn address(i: u64) -> Address {
     H160::from_low_u64_be(0xA000_0000 + i)
 }
 
 /// Storage slot `j`, as the VM keys it (unhashed).
-fn slot(j: u64) -> H256 {
+pub(super) fn slot(j: u64) -> H256 {
     H256::from_low_u64_be(0x5107_0000 + j)
 }
 
@@ -115,7 +115,7 @@ async fn store_with(genesis: Genesis) -> (Store, BlockHeader) {
 /// Builds a store whose genesis holds `accounts` generated accounts, every
 /// third one with `slots` storage slots, and returns it with the genesis
 /// header.
-async fn parent_state(accounts: u64, slots: u64) -> (Store, BlockHeader) {
+pub(super) async fn parent_state(accounts: u64, slots: u64) -> (Store, BlockHeader) {
     store_with(genesis(accounts, slots)).await
 }
 
@@ -416,10 +416,10 @@ async fn emptying_every_account() {
 
 /// Generated index of the hot contract; outside the range `random_updates`
 /// picks from.
-const HOT: u64 = 1_000;
+pub(super) const HOT: u64 = 1_000;
 
 /// `genesis(30, 10)` plus a contract at `address(HOT)` with `slots` slots.
-async fn hot_parent_state(slots: u64) -> (Store, BlockHeader) {
+pub(super) async fn hot_parent_state(slots: u64) -> (Store, BlockHeader) {
     let mut genesis = genesis(30, 10);
     let storage = (0..slots)
         .map(|j| (U256::from_big_endian(slot(j).as_bytes()), U256::from(j + 1)))

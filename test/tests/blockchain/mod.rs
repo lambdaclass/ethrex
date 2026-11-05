@@ -22,6 +22,7 @@ mod parallel_gas_early_stop_tests;
 mod payload_body_check_tests;
 mod payload_build_loop_tests;
 mod payload_tests;
+mod preseal_tests;
 mod sampling_tests;
 mod sharded_trie_tests;
 mod smoke_tests;

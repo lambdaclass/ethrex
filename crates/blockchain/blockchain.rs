@@ -48,6 +48,7 @@ pub mod fork_choice;
 mod glamsterdam;
 pub mod mempool;
 pub mod payload;
+pub mod preseal;
 pub mod prewarm;
 pub mod sampling;
 pub mod sharded_trie;
