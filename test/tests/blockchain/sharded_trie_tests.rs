@@ -13,12 +13,13 @@ use ethrex_common::{
     constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH},
     seeded_hash::SeededHashMap,
     types::{
-        AccountInfo, AccountUpdate, BlockHeader, Code, Genesis, GenesisAccount,
+        AccountInfo, AccountState, AccountUpdate, BlockHeader, Code, Genesis, GenesisAccount,
         block_access_list::BalSynthesisItem,
     },
     utils::keccak,
 };
 use ethrex_crypto::NativeCrypto;
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{AccountUpdatesList, EngineType, Store};
 use ethrex_trie::{Node, TrieNode};
 
@@ -872,4 +873,43 @@ async fn payload_seal_root_matches_serial() {
         result.payload.header.state_root,
         serial_root(&store, &parent, &result.account_updates)
     );
+}
+
+/// A `root()` that fails part way leaves half a batch in the tree: here one
+/// account's storage write lands and the other's fails. A root computed from
+/// that state would silently miss the lost half, so after the error every
+/// call must fail.
+#[tokio::test]
+async fn failed_root_poisons_the_tree() {
+    let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+    let (fine, broken) = (address(1), address(2));
+    // A parent built by hand, where `broken`'s storage root names a trie the
+    // store does not have, so writing its storage fails.
+    let mut parent = store.open_direct_state_trie(*EMPTY_TRIE_HASH).unwrap();
+    for (address, storage_root) in [(fine, *EMPTY_TRIE_HASH), (broken, H256::repeat_byte(0xab))] {
+        let account = AccountState {
+            nonce: 1,
+            balance: U256::from(10),
+            storage_root,
+            code_hash: *EMPTY_KECCAK_HASH,
+        };
+        parent
+            .insert(keccak(address).as_bytes().to_vec(), account.encode_to_vec())
+            .unwrap();
+    }
+    parent.commit(&NativeCrypto).unwrap();
+    let parent_root = parent.hash_no_commit(&NativeCrypto);
+
+    let mut tree = ShardedStateTrie::open(store, parent_root).unwrap();
+    tree.apply([AccountWrite::from_update(&slot_writes(fine, [(1, 1)]))]);
+    tree.root().unwrap();
+    tree.apply([
+        AccountWrite::from_update(&slot_writes(fine, [(2, 2)])),
+        AccountWrite::from_update(&slot_writes(broken, [(1, 1)])),
+    ]);
+    assert!(tree.root().is_err(), "the broken storage trie fails");
+    assert!(tree.root().is_err(), "a retry must not return a root");
+    tree.apply([AccountWrite::from_update(&slot_writes(fine, [(3, 3)]))]);
+    assert!(tree.root().is_err(), "nor a root after more writes");
+    assert!(tree.finish().is_err());
 }

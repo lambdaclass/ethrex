@@ -105,7 +105,12 @@ impl AccountWrite {
 /// `root()` hashed. `hashed` records that a `root()` ran so `finish()` can
 /// refuse to follow one.
 ///
-/// After an error the tree is in an unknown state; drop it.
+/// A `root()` that fails or panics part way can leave half a batch applied:
+/// it has already taken the pending writes and the touched accounts it was
+/// working on, so a retry would read those accounts from the shard trie as
+/// if they were the parent's and return a root without the lost writes.
+/// Such a tree is poisoned: `root()` and `finish()` fail on it and `apply()`
+/// ignores its writes. Reopen the tree at the parent to go on.
 pub struct ShardedStateTrie {
     store: Store,
     parent_state_root: H256,
@@ -118,6 +123,8 @@ pub struct ShardedStateTrie {
     pending: Vec<FxHashMap<H256, PendingWrite>>,
     /// A `root()` has run (see the type docs).
     hashed: bool,
+    /// A `root()` did not complete (see the type docs).
+    poisoned: bool,
     /// Writes applied so far, numbering each account's first one.
     writes_seen: usize,
     /// Every `AccountWrite::code`, in write order, for `finish()`.
@@ -137,14 +144,19 @@ impl ShardedStateTrie {
             accounts: (0..SHARDS).map(|_| FxHashMap::default()).collect(),
             pending: (0..SHARDS).map(|_| FxHashMap::default()).collect(),
             hashed: false,
+            poisoned: false,
             writes_seen: 0,
             code_updates: Vec::new(),
         })
     }
 
     /// Queues `writes` for the next `root()` or `finish()`, in order: the last
-    /// write to a field or slot wins.
+    /// write to a field or slot wins. On a poisoned tree it does nothing, and
+    /// the next `root()` or `finish()` reports the poisoning.
     pub fn apply(&mut self, writes: impl IntoIterator<Item = AccountWrite>) {
+        if self.poisoned {
+            return;
+        }
         for mut write in writes {
             if let Some(code) = write.code.take() {
                 self.code_updates.push(code);
@@ -162,14 +174,29 @@ impl ShardedStateTrie {
         }
     }
 
-    /// The state root with every write applied so far.
+    /// The state root with every write applied so far. Fails on a poisoned
+    /// tree, and poisons the tree if it fails (see the type docs).
     pub fn root(&mut self) -> Result<H256, StoreError> {
+        self.check_not_poisoned()?;
         self.hashed = true;
+        // Cleared only on success, so an error or a panic part way leaves it.
+        self.poisoned = true;
         let inline = pending_work(&self.pending) < INLINE_THRESHOLD;
         // Storage first: the state step writes each account's storage root.
         self.update_storage(inline)?;
         let children = self.update_state(inline)?;
-        root_hash(&self.store, self.parent_state_root, None, children)
+        let root = root_hash(&self.store, self.parent_state_root, None, children)?;
+        self.poisoned = false;
+        Ok(root)
+    }
+
+    fn check_not_poisoned(&self) -> Result<(), StoreError> {
+        if self.poisoned {
+            return Err(StoreError::Custom(
+                "ShardedStateTrie used after a root() that did not complete; reopen it".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     /// The state root, with every trie node and code import must persist for
@@ -183,8 +210,11 @@ impl ShardedStateTrie {
     /// before writing it (Stage C); the root is collapsed and committed
     /// (Stage D).
     ///
-    /// Fails after a `root()` (see the type docs).
+    /// Fails after a `root()` and on a poisoned tree (see the type docs).
     pub fn finish(self) -> Result<AccountUpdatesList, StoreError> {
+        // A failed root() also sets `hashed`, but the poisoning is the cause
+        // worth reporting.
+        self.check_not_poisoned()?;
         if self.hashed {
             return Err(StoreError::Custom(
                 "ShardedStateTrie::finish after root() would miss the nodes root() hashed"
