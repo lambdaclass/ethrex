@@ -613,8 +613,8 @@ pub fn start_block_executor(
 ///    (`eth_*`, `debug_*`, `net_*`, `admin_*`, `web3_*`, `txpool_*`).
 ///
 /// 2. **WebSocket** (`ws`): Optional endpoint that serves the same methods as HTTP plus
-///    the subscription methods `eth_subscribe` / `eth_unsubscribe` (`"newHeads"` and
-///    `"newPendingTransactions"`). Enabled by passing a [`WebSocketConfig`] containing
+///    the subscription methods `eth_subscribe` / `eth_unsubscribe` (`"newHeads"`,
+///    `"newPendingTransactions"` and `"syncing"`). Enabled by passing a [`WebSocketConfig`] containing
 ///    the listen address and the [`SubscriptionManager`] actor handle. When its address
 ///    equals `http_addr`, no separate listener is bound: both protocols share the HTTP
 ///    listener (`POST` → JSON-RPC, `GET` + `Upgrade` → WebSocket).
@@ -725,6 +725,11 @@ pub async fn bind_api(
                 .blockchain
                 .mempool
                 .subscribe_new_transactions(),
+            ws.subscription_manager.clone(),
+            cancel_token.clone(),
+        );
+        crate::subscription_manager::spawn_syncing_feed(
+            &service_context,
             ws.subscription_manager.clone(),
             cancel_token.clone(),
         );
@@ -1563,8 +1568,8 @@ fn ws_error_response(id: Option<RpcRequestId>, code: i32, message: &str) -> Stri
 
 /// Handle `eth_subscribe`.
 ///
-/// Supports `"newHeads"` and `"newPendingTransactions"` (hashes only). Registers
-/// this connection with the `SubscriptionManager` actor and returns the
+/// Supports `"newHeads"`, `"newPendingTransactions"` (hashes only) and `"syncing"`.
+/// Registers this connection with the `SubscriptionManager` actor and returns the
 /// subscription ID.
 pub async fn handle_eth_subscribe(
     req: &crate::utils::RpcRequest,
@@ -1594,6 +1599,16 @@ pub async fn handle_eth_subscribe(
         .ok_or_else(|| RpcErr::Internal("WebSocket server not enabled".to_string()))?;
     let subscribed = match sub_type.as_str() {
         "newHeads" => ws.subscription_manager.subscribe(out_tx.clone()).await,
+        "syncing" => {
+            if context.syncer.is_none() {
+                return Err(RpcErr::Internal(
+                    "Syncing status requested but syncer is not initialized".to_string(),
+                ));
+            }
+            ws.subscription_manager
+                .subscribe_syncing(out_tx.clone())
+                .await
+        }
         "newPendingTransactions" => {
             // geth's optional second param asks for full transaction objects.
             crate::eth::filter::parse_pending_full_txs(
@@ -2387,6 +2402,98 @@ mod tests {
             let response: Value = serde_json::from_str(&response).unwrap();
             assert_eq!(response["error"]["code"], code, "for {body}");
         }
+    }
+
+    #[tokio::test]
+    async fn ws_subscribe_syncing_reports_status_changes() {
+        let route_request = |_req: RpcRequest| async move {
+            panic!("eth_subscribe must not be routed");
+            #[allow(unreachable_code)]
+            Ok::<Value, RpcErr>(Value::Null)
+        };
+        let request = |method: &str, params: &str| -> RpcRequest {
+            serde_json::from_str(&format!(
+                r#"{{"jsonrpc":"2.0","method":"{method}","params":{params},"id":1}}"#
+            ))
+            .unwrap()
+        };
+        let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<String>(16);
+        let mut subscription_ids: Vec<String> = Vec::new();
+
+        let storage = Store::new("temp.db", EngineType::InMemory).expect("in-memory store");
+        let mut no_syncer = crate::test_utils::context_without_p2p(storage);
+        no_syncer.ws = Some(WebSocketConfig {
+            addr: "127.0.0.1:0".parse().unwrap(),
+            subscription_manager: SubscriptionManager::spawn(),
+        });
+        let response = process_ws_request(
+            request("eth_subscribe", r#"["syncing"]"#),
+            &no_syncer,
+            &out_tx,
+            &mut subscription_ids,
+            &route_request,
+        )
+        .await
+        .unwrap();
+        assert!(response.get("error").is_some(), "{response}");
+
+        let mut context =
+            default_context_with_storage(crate::test_utils::setup_store().await).await;
+        let subscription_manager = SubscriptionManager::spawn();
+        context.ws = Some(WebSocketConfig {
+            addr: "127.0.0.1:0".parse().unwrap(),
+            subscription_manager: subscription_manager.clone(),
+        });
+        crate::subscription_manager::spawn_syncing_feed(
+            &context,
+            subscription_manager,
+            CancellationToken::new(),
+        );
+
+        let response = process_ws_request(
+            request("eth_subscribe", r#"["syncing"]"#),
+            &context,
+            &out_tx,
+            &mut subscription_ids,
+            &route_request,
+        )
+        .await
+        .unwrap();
+        let id = response["result"].clone();
+        assert!(id.is_string(), "{response}");
+
+        let mut next_result = async || -> Value {
+            let notification = tokio::time::timeout(Duration::from_secs(10), out_rx.recv())
+                .await
+                .expect("timed out waiting for the notification")
+                .unwrap();
+            let notification: Value = serde_json::from_str(&notification).unwrap();
+            assert_eq!(notification["method"], "eth_subscription");
+            assert_eq!(notification["params"]["subscription"], id);
+            notification["params"]["result"].clone()
+        };
+        assert_eq!(
+            next_result().await,
+            serde_json::json!({
+                "syncing": true,
+                "startingBlock": "0x0",
+                "currentBlock": "0x0",
+                "highestBlock": "0x0",
+            })
+        );
+        context.blockchain.set_synced();
+        assert_eq!(next_result().await, Value::Bool(false));
+
+        let response = process_ws_request(
+            request("eth_unsubscribe", &format!("[{id}]")),
+            &context,
+            &out_tx,
+            &mut subscription_ids,
+            &route_request,
+        )
+        .await
+        .unwrap();
+        assert_eq!(response["result"], true, "{response}");
     }
 
     /// `newPendingTransactions` delivers the hash of each transaction the mempool

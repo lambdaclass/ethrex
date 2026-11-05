@@ -12,8 +12,11 @@
 //! removed during the next `new_head` fan-out rather than silently accumulating
 //! unread messages.
 
+pub use crate::eth::client::{SyncStatus, SyncingStatusRpc};
+use crate::{eth::client::sync_status, rpc::RpcApiContext};
 use ethrex_common::{H256, types::BlockHeader};
 use rand::RngCore;
+use serde::Serialize;
 use serde_json::Value;
 use spawned_concurrency::{
     actor,
@@ -54,6 +57,8 @@ pub const MAX_TOTAL_SUBSCRIPTIONS: usize = 10_000;
 pub struct SubscriptionManager {
     /// `newHeads` subscribers.
     subscribers: HashMap<String, Sender<String>>,
+    syncing_subscribers: HashMap<String, Sender<String>>,
+    sync_status: Option<SyncStatus>,
     /// `newPendingTransactions` subscribers.
     pending_tx_subscribers: HashMap<String, Sender<String>>,
 }
@@ -72,12 +77,17 @@ pub trait SubscriptionManagerProtocol: Send + Sync {
     /// `newPendingTransactions` subscribers.
     fn new_pending_transaction(&self, hash: H256) -> Result<(), ActorError>;
 
+    /// Record the sync status; `syncing` subscribers only hear syncing/synced switches.
+    fn new_sync_status(&self, status: SyncStatus) -> Result<(), ActorError>;
+
     /// Register a new subscriber.
     ///
     /// Returns `Some(id)` with the subscription ID that the client should use
     /// in subsequent `eth_unsubscribe` calls, or `None` if the global cap
     /// [`MAX_TOTAL_SUBSCRIPTIONS`] has been reached.
     fn subscribe(&self, sender: Sender<String>) -> Response<Option<String>>;
+
+    fn subscribe_syncing(&self, sender: Sender<String>) -> Response<Option<String>>;
 
     /// Register a new `newPendingTransactions` subscriber. Returns its ID like
     /// [`Self::subscribe`], under the same global cap.
@@ -144,6 +154,26 @@ impl SubscriptionManager {
         );
     }
 
+    #[send_handler]
+    async fn handle_new_sync_status(
+        &mut self,
+        msg: subscription_manager_protocol::NewSyncStatus,
+        _ctx: &Context<Self>,
+    ) {
+        let status = msg.status;
+        let is_synced = |status: SyncStatus| matches!(status, SyncStatus::Synced);
+        let changed = self
+            .sync_status
+            .replace(status)
+            .is_none_or(|last| is_synced(last) != is_synced(status));
+        if changed
+            && !self.syncing_subscribers.is_empty()
+            && let Some(result) = sync_status_result(status)
+        {
+            fan_out(&mut self.syncing_subscribers, &result, "syncing");
+        }
+    }
+
     #[request_handler]
     async fn handle_subscribe(
         &mut self,
@@ -155,6 +185,26 @@ impl SubscriptionManager {
         }
         let id = generate_subscription_id();
         self.subscribers.insert(id.clone(), msg.sender);
+        Some(id)
+    }
+
+    #[request_handler]
+    async fn handle_subscribe_syncing(
+        &mut self,
+        msg: subscription_manager_protocol::SubscribeSyncing,
+        _ctx: &Context<Self>,
+    ) -> Option<String> {
+        if !self.below_cap() {
+            return None;
+        }
+        let id = generate_subscription_id();
+        if let Some(result) = self.sync_status.and_then(sync_status_result) {
+            let notification = build_subscription_notification(&id, &result);
+            if msg.sender.try_send(notification).is_err() {
+                warn!(sub_id = %id, "Failed to send the current sync status to a new subscriber");
+            }
+        }
+        self.syncing_subscribers.insert(id.clone(), msg.sender);
         Some(id)
     }
 
@@ -179,6 +229,7 @@ impl SubscriptionManager {
         _ctx: &Context<Self>,
     ) -> bool {
         self.subscribers.remove(&msg.id).is_some()
+            || self.syncing_subscribers.remove(&msg.id).is_some()
             || self.pending_tx_subscribers.remove(&msg.id).is_some()
     }
 }
@@ -186,7 +237,11 @@ impl SubscriptionManager {
 impl SubscriptionManager {
     /// Whether one more subscription fits under [`MAX_TOTAL_SUBSCRIPTIONS`].
     fn below_cap(&self) -> bool {
-        if self.subscribers.len() + self.pending_tx_subscribers.len() >= MAX_TOTAL_SUBSCRIPTIONS {
+        if self.subscribers.len()
+            + self.syncing_subscribers.len()
+            + self.pending_tx_subscribers.len()
+            >= MAX_TOTAL_SUBSCRIPTIONS
+        {
             warn!(
                 cap = MAX_TOTAL_SUBSCRIPTIONS,
                 "Global subscription cap reached, refusing new subscriber"
@@ -246,6 +301,57 @@ pub fn spawn_pending_transactions_feed(
             }
         }
     });
+}
+
+pub const SYNC_STATUS_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Polls the sync status for `syncing` subscribers; a no-op without a sync manager.
+pub fn spawn_syncing_feed(
+    context: &RpcApiContext,
+    manager: ActorRef<SubscriptionManager>,
+    cancel_token: CancellationToken,
+) {
+    let Some(syncer) = context.syncer.clone() else {
+        return;
+    };
+    let storage = context.storage.clone();
+    let blockchain = context.blockchain.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(SYNC_STATUS_POLL_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                _ = interval.tick() => match sync_status(&storage, &blockchain, &syncer).await {
+                    Ok(status) => {
+                        if manager.new_sync_status(status).is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => debug!("Failed to read the sync status for syncing subscribers: {e:?}"),
+                },
+                _ = cancel_token.cancelled() => break,
+            }
+        }
+    });
+}
+
+/// reth's format: `false`, or `{syncing: true, startingBlock, currentBlock, highestBlock}`.
+fn sync_status_result(status: SyncStatus) -> Option<Value> {
+    #[derive(Serialize)]
+    struct Syncing {
+        syncing: bool,
+        #[serde(flatten)]
+        status: SyncingStatusRpc,
+    }
+    let SyncStatus::Syncing(status) = status else {
+        return Some(Value::Bool(false));
+    };
+    serde_json::to_value(Syncing {
+        syncing: true,
+        status,
+    })
+    .inspect_err(|e| warn!("Failed to serialize the sync status for syncing subscribers: {e}"))
+    .ok()
 }
 
 /// Build the standard Ethereum subscription notification envelope.
