@@ -13,6 +13,6 @@ jobs:
   # for which the check is skipped
   changelog:
     if: contains(github.event.pull_request.labels.*.name, 'performance')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: dangoslen/changelog-enforcer@v3.6.1

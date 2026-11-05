@@ -23,7 +23,7 @@ env:
 
 jobs:
   detect-changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
@@ -56,7 +56,7 @@ jobs:
   lint:
     # "Lint" is a required check, don't change the name
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
@@ -191,7 +191,7 @@ jobs:
 
   known-issues-comment:
     name: Post Known Issues sticky comment
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Only on PRs from the same repo (forks lack write perms for comments).
     if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false }}
     permissions:
@@ -252,7 +252,7 @@ jobs:
 
   docker_build:
     name: Build Docker
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
@@ -280,7 +280,7 @@ jobs:
 
   run-assertoor:
     name: Assertoor - ${{ matrix.name }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [detect-changes, docker_build]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     strategy:
@@ -322,7 +322,7 @@ jobs:
 
   run-hive:
     name: Hive - ${{ matrix.name }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [detect-changes, docker_build]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     env:
@@ -469,7 +469,7 @@ jobs:
   unit-tests:
     # "Test" is a required check, don't change the name
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [detect-changes, test]
     # Make sure this job runs even if the previous jobs failed or were skipped
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() }}
@@ -483,7 +483,7 @@ jobs:
 
   check-cargo-locks:
     name: Check Cargo.lock
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
@@ -509,7 +509,7 @@ jobs:
   all-tests:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [detect-changes, run-assertoor, run-hive, check-cargo-locks, engine-ef-tests]
     # Make sure this job runs even if the previous jobs failed or were skipped
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.run-assertoor.result != 'skipped' && needs.run-hive.result != 'skipped' }}
@@ -534,7 +534,7 @@ jobs:
 
   reorg-tests:
     name: Reorg Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
