@@ -1819,7 +1819,8 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
             .get_payload(payload_id)
             .await
             .map_err(|err| match err {
-                ChainError::UnknownPayload => {
+                // A build that timed out was dropped, so its id has no payload.
+                ChainError::UnknownPayload | ChainError::PayloadTimedOut => {
                     RpcErr::UnknownPayload(format!("Payload with id {payload_id:#018x} not found",))
                 }
                 err => RpcErr::Internal(err.to_string()),

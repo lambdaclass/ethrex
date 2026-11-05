@@ -90,13 +90,25 @@ impl PayloadOrTask {
     }
 }
 
-/// Installs an in-flight build task into the payload pool, evicting the oldest
-/// entry if at capacity.
+/// Installs an in-flight build task into the payload pool, after dropping the
+/// builds that already ended on their own and, if still at capacity, the
+/// oldest entry.
 fn register_payload_build_task(
     payloads: &mut Vec<(u64, PayloadOrTask)>,
     payload_id: u64,
     task: PayloadBuildTask,
 ) {
+    // Drop the builds whose loop already ended on its own. This loses no
+    // block: `get_payload` removes an entry before it awaits its task, so a
+    // finished `Task` still listed was never requested, and the loop returns a
+    // build only once cancelled, which only `get_payload` and eviction do, both
+    // after removing the entry. Such a task holds an error (a timeout or a
+    // failed first build). `is_finished` does not wait and the caller already
+    // holds the `payloads` lock, so this takes no new lock and cannot deadlock
+    // with a `get_payload` that holds that lock while it awaits its task.
+    payloads.retain(
+        |(_, entry)| !matches!(entry, PayloadOrTask::Task(build) if build.task.is_finished()),
+    );
     if payloads.len() >= MAX_PAYLOADS {
         // Remove the oldest entry. A build still running there would keep
         // rebuilding for the rest of its slot, holding its build context, with
@@ -484,7 +496,8 @@ impl std::fmt::Debug for UnsealedPayload {
 impl Blockchain {
     /// Attempts to fetch a payload given its id. If the payload is still being
     /// built, the build is stopped and its best payload sealed. Fails if there
-    /// is no payload or active payload build task for the given id.
+    /// is no payload or active payload build task for the given id, or with
+    /// `PayloadTimedOut` if its build ended at the slot deadline.
     pub async fn get_payload(
         self: &Arc<Self>,
         payload_id: u64,
@@ -524,7 +537,8 @@ impl Blockchain {
     }
 
     /// Starts a payload build process. The built payload can be retrieved by calling `get_payload`.
-    /// The build process will run for the full block building timeslot or until `get_payload` is called
+    /// The build process will run for the full block building timeslot or until `get_payload` is called.
+    /// A build not retrieved within the timeslot is dropped.
     pub async fn initiate_payload_build(self: Arc<Blockchain>, payload: Block, payload_id: u64) {
         // EIP-8070: a node that builds payloads SHOULD permanently act as an eager
         // provider, so it holds complete blob data for every blob tx it may include.
@@ -552,8 +566,10 @@ impl Blockchain {
     /// Build the given payload and keep on rebuilding it until either the time slot
     /// given by `SECONDS_PER_SLOT` is up or the `cancel_token` is cancelled.
     ///
-    /// The loop keeps its best build (see `UnsealedPayload::beats`) and
-    /// returns it unsealed; [`Blockchain::get_payload`] seals it.
+    /// The loop keeps its best build (see `UnsealedPayload::beats`) and, once
+    /// cancelled, returns it unsealed; [`Blockchain::get_payload`] seals it.
+    /// If the slot ends first, the build is dropped and the loop returns
+    /// `ChainError::PayloadTimedOut`.
     ///
     /// Cancelling also stops the build in progress: it stops adding transactions
     /// and returns the ones it already has, so `getPayload` never waits for a
@@ -563,7 +579,9 @@ impl Blockchain {
         payload: Block,
         cancel_token: CancellationToken,
     ) -> Result<UnsealedPayload, ChainError> {
-        let start = Instant::now();
+        // Tokio's clock, the one the deadline `sleep` below runs on, so a test
+        // with a paused clock reaches the deadline without waiting 12 s.
+        let start = tokio::time::Instant::now();
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
         // The mempool sequence the latest build started from. Snapshot it
@@ -617,32 +635,17 @@ impl Blockchain {
             }
         }
 
-        // The slot-timeout `select!` arm can win over a simultaneous `tx_added`
-        // notification near the slot boundary, so if a tx landed after the
-        // latest build's snapshot, do one final build. On cancellation
-        // there is nothing left to do: a build started now would stop before
-        // adding a transaction, and the loop already waited for the in-flight
-        // rebuild when `best` was empty.
-        if !cancel_token.is_cancelled() && self.mempool.tx_seq() > last_built_seq {
-            let wait_if_cancelled = best.transactions().is_empty();
-            match self
-                .rebuild_payload(payload, &cancel_token, wait_if_cancelled)
-                .await
-            {
-                Some(Ok(Ok(candidate))) => {
-                    if candidate.beats(&best) {
-                        best = candidate;
-                    }
-                }
-                Some(Ok(Err(err))) => {
-                    warn!(%err, "Final payload rebuild failed; returning previous result")
-                }
-                Some(Err(err)) => warn!(%err, "Final payload rebuild task panicked"),
-                None => {}
-            }
+        // Read the token here rather than note which way the loop was left: a
+        // `getPayload` that cancels as the deadline passes, even after the
+        // deadline arm won, still gets the block.
+        if cancel_token.is_cancelled() {
+            return Ok(best);
         }
-
-        Ok(best)
+        // Nobody asked for the block within the slot. Drop the build here
+        // instead of holding it until the entry is evicted; a `getPayload` for
+        // this id now answers UnknownPayload.
+        drop(best);
+        Err(ChainError::PayloadTimedOut)
     }
 
     /// Rebuilds `payload` on a blocking thread, unsealed. If `cancel_token` is
@@ -2170,5 +2173,163 @@ mod tests {
             "a build task still registered was cancelled"
         );
         assert_eq!(payloads.len(), MAX_PAYLOADS);
+    }
+
+    /// A blockchain over the execution-api genesis with an empty mempool, and
+    /// a block template on top of genesis.
+    async fn blockchain_and_template() -> (Arc<Blockchain>, Block) {
+        use ethrex_common::types::{DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Genesis};
+        let path = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/genesis/execution-api.json"
+        ));
+        let genesis = Genesis::try_from(path).expect("Failed to load execution-api genesis");
+        let mut store = Store::new("store.db", ethrex_storage::EngineType::InMemory)
+            .expect("Failed to create in-memory store");
+        store
+            .add_initial_state(genesis)
+            .await
+            .expect("Failed to add genesis");
+        let blockchain = Arc::new(Blockchain::default_with_store(store.clone()));
+        let parent = store
+            .get_block_header(0)
+            .expect("Failed to read genesis header")
+            .expect("genesis header missing");
+        let args = BuildPayloadArgs {
+            parent: parent.hash(),
+            timestamp: parent.timestamp + 12,
+            fee_recipient: Address::zero(),
+            random: H256::zero(),
+            withdrawals: Some(Vec::new()),
+            beacon_root: Some(H256::zero()),
+            slot_number: None,
+            version: 3,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        };
+        let template = create_payload(&args, &store, Bytes::new()).expect("create_payload failed");
+        (blockchain, template)
+    }
+
+    /// Yields until the build task registered under `payload_id` has returned.
+    async fn wait_until_build_ended(blockchain: &Blockchain, payload_id: u64) {
+        for _ in 0..1_000 {
+            let ended = blockchain.payloads.lock().await.iter().any(|(id, entry)| {
+                *id == payload_id
+                    && matches!(entry, PayloadOrTask::Task(build) if build.task.is_finished())
+            });
+            if ended {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("the build loop did not end at its deadline");
+    }
+
+    /// A build nobody asked for within its slot is dropped: the loop returns
+    /// `PayloadTimedOut` (the engine API answers UnknownPayload) and the id
+    /// has no payload afterwards.
+    #[tokio::test(start_paused = true)]
+    async fn timed_out_build_is_dropped() {
+        let (blockchain, template) = blockchain_and_template().await;
+        let payload_id = 1;
+        blockchain
+            .clone()
+            .initiate_payload_build(template, payload_id)
+            .await;
+        // Let the loop take its start time, build the empty block and park in
+        // its `select!` before the clock moves; advancing first would start
+        // its 12 s after the jump. The mempool is empty, so no rebuild is
+        // running on a blocking thread while the clock jumps: the jump only
+        // wakes the loop's deadline.
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(13)).await;
+        // A getPayload that cancels the loop before it has seen its deadline
+        // gets the block, so wait for the loop to end on its own.
+        wait_until_build_ended(&blockchain, payload_id).await;
+
+        match blockchain.get_payload(payload_id).await {
+            Err(ChainError::PayloadTimedOut) => {}
+            other => panic!(
+                "expected PayloadTimedOut, got {:?}",
+                other.map(|sealed| sealed.payload.hash())
+            ),
+        }
+        match blockchain.get_payload(payload_id).await {
+            Err(ChainError::UnknownPayload) => {}
+            other => panic!(
+                "expected UnknownPayload for a dropped build, got {:?}",
+                other.map(|sealed| sealed.payload.hash())
+            ),
+        }
+    }
+
+    /// A getPayload that cancels the loop after its deadline has passed, but
+    /// before the loop has seen it, still gets the block: the outcome depends
+    /// on the cancellation, not on the clock.
+    #[tokio::test(start_paused = true)]
+    async fn cancel_racing_the_deadline_returns_the_build() {
+        let (blockchain, template) = blockchain_and_template().await;
+        let token = CancellationToken::new();
+        let mut build = std::pin::pin!(blockchain.build_payload_loop(template, token.clone()));
+        // Polled by hand, the loop runs only here: its first build, then it
+        // parks in its `select!`.
+        std::future::poll_fn(|cx| {
+            assert!(
+                build.as_mut().poll(cx).is_pending(),
+                "the loop ended before its deadline"
+            );
+            std::task::Poll::Ready(())
+        })
+        .await;
+
+        tokio::time::advance(Duration::from_secs(13)).await;
+        token.cancel();
+
+        assert!(
+            build.await.is_ok(),
+            "a getPayload racing the deadline lost its block"
+        );
+    }
+
+    /// Registering a build drops the entries whose loop already ended on its
+    /// own, as a timed-out one does, and keeps sealed payloads (for a repeated
+    /// getPayload) and builds still running.
+    #[tokio::test]
+    async fn finished_entries_are_purged_on_register() {
+        let ended = PayloadBuildTask {
+            task: tokio::spawn(async { Err(ChainError::PayloadTimedOut) }),
+            cancel: CancellationToken::new(),
+        };
+        for _ in 0..100 {
+            if ended.task.is_finished() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(ended.task.is_finished(), "the ended task did not run");
+        let running = || PayloadBuildTask {
+            task: tokio::spawn(std::future::pending()),
+            cancel: CancellationToken::new(),
+        };
+        let sealed = PayloadBuildResult {
+            blobs_bundle: BlobsBundle::default(),
+            block_value: U256::zero(),
+            receipts: Vec::new(),
+            requests: Vec::new(),
+            account_updates: Vec::new(),
+            payload: Block::default(),
+            block_access_list: None,
+        };
+        let mut payloads = vec![
+            (0, PayloadOrTask::Payload(Box::new(sealed))),
+            (1, PayloadOrTask::Task(ended)),
+            (2, PayloadOrTask::Task(running())),
+        ];
+
+        register_payload_build_task(&mut payloads, 3, running());
+
+        let ids: Vec<u64> = payloads.iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, vec![0, 2, 3], "the ended build was not purged");
     }
 }

@@ -36,6 +36,10 @@ pub enum ChainError {
     Custom(String),
     #[error("Unknown Payload")]
     UnknownPayload,
+    /// The payload build loop reached the end of its slot without a
+    /// `getPayload` and dropped its build, so the payload id no longer has one.
+    #[error("Payload build timed out before it was requested")]
+    PayloadTimedOut,
 }
 
 impl From<EvmError> for ChainError {
@@ -67,6 +71,7 @@ impl ChainError {
             ChainError::WitnessGeneration(_) => "witness_generation",
             ChainError::Custom(_) => "custom_error",
             ChainError::UnknownPayload => "unknown_payload",
+            ChainError::PayloadTimedOut => "payload_timed_out",
         }
     }
 }

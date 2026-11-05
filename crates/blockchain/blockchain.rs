@@ -142,7 +142,11 @@ use ethrex_metrics::blocks::METRICS_BLOCKS;
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
 
-const MAX_PAYLOADS: usize = 10;
+// Payload entries (sealed payloads and builds still running) kept so a repeated
+// getPayload for a recent id still gets its block. Each running entry holds its
+// best build's context and, with pre-sealing, a state tree, so the cap also
+// bounds how much of that memory payload building can hold at once.
+const MAX_PAYLOADS: usize = 4;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 // Below this many touched storage slots the BFS prefetch's own overhead (one
 // `multi_get` per trie level) isn't worth it; the serial insert loop's
