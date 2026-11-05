@@ -12,6 +12,7 @@ use serde_json::{Value, value::RawValue};
 use tracing::debug;
 
 use crate::{
+    eth::block::get_block_body,
     rpc::{RpcApiContext, RpcHandler},
     types::block_identifier::BlockIdentifier,
     utils::{RpcErr, parse_json_hex},
@@ -152,8 +153,7 @@ impl RpcHandler for FeeHistoryRequest {
             // Only the rewards need the block's transactions, so its body is read
             // only when percentiles are requested.
             if !self.reward_percentiles.is_empty() {
-                let body = storage
-                    .get_block_body(block_number)
+                let body = get_block_body(storage, block_number)
                     .await?
                     .ok_or(RpcErr::Internal(format!(
                         "Could not get body for block {block_number}"
@@ -218,8 +218,6 @@ async fn get_range(
 ) -> Result<(u64, u64), RpcErr> {
     // NOTE: The amount of blocks to retrieve is capped by MAX_BLOCK_COUNT
 
-    // Get earliest block
-    let earliest_block_num = storage.get_earliest_block_number().await?;
     // Get latest block
     let latest_block_num = storage.get_latest_block_number()?;
     // Get the expected finish block number from the parameter
@@ -231,8 +229,8 @@ async fn get_range(
         ))?;
     // Calculate start and finish block numbers, considering finish block inclusion
     let finish_block_num = expected_finish_block_num.min(latest_block_num);
-    let expected_start_block_num = (finish_block_num + 1).saturating_sub(block_count);
-    let start_block_num = earliest_block_num.max(expected_start_block_num);
+    // Not clamped to the earliest block: header fields are served below it.
+    let start_block_num = (finish_block_num + 1).saturating_sub(block_count);
 
     Ok((start_block_num, finish_block_num))
 }
