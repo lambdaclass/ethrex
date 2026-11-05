@@ -51,3 +51,18 @@ impl AccountUpdate {
         }
     }
 }
+
+/// One account's change in a build, with the parent values it replaces.
+/// A rebase uses the parent values to undo a change a newer build no longer makes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountDiff {
+    /// Exactly what `get_state_transitions` emits for this account.
+    pub update: AccountUpdate,
+    /// The account's info in the parent state.
+    pub parent_info: AccountInfo,
+    /// Parent value of every slot in `update.added_storage`.
+    pub parent_storage: SeededHashMap<H256, U256>,
+}
+
+/// A build's full change over its parent state.
+pub type StateDiff = SeededHashMap<Address, AccountDiff>;
