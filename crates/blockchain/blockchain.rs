@@ -119,6 +119,7 @@ use mempool::{
 };
 use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
+use sharded_trie::{AccountWrite, ShardedStateTrie};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
@@ -1592,13 +1593,50 @@ impl Blockchain {
     /// directly in the execution thread; the sequential path runs the same gate against the
     /// rebuilt BAL. On any mismatch the optimistic merkle output is discarded via `?` on the
     /// execution thread's join result.
+    ///
+    /// Public (and hidden) only so `bal_path_matches_reference` can compare it
+    /// with `bal_merkleization_reference`.
     #[instrument(
         level = "trace",
         name = "Trie update (BAL)",
         skip_all,
         fields(namespace = "block_execution")
     )]
-    fn handle_merkleization_bal_from_updates(
+    #[doc(hidden)]
+    pub fn handle_merkleization_bal_from_updates(
+        &self,
+        prepared: SeededHashMap<Address, BalSynthesisItem>,
+        parent_header: &BlockHeader,
+    ) -> Result<AccountUpdatesList, StoreError> {
+        let mut tree = ShardedStateTrie::open(self.storage.clone(), parent_header.state_root)?;
+        // Synthesis never removes an account or resets its storage; an account
+        // left empty is removed by the tree's EIP-161 rule, as Stage C did.
+        tree.apply(prepared.into_iter().map(|(address, item)| {
+            AccountWrite {
+                hashed_address: keccak(address),
+                removed: false,
+                removed_storage: false,
+                nonce: item.nonce,
+                balance: item.balance,
+                code_hash: item.code_hash,
+                code: item.code_hash.zip(item.code),
+                storage: item
+                    .added_storage
+                    .into_iter()
+                    .map(|(key, value)| (keccak(key), value))
+                    .collect(),
+            }
+        }));
+        tree.finish()
+    }
+
+    /// The BAL merkleizer as it was before it moved onto `ShardedStateTrie`.
+    /// Import does not call it: it is kept, unchanged, only so the
+    /// `bal_path_matches_reference` test in the `ethrex-test` crate (hence
+    /// `pub`) can catch a root or node-set regression in
+    /// `ShardedStateTrie::finish` whenever either side is edited.
+    #[doc(hidden)]
+    pub fn bal_merkleization_reference(
         &self,
         prepared: SeededHashMap<Address, BalSynthesisItem>,
         parent_header: &BlockHeader,
@@ -5089,7 +5127,10 @@ pub(crate) fn branchify(node: Node) -> Box<BranchNode> {
     }
 }
 
-fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieNode>), TrieError> {
+pub(crate) fn collect_trie(
+    index: u8,
+    mut trie: Trie,
+) -> Result<(Box<BranchNode>, Vec<TrieNode>), TrieError> {
     let root = branchify(
         trie.root_node()?
             .map(Arc::unwrap_or_clone)
@@ -5111,7 +5152,7 @@ fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieN
 /// branchify/collapse reassembly, while producing the correct root, would emit
 /// a different (extra/stale, always unreachable) node set than the canonical
 /// serial path.
-fn serial_storage_root(
+pub(crate) fn serial_storage_root(
     storage: &Store,
     parent_state_root: H256,
     hashed_address: H256,

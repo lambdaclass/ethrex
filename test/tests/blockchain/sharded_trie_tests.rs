@@ -4,16 +4,23 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bytes::Bytes;
-use ethrex_blockchain::sharded_trie::{AccountWrite, ShardedStateTrie};
+use ethrex_blockchain::{
+    Blockchain,
+    sharded_trie::{AccountWrite, ShardedStateTrie},
+};
 use ethrex_common::{
     Address, H160, H256, U256,
-    constants::EMPTY_TRIE_HASH,
-    types::{AccountInfo, AccountUpdate, BlockHeader, Code, Genesis, GenesisAccount},
+    constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH},
+    seeded_hash::SeededHashMap,
+    types::{
+        AccountInfo, AccountUpdate, BlockHeader, Code, Genesis, GenesisAccount,
+        block_access_list::BalSynthesisItem,
+    },
     utils::keccak,
 };
 use ethrex_crypto::NativeCrypto;
-use ethrex_storage::{EngineType, Store};
-use ethrex_trie::Node;
+use ethrex_storage::{AccountUpdatesList, EngineType, Store};
+use ethrex_trie::{Node, TrieNode};
 
 /// Deterministic generator, so a failure is reproducible from its seed.
 struct Rng(u64);
@@ -567,4 +574,274 @@ async fn hot_account_across_batches() {
         "reset"
     );
     assert!(tree.is_sharded_storage(keccak(hot)), "reset");
+}
+
+#[tokio::test]
+async fn finish_after_root_is_an_error() {
+    let (store, parent) = parent_state(30, 10).await;
+    let updates = random_updates(&mut Rng(3), 30, 10, 10);
+    let mut tree = ShardedStateTrie::open(store, parent.state_root).unwrap();
+    tree.apply(updates.iter().map(AccountWrite::from_update));
+    tree.root().unwrap();
+    // The root memoized node hashes, so a node collection now would be
+    // missing nodes; it must fail rather than return them.
+    assert!(tree.finish().is_err());
+}
+
+/// An account update list in a form two runs can be compared in: every node
+/// list sorted, since shards and workers emit them in any order. Code updates
+/// are sorted too, as both sides push them in the input map's iteration order,
+/// which nothing guarantees to match.
+type Normalized = (
+    H256,
+    Vec<TrieNode>,
+    Vec<(H256, Vec<TrieNode>)>,
+    Vec<(H256, Code)>,
+);
+
+fn normalized(mut list: AccountUpdatesList) -> Normalized {
+    list.state_updates.sort();
+    for (_, nodes) in &mut list.storage_updates {
+        nodes.sort();
+    }
+    list.storage_updates.sort();
+    list.code_updates
+        .sort_by_key(|(hash, code)| (*hash, code.hash));
+    (
+        list.state_trie_hash,
+        list.state_updates,
+        list.storage_updates,
+        list.code_updates,
+    )
+}
+
+/// Generated index of a contract with `BAL_HOT_SLOTS` parent slots.
+const BAL_HOT: u64 = 1_000;
+const BAL_HOT_SLOTS: u64 = 3_000;
+const BAL_ACCOUNTS: u64 = 60;
+const BAL_SLOTS: u64 = 40;
+
+async fn bal_parent_state() -> (Store, BlockHeader) {
+    let mut genesis = genesis(BAL_ACCOUNTS, BAL_SLOTS);
+    let mut hot = generated_account(0, BAL_HOT_SLOTS);
+    hot.nonce = 1;
+    genesis.alloc.insert(address(BAL_HOT), hot);
+    store_with(genesis).await
+}
+
+fn new_code(rng: &mut Rng) -> Code {
+    Code::from_bytecode(
+        Bytes::from(rng.next().to_be_bytes().to_vec()),
+        &NativeCrypto,
+    )
+}
+
+fn random_value(rng: &mut Rng, zero_percent: u64) -> U256 {
+    if rng.chance(zero_percent) {
+        U256::zero()
+    } else {
+        U256::from(1 + rng.below(1 << 32))
+    }
+}
+
+/// One random BAL item for account `i`, which the parent has if `exists`.
+fn random_bal_item(rng: &mut Rng, i: u64, exists: bool) -> BalSynthesisItem {
+    let mut item = BalSynthesisItem::default();
+    match rng.below(6) {
+        // Info only.
+        0 => {
+            item.balance = Some(U256::from(1 + rng.below(1 << 40)));
+            if rng.chance(50) {
+                item.nonce = Some(1 + rng.below(50));
+            }
+        }
+        // Slot overwrites, inserts and deletions.
+        1 | 2 => {
+            if !exists {
+                let code = new_code(rng);
+                item.nonce = Some(1);
+                item.code_hash = Some(code.hash);
+                item.code = Some(code);
+            }
+            for _ in 0..1 + rng.below(30) {
+                let j = if exists && has_storage(i) && rng.chance(60) {
+                    rng.below(BAL_SLOTS)
+                } else {
+                    BAL_SLOTS + rng.below(100)
+                };
+                item.added_storage.insert(slot(j), random_value(rng, 20));
+            }
+        }
+        // Every parent slot cleared, so the storage trie ends up empty. Half
+        // the time the account also loses its code, nonce and balance and
+        // ends up empty too, so it is removed (EIP-161).
+        3 if exists && has_storage(i) => {
+            for j in 0..BAL_SLOTS {
+                item.added_storage.insert(slot(j), U256::zero());
+            }
+            if rng.chance(50) {
+                item.nonce = Some(0);
+                item.balance = Some(U256::zero());
+                item.code_hash = Some(*EMPTY_KECCAK_HASH);
+            }
+        }
+        // Zero nonce and balance: an account without code or storage ends up
+        // empty and is removed (EIP-161), including one the parent does not
+        // have.
+        3 | 4 => {
+            item.nonce = Some(0);
+            item.balance = Some(U256::zero());
+        }
+        // New code.
+        _ => {
+            let code = new_code(rng);
+            item.nonce = Some(1 + rng.below(5));
+            item.code_hash = Some(code.hash);
+            item.code = Some(code);
+        }
+    }
+    item
+}
+
+/// `n` slot indices whose hashed keys all start with `nibble`.
+fn slots_in_bucket(nibble: u8, n: usize) -> Vec<u64> {
+    (0u64..)
+        .filter(|j| keccak(slot(*j)).as_bytes()[0] >> 4 == nibble)
+        .take(n)
+        .collect()
+}
+
+/// The BAL items for one seed: random items over existing and new accounts,
+/// plus one hot-storage case chosen by the seed so every case runs.
+fn random_bal_items(seed: u64) -> SeededHashMap<Address, BalSynthesisItem> {
+    let mut rng = Rng(seed);
+    let mut items = SeededHashMap::default();
+    while items.len() < 50 {
+        let i = rng.below(BAL_ACCOUNTS + BAL_ACCOUNTS / 2);
+        let item = random_bal_item(&mut rng, i, i < BAL_ACCOUNTS);
+        items.insert(address(i), item);
+    }
+    let mut hot = BalSynthesisItem::default();
+    match seed % 5 {
+        // Overwrites, inserts and deletions over the parent's slots.
+        0 => {
+            for _ in 0..2_500 {
+                let j = rng.below(BAL_HOT_SLOTS + 1_000);
+                hot.added_storage
+                    .insert(slot(j), random_value(&mut rng, 10));
+            }
+        }
+        // Every slot deleted: the split trie empties, which import computes
+        // serially instead.
+        1 => {
+            for j in 0..BAL_HOT_SLOTS {
+                hot.added_storage.insert(slot(j), U256::zero());
+            }
+        }
+        // Every write in one bucket: import computes it serially instead.
+        2 => {
+            let nibble = u8::try_from(seed % 16).expect("a nibble");
+            for j in slots_in_bucket(nibble, 2_100) {
+                hot.added_storage
+                    .insert(slot(j), random_value(&mut rng, 10));
+            }
+        }
+        // Every slot outside one bucket deleted and some inside it changed,
+        // so the split path runs and the root collapses onto that bucket:
+        // there its node set differs from a serial one, and import keeps the
+        // split path's.
+        3 => {
+            let kept = u8::try_from(seed % 16).expect("a nibble");
+            for j in 0..BAL_HOT_SLOTS {
+                if keccak(slot(j)).as_bytes()[0] >> 4 != kept {
+                    hot.added_storage.insert(slot(j), U256::zero());
+                } else if j % 3 == 0 {
+                    hot.added_storage.insert(slot(j), U256::from(7 + j));
+                }
+            }
+        }
+        // A new account with a split trie from the start; the hot one only
+        // changes its balance.
+        _ => {
+            let code = new_code(&mut rng);
+            let mut fresh = BalSynthesisItem {
+                nonce: Some(1),
+                code_hash: Some(code.hash),
+                code: Some(code),
+                ..Default::default()
+            };
+            for j in 0..2_500 {
+                fresh
+                    .added_storage
+                    .insert(slot(j), random_value(&mut rng, 0));
+            }
+            items.insert(address(2_000 + seed), fresh);
+            hot.balance = Some(U256::from(seed));
+        }
+    }
+    items.insert(address(BAL_HOT), hot);
+    items
+}
+
+/// Import's BAL merkleizer on `ShardedStateTrie::finish` must give the same
+/// root, the same state and storage node sets and the same code as the
+/// merkleizer it replaced.
+#[tokio::test]
+async fn bal_path_matches_reference() {
+    let (store, parent) = bal_parent_state().await;
+    let blockchain = Blockchain::default_with_store(store);
+    for seed in 1..=40 {
+        let items = random_bal_items(seed);
+        // A clone iterates in the same order, so both sides apply the items in
+        // the same order, as one block's would be.
+        let reference = blockchain
+            .bal_merkleization_reference(items.clone(), &parent)
+            .unwrap();
+        let sharded = blockchain
+            .handle_merkleization_bal_from_updates(items, &parent)
+            .unwrap();
+        let (root, state, storage, code) = normalized(sharded);
+        let (expected_root, expected_state, expected_storage, expected_code) =
+            normalized(reference);
+        assert_eq!(root, expected_root, "seed {seed}: root");
+        assert_eq!(state, expected_state, "seed {seed}: state nodes");
+        assert_eq!(storage, expected_storage, "seed {seed}: storage nodes");
+        assert_eq!(code, expected_code, "seed {seed}: code");
+    }
+}
+
+/// When every account ends up empty, both sides return the empty root with
+/// the `RLP_NULL` root entry (Stage D).
+#[tokio::test]
+async fn bal_path_matches_reference_when_the_state_empties() {
+    let mut genesis = fixture_genesis();
+    genesis.alloc.clear();
+    let plain: Vec<u64> = (1..40).filter(|i| !has_storage(*i)).collect();
+    for i in &plain {
+        genesis.alloc.insert(address(*i), generated_account(*i, 0));
+    }
+    let (store, parent) = store_with(genesis).await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let mut items = SeededHashMap::default();
+    for i in &plain {
+        let item = BalSynthesisItem {
+            nonce: Some(0),
+            balance: Some(U256::zero()),
+            ..Default::default()
+        };
+        items.insert(address(*i), item);
+    }
+    let reference = normalized(
+        blockchain
+            .bal_merkleization_reference(items.clone(), &parent)
+            .unwrap(),
+    );
+    let sharded = normalized(
+        blockchain
+            .handle_merkleization_bal_from_updates(items, &parent)
+            .unwrap(),
+    );
+    assert_eq!(sharded.0, *EMPTY_TRIE_HASH);
+    assert_eq!(sharded, reference);
 }

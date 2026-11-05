@@ -18,15 +18,18 @@ use ethrex_common::{
     types::{AccountState, AccountUpdate, Code},
 };
 use ethrex_crypto::NativeCrypto;
-use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_storage::{Store, error::StoreError};
+use ethrex_rlp::{constants::RLP_NULL, decode::RLPDecode, encode::RLPEncode};
+use ethrex_storage::{AccountUpdatesList, Store, error::StoreError};
 use ethrex_trie::{
-    Nibbles, Node, NodeRef, OnceLock, Trie, TrieError,
+    Nibbles, Node, NodeRef, OnceLock, Trie, TrieError, TrieNode,
     node::{BranchNode, ExtensionNode, LeafNode},
 };
 use rustc_hash::FxHashMap;
 
-use crate::{STATE_SHARD_PREFETCH_THRESHOLD, STORAGE_PREFETCH_THRESHOLD, collapse_root_node};
+use crate::{
+    DROP_SENDER, STATE_SHARD_PREFETCH_THRESHOLD, STORAGE_PREFETCH_THRESHOLD, collapse_root_node,
+    collect_trie, compute_sharded_storage_root, serial_storage_root,
+};
 
 /// Shards of the state trie, one per first nibble of the hashed address.
 pub const SHARDS: usize = 16;
@@ -115,6 +118,10 @@ pub struct ShardedStateTrie {
     pending: Vec<FxHashMap<H256, PendingWrite>>,
     /// A `root()` has run (see the type docs).
     hashed: bool,
+    /// Writes applied so far, numbering each account's first one.
+    writes_seen: usize,
+    /// Every `AccountWrite::code`, in write order, for `finish()`.
+    code_updates: Vec<(H256, Code)>,
 }
 
 impl ShardedStateTrie {
@@ -130,17 +137,27 @@ impl ShardedStateTrie {
             accounts: (0..SHARDS).map(|_| FxHashMap::default()).collect(),
             pending: (0..SHARDS).map(|_| FxHashMap::default()).collect(),
             hashed: false,
+            writes_seen: 0,
+            code_updates: Vec::new(),
         })
     }
 
-    /// Queues `writes` for the next `root()`, in order: the last write to a
-    /// field or slot wins.
+    /// Queues `writes` for the next `root()` or `finish()`, in order: the last
+    /// write to a field or slot wins.
     pub fn apply(&mut self, writes: impl IntoIterator<Item = AccountWrite>) {
-        for write in writes {
+        for mut write in writes {
+            if let Some(code) = write.code.take() {
+                self.code_updates.push(code);
+            }
+            let seq = self.writes_seen;
+            self.writes_seen += 1;
             let shard = usize::from(write.hashed_address.as_bytes()[0] >> 4);
             self.pending[shard]
                 .entry(write.hashed_address)
-                .or_default()
+                .or_insert_with(|| PendingWrite {
+                    seq,
+                    ..Default::default()
+                })
                 .merge(write);
         }
     }
@@ -148,17 +165,96 @@ impl ShardedStateTrie {
     /// The state root with every write applied so far.
     pub fn root(&mut self) -> Result<H256, StoreError> {
         self.hashed = true;
-        let work: usize = self
-            .pending
-            .iter()
-            .flat_map(|shard| shard.values())
-            .map(|write| 1 + write.slots.len())
-            .sum();
-        let inline = work < INLINE_THRESHOLD;
+        let inline = pending_work(&self.pending) < INLINE_THRESHOLD;
         // Storage first: the state step writes each account's storage root.
         self.update_storage(inline)?;
         let children = self.update_state(inline)?;
         root_hash(&self.store, self.parent_state_root, None, children)
+    }
+
+    /// The state root, with every trie node and code import must persist for
+    /// the writes applied. Consumes the tree.
+    ///
+    /// It reproduces import's BAL merkleizer node for node: a storage trie
+    /// with `HOT_STORAGE_SLOTS` or more slot writes goes through
+    /// `compute_sharded_storage_root` (Stage B.5) and any other through
+    /// `serial_storage_root` (Stage B); each state shard takes accounts in the
+    /// order they were first written and re-inserts an account's parent leaf
+    /// before writing it (Stage C); the root is collapsed and committed
+    /// (Stage D).
+    ///
+    /// Fails after a `root()` (see the type docs).
+    pub fn finish(self) -> Result<AccountUpdatesList, StoreError> {
+        if self.hashed {
+            return Err(StoreError::Custom(
+                "ShardedStateTrie::finish after root() would miss the nodes root() hashed"
+                    .to_string(),
+            ));
+        }
+        let Self {
+            store,
+            parent_state_root,
+            state,
+            mut accounts,
+            mut pending,
+            code_updates,
+            ..
+        } = self;
+        let inline = pending_work(&pending) < INLINE_THRESHOLD;
+
+        // Stages B and B.5.
+        let jobs = take_storage_jobs(&mut pending, &mut accounts);
+        let (hot, normal): (Vec<_>, Vec<_>) = jobs.into_iter().partition(StorageJob::sharded);
+        let mut collected = run_storage_jobs(normal, inline, |job, reader| {
+            job.collect(&store, parent_state_root, reader)
+        })?;
+        // One at a time: `compute_sharded_storage_root` keeps 16 threads busy.
+        let mut reader = None;
+        for job in hot {
+            collected.push(job.collect(&store, parent_state_root, &mut reader)?);
+        }
+        let mut storage_updates = Vec::with_capacity(collected.len());
+        for (shard, hashed_address, account, nodes) in collected {
+            accounts[shard].insert(hashed_address, account);
+            storage_updates.push((hashed_address, nodes));
+        }
+
+        // Stage C. A shard without writes still contributes its child.
+        let shards = per_part(
+            "sharded_trie_collect",
+            state.into_iter().zip(accounts).zip(pending),
+            |(_, pending)| !inline && !pending.is_empty(),
+            |index, ((trie, accounts), pending)| collect_shard(index, trie, accounts, pending),
+        )?;
+        let mut root = BranchNode::default();
+        let mut state_updates = Vec::new();
+        for (index, (child, nodes)) in shards.into_iter().enumerate() {
+            state_updates.extend(nodes);
+            root.choices[index] = child;
+        }
+
+        // Stage D.
+        let state_trie_hash = match collapse_root_node(&store, parent_state_root, None, root)? {
+            Some(root) => {
+                let mut root = NodeRef::from(root);
+                let hash = root.commit(Nibbles::default(), &mut state_updates, &NativeCrypto);
+                // Freeing a large tree is slow; the drop thread does it off
+                // the import path.
+                let _ = DROP_SENDER.send(Box::new(root));
+                hash.finalize(&NativeCrypto)
+            }
+            None => {
+                state_updates.push((Nibbles::default(), vec![RLP_NULL]));
+                *EMPTY_TRIE_HASH
+            }
+        };
+
+        Ok(AccountUpdatesList {
+            state_trie_hash,
+            state_updates,
+            storage_updates,
+            code_updates,
+        })
     }
 
     /// Whether `hashed_address`'s storage trie is split in 16, as of the last
@@ -175,40 +271,20 @@ impl ShardedStateTrie {
     /// Applies the queued slot writes and stores each written account's new
     /// storage root in its `TouchedAccount`.
     fn update_storage(&mut self, inline: bool) -> Result<(), StoreError> {
-        // Each job takes its account out of the shard map, so jobs can run on
-        // separate threads without sharing the maps.
-        let mut jobs = Vec::new();
-        for (shard, pending) in self.pending.iter_mut().enumerate() {
-            for (hashed_address, write) in pending.iter_mut() {
-                if !write.has_storage_work() {
-                    continue;
-                }
-                jobs.push(StorageJob {
-                    shard,
-                    hashed_address: *hashed_address,
-                    account: self.accounts[shard].remove(hashed_address),
-                    reset: write.removed_storage,
-                    slots: last_write_per_slot(std::mem::take(&mut write.slots)),
-                });
-            }
-        }
+        let jobs = take_storage_jobs(&mut self.pending, &mut self.accounts);
+        let (store, parent_state_root) = (&self.store, self.parent_state_root);
         // A split trie with enough slots runs its 16 parts on threads by itself.
         let (hot, normal): (Vec<_>, Vec<_>) = jobs
             .into_iter()
             .partition(|job| !inline && job.sharded() && job.slots.len() >= INLINE_THRESHOLD);
-        let mut reader = None;
-        let mut done = if inline || normal.len() <= 1 {
-            normal
-                .into_iter()
-                .map(|job| job.run(&self.store, self.parent_state_root, &mut reader, false))
-                .collect::<Result<Vec<_>, _>>()?
-        } else {
-            run_storage_jobs(&self.store, self.parent_state_root, normal)?
-        };
+        let mut done = run_storage_jobs(normal, inline, |job, reader| {
+            job.run(store, parent_state_root, reader, false)
+        })?;
         // One at a time, after the rest, as import's Stage B.5 does: each
         // already keeps 16 threads busy.
+        let mut reader = None;
         for job in hot {
-            done.push(job.run(&self.store, self.parent_state_root, &mut reader, true)?);
+            done.push(job.run(store, parent_state_root, &mut reader, true)?);
         }
         for (shard, hashed_address, account) in done {
             self.accounts[shard].insert(hashed_address, account);
@@ -232,9 +308,7 @@ impl ShardedStateTrie {
 }
 
 /// The 16 children of a root branch, child `i` computed by `child(i, part)`
-/// from the `i`th of 16 `parts`. Parts for which `threaded` holds run on
-/// scoped threads; the rest run inline, which suits parts with nothing to
-/// write, whose child is a memoized read.
+/// from the `i`th of 16 `parts` (see `per_part`).
 fn children_of<P: Send>(
     thread_name: &str,
     parts: impl Iterator<Item = P>,
@@ -242,28 +316,84 @@ fn children_of<P: Send>(
     child: impl Fn(usize, P) -> Result<NodeRef, StoreError> + Sync,
 ) -> Result<[NodeRef; SHARDS], StoreError> {
     let mut children = BranchNode::EMPTY_CHOICES;
+    for (slot, child) in children
+        .iter_mut()
+        .zip(per_part(thread_name, parts, threaded, child)?)
+    {
+        *slot = child;
+    }
+    Ok(children)
+}
+
+/// `work(i, part)` for each of `parts`, in part order. Parts for which
+/// `threaded` holds run on scoped threads; the rest run inline, which suits
+/// parts with nothing to write, whose result is a memoized read.
+fn per_part<P: Send, T: Send>(
+    thread_name: &str,
+    parts: impl Iterator<Item = P>,
+    threaded: impl Fn(&P) -> bool,
+    work: impl Fn(usize, P) -> Result<T, StoreError> + Sync,
+) -> Result<Vec<T>, StoreError> {
+    let mut results: Vec<Option<T>> = Vec::new();
     std::thread::scope(|s| -> Result<(), StoreError> {
-        let child = &child;
+        let work = &work;
         let mut handles = Vec::new();
         for (index, part) in parts.enumerate() {
             if !threaded(&part) {
-                children[index] = child(index, part)?;
+                results.push(Some(work(index, part)?));
                 continue;
             }
             let handle = std::thread::Builder::new()
                 .name(format!("{thread_name}_{index}"))
-                .spawn_scoped(s, move || child(index, part))
+                .spawn_scoped(s, move || work(index, part))
                 .map_err(|e| StoreError::Custom(format!("spawn failed: {e}")))?;
             handles.push((index, handle));
+            results.push(None);
         }
         for (index, handle) in handles {
-            children[index] = handle
-                .join()
-                .map_err(|_| StoreError::Custom(format!("{thread_name} worker panicked")))??;
+            results[index] = Some(
+                handle
+                    .join()
+                    .map_err(|_| StoreError::Custom(format!("{thread_name} worker panicked")))??,
+            );
         }
         Ok(())
     })?;
-    Ok(children)
+    Ok(results.into_iter().flatten().collect())
+}
+
+/// Dirty accounts plus queued slots, to choose between inline and threads.
+fn pending_work(pending: &[FxHashMap<H256, PendingWrite>]) -> usize {
+    pending
+        .iter()
+        .flat_map(|shard| shard.values())
+        .map(|write| 1 + write.slots.len())
+        .sum()
+}
+
+/// Moves the storage work queued in `pending` into one job per account. Each
+/// job takes its account out of `accounts`, so jobs can run on separate
+/// threads without sharing the maps; the caller puts it back.
+fn take_storage_jobs(
+    pending: &mut [FxHashMap<H256, PendingWrite>],
+    accounts: &mut [FxHashMap<H256, TouchedAccount>],
+) -> Vec<StorageJob> {
+    let mut jobs = Vec::new();
+    for (shard, (pending, accounts)) in pending.iter_mut().zip(accounts).enumerate() {
+        for (hashed_address, write) in pending.iter_mut() {
+            if !write.has_storage_work() {
+                continue;
+            }
+            jobs.push(StorageJob {
+                shard,
+                hashed_address: *hashed_address,
+                account: accounts.remove(hashed_address),
+                reset: write.removed_storage,
+                slots: last_write_per_slot(std::mem::take(&mut write.slots)),
+            });
+        }
+    }
+    jobs
 }
 
 /// The root hash of a trie whose root branch has `children`, collapsed as
@@ -331,6 +461,9 @@ impl TouchedAccount {
 /// Every write to one account since the last `root()`, merged.
 #[derive(Default)]
 struct PendingWrite {
+    /// Number of the first of these writes among all the tree's writes.
+    /// `finish()` replays accounts in this order, as Stage C did.
+    seq: usize,
     /// The last write's `removed`.
     removed: bool,
     /// Some write reset the storage; `slots` holds only later writes.
@@ -352,7 +485,12 @@ impl PendingWrite {
         self.nonce = write.nonce.or(self.nonce);
         self.balance = write.balance.or(self.balance);
         self.code_hash = write.code_hash.or(self.code_hash);
-        self.slots.extend(write.storage);
+        if self.slots.is_empty() {
+            // Most accounts get one write: keep its vector instead of copying.
+            self.slots = write.storage;
+        } else {
+            self.slots.extend(write.storage);
+        }
     }
 
     fn has_storage_work(&self) -> bool {
@@ -495,15 +633,62 @@ impl StorageJob {
         account.storage = Some(storage);
         Ok((self.shard, self.hashed_address, account))
     }
+
+    /// The one-shot counterpart of `run`, for `finish()`: also returns the
+    /// trie nodes the slot writes produce, exactly as import's Stage B
+    /// (`serial_storage_root`) or Stage B.5 (`compute_sharded_storage_root`)
+    /// produced them, and keeps no trie.
+    fn collect(
+        self,
+        store: &Store,
+        parent_state_root: H256,
+        reader: &mut Option<Trie>,
+    ) -> Result<(usize, H256, TouchedAccount, Vec<TrieNode>), StoreError> {
+        let sharded = self.sharded();
+        let mut account = match self.account {
+            Some(account) => account,
+            None => TouchedAccount::new(read_parent(
+                store,
+                parent_state_root,
+                reader,
+                self.hashed_address,
+            )?),
+        };
+        let storage_root = if self.reset {
+            *EMPTY_TRIE_HASH
+        } else {
+            account.parent_storage_root
+        };
+        let collect = if sharded {
+            compute_sharded_storage_root
+        } else {
+            serial_storage_root
+        };
+        let (root, nodes) = collect(
+            store,
+            parent_state_root,
+            self.hashed_address,
+            storage_root,
+            &self.slots,
+        )?;
+        account.state.storage_root = root;
+        Ok((self.shard, self.hashed_address, account, nodes))
+    }
 }
 
-/// Runs storage jobs on up to `SHARDS` scoped threads, bin-packed greedily by
-/// slot count as import's Stage B does.
-fn run_storage_jobs(
-    store: &Store,
-    parent_state_root: H256,
+/// `run(job, reader)` for each job: inline when `inline` or there is at most
+/// one job, else on up to `SHARDS` scoped threads, bin-packed greedily by slot
+/// count as import's Stage B does. `reader` is the worker's own read-only
+/// parent state trie, opened on first use.
+fn run_storage_jobs<T: Send>(
     mut jobs: Vec<StorageJob>,
-) -> Result<Vec<(usize, H256, TouchedAccount)>, StoreError> {
+    inline: bool,
+    run: impl Fn(StorageJob, &mut Option<Trie>) -> Result<T, StoreError> + Sync,
+) -> Result<Vec<T>, StoreError> {
+    if inline || jobs.len() <= 1 {
+        let mut reader = None;
+        return jobs.into_iter().map(|job| run(job, &mut reader)).collect();
+    }
     jobs.sort_unstable_by_key(|job| std::cmp::Reverse(job.weight()));
     let mut bins: Vec<Vec<StorageJob>> = (0..SHARDS).map(|_| Vec::new()).collect();
     let mut weights = [0usize; SHARDS];
@@ -516,6 +701,7 @@ fn run_storage_jobs(
         weights[lightest] += job.weight();
         bins[lightest].push(job);
     }
+    let run = &run;
     std::thread::scope(|s| {
         let handles = bins
             .into_iter()
@@ -527,7 +713,7 @@ fn run_storage_jobs(
                     .spawn_scoped(s, move || {
                         let mut reader = None;
                         bin.into_iter()
-                            .map(|job| job.run(store, parent_state_root, &mut reader, false))
+                            .map(|job| run(job, &mut reader))
                             .collect::<Result<Vec<_>, _>>()
                     })
                     .map_err(|e| StoreError::Custom(format!("spawn failed: {e}")))
@@ -582,6 +768,56 @@ fn update_shard(
         }
     }
     Ok(shard_child(trie, index)?)
+}
+
+/// Stage C for shard `index`, for `finish()`: writes `pending` the way import
+/// did and returns the shard's child of the root branch with the nodes the
+/// shard produced.
+fn collect_shard(
+    index: usize,
+    mut trie: Trie,
+    mut accounts: FxHashMap<H256, TouchedAccount>,
+    pending: FxHashMap<H256, PendingWrite>,
+) -> Result<(NodeRef, Vec<TrieNode>), StoreError> {
+    let mut writes: Vec<(H256, PendingWrite)> = pending.into_iter().collect();
+    if writes.len() >= STATE_SHARD_PREFETCH_THRESHOLD {
+        let mut addresses: Vec<H256> = writes.iter().map(|(address, _)| *address).collect();
+        addresses.sort_unstable();
+        let paths: Vec<Nibbles> = addresses
+            .iter()
+            .map(|address| Nibbles::from_bytes(address.as_bytes()))
+            .collect();
+        trie.prefetch_sorted(&paths)?;
+    }
+    // First-write order, the order Stage C took them in: which unchanged
+    // nodes a removal re-creates depends on what was inserted before it, so
+    // another order can emit a different node set.
+    writes.sort_unstable_by_key(|(_, write)| write.seq);
+    for (hashed_address, write) in writes {
+        let path = hashed_address.as_bytes();
+        // Stage C re-inserts the parent leaf before writing the account, so
+        // its path is collected even when the account ends up unchanged.
+        let parent = match trie.get(path)? {
+            Some(rlp) => {
+                let parent = AccountState::decode(&rlp)?;
+                trie.insert(path.to_vec(), rlp)?;
+                Some(parent)
+            }
+            None => None,
+        };
+        let mut account = accounts
+            .remove(&hashed_address)
+            .unwrap_or_else(|| TouchedAccount::new(parent));
+        account.apply(&write);
+        match account.leaf() {
+            Some(leaf) => trie.insert(path.to_vec(), leaf.encode_to_vec())?,
+            None => {
+                trie.remove(path)?;
+            }
+        }
+    }
+    let (mut subroot, nodes) = collect_trie(index as u8, trie)?;
+    Ok((std::mem::take(&mut subroot.choices[index]), nodes))
 }
 
 /// Child `index` of the root branch as `trie` holds it, with its hash
@@ -657,14 +893,16 @@ fn decode_account(rlp: Option<Vec<u8>>) -> Result<Option<AccountState>, StoreErr
 fn last_write_per_slot(mut slots: Vec<(H256, U256)>) -> Vec<(H256, U256)> {
     // Stable, so writes to one key keep their order.
     slots.sort_by_key(|(key, _)| *key);
-    let mut last: Vec<(H256, U256)> = Vec::with_capacity(slots.len());
-    for (key, value) in slots {
-        match last.last_mut() {
-            Some(previous) if previous.0 == key => previous.1 = value,
-            _ => last.push((key, value)),
+    // `dedup_by` keeps the first write of a run and drops each later one;
+    // carry the later value into the kept one first.
+    slots.dedup_by(|later, kept| {
+        let same = later.0 == kept.0;
+        if same {
+            kept.1 = later.1;
         }
-    }
-    last
+        same
+    });
+    slots
 }
 
 fn paths(slots: &[(H256, U256)]) -> Vec<Nibbles> {
