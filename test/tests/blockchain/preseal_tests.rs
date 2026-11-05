@@ -26,7 +26,10 @@ use ethrex_common::{
     Address, H256, U256,
     constants::EMPTY_KECCAK_HASH,
     seeded_hash::SeededHashMap,
-    types::{AccountDiff, AccountInfo, AccountUpdate, BlockHeader, Code, StateDiff},
+    types::{
+        AccountDiff, AccountInfo, AccountUpdate, BlockHeader, Code, StateDiff, TxKind, Withdrawal,
+        compute_withdrawals_root,
+    },
     utils::keccak,
 };
 use ethrex_crypto::NativeCrypto;
@@ -671,14 +674,45 @@ async fn presealed_get_payload_matches_one_shot() {
     let accounts: Vec<Address> = keys.iter().map(address_for).collect();
     let store = setup_store(&accounts).await;
     let blockchain = blockchain_for(&store);
+    let mut transfer_recipient = None;
     for key in &keys {
         for nonce in 0..NONCES_BEFORE {
             let tx = signed_transfer(key, nonce).await;
+            if let (None, TxKind::Call(to)) = (transfer_recipient, tx.to()) {
+                transfer_recipient = Some(to);
+            }
             blockchain.add_transaction_to_pool(tx).await.unwrap();
         }
     }
     // One template for both builds: `payload_block` picks a random coinbase.
-    let template = payload_block(&store);
+    let mut template = payload_block(&store);
+    // Withdrawals run after the transactions, so the seal's final rebase must
+    // fold them into the held build's diff: one to an account a transaction
+    // also pays (not a sender: senders start at U256::MAX), one to an address
+    // nothing else touches, and one to the coinbase, which every build's fees
+    // change.
+    let withdrawals = vec![
+        Withdrawal {
+            index: 0,
+            validator_index: 0,
+            address: transfer_recipient.expect("a transfer was queued"),
+            amount: 1_000_000,
+        },
+        Withdrawal {
+            index: 1,
+            validator_index: 1,
+            address: Address::repeat_byte(0x77),
+            amount: 2_000_000,
+        },
+        Withdrawal {
+            index: 2,
+            validator_index: 2,
+            address: template.header.coinbase,
+            amount: 3_000_000,
+        },
+    ];
+    template.header.withdrawals_root = Some(compute_withdrawals_root(&withdrawals, &NativeCrypto));
+    template.body.withdrawals = Some(withdrawals);
 
     let token = CancellationToken::new();
     let build = tokio::spawn(
@@ -717,6 +751,15 @@ async fn presealed_get_payload_matches_one_shot() {
     assert!(
         transactions.len() > SENDERS * NONCES_BEFORE as usize,
         "no late transaction made it into the block"
+    );
+    // The withdrawal-only recipient appears only in the seal's final updates,
+    // so the final rebase must have written it.
+    assert!(
+        presealed
+            .account_updates
+            .iter()
+            .any(|update| update.address == Address::repeat_byte(0x77)),
+        "the withdrawal recipient is missing from the sealed state"
     );
     let one_shot = blockchain
         .build_payload_with_transactions(template, transactions)
