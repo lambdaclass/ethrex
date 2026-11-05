@@ -37,6 +37,10 @@ pub const HOT_STORAGE_SLOTS: usize = 2048;
 /// Below this many dirty accounts plus slots, `root()` runs inline: spawning
 /// 16 threads costs more than hashing a few paths.
 const INLINE_THRESHOLD: usize = 64;
+/// Each part of a split storage trie gets about a 16th of the account's
+/// slots, so its prefetch gate is a 16th of the whole-trie one (as in
+/// `compute_sharded_storage_root`).
+const STORAGE_PART_PREFETCH_THRESHOLD: usize = STORAGE_PREFETCH_THRESHOLD / SHARDS;
 
 /// One account write with absolute values: the last write to a field wins.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -153,13 +157,19 @@ impl ShardedStateTrie {
         let inline = work < INLINE_THRESHOLD;
         // Storage first: the state step writes each account's storage root.
         self.update_storage(inline)?;
-        let root = BranchNode::new(self.update_state(inline)?);
-        Ok(
-            match collapse_root_node(&self.store, self.parent_state_root, None, root)? {
-                Some(node) => node.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
-                None => *EMPTY_TRIE_HASH,
-            },
-        )
+        let children = self.update_state(inline)?;
+        root_hash(&self.store, self.parent_state_root, None, children)
+    }
+
+    /// Whether `hashed_address`'s storage trie is split in 16, as of the last
+    /// `root()`. Only for tests.
+    #[doc(hidden)]
+    pub fn is_sharded_storage(&self, hashed_address: H256) -> bool {
+        let shard = usize::from(hashed_address.as_bytes()[0] >> 4);
+        self.accounts[shard]
+            .get(&hashed_address)
+            .and_then(|account| account.storage.as_ref())
+            .is_some_and(StorageTrie::is_sharded)
     }
 
     /// Applies the queued slot writes and stores each written account's new
@@ -182,14 +192,24 @@ impl ShardedStateTrie {
                 });
             }
         }
-        let done = if inline || jobs.len() <= 1 {
-            let mut reader = None;
-            jobs.into_iter()
-                .map(|job| job.run(&self.store, self.parent_state_root, &mut reader))
+        // A split trie with enough slots runs its 16 parts on threads by itself.
+        let (hot, normal): (Vec<_>, Vec<_>) = jobs
+            .into_iter()
+            .partition(|job| !inline && job.sharded() && job.slots.len() >= INLINE_THRESHOLD);
+        let mut reader = None;
+        let mut done = if inline || normal.len() <= 1 {
+            normal
+                .into_iter()
+                .map(|job| job.run(&self.store, self.parent_state_root, &mut reader, false))
                 .collect::<Result<Vec<_>, _>>()?
         } else {
-            run_storage_jobs(&self.store, self.parent_state_root, jobs)?
+            run_storage_jobs(&self.store, self.parent_state_root, normal)?
         };
+        // One at a time, after the rest, as import's Stage B.5 does: each
+        // already keeps 16 threads busy.
+        for job in hot {
+            done.push(job.run(&self.store, self.parent_state_root, &mut reader, true)?);
+        }
         for (shard, hashed_address, account) in done {
             self.accounts[shard].insert(hashed_address, account);
         }
@@ -199,42 +219,69 @@ impl ShardedStateTrie {
     /// Writes every pending account's leaf into its shard and returns each
     /// shard's child of the root branch.
     fn update_state(&mut self, inline: bool) -> Result<[NodeRef; SHARDS], StoreError> {
-        let mut children = BranchNode::EMPTY_CHOICES;
-        let shards = self
-            .state
-            .iter_mut()
-            .zip(self.accounts.iter_mut())
-            .zip(self.pending.iter_mut().map(std::mem::take))
-            .enumerate();
-        if inline {
-            for (index, ((trie, accounts), pending)) in shards {
-                children[index] = update_shard(index, trie, accounts, pending)?;
-            }
-            return Ok(children);
-        }
-        std::thread::scope(|s| -> Result<(), StoreError> {
-            let mut handles = Vec::new();
-            for (index, ((trie, accounts), pending)) in shards {
-                // A shard without writes only reads its memoized child.
-                if pending.is_empty() {
-                    children[index] = update_shard(index, trie, accounts, pending)?;
-                    continue;
-                }
-                let handle = std::thread::Builder::new()
-                    .name(format!("sharded_trie_state_{index}"))
-                    .spawn_scoped(s, move || update_shard(index, trie, accounts, pending))
-                    .map_err(|e| StoreError::Custom(format!("spawn failed: {e}")))?;
-                handles.push((index, handle));
-            }
-            for (index, handle) in handles {
-                children[index] = handle.join().map_err(|_| {
-                    StoreError::Custom("sharded trie state worker panicked".to_string())
-                })??;
-            }
-            Ok(())
-        })?;
-        Ok(children)
+        children_of(
+            "sharded_trie_state",
+            self.state
+                .iter_mut()
+                .zip(self.accounts.iter_mut())
+                .zip(self.pending.iter_mut().map(std::mem::take)),
+            |(_, pending)| !inline && !pending.is_empty(),
+            |index, ((trie, accounts), pending)| update_shard(index, trie, accounts, pending),
+        )
     }
+}
+
+/// The 16 children of a root branch, child `i` computed by `child(i, part)`
+/// from the `i`th of 16 `parts`. Parts for which `threaded` holds run on
+/// scoped threads; the rest run inline, which suits parts with nothing to
+/// write, whose child is a memoized read.
+fn children_of<P: Send>(
+    thread_name: &str,
+    parts: impl Iterator<Item = P>,
+    threaded: impl Fn(&P) -> bool,
+    child: impl Fn(usize, P) -> Result<NodeRef, StoreError> + Sync,
+) -> Result<[NodeRef; SHARDS], StoreError> {
+    let mut children = BranchNode::EMPTY_CHOICES;
+    std::thread::scope(|s| -> Result<(), StoreError> {
+        let child = &child;
+        let mut handles = Vec::new();
+        for (index, part) in parts.enumerate() {
+            if !threaded(&part) {
+                children[index] = child(index, part)?;
+                continue;
+            }
+            let handle = std::thread::Builder::new()
+                .name(format!("{thread_name}_{index}"))
+                .spawn_scoped(s, move || child(index, part))
+                .map_err(|e| StoreError::Custom(format!("spawn failed: {e}")))?;
+            handles.push((index, handle));
+        }
+        for (index, handle) in handles {
+            children[index] = handle
+                .join()
+                .map_err(|_| StoreError::Custom(format!("{thread_name} worker panicked")))??;
+        }
+        Ok(())
+    })?;
+    Ok(children)
+}
+
+/// The root hash of a trie whose root branch has `children`, collapsed as
+/// `collapse_root_node` does when fewer than two remain. `prefix` names the
+/// account for a storage trie (`None` for the state trie).
+fn root_hash(
+    store: &Store,
+    parent_state_root: H256,
+    prefix: Option<H256>,
+    children: [NodeRef; SHARDS],
+) -> Result<H256, StoreError> {
+    let root = BranchNode::new(children);
+    Ok(
+        match collapse_root_node(store, parent_state_root, prefix, root)? {
+            Some(node) => node.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
+            None => *EMPTY_TRIE_HASH,
+        },
+    )
 }
 
 /// An account the tree has touched.
@@ -316,6 +363,9 @@ impl PendingWrite {
 /// An account's storage trie, opened on its first slot write.
 enum StorageTrie {
     Single(Trie),
+    /// Trie `i` is the account's storage trie, only ever written under first
+    /// slot nibble `i`, so the 16 can be written and hashed at once.
+    Sharded(Vec<Trie>),
 }
 
 impl StorageTrie {
@@ -324,17 +374,30 @@ impl StorageTrie {
         parent_state_root: H256,
         hashed_address: H256,
         storage_root: H256,
+        sharded: bool,
     ) -> Result<Self, StoreError> {
-        Ok(Self::Single(store.open_storage_trie(
-            hashed_address,
-            parent_state_root,
-            storage_root,
-        )?))
+        let open = || store.open_storage_trie(hashed_address, parent_state_root, storage_root);
+        Ok(if sharded {
+            Self::Sharded((0..SHARDS).map(|_| open()).collect::<Result<_, _>>()?)
+        } else {
+            Self::Single(open()?)
+        })
+    }
+
+    fn is_sharded(&self) -> bool {
+        matches!(self, Self::Sharded(_))
     }
 
     /// Applies `slots` (sorted by key, one write per key) and returns the new
-    /// storage root.
-    fn apply(&mut self, slots: &[(H256, U256)]) -> Result<H256, StoreError> {
+    /// storage root. A split trie runs its parts on threads when `parallel`.
+    fn apply(
+        &mut self,
+        store: &Store,
+        parent_state_root: H256,
+        hashed_address: H256,
+        slots: &[(H256, U256)],
+        parallel: bool,
+    ) -> Result<H256, StoreError> {
         match self {
             Self::Single(trie) => {
                 if slots.len() >= STORAGE_PREFETCH_THRESHOLD {
@@ -342,6 +405,25 @@ impl StorageTrie {
                 }
                 write_slots(trie, slots)?;
                 Ok(trie.hash_no_commit(&NativeCrypto))
+            }
+            Self::Sharded(tries) => {
+                let mut buckets: [Vec<(H256, U256)>; SHARDS] = Default::default();
+                for &(key, value) in slots {
+                    buckets[usize::from(key.as_bytes()[0] >> 4)].push((key, value));
+                }
+                let children = children_of(
+                    "sharded_trie_slots",
+                    tries.iter_mut().zip(buckets),
+                    |(_, bucket)| parallel && !bucket.is_empty(),
+                    |nibble, (trie, bucket)| {
+                        if bucket.len() >= STORAGE_PART_PREFETCH_THRESHOLD {
+                            trie.prefetch_sorted(&paths(&bucket))?;
+                        }
+                        write_slots(trie, &bucket)?;
+                        Ok(shard_child(trie, nibble)?)
+                    },
+                )?;
+                root_hash(store, parent_state_root, Some(hashed_address), children)
             }
         }
     }
@@ -364,13 +446,24 @@ impl StorageJob {
         self.slots.len().max(1)
     }
 
+    /// The account's storage trie is split, or opens split in this job. The
+    /// kind is chosen when the trie first opens and kept, through resets too.
+    fn sharded(&self) -> bool {
+        match self.account.as_ref().and_then(|a| a.storage.as_ref()) {
+            Some(storage) => storage.is_sharded(),
+            None => self.slots.len() >= HOT_STORAGE_SLOTS,
+        }
+    }
+
     /// Applies the job and returns the account to put back in its shard.
     fn run(
         self,
         store: &Store,
         parent_state_root: H256,
         reader: &mut Option<Trie>,
+        parallel: bool,
     ) -> Result<(usize, H256, TouchedAccount), StoreError> {
+        let sharded = self.sharded();
         let mut account = match self.account {
             Some(account) => account,
             None => TouchedAccount::new(read_parent(
@@ -389,10 +482,16 @@ impl StorageJob {
                 } else {
                     account.parent_storage_root
                 };
-                StorageTrie::open(store, parent_state_root, self.hashed_address, root)?
+                StorageTrie::open(store, parent_state_root, self.hashed_address, root, sharded)?
             }
         };
-        account.state.storage_root = storage.apply(&self.slots)?;
+        account.state.storage_root = storage.apply(
+            store,
+            parent_state_root,
+            self.hashed_address,
+            &self.slots,
+            parallel,
+        )?;
         account.storage = Some(storage);
         Ok((self.shard, self.hashed_address, account))
     }
@@ -428,7 +527,7 @@ fn run_storage_jobs(
                     .spawn_scoped(s, move || {
                         let mut reader = None;
                         bin.into_iter()
-                            .map(|job| job.run(store, parent_state_root, &mut reader))
+                            .map(|job| job.run(store, parent_state_root, &mut reader, false))
                             .collect::<Result<Vec<_>, _>>()
                     })
                     .map_err(|e| StoreError::Custom(format!("spawn failed: {e}")))

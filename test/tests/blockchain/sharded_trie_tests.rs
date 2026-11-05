@@ -402,3 +402,169 @@ async fn emptying_every_account() {
     tree.apply(rest.iter().map(AccountWrite::from_update));
     assert_eq!(tree.root().unwrap(), *EMPTY_TRIE_HASH, "two batches");
 }
+
+/// Generated index of the hot contract; outside the range `random_updates`
+/// picks from.
+const HOT: u64 = 1_000;
+
+/// `genesis(30, 10)` plus a contract at `address(HOT)` with `slots` slots.
+async fn hot_parent_state(slots: u64) -> (Store, BlockHeader) {
+    let mut genesis = genesis(30, 10);
+    let storage = (0..slots)
+        .map(|j| (U256::from_big_endian(slot(j).as_bytes()), U256::from(j + 1)))
+        .collect();
+    genesis.alloc.insert(
+        address(HOT),
+        GenesisAccount {
+            code: Bytes::from_static(&[0x60, 0x00, 0x00]),
+            storage,
+            balance: U256::one(),
+            nonce: 1,
+        },
+    );
+    store_with(genesis).await
+}
+
+/// Slot writes `(slot index, value)` to `address`; a zero value deletes.
+fn slot_writes(address: Address, writes: impl IntoIterator<Item = (u64, u64)>) -> AccountUpdate {
+    let mut update = AccountUpdate::new(address);
+    for (j, value) in writes {
+        update.added_storage.insert(slot(j), U256::from(value));
+    }
+    update
+}
+
+/// `n` random writes over slots `0..4000`, a tenth of them deletions.
+fn random_slot_writes(rng: &mut Rng, address: Address, n: usize) -> AccountUpdate {
+    let mut update = AccountUpdate::new(address);
+    while update.added_storage.len() < n {
+        let value = if rng.chance(10) {
+            0
+        } else {
+            1 + rng.below(1 << 32)
+        };
+        update
+            .added_storage
+            .insert(slot(rng.below(4000)), U256::from(value));
+    }
+    update
+}
+
+#[tokio::test]
+async fn hot_account_matches_serial() {
+    let (store, parent) = hot_parent_state(3000).await;
+    // 2500 writes: 1200 overwrites, 1000 inserts and 300 deletions.
+    let hot = slot_writes(
+        address(HOT),
+        (0..1200)
+            .map(|j| (j, 5_000 + j))
+            .chain((3000..4000).map(|j| (j, j)))
+            .chain((1200..1500).map(|j| (j, 0))),
+    );
+    // Other accounts in the same batch, so the normal storage bins run too.
+    let mut updates = random_updates(&mut Rng(7), 30, 10, 20);
+    updates.push(hot);
+
+    let mut tree = ShardedStateTrie::open(store.clone(), parent.state_root).unwrap();
+    tree.apply(updates.iter().map(AccountWrite::from_update));
+    assert_eq!(tree.root().unwrap(), serial_root(&store, &parent, &updates));
+    assert!(tree.is_sharded_storage(keccak(address(HOT))));
+}
+
+#[tokio::test]
+async fn hot_account_cleared() {
+    let (store, parent) = hot_parent_state(3000).await;
+    let in_first_bucket = |j: &u64| keccak(slot(*j)).as_bytes()[0] >> 4 == 0;
+
+    // Delete every slot outside the first bucket and leave that bucket
+    // untouched, so the storage root collapses onto a child the tree never
+    // loaded.
+    let outside = slot_writes(
+        address(HOT),
+        (0..3000).filter(|j| !in_first_bucket(j)).map(|j| (j, 0)),
+    );
+    let mut tree = ShardedStateTrie::open(store.clone(), parent.state_root).unwrap();
+    tree.apply([AccountWrite::from_update(&outside)]);
+    assert_eq!(
+        tree.root().unwrap(),
+        serial_root(&store, &parent, std::slice::from_ref(&outside)),
+        "one bucket left"
+    );
+    assert!(tree.is_sharded_storage(keccak(address(HOT))));
+
+    let inside = slot_writes(
+        address(HOT),
+        (0..3000).filter(in_first_bucket).map(|j| (j, 0)),
+    );
+    tree.apply([AccountWrite::from_update(&inside)]);
+    let mut every_slot = outside;
+    every_slot.merge(inside);
+    let cleared = serial_root(&store, &parent, &[every_slot]);
+    assert_eq!(tree.root().unwrap(), cleared, "every slot deleted");
+    // Deleting every slot leaves the empty storage root, as a reset does.
+    let reset = AccountUpdate {
+        removed_storage: true,
+        ..AccountUpdate::new(address(HOT))
+    };
+    assert_eq!(cleared, serial_root(&store, &parent, &[reset]));
+}
+
+/// The storage kind is chosen when the trie first opens and kept: an
+/// account first written with `HOT_STORAGE_SLOTS` or more slots stays split
+/// through small batches and a reset, and one first written with fewer stays
+/// whole when a large batch comes later.
+#[tokio::test]
+async fn hot_account_across_batches() {
+    let (store, parent) = hot_parent_state(3000).await;
+    let hot = address(HOT);
+    // A contract with 10 parent slots.
+    let warm = address(3);
+    let mut rng = Rng(11);
+    let batches = [
+        // The hot trie opens split, the warm one whole.
+        vec![
+            random_slot_writes(&mut rng, hot, 2500),
+            random_slot_writes(&mut rng, warm, 1000),
+        ],
+        vec![
+            random_slot_writes(&mut rng, hot, 1000),
+            random_slot_writes(&mut rng, warm, 2500),
+        ],
+        // Small enough to run inline.
+        vec![random_slot_writes(&mut rng, hot, 5)],
+        vec![random_slot_writes(&mut rng, hot, 1000)],
+        vec![
+            random_slot_writes(&mut rng, hot, 1000),
+            random_slot_writes(&mut rng, warm, 1000),
+        ],
+    ];
+
+    let mut tree = ShardedStateTrie::open(store.clone(), parent.state_root).unwrap();
+    let mut net = BTreeMap::new();
+    for (batch, updates) in batches.iter().enumerate() {
+        merge_into(&mut net, updates);
+        tree.apply(updates.iter().map(AccountWrite::from_update));
+        let merged: Vec<AccountUpdate> = net.values().cloned().collect();
+        assert_eq!(
+            tree.root().unwrap(),
+            serial_root(&store, &parent, &merged),
+            "batch {batch}"
+        );
+        assert!(tree.is_sharded_storage(keccak(hot)), "batch {batch}");
+        assert!(!tree.is_sharded_storage(keccak(warm)), "batch {batch}");
+    }
+
+    // A reset drops every earlier slot write. `AccountUpdate::merge` keeps
+    // them, so the expected state is the reset alone plus the warm account's
+    // net change.
+    let mut reset = random_slot_writes(&mut rng, hot, 50);
+    reset.removed_storage = true;
+    tree.apply([AccountWrite::from_update(&reset)]);
+    let expected = vec![reset, net[&warm].clone()];
+    assert_eq!(
+        tree.root().unwrap(),
+        serial_root(&store, &parent, &expected),
+        "reset"
+    );
+    assert!(tree.is_sharded_storage(keccak(hot)), "reset");
+}
