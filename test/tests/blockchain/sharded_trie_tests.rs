@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use bytes::Bytes;
 use ethrex_blockchain::{
     Blockchain,
-    sharded_trie::{AccountWrite, ShardedStateTrie},
+    sharded_trie::{AccountWrite, HOT_STORAGE_SLOTS, ShardedStateTrie},
 };
 use ethrex_common::{
     Address, H160, H256, U256,
@@ -518,7 +518,14 @@ async fn hot_account_cleared() {
         removed_storage: true,
         ..AccountUpdate::new(address(HOT))
     };
-    assert_eq!(cleared, serial_root(&store, &parent, &[reset]));
+    assert_eq!(
+        cleared,
+        serial_root(&store, &parent, std::slice::from_ref(&reset))
+    );
+    // The tree's own reset path agrees with deleting every slot.
+    let mut reset_tree = ShardedStateTrie::open(store, parent.state_root).unwrap();
+    reset_tree.apply([AccountWrite::from_update(&reset)]);
+    assert_eq!(reset_tree.root().unwrap(), cleared, "reset");
 }
 
 /// The storage kind is chosen when the trie first opens and kept: an
@@ -631,7 +638,43 @@ async fn bal_parent_state() -> (Store, BlockHeader) {
     let mut hot = generated_account(0, BAL_HOT_SLOTS);
     hot.nonce = 1;
     genesis.alloc.insert(address(BAL_HOT), hot);
+    for (index, _) in BAL_EDGES {
+        let mut edge = generated_account(0, BAL_EDGE_SLOTS);
+        edge.nonce = 1;
+        genesis.alloc.insert(address(index), edge);
+    }
     store_with(genesis).await
+}
+
+/// Contracts that take exactly one slot write fewer than the split
+/// threshold, and exactly the threshold, every block.
+const BAL_EDGES: [(u64, usize); 2] = [(1_001, HOT_STORAGE_SLOTS - 1), (1_002, HOT_STORAGE_SLOTS)];
+const BAL_EDGE_SLOTS: u64 = 2_100;
+
+/// Exactly `n` unique slot writes to an edge contract: every parent slot
+/// outside bucket `kept` deleted, then writes inside it up to `n`. That
+/// collapses the storage root onto one bucket, where the split and serial
+/// node sets differ, so a merkleizer on the wrong side of the threshold
+/// does not match.
+fn edge_item(kept: u8, n: usize) -> BalSynthesisItem {
+    let mut item = BalSynthesisItem::default();
+    for j in 0..BAL_EDGE_SLOTS {
+        if keccak(slot(j)).as_bytes()[0] >> 4 != kept {
+            item.added_storage.insert(slot(j), U256::zero());
+        }
+    }
+    assert!(
+        item.added_storage.len() < n,
+        "room for writes in the bucket"
+    );
+    for j in slots_in_bucket(kept, n) {
+        if item.added_storage.len() == n {
+            break;
+        }
+        item.added_storage.insert(slot(j), U256::from(j + 7));
+    }
+    assert_eq!(item.added_storage.len(), n);
+    item
 }
 
 fn new_code(rng: &mut Rng) -> Code {
@@ -728,9 +771,10 @@ fn random_bal_items(seed: u64) -> SeededHashMap<Address, BalSynthesisItem> {
     }
     let mut hot = BalSynthesisItem::default();
     match seed % 5 {
-        // Overwrites, inserts and deletions over the parent's slots.
+        // Overwrites, inserts and deletions over the parent's slots: 2500
+        // unique ones, so the split path runs (draws repeat, so count slots).
         0 => {
-            for _ in 0..2_500 {
+            while hot.added_storage.len() < 2_500 {
                 let j = rng.below(BAL_HOT_SLOTS + 1_000);
                 hot.added_storage
                     .insert(slot(j), random_value(&mut rng, 10));
@@ -785,6 +829,10 @@ fn random_bal_items(seed: u64) -> SeededHashMap<Address, BalSynthesisItem> {
         }
     }
     items.insert(address(BAL_HOT), hot);
+    let kept = u8::try_from((seed + 7) % 16).expect("a nibble");
+    for (index, writes) in BAL_EDGES {
+        items.insert(address(index), edge_item(kept, writes));
+    }
     items
 }
 
@@ -912,4 +960,176 @@ async fn failed_root_poisons_the_tree() {
     tree.apply([AccountWrite::from_update(&slot_writes(fine, [(3, 3)]))]);
     assert!(tree.root().is_err(), "nor a root after more writes");
     assert!(tree.finish().is_err());
+}
+
+/// `root()` removes an account that ends up empty without `removed`
+/// (EIP-161), as import's Stage C does. The serial oracle keeps such an
+/// account, so the expected roots are built by hand: the parent root, or the
+/// serial root with the account `removed`.
+#[tokio::test]
+async fn root_removes_an_account_left_empty() {
+    let (store, parent) = parent_state(30, 10).await;
+    let empty_info = AccountInfo {
+        nonce: 0,
+        balance: U256::zero(),
+        code_hash: *EMPTY_KECCAK_HASH,
+    };
+
+    // An account the parent does not have: created, then written empty.
+    let created = address(100);
+    let mut create = new_account(created, 1);
+    create.added_storage.insert(slot(1), U256::from(5));
+    let mut emptied = slot_writes(created, [(1, 0)]);
+    emptied.info = Some(empty_info.clone());
+    let mut tree = ShardedStateTrie::open(store.clone(), parent.state_root).unwrap();
+    tree.apply([AccountWrite::from_update(&create)]);
+    assert_ne!(tree.root().unwrap(), parent.state_root, "created");
+    tree.apply([AccountWrite::from_update(&emptied)]);
+    assert_eq!(
+        tree.root().unwrap(),
+        parent.state_root,
+        "created, then emptied"
+    );
+
+    // Accounts the parent has: a contract with code and 10 slots, and a
+    // plain one. A first batch changes the contract, a second writes both
+    // empty.
+    let (contract, plain) = (address(3), address(1));
+    let mut tree = ShardedStateTrie::open(store.clone(), parent.state_root).unwrap();
+    tree.apply([AccountWrite::from_update(&slot_writes(contract, [(0, 99)]))]);
+    tree.root().unwrap();
+    let mut contract_emptied = slot_writes(contract, (0..10).map(|j| (j, 0)));
+    contract_emptied.info = Some(empty_info.clone());
+    let plain_emptied = AccountUpdate {
+        info: Some(empty_info),
+        ..AccountUpdate::new(plain)
+    };
+    tree.apply([
+        AccountWrite::from_update(&contract_emptied),
+        AccountWrite::from_update(&plain_emptied),
+    ]);
+    let removed = [
+        AccountUpdate::removed(contract),
+        AccountUpdate::removed(plain),
+    ];
+    assert_eq!(
+        tree.root().unwrap(),
+        serial_root(&store, &parent, &removed),
+        "existing accounts emptied"
+    );
+}
+
+fn nibble(hash: H256, n: usize) -> u8 {
+    let byte = hash.as_bytes()[n / 2];
+    if n.is_multiple_of(2) {
+        byte >> 4
+    } else {
+        byte & 0x0f
+    }
+}
+
+/// Two generated account indices whose hashed addresses share exactly
+/// `shared` leading nibbles, so a parent with just those two has an
+/// extension root with a `shared`-nibble prefix.
+fn pair_sharing(shared: usize) -> (u64, u64) {
+    let common = |a: H256, b: H256| {
+        (0..64)
+            .take_while(|n| nibble(a, *n) == nibble(b, *n))
+            .count()
+    };
+    (0u64..)
+        .flat_map(|i| (0..i).map(move |j| (j, i)))
+        .find(|(j, i)| common(keccak(address(*j)), keccak(address(*i))) == shared)
+        .expect("a pair exists")
+}
+
+/// Like `random_updates`, over the `existing` indices and `fresh` ones the
+/// parent does not have.
+fn random_updates_among(
+    rng: &mut Rng,
+    existing: &[u64],
+    fresh: std::ops::Range<u64>,
+    slots: u64,
+    n: usize,
+) -> Vec<AccountUpdate> {
+    let mut picked = BTreeSet::new();
+    let mut updates = Vec::with_capacity(n);
+    while updates.len() < n {
+        let i = if rng.chance(50) {
+            existing[usize::try_from(rng.below(existing.len() as u64)).expect("an index")]
+        } else {
+            fresh.start + rng.below(fresh.end - fresh.start)
+        };
+        if picked.insert(i) {
+            updates.push(random_update(rng, i, existing.contains(&i), slots));
+        }
+    }
+    updates
+}
+
+/// A parent whose state root is an extension: one with a 1-nibble prefix
+/// and one with a 2-nibble prefix, the two shapes `root()` reads a shard's
+/// child from.
+#[tokio::test]
+async fn extension_root_parents_match_serial() {
+    for shared in [1, 2] {
+        let (a, b) = pair_sharing(shared);
+        let mut genesis = fixture_genesis();
+        genesis.alloc.clear();
+        for i in [a, b] {
+            genesis.alloc.insert(address(i), generated_account(i, 10));
+        }
+        let (store, parent) = store_with(genesis).await;
+        let root_node = store
+            .open_state_trie(parent.state_root)
+            .unwrap()
+            .root_node()
+            .unwrap()
+            .expect("non-empty parent");
+        assert!(
+            matches!(&*root_node, Node::Extension(e) if e.prefix.len() == shared),
+            "parent root is an extension with a {shared}-nibble prefix"
+        );
+        let fresh = 10_000..10_040;
+
+        for seed in 1..=10 {
+            let mut rng = Rng(seed);
+            let updates = random_updates_among(&mut rng, &[a, b], fresh.clone(), 10, 6);
+            let mut tree = ShardedStateTrie::open(store.clone(), parent.state_root).unwrap();
+            tree.apply(updates.iter().map(AccountWrite::from_update));
+            assert_eq!(
+                tree.root().unwrap(),
+                serial_root(&store, &parent, &updates),
+                "shared {shared} seed {seed}: one batch"
+            );
+        }
+
+        for seed in 1..=10 {
+            let mut rng = Rng(100 + seed);
+            let mut tree = ShardedStateTrie::open(store.clone(), parent.state_root).unwrap();
+            let mut net = BTreeMap::new();
+            // First change one of the two in place, so the shard holding
+            // both reads its child through the extension with a dirty child.
+            let mut batches = vec![vec![new_account(address(a), 7)]];
+            for n in [1, 2, 1, 3] {
+                batches.push(random_updates_among(
+                    &mut rng,
+                    &[a, b],
+                    fresh.clone(),
+                    10,
+                    n,
+                ));
+            }
+            for (batch, updates) in batches.iter().enumerate() {
+                merge_into(&mut net, updates);
+                tree.apply(updates.iter().map(AccountWrite::from_update));
+                let merged: Vec<AccountUpdate> = net.values().cloned().collect();
+                assert_eq!(
+                    tree.root().unwrap(),
+                    serial_root(&store, &parent, &merged),
+                    "shared {shared} seed {seed} batch {batch}"
+                );
+            }
+        }
+    }
 }
