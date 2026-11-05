@@ -617,7 +617,7 @@ async fn bloom_matching_headers(
 
 /// Collect every log of one block that matches the filter's addresses and topics into
 /// `logs`, pairing the block's transactions with their receipts by index.
-async fn collect_block_logs(
+pub(crate) async fn collect_block_logs(
     storage: &Store,
     block_header: &BlockHeader,
     block_body: &BlockBody,
@@ -672,7 +672,7 @@ async fn collect_block_logs(
 /// wildcard (`null`, an empty list, or a list containing `null`) or a set of allowed
 /// values for the log's topic at that position, and the log must have a topic at every
 /// filter position.
-fn matches_topics(topics: &[H256], topic_filter: &[TopicFilter]) -> bool {
+pub(crate) fn matches_topics(topics: &[H256], topic_filter: &[TopicFilter]) -> bool {
     if topic_filter.len() > topics.len() {
         return false;
     }
