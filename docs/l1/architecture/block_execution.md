@@ -197,6 +197,29 @@ This is one of the two merkleization backends (the other is used by `add_block_p
 4. Compute new state root
 5. Verify it matches `header.state_root`
 
+### Sharded State Trie
+
+```rust
+// crates/blockchain/sharded_trie.rs
+ShardedStateTrie::open(store, parent_state_root)
+```
+
+`ShardedStateTrie` splits the state trie into 16 shards by the first nibble of
+the hashed address and keeps a storage trie open per touched account. A storage
+trie first written with 2048 or more slots is split in 16 the same way. Work on
+the shards runs on scoped threads, never on the blockchain's merkle pool, whose
+16 workers must all run together.
+
+- `apply` takes absolute writes per account (the last write to a field wins).
+- `root()` recomputes the root re-hashing only the paths written since the
+  previous call, so it can be called repeatedly on the same tree.
+- `finish()` consumes the tree and returns the root plus the trie nodes to
+  persist. It is only valid on a tree that never ran `root()`.
+
+Import of blocks with a block access list (Amsterdam and later, through
+`add_block_pipeline`) merkleizes on it one-shot (`apply`, then `finish()`).
+Payload sealing uses `root()` (see [Pre-sealing](#pre-sealing)).
+
 ## Payload Building
 
 When ethrex acts as a block producer (validator), it builds payloads:
@@ -229,7 +252,8 @@ Blockchain::build_payload(template: Block) -> PayloadBuildResult
 
 ### Payload Rebuilding
 
-Payloads are rebuilt as new transactions arrive, until requested:
+Payloads are rebuilt as new transactions arrive, until `getPayload` arrives or
+the slot ends (12 s from the forkchoice update that started the build):
 
 ```rust
 // crates/blockchain/payload.rs
@@ -238,6 +262,38 @@ Blockchain::build_payload_loop(payload, cancel_token)
 
 The loop keeps the most valuable build (block value, then gas used) and leaves
 it unsealed; `getPayload` seals it once.
+
+### Pre-sealing
+
+The state root is the costly part of a seal. To keep it off `getPayload`, the
+held build owns a `PreSealer` (`crates/blockchain/preseal.rs`): a worker thread
+with a `ShardedStateTrie` opened at the parent state, kept equal to the held
+build's state.
+
+- After a build, the loop reads its diff from the VM with `state_diff()`, which
+  leaves the VM usable for the seal.
+- When a rebuild beats the held build, the PreSealer moves to it and rebases
+  the tree by diff: it writes only the keys whose value differs between the two
+  builds, and resets keys only the old build touched to their parent value. A
+  burst of new best builds coalesces into one rebase.
+- On `getPayload` the seal runs the post-transaction phase (withdrawals, request
+  system calls) and sends the final updates to the worker, which applies the
+  difference and returns the root. `getPayload` pays for the rest of an
+  in-flight rebase plus the last change, not for a full state root.
+- If the worker fails, the seal logs a warning and computes the root in one
+  shot from the final updates: a broken pre-seal costs time, never a wrong root.
+
+Builds outside the loop (L2 block production, explicit-transaction builds) have
+no PreSealer and compute the root in one shot on a `ShardedStateTrie`.
+
+### Payload Lifecycle
+
+- At most 4 entries are kept (`MAX_PAYLOADS`). Registering a build first drops
+  entries whose build already ended, then evicts the oldest if still full.
+- A build not requested within its slot is dropped with its tree, and a later
+  `getPayload` for its id answers `UnknownPayload` (-38001).
+- A running build's tree keeps every key touched by any of the slot's best
+  builds loaded until `getPayload`, the timeout or eviction.
 
 ## Error Handling
 
