@@ -806,9 +806,15 @@ impl GuestProgramState {
         block_number: u64,
         crypto: &dyn Crypto,
     ) -> Result<H256, GuestProgramStateError> {
+        // BLOCKHASH can ask for one header a million times in a block, and a guest's heap often
+        // never frees, so keep the hash in the header's cache rather than re-encoding it each time.
         self.block_headers
             .get(&block_number)
-            .map(|header| header.compute_block_hash(crypto))
+            .map(|header| {
+                *header
+                    .hash
+                    .get_or_init(|| header.compute_block_hash(crypto))
+            })
             .ok_or_else(|| {
                 GuestProgramStateError::Database(format!(
                     "Block hash not found for block number {block_number}"
@@ -1372,5 +1378,50 @@ mod secured_trie_path_tests {
         let mut nodes = storage_nodes;
         nodes.extend(state_trie.get_proof(&hashed_address).expect("proof"));
         assert_rejected(rebuild(state_trie.hash_no_commit(crypto), nodes));
+    }
+}
+
+#[cfg(test)]
+mod block_hash_tests {
+    use super::*;
+    use ethrex_crypto::NativeCrypto;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Hashes as `NativeCrypto` does and counts the Keccak calls.
+    #[derive(Debug, Default)]
+    struct CountingCrypto(AtomicUsize);
+
+    impl Crypto for CountingCrypto {
+        fn keccak256(&self, input: &[u8]) -> [u8; 32] {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            NativeCrypto.keccak256(input)
+        }
+    }
+
+    #[test]
+    fn get_block_hash_hashes_each_header_once() {
+        let header = BlockHeader {
+            number: 7,
+            ..Default::default()
+        };
+        let expected = header.compute_block_hash(&NativeCrypto);
+        let state = GuestProgramState {
+            codes_hashed: BTreeMap::new(),
+            block_headers: BTreeMap::from([(7, header)]),
+            state_trie: Trie::new_temp(),
+            parent_block_header: BlockHeader::default(),
+            first_block_number: 0,
+            chain_config: ChainConfig::default(),
+            storage_tries: BTreeMap::new(),
+            account_hashes_by_address: BTreeMap::new(),
+            verified_storage_roots: BTreeMap::new(),
+        };
+        let crypto = CountingCrypto::default();
+
+        // BLOCKHASH can ask for the same header many times within one block.
+        for _ in 0..3 {
+            assert_eq!(state.get_block_hash(7, &crypto).unwrap(), expected);
+        }
+        assert_eq!(crypto.0.load(Ordering::Relaxed), 1);
     }
 }
