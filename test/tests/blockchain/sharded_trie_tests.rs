@@ -22,6 +22,10 @@ use ethrex_crypto::NativeCrypto;
 use ethrex_storage::{AccountUpdatesList, EngineType, Store};
 use ethrex_trie::{Node, TrieNode};
 
+use super::payload_build_loop_tests::{
+    address_for, blockchain_for, payload_block, read_private_keys, setup_store, signed_transfer,
+};
+
 /// Deterministic generator, so a failure is reproducible from its seed.
 struct Rng(u64);
 
@@ -844,4 +848,28 @@ async fn bal_path_matches_reference_when_the_state_empties() {
     );
     assert_eq!(sharded.0, *EMPTY_TRIE_HASH);
     assert_eq!(sharded, reference);
+}
+
+/// The payload seal's state root must equal the serial root of the same
+/// account updates.
+#[tokio::test]
+async fn payload_seal_root_matches_serial() {
+    let keys = read_private_keys(20);
+    let accounts: Vec<Address> = keys.iter().map(address_for).collect();
+    let store = setup_store(&accounts).await;
+    let blockchain = blockchain_for(&store);
+    for sk in &keys {
+        for nonce in 0..10 {
+            let tx = signed_transfer(sk, nonce).await;
+            blockchain.add_transaction_to_pool(tx).await.unwrap();
+        }
+    }
+
+    let result = blockchain.build_payload(payload_block(&store)).unwrap();
+    assert_eq!(result.payload.body.transactions.len(), 200);
+    let parent = store.get_block_header(0).unwrap().unwrap();
+    assert_eq!(
+        result.payload.header.state_root,
+        serial_root(&store, &parent, &result.account_updates)
+    );
 }

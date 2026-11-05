@@ -46,6 +46,7 @@ use crate::{
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
     new_evm,
+    sharded_trie::{AccountWrite, ShardedStateTrie},
     vm::StoreVmDatabase,
 };
 
@@ -1460,18 +1461,31 @@ impl Blockchain {
         Ok(())
     }
 
+    /// The state root of `updates` over the state of block `parent_hash`,
+    /// computed in one go on a `ShardedStateTrie`: its shards and storage
+    /// tries hash on scoped threads, and it collects no trie nodes, which a
+    /// seal does not persist. The pre-seal falls back to it.
+    pub(crate) fn one_shot_state_root(
+        &self,
+        parent_hash: BlockHash,
+        updates: &[AccountUpdate],
+    ) -> Result<H256, ChainError> {
+        let parent = self
+            .storage
+            .get_block_header_by_hash(parent_hash)?
+            .ok_or(ChainError::ParentStateNotFound)?;
+        let mut tree = ShardedStateTrie::open(self.storage.clone(), parent.state_root)?;
+        tree.apply(updates.iter().map(AccountWrite::from_update));
+        Ok(tree.root()?)
+    }
+
     pub fn finalize_payload(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
         // Take BAL from VM before getting state transitions (which clears state)
         let block_access_list = context.vm.take_bal();
 
         let account_updates = context.vm.get_state_transitions()?;
 
-        let ret_acount_updates_list = self
-            .storage
-            .apply_account_updates_batch(context.parent_hash(), &account_updates)?
-            .ok_or(ChainError::ParentStateNotFound)?;
-
-        let state_root = ret_acount_updates_list.state_trie_hash;
+        let state_root = self.one_shot_state_root(context.parent_hash(), &account_updates)?;
 
         context.payload.header.state_root = state_root;
         context.payload.header.transactions_root =
