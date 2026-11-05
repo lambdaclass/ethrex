@@ -8,8 +8,14 @@
 //! a slot is reported only when it differs from its parent value, info only
 //! when it differs from the parent's, and `removed` only for an account the
 //! parent has that the build leaves empty.
+//!
+//! `presealed_get_payload_matches_one_shot` checks the whole pre-seal: a
+//! payload sealed from the tree the build loop kept is the one-shot block.
 
-use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
+use std::{
+    collections::{BTreeMap, BTreeSet, btree_map::Entry},
+    time::Duration,
+};
 
 use bytes::Bytes;
 use ethrex_blockchain::{
@@ -17,7 +23,7 @@ use ethrex_blockchain::{
     sharded_trie::{AccountWrite, ShardedStateTrie},
 };
 use ethrex_common::{
-    H256, U256,
+    Address, H256, U256,
     constants::EMPTY_KECCAK_HASH,
     seeded_hash::SeededHashMap,
     types::{AccountDiff, AccountInfo, AccountUpdate, BlockHeader, Code, StateDiff},
@@ -26,7 +32,11 @@ use ethrex_common::{
 use ethrex_crypto::NativeCrypto;
 use ethrex_storage::Store;
 
+use super::payload_build_loop_tests::{
+    address_for, blockchain_for, payload_block, read_private_keys, setup_store, signed_transfer,
+};
 use super::sharded_trie_tests::{HOT, Rng, address, hot_parent_state, parent_state, slot};
+use tokio_util::sync::CancellationToken;
 
 /// An account as a build leaves it.
 #[derive(Clone, Debug)]
@@ -636,4 +646,90 @@ async fn rebase_resets_when_held_lacks_a_parent_value() {
         rebase_writes(Some(&held), updates(&target)),
         Rebase::Writes(_)
     ));
+}
+
+/// A payload sealed from the pre-sealed tree has the roots of a one-shot build
+/// of the same transactions, after the build loop moved the tree across
+/// several best builds.
+///
+/// It drives `build_payload_loop` as `initiate_payload_build` does and seals
+/// what it returns as `get_payload` does, so it can read how many diffs the
+/// PreSealer applied: through `get_payload` the build is gone by then, and a
+/// test where the loop never rebased would pass without checking anything.
+#[tokio::test(flavor = "multi_thread")]
+async fn presealed_get_payload_matches_one_shot() {
+    // 300 transfers before the loop starts, 3 per sender, then 50 more that
+    // continue the nonces of the first 50 senders while the loop runs.
+    const SENDERS: usize = 100;
+    const NONCES_BEFORE: u64 = 3;
+    const LATE: usize = 50;
+    // Spaced so the loop rebuilds, and the best build changes, many times;
+    // a rebuild of a few hundred transfers takes a fraction of this window.
+    const LATE_INTERVAL: Duration = Duration::from_millis(40);
+
+    let keys = read_private_keys(SENDERS);
+    let accounts: Vec<Address> = keys.iter().map(address_for).collect();
+    let store = setup_store(&accounts).await;
+    let blockchain = blockchain_for(&store);
+    for key in &keys {
+        for nonce in 0..NONCES_BEFORE {
+            let tx = signed_transfer(key, nonce).await;
+            blockchain.add_transaction_to_pool(tx).await.unwrap();
+        }
+    }
+    // One template for both builds: `payload_block` picks a random coinbase.
+    let template = payload_block(&store);
+
+    let token = CancellationToken::new();
+    let build = tokio::spawn(
+        blockchain
+            .clone()
+            .build_payload_loop(template.clone(), token.clone()),
+    );
+    for key in &keys[..LATE] {
+        let tx = signed_transfer(key, NONCES_BEFORE).await;
+        blockchain.add_transaction_to_pool(tx).await.unwrap();
+        tokio::time::sleep(LATE_INTERVAL).await;
+    }
+    token.cancel();
+    let unsealed = build.await.unwrap().unwrap();
+
+    let applied = unsealed
+        .preseal_diffs_applied()
+        .expect("the loop's best build has a PreSealer");
+    // A lower bound: the newest diff may still be in flight.
+    println!(
+        "pre-seal applied {applied} diffs ({} rebases) for a block of {} txs",
+        applied.saturating_sub(1),
+        unsealed.transactions().len()
+    );
+    assert!(
+        applied >= 3,
+        "the PreSealer applied {applied} diffs; the test needs at least 2 rebases"
+    );
+
+    let sealer = blockchain.clone();
+    let presealed = tokio::task::spawn_blocking(move || sealer.seal_payload(unsealed))
+        .await
+        .unwrap()
+        .unwrap();
+    let transactions = presealed.payload.body.transactions.clone();
+    assert!(
+        transactions.len() > SENDERS * NONCES_BEFORE as usize,
+        "no late transaction made it into the block"
+    );
+    let one_shot = blockchain
+        .build_payload_with_transactions(template, transactions)
+        .unwrap();
+
+    let (presealed, one_shot) = (&presealed.payload.header, &one_shot.payload.header);
+    assert_eq!(presealed.state_root, one_shot.state_root, "state root");
+    assert_eq!(
+        presealed.receipts_root, one_shot.receipts_root,
+        "receipts root"
+    );
+    assert_eq!(
+        presealed.transactions_root, one_shot.transactions_root,
+        "transactions root"
+    );
 }

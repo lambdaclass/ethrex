@@ -16,7 +16,7 @@ use ethrex_common::{
     },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal,
+        ChainConfig, Fork, MempoolTransaction, Receipt, StateDiff, Transaction, TxType, Withdrawal,
         block_access_list::BlockAccessList,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
         calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
@@ -46,6 +46,7 @@ use crate::{
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
     new_evm,
+    preseal::PreSealer,
     sharded_trie::{AccountWrite, ShardedStateTrie},
     vm::StoreVmDatabase,
 };
@@ -459,6 +460,13 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
 /// so a build is sealed at most once.
 pub struct UnsealedPayload {
     context: PayloadBuildContext,
+    /// The build's change over its parent, for the pre-seal. Only the build
+    /// loop's builds carry one: other builds seal right away, so a copy of the
+    /// diff would be wasted.
+    diff: Option<Arc<StateDiff>>,
+    /// Keeps this build's state tree up to date while it is the loop's best,
+    /// so the seal only hashes what changed since (see `crate::preseal`).
+    preseal: Option<PreSealer>,
 }
 
 impl UnsealedPayload {
@@ -483,6 +491,21 @@ impl UnsealedPayload {
     pub fn transactions(&self) -> &[Transaction] {
         &self.context.payload.body.transactions
     }
+
+    /// Diffs this build's PreSealer has applied so far, or `None` without
+    /// one. Only for tests, which check that the build loop really moved its
+    /// tree across builds.
+    #[doc(hidden)]
+    pub fn preseal_diffs_applied(&self) -> Option<usize> {
+        self.preseal.as_ref().map(PreSealer::diffs_applied)
+    }
+
+    /// Hands this build's diff to its PreSealer, if it has both.
+    fn submit_to_preseal(&self) {
+        if let (Some(preseal), Some(diff)) = (&self.preseal, &self.diff) {
+            preseal.submit(diff.clone());
+        }
+    }
 }
 
 impl std::fmt::Debug for UnsealedPayload {
@@ -490,6 +513,7 @@ impl std::fmt::Debug for UnsealedPayload {
         f.debug_struct("UnsealedPayload")
             .field("transactions", &self.transactions().len())
             .field("block_value", &self.block_value())
+            .field("presealed", &self.preseal.is_some())
             .finish()
     }
 }
@@ -572,6 +596,10 @@ impl Blockchain {
     /// If the slot ends first, the build is dropped and the loop returns
     /// `ChainError::PayloadTimedOut`.
     ///
+    /// The best build carries a `PreSealer` that keeps its state tree up to
+    /// date: it moves to each build that beats the best, so the seal only
+    /// hashes what changed since the last best and the post-transaction phase.
+    ///
     /// Cancelling also stops the build in progress: it stops adding transactions
     /// and returns the ones it already has, so `getPayload` never waits for a
     /// full build.
@@ -592,6 +620,8 @@ impl Blockchain {
         // A `getPayload` arriving during this first build gets a block with only
         // the transactions added before it arrived, possibly none.
         let mut best = self.build_unsealed_until(payload.clone(), &cancel_token)?;
+        best.preseal = self.start_preseal(payload.header.parent_hash);
+        best.submit_to_preseal();
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             // `notify_waiters` only reaches `Notified` futures that already
             // exist, so create it before checking the sequence: a tx that lands
@@ -621,8 +651,10 @@ impl Blockchain {
             // the same way each time must not be retried without a new tx.
             last_built_seq = seq_before;
             match rebuilt {
-                Some(Ok(Ok(candidate))) => {
+                Some(Ok(Ok(mut candidate))) => {
                     if candidate.beats(&best) {
+                        candidate.preseal = best.preseal.take();
+                        candidate.submit_to_preseal();
                         best = candidate;
                     }
                 }
@@ -643,10 +675,33 @@ impl Blockchain {
             return Ok(best);
         }
         // Nobody asked for the block within the slot. Drop the build here
-        // instead of holding it until the entry is evicted; a `getPayload` for
-        // this id now answers UnknownPayload.
+        // instead of holding it until the entry is evicted; this also stops
+        // its PreSealer, freeing the tree. A `getPayload` for this id now
+        // answers UnknownPayload.
         drop(best);
         Err(ChainError::PayloadTimedOut)
+    }
+
+    /// Starts the PreSealer of a loop building on `parent_hash`. Without one,
+    /// the seal computes the state root in one shot, so a failure here only
+    /// costs time.
+    fn start_preseal(&self, parent_hash: BlockHash) -> Option<PreSealer> {
+        let parent = match self.storage.get_block_header_by_hash(parent_hash) {
+            Ok(Some(parent)) => parent,
+            Ok(None) => {
+                debug!(%parent_hash, "Payload parent header not found; building without a pre-seal");
+                return None;
+            }
+            Err(err) => {
+                warn!(%err, "Could not read the payload parent header; building without a pre-seal");
+                return None;
+            }
+        };
+        PreSealer::start(self.storage.clone(), parent.state_root)
+            .inspect_err(|err| {
+                warn!(%err, "Could not start the payload pre-seal worker; building without it");
+            })
+            .ok()
     }
 
     /// Rebuilds `payload` on a blocking thread, unsealed. If `cancel_token` is
@@ -713,13 +768,14 @@ impl Blockchain {
     }
 
     /// Same as `build_payload`, but unsealed, and once `stop` is cancelled it
-    /// stops adding transactions and returns the ones it already has.
+    /// stops adding transactions and returns the ones it already has. For
+    /// the build loop: the result carries its state diff for the pre-seal.
     fn build_unsealed_until(
         &self,
         payload: Block,
         stop: &CancellationToken,
     ) -> Result<UnsealedPayload, ChainError> {
-        self.build_unsealed(payload, None, Some(stop))
+        self.build_unsealed(payload, None, Some(stop), true)
     }
 
     /// Builds a payload from an explicit, ordered list of transactions instead of the
@@ -898,7 +954,7 @@ impl Blockchain {
         explicit_transactions: Option<Vec<Transaction>>,
         stop: Option<&CancellationToken>,
     ) -> Result<PayloadBuildResult, ChainError> {
-        let unsealed = self.build_unsealed(payload, explicit_transactions, stop)?;
+        let unsealed = self.build_unsealed(payload, explicit_transactions, stop, false)?;
         self.seal_payload(unsealed)
     }
 
@@ -906,11 +962,15 @@ impl Blockchain {
     /// `None` the payload is filled from the mempool, stopping early once
     /// `stop` is cancelled; otherwise the provided transactions are applied
     /// verbatim. The result is not sealed: see [`Self::seal_payload`].
+    ///
+    /// `with_diff` copies the build's state diff into the result, for the
+    /// build loop's pre-seal.
     fn build_unsealed(
         &self,
         payload: Block,
         explicit_transactions: Option<Vec<Transaction>>,
         stop: Option<&CancellationToken>,
+        with_diff: bool,
     ) -> Result<UnsealedPayload, ChainError> {
         let since = Instant::now();
 
@@ -926,6 +986,20 @@ impl Blockchain {
             None => self.fill_transactions(&mut context, stop)?,
             Some(transactions) => self.fill_explicit_transactions(&mut context, transactions)?,
         }
+        // Before the build time is taken: a loop build pays for this copy.
+        // The pre-seal only saves time, so a failure leaves the build without
+        // a diff instead of failing it; its PreSealer then lags and the seal
+        // rebases from an older build, which gives the same root.
+        let diff = if with_diff {
+            context
+                .vm
+                .state_diff()
+                .inspect_err(|err| warn!(%err, "Could not read the payload's state diff"))
+                .ok()
+                .map(Arc::new)
+        } else {
+            None
+        };
 
         let interval = Instant::now().duration_since(since).as_millis();
 
@@ -949,19 +1023,28 @@ impl Blockchain {
             }
         }
 
-        Ok(UnsealedPayload { context })
+        Ok(UnsealedPayload {
+            context,
+            diff,
+            preseal: None,
+        })
     }
 
     /// Seals a payload: runs the post-transaction phase (withdrawals, then the
     /// request system calls, as EELS `apply_body` orders them) and computes the
     /// header roots. Consumes the payload, since `finalize_payload` drains the
-    /// VM's state.
+    /// VM's state. The state root comes from the build's PreSealer when it has
+    /// one. Blocks on that worker: call it from a blocking thread.
     pub fn seal_payload(
         &self,
         unsealed: UnsealedPayload,
     ) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
-        let UnsealedPayload { mut context } = unsealed;
+        let UnsealedPayload {
+            mut context,
+            preseal,
+            diff: _,
+        } = unsealed;
         // EIP-7928: Post-tx phase uses index n+1 for both withdrawals and requests.
         // Withdrawals precede the request system calls, as on block import; see the
         // ordering note in `LEVM::execute_block`.
@@ -981,7 +1064,7 @@ impl Blockchain {
         }
         self.apply_withdrawals(&mut context)?;
         self.extract_requests(&mut context)?;
-        self.finalize_payload(&mut context)?;
+        self.finalize_payload_with(&mut context, preseal)?;
 
         let interval = Instant::now().duration_since(since).as_millis();
         tracing::debug!("[METRIC] SEALING PAYLOAD TOOK: {interval} ms");
@@ -1479,13 +1562,52 @@ impl Blockchain {
         Ok(tree.root()?)
     }
 
+    /// The state root of `updates`, from `preseal`'s tree when there is one.
+    /// A pre-seal that failed or whose worker died falls back to the one-shot
+    /// root: a broken pre-seal costs time, never a wrong root. Returns the
+    /// updates back for the build result.
+    fn seal_state_root(
+        &self,
+        parent_hash: BlockHash,
+        updates: Vec<AccountUpdate>,
+        preseal: Option<PreSealer>,
+    ) -> Result<(H256, Vec<AccountUpdate>), ChainError> {
+        let Some(preseal) = preseal else {
+            let state_root = self.one_shot_state_root(parent_hash, &updates)?;
+            return Ok((state_root, updates));
+        };
+        let updates = Arc::new(updates);
+        let state_root = match preseal.finish(updates.clone()) {
+            Ok(state_root) => state_root,
+            Err(err) => {
+                warn!(%err, "Payload pre-seal failed; computing the state root in one shot");
+                self.one_shot_state_root(parent_hash, &updates)?
+            }
+        };
+        // The worker drops its reference before it replies, so this is no
+        // copy unless the worker died holding it.
+        let updates = Arc::try_unwrap(updates).unwrap_or_else(|shared| (*shared).clone());
+        Ok((state_root, updates))
+    }
+
     pub fn finalize_payload(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
+        self.finalize_payload_with(context, None)
+    }
+
+    /// `finalize_payload`, with the state root taken from `preseal` when the
+    /// build has one.
+    pub(crate) fn finalize_payload_with(
+        &self,
+        context: &mut PayloadBuildContext,
+        preseal: Option<PreSealer>,
+    ) -> Result<(), ChainError> {
         // Take BAL from VM before getting state transitions (which clears state)
         let block_access_list = context.vm.take_bal();
 
         let account_updates = context.vm.get_state_transitions()?;
 
-        let state_root = self.one_shot_state_root(context.parent_hash(), &account_updates)?;
+        let (state_root, account_updates) =
+            self.seal_state_root(context.parent_hash(), account_updates, preseal)?;
 
         context.payload.header.state_root = state_root;
         context.payload.header.transactions_root =
@@ -2303,6 +2425,52 @@ mod tests {
         assert!(
             build.await.is_ok(),
             "a getPayload racing the deadline lost its block"
+        );
+    }
+
+    /// The seal takes its state root from the pre-sealed tree, and a broken
+    /// pre-seal falls back to a one-shot root: either way the root is the one
+    /// a seal without a pre-seal computes.
+    #[tokio::test]
+    async fn presealed_and_failed_preseal_seal_the_same_root() {
+        let (blockchain, template) = blockchain_and_template().await;
+        let parent = blockchain
+            .storage
+            .get_block_header_by_hash(template.header.parent_hash)
+            .expect("read the parent header")
+            .expect("parent header");
+        let never = CancellationToken::new();
+        let seal = |preseal_root: Option<H256>| {
+            let mut unsealed = blockchain
+                .build_unsealed_until(template.clone(), &never)
+                .expect("build");
+            if let Some(root) = preseal_root {
+                let preseal =
+                    PreSealer::start(blockchain.storage.clone(), root).expect("start pre-seal");
+                preseal.submit(
+                    unsealed
+                        .diff
+                        .clone()
+                        .expect("a loop build carries its diff"),
+                );
+                unsealed.preseal = Some(preseal);
+            }
+            blockchain
+                .seal_payload(unsealed)
+                .expect("seal")
+                .payload
+                .header
+                .state_root
+        };
+
+        let one_shot = seal(None);
+        assert_eq!(seal(Some(parent.state_root)), one_shot, "pre-sealed root");
+        // No state trie has this root, so the pre-seal fails and the seal
+        // falls back to the one-shot root.
+        assert_eq!(
+            seal(Some(H256::repeat_byte(0xab))),
+            one_shot,
+            "root after a failed pre-seal"
         );
     }
 
