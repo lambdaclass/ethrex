@@ -231,6 +231,7 @@ pub async fn sync_cycle_snap(
                 tokio_util::sync::CancellationToken::new(),
                 sync_head,
                 store.clone(),
+                None,
             )
             .await;
         }

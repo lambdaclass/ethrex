@@ -33,6 +33,7 @@ pub async fn sync_cycle_full(
     cancel_token: CancellationToken,
     mut sync_head: H256,
     store: Store,
+    stop_at_block: Option<u64>,
 ) -> Result<(), SyncError> {
     info!("Syncing to sync_head {:?}", sync_head);
 
@@ -47,79 +48,213 @@ pub async fn sync_cycle_full(
         pending_blocks.insert(0, block);
     }
 
-    // Request all block headers between the sync head and our local chain
-    // We will begin from the sync head so that we download the latest state first, ensuring we follow the correct chain
-    // This step is not parallelized
-    let mut start_block_number;
-    let mut end_block_number = 0;
-    let mut headers = vec![];
-    let mut single_batch = true;
+    // Request all block headers between the sync head and our local chain.
+    //
+    // Two paths:
+    //   * Default: walk new-to-old from sync_head until we merge with the canonical chain.
+    //     Pulls every header in [local_canonical+1, sync_head], which is fine for normal
+    //     catch-up but wasteful when we only intend to execute a small slice.
+    //   * `--stop-at-block N` set and N > local_canonical: pull headers OldToNew starting
+    //     from local canonical's hash, capped at N. We download exactly the headers we'll
+    //     execute (~N - local_canonical), skipping the [N+1, sync_head] range entirely.
+    let start_block_number;
+    let end_block_number;
+    let headers: Vec<ethrex_common::types::BlockHeader>;
+    let single_batch;
 
-    let mut attempts = 0;
-
-    // Request and store all block headers from the advertised sync head
-    loop {
-        let Some(mut block_headers) = peers
-            .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
-            .await?
-        else {
-            if attempts >= MAX_HEADER_FETCH_ATTEMPTS {
-                warn!(
-                    "Sync failed to find target block header after {attempts} attempts, aborting to wait for a newer sync head"
-                );
-                return Ok(());
-            }
-            attempts += 1;
-            warn!(
-                "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 2s"
-            );
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            continue;
-        };
-        debug!("Sync Log 9: Received {} block headers", block_headers.len());
-        // Reset failure counter on success so it tracks consecutive failures
-        attempts = 0;
-
-        let first_header = block_headers.first().ok_or(SyncError::NoBlocks)?;
-        let last_header = block_headers.last().ok_or(SyncError::NoBlocks)?;
-
-        info!(
-            "Received {} block headers| First Number: {} Last Number: {}",
-            block_headers.len(),
-            first_header.number,
-            last_header.number,
-        );
-        end_block_number = end_block_number.max(first_header.number);
-        start_block_number = last_header.number;
-
-        sync_head = last_header.parent_hash;
-        if store.is_canonical_sync(sync_head)? || sync_head.is_zero() {
-            // Incoming chain merged with current chain
-            // Filter out already canonical blocks from batch
-            let mut first_canon_block = block_headers.len();
-            for (index, header) in block_headers.iter().enumerate() {
-                if store.is_canonical_sync(header.hash())? {
-                    first_canon_block = index;
-                    break;
-                }
-            }
-            block_headers.drain(first_canon_block..block_headers.len());
-            if let Some(last_header) = block_headers.last() {
-                start_block_number = last_header.number;
-            }
-            // If the fullsync consists of a single batch of headers we can just keep them in memory instead of writing them to Store
-            if single_batch {
-                headers = block_headers.into_iter().rev().collect();
-            } else {
-                store.add_fullsync_batch(block_headers).await?;
-            }
-            break;
+    if let Some(stop) = stop_at_block {
+        let local_canonical = store.get_latest_block_number().await.unwrap_or(0);
+        if stop <= local_canonical {
+            // The init_l1 early-exit normally catches this; defensive no-op.
+            store.clear_fullsync_headers().await?;
+            return Ok(());
         }
-        store.add_fullsync_batch(block_headers).await?;
-        single_batch = false;
+        let local_canonical_hash = store
+            .get_canonical_block_hash(local_canonical)
+            .await?
+            .ok_or(SyncError::NoLatestCanonical)?;
+        let total_needed = stop - local_canonical;
+        // For small ranges keep headers in memory and execute as a single block-by-block batch.
+        // For large ranges flush accumulated headers to FULLSYNC_HEADERS storage so the
+        // executor can pick them up in EXECUTE_BATCH_SIZE chunks via add_blocks_in_batch
+        // (much faster than the block-by-block fallback for bulk catch-up).
+        let use_multi_batch = total_needed > *EXECUTE_BATCH_SIZE as u64;
+        info!(
+            "[STOP_AT_BLOCK] bounded forward header download: canonical={local_canonical} target={stop} ({total_needed} headers needed, {})",
+            if use_multi_batch {
+                "multi-batch"
+            } else {
+                "single-batch"
+            }
+        );
+        // Threshold at which we drain in-memory accumulator to FULLSYNC_HEADERS storage.
+        let flush_threshold: usize = (*EXECUTE_BATCH_SIZE).saturating_mul(4);
+
+        let mut accumulator: Vec<ethrex_common::types::BlockHeader> = if use_multi_batch {
+            Vec::with_capacity(flush_threshold)
+        } else {
+            Vec::with_capacity(total_needed as usize)
+        };
+        let mut total_downloaded: u64 = 0;
+        let mut anchor_hash = local_canonical_hash;
+        let mut anchor_number = local_canonical;
+        let mut consecutive_failures = 0_u32;
+        const MAX_CONSECUTIVE_FAILURES: u32 = MAX_HEADER_FETCH_ATTEMPTS as u32 * 3;
+
+        while anchor_number < stop {
+            let Some(batch) = peers
+                .request_block_headers_from_hash(anchor_hash, BlockRequestOrder::OldToNew)
+                .await?
+            else {
+                consecutive_failures += 1;
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    warn!(
+                        "[STOP_AT_BLOCK] header download stalled after {consecutive_failures} consecutive failures; aborting cycle"
+                    );
+                    store.clear_fullsync_headers().await?;
+                    return Ok(());
+                }
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                continue;
+            };
+            // Drop any header at or below the anchor (peers include the anchor in OldToNew responses).
+            let mut to_extend: Vec<ethrex_common::types::BlockHeader> = batch
+                .into_iter()
+                .filter(|h| h.number > anchor_number)
+                .collect();
+            // Validate the chain anchors correctly to the previous tail.
+            if to_extend
+                .first()
+                .is_some_and(|h| h.parent_hash != anchor_hash)
+            {
+                warn!(
+                    "[STOP_AT_BLOCK] header chain mismatch from peer (parent_hash != anchor); retrying"
+                );
+                consecutive_failures += 1;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+            // Trim trailing headers past the target (we never execute past stop).
+            to_extend.retain(|h| h.number <= stop);
+            if to_extend.is_empty() {
+                consecutive_failures += 1;
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    warn!("[STOP_AT_BLOCK] header download not making progress; aborting cycle");
+                    store.clear_fullsync_headers().await?;
+                    return Ok(());
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+            consecutive_failures = 0;
+            let last = to_extend.last().expect("non-empty");
+            anchor_hash = last.hash();
+            anchor_number = last.number;
+            total_downloaded += to_extend.len() as u64;
+            accumulator.extend(to_extend);
+            // Periodically flush when in multi-batch mode so memory stays bounded.
+            if use_multi_batch && accumulator.len() >= flush_threshold {
+                let drained = std::mem::take(&mut accumulator);
+                store.add_fullsync_batch(drained).await?;
+            }
+            info!(
+                "[STOP_AT_BLOCK] downloaded {} of {} headers (latest: {})",
+                total_downloaded, total_needed, anchor_number
+            );
+        }
+
+        if total_downloaded == 0 {
+            warn!("[STOP_AT_BLOCK] no headers downloaded; cycle aborts");
+            store.clear_fullsync_headers().await?;
+            return Ok(());
+        }
+
+        start_block_number = local_canonical + 1;
+        end_block_number = stop + 1; // exclusive
+        if use_multi_batch {
+            // Flush any remainder so the body-download task can read every batch from storage.
+            if !accumulator.is_empty() {
+                let drained = std::mem::take(&mut accumulator);
+                store.add_fullsync_batch(drained).await?;
+            }
+            single_batch = false;
+            headers = vec![]; // empty; multi-batch reads from FULLSYNC_HEADERS storage
+        } else {
+            single_batch = true;
+            headers = accumulator; // OldToNew order, low number to high
+        }
+        // Filter pending_blocks down to those ≤ stop (defensive; init_l1 typically rules them out).
+        pending_blocks.retain(|b| b.header.number <= stop);
+    } else {
+        let mut start_block_number_inner;
+        let mut end_block_number_inner = 0;
+        let mut headers_inner: Vec<ethrex_common::types::BlockHeader> = vec![];
+        let mut single_batch_inner = true;
+        let mut attempts = 0;
+
+        // Request and store all block headers from the advertised sync head, walking new-to-old.
+        loop {
+            let Some(mut block_headers) = peers
+                .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
+                .await?
+            else {
+                if attempts >= MAX_HEADER_FETCH_ATTEMPTS {
+                    warn!(
+                        "Sync failed to find target block header after {attempts} attempts, aborting to wait for a newer sync head"
+                    );
+                    return Ok(());
+                }
+                attempts += 1;
+                warn!(
+                    "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 2s"
+                );
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                continue;
+            };
+            debug!("Sync Log 9: Received {} block headers", block_headers.len());
+            attempts = 0;
+
+            let first_header = block_headers.first().ok_or(SyncError::NoBlocks)?;
+            let last_header = block_headers.last().ok_or(SyncError::NoBlocks)?;
+
+            info!(
+                "Received {} block headers| First Number: {} Last Number: {}",
+                block_headers.len(),
+                first_header.number,
+                last_header.number,
+            );
+            end_block_number_inner = end_block_number_inner.max(first_header.number);
+            start_block_number_inner = last_header.number;
+
+            sync_head = last_header.parent_hash;
+            if store.is_canonical_sync(sync_head)? || sync_head.is_zero() {
+                // Incoming chain merged with current chain. Drop the canonical-prefix from this batch.
+                let mut first_canon_block = block_headers.len();
+                for (index, header) in block_headers.iter().enumerate() {
+                    if store.is_canonical_sync(header.hash())? {
+                        first_canon_block = index;
+                        break;
+                    }
+                }
+                block_headers.drain(first_canon_block..block_headers.len());
+                if let Some(last_header) = block_headers.last() {
+                    start_block_number_inner = last_header.number;
+                }
+                if single_batch_inner {
+                    headers_inner = block_headers.into_iter().rev().collect();
+                } else {
+                    store.add_fullsync_batch(block_headers).await?;
+                }
+                break;
+            }
+            store.add_fullsync_batch(block_headers).await?;
+            single_batch_inner = false;
+        }
+        start_block_number = start_block_number_inner.max(1);
+        end_block_number = end_block_number_inner + 1;
+        headers = headers_inner;
+        single_batch = single_batch_inner;
     }
-    end_block_number += 1;
-    start_block_number = start_block_number.max(1);
 
     // Pipeline: download block bodies in a background task while the main loop executes.
     // This overlaps network I/O with block execution for better throughput.

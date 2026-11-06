@@ -117,9 +117,14 @@ pub struct Syncer {
     /// used during the syncing process
     datadir: PathBuf,
     diagnostics: Arc<tokio::sync::RwLock<SyncDiagnostics>>,
+    /// When set, full-sync halts at exactly this block, flushes all in-memory trie layers, and
+    /// triggers a graceful shutdown. Used for taking on-disk snapshots at a known height.
+    /// Only honoured by the full-sync path; rejected at startup if `--syncmode snap`.
+    stop_at_block: Option<u64>,
 }
 
 impl Syncer {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         peers: PeerHandler,
         snap_enabled: Arc<AtomicBool>,
@@ -127,6 +132,7 @@ impl Syncer {
         blockchain: Arc<Blockchain>,
         datadir: PathBuf,
         diagnostics: Arc<tokio::sync::RwLock<SyncDiagnostics>>,
+        stop_at_block: Option<u64>,
     ) -> Self {
         Self {
             snap_enabled,
@@ -135,6 +141,7 @@ impl Syncer {
             blockchain,
             datadir,
             diagnostics,
+            stop_at_block,
         }
     }
 
@@ -227,6 +234,7 @@ impl Syncer {
                 self.cancel_token.clone(),
                 sync_head,
                 store,
+                self.stop_at_block,
             )
             .await
         }
@@ -313,6 +321,8 @@ pub enum SyncError {
     MissingFullsyncBatch,
     #[error("Snap error: {0}")]
     Snap(#[from] crate::snap::SnapError),
+    #[error("{0}")]
+    Custom(String),
 }
 
 impl SyncError {
@@ -343,7 +353,8 @@ impl SyncError {
             | SyncError::PeerTableError(_)
             | SyncError::MissingFullsyncBatch
             | SyncError::Snap(_)
-            | SyncError::FileSystem(_) => false,
+            | SyncError::FileSystem(_)
+            | SyncError::Custom(_) => false,
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)

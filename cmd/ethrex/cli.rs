@@ -365,6 +365,21 @@ pub struct Options {
         env = "ETHREX_PRECOMPUTE_WITNESSES"
     )]
     pub precompute_witnesses: bool,
+    #[arg(
+        long = "stop-at-block",
+        value_name = "BLOCK_NUMBER",
+        help = "Halt full-sync at exactly this block, force-flush all in-memory trie layers, then exit. Intended for snapshotting.",
+        long_help = "When set, full-sync stops at exactly the given block number. The final partial \
+                     batch (which most likely crosses the target mid-batch) executes block-by-block \
+                     via the existing fallback path, all in-memory trie diff-layers are flushed to \
+                     disk, FlatKeyValue generation (if enabled) is awaited to completion, and the \
+                     node exits cleanly. After exit the datadir is self-consistent — use \
+                     `Store::create_checkpoint` or `cp -r` to take a snapshot. Incompatible with \
+                     `--syncmode snap` (snap's pivot semantics don't fit `exact stop`).",
+        help_heading = "Node options",
+        env = "ETHREX_STOP_AT_BLOCK"
+    )]
+    pub stop_at_block: Option<u64>,
 }
 
 impl Options {
@@ -449,6 +464,7 @@ impl Default for Options {
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
             max_blobs_per_block: None,
             precompute_witnesses: false,
+            stop_at_block: None,
             no_migrate: false,
         }
     }

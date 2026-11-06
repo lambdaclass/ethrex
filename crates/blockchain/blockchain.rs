@@ -227,6 +227,12 @@ pub struct BlockchainOptions {
     pub max_blobs_per_block: Option<u32>,
     /// If true, computes execution witnesses upon receiving newPayload messages and stores them in local storage
     pub precompute_witnesses: bool,
+    /// If set, [`Blockchain::add_block_pipeline`] rejects blocks whose number exceeds this
+    /// target. Used by `--stop-at-block` to halt execution at an exact height (the engine-API
+    /// path goes through `add_block_pipeline`, so the reject must live there to catch CL-driven
+    /// payload deliveries during catch-up). The companion watcher task in `init_l1` triggers
+    /// the flush + shutdown sequence once the latest block reaches the target.
+    pub stop_at_block: Option<u64>,
 }
 
 impl Default for BlockchainOptions {
@@ -237,6 +243,7 @@ impl Default for BlockchainOptions {
             r#type: BlockchainType::default(),
             max_blobs_per_block: None,
             precompute_witnesses: false,
+            stop_at_block: None,
         }
     }
 }
@@ -1828,6 +1835,22 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<(Option<BlockAccessList>, Result<(), ChainError>), ChainError> {
+        // --stop-at-block: refuse to execute any *forward-progress* block past the target.
+        // Catches the engine-API path (handle_new_payload → add_block → add_block_pipeline)
+        // and the fullsync block-by-block fallback (run_blocks_pipeline). Skips blocks ≤ the
+        // current cached head so internal replay paths (e.g. `regenerate_head_state` walking
+        // forward from a known state-root) aren't blocked. The watcher task in `init_l1`
+        // polls the latest block and triggers the actual flush + clean shutdown.
+        if let Some(stop) = self.options.stop_at_block
+            && block.header.number > stop
+            && block.header.number > self.storage.get_latest_block_number_sync()
+        {
+            return Err(ChainError::Custom(format!(
+                "block {} rejected: --stop-at-block target {stop} reached",
+                block.header.number
+            )));
+        }
+
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.

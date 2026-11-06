@@ -219,6 +219,7 @@ pub async fn init_l2(
         perf_logs_enabled: true,
         max_blobs_per_block: None, // L2 doesn't support blob transactions
         precompute_witnesses: opts.node_opts.precompute_witnesses,
+        stop_at_block: opts.node_opts.stop_at_block,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
@@ -283,6 +284,7 @@ pub async fn init_l2(
             blockchain.clone(),
             store.clone(),
             opts.node_opts.datadir.clone(),
+            opts.node_opts.stop_at_block,
         )
         .await;
 

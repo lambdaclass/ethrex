@@ -205,6 +205,7 @@ pub async fn init_rpc_api(
         blockchain.clone(),
         store.clone(),
         datadir.to_path_buf(),
+        opts.stop_at_block,
     )
     .await;
 
@@ -508,6 +509,31 @@ pub async fn init_l1(
         store.generate_flatkeyvalue()?;
     }
 
+    // --stop-at-block: if the on-disk LatestBlockNumber is already at or past the target,
+    // there is nothing to sync. Run the flush + shutdown sequence inline (so the datadir is
+    // self-consistent for snapshotting) and bail out before regenerate_head_state, which
+    // would otherwise replay forward-progress blocks past the target.
+    if let Some(stop) = opts.stop_at_block {
+        let latest = store.get_latest_block_number().await.unwrap_or(0);
+        if latest >= stop {
+            warn!(
+                "[STOP_AT_BLOCK] node already at block {latest} >= target {stop}; \
+                 cannot rewind to an earlier block. Flushing trie layers and exiting."
+            );
+            if let Ok(Some(header)) = store.get_block_header(stop) {
+                if let Err(e) = store.flush_all_trie_layers(header.state_root).await {
+                    warn!("[STOP_AT_BLOCK] flush_all_trie_layers failed: {e}");
+                }
+            } else {
+                warn!("[STOP_AT_BLOCK] no header for target block {stop}; skipping flush");
+            }
+            return Err(eyre::eyre!(
+                "--stop-at-block: node head ({latest}) is already past target ({stop}). \
+                 Use a fresh datadir or pick a target ≥ current head."
+            ));
+        }
+    }
+
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
@@ -519,6 +545,7 @@ pub async fn init_l1(
             r#type: BlockchainType::L1,
             max_blobs_per_block: opts.max_blobs_per_block,
             precompute_witnesses: opts.precompute_witnesses,
+            stop_at_block: opts.stop_at_block,
         },
     );
 
@@ -590,6 +617,91 @@ pub async fn init_l1(
         .await;
     } else {
         info!("P2P is disabled");
+    }
+
+    // --stop-at-block watcher: poll the latest block and trigger a clean shutdown once the
+    // target is reached. This catches every execution path (fullsync, snap-to-full transition,
+    // engine-API catch-up via lighthouse) — the per-block reject in
+    // `Blockchain::add_block_pipeline_inner` is what guarantees we don't overshoot the
+    // target by more than the in-flight payload, and this watcher is what actually flushes
+    // and exits.
+    if let Some(stop) = opts.stop_at_block {
+        let store_for_watcher = store.clone();
+        let cancel_for_watcher = cancel_token.clone();
+        tokio::spawn(async move {
+            const FKV_SENTINEL: &[u8] = &[0xffu8; 64];
+            const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+            const FKV_WAIT_SOFT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1800);
+            info!("[STOP_AT_BLOCK] watcher armed; will halt at block {stop}");
+            // Wait until latest_block_number >= stop OR the node is shutting down for
+            // another reason.
+            loop {
+                tokio::select! {
+                    _ = cancel_for_watcher.cancelled() => return,
+                    _ = tokio::time::sleep(POLL_INTERVAL) => {}
+                }
+                let latest = store_for_watcher
+                    .get_latest_block_number()
+                    .await
+                    .unwrap_or(0);
+                if latest >= stop {
+                    info!("[STOP_AT_BLOCK] reached: latest={latest} target={stop}; halting node");
+                    break;
+                }
+            }
+            // Cancel first so the engine-API/RPC stops accepting new payloads and existing
+            // tasks start unwinding. The flush below still runs concurrently.
+            cancel_for_watcher.cancel();
+            // Flush every in-memory trie diff-layer for the chain rooted at the target's
+            // state root, so the on-disk state is self-consistent for snapshotting.
+            match store_for_watcher.get_block_header(stop) {
+                Ok(Some(header)) => {
+                    info!(
+                        "[STOP_AT_BLOCK] flushing all in-memory trie layers for state_root {:?}",
+                        header.state_root
+                    );
+                    if let Err(e) = store_for_watcher
+                        .flush_all_trie_layers(header.state_root)
+                        .await
+                    {
+                        warn!("[STOP_AT_BLOCK] flush_all_trie_layers returned error: {e}");
+                    }
+                }
+                Ok(None) => {
+                    warn!("[STOP_AT_BLOCK] no header found for target block {stop}; skipping flush")
+                }
+                Err(e) => warn!("[STOP_AT_BLOCK] error fetching target header: {e}"),
+            }
+            // Wait for FlatKeyValue to finish (sentinel = vec![0xff; 64]). Soft-timeout so a
+            // never-completing FKV doesn't hang the shutdown.
+            let wait_start = std::time::Instant::now();
+            let mut last_log = wait_start;
+            loop {
+                let lw = store_for_watcher.last_written().unwrap_or_default();
+                if lw == FKV_SENTINEL {
+                    info!("[STOP_AT_BLOCK] FKV generation complete");
+                    break;
+                }
+                if wait_start.elapsed() > FKV_WAIT_SOFT_TIMEOUT {
+                    warn!(
+                        "[STOP_AT_BLOCK] FKV did not finish within {:?}; exiting anyway",
+                        FKV_WAIT_SOFT_TIMEOUT
+                    );
+                    break;
+                }
+                if last_log.elapsed() > std::time::Duration::from_secs(60) {
+                    info!(
+                        "[STOP_AT_BLOCK] waiting for FKV to complete (elapsed {:?}, marker {} bytes)",
+                        wait_start.elapsed(),
+                        lw.len()
+                    );
+                    last_log = std::time::Instant::now();
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+            info!("[STOP_AT_BLOCK] reached block {stop}; trie layers flushed; exiting cleanly");
+            std::process::exit(0);
+        });
     }
 
     Ok((

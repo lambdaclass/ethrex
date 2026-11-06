@@ -34,6 +34,7 @@ pub struct SyncManager {
 }
 
 impl SyncManager {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         peer_handler: PeerHandler,
         sync_mode: &SyncMode,
@@ -41,6 +42,7 @@ impl SyncManager {
         blockchain: Arc<Blockchain>,
         store: Store,
         datadir: PathBuf,
+        stop_at_block: Option<u64>,
     ) -> Self {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
 
@@ -77,6 +79,18 @@ impl SyncManager {
             }
         }
 
+        // --stop-at-block is only meaningful for full sync. If the auto-switch above didn't
+        // demote snap to full (i.e. the node is genuinely starting from genesis), the flag
+        // can't be honoured. Log a warning rather than aborting so the rest of the node still
+        // boots; the operator can re-launch with `--syncmode full` after the initial snap.
+        if stop_at_block.is_some() && snap_enabled.load(Ordering::Relaxed) {
+            warn!(
+                "--stop-at-block was set but the node is starting in snap mode; \
+                 the flag will be ignored for this run. Use --syncmode full or restart \
+                 once the node has post-merge state."
+            );
+        }
+
         let diagnostics = Arc::new(tokio::sync::RwLock::new(SyncDiagnostics::default()));
         let syncer = Arc::new(Mutex::new(Syncer::new(
             peer_handler,
@@ -85,6 +99,7 @@ impl SyncManager {
             blockchain,
             datadir,
             diagnostics.clone(),
+            stop_at_block,
         )));
         let sync_manager = Self {
             snap_enabled,
