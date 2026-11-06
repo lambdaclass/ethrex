@@ -217,6 +217,10 @@ pub async fn init_l2(
     opts: L2Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<()> {
+    // Before any actor starts: spawned fixes its timing policy on first use.
+    #[cfg(feature = "metrics")]
+    ethrex_metrics::actors::configure(opts.node_opts.metrics_enabled);
+
     raise_fd_limit()?;
     let datadir = opts.node_opts.datadir.clone();
     init_datadir(&opts.node_opts.datadir);
