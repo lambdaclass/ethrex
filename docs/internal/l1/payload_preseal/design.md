@@ -180,6 +180,41 @@ Porting means: add `fork()` to `ShardedStateTrie` and `PreSealer`, call it in th
 - **Payload.** `unsealed_payload_tests` pass. A pre-sealed `getPayload` gives the same state root as a one-shot seal of the same build. A timed-out build gives `UnknownPayload`: the loop's clock moves to `tokio::time::Instant`, so a paused-clock test reaches 12 s without waiting.
 - **Measurement.** Rerun the seal-scaling and large-diff harnesses (`harness/seal_scaling_tmp.rs`, `harness/seal_diff_tmp.rs`; copied into `test/tests/blockchain/` only while measuring) and the release latency test. Expected: `getPayload` pays for the post-tx phase plus the last change.
 
+## Results
+
+Measured 2026-11-05 on `feat/payload-preseal` (release, in-memory store, the harnesses above copied into the test tree for the run). The 1-min load was 4.5 to 11.5: under the plan's limit of 12, but the machine was not idle. The baseline was not rerun; "Before" is the Background numbers.
+
+Each harness configuration ran its reps twice, as getPayload would see them:
+
+- **One-shot:** cancel right after the initial build, before the first pre-seal finished (the runs confirm it had not). The seal either waits for that in-flight pre-seal or replaces it; either way it pays for a full sharded root, which is what L2 and explicit builds now pay.
+- **Pre-sealed:** wait 2 s first, so the first pre-seal is done and the seal pays for the post-tx phase plus the final rebase.
+
+Large diffs (`seal_diff`: a 1M-slot contract, 1M accounts), seal median of 3:
+
+| Workload | Slots | Before (serial) | One-shot | Pre-sealed |
+| --- | --- | --- | --- | --- |
+| UpdateHot | 12k (61M gas) | 64 ms | 13.8 ms | 2.9 ms |
+| UpdateHot | 30k | | 56.4 ms | 13.2 ms |
+| UpdateHot | 60k (304M gas) | 294 ms | 67.4 ms | 15.6 ms |
+| ClearHot | 12k | | 22.3 ms | 2.6 ms |
+| ClearHot | 60k | | 87.6 ms | 19.2 ms |
+| UpdateSpread | 11.4k | | 18.2 ms | 3.1 ms |
+| UpdateSpread | 57k | | 50.2 ms | 12.8 ms |
+
+Small and medium diffs (`seal_scaling`): with a 2 s `sleep` as the wait, the pre-sealed seal came out slower than the one-shot, even where the state root is trivial. A rerun replaced the sleep with a 2 s busy spin (the pre-seal still finishes first), which showed that the slowdown came from the idle CPU, not the pre-seal. Seal median of 5:
+
+| Workload | One-shot | Pre-sealed, after a 2 s sleep | Pre-sealed, after a 2 s spin |
+| --- | --- | --- | --- |
+| FixedRecipients, 16000 txs (about 70 accounts) | 24.8 ms | 54.7 ms | 25.0 ms |
+| FreshSlots, 8000 txs | 18.2 ms | 36.3 ms | 14.2 ms |
+| FreshRecipients, 16000 txs | 44.4 ms | 58.6 ms | 28.6 ms |
+
+With a small state diff the seal is mostly the transactions and receipts roots, which this design does not change: FixedRecipients seals in 25 ms either way.
+
+`getpayload_latency_under_sustained_mempool_inflow`, release, 3 runs at a 1-min load of 10 to 11.5: passes 3 of 3. `get_payload` took 3.75, 3.12 and 2.81 ms against one full build of 9.7, 8.8 and 14.3 ms. Before, it failed 3 of 3 (4.0 to 4.3 ms against a limit of 4.0 to 4.15 ms). Builds were slower under this load, which loosens the `build / 2` bound, so the pass alone overstates the gain. In absolute terms the median `get_payload` went from about 4.1 ms to 3.1 ms.
+
+Not measured: memory (`harness/mem_probe_tmp.rs` was not rerun), RocksDB or a devnet, and the import benchmark (no bal-devnet `import-bench` database on the machine).
+
 ## Behavior changes for the PR body
 
 - `getPayload` seals from the pre-sealed tree; its cost is the post-tx phase plus the last change, instead of a full state root.
