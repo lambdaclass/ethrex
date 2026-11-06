@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
   prepare:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       matrix: ${{ steps.targets.outputs.matrix }}
       build_profile: ${{ steps.build_opts.outputs.build_profile }}
