@@ -88,5 +88,10 @@ path = "tests/tests.rs"
 name = "allocation_tests"
 path = "tests/allocation_tests.rs"
 
+# Its own binary: it delivers SIGINT to the whole test process.
+[[test]]
+name = "peer_table_ctrl_c_tests"
+path = "tests/peer_table_ctrl_c_tests.rs"
+
 [lints]
 workspace = true
