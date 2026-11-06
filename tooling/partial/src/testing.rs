@@ -295,7 +295,7 @@ impl World {
             .serialize_compact();
         tx.signature_r = U256::from_big_endian(compact.get(..32).expect("r"));
         tx.signature_s = U256::from_big_endian(compact.get(32..).expect("s"));
-        tx.signature_y_parity = i32::from(recovery_id) != 0;
+        tx.signature_y_parity = (i32::from(recovery_id) as u8).into();
         Transaction::EIP1559Transaction(tx)
     }
 

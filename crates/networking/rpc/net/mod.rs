@@ -8,7 +8,8 @@ use crate::{
 pub fn version(_req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     let chain_spec = context.storage.get_chain_config();
 
-    let value = serde_json::to_value(format!("{}", chain_spec.chain_id))?;
+    let value = serde_json::to_value(format!("{}", chain_spec.chain_id))
+        .map_err(|error| RpcErr::Internal(error.to_string()))?;
     Ok(value)
 }
 
