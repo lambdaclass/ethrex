@@ -1,6 +1,6 @@
 [package]
 name = "ethrex-guest-sp1"
-version = "30.0.1"
+version = "31.0.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
