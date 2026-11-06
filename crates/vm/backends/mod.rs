@@ -8,8 +8,8 @@ use crate::execution_result::ExecutionResult;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::requests::Requests;
 use ethrex_common::types::{
-    AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction,
-    Withdrawal,
+    AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, StateDiff,
+    Transaction, Withdrawal,
 };
 use ethrex_common::{Address, U256, types::fee_config::FeeConfig};
 use ethrex_crypto::Crypto;
@@ -311,6 +311,12 @@ impl Evm {
     /// The output is `Vec<AccountUpdate>`.
     pub fn get_state_transitions(&mut self) -> Result<Vec<AccountUpdate>, EvmError> {
         LEVM::get_state_transitions(&mut self.db)
+    }
+
+    /// Wraps [LEVM::state_diff]: the changes so far with their parent values,
+    /// without clearing the caches, so execution can go on afterwards.
+    pub fn state_diff(&self) -> Result<StateDiff, EvmError> {
+        LEVM::state_diff(&self.db)
     }
 
     /// Wraps [LEVM::process_withdrawals].

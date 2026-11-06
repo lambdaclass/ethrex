@@ -36,8 +36,8 @@ use ethrex_common::{
     Address, U256,
     types::{
         AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, FrameReceipt,
-        GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Log, Receipt, Transaction, TxKind,
-        Withdrawal, requests::Requests,
+        GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Log, Receipt, StateDiff, Transaction,
+        TxKind, Withdrawal, requests::Requests,
     },
 };
 #[cfg(feature = "rayon")]
@@ -3878,6 +3878,10 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
     ) -> Result<Vec<AccountUpdate>, EvmError> {
         Ok(db.get_state_transitions()?)
+    }
+
+    pub fn state_diff(db: &GeneralizedDatabase) -> Result<StateDiff, EvmError> {
+        Ok(db.state_diff()?)
     }
 
     pub fn get_state_transitions_tx(

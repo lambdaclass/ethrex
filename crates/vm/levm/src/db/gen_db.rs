@@ -25,6 +25,7 @@ use crate::utils::restore_cache_state;
 use crate::vm::VM;
 use ethrex_common::seeded_hash::{SeededHashMap, SeededHashSet};
 pub use ethrex_common::types::AccountUpdate;
+use ethrex_common::types::{AccountDiff, StateDiff};
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 
@@ -585,106 +586,164 @@ impl GeneralizedDatabase {
         let mut account_updates: Vec<AccountUpdate> =
             Vec::with_capacity(self.current_accounts_state.len());
         for (address, new_state_account) in self.current_accounts_state.iter() {
-            if new_state_account.is_unmodified() {
-                // Skip processing account that we know wasn't mutably accessed during execution
-                continue;
+            if let Some((account_update, _)) = self.account_update(address, new_state_account)? {
+                account_updates.push(account_update);
             }
-            // In case the account is not in immutable_cache (rare) we search for it in the actual database.
-            let initial_state_account =
-                self.initial_accounts_state.get(address).ok_or_else(|| {
-                    VMError::Internal(InternalError::Custom(format!(
-                        "Failed to get account {address} from immutable cache",
-                    )))
-                })?;
-
-            let mut acc_info_updated = false;
-            let mut storage_updated = false;
-
-            // 1. Account Info has been updated if balance, nonce or bytecode changed.
-            if initial_state_account.info.balance != new_state_account.info.balance {
-                acc_info_updated = true;
-            }
-
-            if initial_state_account.info.nonce != new_state_account.info.nonce {
-                acc_info_updated = true;
-            }
-
-            let code = if initial_state_account.info.code_hash != new_state_account.info.code_hash {
-                acc_info_updated = true;
-                // code should be in `codes`
-                Some(
-                    self.codes
-                        .get(&new_state_account.info.code_hash)
-                        .ok_or_else(|| {
-                            VMError::Internal(InternalError::Custom(format!(
-                                "Failed to get code for account {address}"
-                            )))
-                        })?,
-                )
-            } else {
-                None
-            };
-
-            // Account will have only its storage removed if it was Destroyed and then modified
-            // Edge cases that can make this true:
-            //   1. Account was destroyed and created again afterwards.
-            //   2. Account was destroyed but then was sent ETH, so it's not going to be completely removed from the trie.
-            let was_destroyed = new_state_account.status == AccountStatus::DestroyedModified;
-            // Only emit removed_storage if the account actually had storage in the trie.
-            // If it didn't (e.g. account was created within the batch), there's nothing to
-            // remove, and emitting removed_storage=true would cause a spurious empty
-            // account to be inserted into the state trie.
-            let removed_storage = was_destroyed && initial_state_account.has_storage;
-
-            // 2. Storage has been updated if the current value is different from the one before execution.
-            let mut added_storage: SeededHashMap<_, _> = Default::default();
-
-            for (key, new_value) in &new_state_account.storage {
-                let old_value = if !was_destroyed {
-                    initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address:?}. For key: {key:?}")))})?
-                } else {
-                    // There's not an "old value" if the contract was destroyed and re-created.
-                    &ZERO_U256
-                };
-
-                if new_value != old_value {
-                    added_storage.insert(*key, *new_value);
-                    storage_updated = true;
-                }
-            }
-
-            let info = if acc_info_updated {
-                Some(new_state_account.info.clone())
-            } else {
-                None
-            };
-
-            // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
-            // ethrex is a post-Merge client, empty accounts have already been pruned from the trie on Mainnet by the Merge (see EIP-161), so we won't have any empty accounts in the trie.
-            let was_empty = initial_state_account.is_empty();
-            let removed = new_state_account.is_empty() && !was_empty;
-
-            if !removed && !acc_info_updated && !storage_updated && !removed_storage {
-                // Account hasn't been updated
-                continue;
-            }
-
-            let account_update = AccountUpdate {
-                address: *address,
-                removed,
-                info,
-                code: code.cloned(),
-                added_storage,
-                removed_storage,
-            };
-
-            account_updates.push(account_update);
         }
         self.initial_accounts_state.clear();
         self.current_accounts_state.clear();
         self.codes.clear();
         self.code_metadata.clear();
         Ok(account_updates)
+    }
+
+    /// The same updates as `get_state_transitions`, each with the parent value of
+    /// what it changes, read without clearing anything: a payload build reads its
+    /// diff to pre-seal its state root, then keeps executing or gets sealed, and
+    /// the seal still needs the caches.
+    ///
+    /// The parent values come from `initial_accounts_state`, which holds the
+    /// parent state as long as nothing flushed the caches mid-block
+    /// (`get_state_transitions_tx`, import only).
+    pub fn state_diff(&self) -> Result<StateDiff, VMError> {
+        let mut diff = StateDiff::default();
+        for (address, new_state_account) in self.current_accounts_state.iter() {
+            let Some((update, initial_state_account)) =
+                self.account_update(address, new_state_account)?
+            else {
+                continue;
+            };
+            // `account_update` fails on a slot missing from the initial storage unless the
+            // account was destroyed, so the zero default only applies to a destroyed account's
+            // slots the build never read. Zero is their parent value when the account had no
+            // storage; when it had, `update.removed_storage` is set, and a consumer must rebuild
+            // that account from the parent instead of trusting these values.
+            let parent_storage = update
+                .added_storage
+                .keys()
+                .map(|key| {
+                    let parent_value = initial_state_account
+                        .storage
+                        .get(key)
+                        .copied()
+                        .unwrap_or_default();
+                    (*key, parent_value)
+                })
+                .collect();
+            diff.insert(
+                *address,
+                AccountDiff {
+                    parent_info: initial_state_account.info.clone(),
+                    parent_storage,
+                    update,
+                },
+            );
+        }
+        Ok(diff)
+    }
+
+    /// The update `get_state_transitions` emits for one account, or `None` if execution
+    /// left it as it was. It also returns the account's initial state by reference, so
+    /// that only `state_diff` pays to copy parent values: block import calls
+    /// `get_state_transitions` on every block.
+    fn account_update<'a>(
+        &'a self,
+        address: &Address,
+        new_state_account: &LevmAccount,
+    ) -> Result<Option<(AccountUpdate, &'a LevmAccount)>, VMError> {
+        if new_state_account.is_unmodified() {
+            // Skip processing account that we know wasn't mutably accessed during execution
+            return Ok(None);
+        }
+        // In case the account is not in immutable_cache (rare) we search for it in the actual database.
+        let initial_state_account = self.initial_accounts_state.get(address).ok_or_else(|| {
+            VMError::Internal(InternalError::Custom(format!(
+                "Failed to get account {address} from immutable cache",
+            )))
+        })?;
+
+        let mut acc_info_updated = false;
+        let mut storage_updated = false;
+
+        // 1. Account Info has been updated if balance, nonce or bytecode changed.
+        if initial_state_account.info.balance != new_state_account.info.balance {
+            acc_info_updated = true;
+        }
+
+        if initial_state_account.info.nonce != new_state_account.info.nonce {
+            acc_info_updated = true;
+        }
+
+        let code = if initial_state_account.info.code_hash != new_state_account.info.code_hash {
+            acc_info_updated = true;
+            // code should be in `codes`
+            Some(
+                self.codes
+                    .get(&new_state_account.info.code_hash)
+                    .ok_or_else(|| {
+                        VMError::Internal(InternalError::Custom(format!(
+                            "Failed to get code for account {address}"
+                        )))
+                    })?,
+            )
+        } else {
+            None
+        };
+
+        // Account will have only its storage removed if it was Destroyed and then modified
+        // Edge cases that can make this true:
+        //   1. Account was destroyed and created again afterwards.
+        //   2. Account was destroyed but then was sent ETH, so it's not going to be completely removed from the trie.
+        let was_destroyed = new_state_account.status == AccountStatus::DestroyedModified;
+        // Only emit removed_storage if the account actually had storage in the trie.
+        // If it didn't (e.g. account was created within the batch), there's nothing to
+        // remove, and emitting removed_storage=true would cause a spurious empty
+        // account to be inserted into the state trie.
+        let removed_storage = was_destroyed && initial_state_account.has_storage;
+
+        // 2. Storage has been updated if the current value is different from the one before execution.
+        let mut added_storage: SeededHashMap<_, _> = Default::default();
+
+        for (key, new_value) in &new_state_account.storage {
+            let old_value = if !was_destroyed {
+                initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address:?}. For key: {key:?}")))})?
+            } else {
+                // There's not an "old value" if the contract was destroyed and re-created.
+                &ZERO_U256
+            };
+
+            if new_value != old_value {
+                added_storage.insert(*key, *new_value);
+                storage_updated = true;
+            }
+        }
+
+        let info = if acc_info_updated {
+            Some(new_state_account.info.clone())
+        } else {
+            None
+        };
+
+        // "At the end of the transaction, any account touched by the execution of that transaction which is now empty SHALL instead become non-existent (i.e. deleted)."
+        // ethrex is a post-Merge client, empty accounts have already been pruned from the trie on Mainnet by the Merge (see EIP-161), so we won't have any empty accounts in the trie.
+        let was_empty = initial_state_account.is_empty();
+        let removed = new_state_account.is_empty() && !was_empty;
+
+        if !removed && !acc_info_updated && !storage_updated && !removed_storage {
+            // Account hasn't been updated
+            return Ok(None);
+        }
+
+        let account_update = AccountUpdate {
+            address: *address,
+            removed,
+            info,
+            code: code.cloned(),
+            added_storage,
+            removed_storage,
+        };
+
+        Ok(Some((account_update, initial_state_account)))
     }
 
     pub fn get_state_transitions_tx(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
@@ -1149,5 +1208,339 @@ impl<'a> VM<'a> {
             .or_insert(current_value);
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::indexing_slicing)]
+mod state_diff_tests {
+    use super::*;
+    use crate::db::Database;
+    use crate::environment::{EVMConfig, Environment};
+    use crate::errors::DatabaseError;
+    use crate::tracing::LevmCallTracer;
+    use crate::vm::VMType;
+    use bytes::Bytes;
+    use ethrex_common::constants::EMPTY_TRIE_HASH;
+    use ethrex_common::types::{
+        AccountInfo, AccountState, ChainConfig, EIP1559Transaction, Fork, Transaction, TxKind,
+    };
+    use ethrex_crypto::NativeCrypto;
+
+    const SENDER: u64 = 0x1000;
+    /// Exists in the parent state.
+    const RECIPIENT: u64 = 0x2000;
+    /// Does not exist in the parent state.
+    const NEW_RECIPIENT: u64 = 0x3000;
+    const CONTRACT: u64 = 0x4000;
+    /// Does not exist in the parent state; the priority fee creates it.
+    const COINBASE: u64 = 0x5000;
+
+    /// The parent state the build runs on.
+    struct ParentState {
+        accounts: FxHashMap<Address, Account>,
+    }
+
+    impl Database for ParentState {
+        fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
+            Ok(self
+                .accounts
+                .get(&address)
+                .map(|acc| AccountState {
+                    nonce: acc.info.nonce,
+                    balance: acc.info.balance,
+                    storage_root: *EMPTY_TRIE_HASH,
+                    code_hash: acc.info.code_hash,
+                })
+                .unwrap_or_default())
+        }
+
+        fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
+            Ok(self
+                .accounts
+                .get(&address)
+                .and_then(|acc| acc.storage.get(&key).copied())
+                .unwrap_or_default())
+        }
+
+        fn get_block_hash(&self, _block_number: u64) -> Result<H256, DatabaseError> {
+            Ok(H256::zero())
+        }
+
+        fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+            Ok(ChainConfig::default())
+        }
+
+        fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
+            Ok(self
+                .accounts
+                .values()
+                .find(|acc| acc.info.code_hash == code_hash)
+                .map(|acc| acc.code.clone())
+                .unwrap_or_default())
+        }
+
+        fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
+            let code = self.get_account_code(code_hash)?;
+            Ok(CodeMetadata {
+                length: u64::try_from(code.len()).expect("code length fits u64"),
+            })
+        }
+    }
+
+    fn addr(n: u64) -> Address {
+        Address::from_low_u64_be(n)
+    }
+
+    fn slot(n: u64) -> H256 {
+        H256::from_low_u64_be(n)
+    }
+
+    /// Sets slot 1 (parent 0x11) to 0x99, slot 2 (parent 0) to 0x77, and slot 3
+    /// to its parent value 0x33, which reads it without changing it.
+    fn sstore_code() -> Bytes {
+        Bytes::from(vec![
+            0x60, 0x99, 0x60, 0x01, 0x55, // SSTORE(1, 0x99)
+            0x60, 0x77, 0x60, 0x02, 0x55, // SSTORE(2, 0x77)
+            0x60, 0x33, 0x60, 0x03, 0x55, // SSTORE(3, 0x33)
+            0x00, // STOP
+        ])
+    }
+
+    fn parent_accounts() -> FxHashMap<Address, Account> {
+        let eoa = |balance: u64| {
+            Account::new(
+                U256::from(balance),
+                Code::default(),
+                0,
+                FxHashMap::default(),
+            )
+        };
+        let mut storage = FxHashMap::default();
+        storage.insert(slot(1), U256::from(0x11));
+        storage.insert(slot(3), U256::from(0x33));
+        let contract = Account::new(
+            U256::zero(),
+            Code::from_bytecode(sstore_code(), &NativeCrypto),
+            1,
+            storage,
+        );
+        [
+            (addr(SENDER), eoa(1_000_000_000_000)),
+            (addr(RECIPIENT), eoa(5)),
+            (addr(CONTRACT), contract),
+        ]
+        .into_iter()
+        .collect()
+    }
+
+    /// Runs `to <- value` from `SENDER` with `nonce` on `db`, paying a priority
+    /// fee so the coinbase is part of the diff too.
+    fn execute(db: &mut GeneralizedDatabase, nonce: u64, to: Address, value: u64) {
+        const GAS_LIMIT: u64 = 100_000;
+        let fork = Fork::Prague;
+        let env = Environment {
+            origin: addr(SENDER),
+            gas_limit: GAS_LIMIT,
+            config: EVMConfig::new(fork, EVMConfig::canonical_values(fork)),
+            block_number: 1,
+            coinbase: addr(COINBASE),
+            timestamp: 1000,
+            prev_randao: Some(H256::zero()),
+            difficulty: U256::zero(),
+            slot_number: U256::zero(),
+            chain_id: U256::from(1),
+            base_fee_per_gas: U256::from(1),
+            base_blob_fee_per_gas: U256::from(1),
+            gas_price: U256::from(2),
+            block_excess_blob_gas: None,
+            block_blob_gas_used: None,
+            tx_blob_hashes: vec![],
+            tx_max_priority_fee_per_gas: Some(U256::from(1)),
+            tx_max_fee_per_gas: Some(U256::from(2)),
+            tx_max_fee_per_blob_gas: None,
+            tx_nonce: nonce,
+            block_gas_limit: 30_000_000,
+            is_privileged: false,
+            fee_token: None,
+            disable_balance_check: false,
+            disable_nonce_check: false,
+            disable_gas_allowance_check: false,
+            disable_sender_eoa_check: false,
+            disable_execution_gas_cap: false,
+            is_system_call: false,
+        };
+        let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+            chain_id: 1,
+            nonce,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: 2,
+            gas_limit: GAS_LIMIT,
+            to: TxKind::Call(to),
+            value: U256::from(value),
+            data: Bytes::new(),
+            access_list: Default::default(),
+            ..Default::default()
+        });
+        let mut vm = VM::new(
+            env,
+            db,
+            &tx,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &NativeCrypto,
+            None,
+        )
+        .expect("VM::new");
+        let report = vm.execute().expect("execute");
+        assert!(report.is_success(), "tx {nonce} to {to:?} failed");
+    }
+
+    fn sorted(mut updates: Vec<AccountUpdate>) -> Vec<AccountUpdate> {
+        updates.sort_by_key(|u| u.address);
+        updates
+    }
+
+    /// The diff must hold exactly what `get_state_transitions` emits, plus the
+    /// parent value of everything it changes, and reading it must leave the VM
+    /// as it was: the payload build keeps executing after each read, and the
+    /// seal still calls `get_state_transitions` at the end.
+    #[test]
+    fn state_diff_matches_transitions_with_parent_values() {
+        let parent = Arc::new(ParentState {
+            accounts: parent_accounts(),
+        });
+        let mut db = GeneralizedDatabase::new(parent.clone());
+        execute(&mut db, 0, addr(RECIPIENT), 7);
+        execute(&mut db, 1, addr(NEW_RECIPIENT), 9);
+        execute(&mut db, 2, addr(CONTRACT), 0);
+
+        let diff = db.state_diff().expect("state_diff");
+        assert_eq!(
+            db.state_diff().expect("second state_diff"),
+            diff,
+            "a second read must see the same diff: the first one cleared or changed something"
+        );
+
+        let transitions = sorted(db.get_state_transitions().expect("get_state_transitions"));
+        assert_eq!(
+            sorted(diff.values().map(|d| d.update.clone()).collect()),
+            transitions,
+            "the diff's updates must be exactly what get_state_transitions emits"
+        );
+
+        let mut touched: Vec<Address> = diff.keys().copied().collect();
+        touched.sort();
+        assert_eq!(
+            touched,
+            vec![
+                addr(SENDER),
+                addr(RECIPIENT),
+                addr(NEW_RECIPIENT),
+                addr(CONTRACT),
+                addr(COINBASE)
+            ]
+        );
+
+        for (address, account) in &diff {
+            let state = parent.get_account_state(*address).expect("parent account");
+            assert_eq!(
+                account.parent_info,
+                AccountInfo {
+                    code_hash: state.code_hash,
+                    balance: state.balance,
+                    nonce: state.nonce,
+                },
+                "parent_info of {address:?}"
+            );
+            let mut changed: Vec<H256> = account.update.added_storage.keys().copied().collect();
+            let mut with_parent: Vec<H256> = account.parent_storage.keys().copied().collect();
+            changed.sort();
+            with_parent.sort();
+            assert_eq!(with_parent, changed, "parent_storage keys of {address:?}");
+            for (key, value) in &account.parent_storage {
+                assert_eq!(
+                    *value,
+                    parent
+                        .get_storage_value(*address, *key)
+                        .expect("parent slot"),
+                    "parent value of {address:?} slot {key:?}"
+                );
+            }
+        }
+
+        let recipient = &diff[&addr(RECIPIENT)];
+        assert_eq!(recipient.parent_info.balance, U256::from(5));
+        assert_eq!(
+            recipient.update.info.as_ref().map(|info| info.balance),
+            Some(U256::from(12))
+        );
+
+        // Slot 3 was written with its parent value, so it is not a change.
+        let contract = &diff[&addr(CONTRACT)];
+        let expected_storage: SeededHashMap<H256, U256> =
+            [(slot(1), U256::from(0x99)), (slot(2), U256::from(0x77))]
+                .into_iter()
+                .collect();
+        let expected_parent: SeededHashMap<H256, U256> =
+            [(slot(1), U256::from(0x11)), (slot(2), U256::zero())]
+                .into_iter()
+                .collect();
+        assert_eq!(contract.update.added_storage, expected_storage);
+        assert_eq!(contract.parent_storage, expected_parent);
+    }
+
+    /// A destroyed account's slots are compared with zero instead of their parent
+    /// value, so a slot the build never read before the destruction has no parent
+    /// value in the cache: it is reported as zero, while a slot read before keeps
+    /// its parent value.
+    #[test]
+    fn state_diff_of_destroyed_account() {
+        let target = addr(CONTRACT);
+        let mut storage = FxHashMap::default();
+        storage.insert(slot(1), U256::from(5));
+        let parent_account = Account::new(U256::zero(), Code::default(), 1, storage);
+        let mut db = GeneralizedDatabase::new_with_account_state(
+            Arc::new(ParentState {
+                accounts: FxHashMap::default(),
+            }),
+            [(target, parent_account)].into_iter().collect(),
+        );
+
+        // Destroyed and recreated in the build: slot 1 overwritten, slot 2 new.
+        let current = db
+            .current_accounts_state
+            .get_mut(&target)
+            .expect("target in cache");
+        current.status = AccountStatus::DestroyedModified;
+        current.has_storage = false;
+        current.info.balance = U256::from(3);
+        current.storage = [(slot(1), U256::from(7)), (slot(2), U256::from(9))]
+            .into_iter()
+            .collect();
+
+        let diff = db.state_diff().expect("state_diff");
+        assert_eq!(db.state_diff().expect("second state_diff"), diff);
+        let transitions = sorted(db.get_state_transitions().expect("get_state_transitions"));
+        assert_eq!(
+            sorted(diff.values().map(|d| d.update.clone()).collect()),
+            transitions
+        );
+
+        let account = &diff[&target];
+        assert!(account.update.removed_storage);
+        assert_eq!(
+            account.parent_info,
+            AccountInfo {
+                code_hash: Code::default().hash,
+                balance: U256::zero(),
+                nonce: 1,
+            }
+        );
+        let expected_parent: SeededHashMap<H256, U256> =
+            [(slot(1), U256::from(5)), (slot(2), U256::zero())]
+                .into_iter()
+                .collect();
+        assert_eq!(account.parent_storage, expected_parent);
     }
 }

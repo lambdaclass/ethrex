@@ -2,7 +2,10 @@ use std::{
     cmp::{Ordering, max},
     collections::BTreeMap,
     ops::Div,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{self, AtomicBool},
+    },
     time::{Duration, Instant},
 };
 
@@ -16,7 +19,7 @@ use ethrex_common::{
     },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal,
+        ChainConfig, Fork, MempoolTransaction, Receipt, StateDiff, Transaction, TxType, Withdrawal,
         block_access_list::BlockAccessList,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
         calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
@@ -46,6 +49,8 @@ use crate::{
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
     new_evm,
+    preseal::PreSealer,
+    sharded_trie::{AccountWrite, ShardedStateTrie},
     vm::StoreVmDatabase,
 };
 
@@ -56,6 +61,10 @@ use tracing::{debug, warn};
 pub struct PayloadBuildTask {
     task: tokio::task::JoinHandle<Result<UnsealedPayload, ChainError>>,
     cancel: CancellationToken,
+    /// Set once the build loop ended at its slot deadline. Only such a build
+    /// is dropped when a new one registers: a build that ended on an error
+    /// keeps it for its `getPayload`.
+    timed_out: Arc<AtomicBool>,
 }
 
 #[derive(Debug)]
@@ -90,13 +99,26 @@ impl PayloadOrTask {
     }
 }
 
-/// Installs an in-flight build task into the payload pool, evicting the oldest
-/// entry if at capacity.
+/// Installs an in-flight build task into the payload pool, after dropping the
+/// builds that timed out and, if still at capacity, the oldest entry.
 fn register_payload_build_task(
     payloads: &mut Vec<(u64, PayloadOrTask)>,
     payload_id: u64,
     task: PayloadBuildTask,
 ) {
+    // Drop the builds whose loop reached its slot deadline: they hold only
+    // `PayloadTimedOut`, which a `getPayload` for their id answers the same as
+    // a missing entry. A build that ended on an error stays, so its
+    // `getPayload` still reports that error; it leaves by eviction like any
+    // other entry. Reading the flag does not wait and the caller already holds
+    // the `payloads` lock, so this takes no new lock and cannot deadlock with a
+    // `get_payload` that holds that lock while it awaits its task.
+    payloads.retain(|(_, entry)| {
+        !matches!(
+            entry,
+            PayloadOrTask::Task(build) if build.timed_out.load(atomic::Ordering::Acquire)
+        )
+    });
     if payloads.len() >= MAX_PAYLOADS {
         // Remove the oldest entry. A build still running there would keep
         // rebuilding for the rest of its slot, holding its build context, with
@@ -446,6 +468,13 @@ impl From<PayloadBuildContext> for PayloadBuildResult {
 /// so a build is sealed at most once.
 pub struct UnsealedPayload {
     context: PayloadBuildContext,
+    /// The build's change over its parent, for the pre-seal. Only the build
+    /// loop's builds carry one: other builds seal right away, so a copy of the
+    /// diff would be wasted.
+    diff: Option<Arc<StateDiff>>,
+    /// Keeps this build's state tree up to date while it is the loop's best,
+    /// so the seal only hashes what changed since (see `crate::preseal`).
+    preseal: Option<PreSealer>,
 }
 
 impl UnsealedPayload {
@@ -470,6 +499,21 @@ impl UnsealedPayload {
     pub fn transactions(&self) -> &[Transaction] {
         &self.context.payload.body.transactions
     }
+
+    /// Diffs this build's PreSealer has applied so far, or `None` without
+    /// one. Only for tests, which check that the build loop really moved its
+    /// tree across builds.
+    #[doc(hidden)]
+    pub fn preseal_diffs_applied(&self) -> Option<usize> {
+        self.preseal.as_ref().map(PreSealer::diffs_applied)
+    }
+
+    /// Hands this build's diff to its PreSealer, if it has both.
+    fn submit_to_preseal(&self) {
+        if let (Some(preseal), Some(diff)) = (&self.preseal, &self.diff) {
+            preseal.submit(diff.clone());
+        }
+    }
 }
 
 impl std::fmt::Debug for UnsealedPayload {
@@ -477,6 +521,7 @@ impl std::fmt::Debug for UnsealedPayload {
         f.debug_struct("UnsealedPayload")
             .field("transactions", &self.transactions().len())
             .field("block_value", &self.block_value())
+            .field("presealed", &self.preseal.is_some())
             .finish()
     }
 }
@@ -484,7 +529,8 @@ impl std::fmt::Debug for UnsealedPayload {
 impl Blockchain {
     /// Attempts to fetch a payload given its id. If the payload is still being
     /// built, the build is stopped and its best payload sealed. Fails if there
-    /// is no payload or active payload build task for the given id.
+    /// is no payload or active payload build task for the given id, or with
+    /// `PayloadTimedOut` if its build ended at the slot deadline.
     pub async fn get_payload(
         self: &Arc<Self>,
         payload_id: u64,
@@ -524,7 +570,8 @@ impl Blockchain {
     }
 
     /// Starts a payload build process. The built payload can be retrieved by calling `get_payload`.
-    /// The build process will run for the full block building timeslot or until `get_payload` is called
+    /// The build process will run for the full block building timeslot or until `get_payload` is called.
+    /// A build not retrieved within the timeslot is dropped.
     pub async fn initiate_payload_build(self: Arc<Blockchain>, payload: Block, payload_id: u64) {
         // EIP-8070: a node that builds payloads SHOULD permanently act as an eager
         // provider, so it holds complete blob data for every blob tx it may include.
@@ -533,10 +580,16 @@ impl Blockchain {
         let self_clone = self.clone();
         let cancel_token = CancellationToken::new();
         let cancel_token_clone = cancel_token.clone();
+        let timed_out = Arc::new(AtomicBool::new(false));
+        let timed_out_flag = timed_out.clone();
         let payload_build_task = tokio::task::spawn(async move {
-            self_clone
+            let result = self_clone
                 .build_payload_loop(payload, cancel_token_clone)
-                .await
+                .await;
+            if matches!(result, Err(ChainError::PayloadTimedOut)) {
+                timed_out_flag.store(true, atomic::Ordering::Release);
+            }
+            result
         });
         let mut payloads = self.payloads.lock().await;
         register_payload_build_task(
@@ -545,6 +598,7 @@ impl Blockchain {
             PayloadBuildTask {
                 task: payload_build_task,
                 cancel: cancel_token,
+                timed_out,
             },
         );
     }
@@ -552,8 +606,14 @@ impl Blockchain {
     /// Build the given payload and keep on rebuilding it until either the time slot
     /// given by `SECONDS_PER_SLOT` is up or the `cancel_token` is cancelled.
     ///
-    /// The loop keeps its best build (see `UnsealedPayload::beats`) and
-    /// returns it unsealed; [`Blockchain::get_payload`] seals it.
+    /// The loop keeps its best build (see `UnsealedPayload::beats`) and, once
+    /// cancelled, returns it unsealed; [`Blockchain::get_payload`] seals it.
+    /// If the slot ends first, the build is dropped and the loop returns
+    /// `ChainError::PayloadTimedOut`.
+    ///
+    /// The best build carries a `PreSealer` that keeps its state tree up to
+    /// date: it moves to each build that beats the best, so the seal only
+    /// hashes what changed since the last best and the post-transaction phase.
     ///
     /// Cancelling also stops the build in progress: it stops adding transactions
     /// and returns the ones it already has, so `getPayload` never waits for a
@@ -563,7 +623,9 @@ impl Blockchain {
         payload: Block,
         cancel_token: CancellationToken,
     ) -> Result<UnsealedPayload, ChainError> {
-        let start = Instant::now();
+        // Tokio's clock, the one the deadline `sleep` below runs on, so a test
+        // with a paused clock reaches the deadline without waiting 12 s.
+        let start = tokio::time::Instant::now();
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
         // The mempool sequence the latest build started from. Snapshot it
@@ -573,6 +635,8 @@ impl Blockchain {
         // A `getPayload` arriving during this first build gets a block with only
         // the transactions added before it arrived, possibly none.
         let mut best = self.build_unsealed_until(payload.clone(), &cancel_token)?;
+        best.preseal = self.start_preseal(payload.header.parent_hash);
+        best.submit_to_preseal();
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             // `notify_waiters` only reaches `Notified` futures that already
             // exist, so create it before checking the sequence: a tx that lands
@@ -602,8 +666,10 @@ impl Blockchain {
             // the same way each time must not be retried without a new tx.
             last_built_seq = seq_before;
             match rebuilt {
-                Some(Ok(Ok(candidate))) => {
+                Some(Ok(Ok(mut candidate))) => {
                     if candidate.beats(&best) {
+                        candidate.preseal = best.preseal.take();
+                        candidate.submit_to_preseal();
                         best = candidate;
                     }
                 }
@@ -617,32 +683,40 @@ impl Blockchain {
             }
         }
 
-        // The slot-timeout `select!` arm can win over a simultaneous `tx_added`
-        // notification near the slot boundary, so if a tx landed after the
-        // latest build's snapshot, do one final build. On cancellation
-        // there is nothing left to do: a build started now would stop before
-        // adding a transaction, and the loop already waited for the in-flight
-        // rebuild when `best` was empty.
-        if !cancel_token.is_cancelled() && self.mempool.tx_seq() > last_built_seq {
-            let wait_if_cancelled = best.transactions().is_empty();
-            match self
-                .rebuild_payload(payload, &cancel_token, wait_if_cancelled)
-                .await
-            {
-                Some(Ok(Ok(candidate))) => {
-                    if candidate.beats(&best) {
-                        best = candidate;
-                    }
-                }
-                Some(Ok(Err(err))) => {
-                    warn!(%err, "Final payload rebuild failed; returning previous result")
-                }
-                Some(Err(err)) => warn!(%err, "Final payload rebuild task panicked"),
-                None => {}
-            }
+        // Read the token here rather than note which way the loop was left: a
+        // `getPayload` that cancels as the deadline passes, even after the
+        // deadline arm won, still gets the block.
+        if cancel_token.is_cancelled() {
+            return Ok(best);
         }
+        // Nobody asked for the block within the slot. Drop the build here
+        // instead of holding it until the entry is evicted; this also stops
+        // its PreSealer, freeing the tree. A `getPayload` for this id now
+        // answers UnknownPayload.
+        drop(best);
+        Err(ChainError::PayloadTimedOut)
+    }
 
-        Ok(best)
+    /// Starts the PreSealer of a loop building on `parent_hash`. Without one,
+    /// the seal computes the state root in one shot, so a failure here only
+    /// costs time.
+    fn start_preseal(&self, parent_hash: BlockHash) -> Option<PreSealer> {
+        let parent = match self.storage.get_block_header_by_hash(parent_hash) {
+            Ok(Some(parent)) => parent,
+            Ok(None) => {
+                debug!(%parent_hash, "Payload parent header not found; building without a pre-seal");
+                return None;
+            }
+            Err(err) => {
+                warn!(%err, "Could not read the payload parent header; building without a pre-seal");
+                return None;
+            }
+        };
+        PreSealer::start(self.storage.clone(), parent.state_root)
+            .inspect_err(|err| {
+                warn!(%err, "Could not start the payload pre-seal worker; building without it");
+            })
+            .ok()
     }
 
     /// Rebuilds `payload` on a blocking thread, unsealed. If `cancel_token` is
@@ -709,13 +783,14 @@ impl Blockchain {
     }
 
     /// Same as `build_payload`, but unsealed, and once `stop` is cancelled it
-    /// stops adding transactions and returns the ones it already has.
+    /// stops adding transactions and returns the ones it already has. For
+    /// the build loop: the result carries its state diff for the pre-seal.
     fn build_unsealed_until(
         &self,
         payload: Block,
         stop: &CancellationToken,
     ) -> Result<UnsealedPayload, ChainError> {
-        self.build_unsealed(payload, None, Some(stop))
+        self.build_unsealed(payload, None, Some(stop), true)
     }
 
     /// Builds a payload from an explicit, ordered list of transactions instead of the
@@ -894,7 +969,7 @@ impl Blockchain {
         explicit_transactions: Option<Vec<Transaction>>,
         stop: Option<&CancellationToken>,
     ) -> Result<PayloadBuildResult, ChainError> {
-        let unsealed = self.build_unsealed(payload, explicit_transactions, stop)?;
+        let unsealed = self.build_unsealed(payload, explicit_transactions, stop, false)?;
         self.seal_payload(unsealed)
     }
 
@@ -902,11 +977,15 @@ impl Blockchain {
     /// `None` the payload is filled from the mempool, stopping early once
     /// `stop` is cancelled; otherwise the provided transactions are applied
     /// verbatim. The result is not sealed: see [`Self::seal_payload`].
+    ///
+    /// `with_diff` copies the build's state diff into the result, for the
+    /// build loop's pre-seal.
     fn build_unsealed(
         &self,
         payload: Block,
         explicit_transactions: Option<Vec<Transaction>>,
         stop: Option<&CancellationToken>,
+        with_diff: bool,
     ) -> Result<UnsealedPayload, ChainError> {
         let since = Instant::now();
 
@@ -922,6 +1001,20 @@ impl Blockchain {
             None => self.fill_transactions(&mut context, stop)?,
             Some(transactions) => self.fill_explicit_transactions(&mut context, transactions)?,
         }
+        // Before the build time is taken: a loop build pays for this copy.
+        // The pre-seal only saves time, so a failure leaves the build without
+        // a diff instead of failing it; its PreSealer then lags and the seal
+        // rebases from an older build, which gives the same root.
+        let diff = if with_diff {
+            context
+                .vm
+                .state_diff()
+                .inspect_err(|err| warn!(%err, "Could not read the payload's state diff"))
+                .ok()
+                .map(Arc::new)
+        } else {
+            None
+        };
 
         let interval = Instant::now().duration_since(since).as_millis();
 
@@ -945,19 +1038,28 @@ impl Blockchain {
             }
         }
 
-        Ok(UnsealedPayload { context })
+        Ok(UnsealedPayload {
+            context,
+            diff,
+            preseal: None,
+        })
     }
 
     /// Seals a payload: runs the post-transaction phase (withdrawals, then the
     /// request system calls, as EELS `apply_body` orders them) and computes the
     /// header roots. Consumes the payload, since `finalize_payload` drains the
-    /// VM's state.
+    /// VM's state. The state root comes from the build's PreSealer when it has
+    /// one. Blocks on that worker: call it from a blocking thread.
     pub fn seal_payload(
         &self,
         unsealed: UnsealedPayload,
     ) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
-        let UnsealedPayload { mut context } = unsealed;
+        let UnsealedPayload {
+            mut context,
+            preseal,
+            diff: _,
+        } = unsealed;
         // EIP-7928: Post-tx phase uses index n+1 for both withdrawals and requests.
         // Withdrawals precede the request system calls, as on block import; see the
         // ordering note in `LEVM::execute_block`.
@@ -977,7 +1079,7 @@ impl Blockchain {
         }
         self.apply_withdrawals(&mut context)?;
         self.extract_requests(&mut context)?;
-        self.finalize_payload(&mut context)?;
+        self.finalize_payload_with(&mut context, preseal)?;
 
         let interval = Instant::now().duration_since(since).as_millis();
         tracing::debug!("[METRIC] SEALING PAYLOAD TOOK: {interval} ms");
@@ -1457,18 +1559,70 @@ impl Blockchain {
         Ok(())
     }
 
+    /// The state root of `updates` over the state of block `parent_hash`,
+    /// computed in one go on a `ShardedStateTrie`: its shards and storage
+    /// tries hash on scoped threads, and it collects no trie nodes, which a
+    /// seal does not persist. The pre-seal falls back to it.
+    pub(crate) fn one_shot_state_root(
+        &self,
+        parent_hash: BlockHash,
+        updates: &[AccountUpdate],
+    ) -> Result<H256, ChainError> {
+        let parent = self
+            .storage
+            .get_block_header_by_hash(parent_hash)?
+            .ok_or(ChainError::ParentStateNotFound)?;
+        let mut tree = ShardedStateTrie::open(self.storage.clone(), parent.state_root)?;
+        tree.apply(updates.iter().map(AccountWrite::from_update));
+        Ok(tree.root()?)
+    }
+
+    /// The state root of `updates`, from `preseal`'s tree when there is one.
+    /// A pre-seal that failed or whose worker died falls back to the one-shot
+    /// root: a broken pre-seal costs time, never a wrong root. Returns the
+    /// updates back for the build result.
+    fn seal_state_root(
+        &self,
+        parent_hash: BlockHash,
+        updates: Vec<AccountUpdate>,
+        preseal: Option<PreSealer>,
+    ) -> Result<(H256, Vec<AccountUpdate>), ChainError> {
+        let Some(preseal) = preseal else {
+            let state_root = self.one_shot_state_root(parent_hash, &updates)?;
+            return Ok((state_root, updates));
+        };
+        let updates = Arc::new(updates);
+        let state_root = match preseal.finish(updates.clone()) {
+            Ok(state_root) => state_root,
+            Err(err) => {
+                warn!(%err, "Payload pre-seal failed; computing the state root in one shot");
+                self.one_shot_state_root(parent_hash, &updates)?
+            }
+        };
+        // The worker drops its reference before it replies, so this is no
+        // copy unless the worker died holding it.
+        let updates = Arc::try_unwrap(updates).unwrap_or_else(|shared| (*shared).clone());
+        Ok((state_root, updates))
+    }
+
     pub fn finalize_payload(&self, context: &mut PayloadBuildContext) -> Result<(), ChainError> {
+        self.finalize_payload_with(context, None)
+    }
+
+    /// `finalize_payload`, with the state root taken from `preseal` when the
+    /// build has one.
+    pub(crate) fn finalize_payload_with(
+        &self,
+        context: &mut PayloadBuildContext,
+        preseal: Option<PreSealer>,
+    ) -> Result<(), ChainError> {
         // Take BAL from VM before getting state transitions (which clears state)
         let block_access_list = context.vm.take_bal();
 
         let account_updates = context.vm.get_state_transitions()?;
 
-        let ret_acount_updates_list = self
-            .storage
-            .apply_account_updates_batch(context.parent_hash(), &account_updates)?
-            .ok_or(ChainError::ParentStateNotFound)?;
-
-        let state_root = ret_acount_updates_list.state_trie_hash;
+        let (state_root, account_updates) =
+            self.seal_state_root(context.parent_hash(), account_updates, preseal)?;
 
         context.payload.header.state_root = state_root;
         context.payload.header.transactions_root =
@@ -2147,7 +2301,10 @@ mod tests {
 
     /// Evicting the oldest entry at `MAX_PAYLOADS` must stop its build loop:
     /// dropping the `JoinHandle` alone detaches the task and leaves it running.
-    #[tokio::test]
+    /// The tasks never end, like builds still in their slot, and the runtime
+    /// has several workers, so the result does not depend on whether a task
+    /// runs before the next one registers.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn evicted_build_task_is_cancelled() {
         let tokens: Vec<CancellationToken> = (0..=MAX_PAYLOADS)
             .map(|_| CancellationToken::new())
@@ -2155,8 +2312,9 @@ mod tests {
         let mut payloads = Vec::new();
         for (payload_id, token) in (0u64..).zip(&tokens) {
             let task = PayloadBuildTask {
-                task: tokio::spawn(async { Err(ChainError::Custom("unused".to_string())) }),
+                task: tokio::spawn(std::future::pending()),
                 cancel: token.clone(),
+                timed_out: Arc::default(),
             };
             register_payload_build_task(&mut payloads, payload_id, task);
         }
@@ -2170,5 +2328,251 @@ mod tests {
             "a build task still registered was cancelled"
         );
         assert_eq!(payloads.len(), MAX_PAYLOADS);
+    }
+
+    /// A blockchain over the execution-api genesis with an empty mempool, and
+    /// a block template on top of genesis.
+    async fn blockchain_and_template() -> (Arc<Blockchain>, Block) {
+        use ethrex_common::types::{DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Genesis};
+        let path = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/genesis/execution-api.json"
+        ));
+        let genesis = Genesis::try_from(path).expect("Failed to load execution-api genesis");
+        let mut store = Store::new("store.db", ethrex_storage::EngineType::InMemory)
+            .expect("Failed to create in-memory store");
+        store
+            .add_initial_state(genesis)
+            .await
+            .expect("Failed to add genesis");
+        let blockchain = Arc::new(Blockchain::default_with_store(store.clone()));
+        let parent = store
+            .get_block_header(0)
+            .expect("Failed to read genesis header")
+            .expect("genesis header missing");
+        let args = BuildPayloadArgs {
+            parent: parent.hash(),
+            timestamp: parent.timestamp + 12,
+            fee_recipient: Address::zero(),
+            random: H256::zero(),
+            withdrawals: Some(Vec::new()),
+            beacon_root: Some(H256::zero()),
+            slot_number: None,
+            version: 3,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        };
+        let template = create_payload(&args, &store, Bytes::new()).expect("create_payload failed");
+        (blockchain, template)
+    }
+
+    /// Yields until the build task registered under `payload_id` has returned.
+    async fn wait_until_build_ended(blockchain: &Blockchain, payload_id: u64) {
+        for _ in 0..1_000 {
+            let ended = blockchain.payloads.lock().await.iter().any(|(id, entry)| {
+                *id == payload_id
+                    && matches!(entry, PayloadOrTask::Task(build) if build.task.is_finished())
+            });
+            if ended {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("the build loop did not end at its deadline");
+    }
+
+    /// A build nobody asked for within its slot is dropped: the loop returns
+    /// `PayloadTimedOut` (the engine API answers UnknownPayload) and the id
+    /// has no payload afterwards.
+    #[tokio::test(start_paused = true)]
+    async fn timed_out_build_is_dropped() {
+        let (blockchain, template) = blockchain_and_template().await;
+        let payload_id = 1;
+        blockchain
+            .clone()
+            .initiate_payload_build(template, payload_id)
+            .await;
+        // Let the loop take its start time, build the empty block and park in
+        // its `select!` before the clock moves; advancing first would start
+        // its 12 s after the jump. The mempool is empty, so no rebuild is
+        // running on a blocking thread while the clock jumps: the jump only
+        // wakes the loop's deadline.
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(13)).await;
+        // A getPayload that cancels the loop before it has seen its deadline
+        // gets the block, so wait for the loop to end on its own.
+        wait_until_build_ended(&blockchain, payload_id).await;
+
+        match blockchain.get_payload(payload_id).await {
+            Err(ChainError::PayloadTimedOut) => {}
+            other => panic!(
+                "expected PayloadTimedOut, got {:?}",
+                other.map(|sealed| sealed.payload.hash())
+            ),
+        }
+        match blockchain.get_payload(payload_id).await {
+            Err(ChainError::UnknownPayload) => {}
+            other => panic!(
+                "expected UnknownPayload for a dropped build, got {:?}",
+                other.map(|sealed| sealed.payload.hash())
+            ),
+        }
+    }
+
+    /// A getPayload that cancels the loop after its deadline has passed, but
+    /// before the loop has seen it, still gets the block: the outcome depends
+    /// on the cancellation, not on the clock.
+    #[tokio::test(start_paused = true)]
+    async fn cancel_racing_the_deadline_returns_the_build() {
+        let (blockchain, template) = blockchain_and_template().await;
+        let token = CancellationToken::new();
+        let mut build = std::pin::pin!(blockchain.build_payload_loop(template, token.clone()));
+        // Polled by hand, the loop runs only here: its first build, then it
+        // parks in its `select!`.
+        std::future::poll_fn(|cx| {
+            assert!(
+                build.as_mut().poll(cx).is_pending(),
+                "the loop ended before its deadline"
+            );
+            std::task::Poll::Ready(())
+        })
+        .await;
+
+        tokio::time::advance(Duration::from_secs(13)).await;
+        token.cancel();
+
+        assert!(
+            build.await.is_ok(),
+            "a getPayload racing the deadline lost its block"
+        );
+    }
+
+    /// The seal takes its state root from the pre-sealed tree, and a broken
+    /// pre-seal falls back to a one-shot root: either way the root is the one
+    /// a seal without a pre-seal computes.
+    #[tokio::test]
+    async fn presealed_and_failed_preseal_seal_the_same_root() {
+        let (blockchain, template) = blockchain_and_template().await;
+        let parent = blockchain
+            .storage
+            .get_block_header_by_hash(template.header.parent_hash)
+            .expect("read the parent header")
+            .expect("parent header");
+        let never = CancellationToken::new();
+        let seal = |preseal_root: Option<H256>| {
+            let mut unsealed = blockchain
+                .build_unsealed_until(template.clone(), &never)
+                .expect("build");
+            if let Some(root) = preseal_root {
+                let preseal =
+                    PreSealer::start(blockchain.storage.clone(), root).expect("start pre-seal");
+                preseal.submit(
+                    unsealed
+                        .diff
+                        .clone()
+                        .expect("a loop build carries its diff"),
+                );
+                unsealed.preseal = Some(preseal);
+            }
+            blockchain
+                .seal_payload(unsealed)
+                .expect("seal")
+                .payload
+                .header
+                .state_root
+        };
+
+        let one_shot = seal(None);
+        assert_eq!(seal(Some(parent.state_root)), one_shot, "pre-sealed root");
+        // No state trie has this root, so the pre-seal fails and the seal
+        // falls back to the one-shot root.
+        assert_eq!(
+            seal(Some(H256::repeat_byte(0xab))),
+            one_shot,
+            "root after a failed pre-seal"
+        );
+    }
+
+    /// Registering a build drops the entries whose loop timed out, and keeps
+    /// sealed payloads (for a repeated getPayload), builds still running and
+    /// builds that ended on an error (for their getPayload to report it).
+    #[tokio::test]
+    async fn timed_out_entries_are_purged_on_register() {
+        let ended =
+            |result: Result<UnsealedPayload, ChainError>, timed_out: bool| PayloadBuildTask {
+                task: tokio::spawn(async move { result }),
+                cancel: CancellationToken::new(),
+                timed_out: Arc::new(AtomicBool::new(timed_out)),
+            };
+        let timed_out = ended(Err(ChainError::PayloadTimedOut), true);
+        let failed = ended(Err(ChainError::Custom("first build failed".into())), false);
+        for _ in 0..100 {
+            if timed_out.task.is_finished() && failed.task.is_finished() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            timed_out.task.is_finished() && failed.task.is_finished(),
+            "the ended tasks did not run"
+        );
+        let running = || PayloadBuildTask {
+            task: tokio::spawn(std::future::pending()),
+            cancel: CancellationToken::new(),
+            timed_out: Arc::default(),
+        };
+        let sealed = PayloadBuildResult {
+            blobs_bundle: BlobsBundle::default(),
+            block_value: U256::zero(),
+            receipts: Vec::new(),
+            requests: Vec::new(),
+            account_updates: Vec::new(),
+            payload: Block::default(),
+            block_access_list: None,
+        };
+        let mut payloads = vec![
+            (0, PayloadOrTask::Payload(Box::new(sealed))),
+            (1, PayloadOrTask::Task(timed_out)),
+            (2, PayloadOrTask::Task(failed)),
+            (3, PayloadOrTask::Task(running())),
+        ];
+
+        register_payload_build_task(&mut payloads, 4, running());
+
+        let ids: Vec<u64> = payloads.iter().map(|(id, _)| *id).collect();
+        assert_eq!(
+            ids,
+            vec![0, 2, 3, 4],
+            "only the timed-out build should be purged"
+        );
+    }
+
+    /// A build whose first build failed keeps that error for its getPayload,
+    /// even after a later forkchoice update registers another build.
+    #[tokio::test]
+    async fn failed_first_build_keeps_its_error_after_a_new_build_registers() {
+        let (blockchain, template) = blockchain_and_template().await;
+        let mut orphan = template.clone();
+        // No stored header has this hash, so the first build fails.
+        orphan.header.parent_hash = H256::repeat_byte(0x11);
+        let failed_id = 1;
+        blockchain
+            .clone()
+            .initiate_payload_build(orphan, failed_id)
+            .await;
+        wait_until_build_ended(&blockchain, failed_id).await;
+
+        blockchain.clone().initiate_payload_build(template, 2).await;
+
+        match blockchain.get_payload(failed_id).await {
+            Err(ChainError::EvmError(_)) => {}
+            Err(ChainError::UnknownPayload) => {
+                panic!("the failed build was purged and its error lost")
+            }
+            other => panic!(
+                "expected the first build's error, got {:?}",
+                other.map(|sealed| sealed.payload.hash())
+            ),
+        }
     }
 }

@@ -101,7 +101,7 @@ pub(super) fn payload_block(store: &Store) -> Block {
     create_payload(&args, store, Bytes::new()).unwrap()
 }
 
-async fn signed_transfer(sk: &SecretKey, nonce: u64) -> Transaction {
+pub(super) async fn signed_transfer(sk: &SecretKey, nonce: u64) -> Transaction {
     let signer = Signer::Local(LocalSigner::new(*sk));
     let mut tx = Transaction::EIP1559Transaction(EIP1559Transaction {
         nonce,

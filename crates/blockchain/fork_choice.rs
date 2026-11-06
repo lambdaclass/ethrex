@@ -769,7 +769,8 @@ fn map_chain_error_for_fcu(err: ChainError, last_valid_hash: H256) -> InvalidFor
         | ChainError::EvmError(_)
         | ChainError::WitnessGeneration(_)
         | ChainError::Custom(_)
-        | ChainError::UnknownPayload => InvalidForkChoice::StateNotReachable,
+        | ChainError::UnknownPayload
+        | ChainError::PayloadTimedOut => InvalidForkChoice::StateNotReachable,
     }
 }
 

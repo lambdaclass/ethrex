@@ -49,8 +49,10 @@ pub mod fork_choice;
 mod glamsterdam;
 pub mod mempool;
 pub mod payload;
+pub mod preseal;
 pub mod prewarm;
 pub mod sampling;
+pub mod sharded_trie;
 pub mod simulate;
 pub mod stateless;
 pub mod tracing;
@@ -120,6 +122,7 @@ use mempool::{
 };
 use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
+use sharded_trie::{AccountWrite, ShardedStateTrie};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
@@ -144,7 +147,11 @@ use ethrex_metrics::blocks::METRICS_BLOCKS;
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
 
-const MAX_PAYLOADS: usize = 10;
+// Payload entries (sealed payloads and builds still running) kept so a repeated
+// getPayload for a recent id still gets its block. Each running entry holds its
+// best build's context and, with pre-sealing, a state tree, so the cap also
+// bounds how much of that memory payload building can hold at once.
+const MAX_PAYLOADS: usize = 4;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
 // Below this many touched storage slots the BFS prefetch's own overhead (one
 // `multi_get` per trie level) isn't worth it; the serial insert loop's
@@ -1589,13 +1596,50 @@ impl Blockchain {
     /// directly in the execution thread; the sequential path runs the same gate against the
     /// rebuilt BAL. On any mismatch the optimistic merkle output is discarded via `?` on the
     /// execution thread's join result.
+    ///
+    /// Public (and hidden) only so `bal_path_matches_reference` can compare it
+    /// with `bal_merkleization_reference`.
     #[instrument(
         level = "trace",
         name = "Trie update (BAL)",
         skip_all,
         fields(namespace = "block_execution")
     )]
-    fn handle_merkleization_bal_from_updates(
+    #[doc(hidden)]
+    pub fn handle_merkleization_bal_from_updates(
+        &self,
+        prepared: SeededHashMap<Address, BalSynthesisItem>,
+        parent_header: &BlockHeader,
+    ) -> Result<AccountUpdatesList, StoreError> {
+        let mut tree = ShardedStateTrie::open(self.storage.clone(), parent_header.state_root)?;
+        // Synthesis never removes an account or resets its storage; an account
+        // left empty is removed by the tree's EIP-161 rule, as Stage C did.
+        tree.apply(prepared.into_iter().map(|(address, item)| {
+            AccountWrite {
+                hashed_address: keccak(address),
+                removed: false,
+                removed_storage: false,
+                nonce: item.nonce,
+                balance: item.balance,
+                code_hash: item.code_hash,
+                code: item.code_hash.zip(item.code),
+                storage: item
+                    .added_storage
+                    .into_iter()
+                    .map(|(key, value)| (keccak(key), value))
+                    .collect(),
+            }
+        }));
+        tree.finish()
+    }
+
+    /// The BAL merkleizer as it was before it moved onto `ShardedStateTrie`.
+    /// Import does not call it: it is kept, unchanged, only so the
+    /// `bal_path_matches_reference` test in the `ethrex-test` crate (hence
+    /// `pub`) can catch a root or node-set regression in
+    /// `ShardedStateTrie::finish` whenever either side is edited.
+    #[doc(hidden)]
+    pub fn bal_merkleization_reference(
         &self,
         prepared: SeededHashMap<Address, BalSynthesisItem>,
         parent_header: &BlockHeader,
@@ -4446,7 +4490,7 @@ fn load_trie(
 
 /// Collapse a root branch node into an extension or leaf if it has only one valid child.
 /// Returns `None` if there are no valid children.
-fn collapse_root_node(
+pub(crate) fn collapse_root_node(
     storage: &Store,
     parent_state_root: H256,
     prefix: Option<H256>,
@@ -5085,7 +5129,7 @@ pub async fn is_canonical(
     }
 }
 
-fn branchify(node: Node) -> Box<BranchNode> {
+pub(crate) fn branchify(node: Node) -> Box<BranchNode> {
     match node {
         Node::Branch(branch_node) => branch_node,
         Node::Extension(extension_node) => {
@@ -5111,7 +5155,10 @@ fn branchify(node: Node) -> Box<BranchNode> {
     }
 }
 
-fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieNode>), TrieError> {
+pub(crate) fn collect_trie(
+    index: u8,
+    mut trie: Trie,
+) -> Result<(Box<BranchNode>, Vec<TrieNode>), TrieError> {
     let root = branchify(
         trie.root_node()?
             .map(Arc::unwrap_or_clone)
@@ -5133,7 +5180,7 @@ fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieN
 /// branchify/collapse reassembly, while producing the correct root, would emit
 /// a different (extra/stale, always unreachable) node set than the canonical
 /// serial path.
-fn serial_storage_root(
+pub(crate) fn serial_storage_root(
     storage: &Store,
     parent_state_root: H256,
     hashed_address: H256,
