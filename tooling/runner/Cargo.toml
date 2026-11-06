@@ -5,7 +5,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-ethrex-levm = { path = "../" }
+ethrex-levm = { path = "../../crates/vm/levm" }
 ethrex-vm.workspace = true
 ethrex-common.workspace = true
 # blst enables the host BLS12-381 (EIP-2537) backend for blocks that hit the
