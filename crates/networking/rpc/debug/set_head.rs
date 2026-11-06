@@ -42,7 +42,7 @@ impl RpcHandler for SetHeadRequest {
             .get_canonical_block_hash(self.block_number)
             .await?
             .ok_or_else(|| {
-                RpcErr::BadParams(format!(
+                RpcErr::ServerError(format!(
                     "block {} not found in canonical chain",
                     self.block_number
                 ))
@@ -51,12 +51,12 @@ impl RpcHandler for SetHeadRequest {
         // Point head, safe and finalized at the target block, rewinding the
         // canonical chain to it.
         // apply_fork_choice refuses to rewind below the stored finalized block
-        // number. Surface this as BadParams so callers know they passed an
-        // invalid target rather than interpreting it as a server bug.
+        // number. Surface this as ServerError (-32000) so callers know they passed
+        // an invalid target rather than interpreting it as a server bug (-32603).
         // `None`: use the finality-bounded default reorg cap (no operator override).
         apply_fork_choice(&context.storage, block_hash, block_hash, block_hash, None)
             .await
-            .map_err(|err| RpcErr::BadParams(format!("cannot set head: {err}")))?;
+            .map_err(|err| RpcErr::ServerError(format!("cannot set head: {err}")))?;
 
         Ok(Value::Null)
     }

@@ -511,11 +511,14 @@ pub fn compute_actual_gas_used(
 }
 
 pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
-    let priority_fee_per_gas = vm
-        .env
-        .gas_price
-        .checked_sub(vm.env.base_fee_per_gas)
-        .ok_or(InternalError::Underflow)?;
+    let priority_fee_per_gas = if vm.validate_base_fee {
+        vm.env
+            .gas_price
+            .checked_sub(vm.env.base_fee_per_gas)
+            .ok_or(InternalError::Underflow)?
+    } else {
+        vm.env.gas_price.saturating_sub(vm.env.base_fee_per_gas)
+    };
 
     let coinbase_fee = U256::from(gas_to_pay)
         .checked_mul(priority_fee_per_gas)
@@ -724,7 +727,9 @@ pub fn validate_init_code_size(vm: &mut VM<'_>) -> Result<(), VMError> {
 }
 
 pub fn validate_sufficient_max_fee_per_gas(vm: &mut VM<'_>) -> Result<(), TxValidationError> {
-    if vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price) < vm.env.base_fee_per_gas {
+    if vm.validate_base_fee
+        && vm.env.tx_max_fee_per_gas.unwrap_or(vm.env.gas_price) < vm.env.base_fee_per_gas
+    {
         return Err(TxValidationError::InsufficientMaxFeePerGas);
     }
     Ok(())
@@ -922,13 +927,10 @@ pub fn transfer_value(vm: &mut VM<'_>) -> Result<(), VMError> {
 
         vm.increase_account_balance(to, value)?;
 
-        // EIP-7708: Emit transfer log for nonzero-value transactions to DIFFERENT accounts
-        // Self-transfers (origin == to) should NOT emit a log per the EIP spec
-        let from = vm.env.origin;
-        if vm.env.config.fork >= Fork::Amsterdam && !value.is_zero() && from != to {
-            let log = create_eth_transfer_log(from, to, value);
-            vm.substate.add_log(log);
-        }
+        // EIP-7708 / traceTransfers: emit transfer log for nonzero-value transactions.
+        // Self-transfers (origin == to) do NOT emit consensus logs per the EIP spec;
+        // trace mode includes them (see `VM::push_eth_transfer_logs`).
+        vm.add_eth_transfer_logs(vm.env.origin, to, value);
     }
     Ok(())
 }

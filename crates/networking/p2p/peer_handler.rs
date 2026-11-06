@@ -1160,10 +1160,10 @@ fn truncate_to_single_chain(block_headers: &mut Vec<BlockHeader>) -> usize {
     dropped
 }
 
-/// Replaces with `None` every block access list that does not hash to the
-/// `block_access_list_hash` of the header at the same position, and returns whether it
-/// replaced any. A wrong list must never reach execution: full sync runs a block with the
-/// list it is given, and a wrong one can get a valid block rejected as invalid.
+/// Replaces with `None` every block access list that is not canonically ordered or does not
+/// hash to the `block_access_list_hash` of the header at the same position, and returns
+/// whether it replaced any. A wrong list must never reach execution: full sync runs a block
+/// with the list it is given, and a wrong one can get a valid block rejected as invalid.
 fn drop_mismatched_block_access_lists(
     block_access_lists: &mut [Option<BlockAccessList>],
     block_headers: &[BlockHeader],
@@ -1171,7 +1171,8 @@ fn drop_mismatched_block_access_lists(
     let mut dropped = false;
     for (bal, header) in block_access_lists.iter_mut().zip(block_headers) {
         if bal.as_ref().is_some_and(|bal| {
-            !bal.matches_commitment(header.block_access_list_hash, &NativeCrypto)
+            bal.validate_ordering().is_err()
+                || !bal.matches_commitment(header.block_access_list_hash, &NativeCrypto)
         }) {
             *bal = None;
             dropped = true;
@@ -1352,5 +1353,26 @@ mod tests {
         ];
         assert!(drop_mismatched_block_access_lists(&mut response, &headers));
         assert_eq!(response, vec![Some(bal(1)), None, None, None, None]);
+    }
+
+    #[test]
+    fn non_canonical_block_access_lists_are_dropped() {
+        use ethrex_common::types::block_access_list::AccountChanges;
+
+        let unsorted_accounts = BlockAccessList::from_accounts(vec![
+            AccountChanges::new(ethrex_common::Address::repeat_byte(2)),
+            AccountChanges::new(ethrex_common::Address::repeat_byte(1)),
+        ]);
+        let mut account = AccountChanges::new(ethrex_common::Address::repeat_byte(1));
+        account.add_storage_read(ethrex_common::U256::one());
+        account.add_storage_read(ethrex_common::U256::zero());
+        let unsorted_reads = BlockAccessList::from_accounts(vec![account]);
+
+        for bal in [unsorted_accounts, unsorted_reads] {
+            let headers = [header_committing_to(&bal)];
+            let mut response = vec![Some(bal)];
+            assert!(drop_mismatched_block_access_lists(&mut response, &headers));
+            assert_eq!(response, vec![None]);
+        }
     }
 }

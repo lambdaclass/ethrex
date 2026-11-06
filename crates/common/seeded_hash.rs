@@ -11,6 +11,11 @@
 //! spends two, which shows on storage-heavy code; the word path resists the same attacks,
 //! since every multiply still mixes in a seed the key does not know.
 //!
+//! It is foldhash's quality variant, which ends with one more folded multiply than the fast
+//! one. hashbrown picks a key's bucket from the low bits of its hash, and with the fast
+//! variant those came out of a single multiply: for some seeds, keys that differ only in a
+//! short word, such as addresses differing in their last four bytes, crowded a few buckets.
+//!
 //! A keccak output is no safer as a key than the preimage behind it. Whoever picks the
 //! preimage (a CREATE2 salt, the trailing bytes of deployed code) can grind it until the hash
 //! lands in a chosen bucket, at about one keccak per bucket of the table for each key. What
@@ -35,10 +40,10 @@ pub type SeededHashMap<K, V> = std::collections::HashMap<K, V, SeededState>;
 /// A `std::collections::HashSet` hashed with [`SeededState`].
 pub type SeededHashSet<K> = std::collections::HashSet<K, SeededState>;
 
-/// A foldhash `RandomState`, seeded per process and per map, whose hasher takes fixed-size
-/// keys through foldhash's integer path. See the module docs.
+/// A foldhash quality `RandomState`, seeded per process and per map, whose hasher takes
+/// fixed-size keys through foldhash's integer path. See the module docs.
 #[derive(Clone, Debug, Default)]
-pub struct SeededState(foldhash::fast::RandomState);
+pub struct SeededState(foldhash::quality::RandomState);
 
 impl BuildHasher for SeededState {
     type Hasher = SeededHasher;
@@ -50,7 +55,7 @@ impl BuildHasher for SeededState {
 }
 
 /// The hasher built by [`SeededState`].
-pub struct SeededHasher(foldhash::fast::FoldHasher<'static>);
+pub struct SeededHasher(foldhash::quality::FoldHasher<'static>);
 
 impl Hasher for SeededHasher {
     /// `H256` and `Address` hash as one 32- or 20-byte write, and `U256` as a length prefix

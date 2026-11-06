@@ -115,12 +115,6 @@ impl RpcHandler for FeeHistoryRequest {
                 .ok_or(RpcErr::Internal(format!(
                     "Could not get header for block {block_number}"
                 )))?;
-            let body = storage
-                .get_block_body(block_number)
-                .await?
-                .ok_or(RpcErr::Internal(format!(
-                    "Could not get body for block {block_number}"
-                )))?;
 
             let blob_schedule_opt = config.get_fork_blob_schedule(header.timestamp);
             let max_blob_gas_per_block =
@@ -155,7 +149,15 @@ impl RpcHandler for FeeHistoryRequest {
                         context.gas_ceil,
                     )?;
             }
+            // Only the rewards need the block's transactions, so its body is read
+            // only when percentiles are requested.
             if !self.reward_percentiles.is_empty() {
+                let body = storage
+                    .get_block_body(block_number)
+                    .await?
+                    .ok_or(RpcErr::Internal(format!(
+                        "Could not get body for block {block_number}"
+                    )))?;
                 reward.push(calculate_percentiles_for_block(
                     Block::new(header, body),
                     &self.reward_percentiles,
@@ -274,4 +276,59 @@ fn calculate_percentiles_for_block(block: Block, percentiles: &[f32]) -> Vec<u64
             effective_priority_fees.get(i).cloned().unwrap_or_default()
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    use crate::test_utils::{add_eip1559_tx_blocks, default_context_with_storage, setup_store};
+
+    async fn fee_history(context: &RpcApiContext, reward_percentiles: Vec<f32>) -> Value {
+        FeeHistoryRequest {
+            block_count: 5,
+            newest_block: BlockIdentifier::Number(5),
+            reward_percentiles,
+        }
+        .handle(context.clone())
+        .await
+        .unwrap()
+    }
+
+    /// Requesting rewards adds the `reward` field and leaves every other field as
+    /// it is without them, which are computed from the headers alone.
+    #[tokio::test]
+    async fn rewards_only_add_the_reward_field() {
+        let storage = setup_store().await;
+        add_eip1559_tx_blocks(&storage, 5, 10).await;
+        let context = default_context_with_storage(storage).await;
+
+        let without_rewards = fee_history(&context, vec![]).await;
+        let mut with_rewards = fee_history(&context, vec![25.0, 75.0]).await;
+
+        let rewards = with_rewards
+            .as_object_mut()
+            .unwrap()
+            .remove("reward")
+            .unwrap();
+        assert_eq!(rewards.as_array().unwrap().len(), 5);
+        assert!(
+            rewards
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|block| block.as_array().unwrap().len() == 2)
+        );
+        let mut without_rewards = without_rewards;
+        assert_eq!(
+            without_rewards
+                .as_object_mut()
+                .unwrap()
+                .remove("reward")
+                .unwrap(),
+            serde_json::json!([])
+        );
+        assert_eq!(without_rewards, with_rewards);
+        assert_eq!(without_rewards["gasUsedRatio"].as_array().unwrap().len(), 5);
+    }
 }

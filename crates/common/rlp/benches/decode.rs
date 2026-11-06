@@ -85,7 +85,7 @@ fn random_eip1559_tx(rng: &mut impl Rng) -> EIP1559Transaction {
         value: U256(rng.random()),
         data: Bytes::from((0..32).map(|_| rng.random::<u8>()).collect::<Vec<_>>()),
         access_list: vec![],
-        signature_y_parity: rng.random(),
+        signature_y_parity: rng.random::<u8>().into(),
         signature_r: U256(rng.random()),
         signature_s: U256(rng.random()),
         inner_hash: OnceCell::new(),

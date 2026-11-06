@@ -24,12 +24,12 @@ env:
 
 jobs:
   detect-changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v4
+      - uses: actions/checkout@v6.1.0
+      - uses: dorny/paths-filter@v4.0.3
         id: filter
         with:
           filters: |
@@ -74,18 +74,18 @@ jobs:
   lint:
     # "Lint L2" is a required check, don't change the name
     name: Lint L2
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l2
           components: rustfmt, clippy
@@ -93,7 +93,7 @@ jobs:
       - name: Install RISC0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        uses: ./.github/actions/install-risc0
+        uses: $/.github/actions/install-risc0
 
       - name: Create placeholder SP1 ELF
         run: |
@@ -135,15 +135,15 @@ jobs:
     # - docs/workflows/regenerate-blobs.md (agent workflow)
     # - docs/developers/l2/state-reconstruction-blobs.md (step-by-step guide)
     name: Validate Blob Fixtures
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l2
 
@@ -154,18 +154,18 @@ jobs:
 
   build-docker:
     name: Build docker image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@v4.4.1
 
       - name: Build L1 docker image
-        uses: ./.github/actions/build-docker
+        uses: $/.github/actions/build-docker
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -177,7 +177,7 @@ jobs:
           cache_write: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true }}
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: ethrex_image
           path: /tmp/ethrex_image.tar
@@ -186,18 +186,18 @@ jobs:
   # The build args for l2.
   build-docker-l2:
     name: Build docker image L2
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@v4.4.1
 
       - name: Build L2 docker image
-        uses: ./.github/actions/build-docker
+        uses: $/.github/actions/build-docker
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -211,31 +211,31 @@ jobs:
           cache_write: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true }}
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: ethrex_image_l2
           path: /tmp/ethrex_image_l2.tar
 
   uniswap-swap:
     name: Uniswap Swap Token Flow
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [detect-changes]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     timeout-minutes: 60
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l2
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v6.5.0
         with:
           node-version: "20"
 
@@ -243,10 +243,10 @@ jobs:
         run: npm install -g yarn
 
       - name: Install solc
-        uses: ./.github/actions/install-solc
+        uses: $/.github/actions/install-solc
 
       - name: Install rex
-        uses: ./.github/actions/install-rex
+        uses: $/.github/actions/install-rex
 
       - name: Build ethrex with L2 features and contracts
         env:
@@ -326,7 +326,7 @@ jobs:
 
   integration-test:
     name: Integration Test - ${{ matrix.name }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [detect-changes, build-docker, build-docker-l2]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     strategy:
@@ -355,15 +355,15 @@ jobs:
             compose_targets: [docker-compose.yaml]
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l2
           save-cache: 'true'
 
       - name: Install solc
-        uses: ./.github/actions/install-solc
+        uses: $/.github/actions/install-solc
 
       - name: Build prover
         run: |
@@ -382,7 +382,7 @@ jobs:
           docker compose -f ${{ join(matrix.compose_targets, ' -f ') }} up --detach web3signer
 
       - name: Download ethrex image artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v6.0.0
         with:
           name: ethrex_image
           path: /tmp
@@ -392,7 +392,7 @@ jobs:
           docker load --input /tmp/ethrex_image.tar
 
       - name: Download ethrex L2 image artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v6.0.0
         with:
           name: ethrex_image_l2
           path: /tmp
@@ -407,7 +407,7 @@ jobs:
           ETHREX_LOG_LEVEL=debug docker compose up --detach ethrex_l1
 
       - name: Install rex
-        uses: ./.github/actions/install-rex
+        uses: $/.github/actions/install-rex
 
       - name: Deploy contracts
         run: |
@@ -510,26 +510,26 @@ jobs:
 
   integration-test-tdx:
     name: Integration Test - TDX
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [detect-changes, build-docker, build-docker-l2]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Free Disk Space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l2
 
       - name: Install solc
-        uses: ./.github/actions/install-solc
+        uses: $/.github/actions/install-solc
 
       - name: Download ethrex image artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v6.0.0
         with:
           name: ethrex_image
           path: /tmp
@@ -539,7 +539,7 @@ jobs:
           docker load --input /tmp/ethrex_image.tar
 
       - name: Download ethrex L2 image artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v6.0.0
         with:
           name: ethrex_image_l2
           path: /tmp
@@ -549,7 +549,7 @@ jobs:
           docker load --input /tmp/ethrex_image_l2.tar
 
       - name: Set up Nix
-        uses: cachix/install-nix-action@v31
+        uses: cachix/install-nix-action@v31.11.3
         with:
           # crates.io 403s any User-Agent containing "curl/", which is what Nix's
           # fetchurl sends by default, breaking crate downloads during the image
@@ -659,19 +659,19 @@ jobs:
     # - docs/workflows/regenerate-blobs.md (agent workflow)
     # - docs/developers/l2/state-reconstruction-blobs.md (step-by-step guide)
     name: State Reconstruction Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [detect-changes, build-docker, build-docker-l2, validate-blobs]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l2
 
       - name: Download ethrex image artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v6.0.0
         with:
           name: ethrex_image
           path: /tmp
@@ -681,7 +681,7 @@ jobs:
           docker load --input /tmp/ethrex_image.tar
 
       - name: Download ethrex L2 image artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v6.0.0
         with:
           name: ethrex_image_l2
           path: /tmp
@@ -691,7 +691,7 @@ jobs:
           docker load --input /tmp/ethrex_image_l2.tar
 
       - name: Install solc
-        uses: ./.github/actions/install-solc
+        uses: $/.github/actions/install-solc
 
       - name: Start L1 & Deploy contracts
         run: |
@@ -720,7 +720,7 @@ jobs:
 
   integration-test-shared-bridge:
     name: Integration Test Shared Bridge - ${{ matrix.name }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [detect-changes, build-docker, build-docker-l2]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     strategy:
@@ -733,17 +733,17 @@ jobs:
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l2
 
       - name: Install solc
-        uses: ./.github/actions/install-solc
+        uses: $/.github/actions/install-solc
 
       - name: Install rex
-        uses: ./.github/actions/install-rex
+        uses: $/.github/actions/install-rex
 
       - name: Build prover
         run: |
@@ -756,7 +756,7 @@ jobs:
           cargo test -p ethrex-test l2:: --no-run --release --features l2
 
       - name: Download ethrex image artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v6.0.0
         with:
           name: ethrex_image
           path: /tmp
@@ -766,7 +766,7 @@ jobs:
           docker load --input /tmp/ethrex_image.tar
 
       - name: Download ethrex L2 image artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v6.0.0
         with:
           name: ethrex_image_l2
           path: /tmp
@@ -965,7 +965,7 @@ jobs:
   all-tests:
     # "Integration Test L2" is a required check, don't change the name
     name: Integration Test L2
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs:
       [
         detect-changes,

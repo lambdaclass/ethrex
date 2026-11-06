@@ -42,7 +42,7 @@ env:
 jobs:
   resolve:
     name: "Resolve promotion tags"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Run on a manual dispatch, or on an edit that promotes an RC to a full
     # release (the tag was renamed AND the release is no longer a pre-release).
     # A notes-only edit, or an edit while still a pre-release, is skipped.
@@ -81,7 +81,7 @@ jobs:
 
   retag_docker_images:
     name: "Tag latest Docker images"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [resolve]
     permissions:
       contents: read
@@ -92,14 +92,14 @@ jobs:
       NEW_TAG: ${{ needs.resolve.outputs.new_tag }}
     steps:
       - name: Login to Docker registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@v4.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@v4.4.1
 
       - name: Promote RC images to release tags
         run: |
@@ -141,7 +141,7 @@ jobs:
 
   verify-latest:
     name: "Verify latest tag promotion"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [resolve, retag_docker_images]
     permissions:
       contents: read
@@ -150,7 +150,7 @@ jobs:
       NEW_TAG: ${{ needs.resolve.outputs.new_tag }}
     steps:
       - name: Login to Docker registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@v4.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -182,7 +182,7 @@ jobs:
 
   assert-latest-promoted:
     name: "Assert release was promoted to latest"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Tripwire: a release promoted to a full release MUST end up on :latest. The
     # 'edited' run (or a manual dispatch) does the retag concurrently, so poll
     # until :latest catches up. A persistent mismatch means the automatic retag
@@ -195,7 +195,7 @@ jobs:
       RELEASE_TAG: ${{ github.event.release.tag_name }}
     steps:
       - name: Login to Docker registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@v4.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}

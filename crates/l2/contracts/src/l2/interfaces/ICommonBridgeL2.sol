@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.8.31;
 
+// Domain separator for messages sent through sendIntentToL1.
+bytes32 constant L2_TO_L1_INTENT_DOMAIN =
+    keccak256("ethrex.L2ToL1Intent.v1");
+
 /// @title Interface for the L2 side of the CommonBridge contract.
 /// @author LambdaClass
 /// @notice A CommonBridge contract is a contract that allows L1<->L2 communication
@@ -45,6 +49,19 @@ interface ICommonBridgeL2 {
         address indexed tokenL2,
         address indexed receiverOnL1,
         uint256 amount
+    );
+
+    /// @notice An intent has been sent to L1.
+    /// @dev Event emitted when a data-only message is sent to L1.
+    /// @param senderOnL2 the caller on L2.
+    /// @param consumerOnL1 the address that can consume the message on L1.
+    /// @param payloadHash the payload the caller committed to.
+    /// @param intentHash the hash that was sent to L1.
+    event IntentInitiated(
+        address indexed senderOnL2,
+        address indexed consumerOnL1,
+        bytes32 payloadHash,
+        bytes32 indexed intentHash
     );
 
     /// @notice Initiates the withdrawal of funds to the L1.
@@ -103,6 +120,19 @@ interface ICommonBridgeL2 {
         address destination,
         uint256 amount
     ) external;
+
+    /// @notice Sends a data-only message to L1.
+    /// @dev The bridge hashes the payload together with a domain separator, the
+    /// @dev chain id, the caller and the consumer, so that an intent can never be
+    /// @dev read as a withdrawal, the caller cannot claim to be someone else and
+    /// @dev nobody but the consumer can spend the message on L1.
+    /// @param payloadHash Hash of the payload the caller commits to
+    /// @param consumerOnL1 the only address allowed to consume the message on L1
+    /// @return The hash sent to L1
+    function sendIntentToL1(
+        bytes32 payloadHash,
+        address consumerOnL1
+    ) external returns (bytes32);
 
     /// @notice Transfer ERC20 tokens to the desired L2 chain.
     /// @dev This burns tokens on this L2 and sends a message to the destination L2

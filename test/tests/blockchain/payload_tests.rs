@@ -169,7 +169,7 @@ async fn builder_caps_elided_blob_bundles_to_fork_max() {
             access_list: AccessList::default(),
             max_fee_per_blob_gas: U256::from(1_000_000_000u64),
             blob_versioned_hashes: vec![versioned_hash],
-            signature_y_parity: false,
+            signature_y_parity: 0u8.into(),
             signature_r: U256::zero(),
             signature_s: U256::zero(),
             ..Default::default()
@@ -180,7 +180,7 @@ async fn builder_caps_elided_blob_bundles_to_fork_max() {
         let (r, s, y_parity) = secp256k1_sign(&sk, &hash);
         tx.signature_r = r;
         tx.signature_s = s;
-        tx.signature_y_parity = y_parity;
+        tx.signature_y_parity = u8::from(y_parity).into();
 
         let transaction = Transaction::EIP4844Transaction(tx);
         let tx_hash = transaction.hash(&ethrex_crypto::NativeCrypto);
