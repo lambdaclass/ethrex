@@ -1,3 +1,5 @@
+#[cfg(feature = "spawned")]
+pub mod actors;
 #[cfg(feature = "api")]
 pub mod api;
 #[cfg(any(feature = "api", feature = "metrics"))]
