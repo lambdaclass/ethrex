@@ -289,7 +289,8 @@ no PreSealer and compute the root in one shot on a `ShardedStateTrie`.
 ### Payload Lifecycle
 
 - At most 4 entries are kept (`MAX_PAYLOADS`). Registering a build first drops
-  entries whose build already ended, then evicts the oldest if still full.
+  entries whose build timed out, then evicts the oldest if still full. A build
+  that ended on an error stays, so its `getPayload` reports that error.
 - A build not requested within its slot is dropped with its tree, and a later
   `getPayload` for its id answers `UnknownPayload` (-38001).
 - A running build's tree keeps every key touched by any of the slot's best

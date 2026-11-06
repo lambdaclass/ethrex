@@ -134,7 +134,7 @@ getPayload: stop loop, seal
 | --- | --- |
 | `MAX_PAYLOADS` 10 → 4 (`crates/blockchain/blockchain.rs:145`) | At most 4 entries. A sealed payload stays available for a repeated `getPayload` until 4 newer FCUs |
 | A timed-out build is dropped entirely | The loop's 12 s are counted from when it started, at FCU receipt, not from the slot start. When it reaches 12 s without `getPayload`, it drops its best build and PreSealer and returns a new `ChainError::PayloadTimedOut`. A later `getPayload` for that id answers `UnknownPayload` (-38001); the engine handler maps `PayloadTimedOut` to the same error |
-| Finished entries are purged | `register_payload_build_task` removes entries whose task `is_finished()`, under the `payloads` lock it already holds. No new lock, so no deadlock with `getPayload` (which holds the lock while it awaits the task) |
+| Timed-out entries are purged | `register_payload_build_task` removes entries whose loop timed out (a flag the build task sets when the loop returns `PayloadTimedOut`), under the `payloads` lock it already holds. No new lock, so no deadlock with `getPayload` (which holds the lock while it awaits the task). A build that ended on an error is kept, so its `getPayload` still reports that error |
 | The final rebuild at slot end is removed | Today the loop rebuilds once more after the slot timeout if a tx arrived. The build is dropped now, so that rebuild has no use |
 | No reset of the tree | Keys reset to their parent value stay loaded, so the tree holds every key touched by any best in the slot |
 
@@ -164,7 +164,7 @@ Memory held by a trie after overwriting K existing keys and hashing (release, co
 | --- | --- |
 | Late IL appended to the held build (`apply_inclusion_list_transactions`) | Recompute the build's `state_diff()` and submit it: rebase held → held + IL. Appends overwrite values, so the delta is only the IL txs' writes |
 | IL-first rebuild beats the held build | The same rebase as on main |
-| Takeover by a later FCU with the same attributes (new id) | `fork()` the tree for the new loop; the old id keeps its stopped build and its tree as `PayloadOrTask::Unsealed`, so the timeout purge (which matches finished `Task`s) does not drop it |
+| Takeover by a later FCU with the same attributes (new id) | `fork()` the tree for the new loop; the old id keeps its stopped build and its tree as `PayloadOrTask::Unsealed`, so the timeout purge (which matches timed-out `Task`s) does not drop it |
 | IL check on import | Not affected: it runs at the pre-withdrawals state; the tree only produces the post-state root |
 | `getPayload` | Same as main |
 

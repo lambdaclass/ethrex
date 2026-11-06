@@ -2,7 +2,10 @@ use std::{
     cmp::{Ordering, max},
     collections::BTreeMap,
     ops::Div,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{self, AtomicBool},
+    },
     time::{Duration, Instant},
 };
 
@@ -58,6 +61,10 @@ use tracing::{debug, warn};
 pub struct PayloadBuildTask {
     task: tokio::task::JoinHandle<Result<UnsealedPayload, ChainError>>,
     cancel: CancellationToken,
+    /// Set once the build loop ended at its slot deadline. Only such a build
+    /// is dropped when a new one registers: a build that ended on an error
+    /// keeps it for its `getPayload`.
+    timed_out: Arc<AtomicBool>,
 }
 
 #[derive(Debug)]
@@ -93,24 +100,25 @@ impl PayloadOrTask {
 }
 
 /// Installs an in-flight build task into the payload pool, after dropping the
-/// builds that already ended on their own and, if still at capacity, the
-/// oldest entry.
+/// builds that timed out and, if still at capacity, the oldest entry.
 fn register_payload_build_task(
     payloads: &mut Vec<(u64, PayloadOrTask)>,
     payload_id: u64,
     task: PayloadBuildTask,
 ) {
-    // Drop the builds whose loop already ended on its own. This loses no
-    // block: `get_payload` removes an entry before it awaits its task, so a
-    // finished `Task` still listed was never requested, and the loop returns a
-    // build only once cancelled, which only `get_payload` and eviction do, both
-    // after removing the entry. Such a task holds an error (a timeout or a
-    // failed first build). `is_finished` does not wait and the caller already
-    // holds the `payloads` lock, so this takes no new lock and cannot deadlock
-    // with a `get_payload` that holds that lock while it awaits its task.
-    payloads.retain(
-        |(_, entry)| !matches!(entry, PayloadOrTask::Task(build) if build.task.is_finished()),
-    );
+    // Drop the builds whose loop reached its slot deadline: they hold only
+    // `PayloadTimedOut`, which a `getPayload` for their id answers the same as
+    // a missing entry. A build that ended on an error stays, so its
+    // `getPayload` still reports that error; it leaves by eviction like any
+    // other entry. Reading the flag does not wait and the caller already holds
+    // the `payloads` lock, so this takes no new lock and cannot deadlock with a
+    // `get_payload` that holds that lock while it awaits its task.
+    payloads.retain(|(_, entry)| {
+        !matches!(
+            entry,
+            PayloadOrTask::Task(build) if build.timed_out.load(atomic::Ordering::Acquire)
+        )
+    });
     if payloads.len() >= MAX_PAYLOADS {
         // Remove the oldest entry. A build still running there would keep
         // rebuilding for the rest of its slot, holding its build context, with
@@ -572,10 +580,16 @@ impl Blockchain {
         let self_clone = self.clone();
         let cancel_token = CancellationToken::new();
         let cancel_token_clone = cancel_token.clone();
+        let timed_out = Arc::new(AtomicBool::new(false));
+        let timed_out_flag = timed_out.clone();
         let payload_build_task = tokio::task::spawn(async move {
-            self_clone
+            let result = self_clone
                 .build_payload_loop(payload, cancel_token_clone)
-                .await
+                .await;
+            if matches!(result, Err(ChainError::PayloadTimedOut)) {
+                timed_out_flag.store(true, atomic::Ordering::Release);
+            }
+            result
         });
         let mut payloads = self.payloads.lock().await;
         register_payload_build_task(
@@ -584,6 +598,7 @@ impl Blockchain {
             PayloadBuildTask {
                 task: payload_build_task,
                 cancel: cancel_token,
+                timed_out,
             },
         );
     }
@@ -2286,7 +2301,10 @@ mod tests {
 
     /// Evicting the oldest entry at `MAX_PAYLOADS` must stop its build loop:
     /// dropping the `JoinHandle` alone detaches the task and leaves it running.
-    #[tokio::test]
+    /// The tasks never end, like builds still in their slot, and the runtime
+    /// has several workers, so the result does not depend on whether a task
+    /// runs before the next one registers.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn evicted_build_task_is_cancelled() {
         let tokens: Vec<CancellationToken> = (0..=MAX_PAYLOADS)
             .map(|_| CancellationToken::new())
@@ -2294,8 +2312,9 @@ mod tests {
         let mut payloads = Vec::new();
         for (payload_id, token) in (0u64..).zip(&tokens) {
             let task = PayloadBuildTask {
-                task: tokio::spawn(async { Err(ChainError::Custom("unused".to_string())) }),
+                task: tokio::spawn(std::future::pending()),
                 cancel: token.clone(),
+                timed_out: Arc::default(),
             };
             register_payload_build_task(&mut payloads, payload_id, task);
         }
@@ -2474,25 +2493,33 @@ mod tests {
         );
     }
 
-    /// Registering a build drops the entries whose loop already ended on its
-    /// own, as a timed-out one does, and keeps sealed payloads (for a repeated
-    /// getPayload) and builds still running.
+    /// Registering a build drops the entries whose loop timed out, and keeps
+    /// sealed payloads (for a repeated getPayload), builds still running and
+    /// builds that ended on an error (for their getPayload to report it).
     #[tokio::test]
-    async fn finished_entries_are_purged_on_register() {
-        let ended = PayloadBuildTask {
-            task: tokio::spawn(async { Err(ChainError::PayloadTimedOut) }),
-            cancel: CancellationToken::new(),
-        };
+    async fn timed_out_entries_are_purged_on_register() {
+        let ended =
+            |result: Result<UnsealedPayload, ChainError>, timed_out: bool| PayloadBuildTask {
+                task: tokio::spawn(async move { result }),
+                cancel: CancellationToken::new(),
+                timed_out: Arc::new(AtomicBool::new(timed_out)),
+            };
+        let timed_out = ended(Err(ChainError::PayloadTimedOut), true);
+        let failed = ended(Err(ChainError::Custom("first build failed".into())), false);
         for _ in 0..100 {
-            if ended.task.is_finished() {
+            if timed_out.task.is_finished() && failed.task.is_finished() {
                 break;
             }
             tokio::task::yield_now().await;
         }
-        assert!(ended.task.is_finished(), "the ended task did not run");
+        assert!(
+            timed_out.task.is_finished() && failed.task.is_finished(),
+            "the ended tasks did not run"
+        );
         let running = || PayloadBuildTask {
             task: tokio::spawn(std::future::pending()),
             cancel: CancellationToken::new(),
+            timed_out: Arc::default(),
         };
         let sealed = PayloadBuildResult {
             blobs_bundle: BlobsBundle::default(),
@@ -2505,13 +2532,47 @@ mod tests {
         };
         let mut payloads = vec![
             (0, PayloadOrTask::Payload(Box::new(sealed))),
-            (1, PayloadOrTask::Task(ended)),
-            (2, PayloadOrTask::Task(running())),
+            (1, PayloadOrTask::Task(timed_out)),
+            (2, PayloadOrTask::Task(failed)),
+            (3, PayloadOrTask::Task(running())),
         ];
 
-        register_payload_build_task(&mut payloads, 3, running());
+        register_payload_build_task(&mut payloads, 4, running());
 
         let ids: Vec<u64> = payloads.iter().map(|(id, _)| *id).collect();
-        assert_eq!(ids, vec![0, 2, 3], "the ended build was not purged");
+        assert_eq!(
+            ids,
+            vec![0, 2, 3, 4],
+            "only the timed-out build should be purged"
+        );
+    }
+
+    /// A build whose first build failed keeps that error for its getPayload,
+    /// even after a later forkchoice update registers another build.
+    #[tokio::test]
+    async fn failed_first_build_keeps_its_error_after_a_new_build_registers() {
+        let (blockchain, template) = blockchain_and_template().await;
+        let mut orphan = template.clone();
+        // No stored header has this hash, so the first build fails.
+        orphan.header.parent_hash = H256::repeat_byte(0x11);
+        let failed_id = 1;
+        blockchain
+            .clone()
+            .initiate_payload_build(orphan, failed_id)
+            .await;
+        wait_until_build_ended(&blockchain, failed_id).await;
+
+        blockchain.clone().initiate_payload_build(template, 2).await;
+
+        match blockchain.get_payload(failed_id).await {
+            Err(ChainError::EvmError(_)) => {}
+            Err(ChainError::UnknownPayload) => {
+                panic!("the failed build was purged and its error lost")
+            }
+            other => panic!(
+                "expected the first build's error, got {:?}",
+                other.map(|sealed| sealed.payload.hash())
+            ),
+        }
     }
 }
