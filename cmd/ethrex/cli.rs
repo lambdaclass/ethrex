@@ -10,7 +10,7 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
-    BlockchainOptions, BlockchainType, DEFAULT_BLOB_PRICE_BUMP_PERCENT,
+    Blockchain, BlockchainOptions, BlockchainType, DEFAULT_BLOB_PRICE_BUMP_PERCENT,
     DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD, DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT, DEFAULT_MIN_TIP_WEI,
     DEFAULT_PRICE_BUMP_PERCENT, L2Config,
     error::{ChainError, InvalidBlockError},
@@ -24,7 +24,7 @@ use ethrex_p2p::{
     types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{DB_COMMIT_THRESHOLD, error::StoreError, has_valid_db};
+use ethrex_storage::{DB_COMMIT_THRESHOLD, Store, error::StoreError, has_valid_db};
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, error, info, warn};
 
@@ -1057,129 +1057,62 @@ pub fn remove_db(datadir: &Path, force: bool) {
     }
 }
 
+/// Imports blocks from an RLP chain file, or from every file in a directory: files
+/// named by a number (`1.rlp`, `2.rlp`, ..., `10.rlp`) in numeric order, then any
+/// others by name.
+///
+/// A directory import keeps going when one file fails, so the blocks in the other
+/// files are still applied: hive's consume-rlp simulator writes one block per file,
+/// and its fixtures include blocks the client must reject. It still returns an error
+/// once every file has been tried, as geth's `import` does with several files. A
+/// file import stops at the first failure.
 pub async fn import_blocks(
     path: &str,
     datadir: &Path,
     genesis: Genesis,
     blockchain_opts: BlockchainOptions,
 ) -> Result<(), ChainError> {
-    const IMPORT_BATCH_SIZE: usize = 1024;
-    // This value is higher than the spec (128) as the latter block's state nodes will be kept in memory and not committed when using rocksdb
-    // This means we need to run some extra-blocks to ensure we commit their state and don't need to regenerate the full block range upon node restart
-    const MIN_FULL_BLOCKS: usize = 132;
     let start_time = Instant::now();
     init_datadir(datadir);
     let store = init_store(datadir, genesis).await?;
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     // Re-execute any blocks above the last committed state root so the in-memory diff
-    // layers are populated before this import appends. Required for per-file imports
-    // (e.g. EEST consume-rlp fork-transition fixtures) where each invocation's tail
-    // layers are dropped on process exit and the next file's parent state would
+    // layers are populated before this import appends. They are dropped whenever an
+    // earlier import or node run exits, and the next block's parent state would
     // otherwise be unreachable.
     crate::initializers::regenerate_head_state(&store, &blockchain)
         .await
         .map_err(|e| ChainError::Custom(format!("regenerate_head_state failed: {e}")))?;
-    let path_metadata = metadata(path).expect("Failed to read path");
 
-    // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
-    let chains: Vec<Vec<Block>> = if path_metadata.is_dir() {
+    let path_metadata = metadata(path)
+        .map_err(|e| ChainError::Custom(format!("failed to read path {path}: {e}")))?;
+    let is_dir = path_metadata.is_dir();
+    let files = if is_dir {
         info!(path = %path, "Importing blocks from directory");
-        let mut entries: Vec<_> = read_dir(path)
-            .expect("Failed to read blocks directory")
-            .map(|res| res.expect("Failed to open file in directory").path())
-            .collect();
-
-        // Sort entries to process files in order (e.g., 1.rlp, 2.rlp, ...)
-        entries.sort();
-
-        entries
-            .iter()
-            .map(|entry| {
-                let path_str = entry.to_str().expect("Couldn't convert path to string");
-                info!(path = %path_str, "Importing blocks from file");
-                utils::read_chain_file(path_str)
-            })
-            .collect()
+        chain_files_in_dir(Path::new(path))?
     } else {
-        info!(path = %path, "Importing blocks from file");
-        vec![utils::read_chain_file(path)]
+        vec![PathBuf::from(path)]
     };
 
     let mut total_blocks_imported = 0;
-    for blocks in chains {
-        let mut block_batch = vec![];
-        let size = blocks.len();
-        let mut numbers_and_hashes = blocks
-            .iter()
-            .map(|b| (b.header.number, b.hash()))
-            .collect::<Vec<_>>();
-        // Execute block by block
-        let mut last_progress_log = Instant::now();
-        for (index, block) in blocks.into_iter().enumerate() {
-            let hash = block.hash();
-            let number = block.header.number;
-
-            // Log progress every 10 seconds
-            if last_progress_log.elapsed() >= Duration::from_secs(10) {
-                let processed = index + 1;
-                let percent = (((processed as f64 / size as f64) * 100.0) * 10.0).round() / 10.0;
-                info!(processed, total = size, percent, "Import progress");
-                last_progress_log = Instant::now();
+    let mut failed_files = 0;
+    for file in &files {
+        info!(path = %file.display(), "Importing blocks from file");
+        let result = match utils::read_chain_file(file) {
+            Ok(blocks) => import_chain(&store, &blockchain, blocks).await,
+            Err(e) => Err(ChainError::Custom(format!(
+                "failed to read chain file {}: {e:#}",
+                file.display()
+            ))),
+        };
+        match result {
+            Ok(imported) => total_blocks_imported += imported,
+            Err(err) if is_dir && !is_store_failure(&err) => {
+                warn!(path = %file.display(), %err, "Skipping file that failed to import");
+                failed_files += 1;
             }
-
-            // Check if the block is already in the blockchain, if it is do nothing, if not add it
-            let block_number = store.get_block_number(hash).await.map_err(|_e| {
-                ChainError::Custom(String::from(
-                    "Couldn't check if block is already in the blockchain",
-                ))
-            })?;
-
-            if block_number.is_some() {
-                info!("Block {} is already in the blockchain", block.hash());
-                continue;
-            }
-
-            validate_block_body(&block.header, &block.body, &ethrex_crypto::NativeCrypto)
-                .map_err(InvalidBlockError::InvalidBody)?;
-
-            if index + MIN_FULL_BLOCKS < size {
-                block_batch.push(block);
-                if block_batch.len() >= IMPORT_BATCH_SIZE || index + MIN_FULL_BLOCKS + 1 == size {
-                    blockchain
-                        .add_blocks_in_batch(
-                            mem::take(&mut block_batch),
-                            &[],
-                            CancellationToken::new(),
-                        )
-                        .await
-                        .map_err(|(err, _)| err)?;
-                }
-            } else {
-                // We need to have the state of the latest 128 blocks
-                blockchain
-                .add_block_pipeline_bounded(block, None, DB_COMMIT_THRESHOLD)
-                .inspect_err(|err| match err {
-                    // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
-                    ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
-                    _ => warn!("Failed to add block {number} with hash {hash:#x}"),
-                })?;
-            }
+            Err(err) => return Err(err),
         }
-
-        // Make head canonical and label all special blocks correctly.
-        if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
-            store
-                .forkchoice_update(
-                    numbers_and_hashes,
-                    head_number,
-                    head_hash,
-                    Some(head_number),
-                    Some(head_number),
-                )
-                .await?;
-        }
-
-        total_blocks_imported += size;
     }
 
     let total_duration = start_time.elapsed();
@@ -1188,7 +1121,123 @@ pub async fn import_blocks(
         seconds = total_duration.as_secs_f64(),
         "Import completed"
     );
+    if failed_files > 0 {
+        return Err(ChainError::Custom(format!(
+            "{failed_files} of {} files failed to import",
+            files.len()
+        )));
+    }
     Ok(())
+}
+
+/// Lists the files in a directory of chain files in import order. See
+/// [`chain_file_sort_key`].
+fn chain_files_in_dir(dir: &Path) -> Result<Vec<PathBuf>, ChainError> {
+    let read_err = |e: io::Error| {
+        ChainError::Custom(format!("failed to read directory {}: {e}", dir.display()))
+    };
+    let mut files = read_dir(dir)
+        .map_err(read_err)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(read_err)?;
+    files.sort_by_cached_key(|path| chain_file_sort_key(path));
+    Ok(files)
+}
+
+/// Orders files whose name is a number (`2.rlp` before `10.rlp`, and zero-padded
+/// names such as `0001.rlp`) by that number, then any other files by name.
+fn chain_file_sort_key(path: &Path) -> (bool, Option<u64>, PathBuf) {
+    let number = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .and_then(|stem| stem.parse::<u64>().ok());
+    // `None` sorts before `Some`, so lead with a flag that puts numbered files first.
+    (number.is_none(), number, path.to_path_buf())
+}
+
+/// Whether an import error comes from the database rather than from the blocks being
+/// imported. Such a failure would recur for every remaining file, so a directory
+/// import stops instead of skipping the file.
+fn is_store_failure(err: &ChainError) -> bool {
+    matches!(err, ChainError::StoreError(_) | ChainError::TrieError(_))
+}
+
+/// Adds one chain of blocks and makes its last block the canonical head. Returns the
+/// number of blocks in the chain, including any that were already stored.
+async fn import_chain(
+    store: &Store,
+    blockchain: &Blockchain,
+    blocks: Vec<Block>,
+) -> Result<usize, ChainError> {
+    const IMPORT_BATCH_SIZE: usize = 1024;
+    // This value is higher than the spec (128) as the latter block's state nodes will be kept in memory and not committed when using rocksdb
+    // This means we need to run some extra-blocks to ensure we commit their state and don't need to regenerate the full block range upon node restart
+    const MIN_FULL_BLOCKS: usize = 132;
+
+    let mut block_batch = vec![];
+    let size = blocks.len();
+    let mut numbers_and_hashes = blocks
+        .iter()
+        .map(|b| (b.header.number, b.hash()))
+        .collect::<Vec<_>>();
+    // Execute block by block
+    let mut last_progress_log = Instant::now();
+    for (index, block) in blocks.into_iter().enumerate() {
+        let hash = block.hash();
+        let number = block.header.number;
+
+        // Log progress every 10 seconds
+        if last_progress_log.elapsed() >= Duration::from_secs(10) {
+            let processed = index + 1;
+            let percent = (((processed as f64 / size as f64) * 100.0) * 10.0).round() / 10.0;
+            info!(processed, total = size, percent, "Import progress");
+            last_progress_log = Instant::now();
+        }
+
+        // Check if the block is already in the blockchain, if it is do nothing, if not add it
+        if store.get_block_number(hash).await?.is_some() {
+            info!("Block {hash:#x} is already in the blockchain");
+            continue;
+        }
+
+        validate_block_body(&block.header, &block.body, &ethrex_crypto::NativeCrypto)
+            .map_err(InvalidBlockError::InvalidBody)?;
+
+        if index + MIN_FULL_BLOCKS < size {
+            block_batch.push(block);
+            if block_batch.len() >= IMPORT_BATCH_SIZE || index + MIN_FULL_BLOCKS + 1 == size {
+                blockchain
+                    .add_blocks_in_batch(mem::take(&mut block_batch), &[], CancellationToken::new())
+                    .await
+                    .map_err(|(err, _)| err)?;
+            }
+        } else {
+            // We need to have the state of the latest 128 blocks
+            blockchain
+                .add_block_pipeline_bounded(block, None, DB_COMMIT_THRESHOLD)
+                .inspect_err(|err| match err {
+                    // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
+                    ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
+                    _ => warn!("Failed to add block {number} with hash {hash:#x}"),
+                })?;
+        }
+    }
+
+    // Make head canonical and label all special blocks correctly.
+    if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
+        store
+            .forkchoice_update(
+                numbers_and_hashes,
+                head_number,
+                head_hash,
+                Some(head_number),
+                Some(head_number),
+            )
+            .await?;
+    }
+
+    Ok(size)
 }
 
 pub async fn import_blocks_bench(
@@ -1225,14 +1274,18 @@ pub async fn import_blocks_bench(
         entries
             .iter()
             .map(|entry| {
-                let path_str = entry.to_str().expect("Couldn't convert path to string");
-                info!(path = %path_str, "Importing blocks from file");
-                utils::read_chain_file(path_str)
+                info!(path = %entry.display(), "Importing blocks from file");
+                utils::read_chain_file(entry).unwrap_or_else(|e| {
+                    panic!("failed to read chain file {}: {e:#}", entry.display())
+                })
             })
             .collect()
     } else {
         info!(path = %path, "Importing blocks from file");
-        vec![utils::read_chain_file(path)]
+        vec![
+            utils::read_chain_file(Path::new(path))
+                .unwrap_or_else(|e| panic!("failed to read chain file {path}: {e:#}")),
+        ]
     };
 
     // Pre-load all BALs into memory upfront to avoid per-block I/O during benchmark.
@@ -1515,6 +1568,18 @@ mod tests {
     use super::*;
     use clap::Parser;
     use ethrex_rpc::RpcNamespace;
+
+    /// Numbered chain files import in numeric order whether or not their names are
+    /// zero-padded, ahead of any other files.
+    #[test]
+    fn chain_files_sort_by_number_then_name() {
+        let mut files = ["b.rlp", "10.rlp", "a.rlp", "2.rlp", "0001.rlp"].map(PathBuf::from);
+        files.sort_by_cached_key(|path| chain_file_sort_key(path));
+        assert_eq!(
+            files,
+            ["0001.rlp", "2.rlp", "10.rlp", "a.rlp", "b.rlp"].map(PathBuf::from)
+        );
+    }
 
     /// `--http.addr` must default to `127.0.0.1` so a fresh install on a public
     /// host is not exposed to the open internet.
