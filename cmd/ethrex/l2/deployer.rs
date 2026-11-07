@@ -229,6 +229,24 @@ pub struct DeployerOptions {
         long,
         default_value = "false",
         value_name = "BOOLEAN",
+        env = "ETHREX_L2_ZISK",
+        action = ArgAction::Set,
+        help_heading = "Deployer options",
+        help = "If true, L2 will require ZisK proofs to validate batch proofs and settle state."
+    )]
+    pub zisk: bool,
+    #[arg(
+        long = "zisk.verifier-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_DEPLOYER_ZISK_VERIFIER_ADDRESS",
+        help_heading = "Deployer options",
+        help = "Address of ZisK's PLONK verifier (ZiskVerifier.sol of the ZisK release the prover is pinned to). Required when ZisK proofs are required: the deployer does not deploy it, see `make deploy-zisk-verifier` in crates/l2."
+    )]
+    pub zisk_verifier_address: Option<Address>,
+    #[arg(
+        long,
+        default_value = "false",
+        value_name = "BOOLEAN",
         env = "ETHREX_L2_ALIGNED",
         action = ArgAction::Set,
         help_heading = "Deployer options",
@@ -317,6 +335,14 @@ pub struct DeployerOptions {
         help = "Path to the Risc0 image id / verification key. This is used for proof verification."
     )]
     pub risc0_vk_path: Option<String>,
+    #[arg(
+        long,
+        value_name = "PATH",
+        env = "ETHREX_ZISK_VERIFICATION_KEY_PATH",
+        help_heading = "Deployer options",
+        help = "Path to the ZisK program verification key (hex of the four u64 words packed big-endian, as written by the guest program build). This is used for proof verification."
+    )]
+    pub zisk_vk_path: Option<String>,
     #[arg(
         long,
         default_value = "false",
@@ -465,6 +491,8 @@ impl Default for DeployerOptions {
             sp1_verifier_address: None,
             tdx: false,
             tdx_verifier_address: None,
+            zisk: false,
+            zisk_verifier_address: None,
             aligned: false,
             aligned_aggregator_address: None,
             randomize_contract_deployment: false,
@@ -495,6 +523,7 @@ impl Default for DeployerOptions {
             on_chain_proposer_owner_pk: None,
             sp1_vk_path: None,
             risc0_vk_path: None,
+            zisk_vk_path: None,
             deploy_based_contracts: false,
             sequencer_registry_owner: None,
             inclusion_max_wait: 3000,
@@ -619,8 +648,8 @@ const L2_BRIDGE_RUNTIME_BYTECODE: &[u8] = include_bytes!(concat!(
     "/contracts/solc_out/L2Bridge.bytecode"
 ));
 
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,bool,bool,bool,bool,address,address,address,address,bytes32,bytes32,bytes32,bytes32,address,uint256,address)";
-const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,bool,bool,bool,bool,address,address,address,address,bytes32,bytes32,bytes32,bytes32,uint256,address)";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE_BASED: &str = "initialize(bool,address,bool,bool,bool,bool,bool,address,address,address,address,address,bytes32,bytes32,bytes32,bytes32,bytes32,address,uint256,address)";
+const INITIALIZE_ON_CHAIN_PROPOSER_SIGNATURE: &str = "initialize(bool,address,bool,bool,bool,bool,bool,address,address,address,address,address,bytes32,bytes32,bytes32,bytes32,bytes32,uint256,address)";
 const INITIALIZE_TIMELOCK_SIGNATURE: &str = "initialize(uint256,address[],address,address,address)";
 
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
@@ -648,6 +677,7 @@ pub struct ContractAddresses {
     pub sp1_verifier_address: Address,
     pub risc0_verifier_address: Address,
     pub tdx_verifier_address: Address,
+    pub zisk_verifier_address: Address,
     pub sequencer_registry_address: Address,
     pub aligned_aggregator_address: Address,
     pub router: Option<Address>,
@@ -976,6 +1006,18 @@ async fn deploy_contracts(
         _ => Address::zero(),
     };
 
+    // ZisK's verifier is GPL (snarkJS output) and generated per ZisK release, so it
+    // is not embedded either: `make deploy-zisk-verifier` in crates/l2 deploys it.
+    let zisk_verifier_address = match opts.zisk_verifier_address {
+        Some(addr) if opts.zisk => addr,
+        None if opts.zisk => {
+            return Err(DeployerError::InternalError(
+                "ZiskVerifier address is not set and zisk is a required prover".to_string(),
+            ));
+        }
+        _ => Address::zero(),
+    };
+
     let tdx_controller_address =
         timelock_address.unwrap_or(on_chain_proposer_deployment.proxy_address);
 
@@ -1018,6 +1060,7 @@ async fn deploy_contracts(
         sp1_verifier_address = ?sp1_verifier_address,
         risc0_verifier_address = ?risc0_verifier_address,
         tdx_verifier_address = ?tdx_verifier_address,
+        zisk_verifier_address = ?zisk_verifier_address,
         "Contracts deployed"
     );
     let mut receipts = vec![
@@ -1044,6 +1087,7 @@ async fn deploy_contracts(
             sp1_verifier_address,
             risc0_verifier_address,
             tdx_verifier_address,
+            zisk_verifier_address,
             sequencer_registry_address: sequencer_registry_deployment.proxy_address,
             aligned_aggregator_address,
             router: opts.router.or(Some(router_deployment.proxy_address)),
@@ -1131,6 +1175,7 @@ fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, Depl
     let (required_type, vk_path) = match prover_type {
         ProverType::SP1 => (opts.sp1, &opts.sp1_vk_path),
         ProverType::RISC0 => (opts.risc0, &opts.risc0_vk_path),
+        ProverType::ZisK => (opts.zisk, &opts.zisk_vk_path),
         _ => unimplemented!("{prover_type}"),
     };
 
@@ -1155,6 +1200,10 @@ fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, Depl
                 ),
                 ProverType::SP1 if !opts.aligned => format!(
                     "{}/../../crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
+                    env!("CARGO_MANIFEST_DIR")
+                ),
+                ProverType::ZisK => format!(
+                    "{}/../../crates/guest-program/bin/zisk/out/riscv64ima-zisk-vk",
                     env!("CARGO_MANIFEST_DIR")
                 ),
                 // other types don't have a verification key
@@ -1218,6 +1267,8 @@ async fn initialize_contracts(
     let risc0_vk = get_vk(ProverType::RISC0, opts)?;
 
     info!("Risc0 vk read");
+    let zisk_vk = get_vk(ProverType::ZisK, opts)?;
+    info!("ZisK vk read");
     let commit_hash = keccak(get_git_commit_hash());
 
     let deployer_address = get_address_from_secret_key(&opts.private_key.secret_bytes())
@@ -1275,13 +1326,16 @@ async fn initialize_contracts(
             Value::Bool(opts.risc0),
             Value::Bool(opts.sp1),
             Value::Bool(opts.tdx),
+            Value::Bool(opts.zisk),
             Value::Bool(opts.aligned),
             Value::Address(contract_addresses.risc0_verifier_address),
             Value::Address(contract_addresses.sp1_verifier_address),
             Value::Address(contract_addresses.tdx_verifier_address),
+            Value::Address(contract_addresses.zisk_verifier_address),
             Value::Address(contract_addresses.aligned_aggregator_address),
             Value::FixedBytes(sp1_vk),
             Value::FixedBytes(risc0_vk),
+            Value::FixedBytes(zisk_vk),
             Value::FixedBytes(commit_hash.0.to_vec().into()),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Address(contract_addresses.sequencer_registry_address),
@@ -1388,13 +1442,16 @@ async fn initialize_contracts(
             Value::Bool(opts.risc0),
             Value::Bool(opts.sp1),
             Value::Bool(opts.tdx),
+            Value::Bool(opts.zisk),
             Value::Bool(opts.aligned),
             Value::Address(contract_addresses.risc0_verifier_address),
             Value::Address(contract_addresses.sp1_verifier_address),
             Value::Address(contract_addresses.tdx_verifier_address),
+            Value::Address(contract_addresses.zisk_verifier_address),
             Value::Address(contract_addresses.aligned_aggregator_address),
             Value::FixedBytes(sp1_vk),
             Value::FixedBytes(risc0_vk),
+            Value::FixedBytes(zisk_vk),
             Value::FixedBytes(commit_hash.0.to_vec().into()),
             Value::FixedBytes(genesis.compute_state_root().0.to_vec().into()),
             Value::Uint(genesis.config.chain_id.into()),
@@ -1740,6 +1797,11 @@ fn write_contract_addresses_to_env(
         writer,
         "ETHREX_DEPLOYER_TDX_VERIFIER_ADDRESS={:#x}",
         contract_addresses.tdx_verifier_address
+    )?;
+    writeln!(
+        writer,
+        "ETHREX_DEPLOYER_ZISK_VERIFIER_ADDRESS={:#x}",
+        contract_addresses.zisk_verifier_address
     )?;
     // TDX aux contracts, qpl-tool depends on exact env var naming.
     // Default to Address::zero() when TDX is not deployed (files won't exist).

@@ -59,7 +59,8 @@ interface ITimelock {
         uint256 firstBatchNumber,
         bytes[] calldata risc0BlockProofs,
         bytes[] calldata sp1ProofsBytes,
-        bytes[] calldata tdxSignatures
+        bytes[] calldata tdxSignatures,
+        bytes[] calldata ziskProofsBytes
     ) external;
 
     /// @notice Verifies multiple batches through the timelock using aligned proofs.

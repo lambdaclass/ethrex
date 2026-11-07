@@ -19,6 +19,7 @@ pub fn verifier_getter(prover_type: ProverType) -> Option<&'static str> {
         ProverType::RISC0 => Some("REQUIRE_RISC0_PROOF()"),
         ProverType::SP1 => Some("REQUIRE_SP1_PROOF()"),
         ProverType::TDX => Some("REQUIRE_TDX_PROOF()"),
+        ProverType::ZisK => Some("REQUIRE_ZISK_PROOF()"),
         ProverType::Exec => None,
     }
 }

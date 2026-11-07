@@ -11,13 +11,16 @@ const PROPOSERS = [
       false, // requireRisc0Proof
       true, // requireSp1Proof
       false, // requireTdxProof
+      false, // requireZiskProof
       aligned,
       ethers.ZeroAddress, // r0verifier
       sp1Verifier,
       ethers.ZeroAddress, // tdxverifier
+      ethers.ZeroAddress, // ziskVerifier
       ethers.ZeroAddress, // alignedProofAggregator
       ethers.id("sp1 vk"),
       ethers.ZeroHash, // risc0Vk
+      ethers.ZeroHash, // ziskVk
       ethers.id("commit"),
       ethers.id("genesis"),
       1729, // chainId
@@ -33,13 +36,16 @@ const PROPOSERS = [
       false, // requireRisc0Proof
       true, // requireSp1Proof
       false, // requireTdxProof
+      false, // requireZiskProof
       aligned,
       ethers.ZeroAddress, // r0verifier
       sp1Verifier,
       ethers.ZeroAddress, // tdxverifier
+      ethers.ZeroAddress, // ziskVerifier
       ethers.ZeroAddress, // alignedProofAggregator
       ethers.id("sp1 vk"),
       ethers.ZeroHash, // risc0Vk
+      ethers.ZeroHash, // ziskVk
       ethers.id("commit"),
       ethers.id("genesis"),
       sequencerRegistry,

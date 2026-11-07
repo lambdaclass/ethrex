@@ -29,7 +29,7 @@ ethrex l2 deploy \
 > Ensure you control the Committer and Proof Sender accounts, as they will be authorized as sequencers. These accounts will have control over the chain state.
 
 > [!IMPORTANT]
-> If you plan to prove your L2 using SP1, RISC0, or TEE, add the following extra arguments to the command above:
+> If you plan to prove your L2 using SP1, RISC0, ZisK, or TEE, add the following extra arguments to the command above:
 >
 > `--sp1 true` to require SP1 proofs for validating batch execution and state settlement.
 > 
@@ -38,6 +38,10 @@ ethrex l2 deploy \
 > `--risc0 true` to require RISC0 proofs for validating batch execution and state settlement.
 > 
 > `--risc0.verifier-address` to use an existing verifier instead of deploying one on the public network. RISC0 recommends their deployed canonical verifier gateways; see the list here.
+> 
+> `--zisk true` to require ZisK proofs for validating batch execution and state settlement.
+> 
+> `--zisk.verifier-address` with the address of a `ZiskVerifier` deployed from the ZisK release ethrex is pinned to. It is required: the deployer does not deploy this verifier. See [Run an ethrex ZisK prover](./prover/zisk.md).
 > 
 > `--tdx true` to require TEE proofs for validating batch execution and state settlement.
 > 

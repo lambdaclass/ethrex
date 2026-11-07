@@ -1,7 +1,7 @@
 .PHONY: help init down restart init-l1-docker down-l1-docker restart-l1-docker \
-	init-l1 rm-db-l1 deploy-l1 deploy-l1-sp1 init-l2 \
+	init-l1 rm-db-l1 deploy-l1 deploy-l1-sp1 deploy-l1-zisk deploy-zisk-verifier init-l2 \
 	init-metrics down-metrics restart-metrics down-l2 restart-l2 rm-db-l2 \
-	init-prover-sp1 init-prover-risc0 init-prover-exec build-prover clean-tee clean-tee-contract-deps \
+	init-prover-sp1 init-prover-risc0 init-prover-zisk init-prover-exec build-prover clean-tee clean-tee-contract-deps \
 	test integration-test integration-test-gpu state-diff-test
 
 .DEFAULT_GOAL := help
@@ -146,6 +146,42 @@ deploy-l1-sp1: ## 📜 Deploys the L1 contracts with SP1 verifier
 	--genesis-l1-path ${L1_GENESIS_FILE_PATH} \
 	--genesis-l2-path ${L2_GENESIS_FILE_PATH}
 
+# ZisK's Solidity verifier (ZiskVerifier.sol over a snarkJS PlonkVerifier.sol) is
+# GPL licensed and generated per ZisK release, so the deployer does not embed it.
+# This fetches it from the release the prover is pinned to, compiles it and
+# deploys it with rex. Export the printed address as
+# ETHREX_DEPLOYER_ZISK_VERIFIER_ADDRESS before running deploy-l1-zisk.
+ZISK_VERSION=v1.3.2-alpha
+ZISK_CONTRACTS_DIR=../../target/zisk-contracts-$(ZISK_VERSION)
+
+deploy-zisk-verifier: ## 📜 Deploys ZiskVerifier.sol from the pinned ZisK release to L1
+	mkdir -p $(ZISK_CONTRACTS_DIR)
+	for f in IZiskVerifier.sol PlonkVerifier.sol ZiskVerifier.sol; do \
+		curl -fsSL https://raw.githubusercontent.com/0xPolygonHermez/zisk/$(ZISK_VERSION)/zisk-contracts/$$f \
+			-o $(ZISK_CONTRACTS_DIR)/$$f; \
+	done
+	solc --optimize --optimize-runs 999999 --bin --overwrite \
+		-o $(ZISK_CONTRACTS_DIR)/out $(ZISK_CONTRACTS_DIR)/ZiskVerifier.sol
+	rex deploy --bytecode $$(cat $(ZISK_CONTRACTS_DIR)/out/ZiskVerifier.bin) \
+		--private-key ${L1_PRIVATE_KEY} --rpc-url ${L1_RPC_URL} --print-address
+
+## Same as deploy-l1 but requires ZisK proofs. Needs the ZisK program verification
+## key written by build-prover-zisk and a deployed verifier (deploy-zisk-verifier).
+deploy-l1-zisk: ## 📜 Deploys the L1 contracts requiring ZisK proofs
+	COMPILE_CONTRACTS=true \
+	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- l2 deploy \
+	--eth-rpc-url ${L1_RPC_URL} \
+	--private-key ${L1_PRIVATE_KEY} \
+	--zisk true \
+	--zisk.verifier-address $${ETHREX_DEPLOYER_ZISK_VERIFIER_ADDRESS:?set it to the address printed by make deploy-zisk-verifier} \
+	--on-chain-proposer-owner ${L2_OWNER_ADDRESS} \
+	--bridge-owner ${L2_OWNER_ADDRESS} \
+	--bridge-owner-pk ${BRIDGE_OWNER_PRIVATE_KEY} \
+	--deposit-rich \
+	--private-keys-file-path ../../fixtures/keys/private_keys_l1.txt \
+	--genesis-l1-path ${L1_GENESIS_FILE_PATH} \
+	--genesis-l2-path ${L2_GENESIS_FILE_PATH}
+
 # ==============================================================================
 # L2
 # ==============================================================================
@@ -243,6 +279,11 @@ build-prover-sp1:
 build-prover-risc0:
 	cargo build --release --features "l2,l2-sql,$(GPU?),risc0" --manifest-path ../../Cargo.toml --bin ethrex
 
+# Linux x86-64 only: the ZisK SDK compiles pil2-stark (with CUDA when a toolkit is
+# installed) and needs the ZisK bundle (`ziskup`) for the toolchain and proving keys.
+build-prover-zisk:
+	cargo build --release --features "l2,l2-sql,$(GPU?),zisk" --manifest-path ../../Cargo.toml --bin ethrex
+
 build-prover-exec:
 	cargo build --release --features "l2,l2-sql,$(GPU?)" --manifest-path ../../Cargo.toml --bin ethrex
 
@@ -257,6 +298,15 @@ init-prover-risc0:
 	l2 prover \
 	--proof-coordinators tcp://127.0.0.1:3900 \
 	--backend risc0
+
+# GLIBC_TUNABLES lets glibc 2.41+ (Debian 13, Ubuntu 25.10) load ZisK's PLONK
+# setup library, which asks for an executable stack; older loaders ignore it.
+init-prover-zisk:
+	GLIBC_TUNABLES=glibc.rtld.execstack=2 \
+	cargo run --release --features "l2,l2-sql,$(GPU?),zisk" --manifest-path ../../Cargo.toml -- \
+	l2 prover \
+	--proof-coordinators tcp://127.0.0.1:3900 \
+	--backend zisk
 
 init-prover-exec:
 	cargo run --release --features "l2,l2-sql,$(GPU?)" --manifest-path ../../Cargo.toml -- \
