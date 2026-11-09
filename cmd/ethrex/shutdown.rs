@@ -13,9 +13,10 @@
 //! deadline.
 
 use crate::utils::{NodeConfigFile, is_memory_datadir, store_node_config_file};
-use ethrex_p2p::{peer_table::PeerTable, types::SharedLocalNode};
+use ethrex_p2p::{discovery::DiscoveryServer, peer_table::PeerTable, types::SharedLocalNode};
 use ethrex_storage::Store;
 use spawned_concurrency::ActorId;
+use spawned_concurrency::supervision::SupervisedChild;
 use spawned_concurrency::system::{ActorSystem, ShutdownReport};
 use std::{
     path::PathBuf,
@@ -52,6 +53,9 @@ pub struct L1Node {
     /// Names for the actors `system` owns, for the shutdown report, which
     /// identifies actors by id only.
     pub actor_names: Vec<(ActorId, &'static str)>,
+    /// The supervised discovery actor, when p2p runs. Its id changes with
+    /// each restart, so it is named at shutdown.
+    pub discovery: Option<SupervisedChild<DiscoveryServer>>,
 }
 
 /// How a shutdown went.
@@ -81,8 +85,12 @@ pub async fn shutdown_l1(node: L1Node, deadline: Duration) -> ShutdownOutcome {
         shared_local_node,
         store,
         system,
-        actor_names,
+        mut actor_names,
+        discovery,
     } = node;
+    if let Some(Ok(current)) = discovery.as_ref().map(SupervisedChild::current) {
+        actor_names.push((current.id(), "discovery"));
+    }
 
     info!(
         deadline_secs = deadline.as_secs(),

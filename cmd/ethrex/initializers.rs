@@ -18,7 +18,8 @@ use ethrex_metrics::rpc::initialize_rpc_metrics;
 use ethrex_p2p::rlpx::initiator::RLPxInitiator;
 use ethrex_p2p::{
     DiscoveryConfig,
-    network::P2PContext,
+    discovery::{DiscoveryServer, InjectCrash},
+    network::{NetworkActors, P2PContext},
     peer_handler::PeerHandler,
     peer_table::PeerTableServer,
     sync::{BackfillConfig, HistoryChain, SyncMode},
@@ -33,7 +34,8 @@ use ethrex_storage::{
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
-use spawned_concurrency::system::{ActorSystem, ExecutionGroup};
+use spawned_concurrency::supervision::SupervisedChild;
+use spawned_concurrency::system::ActorSystem;
 use spawned_concurrency::tasks::ActorRef;
 #[cfg(feature = "sync-test")]
 use std::env;
@@ -469,8 +471,8 @@ pub async fn init_network(
     blockchain: Arc<Blockchain>,
     context: P2PContext,
     shared_local_node: SharedLocalNode,
-    actor_group: Option<&ExecutionGroup>,
-) {
+    actors: Option<NetworkActors<'_>>,
+) -> Option<SupervisedChild<DiscoveryServer>> {
     #[cfg(not(feature = "l2"))]
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
@@ -487,12 +489,12 @@ pub async fn init_network(
         nat_extip_set: opts.nat_extip.is_some(),
     };
 
-    ethrex_p2p::start_network(
+    let discovery = ethrex_p2p::start_network(
         context,
         bootnodes,
         discovery_config,
         shared_local_node,
-        actor_group,
+        actors,
     )
     .await
     .expect("Network starts");
@@ -501,6 +503,7 @@ pub async fn init_network(
         blockchain,
         peer_handler.peer_table,
     ));
+    discovery
 }
 
 #[cfg(feature = "dev")]
@@ -983,6 +986,26 @@ pub async fn init_l1(
     // table, which every other actor here calls, is admitted first and stopped
     // last.
     //
+    // Only discovery is supervised (see `ethrex_p2p::discovery::supervised`): it
+    // holds soft state and nothing references it. The others are not, on
+    // purpose:
+    //
+    // - The peer table is the node's view of the network: scores, sessions,
+    //   connection registrations and in-flight request counts, none of it
+    //   persisted. A fresh table would lose every registered connection while
+    //   those connections still run, and everything here (the connections, the
+    //   sync, the RPC, the tx broadcaster, discovery) holds an `ActorRef` to
+    //   the old one that a replacement would not rebind.
+    // - The tx broadcaster and the RLPx initiator hold no state worth keeping,
+    //   but `P2PContext` (cloned into every connection) and the RPC's
+    //   `PeerHandler` hold their `ActorRef`s, which a replacement would not
+    //   rebind either: restarting them silently disconnects their callers.
+    // - The subscription manager owns the WebSocket subscriptions; a fresh one
+    //   would drop every subscriber without telling them.
+    //
+    // A crash in any of these still just stops that actor, as before;
+    // supervising them needs reference rebinding first.
+    //
     // Per-connection actors (`PeerConnectionServer`) are not admitted: they are
     // created and dropped per peer, and the system only owns a fixed set.
     let system = ActorSystem::new()
@@ -1057,11 +1080,12 @@ pub async fn init_l1(
         spawn_rocksdb_metrics_collector(store.clone(), &tracker, cancel_token.clone());
     }
 
+    let mut discovery = None;
     if opts.dev {
         #[cfg(feature = "dev")]
         init_dev_network(&opts, &store, tracker.clone(), cancel_token.clone()).await;
     } else if !opts.p2p_disabled {
-        init_network(
+        discovery = init_network(
             &opts,
             &network,
             &datadir,
@@ -1070,11 +1094,17 @@ pub async fn init_l1(
             blockchain.clone(),
             p2p_context,
             shared_local_node.clone(),
-            Some(&p2p_group),
+            Some(NetworkActors {
+                system: &system,
+                group: &p2p_group,
+            }),
         )
         .await;
     } else {
         info!("P2P is disabled");
+    }
+    if let Some(discovery) = &discovery {
+        install_fault_injection(discovery.clone());
     }
 
     Ok(L1Node {
@@ -1085,7 +1115,47 @@ pub async fn init_l1(
         store,
         system,
         actor_names,
+        discovery,
     })
+}
+
+/// The environment variable that arms [`install_fault_injection`].
+pub const FAULT_INJECTION_ENV: &str = "ETHREX_FAULT_INJECTION";
+
+/// With `ETHREX_FAULT_INJECTION=1`, crash the current discovery actor on each
+/// SIGUSR1 (`kill -USR1 <pid>`), to exercise its supervisor on a canary node:
+/// each signal is a real handler panic, so the supervisor should log a restart
+/// and a fresh generation should keep finding peers; four within a minute
+/// exhaust the budget and the node runs on without discovery.
+///
+/// Off unless the variable is exactly `1`, and reachable only through a local
+/// signal, never through the network.
+fn install_fault_injection(discovery: SupervisedChild<DiscoveryServer>) {
+    if std::env::var(FAULT_INJECTION_ENV).as_deref() != Ok("1") {
+        return;
+    }
+    use tokio::signal::unix::{SignalKind, signal};
+    let mut usr1 = match signal(SignalKind::user_defined1()) {
+        Ok(usr1) => usr1,
+        Err(err) => {
+            warn!(%err, "Fault injection requested but SIGUSR1 cannot be handled");
+            return;
+        }
+    };
+    warn!("Fault injection armed: SIGUSR1 crashes the discovery server");
+    tokio::spawn(async move {
+        while usr1.recv().await.is_some() {
+            match discovery.current() {
+                Ok(server) => {
+                    warn!(actor = %server.id(), "Fault injection: crashing the discovery server");
+                    let _ = server.send(InjectCrash);
+                }
+                Err(unavailable) => {
+                    warn!(%unavailable, "Fault injection: no discovery server to crash")
+                }
+            }
+        }
+    });
 }
 
 /// Migrates data from a pre-suffix datadir layout to the new network-specific
