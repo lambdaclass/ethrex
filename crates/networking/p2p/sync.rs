@@ -23,7 +23,11 @@ pub use full::{first_resume_point_in_batch, is_resume_point};
 pub use full::sync_head_executed;
 
 use crate::metrics::METRICS;
-use crate::peer_handler::{BlockRequestOrder, HeaderFetchOutcome, PeerHandler, PeerHandlerError};
+use crate::peer_handler::{
+    BlockRequestOrder, HeaderFetchOutcome, PeerHandler, PeerHandlerError,
+    peer_table_error_is_recoverable,
+};
+use crate::snap::SnapError;
 use crate::snap::constants::{EXECUTE_BATCH_SIZE_DEFAULT, MIN_FULL_BLOCKS};
 use crate::utils::delete_leaves_folder;
 use ethrex_blockchain::{Blockchain, error::ChainError};
@@ -637,8 +641,11 @@ impl SyncError {
             | SyncError::BytecodeFileError
             | SyncError::NoLatestCanonical
             | SyncError::MissingFullsyncBatch
-            | SyncError::Snap(_)
             | SyncError::FileSystem(_) => false,
+            // Snap requests reach the peer table too: classify its errors the
+            // same way rather than letting a timeout there exit the node.
+            SyncError::Snap(SnapError::PeerTable(err)) => peer_table_error_is_recoverable(err),
+            SyncError::Snap(_) => false,
             // A peer switch may resolve this (the BAL was wrong).
             SyncError::StateRootMismatch(_, _) => true,
             // A header the catch-up span needs is not stored, which means the
@@ -655,12 +662,7 @@ impl SyncError {
             // these, so retrying the cycle is the restart.
             SyncError::Snap2CatchUpStalled(_, _) => true,
             SyncError::ChainReorgDetected { .. } => true,
-            // A timed-out actor request is transient (mailbox pressure or a
-            // slow handler — requests use spawned-concurrency's 5s default
-            // timeout); a stopped actor means p2p is shutting down and must
-            // stay fatal.
-            SyncError::PeerTableError(ActorError::RequestTimeout) => true,
-            SyncError::PeerTableError(ActorError::ActorStopped) => false,
+            SyncError::PeerTableError(err) => peer_table_error_is_recoverable(err),
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)

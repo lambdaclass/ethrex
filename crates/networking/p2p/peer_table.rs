@@ -428,6 +428,23 @@ impl Drop for RequestPermit {
     }
 }
 
+/// How long a caller waits for the table to pick a peer and reserve a request
+/// slot on it (`get_best_peer` and its variants).
+///
+/// Sync calls these from many download tasks at once, and every reply waits
+/// behind the discovery and connection traffic already queued in the table's
+/// mailbox. Under that load a healthy table can take longer than spawned's
+/// five-second default, and a caller that gives up only sleeps briefly and asks
+/// again, putting one more request in the same queue. A slot reserved for a
+/// caller that already gave up is released when its reply is dropped
+/// (`RequestPermit`), so waiting longer leaks nothing.
+pub const PEER_SELECTION_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// How long a caller waits for a listing of every peer (the RPC admin and
+/// diagnostics endpoints), which copies each peer's data.
+pub const PEER_LISTING_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Requests default to spawned's five seconds; the slow ones above set their own.
 #[protocol]
 pub trait PeerTableServerProtocol: Send + Sync {
     // Send (cast) methods
@@ -486,15 +503,18 @@ pub trait PeerTableServerProtocol: Send + Sync {
         revalidation_interval: Duration,
         protocol: DiscoveryProtocol,
     ) -> Response<Option<Box<Contact>>>;
+    #[request_timeout(PEER_SELECTION_TIMEOUT)]
     fn get_best_peer(
         &self,
         capabilities: Vec<Capability>,
     ) -> Response<Option<(H256, PeerConnection, RequestPermit)>>;
+    #[request_timeout(PEER_SELECTION_TIMEOUT)]
     fn get_best_peer_excluding(
         &self,
         capabilities: Vec<Capability>,
         excluded: Vec<H256>,
     ) -> Response<Option<(H256, PeerConnection, RequestPermit)>>;
+    #[request_timeout(PEER_SELECTION_TIMEOUT)]
     fn get_best_n_peers(
         &self,
         capabilities: Vec<Capability>,
@@ -511,9 +531,11 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn validate_contact(&self, node_id: H256, sender_ip: IpAddr) -> Response<ContactValidation>;
     fn get_closest_nodes(&self, node_id: H256) -> Response<Vec<Node>>;
     fn get_nodes_at_distances(&self, distances: Vec<u32>) -> Response<Vec<NodeRecord>>;
+    #[request_timeout(PEER_LISTING_TIMEOUT)]
     fn get_peers_data(&self) -> Response<Vec<PeerData>>;
     fn get_random_peer(&self, capabilities: Vec<Capability>) -> Response<Option<SelectedPeer>>;
     fn get_session_info(&self, node_id: H256) -> Response<Option<Session>>;
+    #[request_timeout(PEER_LISTING_TIMEOUT)]
     fn get_peer_diagnostics(&self) -> Response<Vec<PeerDiagnostics>>;
     fn get_peer_connection(&self, peer_id: H256) -> Response<Option<PeerConnection>>;
 }

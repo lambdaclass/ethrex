@@ -1231,14 +1231,27 @@ impl PeerHandlerError {
             | PeerHandlerError::ReceiveMessageFromPeerTimeout(_)
             | PeerHandlerError::InvalidHeaders
             | PeerHandlerError::NoResponseFromPeer => true,
-            // A timed-out actor request is transient (mailbox pressure or a
-            // slow handler — requests use spawned-concurrency's 5s default
-            // timeout); a stopped actor means p2p is shutting down and must
-            // stay fatal.
-            PeerHandlerError::PeerTableError(ActorError::RequestTimeout) => true,
-            PeerHandlerError::PeerTableError(ActorError::ActorStopped) => false,
+            PeerHandlerError::PeerTableError(err) => peer_table_error_is_recoverable(err),
             PeerHandlerError::StorageFull | PeerHandlerError::Snap(_) => false,
         }
+    }
+}
+
+/// Whether a failed peer-table request is worth retrying.
+///
+/// A timeout is transient: the table is alive but its mailbox is backed up
+/// (see [`PEER_SELECTION_TIMEOUT`](crate::peer_table::PEER_SELECTION_TIMEOUT)
+/// for how long peer selection waits), so the next attempt can succeed. A
+/// stopped table is not: while the node runs, it means the p2p layer is gone.
+/// During shutdown the sync cycle never gets this far; see
+/// [`SyncError::failure_action`](crate::sync::SyncError::failure_action).
+///
+/// The match is exhaustive on purpose, so a new spawned error kind has to be
+/// classified here.
+pub fn peer_table_error_is_recoverable(err: &ActorError) -> bool {
+    match err {
+        ActorError::RequestTimeout => true,
+        ActorError::ActorStopped => false,
     }
 }
 

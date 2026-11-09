@@ -3,6 +3,7 @@ mod bal_healing_tests;
 mod discovery;
 mod full_sync_tests;
 mod network_tests;
+mod peer_table_timeout_tests;
 mod resume_gate_tests;
 mod rlpx;
 mod snap_server_tests;
