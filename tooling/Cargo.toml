@@ -80,8 +80,12 @@ url = { version = "2.5.4", features = ["serde"] }
 kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
-spawned-concurrency = "0.5.0"
-spawned-rt = "0.5.0"
+# spawned v0.7.0 (release 02b9400b) plus the unreleased spawned-test crate
+# (lambdaclass/spawned#198). Every spawned crate must name the same revision so
+# they share one set of types (ActorRef, protocols, ExitReason). Move to the
+# crates.io release once spawned-test is published.
+spawned-concurrency = { git = "https://github.com/lambdaclass/spawned", rev = "39be3f3b62fa87ade2b62dbf45f0437f95024480" }
+spawned-rt = { git = "https://github.com/lambdaclass/spawned", rev = "39be3f3b62fa87ade2b62dbf45f0437f95024480" }
 lambdaworks-crypto = "0.13.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 crossbeam = "0.8.4"
