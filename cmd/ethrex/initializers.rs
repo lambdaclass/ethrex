@@ -861,6 +861,35 @@ async fn set_sync_block(store: &Store) {
     }
 }
 
+/// How often the actor runtime times a message when `--metrics` is on: one
+/// observation in this many per message kind gets queue-wait and handler-time
+/// samples. Counters and gauges count every message either way.
+///
+/// The peer table handles every discovery packet and every connection's
+/// bookkeeping, so timing all of them would read the clock twice per message
+/// on the busiest actor for histograms that sample just as well at 1 in 16.
+#[cfg(feature = "metrics")]
+const ACTOR_TIMING_SAMPLE_EVERY: u64 = 16;
+
+/// Sets how the actor runtime samples its timings. It must run before the
+/// first actor starts; the configuration is process-wide and fixed after that.
+/// Without `--metrics` nothing scrapes the timings, so only counters are kept.
+#[cfg(feature = "metrics")]
+fn configure_actor_metrics(metrics_enabled: bool) {
+    let timing_sample_every = if metrics_enabled {
+        ACTOR_TIMING_SAMPLE_EVERY
+    } else {
+        0
+    };
+    if spawned_concurrency::metrics::configure(spawned_concurrency::metrics::Config {
+        timing_sample_every,
+    })
+    .is_err()
+    {
+        debug!("Actor metrics were already configured; keeping that configuration");
+    }
+}
+
 /// Async workers for the `p2p` execution group: what the default
 /// `#[tokio::main]` runtime has, since the actors in it (and the outbound
 /// connections the RLPx initiator starts from it) used to share that runtime.
@@ -879,6 +908,9 @@ pub async fn init_l1(
     let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
 
     raise_fd_limit()?;
+
+    #[cfg(feature = "metrics")]
+    configure_actor_metrics(opts.metrics_enabled);
 
     migrate_datadir_if_needed(&opts.datadir, &datadir, &network, opts.no_migrate);
 

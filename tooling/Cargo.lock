@@ -3599,6 +3599,7 @@ dependencies = [
  "prometheus",
  "serde",
  "serde_json",
+ "spawned-concurrency",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
