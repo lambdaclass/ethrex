@@ -126,6 +126,29 @@ This is a WIP document and it requires better descriptions; it's supposed to be 
 
 ---
 
+## Testing & Verification
+
+Proposed priorities, for the team to review. Plan, evidence and acceptance criteria: [testing roadmap](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html). The coverage, fuzzing, prop test and CI security items stay under UX / DX.
+
+| Item | Priority | Status | Description |
+|-----|----------|--------|-------------|
+| [Keep every bug as a reproducible test](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#keep-every-bug-as-a-reproducible-test) | 0 | In Progress (regression tests exist, not yet a rule) | Every `fix` PR lands with a test that fails without the fix; flaky reproductions get a seed or failpoint |
+| [Soak tests with a resource budget](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#soak-tests-with-a-resource-budget) | 0 | Pending (`multisync-loop-auto` used ad hoc) | Nightly multi-hour run with gossip and peer churn; fail if RSS, fds or tasks grow after warm-up (the 1.5 GB/day P2P leak, #6900) |
+| [Failpoints](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#failpoints-buggify) | 1 | Pending | BUGGIFY-style fault points (error, delay, panic, drop) in storage, sync and p2p, behind a feature that release builds never enable |
+| [Differential testing against other clients](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#differential-testing-against-other-clients) | 1 | Pending (`trace_compare` manual; `difffuzz_*` vs reference models in CI) | Compare state/receipts roots, RPC responses and traces against geth and reth on the same blocks, nightly on Kurtosis |
+| [Adopt spawned-test](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#adopt-spawned-test-after-spawned-v07) | 1 | Blocked on spawned v0.7 | Actor mocks and fault injection (stop, delay, timeout) in p2p/sync tests; shutdown through `ActorSystem` (#7491, #6823) |
+| [Property tests against reference models](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#property-tests-against-executable-reference-models) | 2 | In Progress (proptest in trie and storage journal) | Trie, mempool and fork choice checked against small executable models on generated operation sequences. Extends "Add Prop test" |
+| [RPC history checking](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#history-and-linearizability-checking) | 2 | Pending | Record RPC histories during reorg simulator and load runs, check them Porcupine-style against one sequence of canonical heads; pair with `history_validator` |
+| [Metamorphic storage tests](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#metamorphic-tests-for-storage) | 2 | Pending | Same operations through several store configurations (backend, cache sizes, layer thresholds, restart) must give the same roots and reads |
+| [Chaos runs with Attacknet](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#chaos-on-devnets-attacknet) | 2 | Pending | Chaos Mesh faults (partition/heal, crashes, clock skew) on Kurtosis enclaves with assertoor checks; complements the flaky `deep_reorg` harness |
+| [Invariant monitors on logs](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#production-invariant-monitors) | 3 | Pending | PObserve-style checks of actor lifecycle, peer table (#7435) and sync phase invariants over CI and devnet logs |
+| [p2p deterministic simulation](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#deterministic-simulation-dst) | 3 | Pending | Turmoil/madsim-style harness: several nodes and adversarial peers in one process with simulated network and clock for RLPx, discovery and snap sync. Needs injectable time and RNG |
+| [Actor ordering exploration](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#actor-level-ordering-exploration) | 4 | Blocked on spawned `explore` | Search message orderings among peer table, connection and sync actors; #7491 and #7435 as acceptance tests |
+| [ethshadow scale runs](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#whole-system-simulators-ethshadow-and-antithesis) | 4 | Pending | Run ethrex in ethshadow (Shadow simulator) at 100+ nodes for gossip and peer behaviour |
+| [Antithesis evaluation](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#whole-system-simulators-ethshadow-and-antithesis) | 4 | Pending | Pilot one faulted scenario (snap sync plus reorg) in Antithesis' deterministic hypervisor, then decide |
+
+---
+
 ## UX / DX
 
 | Item | Priority | Status | Description |
