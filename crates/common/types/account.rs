@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
-use bytes::{BufMut, Bytes};
+use bytes::{BufMut, Bytes, BytesMut};
 use ethereum_types::{H256, U256};
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_trie::Trie;
@@ -18,11 +18,112 @@ use ethrex_rlp::{
 use super::GenesisAccount;
 use crate::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH};
 
-/// Shared empty jumpdest bitmap. `Code::default()` and any bytecode without a
-/// `JUMPDEST` clone this (a refcount bump) instead of allocating a fresh empty
-/// `Arc` header each time. This matters because the per-tx `Code::default()`
-/// placeholder and every EOA / empty-code load would otherwise each allocate.
-static EMPTY_JUMPDESTS: LazyLock<Arc<[u8]>> = LazyLock::new(|| Arc::from(Vec::new()));
+std::thread_local! {
+    /// Shared empty jumpdest bitmap. `Code::default()` and any bytecode without a
+    /// `JUMPDEST` clone this (a refcount bump) instead of allocating a fresh empty
+    /// `Arc` header each time. This matters because the per-tx `Code::default()`
+    /// placeholder and every EOA / empty-code load would otherwise each allocate.
+    /// One per thread: with a single process-wide `Arc`, threads executing
+    /// transactions in parallel all bump the same reference count and contend on it.
+    static EMPTY_JUMPDESTS: Arc<[u8]> = Arc::from(Vec::new());
+}
+
+fn empty_jumpdests() -> Arc<[u8]> {
+    EMPTY_JUMPDESTS.with(Arc::clone)
+}
+
+/// The allocations an initcode [`Code`] is built in: its bytecode buffer and its
+/// jump-destination bitmap. A finished initcode hands them back through
+/// [`Code::into_initcode_buffer`], so the VM can keep them for the next CREATE instead of
+/// allocating new ones each time, which a zkVM guest's bump allocator never reclaims.
+#[derive(Debug, Default)]
+pub struct InitcodeBuffer {
+    bytecode: BytesMut,
+    jumpdests: Option<Arc<[u8]>>,
+}
+
+impl InitcodeBuffer {
+    /// Replaces the contents with `initcode`, with room for the padding
+    /// [`Code::from_initcode_buffer`] appends, so that appending it does not reallocate.
+    pub fn set(&mut self, initcode: &[u8]) {
+        let needed = initcode.len().saturating_add(BYTECODE_PADDING);
+        let capacity = self.bytecode.capacity();
+        if capacity < needed {
+            // A new buffer rather than this one grown, which would copy what it held. At
+            // least twice as large, so initcode that grows a little each CREATE allocates a
+            // few times rather than every time.
+            self.bytecode = BytesMut::with_capacity(needed.max(capacity.saturating_mul(2)));
+        } else {
+            self.bytecode.clear();
+        }
+        self.bytecode.extend_from_slice(initcode);
+    }
+
+    /// Empties the buffer, keeping its allocations.
+    pub fn clear(&mut self) {
+        self.bytecode.clear();
+    }
+
+    /// The initcode the buffer was last [set](InitcodeBuffer::set) to.
+    pub fn initcode(&self) -> &[u8] {
+        &self.bytecode
+    }
+
+    /// How many bytes of initcode and padding the buffer holds without reallocating.
+    pub fn capacity(&self) -> usize {
+        self.bytecode.capacity()
+    }
+
+    /// Whether the buffer holds any allocation worth keeping.
+    pub fn is_allocated(&self) -> bool {
+        self.bytecode.capacity() > 0 || self.jumpdests.is_some()
+    }
+}
+
+/// A zeroed jump-destination bitmap of `len` bytes, in one allocation: one built in a `Vec`
+/// is copied into a second allocation to become an `Arc`.
+fn zeroed_bitmap(len: usize) -> Arc<[u8]> {
+    std::iter::repeat_n(0, len).collect()
+}
+
+/// A zeroed jump-destination bitmap at least `len` bytes long: `scratch`, whole, when it is
+/// long enough and nothing else references it, which holds for the ones
+/// [`Code::into_initcode_buffer`] hands back, and a new one otherwise. A new one replacing a
+/// `scratch` too short is at least twice as long, as [`InitcodeBuffer::set`] does.
+fn zeroed_bitmap_in(scratch: Option<Arc<[u8]>>, len: usize) -> Arc<[u8]> {
+    let outgrown = match scratch {
+        Some(mut bitmap) if bitmap.len() >= len => {
+            if let Some(bits) = Arc::get_mut(&mut bitmap) {
+                // All of it, not just the first `len` bytes. JUMP trusts the bitmap alone, so
+                // a bit left past the end of the code would make a jump there valid; and the
+                // per-opcode scan only writes the bytes that hold a jump destination.
+                bits.fill(0);
+                return bitmap;
+            }
+            0
+        }
+        Some(bitmap) => bitmap.len(),
+        None => 0,
+    };
+    zeroed_bitmap(len.max(outgrown.saturating_mul(2)))
+}
+
+/// Sets the bit of every `JUMPDEST` in `code` that is not a `PUSH` immediate in `bitmap`,
+/// which is zeroed and `ceil(code.len() / 8)` bytes long. Returns whether it set any.
+/// See [`Code::compute_jumpdests`] for why the scan depends on the target.
+fn mark_jumpdests(code: &[u8], bitmap: &mut [u8]) -> bool {
+    #[cfg(any(
+        target_arch = "aarch64",
+        all(target_arch = "x86_64", target_feature = "ssse3")
+    ))]
+    let any = by_block::jumpdests(code, bitmap);
+    #[cfg(not(any(
+        target_arch = "aarch64",
+        all(target_arch = "x86_64", target_feature = "ssse3")
+    )))]
+    let any = jumpdests_by_opcode(code, bitmap);
+    any
+}
 
 /// Trailing STOP bytes appended to every bytecode so the dispatch loop can read
 /// the next opcode without a bounds check. 33 is the widest single-opcode advance
@@ -47,9 +148,11 @@ pub struct Code {
     /// the jump destinations are, and validating a jump is a bit test rather than a
     /// search.
     ///
-    /// Bytecode with no jump destination stores a zero-length bitmap ([`EMPTY_JUMPDESTS`])
+    /// Bytecode with no jump destination stores a zero-length bitmap (`EMPTY_JUMPDESTS`)
     /// rather than an all-zero one, so this is not always `ceil(len / 8)` bytes long;
-    /// [`Code::is_valid_jumpdest`] reads a missing byte as "no jump destination".
+    /// [`Code::is_valid_jumpdest`] reads a missing byte as "no jump destination". Initcode
+    /// built by [`Code::from_initcode_buffer`] is the exception: it keeps the bitmap it was
+    /// built in, which can be all zero, or longer than `ceil(len / 8)` and zero past it.
     //
     // `Arc<[u8]>` so cloning `Code` (hot: every message-call resolves and clones
     // the callee's code) is a refcount bump instead of deep-copying the bitmap.
@@ -97,55 +200,69 @@ impl Code {
         }
     }
 
-    /// Builds the [`Code::jumpdests`] bitmap: one pass over the bytecode, setting the
-    /// bit for every `JUMPDEST` while skipping `PUSH` immediates.
+    /// Builds initcode from the initcode `buffer` was [set](InitcodeBuffer::set) to, in the
+    /// buffer's allocations: the padding is appended in place and the buffer becomes the
+    /// bytecode, and the jump-destination bitmap reuses the buffer's when that is the right
+    /// size. [`Code::into_initcode_buffer`] hands them back for the next initcode. The hash is
+    /// the same placeholder any initcode gets.
     ///
-    /// The bits of a byte are accumulated in a register and written once the scan leaves
-    /// that byte, which the monotonic `i` makes safe. Reading the bitmap back inside the
-    /// loop instead would turn each `JUMPDEST` into a read-modify-write, and indexing it
-    /// would put a bounds-check panic path in the loop body, which inhibits optimization
-    /// of every iteration rather than only the ones that find a destination.
+    /// Unlike other code, initcode keeps the bitmap it was built in, so it can be handed back
+    /// with the bytecode: even when it marks nothing, instead of the shared empty one, and
+    /// even when it is longer than the code needs, zeroed past its end.
+    pub fn from_initcode_buffer(buffer: InitcodeBuffer) -> Self {
+        let InitcodeBuffer {
+            mut bytecode,
+            jumpdests,
+        } = buffer;
+        let bytecode_len = bytecode.len();
+        let bitmap_len = bytecode_len.div_ceil(8);
+        let mut jumpdests = zeroed_bitmap_in(jumpdests, bitmap_len);
+        // The bitmap can be longer than this code needs; the scan writes its first
+        // `bitmap_len` bytes, and the rest stay zero.
+        mark_jumpdests(&bytecode, &mut Arc::make_mut(&mut jumpdests)[..bitmap_len]);
+        bytecode.extend_from_slice(&[0u8; BYTECODE_PADDING]);
+        Self {
+            hash: H256::zero(),
+            bytecode: bytecode.freeze(),
+            bytecode_len,
+            jumpdests,
+        }
+    }
+
+    /// Hands back the allocations of initcode built by [`Code::from_initcode_buffer`], each
+    /// only when nothing else references it. The bytecode buffer comes back empty, so handing
+    /// back any other `Code`'s is harmless too: no stale bytecode can be built from again.
+    pub fn into_initcode_buffer(self) -> InitcodeBuffer {
+        let mut bytecode = self.bytecode.try_into_mut().unwrap_or_default();
+        bytecode.clear();
+        let mut jumpdests = self.jumpdests;
+        let unique = Arc::get_mut(&mut jumpdests).is_some();
+        InitcodeBuffer {
+            bytecode,
+            jumpdests: unique.then_some(jumpdests),
+        }
+    }
+
+    /// Builds the [`Code::jumpdests`] bitmap: the bit of every `JUMPDEST` that is not a
+    /// `PUSH` immediate.
+    ///
+    /// On aarch64, and on x86_64 with SSSE3, this runs without a data-dependent branch
+    /// (see `by_block`), because a scan that branches on each opcode stalls on every
+    /// misprediction, and random bytecode mispredicts on most bytes. execution-specs#3631
+    /// builds such initcode on purpose. Other targets are mostly the zkVM guests, which
+    /// have no branch predictor and would only pay for the extra instructions, so they
+    /// keep the plain scan (`jumpdests_by_opcode`).
     pub fn compute_jumpdests(code: &[u8]) -> Arc<[u8]> {
-        let mut bitmap = vec![0u8; code.len().div_ceil(8)];
-        let mut any = false;
-        let mut current_byte = usize::MAX;
-        let mut bits = 0u8;
-        let mut i = 0;
-        while i < code.len() {
-            // TODO: we don't use the constants from the vm module to avoid a circular dependency
-            match code[i] {
-                // OP_JUMPDEST
-                0x5B => {
-                    if i / 8 != current_byte {
-                        if let Some(byte) = bitmap.get_mut(current_byte) {
-                            *byte = bits;
-                        }
-                        current_byte = i / 8;
-                        bits = 0;
-                    }
-                    bits |= 1 << (i % 8);
-                    any = true;
-                }
-                // OP_PUSH1..32
-                c @ 0x60..0x80 => {
-                    // OP_PUSH0
-                    i += (c - 0x5F) as usize;
-                }
-                _ => (),
-            }
-            i += 1;
+        // Even an empty `Arc` allocates its reference counts.
+        if code.is_empty() {
+            return empty_jumpdests();
         }
-        if let Some(byte) = bitmap.get_mut(current_byte) {
-            *byte = bits;
-        }
+        let mut bitmap = zeroed_bitmap(code.len().div_ceil(8));
+        let any = mark_jumpdests(code, Arc::make_mut(&mut bitmap));
         // Share the single empty bitmap for jumpless bytecode (very common: EOAs,
-        // tiny contracts) so we don't allocate for an all-zero map; `is_valid_jumpdest`
+        // tiny contracts) so we don't keep an all-zero map; `is_valid_jumpdest`
         // reads a missing byte as "no jump destination".
-        if any {
-            Arc::from(bitmap)
-        } else {
-            EMPTY_JUMPDESTS.clone()
-        }
+        if any { bitmap } else { empty_jumpdests() }
     }
 
     /// Whether `offset` is a valid jump destination, i.e. it holds a `JUMPDEST` that is
@@ -206,6 +323,364 @@ impl Code {
         let bytes_size = size_of::<Bytes>() + self.bytecode.len();
         let bitmap_size = size_of::<Arc<[u8]>>() + self.jumpdests.len();
         hash_size + bytes_size + bitmap_size
+    }
+}
+
+// Opcodes the jump destination analysis needs. The vm module defines them too, but
+// depending on it here would be circular.
+const OP_JUMPDEST: u8 = 0x5B;
+const OP_PUSH1: u8 = 0x60;
+const OP_PUSH32: u8 = 0x7F;
+
+/// Fills `bitmap` for `code` one opcode at a time and returns whether any bit is set.
+///
+/// The bits of a byte are accumulated in a register and written once the scan leaves
+/// that byte, which the monotonic `i` makes safe. Reading the bitmap back inside the
+/// loop instead would turn each `JUMPDEST` into a read-modify-write, and indexing it
+/// would put a bounds-check panic path in the loop body, which inhibits optimization
+/// of every iteration rather than only the ones that find a destination.
+#[cfg_attr(
+    any(
+        target_arch = "aarch64",
+        all(target_arch = "x86_64", target_feature = "ssse3")
+    ),
+    allow(dead_code)
+)]
+fn jumpdests_by_opcode(code: &[u8], bitmap: &mut [u8]) -> bool {
+    let mut any = false;
+    let mut current_byte = usize::MAX;
+    let mut bits = 0u8;
+    let mut i = 0;
+    while i < code.len() {
+        match code[i] {
+            OP_JUMPDEST => {
+                if i / 8 != current_byte {
+                    if let Some(byte) = bitmap.get_mut(current_byte) {
+                        *byte = bits;
+                    }
+                    current_byte = i / 8;
+                    bits = 0;
+                }
+                bits |= 1 << (i % 8);
+                any = true;
+            }
+            // PUSH1..PUSH32 are followed by 1..32 immediate bytes.
+            c @ OP_PUSH1..=OP_PUSH32 => i += usize::from(c - OP_PUSH1) + 1,
+            _ => (),
+        }
+        i += 1;
+    }
+    if let Some(byte) = bitmap.get_mut(current_byte) {
+        *byte = bits;
+    }
+    any
+}
+
+/// The jump destination analysis without a data-dependent branch, 64 bytes at a time.
+///
+/// Whether a byte is an opcode depends on every `PUSH` before it, so the natural scan
+/// branches on each opcode, and on random bytecode that branch mispredicts on most bytes.
+/// Here the work per block is the same whatever its bytes are:
+///
+/// 1. In each 16-byte group, the walks from all 16 bytes, each as if its byte were an
+///    opcode, advance at once until they leave the group (see [`group_walks`]).
+/// 2. The real walk enters the block where the previous block's walk left it. Where it
+///    leaves a group is where it enters the next one, so four dependent loads pick the
+///    walk of each group, and give where the walk enters the next block.
+#[cfg(any(
+    target_arch = "aarch64",
+    all(target_arch = "x86_64", target_feature = "ssse3")
+))]
+mod by_block {
+    use super::{OP_JUMPDEST, OP_PUSH1};
+    use lanes::Lanes;
+
+    /// Bytes per block, one `u64` of bitmap.
+    const BLOCK: usize = 64;
+    /// Bytes per group, one SIMD register.
+    const GROUP: usize = 16;
+
+    /// Fills `bitmap` for `code` and returns whether any bit is set.
+    pub(super) fn jumpdests(code: &[u8], bitmap: &mut [u8]) -> bool {
+        let mut walks = Walks::new();
+        let (blocks, tail) = code.as_chunks::<BLOCK>();
+        let mut carry = 0;
+        let mut any = 0;
+        // A full block fills exactly one 8-byte word of the bitmap.
+        for (block, word) in blocks.iter().zip(bitmap.as_chunks_mut::<8>().0) {
+            let valid = block_jumpdests(block, &mut carry, &mut walks);
+            *word = valid.to_le_bytes();
+            any |= valid;
+        }
+        if !tail.is_empty() {
+            // Zeros are STOPs, which are neither destinations nor PUSHes.
+            let mut padded = [0; BLOCK];
+            padded[..tail.len()].copy_from_slice(tail);
+            let valid = block_jumpdests(&padded, &mut carry, &mut walks);
+            let rest = &mut bitmap[blocks.len() * 8..];
+            rest.copy_from_slice(&valid.to_le_bytes()[..rest.len()]);
+            any |= valid;
+        }
+        any != 0
+    }
+
+    /// The walks of one block's bytes (see [`group_walks`]), by position in the block:
+    /// where each leaves its group, and which bytes of the group it lands on, the lower
+    /// 8 in `low_stops` and the upper 8 in `high_stops`.
+    ///
+    /// Positions from 64 on stand for the next block: they lead to themselves and land on
+    /// nothing, so a walk that has left the block stays where it is.
+    struct Walks {
+        exits: [u8; 2 * BLOCK],
+        low_stops: [u8; 2 * BLOCK],
+        high_stops: [u8; 2 * BLOCK],
+    }
+
+    impl Walks {
+        fn new() -> Self {
+            Self {
+                exits: core::array::from_fn(|i| i as u8),
+                low_stops: [0; 2 * BLOCK],
+                high_stops: [0; 2 * BLOCK],
+            }
+        }
+    }
+
+    /// The valid jump destinations of one block, bit `i` for byte `i`.
+    ///
+    /// `carry` is how many leading bytes of the block are immediates of a `PUSH` in the
+    /// previous block, and is updated for the next one.
+    #[inline(always)]
+    fn block_jumpdests(block: &[u8; BLOCK], carry: &mut usize, walks: &mut Walks) -> u64 {
+        let groups = block.as_chunks::<GROUP>().0;
+        let groups: [Lanes; BLOCK / GROUP] = core::array::from_fn(|g| Lanes::load(&groups[g]));
+        let jumpdests = Lanes::bits(groups.map(|bytes| bytes.eq(Lanes::splat(OP_JUMPDEST))));
+        for (g, bytes) in groups.into_iter().enumerate() {
+            let (exits, low_stops, high_stops) = group_walks(bytes);
+            // From here on, positions are relative to the block instead of the group.
+            let exits = exits.add(Lanes::splat((g * GROUP) as u8));
+            exits.store(&mut walks.exits.as_chunks_mut::<GROUP>().0[g]);
+            low_stops.store(&mut walks.low_stops.as_chunks_mut::<GROUP>().0[g]);
+            high_stops.store(&mut walks.high_stops.as_chunks_mut::<GROUP>().0[g]);
+        }
+        let mut at = *carry;
+        let mut opcodes = 0;
+        for _ in 0..BLOCK / GROUP {
+            // At most 96, 32 immediates past the block; the modulo drops the bounds checks.
+            let i = at % (2 * BLOCK);
+            let stops = u64::from(walks.low_stops[i]) | (u64::from(walks.high_stops[i]) << 8);
+            // Past the block there are no stops, so the shift only matters inside it.
+            let group_start = i & (BLOCK - GROUP);
+            opcodes |= stops << group_start;
+            at = usize::from(walks.exits[i]);
+        }
+        // Each load moves the walk past at least one more group, so it is now past the
+        // block, by as many bytes as the next block starts with immediates.
+        *carry = at - BLOCK;
+        jumpdests & opcodes
+    }
+
+    /// For each byte of a 16-byte group, the walk that starts if that byte is an opcode,
+    /// up to where it leaves the group: the position it leaves to, relative to the group
+    /// (16 to 48), and the bytes it lands on, bits 0 to 7 in the first mask and bits 8 to
+    /// 15 in the second.
+    ///
+    /// All 16 walks advance together by pointer doubling: each round, a walk that is still
+    /// in the group takes as many steps again by continuing with the walk of the byte it
+    /// is at, which a table lookup of every lane (TBL on aarch64, PSHUFB on x86_64) reads.
+    /// A step moves at least one byte, so four rounds (16 steps) take every walk out of
+    /// the group.
+    #[inline(always)]
+    fn group_walks(bytes: Lanes) -> (Lanes, Lanes, Lanes) {
+        const POSITIONS_PLUS_ONE: [u8; GROUP] =
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        const LOW_POSITION_BITS: [u8; GROUP] =
+            [1, 2, 4, 8, 16, 32, 64, 128, 0, 0, 0, 0, 0, 0, 0, 0];
+        const HIGH_POSITION_BITS: [u8; GROUP] =
+            [0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 4, 8, 16, 32, 64, 128];
+        // PUSH1..PUSH32 are exactly the bytes 0b011x_xxxx, with `byte - PUSH1 + 1`
+        // immediates.
+        let is_push = bytes.and(Lanes::splat(0xE0)).eq(Lanes::splat(OP_PUSH1));
+        let immediates = is_push.and(bytes.sub(Lanes::splat(OP_PUSH1 - 1)));
+        // One step, past the opcode and its immediates.
+        let mut exits = Lanes::load(&POSITIONS_PLUS_ONE).add(immediates);
+        let mut low_stops = Lanes::load(&LOW_POSITION_BITS);
+        let mut high_stops = Lanes::load(&HIGH_POSITION_BITS);
+        // The lookups read zero for a walk that has left the group, so its stops stay as
+        // they are, and `max` keeps its exit, while a walk still inside moves ahead.
+        // Stops in the lower 8 bytes are a walk's first 8 at most, so the last round can
+        // skip them.
+        for round in 0..4 {
+            if round < 3 {
+                low_stops = low_stops.or(low_stops.lookup(exits));
+            }
+            high_stops = high_stops.or(high_stops.lookup(exits));
+            exits = exits.max(exits.lookup(exits));
+        }
+        (exits, low_stops, high_stops)
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    mod lanes {
+        use core::arch::aarch64::*;
+
+        /// 16 bytes in a NEON register.
+        #[derive(Clone, Copy)]
+        pub(super) struct Lanes(uint8x16_t);
+
+        // SAFETY (every `unsafe` below): NEON is part of the aarch64 baseline, and the
+        // loads and stores go through a reference to exactly 16 bytes, with no alignment
+        // requirement.
+        impl Lanes {
+            #[inline(always)]
+            pub(super) fn load(bytes: &[u8; 16]) -> Self {
+                unsafe { Self(vld1q_u8(bytes.as_ptr())) }
+            }
+
+            #[inline(always)]
+            pub(super) fn store(self, out: &mut [u8; 16]) {
+                unsafe { vst1q_u8(out.as_mut_ptr(), self.0) }
+            }
+
+            #[inline(always)]
+            pub(super) fn splat(byte: u8) -> Self {
+                unsafe { Self(vdupq_n_u8(byte)) }
+            }
+
+            #[inline(always)]
+            pub(super) fn and(self, other: Self) -> Self {
+                unsafe { Self(vandq_u8(self.0, other.0)) }
+            }
+
+            #[inline(always)]
+            pub(super) fn or(self, other: Self) -> Self {
+                unsafe { Self(vorrq_u8(self.0, other.0)) }
+            }
+
+            #[inline(always)]
+            pub(super) fn add(self, other: Self) -> Self {
+                unsafe { Self(vaddq_u8(self.0, other.0)) }
+            }
+
+            #[inline(always)]
+            pub(super) fn sub(self, other: Self) -> Self {
+                unsafe { Self(vsubq_u8(self.0, other.0)) }
+            }
+
+            /// All ones in the lanes that are equal, zero in the others.
+            #[inline(always)]
+            pub(super) fn eq(self, other: Self) -> Self {
+                unsafe { Self(vceqq_u8(self.0, other.0)) }
+            }
+
+            #[inline(always)]
+            pub(super) fn max(self, other: Self) -> Self {
+                unsafe { Self(vmaxq_u8(self.0, other.0)) }
+            }
+
+            /// Lane `i` of `self` for each lane `i` of `indices` below 16, zero for the rest.
+            #[inline(always)]
+            pub(super) fn lookup(self, indices: Self) -> Self {
+                unsafe { Self(vqtbl1q_u8(self.0, indices.0)) }
+            }
+
+            /// The top bit of every lane of four registers of all-ones or zero lanes.
+            ///
+            /// NEON has no instruction that gathers one bit per byte, so each lane keeps
+            /// the bit of its position within 8 bytes, and three rounds of pairwise adds
+            /// pack them into one `u64`.
+            #[inline(always)]
+            pub(super) fn bits(masks: [Self; 4]) -> u64 {
+                unsafe {
+                    let position_bits = vreinterpretq_u8_u64(vdupq_n_u64(0x8040_2010_0804_0201));
+                    let [a, b, c, d] = masks.map(|m| vandq_u8(m.0, position_bits));
+                    let quarters = vpaddq_u8(vpaddq_u8(a, b), vpaddq_u8(c, d));
+                    vgetq_lane_u64::<0>(vreinterpretq_u64_u8(vpaddq_u8(quarters, quarters)))
+                }
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    mod lanes {
+        use core::arch::x86_64::*;
+
+        /// 16 bytes in an SSE register.
+        #[derive(Clone, Copy)]
+        pub(super) struct Lanes(__m128i);
+
+        // SAFETY (every `unsafe` below): SSE2 is part of the x86_64 baseline, SSSE3 is
+        // enabled for this build (see the `cfg` on `by_block`), and the loads and stores
+        // go through a reference to exactly 16 bytes, with no alignment requirement.
+        impl Lanes {
+            #[inline(always)]
+            pub(super) fn load(bytes: &[u8; 16]) -> Self {
+                unsafe { Self(_mm_loadu_si128(bytes.as_ptr().cast())) }
+            }
+
+            #[inline(always)]
+            pub(super) fn store(self, out: &mut [u8; 16]) {
+                unsafe { _mm_storeu_si128(out.as_mut_ptr().cast(), self.0) }
+            }
+
+            #[inline(always)]
+            pub(super) fn splat(byte: u8) -> Self {
+                unsafe { Self(_mm_set1_epi8(byte as i8)) }
+            }
+
+            #[inline(always)]
+            pub(super) fn and(self, other: Self) -> Self {
+                unsafe { Self(_mm_and_si128(self.0, other.0)) }
+            }
+
+            #[inline(always)]
+            pub(super) fn or(self, other: Self) -> Self {
+                unsafe { Self(_mm_or_si128(self.0, other.0)) }
+            }
+
+            #[inline(always)]
+            pub(super) fn add(self, other: Self) -> Self {
+                unsafe { Self(_mm_add_epi8(self.0, other.0)) }
+            }
+
+            #[inline(always)]
+            pub(super) fn sub(self, other: Self) -> Self {
+                unsafe { Self(_mm_sub_epi8(self.0, other.0)) }
+            }
+
+            /// All ones in the lanes that are equal, zero in the others.
+            #[inline(always)]
+            pub(super) fn eq(self, other: Self) -> Self {
+                unsafe { Self(_mm_cmpeq_epi8(self.0, other.0)) }
+            }
+
+            #[inline(always)]
+            pub(super) fn max(self, other: Self) -> Self {
+                unsafe { Self(_mm_max_epu8(self.0, other.0)) }
+            }
+
+            /// Lane `i` of `self` for each lane `i` of `indices` below 16, zero for the rest
+            /// up to 143.
+            #[inline(always)]
+            pub(super) fn lookup(self, indices: Self) -> Self {
+                // PSHUFB zeroes the lanes whose index has its top bit set and otherwise
+                // uses the index's low 4 bits. Adding 0x70 sets the top bit of 16..=143
+                // and keeps the low 4 bits of 0..=15.
+                unsafe {
+                    let indices = _mm_add_epi8(indices.0, _mm_set1_epi8(0x70));
+                    Self(_mm_shuffle_epi8(self.0, indices))
+                }
+            }
+
+            /// The top bit of every lane of four registers of all-ones or zero lanes.
+            #[inline(always)]
+            pub(super) fn bits(masks: [Self; 4]) -> u64 {
+                masks.iter().enumerate().fold(0, |bits, (i, m)| {
+                    let lanes = unsafe { _mm_movemask_epi8(m.0) } as u16;
+                    bits | (u64::from(lanes) << (16 * i))
+                })
+            }
+        }
     }
 }
 
@@ -325,7 +800,7 @@ impl Default for Code {
             bytecode: Bytes::from_static(&[0u8; BYTECODE_PADDING]),
             bytecode_len: 0,
             hash: *EMPTY_KECCAK_HASH,
-            jumpdests: EMPTY_JUMPDESTS.clone(),
+            jumpdests: empty_jumpdests(),
         }
     }
 }
@@ -674,5 +1149,189 @@ mod test {
         // Real contract code starting with anything else.
         let code = vec![0x60, 0x60, 0x60, 0x40, 0x52 /* ... */];
         assert!(!is_eip7702_delegation(&code));
+    }
+
+    // On these targets `compute_jumpdests` runs `by_block`, so the scan it replaces only
+    // runs here, as the reference: both must give the same bitmap.
+    #[cfg(any(
+        target_arch = "aarch64",
+        all(target_arch = "x86_64", target_feature = "ssse3")
+    ))]
+    mod by_block_against_the_scan {
+        use super::*;
+
+        fn assert_same_jumpdests(code: &[u8]) {
+            let mut want = vec![0; code.len().div_ceil(8)];
+            let mut got = want.clone();
+            let want_any = jumpdests_by_opcode(code, &mut want);
+            let got_any = by_block::jumpdests(code, &mut got);
+            assert_eq!((got_any, got), (want_any, want), "code {code:02x?}");
+        }
+
+        /// One or two bytes at every offset of codes whose lengths straddle the 16-byte
+        /// groups and 64-byte blocks, so every PUSH below crosses each boundary, and is cut
+        /// short by the end of the code.
+        #[test]
+        fn matches_around_group_and_block_boundaries() {
+            // STOP, JUMPDEST, the shortest PUSHes, the ones that fill a group with their
+            // immediates or come a byte short or over, and the longest ones.
+            const BYTES: [u8; 9] = [
+                0x00,
+                OP_JUMPDEST,
+                OP_PUSH1,
+                OP_PUSH1 + 1,
+                OP_PUSH1 + 14,
+                OP_PUSH1 + 15,
+                OP_PUSH1 + 16,
+                OP_PUSH32 - 1,
+                OP_PUSH32,
+            ];
+            let lengths = [
+                1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 96, 127, 128, 129, 193,
+            ];
+            // A JUMPDEST filler exposes any immediate taken for an opcode or the other way
+            // round. A PUSH1 filler makes where each block's walk starts depend on every
+            // byte before it.
+            for filler in [OP_JUMPDEST, OP_PUSH1] {
+                for len in lengths {
+                    for at in 0..len {
+                        for first in BYTES {
+                            for second in [None].into_iter().chain(BYTES.map(Some)) {
+                                let mut code = vec![filler; len];
+                                code[at] = first;
+                                if let (Some(second), Some(byte)) = (second, code.get_mut(at + 1)) {
+                                    *byte = second;
+                                }
+                                assert_same_jumpdests(&code);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /// Random code up to 4 KiB long, over byte mixes that make the scan's branches
+        /// unpredictable.
+        #[test]
+        fn matches_on_random_code() {
+            // xorshift64, so every run checks the same inputs.
+            let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+            let mut next = move || {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state
+            };
+            let jumpdest_and_pushes: Vec<u8> = std::iter::once(OP_JUMPDEST)
+                .chain(OP_PUSH1..=OP_PUSH32)
+                .collect();
+            let all_bytes: Vec<u8> = (0..=u8::MAX).collect();
+            let mixes: [&[u8]; 4] = [
+                &[0x00, OP_JUMPDEST, OP_PUSH1],
+                &[OP_JUMPDEST, OP_PUSH1, OP_PUSH1 + 1],
+                &jumpdest_and_pushes,
+                &all_bytes,
+            ];
+            for mix in mixes {
+                for _ in 0..200 {
+                    let len = (next() % 4096) as usize;
+                    let code: Vec<u8> = (0..len)
+                        .map(|_| mix[(next() % mix.len() as u64) as usize])
+                        .collect();
+                    assert_same_jumpdests(&code);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_reused_jump_destination_bitmap_keeps_nothing_of_the_initcode_before() {
+        // Initcode of the same length, so the second reuses the first one's bitmap: a
+        // JUMPDEST at offset 8, in the bitmap's second byte, then one only at offset 0, in
+        // its first. The per-opcode scan the zkVM guests use writes only the first byte, so a
+        // bitmap reused without zeroing keeps offset 8 valid there. The block scan on this
+        // host rewrites every byte; the tests below catch a missing zeroing here too.
+        let mut first_initcode = [0u8; 16];
+        first_initcode[8] = 0x5b;
+        let mut second_initcode = [0u8; 16];
+        second_initcode[0] = 0x5b;
+        let mut buffer = InitcodeBuffer::default();
+        buffer.set(&first_initcode);
+        let first = Code::from_initcode_buffer(buffer);
+
+        let mut buffer = first.into_initcode_buffer();
+        buffer.set(&second_initcode);
+        let second = Code::from_initcode_buffer(buffer);
+
+        assert!(second.is_valid_jumpdest(0));
+        assert!(!second.is_valid_jumpdest(8));
+    }
+
+    #[test]
+    fn shorter_initcode_has_no_jump_destination_past_its_end_in_a_reused_bitmap() {
+        // A JUMPDEST at every offset of the first initcode fills its 8-byte bitmap. The
+        // second, two bytes long, reuses that bitmap but needs only its first byte, and
+        // JUMP trusts the bitmap alone: a bit left past the end of the code would make a
+        // jump there valid.
+        let mut buffer = InitcodeBuffer::default();
+        buffer.set(&[0x5b; 64]);
+        let first = Code::from_initcode_buffer(buffer);
+
+        let mut buffer = first.into_initcode_buffer();
+        buffer.set(&[0x00, 0x5b]); // STOP, JUMPDEST
+        let second = Code::from_initcode_buffer(buffer);
+
+        assert!(second.is_valid_jumpdest(1));
+        assert!(
+            (0..64)
+                .filter(|&offset| offset != 1)
+                .all(|offset| !second.is_valid_jumpdest(offset))
+        );
+    }
+
+    #[test]
+    fn a_longer_bitmap_is_reused_whole_and_zeroed() {
+        let scratch: Arc<[u8]> = Arc::from(vec![0xff; 8]);
+
+        let bitmap = zeroed_bitmap_in(Some(scratch), 4);
+
+        // Kept at its length rather than replaced by a 4-byte one, and zeroed past the 4
+        // bytes the code needs too.
+        assert_eq!(&*bitmap, &[0; 8]);
+    }
+
+    #[test]
+    fn a_buffer_outgrown_by_initcode_at_least_doubles() {
+        let mut buffer = InitcodeBuffer::default();
+        buffer.set(&[0; 1000]);
+
+        buffer.set(&[0; 1001]);
+
+        // Replaced by one exactly the new size, initcode growing a byte each CREATE would
+        // allocate a new buffer every time.
+        assert!(buffer.capacity() >= 2 * (1000 + BYTECODE_PADDING));
+    }
+
+    #[test]
+    fn an_outgrown_bitmap_at_least_doubles() {
+        let scratch: Arc<[u8]> = Arc::from(vec![0; 4]);
+
+        let bitmap = zeroed_bitmap_in(Some(scratch), 5);
+
+        assert!(bitmap.len() >= 8);
+        assert!(bitmap.iter().all(|&byte| byte == 0));
+    }
+
+    #[test]
+    fn a_handed_back_initcode_buffer_holds_no_bytecode() {
+        // A buffer is meant to be set before code is built from it again. Built from as it
+        // comes back, it must give empty code, not the previous bytecode and its padding.
+        let mut buffer = InitcodeBuffer::default();
+        buffer.set(&[0x60, 0x01]); // PUSH1 1
+        let code = Code::from_initcode_buffer(buffer);
+
+        let rebuilt = Code::from_initcode_buffer(code.into_initcode_buffer());
+
+        assert!(rebuilt.is_empty());
     }
 }

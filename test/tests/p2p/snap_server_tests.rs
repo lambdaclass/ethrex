@@ -19,7 +19,7 @@ use ethrex_p2p::snap::{
 };
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
-use ethrex_trie::EMPTY_TRIE_HASH;
+use ethrex_trie::{EMPTY_TRIE_HASH, verify_range};
 
 use lazy_static::lazy_static;
 
@@ -289,6 +289,34 @@ async fn hive_account_range_m() -> Result<(), SnapError> {
     assert_eq!(res.accounts.len(), 1);
     assert_eq!(res.accounts.first().unwrap().hash, *HASH_FIRST);
     assert_eq!(res.accounts.last().unwrap().hash, *HASH_FIRST);
+    Ok(())
+}
+
+#[tokio::test]
+async fn account_range_past_the_last_account_proves_absence() -> Result<(), SnapError> {
+    // A range starting past the last account of the trie is the one case where
+    // `caps/snap.md`'s "must return at least one account" cannot be honoured:
+    // there is no account after `limit_hash` to fall back to either. The server
+    // answers with no accounts and an edge proof, and that proof is what makes
+    // the empty answer distinguishable from a peer that simply does not hold the
+    // state, which answers with neither.
+    let (store, root) = setup_initial_state()?;
+    let request = GetAccountRange {
+        id: 0,
+        root_hash: root,
+        starting_hash: *HASH_MAX,
+        limit_hash: *HASH_MAX,
+        response_bytes: 4000,
+    };
+    let res = process_account_range_request(request, store).await.unwrap();
+
+    assert!(res.accounts.is_empty());
+    assert!(!res.proof.is_empty());
+
+    let proof: Vec<Vec<u8>> = res.proof.iter().map(|node| node.to_vec()).collect();
+    let should_continue = verify_range(root, &HASH_MAX, &[], &[], &proof)
+        .expect("empty account range must verify as a proof of absence");
+    assert!(!should_continue);
     Ok(())
 }
 

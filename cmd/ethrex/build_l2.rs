@@ -56,7 +56,7 @@ pub fn download_script() {
     compile_contract_to_bytecode(
         &output_contracts_path,
         &output_contracts_path
-            .join("lib/sp1-contracts/contracts/src/v5.0.0/SP1VerifierGroth16.sol"),
+            .join("lib/sp1-contracts/contracts/src/v6.1.0/SP1VerifierGroth16.sol"),
         "SP1Verifier",
         false,
         false,

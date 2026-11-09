@@ -5,6 +5,7 @@
 
 use crate::constants::{GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use crate::errors::InvalidBlockError;
+use crate::types::block_access_list::BlockAccessList;
 use crate::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use crate::types::{
     Block, BlockHeader, ChainConfig, EIP4844Transaction, Receipt, Transaction,
@@ -196,6 +197,31 @@ pub fn validate_header_bal_indices(
             account.code_changes.iter().map(|c| c.block_access_index),
             max_valid_index,
         )?;
+    }
+    Ok(())
+}
+
+/// Validates that no code change in the BAL is larger than `max_code_size`, the fork's
+/// maximum deployed bytecode size.
+///
+/// Code can only be deployed within that limit, so a larger code change cannot appear in
+/// the BAL of a valid block. This is structural, like [`validate_header_bal_indices`], so
+/// it runs before the BAL is used to seed execution rather than after.
+pub fn validate_bal_code_sizes(
+    bal: &BlockAccessList,
+    max_code_size: u64,
+) -> Result<(), InvalidBlockError> {
+    for account in bal.accounts() {
+        for change in &account.code_changes {
+            let size = change.new_code.len();
+            if u64::try_from(size).map_or(true, |size| size > max_code_size) {
+                return Err(InvalidBlockError::BlockAccessListCodeTooLarge {
+                    address: account.address,
+                    size,
+                    max: max_code_size,
+                });
+            }
+        }
     }
     Ok(())
 }

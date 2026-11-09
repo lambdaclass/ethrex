@@ -26,8 +26,14 @@ fn decode_hex(label: &str, s: &str) -> eyre::Result<Vec<u8>> {
     hex::decode(s.trim_start_matches("0x")).map_err(|e| eyre::eyre!("{label} hex decode: {e}"))
 }
 
-/// Reads an EEST zkevm fixture and returns the block's `statelessInputBytes`
-/// verbatim as the guest input.
+/// Reads an EEST zkevm fixture and returns the last executable block's
+/// `statelessInputBytes` verbatim as the guest input.
+///
+/// The last block, not the first, because benchmark tests that need state put
+/// a setup block before the measured one. Taking the first block measured the
+/// setup instead: `eest_bench_bal_mixed_*` recorded under 5 Mgas of
+/// deployment rather than its 30 to 200 Mgas target, about 150 times too cheap,
+/// and nothing failed because the setup block validates fine on its own.
 ///
 /// The bytes are taken from the fixture rather than rebuilt from `rlp` plus
 /// `executionWitness`. Re-deriving them host side means re-deriving every field
@@ -77,7 +83,7 @@ pub fn micro_to_program_input(
         ),
     };
 
-    for block in &test.blocks {
+    for block in test.blocks.iter().rev() {
         if block.expect_exception.is_some() {
             continue;
         }
@@ -146,5 +152,36 @@ mod tests {
             n > 1,
             "ambiguity must not be resolved silently"
         );
+    }
+
+    #[test]
+    fn measures_the_last_executable_block_not_the_setup_block() {
+        // successful_validation sits at index 32 of statelessOutputBytes.
+        let ok_output = format!("0x{}01", "00".repeat(32));
+        let failed_output = format!("0x{}00", "00".repeat(32));
+        let fixture = serde_json::json!({
+            "test_case[benchmark-gas-value_30M]": {
+                "blocks": [
+                    { "statelessInputBytes": "0xaa", "statelessOutputBytes": ok_output },
+                    { "statelessInputBytes": "0xbb", "statelessOutputBytes": ok_output },
+                    { "statelessInputBytes": "0xcc", "statelessOutputBytes": failed_output },
+                    { "statelessInputBytes": "0xdd", "expectException": "TransactionException.INTRINSIC_GAS_TOO_LOW" }
+                ]
+            }
+        });
+        let path = std::env::temp_dir().join(format!(
+            "zkevm_bench_test_micro_last_block_{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, fixture.to_string()).unwrap();
+
+        let input = micro_to_program_input(path.to_str().unwrap(), None, None).unwrap();
+        assert_eq!(
+            input,
+            vec![0xbb],
+            "the setup block (0xaa), a failed validation (0xcc) and an expected exception (0xdd) must all be skipped"
+        );
+
+        std::fs::remove_file(&path).ok();
     }
 }

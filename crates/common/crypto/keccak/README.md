@@ -22,9 +22,10 @@ impl Keccak256 {
 }
 impl Default for Keccak256;
 ```
-There are no feature flags. If building for `x86_64`, it will link an optimized assembly implementation. Because it uses generic `x86_64` code, no fallback is needed.
+There are no feature flags. If building for `x86_64`, it will link an optimized assembly implementation using generic `x86_64` code, which runs everywhere.
+With `std`, CPUs with AVX-512F and AVX-512VL instead use `avx512vl.rs`, picked at runtime once per process (never at compile time, since release builds target `x86-64-v3`). It is plain Rust over `core::arch` intrinsics that keeps each of the 25 lanes in its own 128-bit register, so the state never leaves the 32 vector registers, and uses `vpternlogq` for the three-input XORs of Theta and for Chi and `vprolq` for the rotations.
 If building for `ARMv8`, it will link an optimized implementation using generic `ARMv8` instructions.
-In both cases we chose the baseline instruction sets. This was not due to compatibility, which can be handled with dynamic dispatch, but because in the case of `ARMv8` using specialized `SHA3` instructions showed no improvement, and in `x86_64` using `AVX2` actually showed a regression of 30% in throughput.
+Other variants measured worse. On `ARMv8` the specialized `SHA3` instructions showed no improvement. On x86_64 the _Cryptogams_ alternatives lost or tied against the code above: `AVX2` was 31-36% slower than scalar on an Intel Xeon (Emerald Rapids) and an AMD Zen 5, the 256-bit `AVX512VL` variant was slower than scalar on both, and the 512-bit `AVX-512F` variant was within a few percent of the register-per-lane code on Intel (ahead on long messages, behind on one-block ones), was level with scalar on Zen 5, and is published as slower than scalar on Zen 4, which splits 512-bit operations in two.
 For other architectures, it falls back to `tiny_keccak`. This is specially necessary for proving, as the ZKVMs are RISC-V based, but they are not guaranteed to support all of its extensions. We may revisit adding assembly versions for them at a later time.
 
 ## Code Generation
@@ -37,7 +38,12 @@ $ ./keccak1600-armv8.pl linux64 keccak1600-armv8.s
 $ cd ../x86_64
 $ ./keccak1600-x86_64.pl linux64 keccak1600-x86_64.s
 ```
-- The x86 can be directly imported by the Rust compiler with the current options, but the ARM code requires a few changes, commented at the top of the `keccak1600-armv8.s` file.
+- Both the x86 and the ARM code need a few changes before the Rust compiler can import them. Each file lists its
+  own changes in a `Modified:` comment at the top; the ARM code needs the most of them.
+- One change applies to every file: each `global_asm!` block must both start in `.text` and leave `.text`
+  current when it ends. Blocks in the same codegen unit share the assembler's section state, so a block that
+  finishes in some other section makes the *next* block emit its functions there instead of in `.text`.
+  This is why the trailing `.note.gnu.property` block uses `.pushsection`/`.popsection` rather than `.section`.
 
 ## Copyright Notice
 

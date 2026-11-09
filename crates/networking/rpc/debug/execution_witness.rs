@@ -1,5 +1,5 @@
 use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use tracing::debug;
 
 use crate::{RpcApiContext, RpcErr, RpcHandler, types::block_identifier::BlockIdentifier};
@@ -10,7 +10,7 @@ pub struct ExecutionWitnessRequest {
 }
 
 impl RpcHandler for ExecutionWitnessRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -24,9 +24,9 @@ impl RpcHandler for ExecutionWitnessRequest {
             )));
         }
 
-        let from = BlockIdentifier::parse(params[0].clone(), 0)?;
+        let from = BlockIdentifier::parse_param(&params[0], 0)?;
         let to = if let Some(param) = params.get(1) {
-            Some(BlockIdentifier::parse(param.clone(), 1)?)
+            Some(BlockIdentifier::parse_param(param, 1)?)
         } else {
             None
         };
@@ -111,6 +111,7 @@ impl RpcHandler for ExecutionWitnessRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::raw_params;
     use serde_json::json;
 
     /// `debug_executionWitness` with `params: []` used to index `params[0]` past
@@ -140,21 +141,25 @@ mod tests {
 
     #[test]
     fn one_or_two_block_identifiers_parse() {
-        let single = ExecutionWitnessRequest::parse(&Some(vec![json!("latest")]))
+        let single = ExecutionWitnessRequest::parse(&raw_params(&Some(vec![json!("latest")])))
             .expect("a single block identifier is a valid request");
         assert!(single.to.is_none());
 
-        let range = ExecutionWitnessRequest::parse(&Some(vec![json!("0x1"), json!("0x2")]))
-            .expect("a block range is a valid request");
+        let range =
+            ExecutionWitnessRequest::parse(&raw_params(&Some(vec![json!("0x1"), json!("0x2")])))
+                .expect("a block range is a valid request");
         assert!(range.to.is_some());
     }
 
     #[test]
     fn more_than_two_params_are_rejected() {
-        let err =
-            ExecutionWitnessRequest::parse(&Some(vec![json!("0x1"), json!("0x2"), json!("0x3")]))
-                .err()
-                .expect("three params must not parse");
+        let err = ExecutionWitnessRequest::parse(&raw_params(&Some(vec![
+            json!("0x1"),
+            json!("0x2"),
+            json!("0x3"),
+        ])))
+        .err()
+        .expect("three params must not parse");
         assert!(
             matches!(err, RpcErr::BadParams(_)),
             "expected BadParams, got {err:?}"

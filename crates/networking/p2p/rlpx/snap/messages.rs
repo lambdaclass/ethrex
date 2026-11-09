@@ -4,7 +4,7 @@
 //! Each message type implements RLPxMessage for encoding/decoding.
 
 use bytes::Bytes;
-use ethrex_common::{H256, U256, types::AccountState};
+use ethrex_common::{H256, U256, types::AccountState, types::block_access_list::BlockAccessList};
 
 // =============================================================================
 // REQUEST MESSAGES
@@ -131,4 +131,30 @@ pub struct StorageSlot {
     pub hash: H256,
     /// Storage value
     pub data: U256,
+}
+
+// =============================================================================
+// snap/2 REQUEST / RESPONSE MESSAGES (EIP-8189)
+// =============================================================================
+
+/// snap/2 request: fetch block access lists by block hash.
+/// Code = 0x08 (offset-relative). Replaces `GetTrieNodes` (0x06) in snap/2.
+///
+/// Wire format (EIP-8189 §"GetBlockAccessLists"):
+///   `[request-id, [blockhash1, blockhash2, ...], bytes]`
+#[derive(Debug, Clone)]
+pub struct Snap2GetBlockAccessLists {
+    pub id: u64,
+    pub block_hashes: Vec<H256>,
+    /// Soft cap on response size in bytes (EIP-8189). Spec recommends 2 MiB default.
+    pub response_bytes: u64,
+}
+
+/// snap/2 response: block access lists corresponding to a `Snap2GetBlockAccessLists`.
+/// Code = 0x09 (offset-relative). Position-correspondent with request.
+/// A `None` entry means the BAL is unavailable (block unknown / pruned / pre-Amsterdam).
+#[derive(Debug, Clone)]
+pub struct Snap2BlockAccessLists {
+    pub id: u64,
+    pub bals: Vec<Option<BlockAccessList>>,
 }

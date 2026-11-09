@@ -3,6 +3,7 @@ use ethrex_common::{
     types::{Block, BlockBody, BlockHeader, block_access_list::BlockAccessList},
 };
 use ethrex_rlp::encode::RLPEncode;
+use ethrex_rpc::test_utils::raw_params;
 use ethrex_rpc::{
     engine::payload::NewPayloadV5Request, rpc::RpcHandler,
     test_utils::default_context_with_storage, utils::RpcErrorMetadata,
@@ -52,7 +53,7 @@ async fn undecodable_bal_returns_invalid_status_not_an_error() {
     // 0xde opens a 30-byte RLP list but only 3 bytes follow: valid DATA, invalid RLP.
     let params = v5_params(Some(json!("0xdeadbeef")));
 
-    let request = NewPayloadV5Request::parse(&params).expect("parse must not fail");
+    let request = NewPayloadV5Request::parse(&raw_params(&params)).expect("parse must not fail");
     assert!(
         request.undecodable_bal,
         "the BAL must be flagged undecodable"
@@ -81,7 +82,7 @@ fn well_formed_bal_is_not_flagged() {
     );
     let params = v5_params(Some(json!(bal_hex)));
 
-    let request = NewPayloadV5Request::parse(&params).expect("parse");
+    let request = NewPayloadV5Request::parse(&raw_params(&params)).expect("parse");
     assert!(!request.undecodable_bal);
     assert!(request.raw_bal_hash.is_some());
     assert!(
@@ -95,7 +96,7 @@ fn well_formed_bal_is_not_flagged() {
 #[tokio::test]
 async fn missing_bal_still_returns_invalid_params() {
     let params = v5_params(None);
-    let request = NewPayloadV5Request::parse(&params).expect("parse");
+    let request = NewPayloadV5Request::parse(&raw_params(&params)).expect("parse");
     assert!(!request.undecodable_bal);
 
     let ctx = fresh_context().await;
@@ -112,7 +113,7 @@ async fn missing_bal_still_returns_invalid_params() {
 #[test]
 fn schema_invalid_bal_still_fails_parse_with_invalid_params() {
     let params = v5_params(Some(json!("deadbeef")));
-    let Err(err) = NewPayloadV5Request::parse(&params) else {
+    let Err(err) = NewPayloadV5Request::parse(&raw_params(&params)) else {
         panic!("parse must fail for an unprefixed blockAccessList");
     };
     let metadata = RpcErrorMetadata::from(err);

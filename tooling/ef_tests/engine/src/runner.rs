@@ -238,12 +238,16 @@ pub async fn run_fixture(
     // 5. Per-payload loop (mirrors test_via_engine.py:124–240)
     for (i, payload) in fix.engine_new_payloads.iter().enumerate() {
         // zkevm fixtures carry an expected witness per payload: route those
-        // through `engine_newPayloadWithWitnessV5` (same params, same status
-        // semantics) so the engine-side witness generation is exercised and
-        // its output verified against the fixture.
-        let with_witness = payload.new_payload_version == 5 && payload.execution_witness.is_some();
+        // through `engine_newPayloadWithWitnessV{4,5}` (same params, same status
+        // semantics as the plain call) so the engine-side witness generation is
+        // exercised and its output verified against the fixture. Only V4 and V5
+        // have a witness variant; a witnessed payload at any other version would
+        // be a fixture-format change to look at, not something to route silently.
+        let with_witness =
+            matches!(payload.new_payload_version, 4 | 5) && payload.execution_witness.is_some();
         let resp = if with_witness {
-            Box::pin(harness.new_payload_with_witness(&payload.params)).await
+            Box::pin(harness.new_payload_with_witness(payload.new_payload_version, &payload.params))
+                .await
         } else {
             Box::pin(harness.new_payload(payload.new_payload_version, &payload.params)).await
         }
@@ -278,7 +282,7 @@ pub async fn run_fixture(
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
 
-/// Verify the witness returned by `engine_newPayloadWithWitnessV5` against the
+/// Verify the witness returned by `engine_newPayloadWithWitnessV{4,5}` against the
 /// fixture's expected `executionWitness`. The endpoint returns geth's
 /// `ExtWitness` shape — an RLP list `(headers, codes, state, keys)` with
 /// headers ascending by block number and codes/state sorted lexicographically —

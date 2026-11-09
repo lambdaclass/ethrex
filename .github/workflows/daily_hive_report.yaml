@@ -22,7 +22,7 @@ env:
 jobs:
   run-hive:
     name: Hive - ${{ matrix.test.name }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -99,10 +99,17 @@ jobs:
               parallelism: 2,
             }
           - {
-              name: "Execute Blobs tests",
-              file_name: execute-blobs,
+              name: "Execute Blobs tests (Osaka)",
+              file_name: execute-blobs-osaka,
               simulation: ethereum/eels/execute-blobs,
               limit: "",
+            }
+          - {
+              name: "Execute Blobs tests (Amsterdam)",
+              file_name: execute-blobs-amsterdam,
+              simulation: ethereum/eels/execute-blobs,
+              limit: "",
+              amsterdam: true,
             }
 
     steps:
@@ -113,7 +120,7 @@ jobs:
           large-packages: false
 
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       # Set custom args defined in Dockerfile to pin execution-spec-tests versions
       # See: https://github.com/ethereum/hive/blob/c2dab60f898b94afe8eeac505f60dcde59205e77/simulators/ethereum/eest/consume-rlp/Dockerfile#L4-L8
@@ -164,6 +171,25 @@ jobs:
             FLAGS+=" --client.checktimelimit=180s"
           fi
 
+          # The execute simulators drive a live client over RPC instead of consuming
+          # fixtures, so they take `fork` where the consume ones take `fixtures`, and
+          # fall back to Osaka when it is not given. Left unpinned the image also
+          # clones whatever execution-specs default branch happens to be; that has
+          # drifted far enough that collection aborts with "No spec type format found
+          # in the test item" and the job uploads zero suites while still reporting
+          # success. Both fork runs share the Amsterdam EELS pin because it carries
+          # every fork and collects cleanly, whereas the mainnet pin (tests@v20.0.1)
+          # aborts collection here inside its own fork-filter plugin.
+          if [[ "$SIMULATION" == "ethereum/eels/execute-blobs" ]]; then
+            FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
+            if [[ "$AMSTERDAM" == "true" ]]; then
+              FLAGS+=" --sim.buildarg fork=Amsterdam"
+            else
+              FLAGS+=" --sim.buildarg fork=Osaka"
+            fi
+            FLAGS+=" --client.checktimelimit=300s"
+          fi
+
           if [[ "$SIMULATION" == "ethereum/rpc-compat" ]]; then
             FLAGS+=" --sim.buildarg branch=d08382ae5c808680e976fce4b73f4ba91647199b"
           fi
@@ -178,7 +204,7 @@ jobs:
           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
       - name: Log in to the Container registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@v4.7.0
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -207,20 +233,20 @@ jobs:
     name: Generate and Save report
     needs: run-hive
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       artifact_name: results_daily.md
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1
 
       - name: Download all results
         continue-on-error: true
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v6.0.0
         with:
           path: hive/workspace/logs
           pattern: "*_daily-results.zip"
@@ -263,7 +289,7 @@ jobs:
         run: cargo run --manifest-path tooling/Cargo.toml -p hive_report > results.md
 
       - name: Upload daily result
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: results_daily.md
           path: |
@@ -279,13 +305,13 @@ jobs:
   post-daily-report:
     name: Post report to slack
     needs: [hive-report]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Download hive results
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v6.0.0
         with:
           name: ${{ needs.hive-report.outputs.artifact_name }}
 

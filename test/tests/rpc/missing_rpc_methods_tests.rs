@@ -5,7 +5,8 @@
 //! functionality it largely already had internally.
 
 use ethrex_rpc::test_utils::{
-    add_legacy_tx_blocks, call_http, default_context_with_storage, setup_store,
+    add_eip1559_tx_blocks, add_legacy_tx_blocks, call_http, default_context_with_storage,
+    setup_store,
 };
 use serde_json::Value;
 
@@ -149,4 +150,53 @@ async fn raw_transaction_getters_agree_across_all_three_spellings() {
     )
     .await;
     assert_eq!(past_end["result"], Value::Null, "got {past_end}");
+}
+
+/// Typed transactions come back as the EIP-2718 envelope (`type || payload`),
+/// the encoding whose keccak is the transaction hash, from every raw getter.
+/// Legacy transactions encode the same either way, so this needs a typed one.
+#[tokio::test]
+async fn raw_transaction_getters_return_the_eip2718_envelope() {
+    let store = setup_store().await;
+    add_eip1559_tx_blocks(&store, 1, 1).await;
+    let context = default_context_with_storage(store).await;
+
+    let block = call_http(&context, call("eth_getBlockByNumber", r#"["0x1",false]"#)).await;
+    let tx_hash = block["result"]["transactions"][0]
+        .as_str()
+        .unwrap_or_else(|| panic!("block should contain a transaction: {block}"))
+        .to_owned();
+    let block_hash = block["result"]["hash"].as_str().expect("hash").to_owned();
+
+    for (method, params) in [
+        ("eth_getRawTransactionByHash", format!(r#"["{tx_hash}"]"#)),
+        ("debug_getRawTransaction", format!(r#"["{tx_hash}"]"#)),
+        (
+            "eth_getRawTransactionByBlockNumberAndIndex",
+            r#"["0x1","0x0"]"#.to_owned(),
+        ),
+        (
+            "eth_getRawTransactionByBlockHashAndIndex",
+            format!(r#"["{block_hash}","0x0"]"#),
+        ),
+    ] {
+        let response = call_http(&context, call(method, &params)).await;
+        let raw = response["result"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{method} must return bytes: {response}"));
+        let bytes = hex::decode(raw.trim_start_matches("0x")).expect("hex");
+        assert_eq!(
+            bytes.first(),
+            Some(&0x02),
+            "{method} must start with the EIP-1559 type byte, got {raw}"
+        );
+        let hash = format!(
+            "0x{}",
+            hex::encode(ethrex_crypto::keccak::keccak_hash(&bytes))
+        );
+        assert_eq!(
+            hash, tx_hash,
+            "{method}: the keccak of the returned bytes must be the transaction hash"
+        );
+    }
 }

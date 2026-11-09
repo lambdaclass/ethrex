@@ -1,4 +1,4 @@
-use ethrex_common::{H256, U256};
+use ethrex_common::{Address, H160, H256, U256};
 use std::sync::LazyLock;
 
 pub const WORD_SIZE_IN_BYTES_USIZE: usize = 32;
@@ -37,11 +37,11 @@ pub const TX_BASE_COST_AMSTERDAM: u64 = 12000;
 // https://eips.ethereum.org/EIPS/eip-7825
 pub use ethrex_common::constants::POST_OSAKA_GAS_LIMIT_CAP;
 pub use ethrex_common::constants::TX_MAX_GAS_LIMIT_AMSTERDAM;
+pub use ethrex_common::constants::TX_MAX_TOTAL_GAS_LIMIT_AMSTERDAM;
 
 pub const MAX_CODE_SIZE: u64 = 0x6000;
 pub const INIT_CODE_MAX_SIZE: usize = 49152;
-// EIP-7954 (Amsterdam): increase code size to 64 KiB and initcode to 128 KiB
-pub const AMSTERDAM_MAX_CODE_SIZE: u64 = 0x10000;
+pub use ethrex_common::constants::AMSTERDAM_MAX_CODE_SIZE;
 #[allow(clippy::as_conversions)]
 pub const AMSTERDAM_INIT_CODE_MAX_SIZE: usize = 2 * AMSTERDAM_MAX_CODE_SIZE as usize;
 
@@ -114,3 +114,7 @@ pub const BURN_EVENT_TOPIC: H256 = H256([
     0xcc, 0x16, 0xf5, 0xdb, 0xb4, 0x87, 0x32, 0x80, 0x81, 0x5c, 0x1e, 0xe0, 0x9d, 0xbd, 0x06, 0x73,
     0x6c, 0xff, 0xcc, 0x18, 0x44, 0x12, 0xcf, 0x7a, 0x71, 0xa0, 0xfd, 0xb7, 0x5d, 0x39, 0x7c, 0xa5,
 ]);
+
+/// `eth_simulateV1` traceTransfers: sentinel emitter address for informational
+/// ETH-transfer logs (execution-apis spec), 0xeeee...eeee.
+pub const TRACE_TRANSFER_ADDRESS: Address = H160([0xee; 20]);

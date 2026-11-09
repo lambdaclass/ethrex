@@ -11,6 +11,12 @@ const TEST_FOLDER: &str = "vectors_zkevm/";
 #[cfg(not(feature = "stateless"))]
 const TEST_FOLDER: &str = "vectors/";
 
+// The same bundle's `blockchain_test_engine` fixtures, kept in their own root
+// because the blockchain runner above would otherwise try to parse them. Only
+// their stateless bytes are checked here; see `check_engine_stateless_bytes`.
+#[cfg(feature = "stateless")]
+const ENGINE_TEST_FOLDER: &str = "vectors_zkevm_engine/";
+
 // Base skips shared by all runs.
 const SKIPPED_BASE: &[&str] = &[
     // Skip because they take too long to run, but they pass
@@ -40,4 +46,14 @@ fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
     parse_and_execute(path, Some(&skips), cfg!(feature = "stateless"))
 }
 
+#[cfg(not(feature = "stateless"))]
 datatest_stable::harness!(blockchain_runner, TEST_FOLDER, r".*");
+#[cfg(feature = "stateless")]
+datatest_stable::harness!(
+    blockchain_runner,
+    TEST_FOLDER,
+    r".*",
+    ef_tests_blockchain::test_runner::check_engine_stateless_bytes,
+    ENGINE_TEST_FOLDER,
+    r".*",
+);

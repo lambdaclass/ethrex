@@ -72,8 +72,9 @@ pub struct FixturePayload {
     pub error_code: Option<i32>,
     /// Expected execution witness for this payload (zkevm fixtures):
     /// `{state, codes, headers}` arrays of hex strings. When present (and the
-    /// payload is V5), the runner exercises `engine_newPayloadWithWitnessV5`
-    /// and compares the returned witness against it.
+    /// payload is V4 or V5), the runner exercises the matching
+    /// `engine_newPayloadWithWitnessV{4,5}` and compares the returned witness
+    /// against it.
     #[serde(default, rename = "executionWitness")]
     pub execution_witness: Option<Value>,
 }

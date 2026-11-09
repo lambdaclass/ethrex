@@ -18,9 +18,6 @@ pub use ethrex_prover::Risc0Backend;
 #[cfg(feature = "zisk")]
 pub use ethrex_prover::ZiskBackend;
 
-#[cfg(feature = "openvm")]
-pub use ethrex_prover::OpenVmBackend;
-
 // Re-export protocol and prover types from shared crate
 pub use ethrex_prover::protocol;
 

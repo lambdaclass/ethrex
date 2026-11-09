@@ -114,6 +114,17 @@ pub struct Options {
         env = "ETHREX_ROCKSDB_BLOCK_CACHE_SIZE"
     )]
     pub rocksdb_block_cache_size: Option<usize>,
+    #[arg(
+        long = "code-cache-size",
+        value_name = "BYTES",
+        help = "Byte budget of the in-memory bytecode cache. Defaults to 2 GiB, which holds \
+                ~29k max-size contracts; the cache only grows with code that blocks actually \
+                load. Lower it on memory-constrained hosts, or raise it for workloads that \
+                keep reusing more distinct contracts than that.",
+        help_heading = "Storage options",
+        env = "ETHREX_CODE_CACHE_SIZE"
+    )]
+    pub code_cache_size: Option<u64>,
     #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options", env = "ETHREX_SYNCMODE")]
     pub syncmode: SyncMode,
     #[arg(
@@ -349,6 +360,16 @@ pub struct Options {
     )]
     pub http_api: Vec<ethrex_rpc::RpcNamespace>,
     #[arg(
+        long = "rpc.gascap",
+        default_value_t = ethrex_rpc::DEFAULT_RPC_GAS_CAP,
+        value_name = "GAS",
+        help = "Gas cap for eth_call, eth_estimateGas, eth_createAccessList and debug_traceCall. 0 disables the cap.",
+        long_help = "Upper bound on the gas a simulation RPC (eth_call, eth_estimateGas, eth_createAccessList, debug_traceCall) runs with, whatever the request asks for. The memory a call can use grows with its gas, so the cap bounds what one request can make the node allocate. 0 disables the cap.",
+        help_heading = "RPC options",
+        env = "ETHREX_RPC_GAS_CAP"
+    )]
+    pub rpc_gas_cap: u64,
+    #[arg(
         long = "ws.enabled",
         default_value = "false",
         help = "Enable websocket rpc server. Disabled by default.",
@@ -377,6 +398,47 @@ pub struct Options {
     )]
     pub ws_port: Option<String>,
     #[arg(
+        long = "rpc.max-blocks-per-filter",
+        default_value_t = ethrex_rpc::DEFAULT_MAX_BLOCKS_PER_FILTER,
+        value_name = "BLOCKS",
+        help = "Maximum block range of a log query. 0 means no limit.",
+        long_help = "Maximum block range (toBlock - fromBlock) of an eth_getLogs query or log filter poll. A wider query fails with error -32602 before any block is read; a wider poll reports the first part of its range and leaves the rest to the next poll. 0 means no limit.",
+        help_heading = "RPC options",
+        env = "ETHREX_RPC_MAX_BLOCKS_PER_FILTER"
+    )]
+    pub rpc_max_blocks_per_filter: u64,
+    #[arg(
+        long = "rpc.max-logs-per-response",
+        default_value_t = ethrex_rpc::DEFAULT_MAX_LOGS_PER_RESPONSE,
+        value_name = "LOGS",
+        help = "Maximum logs returned by a log query. 0 means no limit.",
+        long_help = "Maximum logs returned by an eth_getLogs query or log filter poll. A query that matches more fails with error -32602 naming the range to retry with; a poll that matches more reports the blocks before the one that goes over and leaves the rest to the next poll. Queries for a single block, and the first block of a poll, are exempt. 0 means no limit.",
+        help_heading = "RPC options",
+        env = "ETHREX_RPC_MAX_LOGS_PER_RESPONSE"
+    )]
+    pub rpc_max_logs_per_response: u64,
+    #[arg(
+        long = "rpc.max-log-query-work",
+        default_value_t = ethrex_rpc::DEFAULT_MAX_LOG_QUERY_WORK,
+        value_name = "UNITS",
+        help = "Maximum scan work of a log query. 0 means no limit.",
+        long_help = "Maximum scan work of an eth_getLogs query or log filter poll, estimated as the blocks in its range x the addresses in its filter x the alternatives in its largest topic OR-set, each at least 1. A query with no address and no topic filter reads every block in full and counts 100 per block. A query over it fails with error -32005 before any block is read; a poll over it reports the first part of its range that fits and leaves the rest to the next poll. 0 means no limit.",
+        help_heading = "RPC options",
+        env = "ETHREX_RPC_MAX_LOG_QUERY_WORK"
+    )]
+    pub rpc_max_log_query_work: u64,
+    #[arg(
+        long = "rpc.log-query-work-budget",
+        default_value_t = ethrex_rpc::DEFAULT_LOG_QUERY_WORK_BUDGET,
+        value_name = "UNITS",
+        value_parser = clap::value_parser!(u64).range(1..),
+        help = "Total scan work of the log queries running at once.",
+        long_help = "Total scan work (see --rpc.max-log-query-work) of the eth_getLogs queries and log filter polls running at once. A query that does not fit fails at once with error -32005. Queries of at most 10000 units do not count against it.",
+        help_heading = "RPC options",
+        env = "ETHREX_RPC_LOG_QUERY_WORK_BUDGET"
+    )]
+    pub rpc_log_query_work_budget: u64,
+    #[arg(
         long = "authrpc.addr",
         default_value = "127.0.0.1",
         value_name = "ADDRESS",
@@ -403,6 +465,19 @@ pub struct Options {
         env = "ETHREX_AUTHRPC_JWTSECRET_PATH"
     )]
     pub authrpc_jwtsecret: String,
+    #[arg(
+        long = "authrpc.max-inflight-body-size",
+        default_value_t = ethrex_rpc::DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE as u64,
+        value_name = "BYTES",
+        // Below one maximum-size body, the budget would lower the per-request cap and
+        // reject large payloads, silently stalling block import.
+        value_parser = clap::value_parser!(u64).range(ethrex_rpc::AUTHRPC_MAX_BODY_SIZE as u64..),
+        help = "Maximum request body bytes the authenticated rpc server holds at once.",
+        long_help = "Maximum request body bytes the authenticated rpc server holds at once, across all connections. It counts body bytes, not all the memory a request takes: parsing one uses about as much again. A request whose Content-Length does not fit waits up to 8 seconds for other requests to finish, and is then rejected with HTTP 503 before its body is read. A chunked body is counted as its chunks arrive, and gets the same 503 if a chunk finds no room within 8 seconds. Each request body is also capped at 128 MiB, and a larger one is rejected with HTTP 413. Must be at least that cap, 134217728.",
+        help_heading = "RPC options",
+        env = "ETHREX_AUTHRPC_MAX_INFLIGHT_BODY_SIZE"
+    )]
+    pub authrpc_max_inflight_body_size: u64,
     #[arg(long = "p2p.disabled", default_value = "false", value_name = "P2P_DISABLED", action = ArgAction::SetTrue, help_heading = "P2P options", env = "ETHREX_P2P_DISABLED")]
     pub p2p_disabled: bool,
     #[arg(
@@ -598,15 +673,22 @@ impl Default for Options {
             http_addr: Default::default(),
             http_port: Default::default(),
             http_api: ethrex_rpc::DEFAULT_HTTP_API.to_vec(),
+            rpc_gas_cap: ethrex_rpc::DEFAULT_RPC_GAS_CAP,
             ws_enabled: false,
             ws_addr: Default::default(),
             ws_port: Default::default(),
+            rpc_max_blocks_per_filter: ethrex_rpc::DEFAULT_MAX_BLOCKS_PER_FILTER,
+            rpc_max_logs_per_response: ethrex_rpc::DEFAULT_MAX_LOGS_PER_RESPONSE,
+            rpc_max_log_query_work: ethrex_rpc::DEFAULT_MAX_LOG_QUERY_WORK,
+            rpc_log_query_work_budget: ethrex_rpc::DEFAULT_LOG_QUERY_WORK_BUDGET,
             log_level: Level::INFO,
             log_color: Default::default(),
             log_dir: None,
             authrpc_addr: Default::default(),
             authrpc_port: Default::default(),
             authrpc_jwtsecret: Default::default(),
+            authrpc_max_inflight_body_size: ethrex_rpc::DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE
+                as u64,
             p2p_disabled: Default::default(),
             p2p_addr: None,
             nat_extip: None,
@@ -618,6 +700,7 @@ impl Default for Options {
             bootnodes: Default::default(),
             datadir: Default::default(),
             rocksdb_block_cache_size: None,
+            code_cache_size: None,
             syncmode: Default::default(),
             history_chain: Default::default(),
             history_transactions: Default::default(),
@@ -767,6 +850,13 @@ pub enum Subcommand {
     #[cfg(feature = "l2")]
     #[command(name = "l2")]
     L2(crate::l2::L2Command),
+    #[cfg(feature = "partial")]
+    #[command(
+        name = "partial-stateful-node",
+        visible_alias = "psn",
+        about = "Run a partial stateful node: proven partial state kept current with block access lists"
+    )]
+    PartialStatefulNode(crate::partial::PartialCommand),
 }
 
 impl Subcommand {
@@ -775,6 +865,9 @@ impl Subcommand {
         let _guard = match &self {
             #[cfg(feature = "l2")]
             Self::L2(_) => None,
+            // The partial stateful node initializes tracing from its own flattened options.
+            #[cfg(feature = "partial")]
+            Self::PartialStatefulNode(_) => None,
             _ => {
                 let (_, guard) = init_tracing(opts);
                 guard
@@ -896,6 +989,8 @@ impl Subcommand {
             }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,
+            #[cfg(feature = "partial")]
+            Subcommand::PartialStatefulNode(command) => command.run().await?,
         }
 
         Ok(())
@@ -1449,6 +1544,15 @@ mod tests {
         );
     }
 
+    /// `--rpc.gascap` defaults to geth's 50M and accepts 0 to disable the cap.
+    #[test]
+    fn rpc_gascap_defaults_to_50m_and_accepts_zero() {
+        let cli = CLI::parse_from(["ethrex"]);
+        assert_eq!(cli.opts.rpc_gas_cap, 50_000_000);
+        let cli = CLI::parse_from(["ethrex", "--rpc.gascap", "0"]);
+        assert_eq!(cli.opts.rpc_gas_cap, 0);
+    }
+
     /// `--http.api` must default to `eth,net,web3`. Operators have to opt in
     /// explicitly to expose `admin`, `debug` or `txpool`.
     #[test]
@@ -1488,6 +1592,73 @@ mod tests {
     fn http_api_rejects_unknown_namespace() {
         let result = CLI::try_parse_from(["ethrex", "--http.api", "eth,bogus"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn log_query_limit_flags_default_parse_and_reject_an_empty_budget() {
+        let opts = CLI::parse_from(["ethrex"]).opts;
+        assert_eq!(
+            (
+                opts.rpc_max_blocks_per_filter,
+                opts.rpc_max_logs_per_response,
+                opts.rpc_max_log_query_work,
+                opts.rpc_log_query_work_budget,
+            ),
+            (
+                ethrex_rpc::DEFAULT_MAX_BLOCKS_PER_FILTER,
+                ethrex_rpc::DEFAULT_MAX_LOGS_PER_RESPONSE,
+                ethrex_rpc::DEFAULT_MAX_LOG_QUERY_WORK,
+                ethrex_rpc::DEFAULT_LOG_QUERY_WORK_BUDGET,
+            )
+        );
+
+        // Zero lifts each of the three limits.
+        let opts = CLI::parse_from([
+            "ethrex",
+            "--rpc.max-blocks-per-filter",
+            "0",
+            "--rpc.max-logs-per-response",
+            "0",
+            "--rpc.max-log-query-work",
+            "0",
+            "--rpc.log-query-work-budget",
+            "5",
+        ])
+        .opts;
+        assert_eq!(
+            (
+                opts.rpc_max_blocks_per_filter,
+                opts.rpc_max_logs_per_response,
+                opts.rpc_max_log_query_work,
+                opts.rpc_log_query_work_budget,
+            ),
+            (0, 0, 0, 5)
+        );
+
+        for arg in ["0", "-1", "bogus"] {
+            let result = CLI::try_parse_from(["ethrex", "--rpc.log-query-work-budget", arg]);
+            assert!(result.is_err(), "{arg:?} must be rejected");
+        }
+    }
+
+    #[test]
+    fn authrpc_max_inflight_body_size_defaults_and_rejects_less_than_one_body() {
+        let cli = CLI::parse_from(["ethrex"]);
+        assert_eq!(
+            cli.opts.authrpc_max_inflight_body_size,
+            ethrex_rpc::DEFAULT_AUTHRPC_MAX_INFLIGHT_BODY_SIZE as u64
+        );
+        let one_body = ethrex_rpc::AUTHRPC_MAX_BODY_SIZE.to_string();
+        let cli = CLI::parse_from(["ethrex", "--authrpc.max-inflight-body-size", &one_body]);
+        assert_eq!(
+            cli.opts.authrpc_max_inflight_body_size,
+            ethrex_rpc::AUTHRPC_MAX_BODY_SIZE as u64
+        );
+        let just_under = (ethrex_rpc::AUTHRPC_MAX_BODY_SIZE - 1).to_string();
+        for arg in ["0", "1048576", &just_under, "-1", "bogus"] {
+            let result = CLI::try_parse_from(["ethrex", "--authrpc.max-inflight-body-size", arg]);
+            assert!(result.is_err(), "{arg:?} must be rejected");
+        }
     }
 
     #[test]

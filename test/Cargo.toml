@@ -61,17 +61,32 @@ ethrex-l2.workspace = true
 ethrex-l2-rpc.workspace = true
 reqwest.workspace = true
 tokio-util.workspace = true
+futures.workspace = true
 ethrex-guest-program = { workspace = true, default-features = false }
 libssz.workspace = true
 libssz-merkle.workspace = true
 libssz-types.workspace = true
-ethrex-crypto.workspace = true
+# The BLS12-381 differential fuzzers check NativeCrypto's blst backend.
+ethrex-crypto = { workspace = true, features = ["blst"] }
 ethrex-metrics = { workspace = true, features = ["metrics"] }
 serial_test = "3"
+# Independent reference implementations for the differential fuzzers.
+num-bigint = "0.4.6"
+tiny-keccak = { version = "2.0.2", features = ["keccak"] }
+ark-ff = { version = "0.5.0", default-features = false }
+ark-ec = { version = "0.5.0", default-features = false }
+ark-bn254 = { version = "0.5.0", default-features = false, features = ["curve"] }
+ark-bls12-381 = { version = "0.5.0", default-features = false, features = ["curve"] }
+substrate-bn = "=0.6.0"
 
 [[test]]
 name = "ethrex_tests"
 path = "tests/tests.rs"
+
+# Its own binary: it installs a counting global allocator.
+[[test]]
+name = "allocation_tests"
+path = "tests/allocation_tests.rs"
 
 [lints]
 workspace = true

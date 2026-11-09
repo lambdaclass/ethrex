@@ -35,25 +35,25 @@ pub struct Genesis {
     pub difficulty: U256,
     #[serde(default, with = "crate::serde_utils::bytes")]
     pub extra_data: Bytes,
-    #[serde(with = "crate::serde_utils::u64::hex_str")]
+    #[serde(with = "crate::serde_utils::u64::hex_or_dec")]
     pub gas_limit: u64,
-    #[serde(with = "crate::serde_utils::u64::hex_str")]
+    #[serde(with = "crate::serde_utils::u64::hex_or_dec")]
     pub nonce: u64,
     #[serde(alias = "mixHash", alias = "mixhash")]
     pub mix_hash: H256,
-    #[serde(deserialize_with = "crate::serde_utils::u64::deser_hex_or_dec_str")]
+    #[serde(deserialize_with = "crate::serde_utils::u64::hex_or_dec::deserialize")]
     #[serde(serialize_with = "crate::serde_utils::u256::serialize_number")]
     pub timestamp: u64,
-    #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
+    #[serde(default, with = "crate::serde_utils::u64::hex_or_dec_opt")]
     pub base_fee_per_gas: Option<u64>,
-    #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
+    #[serde(default, with = "crate::serde_utils::u64::hex_or_dec_opt")]
     pub blob_gas_used: Option<u64>,
-    #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
+    #[serde(default, with = "crate::serde_utils::u64::hex_or_dec_opt")]
     pub excess_blob_gas: Option<u64>,
     pub requests_hash: Option<H256>,
     // Amsterdam fork fields (EIP-7928)
     pub block_access_list_hash: Option<H256>,
-    #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
+    #[serde(default, with = "crate::serde_utils::u64::hex_or_dec_opt")]
     pub slot_number: Option<u64>,
 }
 
@@ -722,9 +722,9 @@ pub struct GenesisAccount {
     pub code: Bytes,
     #[serde(default)]
     pub storage: BTreeMap<U256, U256>,
-    #[serde(deserialize_with = "crate::serde_utils::u256::deser_hex_or_dec_str")]
+    #[serde(deserialize_with = "crate::serde_utils::u256::hex_or_dec::deserialize")]
     pub balance: U256,
-    #[serde(default, with = "crate::serde_utils::u64::hex_str")]
+    #[serde(default, with = "crate::serde_utils::u64::hex_or_dec")]
     pub nonce: u64,
 }
 
@@ -875,6 +875,97 @@ mod tests {
         assert!(
             err.to_string().contains("finite, non-negative"),
             "error should name the sign/finiteness cause, got: {err}"
+        );
+    }
+
+    #[test]
+    fn genesis_quantities_accept_numbers_and_hex_or_decimal_strings() {
+        // geth reads these fields as a JSON number, a 0x-hex string or a decimal
+        // string, and genesis files written by other tooling use all three. An
+        // unprefixed string is decimal, so "10" must not be read as 0x10.
+        let fixture: serde_json::Value = serde_json::from_reader(BufReader::new(
+            File::open("../../fixtures/genesis/l1.json").expect("Failed to open genesis file"),
+        ))
+        .expect("Failed to deserialize genesis file");
+        for encoded in [
+            serde_json::json!(10),
+            serde_json::json!("0xa"),
+            serde_json::json!("0XA"),
+            serde_json::json!("10"),
+        ] {
+            let account: GenesisAccount =
+                serde_json::from_value(serde_json::json!({"balance": encoded, "nonce": encoded}))
+                    .expect("account quantities should parse");
+            assert_eq!(
+                (account.balance, account.nonce),
+                (U256::from(10), 10),
+                "account quantities {encoded}"
+            );
+
+            let mut genesis = fixture.clone();
+            for field in [
+                "gasLimit",
+                "nonce",
+                "timestamp",
+                "baseFeePerGas",
+                "blobGasUsed",
+                "excessBlobGas",
+                "slotNumber",
+            ] {
+                genesis[field] = encoded.clone();
+            }
+            let genesis: Genesis =
+                serde_json::from_value(genesis).expect("genesis header fields should parse");
+            assert_eq!(
+                (genesis.gas_limit, genesis.nonce, genesis.timestamp),
+                (10, 10, 10),
+                "genesis header fields {encoded}"
+            );
+            assert_eq!(
+                (
+                    genesis.base_fee_per_gas,
+                    genesis.blob_gas_used,
+                    genesis.excess_blob_gas,
+                    genesis.slot_number
+                ),
+                (Some(10), Some(10), Some(10), Some(10)),
+                "optional genesis header fields {encoded}"
+            );
+        }
+
+        // As in geth, an empty string is 0.
+        let account: GenesisAccount =
+            serde_json::from_value(serde_json::json!({"balance": "", "nonce": ""}))
+                .expect("empty account quantities should parse");
+        assert_eq!((account.balance, account.nonce), (U256::zero(), 0));
+
+        for invalid in [
+            serde_json::json!(-1),
+            serde_json::json!("0xzz"),
+            serde_json::json!("0x"),
+            serde_json::json!("0x0x10"),
+            serde_json::json!("+10"),
+            serde_json::json!(true),
+        ] {
+            assert!(
+                serde_json::from_value::<GenesisAccount>(
+                    serde_json::json!({"balance": "0", "nonce": invalid})
+                )
+                .is_err(),
+                "account nonce {invalid} must be rejected"
+            );
+            assert!(
+                serde_json::from_value::<GenesisAccount>(serde_json::json!({"balance": invalid}))
+                    .is_err(),
+                "account balance {invalid} must be rejected"
+            );
+        }
+        // serde_json holds an integer this large as a float, so it must be rejected
+        // rather than rounded.
+        assert!(
+            serde_json::from_str::<GenesisAccount>(r#"{"balance": 1000000000000000000000000}"#)
+                .is_err(),
+            "a balance above u64::MAX given as a JSON number must be rejected"
         );
     }
 

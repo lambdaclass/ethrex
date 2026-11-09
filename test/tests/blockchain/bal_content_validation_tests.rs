@@ -143,7 +143,11 @@ async fn build_block_with_txs(
 /// its sharded-worker performance optimization: the resulting Merkle root is a
 /// pure function of the final account states, so this single-threaded replay
 /// via public `Store` APIs reproduces the identical value production computes.
-fn forge_state_root(store: &Store, parent_header: &BlockHeader, bal: &BlockAccessList) -> H256 {
+pub(crate) fn forge_state_root(
+    store: &Store,
+    parent_header: &BlockHeader,
+    bal: &BlockAccessList,
+) -> H256 {
     let synthesis = synthesize_bal_updates(bal);
     let updates: Vec<AccountUpdate> = synthesis
         .into_iter()
@@ -1031,5 +1035,95 @@ async fn parallel_path_rejects_missing_code_change() {
     assert!(
         ok.is_ok(),
         "parallel path must accept the unmutated block, got: {ok:?}"
+    );
+}
+
+// --- reproducible rejections: a BAL with many extraneous entries names its lowest one ---
+//
+// The checklists of declared reads and pure-access accounts are seeded sets, which walk in a
+// different order on every node and every run. A rejection names the lowest leftover entry,
+// so all of them report the same one.
+
+/// Extraneous entries injected per test. Naming whichever one a set walks to first would
+/// name the lowest with probability 1/256.
+const EXTRANEOUS_ENTRIES: u64 = 256;
+
+/// A valid block holding one 0-value transfer to `RECIPIENT_ADDRESS`, with its BAL.
+async fn transfer_block() -> (Block, BlockAccessList) {
+    let signer: Signer = LocalSigner::new(test_secret_key()).into();
+    let (build_store, chain_id) = setup_store().await;
+    let build_blockchain = parallel_blockchain(build_store.clone());
+    let genesis_header = build_store.get_block_header(0).unwrap().unwrap();
+    let tx = sign(
+        eip1559_tx(
+            chain_id,
+            0,
+            TxKind::Call(RECIPIENT_ADDRESS),
+            U256::zero(),
+            Bytes::new(),
+        ),
+        &signer,
+    )
+    .await;
+    build_blockchain
+        .add_transaction_to_pool(tx)
+        .await
+        .expect("tx should enter pool");
+    let (block, bal, receipts) =
+        build_block_with_txs(&build_store, &build_blockchain, &genesis_header).await;
+    assert!(receipts[0].succeeded, "tx must succeed, got: {receipts:?}");
+    (block, bal)
+}
+
+/// Imports `block` carrying `accounts` as its BAL into a fresh store down the parallel
+/// path, and returns the content-validation message it is rejected with. Neither declared
+/// reads nor bare entries for empty accounts move the state root, so only the BAL hash is
+/// forged.
+async fn rejection_message(block: &Block, mut accounts: Vec<AccountChanges>) -> String {
+    accounts.sort_by_key(|account| account.address);
+    let bal = Arc::new(BlockAccessList::from_accounts(accounts));
+    let mut block = block.clone();
+    block.header.block_access_list_hash = Some(bal.compute_hash(&NativeCrypto));
+    let (store, _) = setup_store().await;
+    match parallel_blockchain(store).add_block_pipeline_bal(block, Some(bal)) {
+        Err(ChainError::EvmError(EvmError::Custom(message))) => message,
+        other => panic!("expected a content-validation EvmError::Custom, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn parallel_path_names_the_lowest_phantom_read() {
+    let (block, bal) = transfer_block().await;
+    let mut accounts = bal.accounts().to_vec();
+    if !accounts.iter().any(|a| a.address == RECIPIENT_ADDRESS) {
+        accounts.push(AccountChanges::new(RECIPIENT_ADDRESS));
+    }
+    let recipient = accounts
+        .iter_mut()
+        .find(|a| a.address == RECIPIENT_ADDRESS)
+        .unwrap();
+    recipient.storage_reads = (1..=EXTRANEOUS_ENTRIES).map(U256::from).collect();
+
+    let message = rejection_message(&block, accounts).await;
+    assert!(
+        message.contains("slot 1 was never actually read"),
+        "got: {message}"
+    );
+}
+
+#[tokio::test]
+async fn parallel_path_names_the_lowest_unaccessed_account() {
+    let (block, bal) = transfer_block().await;
+    let mut accounts = bal.accounts().to_vec();
+    accounts.extend(
+        (1..=EXTRANEOUS_ENTRIES)
+            .map(|i| AccountChanges::new(Address::from_low_u64_be(0x4200_0000 + i))),
+    );
+
+    let message = rejection_message(&block, accounts).await;
+    let lowest = Address::from_low_u64_be(0x4200_0001);
+    assert!(
+        message.contains(&format!("account {lowest:?} has no mutations")),
+        "got: {message}"
     );
 }

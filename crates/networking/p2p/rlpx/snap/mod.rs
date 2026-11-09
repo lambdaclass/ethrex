@@ -22,7 +22,8 @@ mod messages;
 // Re-export all message types
 pub use messages::{
     AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges,
-    GetTrieNodes, StorageRanges, StorageSlot, TrieNodes,
+    GetTrieNodes, Snap2BlockAccessLists, Snap2GetBlockAccessLists, StorageRanges, StorageSlot,
+    TrieNodes,
 };
 
 // Re-export message codes for protocol handling

@@ -252,7 +252,8 @@ pub struct EIP2930Transaction {
     pub data: Bytes,
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
-    pub signature_y_parity: bool,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub signature_y_parity: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_r: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
@@ -279,7 +280,8 @@ pub struct EIP1559Transaction {
     pub data: Bytes,
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
-    pub signature_y_parity: bool,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub signature_y_parity: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_r: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
@@ -311,7 +313,8 @@ pub struct EIP4844Transaction {
     pub max_fee_per_blob_gas: U256,
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::H256Wrapper>)]
     pub blob_versioned_hashes: Vec<H256>,
-    pub signature_y_parity: bool,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub signature_y_parity: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_r: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
@@ -340,7 +343,8 @@ pub struct EIP7702Transaction {
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::AccessListItemWrapper>)]
     pub access_list: AccessList,
     pub authorization_list: AuthorizationList,
-    pub signature_y_parity: bool,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub signature_y_parity: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_r: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
@@ -1212,6 +1216,16 @@ impl RLPDecode for FeeTokenTransaction {
 /// `r || s || v` signature itself. See [`Transaction::signing_payload`].
 pub type SigningPayload = (Vec<u8>, [u8; 65]);
 
+fn signature_parity(value: U256) -> Result<u8, CryptoError> {
+    if value.is_zero() {
+        Ok(0)
+    } else if value == U256::one() {
+        Ok(1)
+    } else {
+        Err(CryptoError::InvalidSignature)
+    }
+}
+
 impl Transaction {
     pub fn sender(&self, crypto: &dyn Crypto) -> Result<Address, CryptoError> {
         // Frame transactions have explicit sender, no ECDSA recovery
@@ -1262,25 +1276,23 @@ impl Transaction {
     pub fn signing_payload(&self) -> Result<Option<SigningPayload>, CryptoError> {
         let (buf, sig) = match self {
             Transaction::LegacyTransaction(tx) => {
-                let v = u64::try_from(tx.v).map_err(|_| CryptoError::InvalidSignature)?;
                 // EIP-155: valid legacy `v` is 27/28 (pre-155) or
                 // {35,36} + chain_id * 2. Any other value is a malformed
                 // signature and must be rejected rather than coerced into a
-                // parity bit (which would recover a bogus sender).
-                let signature_y_parity = match self.chain_id() {
-                    Some(chain_id) => match v.checked_sub(35 + chain_id * 2) {
-                        Some(0) => false,
-                        Some(1) => true,
-                        _ => return Err(CryptoError::InvalidSignature),
-                    },
-                    None => match v {
-                        27 => false,
-                        28 => true,
-                        _ => return Err(CryptoError::InvalidSignature),
-                    },
+                // parity bit (which would recover a bogus sender). `v` is taken
+                // at its full width: a chain id near 2^64 still fits in 64 bits,
+                // but its `v` does not.
+                let chain_id = self.chain_id();
+                let signature_y_parity = match chain_id {
+                    // The chain id is derived from this `v` as (v - 35) / 2, so `v` is
+                    // 35 + chain_id * 2 + parity, which is odd exactly when the parity is 0.
+                    Some(_) => !tx.v.bit(0),
+                    None if tx.v == U256::from(27) => false,
+                    None if tx.v == U256::from(28) => true,
+                    None => return Err(CryptoError::InvalidSignature),
                 };
                 let mut buf = vec![];
-                match self.chain_id() {
+                match chain_id {
                     None => Encoder::new(&mut buf)
                         .encode_field(&tx.nonce)
                         .encode_field(&tx.gas_price)
@@ -1322,7 +1334,7 @@ impl Transaction {
                 let mut sig = [0u8; 65];
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
-                sig[64] = tx.signature_y_parity as u8;
+                sig[64] = signature_parity(tx.signature_y_parity)?;
                 (buf, sig)
             }
             Transaction::EIP1559Transaction(tx) => {
@@ -1341,7 +1353,7 @@ impl Transaction {
                 let mut sig = [0u8; 65];
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
-                sig[64] = tx.signature_y_parity as u8;
+                sig[64] = signature_parity(tx.signature_y_parity)?;
                 (buf, sig)
             }
             Transaction::EIP4844Transaction(tx) => {
@@ -1362,7 +1374,7 @@ impl Transaction {
                 let mut sig = [0u8; 65];
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
-                sig[64] = tx.signature_y_parity as u8;
+                sig[64] = signature_parity(tx.signature_y_parity)?;
                 (buf, sig)
             }
             Transaction::EIP7702Transaction(tx) => {
@@ -1382,7 +1394,7 @@ impl Transaction {
                 let mut sig = [0u8; 65];
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
-                sig[64] = tx.signature_y_parity as u8;
+                sig[64] = signature_parity(tx.signature_y_parity)?;
                 (buf, sig)
             }
             // Explicit sender, no signature: nothing to recover from.
@@ -1406,7 +1418,7 @@ impl Transaction {
                 let mut sig = [0u8; 65];
                 sig[..32].copy_from_slice(&tx.signature_r.to_big_endian());
                 sig[32..64].copy_from_slice(&tx.signature_s.to_big_endian());
-                sig[64] = tx.signature_y_parity as u8;
+                sig[64] = signature_parity(tx.signature_y_parity)?;
                 (buf, sig)
             }
         };
@@ -1425,21 +1437,6 @@ impl Transaction {
         };
         let msg = crypto.keccak256(&buf);
         crypto.recover_signer(&sig, &msg)
-    }
-
-    /// The signer's uncompressed secp256k1 public key (`0x04 || X || Y`).
-    ///
-    /// `Ok(None)` for privileged L2 and frame transactions, which carry an explicit
-    /// sender and no signature. Used to populate
-    /// `SszStatelessInput::public_keys`, which the stateless guest checks against
-    /// each transaction's recovered sender.
-    #[cfg(feature = "secp256k1")]
-    pub fn public_key(&self, crypto: &dyn Crypto) -> Result<Option<[u8; 65]>, CryptoError> {
-        let Some((buf, sig)) = self.signing_payload()? else {
-            return Ok(None);
-        };
-        let msg = crypto.keccak256(&buf);
-        crypto.recover_public_key(&sig, &msg).map(Some)
     }
 
     pub fn gas_limit(&self) -> u64 {
@@ -1710,12 +1707,15 @@ impl Transaction {
 }
 
 fn derive_legacy_chain_id(v: U256) -> Option<u64> {
-    let v = u64::try_from(v).ok()?;
     // EIP-155 encodes the chain id as `v = chain_id * 2 + 35` (or 36), so any
     // replay-protected `v` is >= 35. Pre-EIP-155 txs use v=27/28, and malformed
     // signatures (e.g. v=0 from an unsigned IL transaction) are < 35 too; none
     // carry a chain id. Guard the subtraction to avoid an underflow panic.
-    if v < 35 { None } else { Some((v - 35) / 2) }
+    // The chain id is derived from the whole `v` and must fit in 64 bits. A
+    // larger one leaves the transaction without a chain id, so its `v`, which
+    // is neither 27 nor 28, fails signature recovery as an invalid `v`.
+    let chain_id = v.checked_sub(U256::from(35))? >> 1;
+    u64::try_from(chain_id).ok()
 }
 
 impl TxType {
@@ -1819,7 +1819,8 @@ pub struct FeeTokenTransaction {
     pub access_list: AccessList,
     #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub fee_token: Address,
-    pub signature_y_parity: bool,
+    #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
+    pub signature_y_parity: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
     pub signature_r: U256,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
@@ -3145,9 +3146,8 @@ mod serde_impl {
             )?;
             struct_serializer.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
             struct_serializer
-                .serialize_field("yParity", &format!("{:#x}", self.signature_y_parity as u8))?;
-            struct_serializer
-                .serialize_field("v", &format!("{:#x}", self.signature_y_parity as u8))?; // added to match Hive tests
+                .serialize_field("yParity", &format!("{:#x}", self.signature_y_parity))?;
+            struct_serializer.serialize_field("v", &format!("{:#x}", self.signature_y_parity))?; // added to match Hive tests
             struct_serializer.serialize_field("r", &self.signature_r)?;
             struct_serializer.serialize_field("s", &self.signature_s)?;
             struct_serializer.end()
@@ -3184,9 +3184,8 @@ mod serde_impl {
             )?;
             struct_serializer.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
             struct_serializer
-                .serialize_field("yParity", &format!("{:#x}", self.signature_y_parity as u8))?;
-            struct_serializer
-                .serialize_field("v", &format!("{:#x}", self.signature_y_parity as u8))?; // added to match Hive tests
+                .serialize_field("yParity", &format!("{:#x}", self.signature_y_parity))?;
+            struct_serializer.serialize_field("v", &format!("{:#x}", self.signature_y_parity))?; // added to match Hive tests
             struct_serializer.serialize_field("r", &self.signature_r)?;
             struct_serializer.serialize_field("s", &self.signature_s)?;
             struct_serializer.end()
@@ -3229,9 +3228,8 @@ mod serde_impl {
                 .serialize_field("blobVersionedHashes", &self.blob_versioned_hashes)?;
             struct_serializer.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
             struct_serializer
-                .serialize_field("yParity", &format!("{:#x}", self.signature_y_parity as u8))?;
-            struct_serializer
-                .serialize_field("v", &format!("{:#x}", self.signature_y_parity as u8))?; // added to match Hive tests
+                .serialize_field("yParity", &format!("{:#x}", self.signature_y_parity))?;
+            struct_serializer.serialize_field("v", &format!("{:#x}", self.signature_y_parity))?; // added to match Hive tests
             struct_serializer.serialize_field("r", &self.signature_r)?;
             struct_serializer.serialize_field("s", &self.signature_s)?;
             struct_serializer.end()
@@ -3276,9 +3274,8 @@ mod serde_impl {
             )?;
             struct_serializer.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
             struct_serializer
-                .serialize_field("yParity", &format!("{:#x}", self.signature_y_parity as u8))?;
-            struct_serializer
-                .serialize_field("v", &format!("{:#x}", self.signature_y_parity as u8))?; // added to match Hive tests
+                .serialize_field("yParity", &format!("{:#x}", self.signature_y_parity))?;
+            struct_serializer.serialize_field("v", &format!("{:#x}", self.signature_y_parity))?; // added to match Hive tests
             struct_serializer.serialize_field("r", &self.signature_r)?;
             struct_serializer.serialize_field("s", &self.signature_s)?;
             struct_serializer.end()
@@ -3350,9 +3347,8 @@ mod serde_impl {
             struct_serializer.serialize_field("feeToken", &format!("{:#x}", self.fee_token))?;
             struct_serializer.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
             struct_serializer
-                .serialize_field("yParity", &format!("{:#x}", self.signature_y_parity as u8))?;
-            struct_serializer
-                .serialize_field("v", &format!("{:#x}", self.signature_y_parity as u8))?;
+                .serialize_field("yParity", &format!("{:#x}", self.signature_y_parity))?;
+            struct_serializer.serialize_field("v", &format!("{:#x}", self.signature_y_parity))?;
             struct_serializer.serialize_field("r", &self.signature_r)?;
             struct_serializer.serialize_field("s", &self.signature_s)?;
             struct_serializer.end()
@@ -3554,12 +3550,11 @@ mod serde_impl {
                     .into_iter()
                     .map(|v| (v.address, v.storage_keys))
                     .collect::<Vec<_>>(),
-                signature_y_parity: u8::from_str_radix(
+                signature_y_parity: U256::from_str_radix(
                     deserialize_field::<String, D>(&mut map, "yParity")?.trim_start_matches("0x"),
                     16,
                 )
-                .map_err(serde::de::Error::custom)?
-                    != 0,
+                .map_err(serde::de::Error::custom)?,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
                 ..Default::default()
@@ -3589,12 +3584,11 @@ mod serde_impl {
                     .into_iter()
                     .map(|v| (v.address, v.storage_keys))
                     .collect::<Vec<_>>(),
-                signature_y_parity: u8::from_str_radix(
+                signature_y_parity: U256::from_str_radix(
                     deserialize_field::<String, D>(&mut map, "yParity")?.trim_start_matches("0x"),
                     16,
                 )
-                .map_err(serde::de::Error::custom)?
-                    != 0,
+                .map_err(serde::de::Error::custom)?,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
                 ..Default::default()
@@ -3630,12 +3624,11 @@ mod serde_impl {
                     &mut map,
                     "blobVersionedHashes",
                 )?,
-                signature_y_parity: u8::from_str_radix(
+                signature_y_parity: U256::from_str_radix(
                     deserialize_field::<String, D>(&mut map, "yParity")?.trim_start_matches("0x"),
                     16,
                 )
-                .map_err(serde::de::Error::custom)?
-                    != 0,
+                .map_err(serde::de::Error::custom)?,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
                 ..Default::default()
@@ -3673,12 +3666,11 @@ mod serde_impl {
                 .into_iter()
                 .map(AuthorizationTuple::from)
                 .collect::<Vec<_>>(),
-                signature_y_parity: u8::from_str_radix(
+                signature_y_parity: U256::from_str_radix(
                     deserialize_field::<String, D>(&mut map, "yParity")?.trim_start_matches("0x"),
                     16,
                 )
-                .map_err(serde::de::Error::custom)?
-                    != 0,
+                .map_err(serde::de::Error::custom)?,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
                 ..Default::default()
@@ -3739,12 +3731,11 @@ mod serde_impl {
                     .map(|v| (v.address, v.storage_keys))
                     .collect::<Vec<_>>(),
                 fee_token: deserialize_field::<Address, D>(&mut map, "feeToken")?,
-                signature_y_parity: u8::from_str_radix(
+                signature_y_parity: U256::from_str_radix(
                     deserialize_field::<String, D>(&mut map, "yParity")?.trim_start_matches("0x"),
                     16,
                 )
-                .map_err(serde::de::Error::custom)?
-                    != 0,
+                .map_err(serde::de::Error::custom)?,
                 signature_r: deserialize_field::<U256, D>(&mut map, "r")?,
                 signature_s: deserialize_field::<U256, D>(&mut map, "s")?,
                 ..Default::default()
@@ -3769,7 +3760,7 @@ mod serde_impl {
     #[derive(Deserialize, Debug, PartialEq, Clone, Default)]
     #[serde(rename_all = "camelCase")]
     pub struct GenericTransaction {
-        #[serde(default)]
+        #[serde(default, deserialize_with = "deserialize_generic_tx_type")]
         pub r#type: TxType,
         #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
         pub nonce: Option<u64>,
@@ -3809,6 +3800,19 @@ mod serde_impl {
         )]
         pub input: Bytes,
     }
+
+    /// Calls ignore `type`, so any byte is accepted and a value that is not a known type falls back to the default.
+    /// See https://github.com/ethereum/execution-apis/pull/939
+    fn deserialize_generic_tx_type<'de, D>(deserializer: D) -> Result<TxType, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let str = String::deserialize(deserializer)?;
+        let tx_num = u8::from_str_radix(str.trim_start_matches("0x"), 16)
+            .map_err(|_| D::Error::custom(format!("Failed to deserialize hex value {str}")))?;
+        Ok(TxType::from_u8(tx_num).unwrap_or_default())
+    }
+
     /// Custom deserialization function to parse either `data` or `input` fields, or both as long as they have the same value
     pub fn deserialize_input<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
     where
@@ -4473,6 +4477,55 @@ mod tests {
         assert_eq!(legacy_chain_id(37), Some(1));
     }
 
+    /// EIP-155 at the 64-bit boundary. Signed for chain id 2^64 - 1, a legacy
+    /// transaction's `v` no longer fits in 64 bits but its chain id does: the
+    /// transaction reports that chain id and recovers its signer, so a chain that
+    /// is not 2^64 - 1 rejects it for its chain id. One chain id further, the chain
+    /// id does not fit: the transaction has none and its `v` is invalid.
+    #[test]
+    fn legacy_chain_id_at_the_64_bit_boundary() {
+        let secret = secp256k1::SecretKey::from_byte_array(&[0x11; 32]).unwrap();
+        let signed_for = |chain_id: U256| {
+            let mut tx = LegacyTransaction {
+                nonce: 7,
+                gas_price: U256::from(1_000_000_000u64),
+                gas: 21_000,
+                to: TxKind::Call(Address::repeat_byte(0xde)),
+                value: U256::one(),
+                v: U256::from(35) + chain_id * 2,
+                ..Default::default()
+            };
+            let (payload, _) = Transaction::LegacyTransaction(tx.clone())
+                .signing_payload()
+                .unwrap()
+                .unwrap();
+            let msg = secp256k1::Message::from_digest(NativeCrypto.keccak256(&payload));
+            let (recovery_id, signature) = secp256k1::SECP256K1
+                .sign_ecdsa_recoverable(&msg, &secret)
+                .serialize_compact();
+            tx.r = U256::from_big_endian(&signature[..32]);
+            tx.s = U256::from_big_endian(&signature[32..]);
+            tx.v += U256::from(i32::from(recovery_id));
+            Transaction::LegacyTransaction(tx)
+        };
+        let signer = signed_for(U256::one()).sender(&NativeCrypto).unwrap();
+
+        let largest = signed_for(U256::from(u64::MAX));
+        let Transaction::LegacyTransaction(legacy) = &largest else {
+            unreachable!("signed_for builds legacy transactions");
+        };
+        assert!(legacy.v > U256::from(u64::MAX), "the case under test");
+        assert_eq!(largest.chain_id(), Some(u64::MAX));
+        assert_eq!(largest.sender(&NativeCrypto).unwrap(), signer);
+
+        let too_large = Transaction::LegacyTransaction(LegacyTransaction {
+            v: U256::from(35) + (U256::from(u64::MAX) + 1) * 2,
+            ..Default::default()
+        });
+        assert_eq!(too_large.chain_id(), None);
+        assert!(too_large.sender(&NativeCrypto).is_err());
+    }
+
     #[test]
     fn test_compute_transactions_root() {
         let mut body = BlockBody::empty();
@@ -4517,7 +4570,7 @@ mod tests {
                     hex!("a3d07a7d68fbd49ec2f8e6befdd86c885f86c272819f6f345f365dec35ae6707").into(),
                 ],
             )],
-            signature_y_parity: false,
+            signature_y_parity: 0u8.into(),
             signature_r: U256::from_dec_str(
                 "75813812796588349127366022588733264074091236448495248199152066031778895768879",
             )
@@ -4606,7 +4659,7 @@ mod tests {
                 16,
             )
             .unwrap(),
-            signature_y_parity: false,
+            signature_y_parity: 0u8.into(),
             chain_id: 3151908,
             gas_limit: 63000,
             access_list: vec![],
@@ -4701,6 +4754,21 @@ mod tests {
             deserialized_generic_transaction,
             serde_json::from_str(generic_transaction).unwrap()
         )
+    }
+
+    #[test]
+    fn deserialize_generic_transaction_with_unknown_type() {
+        let generic_transaction: GenericTransaction = serde_json::from_str(
+            r#"{"type":"0x7f","to":"0x6177843db3138ae69679A54b95cf345ED759450d"}"#,
+        )
+        .unwrap();
+        assert_eq!(generic_transaction.r#type, TxType::default());
+        assert!(
+            serde_json::from_str::<GenericTransaction>(
+                r#"{"type":"0x100","to":"0x6177843db3138ae69679A54b95cf345ED759450d"}"#
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -4807,7 +4875,7 @@ mod tests {
                 vec![H256::from_low_u64_be(12), H256::from_low_u64_be(8203)],
             )],
             blob_versioned_hashes: vec![H256::from_low_u64_be(1), H256::from_low_u64_be(2)],
-            signature_y_parity: false,
+            signature_y_parity: 0u8.into(),
             signature_r: U256::from(0x01),
             signature_s: U256::from(0x02),
             ..Default::default()
@@ -4834,7 +4902,7 @@ mod tests {
                 H160::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B3").unwrap(),
                 vec![H256::zero()],
             )],
-            signature_y_parity: true,
+            signature_y_parity: 1u8.into(),
             signature_r: U256::one(),
             signature_s: U256::zero(),
             ..Default::default()
@@ -4864,7 +4932,7 @@ mod tests {
             value: U256::from(100000),
             data: Bytes::from_static(b"03"),
             access_list: vec![],
-            signature_y_parity: true,
+            signature_y_parity: 1u8.into(),
             signature_r: U256::one(),
             signature_s: U256::zero(),
             authorization_list: vec![AuthorizationTuple {
@@ -4970,7 +5038,7 @@ mod tests {
             value: U256::from(1_000_000_000_000_000_000u64),
             data: Bytes::default(),
             access_list: access_list.clone(),
-            signature_y_parity: false,
+            signature_y_parity: 0u8.into(),
             signature_r: U256::from(1),
             signature_s: U256::from(1),
             ..Default::default()

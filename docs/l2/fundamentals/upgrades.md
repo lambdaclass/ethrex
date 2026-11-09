@@ -6,25 +6,60 @@ Each committed batch stores the git commit hash of the sequencer build that prod
 
 ## Registering a new verification key
 
-To allow proofs from a new sequencer/prover build, register its verification key against the commit hash:
+This is not optional on an upgrade. `commitBatch` rejects a commit hash it holds
+no key for, so an upgraded sequencer commits **nothing** until its key is
+registered: every commit reverts with `MissingVerificationKeyForCommit()`
+(selector `0xf6b9798e`) while the L2 keeps producing blocks, which reads as a
+stuck committer rather than a missing key. Nothing is lost — register the key and
+the pending batch is committed on the next attempt.
 
-1. Compute the commit hash as the Keccak-256 of the (reduced) git commit. For example, the commit `9219410` produces `b9105485bc4ba523201eaaf76478a47b259fa7399bbed795cf19294861b7fc57`.
-2. From the OnChainProposer owner account, send the upgrade transaction. Example (replace addresses and keys with your values):
-   ```
-   rex send <ON_CHAIN_PROPOSER_ADDRESS> \
-     "upgradeSP1VerificationKey(bytes32,bytes32)" \
-     <KECCAK_GIT_COMMIT> \
-     <VERIFICATION_KEY> \
-     --private-key <ON_CHAIN_PROPOSER_OWNER_PK>
-   ```
-3. (Optional) Verify the mapping entry:
-   ```
-   rex call <ON_CHAIN_PROPOSER_ADDRESS> \
-     "verificationKeys(bytes32,uint8)(bytes32)" \
-     <KECCAK_GIT_COMMIT> \
-     <PROVER_ID>
-   ```
-   `1` is the SP1 verifier ID, `2` is RISC0.
+Use `rex l2 register-vk`, which derives the commit hash, routes the call, and
+reads the mapping back:
+
+```
+rex l2 register-vk \
+  --commit <GIT_SHA> \
+  --vk <VERIFICATION_KEY> \
+  --on-chain-proposer <ON_CHAIN_PROPOSER_ADDRESS> \
+  --timelock <TIMELOCK_ADDRESS> \
+  --private-key <SECURITY_COUNCIL_PK>
+```
+
+Add `--prover risc0` for a RISC0 deployment, and `--dry-run` to print the derived
+commit hash and the key currently on chain without sending.
+
+Two details this gets right, and which are easy to get wrong by hand:
+
+- **The hashed value is the full git sha the binary reports**, as ASCII — the
+  segment after `HEAD-` in `ethrex --version`. Hashing an abbreviated sha
+  produces a different key, and the only symptom is that commits keep reverting.
+- **`upgradeSP1VerificationKey` is `onlyOwner`, and that owner is the Timelock**
+  in any deployment made since v9.0.0, so the call must be routed through
+  `emergencyExecute` (Security Council) or Governance `schedule` + `execute`.
+  Sending it straight to the OnChainProposer from an EOA reverts with
+  `OwnableUnauthorizedAccount`.
+
+To read a mapping entry directly (`1` is the SP1 verifier ID, `2` is RISC0):
+
+```
+rex l2 call <ON_CHAIN_PROPOSER_ADDRESS> \
+  "verificationKeys(bytes32,uint8)(bytes32)" \
+  <KECCAK_GIT_COMMIT> \
+  <PROVER_ID>
+```
+
+## Replacing the SP1 verifier
+
+A new verification key is enough while the prover stays on the same SP1 version. A new SP1 version can also change the Groth16 circuit its proofs are wrapped in, and an `SP1VerifierGroth16` contract only accepts proofs from its own circuit: it checks the first four bytes of the proof against its `VERIFIER_HASH` and reverts with `WrongVerifierSelector` otherwise. Moving from SP1 5 to SP1 6 is such a change.
+
+The OnChainProposer reads the verifier from `SP1_VERIFIER_ADDRESS`, the same for every batch. If that is Succinct's [`SP1VerifierGateway`](https://docs.succinct.xyz/docs/sp1/verification/contract-addresses), it routes each proof to the verifier of its SP1 version and there is nothing to replace. If it is a verifier of its own, which is what the deployer creates by default, replace it:
+
+1. Let every batch committed by the old version be verified first, with the old prover: once the verifier is replaced, their proofs no longer verify. `upgradeSP1Verifier` enforces it, reverting with `UnverifiedBatchesPending` while `lastVerifiedBatch` is below `lastCommittedBatch`.
+2. Deploy the new `SP1VerifierGroth16` from [sp1-contracts](https://github.com/succinctlabs/sp1-contracts), at the version that matches the prover's SP1 release (for example `v5.0.0` for SP1 5 and `v6.1.0` for SP1 6).
+3. From the OnChainProposer owner, which is the Timelock on deployments since v9, call `upgradeSP1Verifier(address)` with the new verifier's address, and register the new version's verification key as described above.
+4. Start the new sequencer and prover.
+
+A deployment whose OnChainProposer predates `upgradeSP1Verifier` upgrades its implementation first, and can set the verifier in the same Timelock call: `upgradeToAndCall(<new implementation>, <calldata of upgradeSP1Verifier(<new verifier>)>)`. The same check applies, so the whole call reverts if a batch is still unverified.
 
 ### Verification key artifacts
 
@@ -128,3 +163,13 @@ export $(cat cmd/.env | xargs); export COMPILE_CONTRACTS=true;
 ```bash
 curl -X POST http://localhost:5555/state-updater/stop-at/10
 ```
+
+### Handing over to a new version
+
+The flow above runs the same version on both sequencers. When the second sequencer runs a new release:
+
+- Prover inputs are generated at commit time for the committing version, and a proof coordinator only hands a batch to a prover of that version. A sequencer that stops sequencing also stops sending proofs. So before the handover, stop the first sequencer's committer (`GET /committer/stop`), let its prover verify every batch it committed (`lastVerifiedBatch` equals `lastCommittedBatch`), and then stop that prover. The first sequencer keeps producing blocks meanwhile.
+- Register the new release's verification key before the handover, since the second sequencer cannot commit without it. When the release changes the verifier contract, as SP1 6 does, switch it at the same point: after the old batches are verified and before the new release's first proof.
+- Run a prover of the new release against the second sequencer's proof coordinator. It commits the blocks the first sequencer produced after its committer stopped.
+- Take the first sequencer's enode from its startup log (`Local node initialized enode=...`); the L2 RPC only serves `admin_nodeInfo` when `admin` is in its `--http.api`.
+- After the handover the first sequencer stays at block `N`, so move RPC traffic to the second one before stopping the first.

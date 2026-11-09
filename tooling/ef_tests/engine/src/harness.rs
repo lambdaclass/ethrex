@@ -13,7 +13,7 @@ use ethrex_common::{H256, types::Genesis};
 use ethrex_rpc::{
     RpcApiContext,
     rpc::{map_engine_requests, map_http_requests, rpc_response},
-    utils::{RpcNamespace, RpcRequest, RpcRequestId},
+    utils::{RpcNamespace, RpcRequest},
 };
 
 use crate::engine_ctx::engine_only_context;
@@ -115,13 +115,7 @@ impl EngineApiHarness {
 
     /// Build an RpcRequest and dispatch it directly (no envelope round-trip).
     async fn call(&self, method: &str, params: Vec<Value>) -> anyhow::Result<Value> {
-        let req = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: method.to_string(),
-            params: Some(params),
-        };
-        self.dispatch(req).await
+        self.dispatch(RpcRequest::new(method, Some(params))).await
     }
 
     /// Call `engine_forkchoiceUpdatedVx` with `head` as head, safe, and finalized hash.
@@ -142,11 +136,19 @@ impl EngineApiHarness {
             .await
     }
 
-    /// Call `engine_newPayloadWithWitnessV5` (same params as `engine_newPayloadV5`;
-    /// the response additionally carries the geth-shaped `witness` blob).
-    pub async fn new_payload_with_witness(&self, params: &[Value]) -> anyhow::Result<Value> {
-        self.call("engine_newPayloadWithWitnessV5", params.to_vec())
-            .await
+    /// Call `engine_newPayloadWithWitnessV{version}` (same params as the matching
+    /// `engine_newPayloadV{version}`; the response additionally carries the
+    /// geth-shaped `witness` blob). Only V4 and V5 exist upstream.
+    pub async fn new_payload_with_witness(
+        &self,
+        version: u8,
+        params: &[Value],
+    ) -> anyhow::Result<Value> {
+        self.call(
+            &format!("engine_newPayloadWithWitnessV{version}"),
+            params.to_vec(),
+        )
+        .await
     }
 
     /// Call `eth_getBlockByNumber("0x0", false)` and return the raw JSON response.

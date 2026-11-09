@@ -58,12 +58,7 @@ fn verify_inner(
     execution_witness: ExecutionWitness,
     crypto: Arc<dyn Crypto>,
 ) -> Result<(), ExecutionError> {
-    verify_stateless_block(
-        &input.new_payload_request,
-        &input.public_keys,
-        execution_witness,
-        crypto,
-    )
+    verify_stateless_block(&input.new_payload_request, execution_witness, crypto)
 }
 
 /// Concrete `StatelessValidator` used by the EXECUTE precompile: deserializes

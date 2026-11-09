@@ -1,7 +1,7 @@
 use ethrex_common::{Address, H256, U256, utils::keccak};
 use ethrex_l2_common::messages::NATIVE_ROLLUP_L2_BRIDGE;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use tracing::info;
 
 use crate::{
@@ -34,7 +34,7 @@ pub struct NativeWithdrawalProof {
 }
 
 impl RpcHandler for GetNativeWithdrawalProof {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
             "No params provided".to_owned(),
         ))?;
@@ -46,7 +46,7 @@ impl RpcHandler for GetNativeWithdrawalProof {
             .into());
         }
         Ok(GetNativeWithdrawalProof {
-            transaction_hash: serde_json::from_value(params[0].clone())?,
+            transaction_hash: serde_json::from_str(params[0].get())?,
         })
     }
 

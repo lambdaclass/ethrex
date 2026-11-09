@@ -10,6 +10,10 @@ pub enum EngineClientError {
     RequestError(String),
     #[error("reqwest error: {0}")]
     ReqwestError(#[from] reqwest::Error),
+    #[error("Auth failed: {0}")]
+    Unauthorized(String),
+    #[error("Request rejected with HTTP {0}: {1}")]
+    Rejected(reqwest::StatusCode, String),
     #[error("{0}")]
     FailedDuringExchangeCapabilities(#[from] ExchangeCapabilitiesError),
     #[error("{0}")]

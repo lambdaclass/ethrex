@@ -58,6 +58,17 @@ pub async fn read_file(path: &Path) -> Result<Vec<u8>, SnapError> {
         })
 }
 
+/// Removes a single file asynchronously.
+pub async fn remove_file(path: &Path) -> Result<(), SnapError> {
+    tokio::fs::remove_file(path)
+        .await
+        .map_err(|e| SnapError::FileSystem {
+            operation: "remove file",
+            path: path.to_path_buf(),
+            kind: e.kind(),
+        })
+}
+
 /// Removes a directory and all its contents asynchronously.
 pub async fn remove_dir_all(path: &Path) -> Result<(), SnapError> {
     tokio::fs::remove_dir_all(path)

@@ -6,7 +6,7 @@
 use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::utils::RpcErr;
 use ethrex_blockchain::BlockchainType;
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 
 /// Handler for the `eth_gasPrice` RPC method.
 ///
@@ -28,7 +28,7 @@ use serde_json::Value;
 pub struct GasPrice;
 
 impl RpcHandler for GasPrice {
-    fn parse(_: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(_: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         Ok(GasPrice {})
     }
 
@@ -81,7 +81,7 @@ mod tests {
     use crate::test_utils::default_context_with_storage;
     use crate::{
         rpc::{RpcHandler, map_http_requests},
-        utils::{RpcRequest, parse_json_hex},
+        utils::{RpcRequest, parse_json_hex, value_to_raw},
     };
     use ethrex_common::types::MIN_GAS_TIP;
     use serde_json::json;
@@ -95,7 +95,7 @@ mod tests {
 
         let gas_price = GasPrice {};
         let response = gas_price.handle(context.clone()).await.unwrap();
-        let parsed_result = parse_json_hex(&response).unwrap();
+        let parsed_result = parse_json_hex(&value_to_raw(&response)).unwrap();
         assert_eq!(parsed_result, 2 * BASE_PRICE_IN_WEI);
     }
 
@@ -108,7 +108,7 @@ mod tests {
 
         let gas_price = GasPrice {};
         let response = gas_price.handle(context.clone()).await.unwrap();
-        let parsed_result = parse_json_hex(&response).unwrap();
+        let parsed_result = parse_json_hex(&value_to_raw(&response)).unwrap();
         assert_eq!(parsed_result, 2 * BASE_PRICE_IN_WEI);
     }
 
@@ -121,7 +121,7 @@ mod tests {
 
         let gas_price = GasPrice {};
         let response = gas_price.handle(context.clone()).await.unwrap();
-        let parsed_result = parse_json_hex(&response).unwrap();
+        let parsed_result = parse_json_hex(&value_to_raw(&response)).unwrap();
         assert_eq!(parsed_result, 2 * BASE_PRICE_IN_WEI);
     }
 
@@ -134,7 +134,7 @@ mod tests {
 
         let gas_price = GasPrice {};
         let response = gas_price.handle(context.clone()).await.unwrap();
-        let parsed_result = parse_json_hex(&response).unwrap();
+        let parsed_result = parse_json_hex(&value_to_raw(&response)).unwrap();
         assert_eq!(parsed_result, BASE_PRICE_IN_WEI + MIN_GAS_TIP);
     }
 
@@ -146,7 +146,7 @@ mod tests {
         // genesis base fee is = BASE_PRICE_IN_WEI
         let expected_gas_price = BASE_PRICE_IN_WEI + MIN_GAS_TIP;
         let response = gas_price.handle(context.clone()).await.unwrap();
-        let parsed_result = parse_json_hex(&response).unwrap();
+        let parsed_result = parse_json_hex(&value_to_raw(&response)).unwrap();
         assert_eq!(parsed_result, expected_gas_price);
     }
 

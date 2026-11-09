@@ -1,7 +1,7 @@
 use ethrex_common::types::block_access_list::{AccountChanges, BlockAccessList};
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::encode::RLPEncode;
-use serde_json::{Value, json};
+use serde_json::{Value, json, value::RawValue};
 
 use crate::{
     RpcApiContext, RpcErr, RpcHandler,
@@ -23,18 +23,18 @@ enum ResolvedBal {
     UnknownBlock,
 }
 
-fn parse_block_param(params: &Option<Vec<Value>>) -> Result<BlockIdentifierOrHash, RpcErr> {
+fn parse_block_param(params: &Option<Vec<Box<RawValue>>>) -> Result<BlockIdentifierOrHash, RpcErr> {
     let params = params
         .as_ref()
         .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
     if params.len() != 1 {
         return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
     }
-    BlockIdentifierOrHash::parse(params[0].clone(), 0)
+    BlockIdentifierOrHash::parse_param(&params[0], 0)
 }
 
 impl RpcHandler for BlockAccessListRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         Ok(BlockAccessListRequest {
             block: parse_block_param(params)?,
         })
@@ -49,7 +49,7 @@ impl RpcHandler for BlockAccessListRequest {
 }
 
 impl RpcHandler for RawBlockAccessListRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         Ok(RawBlockAccessListRequest {
             block: parse_block_param(params)?,
         })

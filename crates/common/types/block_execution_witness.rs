@@ -229,8 +229,12 @@ impl RpcExecutionWitness {
 
         // get state trie root and embed the rest of the trie into it
         let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
-            Trie::get_embedded_root_committed(&nodes, initial_state_root, crypto)?
-        {
+            Trie::get_embedded_root_committed(
+                &nodes,
+                initial_state_root,
+                crypto,
+                SECURED_TRIE_KEY_NIBBLES,
+            )? {
             Some((*state_trie_root).clone())
         } else {
             None
@@ -256,7 +260,12 @@ impl RpcExecutionWitness {
                 if !nodes.contains_key(&storage_root_hash) {
                     continue;
                 }
-                let node = Trie::get_embedded_root_committed(&nodes, storage_root_hash, crypto)?;
+                let node = Trie::get_embedded_root_committed(
+                    &nodes,
+                    storage_root_hash,
+                    crypto,
+                    SECURED_TRIE_KEY_NIBBLES,
+                )?;
                 let NodeRef::Node(node, _) = node else {
                     return Err(GuestProgramStateError::Custom(
                         "execution witness does not contain non-empty storage trie".to_string(),
@@ -363,8 +372,12 @@ where
     // reuses the known value instead of re-encoding and re-hashing the whole trie.
     // Sound here because `nodes` is keyed by the hash of the very bytes it decodes.
     let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
-        Trie::get_embedded_root_committed(&nodes, initial_state_root, crypto)?
-    {
+        Trie::get_embedded_root_committed(
+            &nodes,
+            initial_state_root,
+            crypto,
+            SECURED_TRIE_KEY_NIBBLES,
+        )? {
         Some((*state_trie_root).clone())
     } else {
         None
@@ -380,7 +393,12 @@ where
             if storage_root_hash == EMPTY_TRIE_HASH || !nodes.contains_key(&storage_root_hash) {
                 continue;
             }
-            let node = Trie::get_embedded_root_committed(&nodes, storage_root_hash, crypto)?;
+            let node = Trie::get_embedded_root_committed(
+                &nodes,
+                storage_root_hash,
+                crypto,
+                SECURED_TRIE_KEY_NIBBLES,
+            )?;
             let NodeRef::Node(node, _) = node else {
                 return Err(GuestProgramStateError::Custom(
                     "execution witness does not contain non-empty storage trie".to_string(),
@@ -516,6 +534,11 @@ fn collect_accounts_from_trie(
     }
 }
 
+/// Nibbles in a secured trie key: the keccak of an address or of a storage slot.
+/// Embedding rejects a witness trie whose paths do not end there
+/// (`test_witness_state_rejects_overlength_secured_trie_path`).
+const SECURED_TRIE_KEY_NIBBLES: usize = 64;
+
 #[derive(thiserror::Error, Debug)]
 pub enum GuestProgramStateError {
     #[error("Failed to rebuild tries: {0}")]
@@ -621,7 +644,12 @@ impl GuestProgramState {
         account_updates: &[AccountUpdate],
         crypto: &dyn Crypto,
     ) -> Result<(), GuestProgramStateError> {
-        for update in account_updates.iter() {
+        // Apply in address order, as the host does while recording the witness. A removal
+        // that leaves a branch with one child reads that child, so the order decides which
+        // nodes the witness must hold; the list comes from a seeded map, so it is not sorted.
+        let mut ordered: Vec<&AccountUpdate> = account_updates.iter().collect();
+        ordered.sort_unstable_by_key(|update| update.address);
+        for update in ordered {
             let hashed_address = *self
                 .account_hashes_by_address
                 .entry(update.address)
@@ -1175,5 +1203,174 @@ mod amsterdam_chain_config_tests {
             config.deposit_contract_address,
             crate::constants::MAINNET_DEPOSIT_CONTRACT_ADDRESS
         );
+    }
+}
+
+#[cfg(test)]
+mod storage_leaf_decoding_tests {
+    use super::*;
+    use ethrex_crypto::NativeCrypto;
+
+    /// A state holding one account whose storage trie maps `slot` to `leaf`,
+    /// stored verbatim as the trie value so malformed encodings reach the reader.
+    fn state_with_storage_leaf(address: Address, slot: H256, leaf: Vec<u8>) -> GuestProgramState {
+        let crypto = &NativeCrypto;
+        let mut storage_trie = Trie::new_temp();
+        storage_trie
+            .insert(hash_key(&slot, crypto), leaf)
+            .expect("insert storage leaf");
+        let storage_root = storage_trie.hash_no_commit(crypto);
+
+        let hashed_address = hash_address(&address, crypto);
+        let account = AccountState {
+            storage_root,
+            ..Default::default()
+        };
+        let mut state_trie = Trie::new_temp();
+        state_trie
+            .insert(hashed_address.as_bytes().to_vec(), account.encode_to_vec())
+            .expect("insert account");
+
+        GuestProgramState {
+            codes_hashed: BTreeMap::new(),
+            block_headers: BTreeMap::new(),
+            state_trie,
+            parent_block_header: BlockHeader::default(),
+            first_block_number: 0,
+            chain_config: ChainConfig::default(),
+            storage_tries: BTreeMap::from([(hashed_address, storage_trie)]),
+            account_hashes_by_address: BTreeMap::new(),
+            verified_storage_roots: BTreeMap::new(),
+        }
+    }
+
+    fn read(leaf: &[u8]) -> Result<Option<U256>, GuestProgramStateError> {
+        let address = Address::from_low_u64_be(0xaa);
+        let slot = H256::from_low_u64_be(1);
+        state_with_storage_leaf(address, slot, leaf.to_vec()).get_storage_slot(
+            address,
+            slot,
+            &NativeCrypto,
+        )
+    }
+
+    /// A storage leaf must decode as a canonical RLP `U256` or the read fails.
+    ///
+    /// execution-specs #3659 (tests-zkevm@v21.0.1) replaced a lenient decode that
+    /// returned zero for a list-shaped leaf with `rlp.decode_to(U256, leaf)`, so a
+    /// malformed leaf now fails validation. No conformance fixture carries one,
+    /// which leaves this test as the only guard: a reader that fell back to zero
+    /// would let a witness forge an empty slot. The cases mirror what
+    /// `rlp.decode_to(U256, ...)` accepts and rejects.
+    #[test]
+    fn malformed_storage_leaves_fail_instead_of_reading_as_zero() {
+        for (leaf, expected) in [
+            (&[0x80][..], U256::zero()),
+            (&[0x01][..], U256::one()),
+            (&[0x82, 0x01, 0x00][..], U256::from(256)),
+        ] {
+            assert_eq!(
+                read(leaf).expect("canonical leaf must decode"),
+                Some(expected),
+                "leaf 0x{}",
+                hex::encode(leaf)
+            );
+        }
+
+        let oversized: Vec<u8> = [&[0xa1u8][..], &[0x01; 33][..]].concat();
+        for (leaf, what) in [
+            (&[0x82, 0x00, 0x01][..], "leading zero byte"),
+            (&[0x81, 0x01][..], "single byte wrapped in a length prefix"),
+            (&[0xc0][..], "empty list"),
+            (&[0xc1, 0x01][..], "list holding a value"),
+            (&oversized[..], "33-byte value"),
+            (&[0x01, 0x01][..], "trailing byte"),
+        ] {
+            assert!(
+                read(leaf).is_err(),
+                "a {what} leaf (0x{}) must fail the read, not decode",
+                hex::encode(leaf)
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod secured_trie_path_tests {
+    use super::*;
+    use ethrex_crypto::NativeCrypto;
+
+    /// Builds a trie mapping every key to an empty account and returns its root plus
+    /// the nodes on the keys' paths, which is what a witness carries for them.
+    fn trie_over(keys: &[Vec<u8>]) -> (H256, BTreeSet<Vec<u8>>) {
+        let mut trie = Trie::new_temp();
+        for key in keys {
+            trie.insert(key.clone(), AccountState::default().encode_to_vec())
+                .expect("insert");
+        }
+        let mut nodes = BTreeSet::new();
+        for key in keys {
+            nodes.extend(trie.get_proof(key).expect("proof"));
+        }
+        (trie.hash_no_commit(&NativeCrypto), nodes)
+    }
+
+    fn rebuild(root: H256, nodes: BTreeSet<Vec<u8>>) -> Result<(), GuestProgramStateError> {
+        rebuild_state_and_storage_tries(nodes, root, &NativeCrypto).map(|_| ())
+    }
+
+    fn assert_rejected(result: Result<(), GuestProgramStateError>) {
+        assert!(
+            matches!(
+                result,
+                Err(GuestProgramStateError::Trie(TrieError::KeyLengthMismatch))
+            ),
+            "expected the secured-path check to reject the trie, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_a_trie_keyed_by_hashes() {
+        let (root, nodes) = trie_over(&[vec![0x11; 32], vec![0x22; 32]]);
+        rebuild(root, nodes).expect("64-nibble keys are the secured key length");
+    }
+
+    #[test]
+    fn rejects_a_leaf_past_the_key_length() {
+        // One key, so the root itself is a 66-nibble leaf.
+        let (root, nodes) = trie_over(&[vec![0x11; 33]]);
+        assert_rejected(rebuild(root, nodes));
+    }
+
+    #[test]
+    fn rejects_leaves_that_run_past_the_key_length_below_a_branch() {
+        // The keys split at the first nibble, so a branch holds two 65-nibble leaves
+        // that each end one nibble past the key.
+        let (root, nodes) = trie_over(&[vec![0x11; 33], vec![0x22; 33]]);
+        assert_rejected(rebuild(root, nodes));
+    }
+
+    #[test]
+    fn rejects_a_leaf_short_of_the_key_length() {
+        let (root, nodes) = trie_over(&[vec![0x11; 31]]);
+        assert_rejected(rebuild(root, nodes));
+    }
+
+    #[test]
+    fn rejects_an_overlength_storage_trie() {
+        let crypto = &NativeCrypto;
+        let (storage_root, storage_nodes) = trie_over(&[vec![0x33; 33]]);
+        let mut state_trie = Trie::new_temp();
+        let hashed_address = vec![0x44; 32];
+        let account = AccountState {
+            storage_root,
+            ..Default::default()
+        };
+        state_trie
+            .insert(hashed_address.clone(), account.encode_to_vec())
+            .expect("insert account");
+        let mut nodes = storage_nodes;
+        nodes.extend(state_trie.get_proof(&hashed_address).expect("proof"));
+        assert_rejected(rebuild(state_trie.hash_no_commit(crypto), nodes));
     }
 }

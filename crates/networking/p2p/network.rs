@@ -126,7 +126,7 @@ pub enum NetworkError {
 }
 
 /// The ENR this node publishes: whatever `local_node` advertises, plus our own
-/// EIP-2124 fork id.
+/// EIP-2124 fork id and the `snap` entry.
 ///
 /// Built here rather than inside discovery, which has no say in what this node
 /// announces about itself.
@@ -143,12 +143,27 @@ pub enum NetworkError {
 async fn build_local_node_record(
     context: &P2PContext,
 ) -> Result<(NodeRecord, Option<ForkId>), NodeError> {
-    let mut record = NodeRecord::from_node(&context.local_node, INITIAL_ENR_SEQ, &context.signer)?;
     let fork_id = context.storage.get_fork_id().await.ok();
-    if let Some(fork_id) = fork_id.clone() {
-        record.set_fork_id(fork_id, &context.signer)?;
-    }
+    let record = local_node_record(&context.local_node, fork_id.clone(), &context.signer)?;
     Ok((record, fork_id))
+}
+
+/// Every connection offers snap (see
+/// [`advertised_snap_capabilities`](crate::rlpx::p2p::advertised_snap_capabilities)),
+/// so the record always carries the `snap` entry, listing the served versions
+/// (ethereum/devp2p#286). DNS discovery lists such as the EIP-1459 `snap.*` trees
+/// select snap servers by this entry.
+pub(crate) fn local_node_record(
+    node: &Node,
+    fork_id: Option<ForkId>,
+    signer: &SecretKey,
+) -> Result<NodeRecord, NodeError> {
+    let mut record = NodeRecord::from_node(node, INITIAL_ENR_SEQ, signer)?;
+    record.edit(signer, |pairs| {
+        pairs.eth = fork_id;
+        pairs.snap = Some(vec![1, 2]);
+    })?;
+    Ok(record)
 }
 
 pub async fn start_network(
@@ -565,7 +580,7 @@ async fn phase_metrics(step: CurrentStepValue, phase_start: &PhaseCounters) -> S
                 .global_storage_tries_leafs_healed
                 .load(Ordering::Relaxed)
                 .saturating_sub(phase_start.healed_storage);
-            format!("{} storage accounts healed", format_thousands(healed))
+            format!("{} storage slots healed", format_thousands(healed))
         }
         CurrentStepValue::RequestingBytecodes => {
             let downloaded = METRICS

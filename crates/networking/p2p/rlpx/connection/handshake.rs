@@ -6,9 +6,9 @@ use super::{
 use crate::rlpx::l2::l2_connection::L2ConnState;
 use crate::{
     rlpx::{
-        connection::server::{ConnectionState, Established},
+        connection::server::{ConnectionId, ConnectionState, Established, WindowCounter},
         error::PeerConnectionError,
-        message::EthCapVersion,
+        message::{EthCapVersion, SnapCapVersion},
         utils::{compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, sha256, sha256_hmac},
     },
     types::Node,
@@ -61,6 +61,7 @@ pub(crate) struct LocalState {
 pub(crate) async fn perform(
     state: ConnectionState,
     eth_version: Arc<RwLock<EthCapVersion>>,
+    snap_version: Arc<RwLock<Option<SnapCapVersion>>>,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), PeerConnectionError> {
     let (context, node, framed, is_inbound) = match state {
         ConnectionState::Initiator(Initiator { context, node }) => {
@@ -79,7 +80,13 @@ pub(crate) async fn perform(
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
                 keccak_hash([remote_state.nonce.0, local_state.nonce.0].concat());
-            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
+            let codec = RLPxCodec::new(
+                &local_state,
+                &remote_state,
+                hashed_nonces,
+                eth_version,
+                snap_version,
+            )?;
             trace!(peer=%node, "Completed handshake as initiator");
             (context, node, Framed::new(stream, codec), false)
         }
@@ -99,7 +106,13 @@ pub(crate) async fn perform(
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
                 keccak_hash([local_state.nonce.0, remote_state.nonce.0].concat());
-            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
+            let codec = RLPxCodec::new(
+                &local_state,
+                &remote_state,
+                hashed_nonces,
+                eth_version,
+                snap_version,
+            )?;
             let node = Node::new(
                 peer_addr.ip(),
                 peer_addr.port(),
@@ -158,8 +171,11 @@ pub(crate) async fn perform(
             current_requests: HashMap::new(),
             disconnect_reason: None,
             is_validated: false,
-            serve_request_window_start: std::time::Instant::now(),
-            serve_requests_in_window: 0,
+            serve_requests: WindowCounter::new(),
+            announced_hashes: WindowCounter::new(),
+            short_tx_answer_strikes: 0,
+            connection_id: ConnectionId::next(),
+            registered_in_peer_table: false,
             txs_sent_to_peer: 0,
             received_txs_from_peer: false,
             missed_pongs: 0,

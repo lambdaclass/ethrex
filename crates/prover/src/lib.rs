@@ -18,6 +18,3 @@ pub use crate::backend::Risc0Backend;
 
 #[cfg(feature = "zisk")]
 pub use crate::backend::ZiskBackend;
-
-#[cfg(feature = "openvm")]
-pub use crate::backend::OpenVmBackend;

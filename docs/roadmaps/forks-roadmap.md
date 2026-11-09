@@ -17,17 +17,12 @@ Next fork: **Glamsterdam** (CL Gloas, EL Amsterdam). Mainnet date not yet schedu
 **glamsterdam-devnet-8**
 
 - Spec baseline: [`devnets/glamsterdam/8`](https://github.com/ethereum/execution-specs/tree/devnets/glamsterdam/8)
-- Fixtures: [`tests-glamsterdam-devnet@v8.1.1`](https://github.com/ethereum/execution-specs/releases/tag/tests-glamsterdam-devnet@v8.1.1)
-- EELS commit: `32f597f7e56e3843198a83c7cf437a0b49aa6c0e` (the v8.1.1 tag, also the tip of `devnets/glamsterdam/8`)
-- Status: 🟢 aligned — blockchain, state and engine ef-tests green on the v8.1.1 bundle
+- Fixtures: [`tests@v21.0.1`](https://github.com/ethereum/execution-specs/releases/tag/tests@v21.0.1), a coverage-only follow-up to `tests@v21.0.0`, the first mainnet bundle to carry Amsterdam, which is why there is no longer a separate devnet pin
+- EELS commit: `1562e2f8b5cb1efda7e0d7c517f2dfb5742c0a43`
+- Status: 🟢 aligned, blockchain, state and engine ef-tests green on the v21.0.1 bundle
 - Tracking: [#6583]
 
-**Bumping to a new bundle:** edit `tooling/ef_tests/.fixtures_url_amsterdam` and
-`.github/config/hive/amsterdam.yaml` (`fixtures` + `eels_commit`) — both, always, since
-grading one release's client against another's bundle fails every fixture the releases
-disagree on — then re-run the three ef-test suites and hive `eels/consume-engine`
-Amsterdam. Upstream expects at least two follow-up releases on this devnet; v8.1.0 and
-v8.1.1 have shipped, carrying coverage rather than new semantics.
+**Bumping to a new bundle:** edit `tooling/ef_tests/.fixtures_url` and `.github/config/hive/amsterdam.yaml` (`fixtures` plus `eels_commit`), both, always, since grading one release's client against another's bundle fails every fixture the releases disagree on, then re-run the three ef-test suites and hive `eels/consume-engine` Amsterdam. The overlay file that used to add the devnet bundle on top of the mainnet one is gone: v21.0.0 ships more Amsterdam fixtures than the last devnet release did (`for_amsterdam` 3277 against 3118, `for_bpo2toamsterdamattime15k` 58 against 41), so an overlay would now downgrade coverage instead of adding to it.
 
 v8.1.1 was announced as coverage-only, which holds for the numbers: the amsterdam fork
 diff is a `Uint` -> `ExecutionGas` type-wrapper refactor with every value unchanged. One
@@ -43,7 +38,7 @@ matched, since `calc_excess_blob_gas` reads the parent unconditionally.
 | **EIP-8070 (eth/72)** | Mandatory for all ELs on devnet-8. In review at [#6776]. Ships no fixtures and hive covers it execute-only ([hive#1365]), so the bundle gives it zero coverage either way — needs an `execute` sim wired up. |
 | **`debug_getRawBlockAccessList`** | Protocol-side requirement per [execution-apis#851](https://github.com/ethereum/execution-apis/pull/851) (merged), along with `-32001`/`4444` for the BAL getters. Implemented by [#7069]. |
 | **EIP-8038 spec text** | The v8.0.0 access-list repricing landed in the tests ahead of its EIPs PR. Confirm the EIP matches once that merges. |
-| **`eth_simulateV1`** | Still unimplemented. Tracked at [#6212]. |
+| **`eth_simulateV1`** | Implemented ([#6212]): multi-block simulation with state/block overrides, `validation`, `traceTransfers` and `returnFullTransactions`, spec error codes (-38010..-38026). Engine in `crates/blockchain/simulate.rs`, handler in `crates/networking/rpc/eth/simulate.rs`. A simulated Amsterdam block models EIP-8037 two-dimensional gas and commits to its EIP-7928 Block Access List, and `movePrecompileToAddress` is applied rather than only validated. One known divergence, pinned by tests: `maxUsedGas` omits the EIP-7623 calldata-floor term that geth and reth both apply, so a calldata-heavy call that also earns a refund reports more gas than they do. The hive `rpc-compat` pin predates the `eth_simulateV1` test corpus, so CI does not exercise it yet; conformance is covered by ported `.io` scenarios in the RPC crate's tests. |
 | **EIP-8189 (snap/2)** | BAL-based state healing, newly listed in [EIP-7773]. Not evaluated. |
 | **EIP-7904** | Informational compute-gas analysis; only a Nethermind draft ([#9619]) exists. Revisit if it reaches SFI. |
 
@@ -108,8 +103,11 @@ Glamsterdam declined 47 EIPs per [EIP-7773], including EIP-7692 (EOF) and EIP-79
 
 The fork enum lives in `crates/common/types/genesis.rs`, ending at `Amsterdam`;
 activation timestamps are `ChainConfig` fields, with `bpo1_time`..`bpo5_time` already
-defined for the BPOs and Hegotá. Amsterdam timestamps are wired into the holesky, sepolia
-and hoodi genesis files under `cmd/ethrex/networks/`.
+defined for the BPOs and Hegotá. Amsterdam is scheduled on Sepolia (`amsterdamTime`
+1791294816, 2026-10-06 13:53:36 UTC, epoch 353024; ethereum/pm#2205, EIP-7773) in
+`cmd/ethrex/networks/sepolia/genesis.json`. Hoodi's 2026-10-26 activation was unscheduled
+(eth-clients/hoodi#33) and the mainnet date is still TBD upstream, so their presets carry no
+`amsterdamTime` yet.
 
 ---
 

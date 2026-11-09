@@ -40,7 +40,10 @@ x-ethrex-common: &ethrex-common
   # Only mainnet maps to host port 3701 (scraped by centralized Prometheus).
 
 x-consensus-common: &consensus-common
-  image: sigp/lighthouse:v8.0.1
+  # v8.3.0-rc.0 is the only Lighthouse release that ships the Sepolia Gloas
+  # config; older ones stop following Sepolia at the fork (2026-10-06).
+  # Move to v8.3.0 once it is out.
+  image: sigp/lighthouse:v8.3.0-rc.0
   restart: unless-stopped
 
 services:

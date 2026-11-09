@@ -437,8 +437,12 @@ pub async fn init_rpc_api(
         get_client_version(),
         log_filter_handler,
         opts.gas_limit,
+        opts.rpc_gas_cap,
         opts.extra_data.clone(),
         opts.http_api.iter().copied().collect(),
+        get_log_query_limits(opts),
+        // Saturating: the budget is clamped to what the semaphore can count anyway.
+        usize::try_from(opts.authrpc_max_inflight_body_size).unwrap_or(usize::MAX),
     )
     .await?;
 
@@ -744,6 +748,15 @@ pub fn get_http_socket_addr(opts: &Options) -> SocketAddr {
         .expect("Failed to parse http address and port")
 }
 
+pub fn get_log_query_limits(opts: &Options) -> ethrex_rpc::LogQueryLimits {
+    ethrex_rpc::LogQueryLimits::new(
+        opts.rpc_max_blocks_per_filter,
+        opts.rpc_max_logs_per_response,
+        opts.rpc_max_log_query_work,
+        opts.rpc_log_query_work_budget,
+    )
+}
+
 /// Two configured listener addresses conflict when they are equal, or when they share a
 /// port and one side is a same-family wildcard: Linux fails the second bind with
 /// EADDRINUSE, but on macOS/BSD `SO_REUSEADDR` lets the specific bind succeed and silently
@@ -861,10 +874,13 @@ pub async fn init_l1(
 
     // An explicit size skips memory detection entirely; the default path runs
     // it once and logs the derivation.
-    let store_config = opts
-        .rocksdb_block_cache_size
-        .map(StoreConfig::with_rocksdb_block_cache_size)
-        .unwrap_or_default();
+    let store_config = StoreConfig {
+        code_cache_size: opts.code_cache_size,
+        ..opts
+            .rocksdb_block_cache_size
+            .map(StoreConfig::with_rocksdb_block_cache_size)
+            .unwrap_or_default()
+    };
     let store_result = if opts.skip_genesis_validation {
         init_store_skip_validation_with_config(&datadir, genesis, store_config).await
     } else {
@@ -1163,8 +1179,8 @@ pub async fn regenerate_head_state(
         unreachable!("Database is empty, genesis block should be present");
     };
 
-    // The persist worker journals every committed trie layer under its block
-    // number. An entry above the head means the full-sync batch that produced it
+    // The persist worker journals every trie layer it commits above the head under
+    // its block number. An entry above the head means the full-sync batch that produced it
     // was interrupted before its forkchoice update, and the walk below would
     // descend to genesis (or to the snap pivot) without a hit: the only state on
     // disk is above the head. Try the O(1) recovery first.
@@ -1256,8 +1272,10 @@ pub async fn regenerate_head_state(
 /// store) belongs to a later block, and the downward walk in
 /// `regenerate_head_state` can never find it.
 ///
-/// The persist worker journals every layer it commits into `STATE_HISTORY`, keyed
-/// by block number and carrying the block hash, and it flushes the block data up
+/// The persist worker journals every layer it commits above the head into
+/// `STATE_HISTORY`, keyed by block number and carrying the block hash (it may skip
+/// layers at or below both the head and finality, which this never needs), and it
+/// flushes the block data up
 /// to and including the block being executed before each commit. So the newest
 /// journal entry names the block whose post-state is on disk, and the headers
 /// from there back to the head are on disk by hash. Verify the root, walk the

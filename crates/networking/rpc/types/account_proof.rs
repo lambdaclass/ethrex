@@ -18,7 +18,9 @@ pub struct AccountProof {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StorageProof {
-    pub key: U256,
+    /// The requested key in its echo form: 32 bytes when given with 63 or 64
+    /// hex digits, otherwise a minimal quantity.
+    pub key: String,
     #[serde(serialize_with = "serialize_proofs")]
     pub proof: Vec<Vec<u8>>,
     pub value: U256,

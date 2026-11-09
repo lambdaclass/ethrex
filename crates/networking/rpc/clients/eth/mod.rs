@@ -129,25 +129,35 @@ pub fn estimate_gas_call_object(transaction: GenericTransaction) -> Result<Value
     // the fee configs entirely (`adjust_disabled_l2_fees`), so the estimate comes back
     // without the L1 data fee gas that the submitted transaction is charged — and the
     // transaction then runs out of gas at exactly its estimate.
+    //
+    // Use only one of gas_price and max_fee_per_gas: some nodes reject a call object
+    // carrying both, even when estimating.
+    //
+    // Send the one that gives a non-zero price. The server computes
+    // min(tip + basefee, max_fee_per_gas), so a zero or missing cap means zero whatever
+    // the tip is, and gas_price is the better choice then.
+    let has_fee_cap = transaction.max_fee_per_gas.is_some_and(|cap| cap != 0);
     if let Value::Object(ref mut map) = data {
-        if let Some(max_fee_per_gas) = transaction.max_fee_per_gas {
-            map.insert(
-                "maxFeePerGas".to_owned(),
-                json!(format!("{max_fee_per_gas:#x}")),
-            );
-        }
-        if let Some(max_priority_fee_per_gas) = transaction.max_priority_fee_per_gas {
-            map.insert(
-                "maxPriorityFeePerGas".to_owned(),
-                json!(format!("{max_priority_fee_per_gas:#x}")),
-            );
-        }
-        if !transaction.gas_price.is_zero() {
+        if !has_fee_cap && !transaction.gas_price.is_zero() {
             map.insert(
                 "gasPrice".to_owned(),
                 json!(format!("{:#x}", transaction.gas_price)),
             );
+        } else {
+            if let Some(max_fee_per_gas) = transaction.max_fee_per_gas {
+                map.insert(
+                    "maxFeePerGas".to_owned(),
+                    json!(format!("{max_fee_per_gas:#x}")),
+                );
+            }
+            if let Some(max_priority_fee_per_gas) = transaction.max_priority_fee_per_gas {
+                map.insert(
+                    "maxPriorityFeePerGas".to_owned(),
+                    json!(format!("{max_priority_fee_per_gas:#x}")),
+                );
+            }
         }
+
         if let Some(max_fee_per_blob_gas) = transaction.max_fee_per_blob_gas {
             map.insert(
                 "maxFeePerBlobGas".to_owned(),
@@ -741,11 +751,13 @@ mod estimate_gas_call_object_tests {
     /// genuinely fee-less call still reaches the relaxed path.
     #[test]
     fn carries_gas_price_only_when_set() {
-        let with_price = GenericTransaction {
+        let legacy = GenericTransaction {
+            to: TxKind::Create,
+            from: Address::repeat_byte(0xaa),
             gas_price: U256::from(7u64),
-            ..eip1559_tx()
+            ..Default::default()
         };
-        let data = estimate_gas_call_object(with_price).expect("call object should build");
+        let data = estimate_gas_call_object(legacy.clone()).expect("call object should build");
         assert_eq!(
             data.as_object()
                 .and_then(|o| o.get("gasPrice"))
@@ -753,10 +765,159 @@ mod estimate_gas_call_object_tests {
             Some("0x7"),
         );
 
-        let data = estimate_gas_call_object(eip1559_tx()).expect("call object should build");
+        let data = estimate_gas_call_object(GenericTransaction {
+            gas_price: U256::zero(),
+            ..legacy
+        })
+        .expect("call object should build");
         assert!(
             data.as_object().expect("object").get("gasPrice").is_none(),
             "a zero gasPrice must be omitted rather than sent as 0x0: {data}"
+        );
+    }
+
+    /// `build_generic_tx` mirrors the fee cap into `gas_price` for the legacy fallback in
+    /// `TryFrom<GenericTransaction>`, so every 1559 transaction reaches the call object
+    /// with both fields populated. A node holding to geth's rule rejects a call object
+    /// naming both fee modes — "both gasPrice and (maxFeePerGas or maxPriorityFeePerGas)
+    /// specified" — even when it is only being asked to estimate, which is how the
+    /// committer's estimate started failing against such a node.
+    #[test]
+    fn never_names_both_fee_modes() {
+        let mirrored = GenericTransaction {
+            gas_price: U256::from(2_000_000_000u64),
+            ..eip1559_tx()
+        };
+        let data = estimate_gas_call_object(mirrored).expect("call object should build");
+        let object = data.as_object().expect("call object is a JSON object");
+
+        assert_eq!(
+            object.get("maxFeePerGas").and_then(|v| v.as_str()),
+            Some("0x77359400"),
+            "the fees the transaction will pay are still sent: {data}"
+        );
+        // Without this, dropping the tip insert would still pass the asserts above.
+        assert_eq!(
+            object.get("maxPriorityFeePerGas").and_then(|v| v.as_str()),
+            Some("0x3b9aca00"),
+            "the tip is half of the price the server resolves: {data}"
+        );
+        assert!(
+            object.get("gasPrice").is_none(),
+            "gasPrice must not accompany the 1559 fee fields: {data}"
+        );
+    }
+
+    /// `estimate_gas` is public, so check every combination, not just the ones
+    /// `build_generic_tx` produces.
+    #[test]
+    fn no_fee_combination_names_both_modes() {
+        for cap in [None, Some(0), Some(2_000_000_000)] {
+            for tip in [None, Some(0), Some(1_000_000_000)] {
+                for gas_price in [U256::zero(), U256::from(7u64)] {
+                    let data = estimate_gas_call_object(GenericTransaction {
+                        max_fee_per_gas: cap,
+                        max_priority_fee_per_gas: tip,
+                        gas_price,
+                        ..eip1559_tx()
+                    })
+                    .expect("call object should build");
+                    let object = data.as_object().expect("call object is a JSON object");
+
+                    let legacy = object.contains_key("gasPrice");
+                    let dynamic = object.contains_key("maxFeePerGas")
+                        || object.contains_key("maxPriorityFeePerGas");
+                    assert!(
+                        !(legacy && dynamic),
+                        "cap {cap:?}, tip {tip:?}, gas_price {gas_price} named both: {data}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A zero cap gives a zero price, so `gas_price` is sent instead.
+    #[test]
+    fn an_unusable_cap_yields_to_a_usable_gas_price() {
+        let zero_cap = GenericTransaction {
+            max_fee_per_gas: Some(0),
+            gas_price: U256::from(7u64),
+            ..eip1559_tx()
+        };
+        let data = estimate_gas_call_object(zero_cap).expect("call object should build");
+        let object = data.as_object().expect("call object is a JSON object");
+
+        assert_eq!(
+            object.get("gasPrice").and_then(|v| v.as_str()),
+            Some("0x7"),
+            "the only fee that prices the call must survive: {data}"
+        );
+        assert!(
+            !object.contains_key("maxFeePerGas") && !object.contains_key("maxPriorityFeePerGas"),
+            "a zero cap must not accompany gasPrice: {data}"
+        );
+    }
+
+    /// A tip with no cap gives a zero price too.
+    #[test]
+    fn a_capless_tip_yields_to_a_usable_gas_price() {
+        let capless = GenericTransaction {
+            max_fee_per_gas: None,
+            gas_price: U256::from(7u64),
+            ..eip1559_tx()
+        };
+        let data = estimate_gas_call_object(capless).expect("call object should build");
+        let object = data.as_object().expect("call object is a JSON object");
+
+        assert_eq!(
+            object.get("gasPrice").and_then(|v| v.as_str()),
+            Some("0x7"),
+            "a tip alone cannot lift min(tip + basefee, 0) off zero: {data}"
+        );
+        assert!(
+            !object.contains_key("maxPriorityFeePerGas"),
+            "the tip must not accompany gasPrice: {data}"
+        );
+    }
+
+    /// With no `gas_price` either, send the 1559 fields anyway: there is nothing better,
+    /// and `gasPrice` still cannot appear next to them.
+    #[test]
+    fn an_unusable_cap_is_still_sent_when_nothing_better_exists() {
+        let data = estimate_gas_call_object(GenericTransaction {
+            max_fee_per_gas: None,
+            gas_price: U256::zero(),
+            ..eip1559_tx()
+        })
+        .expect("call object should build");
+        let object = data.as_object().expect("call object is a JSON object");
+
+        assert_eq!(
+            object.get("maxPriorityFeePerGas").and_then(|v| v.as_str()),
+            Some("0x3b9aca00"),
+        );
+        assert!(!object.contains_key("gasPrice"), "{data}");
+    }
+
+    /// Checks the pairing only, not which of the two fields survives, so it holds
+    /// whichever way the branch resolves a tip without a cap.
+    #[test]
+    fn a_tip_alone_never_pairs_with_gas_price() {
+        let tip_only = GenericTransaction {
+            max_fee_per_gas: None,
+            gas_price: U256::from(7u64),
+            ..eip1559_tx()
+        };
+        let data = estimate_gas_call_object(tip_only).expect("call object should build");
+        let object = data.as_object().expect("call object is a JSON object");
+
+        assert!(
+            !(object.contains_key("gasPrice") && object.contains_key("maxPriorityFeePerGas")),
+            "gasPrice and maxPriorityFeePerGas must never both be named: {data}"
+        );
+        assert!(
+            object.contains_key("gasPrice") || object.contains_key("maxPriorityFeePerGas"),
+            "naming neither is not the way to avoid naming both: {data}"
         );
     }
 }

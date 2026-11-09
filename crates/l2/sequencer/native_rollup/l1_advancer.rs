@@ -276,7 +276,7 @@ pub fn build_ssz_stateless_input(
 ) -> Result<Vec<u8>, String> {
     use ethrex_common::types::stateless_ssz::*;
     use libssz::SszEncode;
-    use libssz_types::{ProgressiveList, SszList, SszVector};
+    use libssz_types::{ProgressiveList, SszList};
 
     // 1. Convert Block → SSZ ExecutionPayload
     // Both levels are progressive lists since #3248, so neither can overflow a
@@ -287,28 +287,6 @@ pub fn build_ssz_stateless_input(
         .map(|tx| tx.encode_canonical_to_vec().into())
         .collect();
     let ssz_transactions: ProgressiveList<ProgressiveList<u8>> = transactions.into();
-
-    // One uncompressed secp256k1 key per transaction, in transaction order, so the
-    // consumer can check senders without running `ecrecover` (#6716). Every
-    // transaction here is signature-bearing — the EXECUTE precompile rejects the
-    // signature-less variants — so a `None` is a real inconsistency, not a case to
-    // skip; skipping would shorten the list and fail the length check anyway.
-    let public_keys = body
-        .transactions
-        .iter()
-        .enumerate()
-        .map(|(i, tx)| {
-            let key = tx
-                .public_key(&NativeCrypto)
-                .map_err(|e| format!("failed to recover public key for transaction {i}: {e}"))?
-                .ok_or_else(|| {
-                    format!("transaction {i} carries no signature to recover a public key from")
-                })?;
-            SszVector::try_from(key.to_vec())
-                .map_err(|e| format!("public key for transaction {i} is not 65 bytes: {e:?}"))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    let ssz_public_keys: SszPublicKeys = ProgressiveList::from(public_keys);
 
     let ssz_withdrawals = ProgressiveList::new(); // Empty for L2
 
@@ -387,7 +365,6 @@ pub fn build_ssz_stateless_input(
         // #3278: only the chain id crosses the wire. The consumer derives the rest
         // from (chain_id, fork), with the fork coming from the schema-id prefix.
         chain_id: witness.chain_config.chain_id,
-        public_keys: ssz_public_keys,
     };
 
     // 5. Serialize to schema-prefixed SSZ bytes. The 2-byte big-endian schema id

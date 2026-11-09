@@ -5,8 +5,11 @@ on:
     branches: ["**"]
     paths:
       - ".github/**.yaml"
-      - ".github/*.yml"
+      # `*` doesn't cross `/`, so `.github/*.yml` missed every `.yml` workflow.
+      - ".github/**.yml"
       - ".github/actions/**"
+      # A relock that only touches the lockfile must still be verified.
+      - ".github/workflows/actions.lock"
       # Without this, editing a script under .github/scripts would not run the
       # jobs below that exercise those scripts.
       - ".github/scripts/**"
@@ -24,10 +27,10 @@ concurrency:
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Install actionlint
         run: bash <(curl -s https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
@@ -35,12 +38,33 @@ jobs:
       - name: Run actionlint
         run: ./actionlint -ignore SC2086 -ignore SC2006 -ignore SC2046
 
-  image-meta:
-    name: build-docker image-meta
-    runs-on: ubuntu-latest
+  actions-lock:
+    name: Verify actions lockfile
+    runs-on: ubuntu-26.04
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install gh-actions-lock
+        run: gh extension install github/gh-actions-lock --pin v0.4.0
+
+      # The runner refuses any action missing from actions.lock, so a `uses:`
+      # change without a relock fails that workflow at job start. This catches
+      # it on the PR instead, along with locked pins that no longer verify
+      # upstream. Fix locally with `gh actions-lock` and commit the result.
+      - name: Verify actions.lock
+        run: gh actions-lock --verify
+
+  image-meta:
+    name: build-docker image-meta
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6.1.0
 
       - name: Assert image-meta derivation across ref types
         env:
@@ -73,10 +97,10 @@ jobs:
 
   stateless-signing:
     name: sign-stateless-artifacts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Install minisign
         run: |
@@ -129,7 +153,7 @@ jobs:
           make_tree() {
             local root="$1"
             rm -rf "$root"
-            for name in stateless-validator-ethrex-sp1-v6.4.0 stateless-validator-ethrex-zisk-v1.1.0-alpha; do
+            for name in stateless-validator-ethrex-sp1-v6.9.0 stateless-validator-ethrex-zisk-v1.3.2-alpha; do
               mkdir -p "$root/$name"
               head -c 256 /dev/urandom > "$root/$name/$name.elf"
               head -c 64 /dev/urandom > "$root/$name/$name.vk"
@@ -178,7 +202,7 @@ jobs:
           # PR: `dry-run-release-assets` is `workflow_dispatch`-only, so on the
           # pull_request path this is the only check that a .minisig is bound to
           # its payload at all.
-          elf="$work/bin/stateless-validator-ethrex-sp1-v6.4.0/stateless-validator-ethrex-sp1-v6.4.0.elf"
+          elf="$work/bin/stateless-validator-ethrex-sp1-v6.9.0/stateless-validator-ethrex-sp1-v6.9.0.elf"
           printf 'x' >> "$elf"
           if minisign -V -m "$elf" -p "$work/pub" -x "$elf.minisig" > /dev/null 2>&1; then
             echo "::error::a tampered artifact still verified"

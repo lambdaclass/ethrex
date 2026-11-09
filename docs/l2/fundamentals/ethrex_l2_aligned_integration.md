@@ -540,7 +540,7 @@ INFO ethrex_l2::sequencer::l1_proof_verifier: Batches verified in OnChainPropose
 ## References
 
 - [Aligned Layer Documentation](https://docs.alignedlayer.com/)
-- [Aligned SDK API Reference](https://docs.alignedlayer.com/proof-aggregation-layer/guides/4_sdk)
+- [Aligned SDK API Reference](https://docs.alignedlayer.com/proof-aggregation-layer/guides/4_sdk#api-reference)
 - [Aligned Contract Addresses](https://docs.alignedlayer.com/proof-aggregation-layer/guides/7_contract_addresses)
 - [Running Ethrex in Aligned Mode](../deployment/aligned.md)
 - [Aligned Failure Recovery Guide](../deployment/aligned_failure_recovery.md)

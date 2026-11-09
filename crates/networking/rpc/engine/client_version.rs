@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use tracing::debug;
 
 use crate::{
@@ -64,14 +64,14 @@ impl std::fmt::Display for GetClientVersionV1Request {
 }
 
 impl RpcHandler for GetClientVersionV1Request {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
         if params.len() != 1 {
             return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
         }
-        let consensus_client: ClientVersionV1 = serde_json::from_value(params[0].clone())?;
+        let consensus_client: ClientVersionV1 = serde_json::from_str(params[0].get())?;
         Ok(GetClientVersionV1Request { consensus_client })
     }
 
