@@ -144,13 +144,13 @@ kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
 aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", rev = "54ca2471624700536561b6bd369ed9f4d327991e", package = "agg_mode_sdk" }
-# spawned v0.7.0 (release 02b9400b) plus the unreleased spawned-test crate
+# spawned main b1a17e6c (v0.7.0 plus canary fixes) plus the unreleased spawned-test crate
 # (lambdaclass/spawned#198). Every spawned crate must name the same revision so
 # they share one set of types (ActorRef, protocols, ExitReason). Move to the
 # crates.io release once spawned-test is published.
-spawned-concurrency = { git = "https://github.com/lambdaclass/spawned", rev = "39be3f3b62fa87ade2b62dbf45f0437f95024480" }
-spawned-rt = { git = "https://github.com/lambdaclass/spawned", rev = "39be3f3b62fa87ade2b62dbf45f0437f95024480" }
-spawned-test = { git = "https://github.com/lambdaclass/spawned", rev = "39be3f3b62fa87ade2b62dbf45f0437f95024480" }
+spawned-concurrency = { git = "https://github.com/lambdaclass/spawned", rev = "fc35abafe7a850aa27f4b511b60e28dc49b4a393" }
+spawned-rt = { git = "https://github.com/lambdaclass/spawned", rev = "fc35abafe7a850aa27f4b511b60e28dc49b4a393" }
+spawned-test = { git = "https://github.com/lambdaclass/spawned", rev = "fc35abafe7a850aa27f4b511b60e28dc49b4a393" }
 lambdaworks-crypto = "0.13.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 crossbeam = "0.8.4"

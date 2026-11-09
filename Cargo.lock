@@ -12326,7 +12326,7 @@ dependencies = [
 [[package]]
 name = "spawned-concurrency"
 version = "0.7.0"
-source = "git+https://github.com/lambdaclass/spawned?rev=39be3f3b62fa87ade2b62dbf45f0437f95024480#39be3f3b62fa87ade2b62dbf45f0437f95024480"
+source = "git+https://github.com/lambdaclass/spawned?rev=fc35abafe7a850aa27f4b511b60e28dc49b4a393#fc35abafe7a850aa27f4b511b60e28dc49b4a393"
 dependencies = [
  "futures",
  "pin-project-lite",
@@ -12339,7 +12339,7 @@ dependencies = [
 [[package]]
 name = "spawned-macros"
 version = "0.7.0"
-source = "git+https://github.com/lambdaclass/spawned?rev=39be3f3b62fa87ade2b62dbf45f0437f95024480#39be3f3b62fa87ade2b62dbf45f0437f95024480"
+source = "git+https://github.com/lambdaclass/spawned?rev=fc35abafe7a850aa27f4b511b60e28dc49b4a393#fc35abafe7a850aa27f4b511b60e28dc49b4a393"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -12349,7 +12349,7 @@ dependencies = [
 [[package]]
 name = "spawned-rt"
 version = "0.7.0"
-source = "git+https://github.com/lambdaclass/spawned?rev=39be3f3b62fa87ade2b62dbf45f0437f95024480#39be3f3b62fa87ade2b62dbf45f0437f95024480"
+source = "git+https://github.com/lambdaclass/spawned?rev=fc35abafe7a850aa27f4b511b60e28dc49b4a393#fc35abafe7a850aa27f4b511b60e28dc49b4a393"
 dependencies = [
  "ctrlc",
  "loom",
@@ -12364,7 +12364,7 @@ dependencies = [
 [[package]]
 name = "spawned-test"
 version = "0.7.0"
-source = "git+https://github.com/lambdaclass/spawned?rev=39be3f3b62fa87ade2b62dbf45f0437f95024480#39be3f3b62fa87ade2b62dbf45f0437f95024480"
+source = "git+https://github.com/lambdaclass/spawned?rev=fc35abafe7a850aa27f4b511b60e28dc49b4a393#fc35abafe7a850aa27f4b511b60e28dc49b4a393"
 dependencies = [
  "spawned-concurrency",
  "spawned-rt",
