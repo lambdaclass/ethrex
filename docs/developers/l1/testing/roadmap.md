@@ -128,6 +128,55 @@ Each technique below lists what it is, who uses it, the evidence, how it applies
 - **Antithesis:** a deterministic hypervisor that runs containers, injects faults and searches for property violations. etcd ran its robustness tests in it for 830 hours ("4.5 years of usage"), found a watch bug in all stable releases and rediscovered every planted bug ([etcd blog](https://etcd.io/blog/2025/autonomus_testing_with_antithesis/)). WarpStream [runs its entire SaaS](https://warpstream.com/blog/deterministic-simulation-testing-for-our-entire-saas) in it. Antithesis [says](https://antithesis.com/case_studies/ethereum_merge) the Ethereum Foundation used it to test the Merge (vendor claim). It needs no code changes beyond assertions, so it is the fastest route to deterministic whole-node testing, at a licence cost.
 - **Effort:** ethshadow medium; Antithesis is an evaluation first (a pilot on one scenario: snap sync plus reorg with faults).
 
+### Process-level shutdown tests
+
+- **What:** start the real `ethrex` binary, let it sync or serve for a while, send SIGTERM and SIGINT, and fail if it does not exit cleanly within a deadline (well under Docker's 10 s stop timeout), or if it exits with a non-zero code.
+- **Why ethrex:** the racy Ctrl-C shutdown (#7491) and `exit(2)` on `ActorStopped` were found by intermittent CI failures, not by a test aimed at shutdown. Ethlambda's 14.3 s shutdown was found by operators.
+- **Effort:** small; one CI job, can reuse the dev-mode node.
+
+### Single-CPU runs
+
+- **What:** run the test suite and a short sync with one Tokio worker thread and the process pinned to one core (`taskset -c 0`).
+- **Why ethrex:** hidden assumptions about ordering and starvation show up immediately; synchronous cell serving occupying every runtime worker (#7404) is this class of bug.
+- **Effort:** small; a CI matrix entry.
+
+### Cancellation-safety tests
+
+- **What:** for async p2p, sync and RPC code, drop each future at each of its await points in turn (a poll-counting wrapper) and check that state stays consistent: no leaked permits, no half-updated peer table, no stuck request ids.
+- **Why ethrex:** request timeouts and peer disconnects cancel futures mid-flight constantly; dropping halfway is the commonest async Rust bug class and nothing tests it systematically.
+- **Effort:** medium; start with the peer table and request/response paths.
+
+### Panic-safety tests
+
+- **What:** inject a panic into each actor callback and handler in turn (and into message `Drop` impls) and check the node keeps its invariants: supervised actors restart, registries and the peer table drop the dead entry, no other actor wedges.
+- **Why ethrex:** one panicking handler should never take down sync or RPC; with spawned v0.7 supervision this becomes checkable.
+- **Effort:** medium, with `spawned-test` fault injection after spawned v0.7.
+
+### Leak tests and LeakSanitizer
+
+- **What:** after shutdown of a test node, every actor, task, thread and connection is gone and resource counts return to baseline; a LeakSanitizer CI job runs the same tests.
+- **Why ethrex:** the 1.5 GB/day heap growth (#6900) was found in production; soak tests catch growth slowly, leak tests catch it on every PR.
+- **Effort:** small to medium.
+
+### Clock-jump tests
+
+- **What:** paused time, large forward and backward wall-clock jumps (NTP corrections), and timer-driven paths (slot timing, engine API timeouts, peer scoring decay, the ~14 actors that reschedule with `send_after`).
+- **Why ethrex:** consensus-facing timing and timeouts are wall-clock sensitive; these paths have no clock tests today.
+- **Effort:** medium; easier once time comes from an injectable clock (Phase 3).
+
+### Fairness and starvation under load
+
+- **What:** under sync and gossip load, no actor's queued requests wait beyond a bound, and control traffic (shutdown, peer table reads) keeps moving behind a data backlog.
+- **Why ethrex:** a `get_best_peer` request timed out under mailbox pressure and exited the node (#6823).
+- **Effort:** medium; builds on spawned metrics (queue wait) and the soak harness.
+
+### Smaller additions
+
+- **Allocation budgets (dhat):** fail when processing a block, transaction or message allocates more than a set count; keeps hot paths from regressing silently.
+- **Kani proofs:** bounded proofs of no overflow and no panic for small critical functions (RLP length handling, gas arithmetic helpers).
+- **Flaky-test tracking:** record reruns and quarantine flaky tests instead of retrying them green; concurrency flakes are real bugs (#7491 failed 6 of 25 runs).
+- **Open-loop load generation:** load tests issue requests on a schedule, not after each reply, so tail latency is not understated (coordinated omission).
+
 ### Specs (TLA+/P)
 
 Not proposed for ethrex now. AWS uses TLA+ and P on core protocols, and the Cosmos DB [TLA+ model](https://arxiv.org/abs/2210.13661) of user-visible consistency fixed documentation and explained an outage. For ethrex the consensus rules are already specified by the execution specs and EF tests, and the actor lifecycle is modelled in spawned under its [verification rule](https://github.com/lambdaclass/spawned/blob/main/ROADMAP.md#verification-rule). Revisit for snap-sync healing if failpoints and DST keep finding bugs there.
@@ -143,6 +192,9 @@ Not proposed for ethrex now. AWS uses TLA+ and P on core protocols, and the Cosm
 | Soak test | Nightly 6-hour run with gossip and peer churn; fails if RSS, fds or task count grow by more than a set slope after warm-up. Reverting #6900's bounded mailbox makes it fail within the run. |
 | Differential job | Scripted `trace_compare` plus state/receipts roots and five RPC methods against geth and reth for N blocks on Kurtosis; runs nightly; any mismatch fails with a diff. |
 | Property tests with reference models | Trie and mempool models in `test/`; reverting a past trie or mempool fix fails them. |
+| Process-level shutdown test | CI starts the node, sends SIGTERM and SIGINT, and fails if exit takes longer than 8 s or returns non-zero. |
+| Single-CPU run | Tests and a short sync pass with one worker thread under `taskset -c 0`. |
+| Leak test | After a test node shuts down, actor, task, thread and fd counts are back to baseline; LeakSanitizer job runs the same tests. |
 
 ### Phase 2: after spawned v0.7
 
@@ -153,6 +205,8 @@ Not proposed for ethrex now. AWS uses TLA+ and P on core protocols, and the Cosm
 | RPC history checking | Histories recorded during the reorg simulator and load tests are checked; injecting a stale `latest` read after a reorg fails the checker. |
 | Metamorphic storage test | Nightly, several configurations plus mid-run restart; injecting a dropped write in one backend fails it. |
 | Attacknet chaos | Three scenarios (partition and heal, peer crash during snap sync, clock skew) run weekly on Kurtosis with assertoor checks. |
+| Cancellation and panic safety | Every peer-table and request/response future is dropped at each await point, and a panic is injected into each handler; invariants hold in every case. |
+| Fairness under load | Under soak load, queued peer-table requests never wait beyond a bound; reverting #6823's handling does not exit the node. |
 | Invariant monitor on CI logs | Peer-table and sync-phase invariants checked on every Hive and Assertoor run; reverting #7435 fails it. |
 
 ### Phase 3: simulation
@@ -160,6 +214,7 @@ Not proposed for ethrex now. AWS uses TLA+ and P on core protocols, and the Cosm
 | Item | Acceptance criteria |
 |---|---|
 | Injectable clock, RNG and network in p2p | p2p code takes time and randomness from a handle; production behaviour unchanged (benchmarks flat). |
+| Clock-jump tests | With the injectable clock, forward/backward jumps of minutes and hours leave slot timing, timeouts and peer scoring correct. |
 | p2p DST harness | Same seed gives byte-identical logs (checked in CI). Reintroducing #6900's unbounded mailbox with a slow simulated peer, or #7435's cleanup, fails within a fixed seed budget. Runs nightly over many seeds. |
 | Actor ordering exploration | With spawned `explore`, the #7491 and #7435 races are found every run. |
 | Antithesis pilot | One scenario with faults for a fixed period; decide on adoption from bugs found versus cost. |
