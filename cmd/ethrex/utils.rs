@@ -3,7 +3,7 @@ use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
-    peer_table::{PeerTable, PeerTableServerProtocol as _},
+    peer_table::{PeerTable, PeerTableServerRef, ToPeerTableServerRef as _},
     sync::{HistoryChain, SyncMode},
     types::{Node, NodeRecord},
 };
@@ -29,19 +29,32 @@ pub struct NodeConfigFile {
 /// peers before keeping the previously saved list instead.
 pub const PEER_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// The peer table as [`NodeConfigFile::new`] takes it at shutdown: answering
+/// within [`PEER_SNAPSHOT_TIMEOUT`].
+pub fn peer_snapshot_source(peer_table: &PeerTable) -> PeerTableServerRef {
+    peer_table
+        .with_request_timeout(PEER_SNAPSHOT_TIMEOUT)
+        .to_peer_table_server_ref()
+}
+
 impl NodeConfigFile {
     /// The config to save at shutdown: `node_record` and the peers connected
-    /// right now. Call it while the peer table is still running.
+    /// right now. Call it while the peer table is still running, through a
+    /// reference whose timeout fits the shutdown budget:
+    /// `peer_table.with_request_timeout(PEER_SNAPSHOT_TIMEOUT).to_peer_table_server_ref()`.
     ///
-    /// If the peer table cannot answer (it has stopped, or does not reply within
-    /// [`PEER_SNAPSHOT_TIMEOUT`]), keeps the peers saved in `datadir` by the
-    /// previous run rather than overwriting them with an empty list.
-    pub async fn new(peer_table: PeerTable, node_record: NodeRecord, datadir: &Path) -> Self {
-        let known_peers = match peer_table
-            .with_request_timeout(PEER_SNAPSHOT_TIMEOUT)
-            .get_connected_nodes()
-            .await
-        {
+    /// If the peer table cannot answer (it has stopped, or does not reply in
+    /// time), keeps the peers saved in `datadir` by the previous run rather
+    /// than overwriting them with an empty list.
+    ///
+    /// Takes a protocol reference rather than the concrete `PeerTable` so tests
+    /// can stand a mock in for a table with live connections.
+    pub async fn new(
+        peer_table: PeerTableServerRef,
+        node_record: NodeRecord,
+        datadir: &Path,
+    ) -> Self {
+        let known_peers = match peer_table.get_connected_nodes().await {
             Ok(peers) => peers,
             Err(err) => {
                 let previous = read_node_config_file(datadir)

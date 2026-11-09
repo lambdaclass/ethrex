@@ -6,6 +6,7 @@ mod network_tests;
 mod peer_table_timeout_tests;
 mod resume_gate_tests;
 mod rlpx;
+mod shutdown_order_tests;
 mod snap_server_tests;
 mod snap_v2_apply_tests;
 mod snap_v2_codec_tests;

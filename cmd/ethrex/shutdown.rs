@@ -12,7 +12,9 @@
 //! [`shutdown_l1`], which runs the steps in dependency order under one
 //! deadline.
 
-use crate::utils::{NodeConfigFile, is_memory_datadir, store_node_config_file};
+use crate::utils::{
+    NodeConfigFile, is_memory_datadir, peer_snapshot_source, store_node_config_file,
+};
 use ethrex_p2p::{discovery::DiscoveryServer, peer_table::PeerTable, types::SharedLocalNode};
 use ethrex_storage::Store;
 use spawned_concurrency::ActorId;
@@ -108,7 +110,7 @@ pub async fn shutdown_l1(node: L1Node, deadline: Duration) -> ShutdownOutcome {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             guard.record.clone()
         };
-        Some(NodeConfigFile::new(peer_table, record, &datadir).await)
+        Some(NodeConfigFile::new(peer_snapshot_source(&peer_table), record, &datadir).await)
     };
 
     // Drain the persist worker, force-flush the block-data buffer, and fsync the
