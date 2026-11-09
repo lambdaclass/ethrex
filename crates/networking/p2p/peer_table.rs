@@ -31,7 +31,8 @@ use spawned_concurrency::{
     actor,
     error::ActorError,
     protocol,
-    tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response, send_message_on},
+    system::{ExecutionGroup, SystemError},
+    tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response},
 };
 use std::{
     net::IpAddr,
@@ -573,6 +574,25 @@ impl PeerTableServer {
         PeerTableServer::new(local_node_id, target_peers, Box::new(filter)).start()
     }
 
+    /// [`Self::spawn`], admitted to `group`: the group's actor system owns the
+    /// table and stops it on shutdown, after the actors admitted later.
+    ///
+    /// The table does not stop itself on ctrl-c. Whoever owns it decides when
+    /// it stops, so a snapshot of its peers can be taken first.
+    pub fn spawn_on(
+        local_node_id: H256,
+        target_peers: usize,
+        store: Store,
+        group: &ExecutionGroup,
+    ) -> Result<PeerTable, SystemError> {
+        PeerTableServer::new(
+            local_node_id,
+            target_peers,
+            Box::new(EthForkIdFilter::new(store)),
+        )
+        .start_on(group)
+    }
+
     pub(crate) fn new(
         local_node_id: H256,
         target_peers: usize,
@@ -588,15 +608,6 @@ impl PeerTableServer {
             sessions: Default::default(),
             connection_pool: IndexMap::with_capacity(MAX_CONNECTION_POOL_SIZE),
         }
-    }
-
-    #[started]
-    async fn started(&mut self, ctx: &Context<Self>) {
-        send_message_on(
-            ctx.clone(),
-            tokio::signal::ctrl_c(),
-            peer_table_server_protocol::Shutdown,
-        );
     }
 
     // === Send handlers ===

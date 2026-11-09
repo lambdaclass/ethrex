@@ -15,8 +15,9 @@ use std::{
     io,
     net::{SocketAddr, ToSocketAddrs},
     path::{Path, PathBuf},
+    time::Duration,
 };
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Serialize, Deserialize)]
 pub struct NodeConfigFile {
@@ -24,12 +25,41 @@ pub struct NodeConfigFile {
     pub node_record: NodeRecord,
 }
 
+/// How long the shutdown path waits for the peer table to list its connected
+/// peers before keeping the previously saved list instead.
+pub const PEER_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(2);
+
 impl NodeConfigFile {
-    pub async fn new(peer_table: PeerTable, node_record: NodeRecord) -> Self {
-        let connected_peers = peer_table.get_connected_nodes().await.unwrap_or(Vec::new());
+    /// The config to save at shutdown: `node_record` and the peers connected
+    /// right now. Call it while the peer table is still running.
+    ///
+    /// If the peer table cannot answer (it has stopped, or does not reply within
+    /// [`PEER_SNAPSHOT_TIMEOUT`]), keeps the peers saved in `datadir` by the
+    /// previous run rather than overwriting them with an empty list.
+    pub async fn new(peer_table: PeerTable, node_record: NodeRecord, datadir: &Path) -> Self {
+        let known_peers = match peer_table
+            .with_request_timeout(PEER_SNAPSHOT_TIMEOUT)
+            .get_connected_nodes()
+            .await
+        {
+            Ok(peers) => peers,
+            Err(err) => {
+                let previous = read_node_config_file(datadir)
+                    .ok()
+                    .flatten()
+                    .map(|config| config.known_peers)
+                    .unwrap_or_default();
+                warn!(
+                    %err,
+                    kept = previous.len(),
+                    "Could not list connected peers at shutdown; keeping the previously saved peers"
+                );
+                previous
+            }
+        };
 
         NodeConfigFile {
-            known_peers: connected_peers,
+            known_peers,
             node_record,
         }
     }

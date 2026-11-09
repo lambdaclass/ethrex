@@ -20,8 +20,9 @@ use spawned_concurrency::{
     actor,
     error::ActorError,
     protocol,
+    system::ExecutionGroup,
     tasks::{
-        Actor, ActorStart as _, Context, Handler, send_after, send_interval, send_message_on,
+        Actor, ActorRef, ActorStart as _, Context, Handler, send_after, send_interval,
         spawn_listener,
     },
 };
@@ -144,6 +145,74 @@ impl DiscoveryServer {
         shared_local_node: SharedLocalNode,
         fork_id: watch::Receiver<Option<ForkId>>,
     ) -> Result<(), DiscoveryServerError> {
+        Self::build(
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket,
+            peer_table,
+            bootnodes,
+            config,
+            shared_local_node,
+            fork_id,
+        )
+        .await?
+        .start();
+        Ok(())
+    }
+
+    /// [`Self::spawn`], admitted to `group`, whose actor system stops it on
+    /// shutdown. Discovery does not stop itself on ctrl-c.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "caller-supplied values; bundling them would only hide the call site"
+    )]
+    pub async fn spawn_on(
+        local_node: Node,
+        local_node_record: NodeRecord,
+        signer: SecretKey,
+        udp_socket: Arc<UdpSocket>,
+        peer_table: PeerTable,
+        bootnodes: Vec<Node>,
+        config: DiscoveryConfig,
+        shared_local_node: SharedLocalNode,
+        fork_id: watch::Receiver<Option<ForkId>>,
+        group: &ExecutionGroup,
+    ) -> Result<ActorRef<DiscoveryServer>, DiscoveryServerError> {
+        let server = Self::build(
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket,
+            peer_table,
+            bootnodes,
+            config,
+            shared_local_node,
+            fork_id,
+        )
+        .await?;
+        server
+            .start_on(group)
+            .map_err(|err| DiscoveryServerError::InternalError(err.to_string()))
+    }
+
+    /// Builds the discovery actor without starting it: seeds the peer table with
+    /// the bootnodes and pings the discv4 ones.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "caller-supplied values; bundling them would only hide the call site"
+    )]
+    pub async fn build(
+        local_node: Node,
+        local_node_record: NodeRecord,
+        signer: SecretKey,
+        udp_socket: Arc<UdpSocket>,
+        peer_table: PeerTable,
+        bootnodes: Vec<Node>,
+        config: DiscoveryConfig,
+        shared_local_node: SharedLocalNode,
+        fork_id: watch::Receiver<Option<ForkId>>,
+    ) -> Result<Self, DiscoveryServerError> {
         debug!("Starting discovery server");
 
         let discv4 = if config.discv4_enabled {
@@ -193,9 +262,7 @@ impl DiscoveryServer {
             }
         }
 
-        server.start();
-
-        Ok(())
+        Ok(server)
     }
 
     #[started]
@@ -249,13 +316,6 @@ impl DiscoveryServer {
             PRUNE_INTERVAL,
             ctx.clone(),
             discovery_server_protocol::Prune,
-        );
-
-        // Shutdown handler
-        send_message_on(
-            ctx.clone(),
-            tokio::signal::ctrl_c(),
-            discovery_server_protocol::Shutdown,
         );
     }
 

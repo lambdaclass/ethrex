@@ -19,6 +19,7 @@ use spawned_concurrency::{
     actor,
     error::ActorError,
     protocol,
+    system::{ExecutionGroup, SystemError},
     tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response},
 };
 use std::collections::HashMap;
@@ -95,6 +96,12 @@ impl SubscriptionManager {
     /// Spawn the actor and return a handle.
     pub fn spawn() -> ActorRef<SubscriptionManager> {
         SubscriptionManager::default().start()
+    }
+
+    /// [`Self::spawn`], admitted to `group`, whose actor system stops it on
+    /// shutdown.
+    pub fn spawn_on(group: &ExecutionGroup) -> Result<ActorRef<SubscriptionManager>, SystemError> {
+        SubscriptionManager::default().start_on(group)
     }
 
     #[send_handler]

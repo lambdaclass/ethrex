@@ -20,6 +20,7 @@ use ethrex_common::H256;
 use ethrex_common::types::ForkId;
 use ethrex_storage::Store;
 use secp256k1::SecretKey;
+use spawned_concurrency::system::ExecutionGroup;
 use spawned_concurrency::tasks::ActorRef;
 use std::{
     io,
@@ -76,16 +77,18 @@ impl P2PContext {
         based_context: Option<P2PBasedContext>,
         tx_broadcasting_time_interval: u64,
         lookup_interval: f64,
+        actor_group: Option<&ExecutionGroup>,
     ) -> Result<Self, NetworkError> {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
             tokio::task::Id,
             Arc<Message>,
         )>(MAX_MESSAGES_TO_BROADCAST);
 
-        let tx_broadcaster = TxBroadcaster::spawn(
+        let tx_broadcaster = TxBroadcaster::spawn_in(
             peer_table.clone(),
             blockchain.clone(),
             tx_broadcasting_time_interval,
+            actor_group,
         )
         .inspect_err(|e| {
             error!("Failed to start Tx Broadcaster: {e}");
@@ -166,11 +169,17 @@ pub(crate) fn local_node_record(
     Ok(record)
 }
 
+/// Starts discovery and the RLPx listener.
+///
+/// With `actor_group`, the discovery actor is admitted to that group, so the
+/// group's actor system stops it on shutdown; without one it runs on the
+/// ambient runtime until the process exits.
 pub async fn start_network(
     context: P2PContext,
     bootnodes: Vec<Node>,
     config: DiscoveryConfig,
     shared_local_node: SharedLocalNode,
+    actor_group: Option<&ExecutionGroup>,
 ) -> Result<(), NetworkError> {
     let udp_socket = Arc::new(
         UdpSocket::bind(context.network_config.bind_udp_addr())
@@ -187,19 +196,37 @@ pub async fn start_network(
     // decides what the node announces, discovery only republishes.
     let fork_id_rx = spawn_fork_id_publisher(&context, initial_fork_id);
 
-    DiscoveryServer::spawn(
-        context.local_node.clone(),
-        local_node_record,
-        context.signer,
-        udp_socket,
-        context.table.clone(),
-        bootnodes,
-        config,
-        shared_local_node,
-        fork_id_rx,
-    )
-    .await
-    .inspect_err(|e| {
+    let discovery = match actor_group {
+        Some(group) => DiscoveryServer::spawn_on(
+            context.local_node.clone(),
+            local_node_record,
+            context.signer,
+            udp_socket,
+            context.table.clone(),
+            bootnodes,
+            config,
+            shared_local_node,
+            fork_id_rx,
+            group,
+        )
+        .await
+        .map(|_| ()),
+        None => {
+            DiscoveryServer::spawn(
+                context.local_node.clone(),
+                local_node_record,
+                context.signer,
+                udp_socket,
+                context.table.clone(),
+                bootnodes,
+                config,
+                shared_local_node,
+                fork_id_rx,
+            )
+            .await
+        }
+    };
+    discovery.inspect_err(|e| {
         error!("Failed to start discovery server: {e}");
     })?;
 

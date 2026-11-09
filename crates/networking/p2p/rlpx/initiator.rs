@@ -6,9 +6,8 @@ use spawned_concurrency::{
     actor,
     error::ActorError,
     protocol,
-    tasks::{
-        Actor, ActorRef, ActorStart as _, Backend, Context, Handler, send_after, send_message_on,
-    },
+    system::{ExecutionGroup, SystemError},
+    tasks::{Actor, ActorRef, ActorStart as _, Backend, Context, Handler, send_after},
 };
 use std::time::Duration;
 use tracing::{debug, error};
@@ -41,6 +40,18 @@ impl RLPxInitiator {
         Self::spawn_with_backend(context, None)
     }
 
+    /// [`Self::spawn`], admitted to `group`, whose actor system stops it on
+    /// shutdown. The initiator does not stop itself on ctrl-c.
+    pub fn spawn_on(
+        context: P2PContext,
+        group: &ExecutionGroup,
+    ) -> Result<ActorRef<RLPxInitiator>, SystemError> {
+        debug!("Starting RLPx initiator");
+        let actor_ref = RLPxInitiator::new(context).start_on(group)?;
+        let _ = actor_ref.send(rlpx_initiator_protocol::LookForPeer);
+        Ok(actor_ref)
+    }
+
     pub fn spawn_on_thread(context: P2PContext) -> ActorRef<RLPxInitiator> {
         Self::spawn_with_backend(context, Some(Backend::Thread))
     }
@@ -57,15 +68,6 @@ impl RLPxInitiator {
         };
         let _ = actor_ref.send(rlpx_initiator_protocol::LookForPeer);
         actor_ref
-    }
-
-    #[started]
-    async fn started(&mut self, ctx: &Context<Self>) {
-        send_message_on(
-            ctx.clone(),
-            tokio::signal::ctrl_c(),
-            rlpx_initiator_protocol::Shutdown,
-        );
     }
 
     #[send_handler]

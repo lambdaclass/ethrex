@@ -1,5 +1,6 @@
 use crate::{
     cli::{LogColor, Options},
+    shutdown::L1Node,
     utils::{
         display_chain_initialization, get_channel, get_client_version, get_client_version_string,
         init_datadir, is_memory_datadir, parse_socket_addr, read_jwtsecret_file,
@@ -10,7 +11,7 @@ use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::{BlockNumber, Genesis};
 use ethrex_config::networks::Network;
-use ethrex_rpc::WebSocketConfig;
+use ethrex_rpc::{SubscriptionManager, WebSocketConfig};
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_metrics::rpc::initialize_rpc_metrics;
@@ -19,7 +20,7 @@ use ethrex_p2p::{
     DiscoveryConfig,
     network::P2PContext,
     peer_handler::PeerHandler,
-    peer_table::{PeerTable, PeerTableServer},
+    peer_table::PeerTableServer,
     sync::{BackfillConfig, HistoryChain, SyncMode},
     sync_manager::SyncManager,
     types::{LocalNode, NetworkConfig, Node, NodeRecord, SharedLocalNode},
@@ -32,13 +33,15 @@ use ethrex_storage::{
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
+use spawned_concurrency::system::{ActorSystem, ExecutionGroup};
+use spawned_concurrency::tasks::ActorRef;
 #[cfg(feature = "sync-test")]
 use std::env;
 use std::{
     fs,
     io::IsTerminal,
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Arc, RwLock},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -362,6 +365,7 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    subscription_manager: Option<ActorRef<SubscriptionManager>>,
 ) -> eyre::Result<()> {
     if !is_memory_datadir(datadir) {
         init_datadir(datadir);
@@ -406,7 +410,8 @@ pub async fn init_rpc_api(
     let ws_config = if opts.ws_enabled {
         Some(WebSocketConfig {
             addr: get_ws_socket_addr(opts),
-            subscription_manager: ethrex_rpc::SubscriptionManager::spawn(),
+            subscription_manager: subscription_manager
+                .unwrap_or_else(ethrex_rpc::SubscriptionManager::spawn),
         })
     } else {
         None
@@ -464,6 +469,7 @@ pub async fn init_network(
     blockchain: Arc<Blockchain>,
     context: P2PContext,
     shared_local_node: SharedLocalNode,
+    actor_group: Option<&ExecutionGroup>,
 ) {
     #[cfg(not(feature = "l2"))]
     if opts.dev {
@@ -481,9 +487,15 @@ pub async fn init_network(
         nat_extip_set: opts.nat_extip.is_some(),
     };
 
-    ethrex_p2p::start_network(context, bootnodes, discovery_config, shared_local_node)
-        .await
-        .expect("Network starts");
+    ethrex_p2p::start_network(
+        context,
+        bootnodes,
+        discovery_config,
+        shared_local_node,
+        actor_group,
+    )
+    .await
+    .expect("Network starts");
 
     tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
         blockchain,
@@ -846,16 +858,20 @@ async fn set_sync_block(store: &Store) {
     }
 }
 
+/// Async workers for the `p2p` execution group: what the default
+/// `#[tokio::main]` runtime has, since the actors in it (and the outbound
+/// connections the RLPx initiator starts from it) used to share that runtime.
+fn p2p_workers() -> usize {
+    std::thread::available_parallelism().map_or(4, std::num::NonZero::get)
+}
+
+/// Starts the L1 node. The returned [`L1Node`] owns its actors: keep it alive
+/// while the node runs, and stop the node with
+/// [`shutdown_l1`](crate::shutdown::shutdown_l1).
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(
-    PathBuf,
-    CancellationToken,
-    PeerTable,
-    SharedLocalNode,
-    Store,
-)> {
+) -> eyre::Result<L1Node> {
     let network = get_network(&opts);
     let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
 
@@ -960,8 +976,30 @@ pub async fn init_l1(
         record: local_node_record,
     }));
 
-    let peer_table =
-        PeerTableServer::spawn(local_p2p_node.node_id(), opts.target_peers, store.clone());
+    // The owner of the node's long-lived actors and of the `p2p` runtime they
+    // run on. Nothing else stops them: no actor listens for ctrl-c itself, and
+    // `shutdown_l1` stops them only after the node's token is cancelled and the
+    // peers are saved. Admission order is shutdown order reversed, so the peer
+    // table, which every other actor here calls, is admitted first and stopped
+    // last.
+    //
+    // Per-connection actors (`PeerConnectionServer`) are not admitted: they are
+    // created and dropped per peer, and the system only owns a fixed set.
+    let system = ActorSystem::new()
+        .map_err(|err| eyre::eyre!("Failed to create the actor system: {err}"))?;
+    let p2p_group = system
+        .async_group("p2p", p2p_workers())
+        .map_err(|err| eyre::eyre!("Failed to create the p2p execution group: {err}"))?;
+    let mut actor_names = Vec::new();
+
+    let peer_table = PeerTableServer::spawn_on(
+        local_p2p_node.node_id(),
+        opts.target_peers,
+        store.clone(),
+        &p2p_group,
+    )
+    .map_err(|err| eyre::eyre!("Failed to start the peer table: {err}"))?;
+    actor_names.push((peer_table.id(), "peer_table"));
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -980,12 +1018,25 @@ pub async fn init_l1(
         None,
         opts.tx_broadcasting_time_interval,
         opts.lookup_interval,
+        Some(&p2p_group),
     )
     .expect("P2P context could not be created");
+    actor_names.push((p2p_context.tx_broadcaster.id(), "tx_broadcaster"));
 
-    let initiator = RLPxInitiator::spawn(p2p_context.clone());
+    let initiator = RLPxInitiator::spawn_on(p2p_context.clone(), &p2p_group)
+        .map_err(|err| eyre::eyre!("Failed to start the RLPx initiator: {err}"))?;
+    actor_names.push((initiator.id(), "rlpx_initiator"));
 
     let peer_handler = PeerHandler::new(peer_table.clone(), initiator);
+
+    let subscription_manager = if opts.ws_enabled {
+        let manager = SubscriptionManager::spawn_on(&p2p_group)
+            .map_err(|err| eyre::eyre!("Failed to start the subscription manager: {err}"))?;
+        actor_names.push((manager.id(), "subscription_manager"));
+        Some(manager)
+    } else {
+        None
+    };
 
     init_rpc_api(
         &opts,
@@ -997,6 +1048,7 @@ pub async fn init_l1(
         cancel_token.clone(),
         tracker.clone(),
         log_filter_handler,
+        subscription_manager,
     )
     .await?;
 
@@ -1018,19 +1070,22 @@ pub async fn init_l1(
             blockchain.clone(),
             p2p_context,
             shared_local_node.clone(),
+            Some(&p2p_group),
         )
         .await;
     } else {
         info!("P2P is disabled");
     }
 
-    Ok((
-        datadir.clone(),
+    Ok(L1Node {
+        datadir: datadir.clone(),
         cancel_token,
-        peer_handler.peer_table,
+        peer_table: peer_handler.peer_table,
         shared_local_node,
         store,
-    ))
+        system,
+        actor_names,
+    })
 }
 
 /// Migrates data from a pre-suffix datadir layout to the new network-specific

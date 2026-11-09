@@ -343,6 +343,7 @@ pub async fn init_l2(
             }),
             opts.node_opts.tx_broadcasting_time_interval,
             opts.node_opts.lookup_interval,
+            None,
         )
         .expect("P2P context could not be created");
         let initiator = RLPxInitiator::spawn(p2p_context.clone());
@@ -378,6 +379,7 @@ pub async fn init_l2(
             blockchain.clone(),
             p2p_context,
             shared_local_node.clone(),
+            None,
         )
         .await;
         (Some(peer_handler), Some(Arc::new(syncer)))
@@ -480,7 +482,7 @@ pub async fn init_l2(
                 .expect("shared_local_node poisoned");
             guard.record.clone()
         };
-        let node_config = NodeConfigFile::new(peer_handler.peer_table, record).await;
+        let node_config = NodeConfigFile::new(peer_handler.peer_table, record, &datadir).await;
         store_node_config_file(node_config, node_config_path);
     }
     tokio::time::sleep(Duration::from_secs(1)).await;
