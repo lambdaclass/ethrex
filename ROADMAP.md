@@ -146,6 +146,14 @@ Proposed priorities, for the team to review. Plan, evidence and acceptance crite
 | [Actor ordering exploration](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#actor-level-ordering-exploration) | 4 | Blocked on spawned `explore` | Search message orderings among peer table, connection and sync actors; #7491 and #7435 as acceptance tests |
 | [ethshadow scale runs](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#whole-system-simulators-ethshadow-and-antithesis) | 4 | Pending | Run ethrex in ethshadow (Shadow simulator) at 100+ nodes for gossip and peer behaviour |
 | [Antithesis evaluation](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#whole-system-simulators-ethshadow-and-antithesis) | 4 | Pending | Pilot one faulted scenario (snap sync plus reorg) in Antithesis' deterministic hypervisor, then decide |
+| [Process-level shutdown tests](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#process-level-shutdown-tests) | 0 | Pending | Start the binary, send SIGTERM/SIGINT, fail if exit exceeds a deadline under Docker's 10 s or is non-zero |
+| [Single-CPU runs](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#single-cpu-runs) | 1 | Pending | Suite and a short sync with one worker thread pinned to one core; exposes ordering and starvation assumptions |
+| [Leak tests and LeakSanitizer](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#leak-tests-and-leaksanitizer) | 1 | Pending | Resources back to baseline after shutdown, on every PR; LSan job |
+| [Cancellation-safety tests](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#cancellation-safety-tests) | 2 | Pending | Drop each async future at each await point; peer table and request paths stay consistent |
+| [Panic-safety tests](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#panic-safety-tests) | 2 | Pending | Panic injected into each handler; node keeps its invariants (with spawned v0.7 supervision) |
+| [Fairness under load](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#fairness-and-starvation-under-load) | 2 | Pending | Queued requests never wait beyond a bound under sync and gossip load (#6823) |
+| [Clock-jump tests](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#clock-jump-tests) | 2 | Pending | Paused time and wall-clock jumps over slot timing, timeouts and peer scoring |
+| [Allocation budgets, Kani, flaky tracking, open-loop load](https://docs.ethrex.xyz/developers/l1/testing/roadmap.html#smaller-additions) | 3 | Pending | Smaller additions: allocation counts on hot paths, bounded proofs for small functions, flake quarantine, coordinated-omission-free load tests |
 
 ---
 
