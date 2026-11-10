@@ -2644,10 +2644,6 @@ mod validation_observer_tests {
 
     #[test]
     fn extcode_on_existing_account_without_code_is_rejected() {
-        // EIP-8141 §Validation Trace Rules: `CALL*`/`EXTCODE*` must target an
-        // existing contract or a precompile. A funded account with no code is
-        // neither, so reading its code hash or size is a violation, while the
-        // same read of a contract is allowed.
         let sender = addr(0xEC_0D);
         let codeless = addr(0xBEEF);
         let contract = addr(0xC0DE);
@@ -2659,9 +2655,9 @@ mod validation_observer_tests {
                 ),
                 (contract, None),
             ] {
-                let mut code = vec![0x73]; // PUSH20 target
+                let mut code = vec![0x73];
                 code.extend_from_slice(target.as_bytes());
-                code.extend_from_slice(&[opcode, 0x50, 0x00]); // EXTCODE*, POP, STOP
+                code.extend_from_slice(&[opcode, 0x50, 0x00]);
                 let tx = frame_tx_for_obs(
                     sender,
                     vec![verify_frame_obs(sender, 100_000, 0x03, Bytes::new())],
