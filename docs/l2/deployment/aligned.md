@@ -11,6 +11,9 @@ It assumes:
 
 > **Important**: Aligned mode only supports **SP1 proofs**. The `sp1` feature must be enabled when building with Aligned mode.
 
+> [!WARNING]
+> Aligned mode is currently unavailable: the SP1 guest is built with SP1 6, while the Aligned SDK still uses SP1 5, so a sequencer started with `--aligned` stops with an error. It will be re-enabled once the Aligned SDK moves to SP1 6.
+
 - Check [How to Run (local devnet)](#how-to-run-local-devnet) for development or testing.
 - Check [How to Run (testnet)](#how-to-run-testnet) for a prod-like environment.
 
@@ -53,7 +56,7 @@ ethrex l2 deploy \
 
 > [!NOTE]
 > This command requires the `COMPILE_CONTRACTS` env variable to be set, as the deployer needs the SDK to embed the proxy bytecode.
-> In this step we are initializing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers; you can find the address for the aligned aggregator service [here](https://docs.alignedlayer.com/guides/7_contract_addresses).
+> In this step we are initializing the `OnChainProposer` contract with the `ALIGNED_PROOF_AGGREGATOR_SERVICE_ADDRESS` and skipping the rest of verifiers; you can find the address for the aligned aggregator service [here](https://docs.alignedlayer.com/proof-aggregation-layer/guides/7_contract_addresses).
 > Save the addresses of the deployed proxy contracts, as you will need them to run the L2 node.
 > Accounts for the deployer, on-chain proposer owner, bridge owner, and proof sender must have funds. Add `--bridge-owner-pk <PRIVATE_KEY>` if you want the deployer to immediately call `acceptOwnership` on behalf of that owner; otherwise, they can accept later.
 

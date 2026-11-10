@@ -7,12 +7,12 @@ use crate::constants::{
     BLOB_BASE_FEE_UPDATE_FRACTION, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE, MAX_BLOB_COUNT,
     MAX_BLOB_COUNT_ELECTRA, TARGET_BLOB_GAS_PER_BLOCK, TARGET_BLOB_GAS_PER_BLOCK_PECTRA,
 };
+use ethrex_common::seeded_hash::SeededHashMap;
 
 /// [EIP-1153]: https://eips.ethereum.org/EIPS/eip-1153#reference-implementation
 ///
-/// Seeded per process and per map: contracts choose these keys, and an unseeded
-/// hasher's public constants (FxHash's) let them pick keys that all collide.
-pub type TransientStorage = foldhash::HashMap<(Address, U256), U256>;
+/// Seeded: contracts choose these keys (see [`SeededHashMap`]).
+pub type TransientStorage = SeededHashMap<(Address, U256), U256>;
 
 #[derive(Debug, Default, Clone)]
 /// Environmental information that the execution agent must provide.
@@ -53,7 +53,14 @@ pub struct Environment {
     /// `ToMessage(_, skipNonceCheck=true)`): the synthetic call may run on top of a
     /// mid-block state (`txIndex`) whose nonce differs from the value the caller
     /// supplied, so enforcing the check would spuriously reject the trace.
+    /// `eth_simulateV1` sets it when `validation: false`, the mode in which the
+    /// method behaves like `eth_call`.
     pub disable_nonce_check: bool,
+    /// When true, emit informational ETH-transfer logs from the
+    /// `TRACE_TRANSFER_ADDRESS` sentinel (`eth_simulateV1` traceTransfers).
+    /// Independent of the fork: an Amsterdam+ block carries these alongside its
+    /// consensus EIP-7708 logs rather than in place of them.
+    pub trace_eth_transfers: bool,
     /// When true, skip the gas limits that gate a transaction's *admission* rather than
     /// its execution: the block-level gas allowance and the EIP-7825 per-transaction cap.
     /// Used by every simulation RPC (eth_call, eth_estimateGas, eth_createAccessList,
@@ -74,6 +81,14 @@ pub struct Environment {
     /// previewing its own transaction. Transaction admission keeps enforcing it: the
     /// mempool rejects such a sender outright, and block execution never sets this flag.
     pub disable_sender_eoa_check: bool,
+    /// When true, the EIP-8037 cap on the execution dimension (Amsterdam+) is lifted: the
+    /// whole gas limit is execution gas and no state-gas reservoir is funded from it, so a
+    /// simulation given more than the per-transaction execution cap can actually spend it.
+    /// Set by `eth_call` and `debug_traceCall` only, as geth does, since nothing they run is
+    /// ever submitted. `eth_estimateGas` and `eth_createAccessList` keep the cap, because
+    /// their answers must hold for a transaction that can be included. Block execution
+    /// never sets it.
+    pub disable_execution_gas_cap: bool,
     /// When true, the tx is a pre-execution system contract call (EIP-2935, EIP-4788,
     /// EIP-7002, EIP-7251 etc.). Skips the block-level gas-allowance check since system
     /// calls are allowed to exceed `block_gas_limit` (their 30M cap is a separate rule).

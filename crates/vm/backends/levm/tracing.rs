@@ -480,6 +480,9 @@ fn prepare_call_env(
     // `env_from_generic` relaxes the allowance check without touching `block_gas_limit`:
     // a trace must report the same GASLIMIT the traced block executed with.
     let mut env = env_from_generic(tx, block_header, db, vm_type)?;
+    // Like `eth_call`, a traced call spends its whole gas limit on execution after
+    // Amsterdam (geth lifts the EIP-8037 execution cap for both).
+    env.disable_execution_gas_cap = true;
     adjust_disabled_base_fee(&mut env);
     let converted_tx = generic_tx_to_transaction(tx)?;
     Ok((env, converted_tx))

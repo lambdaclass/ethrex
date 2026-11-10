@@ -153,19 +153,11 @@ impl OpcodeHandler for OpCallDataLoadHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::CALLDATALOAD)?;
 
-        let value_bytes = usize::try_from(vm.current_call_frame.stack.pop1()?)
-            .ok()
-            .and_then(|offset| vm.current_call_frame.calldata.get(offset..));
-        #[expect(clippy::indexing_slicing, reason = "length is checked in match guard")]
-        vm.current_call_frame.stack.push(match value_bytes {
-            Some(data) if data.len() >= 32 => U256::from_big_endian(&data[..32]),
-            Some(data) => {
-                let mut bytes = [0; 32];
-                bytes[..data.len()].copy_from_slice(data);
-                U256::from_big_endian(&bytes)
-            }
-            None => U256::zero(),
-        })?;
+        let value = match usize::try_from(vm.current_call_frame.stack.pop1()?) {
+            Ok(offset) => vm.current_call_frame.calldata.load_word(offset)?,
+            Err(_) => U256::zero(),
+        };
+        vm.current_call_frame.stack.push(value)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -203,25 +195,10 @@ impl OpcodeHandler for OpCallDataCopyHandler {
                 len,
             )?)?;
 
-        if len > 0 {
-            let data = vm
-                .current_call_frame
-                .calldata
-                .get(src_offset..)
-                .unwrap_or_default();
-            let data = data.get(..len).unwrap_or(data);
-
-            vm.current_call_frame.memory.store_data(dst_offset, data)?;
-            if data.len() < len {
-                #[expect(
-                    clippy::arithmetic_side_effects,
-                    reason = "data.len() < len guard ensures no underflow"
-                )]
-                vm.current_call_frame
-                    .memory
-                    .store_zeros(dst_offset + data.len(), len - data.len())?;
-            }
-        }
+        let call_frame = &mut vm.current_call_frame;
+        call_frame
+            .memory
+            .store_calldata(dst_offset, &call_frame.calldata, src_offset, len)?;
 
         Ok(OpcodeResult::Continue)
     }

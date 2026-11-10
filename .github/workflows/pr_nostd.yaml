@@ -30,9 +30,9 @@ jobs:
     # `use std::` regressions. Needs nightly (JSON target spec + build-std);
     # see .github/targets/README.md.
     name: no_std build check (riscv64im_zicclsm)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
 
       # Pinned for reproducibility (build-std + json-target-spec are nightly-only);
       # bump the date deliberately. dtolnay has no per-date ref, so pass it as input.
@@ -56,12 +56,12 @@ jobs:
     # features a host build does not enable. Without this, the first thing to
     # compile `crypto/zkvm_interface.rs` is the Ere docker build in tag_release.
     name: stateless-validator feature check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.1.0
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
 
       - name: Check each feature combination
         working-directory: crates/guest-program/stateless-validator

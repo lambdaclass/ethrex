@@ -6,6 +6,7 @@ on:
       - Daily Hive Report
       - Daily Lines of Code Report
       - Daily Snapsync Check
+      - Docs Link Check
       - L1
       - L2 (SP1 Backend)
       - L2 (without proving)
@@ -27,7 +28,7 @@ permissions:
 jobs:
   notify-on-failure:
     name: Notify Slack on failure (main)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # `cancelled` runs are deliberately not alerted: a manually cancelled run
     # on main is not a CI failure.
     if: >-
@@ -36,11 +37,11 @@ jobs:
            github.event.workflow_run.event == 'schedule') }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Collect failed jobs
         id: failed_jobs
-        uses: actions/github-script@v8
+        uses: actions/github-script@v8.0.0
         with:
           result-encoding: string
           script: |

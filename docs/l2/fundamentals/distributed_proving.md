@@ -85,7 +85,7 @@ During single-batch fallback, if the revert indicates an invalid proof, that pro
 | Flag | Env Variable | Default | Description |
 |------|-------------|---------|-------------|
 | `--proof-coordinators` | `PROVER_CLIENT_PROOF_COORDINATOR_URL` | `tcp://127.0.0.1:3900` | Space-separated coordinator URLs |
-| `--backend` | `PROVER_CLIENT_BACKEND` | `exec` | Backend: `exec`, `sp1`, `risc0`, `zisk`, `openvm` |
+| `--backend` | `PROVER_CLIENT_BACKEND` | `exec` | Backend: `exec`, `sp1`, `risc0`, `zisk` |
 | `--proving-time` | `PROVER_CLIENT_PROVING_TIME` | `5000` | Wait time (ms) between requesting new work |
 
 ## Testing locally

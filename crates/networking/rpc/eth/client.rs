@@ -8,7 +8,7 @@ use ethrex_common::types::ForkBlobSchedule;
 use ethrex_common::types::ForkId;
 use ethrex_vm::{precompiles_for_fork, system_contracts::system_contracts_for_fork};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use tracing::debug;
 
 use crate::{
@@ -18,7 +18,7 @@ use crate::{
 
 pub struct ChainId;
 impl RpcHandler for ChainId {
-    fn parse(_params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(_params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         Ok(Self {})
     }
 
@@ -52,7 +52,7 @@ struct SyncingStatusRpc {
 
 impl RpcHandler for Syncing {
     /// Ref: https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_syncing
-    fn parse(_params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(_params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         Ok(Self {})
     }
 
@@ -146,7 +146,7 @@ pub struct EthConfigResponse {
 }
 
 impl RpcHandler for Config {
-    fn parse(_params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(_params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         Ok(Self {})
     }
 

@@ -1,6 +1,7 @@
 pub use crate::opcode_tracer::{LevmOpcodeTracer, OpcodeTracerConfig};
 use crate::{
     errors::{ContextResult, InternalError, TxResult, VMError},
+    memory::CallData,
     vm::VM,
 };
 use bytes::Bytes;
@@ -59,10 +60,10 @@ impl LevmCallTracer {
         to: Address,
         value: U256,
         gas: u64,
-        input: &Bytes, // For avoiding cloning when calling (cleaner code)
-    ) {
+        input: &CallData,
+    ) -> Result<(), VMError> {
         if !self.active {
-            return;
+            return Ok(());
         }
 
         // geth traces STATICCALL with a nil value; every other call type carries one.
@@ -78,11 +79,12 @@ impl LevmCallTracer {
             to: Some(to),
             value,
             gas,
-            input: input.clone(),
+            input: input.to_bytes()?,
             ..Default::default()
         };
 
         self.callframes.push(callframe);
+        Ok(())
     }
 
     /// Exits trace call.

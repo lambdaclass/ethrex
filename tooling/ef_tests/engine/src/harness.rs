@@ -13,7 +13,7 @@ use ethrex_common::{H256, types::Genesis};
 use ethrex_rpc::{
     RpcApiContext,
     rpc::{map_engine_requests, map_http_requests, rpc_response},
-    utils::{RpcNamespace, RpcRequest, RpcRequestId},
+    utils::{RpcNamespace, RpcRequest},
 };
 
 use crate::engine_ctx::engine_only_context;
@@ -115,13 +115,7 @@ impl EngineApiHarness {
 
     /// Build an RpcRequest and dispatch it directly (no envelope round-trip).
     async fn call(&self, method: &str, params: Vec<Value>) -> anyhow::Result<Value> {
-        let req = RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: method.to_string(),
-            params: Some(params),
-        };
-        self.dispatch(req).await
+        self.dispatch(RpcRequest::new(method, Some(params))).await
     }
 
     /// Call `engine_forkchoiceUpdatedVx` with `head` as head, safe, and finalized hash.

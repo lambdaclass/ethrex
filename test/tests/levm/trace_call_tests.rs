@@ -23,6 +23,7 @@ use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::DatabaseError;
 use ethrex_levm::tracing::OpcodeTracerConfig;
 use ethrex_levm::vm::VMType;
+use ethrex_vm::backends::ExecutionGasCap;
 use ethrex_vm::backends::levm::LEVM;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
@@ -323,9 +324,16 @@ fn trace_call_calls_top_frame_gas_is_post_refund() {
 
     // Plain execution surfaces the pre-refund / block-accounting `gas_used`.
     let mut db = amsterdam_db_with_stored_slot(bytecode);
-    let exec =
-        LEVM::simulate_tx_from_generic(&tx, &header, &mut db, VMType::L1, &NativeCrypto, None)
-            .expect("simulate_tx_from_generic should succeed");
+    let exec = LEVM::simulate_tx_from_generic(
+        &tx,
+        &header,
+        &mut db,
+        VMType::L1,
+        &NativeCrypto,
+        None,
+        ExecutionGasCap::Enforced,
+    )
+    .expect("simulate_tx_from_generic should succeed");
 
     assert_eq!(
         call_gas_used, opcode_result.gas_used,

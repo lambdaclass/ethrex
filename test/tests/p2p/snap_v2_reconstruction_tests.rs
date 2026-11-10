@@ -8,13 +8,21 @@
 //! flat state that does not describe the pivot, nothing else will catch it.
 
 use ethrex_common::{
-    BigEndianHash, H256, U256,
-    types::{AccountState, BlockHeader},
+    Address, BigEndianHash, H256, U256,
+    constants::EMPTY_TRIE_HASH,
+    types::{
+        AccountState, BlockHeader,
+        block_access_list::{AccountChanges, BlockAccessList, SlotChange, StorageChange},
+    },
 };
-use ethrex_p2p::sync::snap2::{
-    FlatState, MAX_CATCH_UP_BLOCKS, catch_up_exceeds_retention, reconstruct_and_verify,
+use ethrex_p2p::sync::{
+    SyncError,
+    snap2::{
+        DownloadCursor, FlatState, MAX_CATCH_UP_BLOCKS, apply_bal_flat, catch_up_exceeds_retention,
+        reconstruct_and_verify,
+    },
 };
-use ethrex_storage::{EngineType, Store};
+use ethrex_storage::{EngineType, Store, hash_address, hash_key};
 
 fn temp_dir(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("ethrex-snap2-recon-{name}"));
@@ -52,6 +60,20 @@ async fn expected_root(store: &Store, accounts: &[(H256, AccountState)]) -> H256
             .expect("insert account");
     }
     trie.hash(&NativeCrypto).expect("hash state trie")
+}
+
+/// The root `slots` hash to as `account`'s storage trie.
+fn storage_root(store: &Store, account: H256, slots: &[(H256, U256)]) -> H256 {
+    use ethrex_rlp::encode::RLPEncode;
+    let mut trie = store
+        .open_direct_storage_trie(account, *EMPTY_TRIE_HASH)
+        .expect("open storage trie");
+    for (slot_hash, value) in slots {
+        trie.insert(slot_hash.0.to_vec(), value.encode_to_vec())
+            .expect("insert slot");
+    }
+    trie.hash(&ethrex_crypto::NativeCrypto)
+        .expect("hash storage trie")
 }
 
 /// An account-only state reconstructs to the root its leaves imply.
@@ -267,6 +289,129 @@ async fn a_missing_account_fails_the_root_check() {
     reconstruct_and_verify(&store, &flat, &header(10, root))
         .await
         .expect_err("an incomplete flat state must not verify");
+
+    flat.destroy().await.expect("destroy");
+}
+
+/// A contract whose last slot an access list cleared after it was served
+/// reconstructs with the empty storage root.
+///
+/// The leaf still carries the root it was served with, which describes slots
+/// that no longer exist. Passing it through misses the pivot root on every
+/// attempt, and since a mismatch discards the whole download and starts over,
+/// the sync never finishes.
+#[tokio::test]
+async fn a_contract_whose_storage_was_cleared_reconstructs_to_the_empty_root() {
+    use ethrex_rlp::decode::RLPDecode;
+
+    let store = store();
+    let flat = FlatState::open(&temp_dir("cleared-storage")).expect("open");
+
+    let address = Address::repeat_byte(0x42);
+    let contract = H256::from_slice(&hash_address(&address));
+    let slot = U256::from(1);
+    let slot_hash = H256::from_slice(&hash_key(&H256::from_uint(&slot)));
+
+    // Served at an older pivot holding a single slot.
+    let served = AccountState {
+        nonce: 1,
+        balance: U256::from(10),
+        storage_root: storage_root(&store, contract, &[(slot_hash, U256::from(7))]),
+        ..Default::default()
+    };
+    flat.put_account(contract, &served).expect("write account");
+    flat.put_slot(contract, slot_hash, U256::from(7))
+        .expect("write slot");
+
+    // A later block zeroes that slot.
+    let mut cursor = DownloadCursor::new(1);
+    cursor.advance_accounts(H256::repeat_byte(0xff));
+    let bal = BlockAccessList::from_accounts(vec![AccountChanges {
+        address,
+        storage_changes: vec![SlotChange {
+            slot,
+            slot_changes: vec![StorageChange {
+                post_value: U256::zero(),
+                ..Default::default()
+            }],
+        }],
+        ..Default::default()
+    }]);
+    let stats = apply_bal_flat(&flat, &cursor, &store, &bal).expect("apply");
+    assert_eq!(stats.slots_deleted, 1);
+    assert_eq!(flat.iter_slots(contract).count(), 0);
+    assert_eq!(
+        flat.get_account(contract)
+            .expect("read")
+            .map(|a| a.storage_root),
+        Some(served.storage_root),
+        "the patched leaf keeps its served root, or this is not testing the real case"
+    );
+
+    let root = expected_root(
+        &store,
+        &[(
+            contract,
+            AccountState {
+                storage_root: *EMPTY_TRIE_HASH,
+                ..served
+            },
+        )],
+    )
+    .await;
+    reconstruct_and_verify(&store, &flat, &header(10, root))
+        .await
+        .expect("a cleared contract must reconstruct to the pivot root");
+
+    let leaf = store
+        .open_direct_state_trie(root)
+        .expect("open state trie")
+        .get(contract.as_bytes())
+        .expect("read leaf")
+        .expect("the contract is in the reconstructed trie");
+    assert_eq!(
+        AccountState::decode(&leaf)
+            .expect("decode leaf")
+            .storage_root,
+        *EMPTY_TRIE_HASH
+    );
+
+    flat.destroy().await.expect("destroy");
+}
+
+/// A contract whose storage never reached the flat state fails the root check.
+///
+/// The leaf carries the storage root the pivot vouches for, so passing it
+/// through would verify while the storage trie behind it was never built: a
+/// node that answers the pivot root with none of the contract's slots. Each
+/// leaf has to carry what its slots on disk hash to, and none hash to the empty
+/// root.
+#[tokio::test]
+async fn a_contract_served_without_its_storage_fails_the_root_check() {
+    let store = store();
+    let flat = FlatState::open(&temp_dir("missing-storage")).expect("open");
+
+    let contract = at(1);
+    let slots: Vec<(H256, U256)> = (1u64..=3)
+        .map(|slot| (at(slot), U256::from(slot * 7)))
+        .collect();
+    let account = AccountState {
+        nonce: 1,
+        balance: U256::from(10),
+        storage_root: storage_root(&store, contract, &slots),
+        ..Default::default()
+    };
+    // The leaf alone; none of its slots.
+    flat.put_account(contract, &account).expect("write account");
+
+    let root = expected_root(&store, &[(contract, account)]).await;
+    let err = reconstruct_and_verify(&store, &flat, &header(10, root))
+        .await
+        .expect_err("a contract missing its storage must not verify");
+    assert!(
+        matches!(err, SyncError::StateRootMismatch(expected, _) if expected == root),
+        "expected a state root mismatch, got: {err}"
+    );
 
     flat.destroy().await.expect("destroy");
 }

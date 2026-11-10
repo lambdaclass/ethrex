@@ -1,9 +1,9 @@
 use crate::{errors::DatabaseError, precompiles::PrecompileCache};
+use ethrex_common::seeded_hash::{SeededHashMap, SeededHashSet};
 use ethrex_common::{
     Address, H256, U256,
     types::{AccountState, ChainConfig, Code, CodeMetadata},
 };
-use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::{
     Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
     atomic::{AtomicU64, Ordering},
@@ -19,10 +19,12 @@ pub mod gen_db;
 /// large-state blocks these paths target. Tunable.
 pub const BLOATED_BATCH_THRESHOLD: usize = 16_384;
 
-// Type aliases for cache storage maps
-type AccountCache = FxHashMap<Address, AccountState>;
-type StorageCache = FxHashMap<(Address, H256), U256>;
-type CodeCache = FxHashMap<H256, Code>;
+// Type aliases for cache storage maps, all seeded like `TransientStorage`: transactions
+// choose which addresses and slots get cached, and which deployed code, whose hash its
+// deployer can grind (see `ethrex_common::seeded_hash`).
+type AccountCache = SeededHashMap<Address, AccountState>;
+type StorageCache = SeededHashMap<(Address, H256), U256>;
+type CodeCache = SeededHashMap<H256, Code>;
 /// Touched-key snapshot returned by [`CachingDatabase::touched_keys_where`].
 pub struct TouchedKeys {
     /// Touched accounts with their storage roots.
@@ -167,9 +169,9 @@ impl CachingDatabase {
     pub fn new(inner: Arc<dyn Database>, precompile_cache_enabled: bool) -> Self {
         Self {
             inner,
-            accounts: RwLock::new(FxHashMap::default()),
-            storage: RwLock::new(FxHashMap::default()),
-            code: RwLock::new(FxHashMap::default()),
+            accounts: RwLock::new(AccountCache::default()),
+            storage: RwLock::new(StorageCache::default()),
+            code: RwLock::new(CodeCache::default()),
             code_bytes: AtomicU64::new(0),
             precompile_cache: precompile_cache_enabled.then(PrecompileCache::new),
             chain_config: OnceLock::new(),
@@ -419,7 +421,7 @@ impl Database for CachingDatabase {
     fn prefetch_codes(&self, code_hashes: &[H256]) -> Result<u64, DatabaseError> {
         let missing: Vec<H256> = {
             let cache = self.read_code()?;
-            let mut seen: FxHashSet<H256> = FxHashSet::default();
+            let mut seen: SeededHashSet<H256> = Default::default();
             code_hashes
                 .iter()
                 .copied()
@@ -581,5 +583,53 @@ mod code_bytes_tests {
         cache.prefetch_codes(&hashes).unwrap();
         assert_eq!(cache.code_bytes(), 4 * size);
         assert_eq!(cache.read_code().unwrap().len(), 4);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod seeded_cache_tests {
+    use super::*;
+    use std::hash::BuildHasher;
+
+    /// Fails if `state` hashes a key like a fresh instance of its type does, as every
+    /// instance of an unseeded hasher does.
+    #[track_caller]
+    fn assert_seeded<S: BuildHasher + Default>(state: &S) {
+        let key = H256::repeat_byte(0x5a);
+        assert_ne!(state.hash_one(key), S::default().hash_one(key));
+    }
+
+    struct EmptyStore;
+
+    impl Database for EmptyStore {
+        fn get_account_state(&self, _: Address) -> Result<AccountState, DatabaseError> {
+            Ok(AccountState::default())
+        }
+        fn get_storage_value(&self, _: Address, _: H256) -> Result<U256, DatabaseError> {
+            Ok(U256::zero())
+        }
+        fn get_block_hash(&self, _: u64) -> Result<H256, DatabaseError> {
+            Ok(H256::zero())
+        }
+        fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+            Ok(ChainConfig::default())
+        }
+        fn get_account_code(&self, _: H256) -> Result<Code, DatabaseError> {
+            Ok(Code::default())
+        }
+        fn get_code_metadata(&self, _: H256) -> Result<CodeMetadata, DatabaseError> {
+            Ok(CodeMetadata { length: 0 })
+        }
+    }
+
+    /// Transactions choose which accounts and slots the warming cache holds, and which
+    /// deployed code it loads, so none of its maps may hash without a seed.
+    #[test]
+    fn warming_caches_are_seeded() {
+        let cache = CachingDatabase::new(Arc::new(EmptyStore), false);
+        assert_seeded(cache.read_accounts().expect("account cache lock").hasher());
+        assert_seeded(cache.read_storage().expect("storage cache lock").hasher());
+        assert_seeded(cache.read_code().expect("code cache lock").hasher());
     }
 }

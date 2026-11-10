@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, hash_map::Entry},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -47,6 +47,7 @@ pub const BROADCAST_INTERVAL_MS: u64 = 1000; // 1 second
 pub trait TxBroadcasterProtocol: Send + Sync {
     fn broadcast_txs(&self) -> Result<(), ActorError>;
     fn add_txs(&self, tx_hashes: Vec<H256>, peer_id: H256) -> Result<(), ActorError>;
+    fn forget_txs(&self, tx_hashes: Vec<H256>, peer_id: H256) -> Result<(), ActorError>;
     fn prune_txs(&self) -> Result<(), ActorError>;
     fn remove_peer(&self, peer_id: H256) -> Result<(), ActorError>;
 }
@@ -75,6 +76,11 @@ impl PeerMask {
         }
         let bit = (idx as usize) % 64;
         (self.bits[word] >> bit) & 1 == 1
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.bits.iter().all(|word| *word == 0)
     }
 
     #[inline]
@@ -222,6 +228,15 @@ impl TxBroadcaster {
     }
 
     #[send_handler]
+    async fn handle_forget_txs(
+        &mut self,
+        msg: tx_broadcaster_protocol::ForgetTxs,
+        _ctx: &Context<Self>,
+    ) {
+        self.do_forget_txs(msg.tx_hashes, msg.peer_id);
+    }
+
+    #[send_handler]
     async fn handle_prune_txs(
         &mut self,
         _msg: tx_broadcaster_protocol::PruneTxs,
@@ -299,6 +314,23 @@ impl TxBroadcaster {
             let record = self.known_txs.entry(tx).or_default();
             record.peers.set(peer_idx);
             record.last_sent = now;
+        }
+    }
+
+    // Undo `do_add_txs` for transactions a peer sent that the mempool did not keep: clear the
+    // peer's bit and drop records no peer is marked on, so `known_txs` only retains what was
+    // admitted instead of every hash a peer sends.
+    fn do_forget_txs(&mut self, txs: Vec<H256>, peer_id: H256) {
+        let Some(&peer_idx) = self.peer_indexer.get(&peer_id) else {
+            return;
+        };
+        for tx in txs {
+            if let Entry::Occupied(mut record) = self.known_txs.entry(tx) {
+                record.get_mut().peers.clear(peer_idx);
+                if record.get().peers.is_empty() {
+                    record.remove();
+                }
+            }
         }
     }
 
@@ -445,4 +477,47 @@ pub enum TxBroadcasterError {
     StoreError(#[from] StoreError),
     #[error(transparent)]
     PeerTableError(#[from] ActorError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::peer_table::PeerTableServer;
+    use ethrex_storage::{EngineType, Store};
+
+    fn broadcaster() -> TxBroadcaster {
+        let store = Store::new("memory", EngineType::InMemory).expect("in-memory store");
+        TxBroadcaster {
+            peer_table: PeerTableServer::spawn(H256::zero(), 10, store.clone()),
+            blockchain: Arc::new(Blockchain::default_with_store(store)),
+            known_txs: HashMap::new(),
+            peer_indexer: HashMap::new(),
+            next_peer_idx: 0,
+            free_indices: Vec::new(),
+            tx_broadcasting_time_interval: BROADCAST_INTERVAL_MS,
+        }
+    }
+
+    #[tokio::test]
+    async fn forgotten_txs_keep_only_other_peers_marks() {
+        let mut broadcaster = broadcaster();
+        let (sender, other) = (H256::from_low_u64_be(1), H256::from_low_u64_be(2));
+        let (admitted, rejected, rejected_known_to_other) = (
+            H256::from_low_u64_be(10),
+            H256::from_low_u64_be(11),
+            H256::from_low_u64_be(12),
+        );
+        broadcaster.do_add_txs(vec![admitted, rejected, rejected_known_to_other], sender);
+        broadcaster.do_add_txs(vec![rejected_known_to_other], other);
+
+        broadcaster.do_forget_txs(vec![rejected, rejected_known_to_other], sender);
+
+        let sender_idx = broadcaster.peer_index(sender);
+        let other_idx = broadcaster.peer_index(other);
+        assert!(broadcaster.known_txs[&admitted].peers.is_set(sender_idx));
+        assert!(!broadcaster.known_txs.contains_key(&rejected));
+        let shared = &broadcaster.known_txs[&rejected_known_to_other];
+        assert!(!shared.peers.is_set(sender_idx));
+        assert!(shared.peers.is_set(other_idx));
+    }
 }

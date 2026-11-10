@@ -1,7 +1,7 @@
 use ethrex_common::H256;
 use ethrex_rlp::encode::RLPEncode;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use tracing::debug;
 
 use crate::{RpcApiContext, RpcErr, RpcHandler, types::block::RpcBlock};
@@ -17,7 +17,7 @@ struct BadBlock {
 }
 
 impl RpcHandler for GetBadBlocksRequest {
-    fn parse(_params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(_params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         Ok(GetBadBlocksRequest)
     }
 

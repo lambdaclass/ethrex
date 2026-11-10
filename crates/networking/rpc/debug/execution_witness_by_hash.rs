@@ -1,6 +1,6 @@
 use ethrex_common::types::BlockHash;
 use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use tracing::debug;
 
 use crate::{RpcApiContext, RpcErr, RpcHandler};
@@ -10,7 +10,7 @@ pub struct ExecutionWitnessByBlockHashRequest {
 }
 
 impl RpcHandler for ExecutionWitnessByBlockHashRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -21,7 +21,7 @@ impl RpcHandler for ExecutionWitnessByBlockHashRequest {
             )));
         }
 
-        let block_hash: BlockHash = serde_json::from_value(params[0].clone())
+        let block_hash: BlockHash = serde_json::from_str(params[0].get())
             .map_err(|e| RpcErr::BadParams(format!("Invalid block hash: {e}")))?;
 
         Ok(ExecutionWitnessByBlockHashRequest { block_hash })

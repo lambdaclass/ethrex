@@ -21,6 +21,8 @@ pub enum TrieError {
     DbError(anyhow::Error),
     #[error("Invalid trie input")]
     InvalidInput,
+    #[error("Trie node path does not end at the trie's key length")]
+    KeyLengthMismatch,
 }
 
 #[derive(Debug, Error)]

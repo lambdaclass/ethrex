@@ -308,7 +308,7 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 
 	RUST_LOG=info,ethrex_l2_prover=debug GPU=true make init-prover-sp1 & \
 	cargo test -p ethrex-test l2:: --release --features l2 -- --nocapture --test-threads=1
-	killall ethrex -s SIGINT # if sent a SIGTERM, SP1 does not shuts down the sp1-gpu container
+	killall ethrex -s SIGINT # if sent a SIGTERM, SP1 does not shut down its sp1-gpu-server
 
 # State reconstruction tests
 # If this fails due to stale blobs, regenerate them following:

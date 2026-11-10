@@ -31,13 +31,13 @@ concurrency:
 jobs:
   promote-smoke:
     name: Promote smoke test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Free disk space
-        uses: ./.github/actions/free-disk
+        uses: $/.github/actions/free-disk
 
       - name: Build a throwaway RC image (simulates a vX.Y.Z-rc.W build)
         run: |

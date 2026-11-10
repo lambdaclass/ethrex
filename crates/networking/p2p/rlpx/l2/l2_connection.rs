@@ -3,11 +3,11 @@ use crate::rlpx::l2::messages::{BatchSealed, L2Message, NewBlock};
 use crate::rlpx::{connection::server::Established, error::PeerConnectionError, message::Message};
 use ethereum_types::Address;
 use ethereum_types::Signature;
-use ethrex_blockchain::error::ChainError;
-use ethrex_blockchain::fork_choice::apply_fork_choice;
+use ethrex_common::H256;
 use ethrex_common::types::Block;
 use ethrex_common::types::batch::Batch;
 use ethrex_crypto::{Crypto as _, NativeCrypto};
+use ethrex_storage::{Store, error::StoreError};
 use ethrex_storage_rollup::StoreRollup;
 use secp256k1::{Message as SecpMessage, SecretKey};
 use std::collections::BTreeMap;
@@ -15,32 +15,32 @@ use std::sync::Arc;
 use tokio::time::Instant;
 use tracing::{debug, error, info, warn};
 
+use super::block_importer::L2BlockImporter;
 use super::messages::batch_hash;
 use super::{PERIODIC_BATCH_BROADCAST_INTERVAL, PERIODIC_BLOCK_BROADCAST_INTERVAL};
+
+/// Batches carry their blobs, so a peer catching up on them is sent at most this many per
+/// broadcast tick, to bound what it can hold in its outbound queue.
+const MAX_BATCHES_PER_BROADCAST: usize = 16;
 
 #[derive(Debug, Clone)]
 pub struct L2ConnectedState {
     pub latest_block_sent: u64,
-    pub latest_block_added: u64,
     pub latest_batch_sent: u64,
-    pub blocks_on_queue: BTreeMap<u64, QueuedBlock>,
     pub batches_on_queue: BTreeMap<u64, Arc<Batch>>,
     pub store_rollup: StoreRollup,
     pub committer_key: Arc<SecretKey>,
     pub next_block_broadcast: Instant,
     pub next_batch_broadcast: Instant,
-}
-
-#[derive(Debug, Clone)]
-pub struct QueuedBlock {
-    pub block: Arc<Block>,
-    pub fee_config: ethrex_common::types::fee_config::FeeConfig,
+    pub block_importer: L2BlockImporter,
 }
 
 #[derive(Debug, Clone)]
 pub struct P2PBasedContext {
     pub store_rollup: StoreRollup,
     pub committer_key: Arc<SecretKey>,
+    /// Shared by every connection of the node, which hand it the blocks they receive.
+    pub block_importer: L2BlockImporter,
 }
 
 #[derive(Debug, Clone)]
@@ -102,14 +102,13 @@ impl L2ConnState {
             Self::Disconnected(ctxt) => {
                 let state = L2ConnectedState {
                     latest_block_sent: 0,
-                    latest_block_added: 0,
-                    blocks_on_queue: BTreeMap::new(),
                     batches_on_queue: BTreeMap::new(),
                     latest_batch_sent: 0,
                     store_rollup: ctxt.store_rollup.clone(),
                     committer_key: ctxt.committer_key.clone(),
                     next_block_broadcast: Instant::now() + PERIODIC_BLOCK_BROADCAST_INTERVAL,
                     next_batch_broadcast: Instant::now() + PERIODIC_BATCH_BROADCAST_INTERVAL,
+                    block_importer: ctxt.block_importer.clone(),
                 };
                 *self = L2ConnState::Connected(state);
                 Ok(())
@@ -117,6 +116,57 @@ impl L2ConnState {
             Self::Connected(_) => Ok(()),
         }
     }
+
+    /// Starts broadcasting blocks from the head the peer advertised in its eth `Status`, instead
+    /// of from genesis, so a reconnect doesn't re-send the whole chain.
+    ///
+    /// Batches still start from the first one: the peer's head says nothing about which batches
+    /// it has sealed, and a batch it misses can never be sealed afterwards.
+    pub(crate) fn set_peer_head(&mut self, storage: &Store, status: &Message) {
+        let Self::Connected(state) = self else {
+            return;
+        };
+        let (number, hash) = match status {
+            Message::Status68(msg) => (None, msg.block_hash),
+            Message::Status69(msg) => (Some(msg.0.latest_block), msg.0.latest_block_hash),
+            Message::Status70(msg) => (Some(msg.latest_block), msg.latest_block_hash),
+            Message::Status71(msg) => (Some(msg.0.latest_block), msg.0.latest_block_hash),
+            _ => return,
+        };
+        state.latest_block_sent = peer_head_on_local_chain(storage, number, hash)
+            .inspect_err(|err| {
+                warn!("Could not look up the peer's head, broadcasting blocks from genesis: {err}")
+            })
+            .ok()
+            .flatten()
+            .unwrap_or(0);
+    }
+}
+
+/// The number of the peer's head block, if the peer already has every block up to it that we
+/// could send: the head is on our canonical chain, or ahead of our own head. `number` is `None`
+/// for eth/68 peers, which only advertise the head's hash.
+pub fn peer_head_on_local_chain(
+    storage: &Store,
+    number: Option<u64>,
+    hash: H256,
+) -> Result<Option<u64>, StoreError> {
+    let number = match number {
+        Some(number) if number > storage.get_latest_block_number()? => return Ok(Some(number)),
+        Some(number) => number,
+        None => match storage.get_block_header_by_hash(hash)? {
+            Some(header) => header.number,
+            None => return Ok(None),
+        },
+    };
+    Ok((storage.get_canonical_block_hash_sync(number)? == Some(hash)).then_some(number))
+}
+
+/// Whether there's room to queue more catch-up messages for this peer. `send` drops a peer whose
+/// outbound queue is full, so catching up a peer that is far behind must leave room for the rest
+/// of its traffic. Whatever isn't sent now goes out on a later tick.
+fn has_outbound_headroom(established: &Established) -> bool {
+    established.outbound_tx.capacity() >= established.outbound_tx.max_capacity() / 2
 }
 
 fn validate_signature(_recovered_lead_sequencer: Address) -> bool {
@@ -143,19 +193,15 @@ pub(crate) async fn handle_based_capability_message(
             process_batches_on_queue(established).await?;
         }
         L2Message::NewBlock(ref new_block_msg) => {
-            if should_process_new_block(established, new_block_msg).await? {
-                established
+            if should_process_new_block(established, new_block_msg).await?
+                && established
                     .l2_state
-                    .connection_state_mut()?
-                    .blocks_on_queue
-                    .entry(new_block_msg.block.header.number)
-                    .or_insert_with(|| QueuedBlock {
-                        block: new_block_msg.block.clone(),
-                        fee_config: new_block_msg.fee_config,
-                    });
+                    .connection_state()?
+                    .block_importer
+                    .submit(new_block_msg.block.clone(), new_block_msg.fee_config)
+            {
                 broadcast_message(established, msg.into())?;
             }
-            process_blocks_on_queue(established).await?;
         }
     }
     Ok(())
@@ -233,6 +279,9 @@ pub(crate) async fn send_new_block(
         .connection_state_mut()?
         .latest_block_sent;
     for block_number in latest_block_sent + 1..=latest_block_number {
+        if !has_outbound_headroom(established) {
+            break;
+        }
         let new_block_msg = {
             let l2_state = established.l2_state.connection_state_mut()?;
             debug!(
@@ -334,13 +383,9 @@ async fn should_process_new_block(
         );
         return Ok(false);
     }
-    if l2_state.latest_block_added >= msg.block.header.number
-        || l2_state
-            .blocks_on_queue
-            .contains_key(&msg.block.header.number)
-    {
+    if l2_state.block_importer.is_queued(msg.block.header.number) {
         debug!(
-            "Block {} received by peer already stored, ignoring it",
+            "Block {} received by peer already queued, ignoring it",
             msg.block.header.number
         );
         return Ok(false);
@@ -416,149 +461,69 @@ async fn should_process_batch_sealed(
     Ok(true)
 }
 
-pub async fn process_blocks_on_queue(
-    established: &mut Established,
-) -> Result<(), PeerConnectionError> {
-    let l2_state = established.l2_state.connection_state_mut()?;
-
-    let mut next_block_to_add = l2_state.latest_block_added + 1;
-    if let Some(latest_batch_number) = l2_state.store_rollup.get_batch_number().await?
-        && let Some(latest_batch) = l2_state
-            .store_rollup
-            .get_batch(latest_batch_number, ethrex_common::types::Fork::Prague)
-            .await?
-    {
-        next_block_to_add = next_block_to_add.max(latest_batch.last_block + 1);
-    }
-    filter_potential_old_blocks(l2_state, next_block_to_add);
-
-    while let Some(queued) = l2_state.blocks_on_queue.remove(&next_block_to_add) {
-        let QueuedBlock { block, fee_config } = queued;
-        // This check is necessary if a connection to another peer already applied the block but this connection
-        // did not register that update.
-        if let Ok(Some(_)) = established.storage.get_block_body(next_block_to_add).await {
-            l2_state.latest_block_added = next_block_to_add;
-            next_block_to_add += 1;
-            continue;
-        }
-        let block_hash = block.hash();
-        let block_number = block.header.number;
-        let block = Arc::unwrap_or_clone(block);
-        established
-            .blockchain
-            .add_block_pipeline(block, None)
-            .inspect_err(|e| {
-                error!(
-                    peer=%established.node,
-                    error=%e,
-                    block_number,
-                    ?block_hash,
-                    "Error adding new block",
-                );
-            })?;
-
-        apply_fork_choice(
-            &established.storage,
-            block_hash,
-            block_hash,
-            block_hash,
-            None,
-        )
-        .await
-        .map_err(|e| {
-            PeerConnectionError::BlockchainError(ChainError::Custom(format!(
-                "Error adding new block {} with hash {:?}, error: {e}",
-                block_number, block_hash
-            )))
-        })?;
-
-        l2_state
-            .store_rollup
-            .store_fee_config_by_block(block_number, fee_config)
-            .await?;
-        info!(
-            "Added new block {} with hash {:?}",
-            next_block_to_add, block_hash
-        );
-        l2_state.latest_block_added = next_block_to_add;
-        next_block_to_add += 1;
-    }
-    Ok(())
-}
-
-fn filter_potential_old_blocks(l2_state: &mut L2ConnectedState, next_block_to_add: u64) {
-    let keys_to_remove = if let Some(block_entry) = l2_state.blocks_on_queue.first_entry()
-        && block_entry.key() < &next_block_to_add
-    {
-        let mut keys = vec![];
-        for key in l2_state.blocks_on_queue.keys() {
-            if *key < next_block_to_add {
-                keys.push(*key);
-            } else {
-                break;
-            }
-        }
-        keys
-    } else {
-        vec![]
-    };
-    for key in keys_to_remove {
-        l2_state.blocks_on_queue.remove(&key);
-    }
-}
-
+/// Sends the batches the peer hasn't been sent yet, a few per tick: every connection starts from
+/// the first batch, and one per tick would delay new batches by minutes on a long chain.
 pub(crate) async fn send_sealed_batch(
     established: &mut Established,
 ) -> Result<(), PeerConnectionError> {
-    let batch_sealed_msg = {
-        let l2_state = established.l2_state.connection_state_mut()?;
-        let next_batch_to_send = l2_state.latest_batch_sent + 1;
-        if !l2_state
-            .store_rollup
-            .contains_batch(&next_batch_to_send)
-            .await?
-        {
-            return Ok(());
+    for _ in 0..MAX_BATCHES_PER_BROADCAST {
+        if !has_outbound_headroom(established) {
+            break;
         }
-        let l1_fork = established.blockchain.current_fork()?;
-        let Some(batch) = l2_state
-            .store_rollup
-            .get_batch(next_batch_to_send, l1_fork)
-            .await?
-        else {
-            return Ok(());
+        let Some(batch_sealed_msg) = next_batch_sealed_msg(established).await? else {
+            break;
         };
-        match l2_state
-            .store_rollup
-            .get_signature_by_batch(next_batch_to_send)
-            .await
-            .inspect_err(|err| {
-                warn!(
-                    "Fetching signature from store returned an error, \
+        send(established, batch_sealed_msg.into()).await?;
+        established
+            .l2_state
+            .connection_state_mut()?
+            .latest_batch_sent += 1;
+    }
+    Ok(())
+}
+
+async fn next_batch_sealed_msg(
+    established: &mut Established,
+) -> Result<Option<BatchSealed>, PeerConnectionError> {
+    let l2_state = established.l2_state.connection_state_mut()?;
+    let next_batch_to_send = l2_state.latest_batch_sent + 1;
+    if !l2_state
+        .store_rollup
+        .contains_batch(&next_batch_to_send)
+        .await?
+    {
+        return Ok(None);
+    }
+    let l1_fork = established.blockchain.current_fork()?;
+    let Some(batch) = l2_state
+        .store_rollup
+        .get_batch(next_batch_to_send, l1_fork)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let msg = match l2_state
+        .store_rollup
+        .get_signature_by_batch(next_batch_to_send)
+        .await
+        .inspect_err(|err| {
+            warn!(
+                "Fetching signature from store returned an error, \
              defaulting to signing with committer key: {err}"
-                )
-            }) {
-            Ok(Some(recovered_sig)) => BatchSealed::new(batch, recovered_sig),
-            Ok(None) | Err(_) => {
-                let msg = BatchSealed::from_batch_and_key(
-                    batch,
-                    l2_state.committer_key.clone().as_ref(),
-                )?;
-                l2_state
-                    .store_rollup
-                    .store_signature_by_batch(msg.batch.number, msg.signature)
-                    .await?;
-                msg
-            }
+            )
+        }) {
+        Ok(Some(recovered_sig)) => BatchSealed::new(batch, recovered_sig),
+        Ok(None) | Err(_) => {
+            let msg =
+                BatchSealed::from_batch_and_key(batch, l2_state.committer_key.clone().as_ref())?;
+            l2_state
+                .store_rollup
+                .store_signature_by_batch(msg.batch.number, msg.signature)
+                .await?;
+            msg
         }
     };
-    let batch_sealed_msg: Message = batch_sealed_msg.into();
-    send(established, batch_sealed_msg).await?;
-    established
-        .l2_state
-        .connection_state_mut()?
-        .latest_batch_sent += 1;
-    Ok(())
+    Ok(Some(msg))
 }
 
 pub async fn process_batches_on_queue(

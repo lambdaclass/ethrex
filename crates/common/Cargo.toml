@@ -38,6 +38,7 @@ lru.workspace = true
 rayon = { workspace = true, optional = true }
 rkyv.workspace = true
 rustc-hash.workspace = true
+foldhash.workspace = true
 indexmap.workspace = true
 hex-simd = "0.8.0"
 

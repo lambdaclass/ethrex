@@ -472,6 +472,9 @@ impl L1Committer {
             .await?
         {
             Some(batch) => {
+                // Do this while the current checkpoint is still the state the batch
+                // starts from: check_current_checkpoint moves it to the batch's end.
+                self.ensure_prover_input(&batch).await?;
                 // If we have the batch already sealed, we need to ensure the checkpoint
                 // is available.
                 self.check_current_checkpoint(&batch).await?;
@@ -829,12 +832,23 @@ impl L1Committer {
         let mut current_blocks = vec![];
         let mut current_fee_configs = vec![];
 
-        #[cfg(feature = "metrics")]
         let mut tx_count = 0_u64;
         #[cfg(feature = "metrics")]
         let mut blob_size = 0_usize;
         #[cfg(feature = "metrics")]
         let mut batch_gas_used = 0_u64;
+        // The batch's wall-clock span runs from the parent of its first block to
+        // its last block, so it covers every block interval in the batch. The
+        // genesis timestamp says nothing about when block 1 was built, so the
+        // first batch of a chain reports no span.
+        let batch_parent_timestamp = if last_added_block_number == 0 {
+            None
+        } else {
+            self.store
+                .get_block_header(last_added_block_number)?
+                .map(|header| header.timestamp)
+        };
+        let mut batch_last_timestamp = None;
 
         info!("Preparing batch from block {first_block_of_batch}, {batch_number}");
 
@@ -887,14 +901,6 @@ impl L1Committer {
                 receipts.push(receipt);
             }
 
-            metrics!(
-                tx_count += txs
-                    .len()
-                    .try_into()
-                    .inspect_err(|_| tracing::error!("Failed to collect metric tx count"))
-                    .unwrap_or(0);
-                batch_gas_used += potential_batch_block.header.gas_used;
-            );
             // Get block messages and privileged transactions
             let l1_out_messages = get_block_l1_messages(&receipts);
             let l2_out_messages =
@@ -1021,8 +1027,16 @@ impl L1Committer {
             // Save current blobs_bundle and continue to add more blocks.
             blobs_bundle = bundle;
 
+            // The block is in the batch only from here on: a block that does not
+            // fit the blob is read and then dropped above, so counting it earlier
+            // would attribute its transactions and gas to this batch.
+            tx_count += u64::try_from(txs.len())
+                .inspect_err(|_| tracing::error!("Failed to collect metric tx count"))
+                .unwrap_or(0);
+            batch_last_timestamp = Some(potential_batch_block.header.timestamp);
             metrics!(
                 blob_size = latest_blob_size;
+                batch_gas_used += potential_batch_block.header.gas_used;
             );
 
             l1_in_message_hashes.extend(
@@ -1092,6 +1106,23 @@ impl L1Committer {
             METRICS.set_batch_tx_count(batch_number, tx_count)?;
         );
 
+        // Block timestamps have second resolution, so this is the sustained rate
+        // over the batch, not a per-block figure.
+        let batch_span_seconds = batch_last_timestamp
+            .zip(batch_parent_timestamp)
+            .map(|(last, parent)| last.saturating_sub(parent))
+            .filter(|seconds| *seconds > 0);
+        #[allow(clippy::as_conversions)]
+        let batch_tps = batch_span_seconds.map(|seconds| tx_count as f64 / seconds as f64);
+        match batch_span_seconds.zip(batch_tps) {
+            Some((seconds, tps)) => info!(
+                "Batch {batch_number} holds blocks {first_block_of_batch}..={last_added_block_number}: {tx_count} transactions in {seconds} s, tps {tps:.1}"
+            ),
+            None => info!(
+                "Batch {batch_number} holds blocks {first_block_of_batch}..={last_added_block_number}: {tx_count} transactions"
+            ),
+        }
+
         info!(
             "Added {} privileged to the batch",
             l1_in_message_hashes.len() + l2_in_message_hashes.len()
@@ -1132,6 +1163,34 @@ impl L1Committer {
             last_added_block_number,
             acc_non_privileged_transactions.try_into()?,
         )))
+    }
+
+    /// A batch can be sealed by a different build than the one committing it: the
+    /// one that ran before an upgrade, or the sequencer this node synced it from.
+    /// Its prover input then exists only for that build's version, and provers of
+    /// this version would never get it, so generate and store one for this version.
+    async fn ensure_prover_input(&self, batch: &Batch) -> Result<(), CommitterError> {
+        if self
+            .rollup_store
+            .get_prover_input_by_batch_and_version(batch.number, &self.git_commit_hash)
+            .await?
+            .is_some()
+        {
+            return Ok(());
+        }
+        info!(
+            "Batch {} was sealed without a prover input for version {}, generating it",
+            batch.number, self.git_commit_hash
+        );
+        let prover_input = self.generate_batch_prover_input(batch).await?;
+        self.rollup_store
+            .store_prover_input_by_batch_and_version(
+                batch.number,
+                &self.git_commit_hash,
+                prover_input,
+            )
+            .await?;
+        Ok(())
     }
 
     async fn generate_batch_prover_input(

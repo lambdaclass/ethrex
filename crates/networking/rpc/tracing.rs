@@ -8,9 +8,10 @@ use ethrex_common::{
 };
 use ethrex_vm::tracing::OpcodeTracerConfig;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 
 use crate::{
+    eth::transaction::simulation_gas_limit,
     rpc::{RpcApiContext, RpcHandler},
     types::{
         block_identifier::{BlockIdentifier, BlockIdentifierOrHash},
@@ -155,7 +156,7 @@ impl<TxTrace: Serialize> From<(H256, TxTrace)> for BlockTraceComponent<TxTrace> 
 }
 
 impl RpcHandler for TraceTransactionRequest {
-    fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -163,13 +164,13 @@ impl RpcHandler for TraceTransactionRequest {
             return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         };
         let trace_config = if params.len() == 2 {
-            serde_json::from_value(params[1].clone())?
+            serde_json::from_str(params[1].get())?
         } else {
             TraceConfig::default()
         };
 
         Ok(TraceTransactionRequest {
-            tx_hash: serde_json::from_value(params[0].clone())?,
+            tx_hash: serde_json::from_str(params[0].get())?,
             trace_config,
         })
     }
@@ -205,7 +206,7 @@ impl RpcHandler for TraceTransactionRequest {
                     .into_iter()
                     .next()
                     .ok_or(RpcErr::Internal("Empty call trace".to_string()))?;
-                Ok(serde_json::to_value(top_frame)?)
+                serde_json::to_value(top_frame).map_err(|error| RpcErr::Internal(error.to_string()))
             }
             TracerType::PrestateTracer => {
                 let config: PrestateTracerConfig =
@@ -227,8 +228,10 @@ impl RpcHandler for TraceTransactionRequest {
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
                 match result {
-                    PrestateResult::Prestate(trace) => Ok(serde_json::to_value(trace)?),
-                    PrestateResult::Diff(diff) => Ok(serde_json::to_value(diff)?),
+                    PrestateResult::Prestate(trace) => serde_json::to_value(trace)
+                        .map_err(|error| RpcErr::Internal(error.to_string())),
+                    PrestateResult::Diff(diff) => serde_json::to_value(diff)
+                        .map_err(|error| RpcErr::Internal(error.to_string())),
                 }
             }
             TracerType::OpcodeTracer => {
@@ -250,17 +253,18 @@ impl RpcHandler for TraceTransactionRequest {
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
                 // `debug_traceTransaction` returns the geth-RPC structLogger shape.
-                Ok(serde_json::to_value(StructLoggerResult {
+                serde_json::to_value(StructLoggerResult {
                     result: &result,
                     emit,
-                })?)
+                })
+                .map_err(|error| RpcErr::Internal(error.to_string()))
             }
         }
     }
 }
 
 impl RpcHandler for TraceBlockByNumberRequest {
-    fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -268,12 +272,12 @@ impl RpcHandler for TraceBlockByNumberRequest {
             return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         };
         let trace_config = if params.len() == 2 {
-            serde_json::from_value(params[1].clone())?
+            serde_json::from_str(params[1].get())?
         } else {
             TraceConfig::default()
         };
 
-        let block = BlockIdentifier::parse(params[0].clone(), 0)?;
+        let block = BlockIdentifier::parse_param(&params[0], 0)?;
 
         Ok(TraceBlockByNumberRequest {
             block,
@@ -300,7 +304,7 @@ impl RpcHandler for TraceBlockByNumberRequest {
 }
 
 impl RpcHandler for TraceBlockByHashRequest {
-    fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -308,13 +312,13 @@ impl RpcHandler for TraceBlockByHashRequest {
             return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         };
         let trace_config = if params.len() == 2 {
-            serde_json::from_value(params[1].clone())?
+            serde_json::from_str(params[1].get())?
         } else {
             TraceConfig::default()
         };
 
         Ok(TraceBlockByHashRequest {
-            block_hash: serde_json::from_value(params[0].clone())?,
+            block_hash: serde_json::from_str(params[0].get())?,
             trace_config,
         })
     }
@@ -370,7 +374,7 @@ async fn trace_block(
                     Ok((hash, frame).into())
                 })
                 .collect::<Result<_, RpcErr>>()?;
-            Ok(serde_json::to_value(block_trace)?)
+            serde_json::to_value(block_trace).map_err(|error| RpcErr::Internal(error.to_string()))
         }
         TracerType::PrestateTracer => {
             let config: PrestateTracerConfig = if let Some(value) = &trace_config.tracer_config {
@@ -404,8 +408,9 @@ async fn trace_block(
                         result: trace_value,
                     })
                 })
-                .collect::<Result<_, serde_json::Error>>()?;
-            Ok(serde_json::to_value(block_trace)?)
+                .collect::<Result<_, serde_json::Error>>()
+                .map_err(|error| RpcErr::Internal(error.to_string()))?;
+            serde_json::to_value(block_trace).map_err(|error| RpcErr::Internal(error.to_string()))
         }
         TracerType::OpcodeTracer => {
             let cfg: OpcodeTracerConfig = trace_config
@@ -438,8 +443,9 @@ async fn trace_block(
                         result: wrapped,
                     })
                 })
-                .collect::<Result<_, serde_json::Error>>()?;
-            Ok(serde_json::to_value(block_trace)?)
+                .collect::<Result<_, serde_json::Error>>()
+                .map_err(|error| RpcErr::Internal(error.to_string()))?;
+            serde_json::to_value(block_trace).map_err(|error| RpcErr::Internal(error.to_string()))
         }
     }
 }
@@ -495,7 +501,7 @@ impl TraceCallRequest {
 }
 
 impl RpcHandler for TraceCallRequest {
-    fn parse(params: &Option<Vec<serde_json::Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -503,32 +509,32 @@ impl RpcHandler for TraceCallRequest {
             return Err(RpcErr::BadParams("Expected 1 to 5 params".to_owned()));
         }
 
-        let transaction = serde_json::from_value(params[0].clone())?;
+        let transaction = serde_json::from_str(params[0].get())?;
 
         // Block and traceConfig are optional: a JSON `null` is treated the same as an
         // omitted argument, matching geth (which accepts `traceCall(call, null, {...})`).
         // Block defaults to `latest` when absent.
         let block = match params.get(1) {
-            Some(value) if !value.is_null() => BlockIdentifierOrHash::parse(value.clone(), 1)?,
+            Some(value) if value.get() != "null" => BlockIdentifierOrHash::parse_param(value, 1)?,
             _ => BlockIdentifierOrHash::Identifier(BlockIdentifier::default()),
         };
 
         let mut trace_config: TraceCallConfig = match params.get(2) {
-            Some(value) if !value.is_null() => serde_json::from_value(value.clone())?,
+            Some(value) if value.get() != "null" => serde_json::from_str(value.get())?,
             _ => TraceCallConfig::default(),
         };
 
         // Positional params 4 and 5 are an ethrex extension kept for backwards
         // compatibility. The geth-shaped nested fields win when both are present.
         if trace_config.state_overrides.is_none()
-            && let Some(value) = params.get(3).filter(|v| !v.is_null())
+            && let Some(value) = params.get(3).filter(|v| v.get() != "null")
         {
-            trace_config.state_overrides = Some(serde_json::from_value(value.clone())?);
+            trace_config.state_overrides = Some(serde_json::from_str(value.get())?);
         }
         if trace_config.block_overrides.is_none()
-            && let Some(value) = params.get(4).filter(|v| !v.is_null())
+            && let Some(value) = params.get(4).filter(|v| v.get() != "null")
         {
-            trace_config.block_overrides = Some(serde_json::from_value(value.clone())?);
+            trace_config.block_overrides = Some(serde_json::from_str(value.get())?);
         }
 
         Ok(TraceCallRequest {
@@ -562,7 +568,7 @@ impl RpcHandler for TraceCallRequest {
         if let Some(i) = tx_index {
             let tx_count = block.body.transactions.len();
             if i >= tx_count && !(i == 0 && tx_count == 0) {
-                return Err(RpcErr::BadParams(format!(
+                return Err(RpcErr::ServerError(format!(
                     "txIndex {i} out of range for block with {tx_count} transactions"
                 )));
             }
@@ -578,7 +584,7 @@ impl RpcHandler for TraceCallRequest {
         // `ToMessage` (`args.Nonce = db.GetNonce(from)`) and `eth_estimateGas`. Without this
         // the VM's nonce check compares the account's real nonce against a default of 0 and
         // rejects the call.
-        let transaction = match self.transaction.nonce {
+        let mut transaction = match self.transaction.nonce {
             Some(_) => self.transaction.clone(),
             None => {
                 let nonce = context
@@ -590,6 +596,21 @@ impl RpcHandler for TraceCallRequest {
                 transaction
             }
         };
+        // Bounded by the node's RPC gas cap, whatever the request asks for. The header the
+        // call runs against decides the fork, and with it the default allowance.
+        {
+            let env_header = overrides.effective_header.as_ref().unwrap_or(&block.header);
+            let fork = context
+                .storage
+                .get_chain_config()
+                .fork(env_header.timestamp);
+            transaction.gas = Some(simulation_gas_limit(
+                transaction.gas,
+                env_header,
+                fork,
+                context.rpc_gas_cap,
+            ));
+        }
 
         match self.trace_config.base.tracer {
             TracerType::CallTracer => {
@@ -618,7 +639,7 @@ impl RpcHandler for TraceCallRequest {
                     .into_iter()
                     .next()
                     .ok_or(RpcErr::Internal("Empty call trace".to_string()))?;
-                Ok(serde_json::to_value(top_frame)?)
+                serde_json::to_value(top_frame).map_err(|error| RpcErr::Internal(error.to_string()))
             }
             TracerType::PrestateTracer => {
                 let config: PrestateTracerConfig =
@@ -643,8 +664,10 @@ impl RpcHandler for TraceCallRequest {
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
                 match result {
-                    PrestateResult::Prestate(trace) => Ok(serde_json::to_value(trace)?),
-                    PrestateResult::Diff(diff) => Ok(serde_json::to_value(diff)?),
+                    PrestateResult::Prestate(trace) => serde_json::to_value(trace)
+                        .map_err(|error| RpcErr::Internal(error.to_string())),
+                    PrestateResult::Diff(diff) => serde_json::to_value(diff)
+                        .map_err(|error| RpcErr::Internal(error.to_string())),
                 }
             }
             TracerType::OpcodeTracer => {
@@ -675,10 +698,11 @@ impl RpcHandler for TraceCallRequest {
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
                 // `debug_traceCall` returns the geth-RPC structLogger shape.
-                Ok(serde_json::to_value(StructLoggerResult {
+                serde_json::to_value(StructLoggerResult {
                     result: &result,
                     emit,
-                })?)
+                })
+                .map_err(|error| RpcErr::Internal(error.to_string()))
             }
         }
     }
