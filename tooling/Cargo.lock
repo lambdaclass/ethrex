@@ -9558,9 +9558,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-concurrency"
-version = "0.7.2"
+version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4a6a099221b42c15c79722b9f9d4bc1b250836b0f41f7d53e74a0aaa4af1c20"
+checksum = "df828af70c1f649ea251c68ed2fbd6b25286cbce17ff85bdba88982fa0744636"
 dependencies = [
  "futures",
  "pin-project-lite",
@@ -9572,9 +9572,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-macros"
-version = "0.7.2"
+version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "247019687261618cfb7675a007693669486fe6b922e17e51bdca545d2692893d"
+checksum = "5cc490dbf2a9c9d2d83d567c3a10dad8595213e11d653296d6d3917107485301"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9583,9 +9583,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-rt"
-version = "0.7.2"
+version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "459a2fb293cc2e30105ee48c771588821411997cc4d8fff5275573423b5b03a0"
+checksum = "759eb3b98790ef4d1ee7c6f5f4e35474c533282961813d96c53f42f3149f4d36"
 dependencies = [
  "ctrlc",
  "loom",
