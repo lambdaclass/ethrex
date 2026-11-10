@@ -871,9 +871,6 @@ async fn mempool_rejects_oversized_frame_data() {
 
 #[tokio::test]
 async fn mempool_rejects_frame_tx_whose_execution_gas_exceeds_the_eip7825_cap() {
-    // EIP-8141 scopes EIP-7825 to the execution dimension: intrinsic gas plus the
-    // sum of the frames' execution limits must fit TX_MAX_GAS_LIMIT. Execution
-    // rejects a transaction over it, so admission must as well.
     let mut frame_tx = minimal_valid_frame_tx();
     frame_tx.frames.push(Frame {
         mode: FrameMode::Sender as u8,

@@ -3880,12 +3880,7 @@ impl Blockchain {
                 .validate_static_constraints()
                 .map_err(MempoolError::InvalidFrameTransaction)?;
 
-            // EIP-7825, as scoped by EIP-8141: intrinsic gas plus the sum of the
-            // frames' execution limits, and the calldata floor, must fit
-            // TX_MAX_GAS_LIMIT. `tx.gas_limit()` also carries the state budgets, so
-            // the generic cap below does not cover this. Mirrors levm's frame-tx
-            // validation, so the pool does not accept a transaction execution would
-            // reject.
+            // EIP-8141: EIP-7825 cap applies to the execution dimension.
             let capped_gas = frame_tx
                 .mandatory_gas()
                 .saturating_add(frame_tx.data_cost())
