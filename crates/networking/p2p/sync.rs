@@ -23,7 +23,11 @@ pub use full::{first_resume_point_in_batch, is_resume_point};
 pub use full::sync_head_executed;
 
 use crate::metrics::METRICS;
-use crate::peer_handler::{BlockRequestOrder, HeaderFetchOutcome, PeerHandler, PeerHandlerError};
+use crate::peer_handler::{
+    BlockRequestOrder, HeaderFetchOutcome, PeerHandler, PeerHandlerError,
+    peer_table_error_is_recoverable,
+};
+use crate::snap::SnapError;
 use crate::snap::constants::{EXECUTE_BATCH_SIZE_DEFAULT, MIN_FULL_BLOCKS};
 use crate::utils::delete_leaves_folder;
 use ethrex_blockchain::{Blockchain, error::ChainError};
@@ -236,6 +240,12 @@ impl Syncer {
         }
     }
 
+    /// True once the node has begun shutting down (its cancellation token is
+    /// cancelled). Actors the cycle depends on may be stopped from then on.
+    pub fn is_shutting_down(&self) -> bool {
+        self.cancel_token.is_cancelled()
+    }
+
     /// Starts a sync cycle, updating the state with all blocks between the current head and the sync head
     /// Will perform either full or snap sync depending on the manager's `snap_mode`
     /// In full mode, all blocks will be fetched via p2p eth requests and executed to rebuild the state
@@ -256,14 +266,16 @@ impl Syncer {
                 );
             }
 
-            // If the error is irrecoverable, we exit ethrex
+            // If the error is irrecoverable, we exit ethrex, unless the node is
+            // already shutting down: see `SyncFailureAction::StopForShutdown`.
             Err(error) => {
                 let recoverable = error.is_recoverable();
+                let action = error.failure_action(self.is_shutting_down());
                 self.diagnostics.write().await.current_phase = "idle".to_string();
                 debug!(
                     error_type = %error,
                     recoverable = recoverable,
-                    action = if recoverable { "retry" } else { "exit" },
+                    action = ?action,
                     "Sync cycle error classification"
                 );
                 self.diagnostics.write().await.push_error(SyncErrorEvent {
@@ -275,8 +287,16 @@ impl Syncer {
                     error_message: error.to_string(),
                     recoverable,
                 });
-                match recoverable {
-                    false => {
+                match action {
+                    SyncFailureAction::StopForShutdown => {
+                        info!(
+                            time_elapsed_s = start_time.elapsed().as_secs(),
+                            %sync_head,
+                            %error,
+                            "Sync cycle ended by node shutdown",
+                        );
+                    }
+                    SyncFailureAction::Exit => {
                         // We exit the node, as we can't recover this error
                         error!(
                             time_elapsed_s = start_time.elapsed().as_secs(),
@@ -285,7 +305,7 @@ impl Syncer {
                         );
                         std::process::exit(2);
                     }
-                    true => {
+                    SyncFailureAction::Retry => {
                         // We do nothing, as the error is recoverable
                         warn!(
                             time_elapsed_s = start_time.elapsed().as_secs(),
@@ -561,7 +581,40 @@ pub enum SyncError {
     },
 }
 
+/// What [`Syncer::start_sync`] does after a sync cycle fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncFailureAction {
+    /// The error is transient: the next sync cycle retries.
+    Retry,
+    /// The node is shutting down. Whatever failed (often `ActorStopped` from the
+    /// peer table, which the actor system stops on shutdown) is an effect of
+    /// that, so the cycle just ends. Exiting here would skip the database
+    /// flush the shutdown path is about to do.
+    StopForShutdown,
+    /// The error is irrecoverable while the node is running: exit with code 2.
+    Exit,
+}
+
 impl SyncError {
+    /// Decides what a failed sync cycle does next. `shutting_down` is whether the
+    /// node's shutdown had begun when the cycle failed.
+    ///
+    /// Shutdown is checked first: before ethrex owned its actors in an actor
+    /// system, each p2p actor stopped on its own ctrl-c listener, racing the
+    /// shutdown path, and a sync cycle that saw the stopped peer table first
+    /// exited with code 2 (#7491). The node's shutdown now cancels its token
+    /// before stopping any actor, so that `ActorStopped` lands here as
+    /// `StopForShutdown`.
+    pub fn failure_action(&self, shutting_down: bool) -> SyncFailureAction {
+        if shutting_down {
+            SyncFailureAction::StopForShutdown
+        } else if self.is_recoverable() {
+            SyncFailureAction::Retry
+        } else {
+            SyncFailureAction::Exit
+        }
+    }
+
     pub fn is_recoverable(&self) -> bool {
         // PeerHandler delegates to its own classification so that transient
         // peer/network errors retry while structural errors (dead actor,
@@ -588,8 +641,11 @@ impl SyncError {
             | SyncError::BytecodeFileError
             | SyncError::NoLatestCanonical
             | SyncError::MissingFullsyncBatch
-            | SyncError::Snap(_)
             | SyncError::FileSystem(_) => false,
+            // Snap requests reach the peer table too: classify its errors the
+            // same way rather than letting a timeout there exit the node.
+            SyncError::Snap(SnapError::PeerTable(err)) => peer_table_error_is_recoverable(err),
+            SyncError::Snap(_) => false,
             // A peer switch may resolve this (the BAL was wrong).
             SyncError::StateRootMismatch(_, _) => true,
             // A header the catch-up span needs is not stored, which means the
@@ -606,12 +662,7 @@ impl SyncError {
             // these, so retrying the cycle is the restart.
             SyncError::Snap2CatchUpStalled(_, _) => true,
             SyncError::ChainReorgDetected { .. } => true,
-            // A timed-out actor request is transient (mailbox pressure or a
-            // slow handler — requests use spawned-concurrency's 5s default
-            // timeout); a stopped actor means p2p is shutting down and must
-            // stay fatal.
-            SyncError::PeerTableError(ActorError::RequestTimeout) => true,
-            SyncError::PeerTableError(ActorError::ActorStopped) => false,
+            SyncError::PeerTableError(err) => peer_table_error_is_recoverable(err),
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)

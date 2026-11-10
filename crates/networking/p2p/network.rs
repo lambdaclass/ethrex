@@ -4,7 +4,10 @@ use crate::rlpx::l2::l2_connection::P2PBasedContext;
 #[derive(Clone, Debug)]
 pub struct P2PBasedContext;
 use crate::{
-    discovery::{DiscoveryConfig, DiscoveryServer, DiscoveryServerError},
+    discovery::{
+        DiscoveryConfig, DiscoveryServer, DiscoveryServerError,
+        supervised::{DiscoveryInputs, start_supervised},
+    },
     metrics::{CurrentStepValue, METRICS},
     peer_table::{PeerData, PeerTable, PeerTableServerProtocol as _},
     rlpx::{
@@ -20,6 +23,8 @@ use ethrex_common::H256;
 use ethrex_common::types::ForkId;
 use ethrex_storage::Store;
 use secp256k1::SecretKey;
+use spawned_concurrency::supervision::SupervisedChild;
+use spawned_concurrency::system::{ActorSystem, ExecutionGroup};
 use spawned_concurrency::tasks::ActorRef;
 use std::{
     io,
@@ -76,16 +81,18 @@ impl P2PContext {
         based_context: Option<P2PBasedContext>,
         tx_broadcasting_time_interval: u64,
         lookup_interval: f64,
+        actor_group: Option<&ExecutionGroup>,
     ) -> Result<Self, NetworkError> {
         let (channel_broadcast_send_end, _) = tokio::sync::broadcast::channel::<(
             tokio::task::Id,
             Arc<Message>,
         )>(MAX_MESSAGES_TO_BROADCAST);
 
-        let tx_broadcaster = TxBroadcaster::spawn(
+        let tx_broadcaster = TxBroadcaster::spawn_in(
             peer_table.clone(),
             blockchain.clone(),
             tx_broadcasting_time_interval,
+            actor_group,
         )
         .inspect_err(|e| {
             error!("Failed to start Tx Broadcaster: {e}");
@@ -166,12 +173,27 @@ pub(crate) fn local_node_record(
     Ok(record)
 }
 
+/// The node's actor system and the execution group its p2p actors run on.
+#[derive(Clone, Copy)]
+pub struct NetworkActors<'a> {
+    pub system: &'a ActorSystem,
+    pub group: &'a ExecutionGroup,
+}
+
+/// Starts discovery and the RLPx listener.
+///
+/// With `actors`, discovery runs on `actors.group` under its own OneForOne
+/// supervisor in `actors.system` (see [`crate::discovery::supervised`]), which
+/// stops it on shutdown; the supervised child is returned so the caller can
+/// find the current generation. Without, it runs on the ambient runtime until
+/// the process exits, and `None` is returned.
 pub async fn start_network(
     context: P2PContext,
     bootnodes: Vec<Node>,
     config: DiscoveryConfig,
     shared_local_node: SharedLocalNode,
-) -> Result<(), NetworkError> {
+    actors: Option<NetworkActors<'_>>,
+) -> Result<Option<SupervisedChild<DiscoveryServer>>, NetworkError> {
     let udp_socket = Arc::new(
         UdpSocket::bind(context.network_config.bind_udp_addr())
             .await
@@ -187,25 +209,45 @@ pub async fn start_network(
     // decides what the node announces, discovery only republishes.
     let fork_id_rx = spawn_fork_id_publisher(&context, initial_fork_id);
 
-    DiscoveryServer::spawn(
-        context.local_node.clone(),
-        local_node_record,
-        context.signer,
-        udp_socket,
-        context.table.clone(),
-        bootnodes,
-        config,
-        shared_local_node,
-        fork_id_rx,
-    )
-    .await
+    let discovery = match actors {
+        Some(actors) => start_supervised(
+            actors.system,
+            actors.group,
+            DiscoveryInputs {
+                local_node: context.local_node.clone(),
+                local_node_record,
+                signer: context.signer,
+                udp_socket,
+                peer_table: context.table.clone(),
+                bootnodes,
+                config,
+                shared_local_node,
+                fork_id: fork_id_rx,
+            },
+        )
+        .await
+        .map(Some),
+        None => DiscoveryServer::spawn(
+            context.local_node.clone(),
+            local_node_record,
+            context.signer,
+            udp_socket,
+            context.table.clone(),
+            bootnodes,
+            config,
+            shared_local_node,
+            fork_id_rx,
+        )
+        .await
+        .map(|()| None),
+    }
     .inspect_err(|e| {
         error!("Failed to start discovery server: {e}");
     })?;
 
     context.tracker.spawn(serve_p2p_requests(context.clone()));
 
-    Ok(())
+    Ok(discovery)
 }
 
 pub(crate) async fn serve_p2p_requests(context: P2PContext) {

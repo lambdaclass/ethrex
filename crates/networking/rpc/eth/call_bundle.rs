@@ -657,7 +657,7 @@ mod tests {
             "jsonrpc": "2.0", "id": 1, "method": "eth_callBundle", "params": [bundle],
         }))
         .unwrap();
-        map_http_requests(&request, context.clone()).await
+        Box::pin(map_http_requests(&request, context.clone())).await
     }
 
     async fn call_bundle(bundle: Value) -> Result<Value, RpcErr> {

@@ -1,5 +1,6 @@
 use crate::{
     cli::{LogColor, Options},
+    shutdown::L1Node,
     utils::{
         display_chain_initialization, get_channel, get_client_version, get_client_version_string,
         init_datadir, is_memory_datadir, parse_socket_addr, read_jwtsecret_file,
@@ -10,16 +11,17 @@ use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::{BlockNumber, Genesis};
 use ethrex_config::networks::Network;
-use ethrex_rpc::WebSocketConfig;
+use ethrex_rpc::{SubscriptionManager, WebSocketConfig};
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_metrics::rpc::initialize_rpc_metrics;
 use ethrex_p2p::rlpx::initiator::RLPxInitiator;
 use ethrex_p2p::{
     DiscoveryConfig,
-    network::P2PContext,
+    discovery::{DiscoveryServer, InjectCrash},
+    network::{NetworkActors, P2PContext},
     peer_handler::PeerHandler,
-    peer_table::{PeerTable, PeerTableServer},
+    peer_table::PeerTableServer,
     sync::{BackfillConfig, HistoryChain, SyncMode},
     sync_manager::SyncManager,
     types::{LocalNode, NetworkConfig, Node, NodeRecord, SharedLocalNode},
@@ -32,13 +34,16 @@ use ethrex_storage::{
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
+use spawned_concurrency::supervision::SupervisedChild;
+use spawned_concurrency::system::ActorSystem;
+use spawned_concurrency::tasks::ActorRef;
 #[cfg(feature = "sync-test")]
 use std::env;
 use std::{
     fs,
     io::IsTerminal,
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Arc, RwLock},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -362,6 +367,7 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    subscription_manager: Option<ActorRef<SubscriptionManager>>,
 ) -> eyre::Result<()> {
     if !is_memory_datadir(datadir) {
         init_datadir(datadir);
@@ -406,7 +412,8 @@ pub async fn init_rpc_api(
     let ws_config = if opts.ws_enabled {
         Some(WebSocketConfig {
             addr: get_ws_socket_addr(opts),
-            subscription_manager: ethrex_rpc::SubscriptionManager::spawn(),
+            subscription_manager: subscription_manager
+                .unwrap_or_else(ethrex_rpc::SubscriptionManager::spawn),
         })
     } else {
         None
@@ -464,7 +471,8 @@ pub async fn init_network(
     blockchain: Arc<Blockchain>,
     context: P2PContext,
     shared_local_node: SharedLocalNode,
-) {
+    actors: Option<NetworkActors<'_>>,
+) -> Option<SupervisedChild<DiscoveryServer>> {
     #[cfg(not(feature = "l2"))]
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
@@ -481,14 +489,21 @@ pub async fn init_network(
         nat_extip_set: opts.nat_extip.is_some(),
     };
 
-    ethrex_p2p::start_network(context, bootnodes, discovery_config, shared_local_node)
-        .await
-        .expect("Network starts");
+    let discovery = ethrex_p2p::start_network(
+        context,
+        bootnodes,
+        discovery_config,
+        shared_local_node,
+        actors,
+    )
+    .await
+    .expect("Network starts");
 
     tracker.spawn(ethrex_p2p::periodically_show_peer_stats(
         blockchain,
         peer_handler.peer_table,
     ));
+    discovery
 }
 
 #[cfg(feature = "dev")]
@@ -846,20 +861,56 @@ async fn set_sync_block(store: &Store) {
     }
 }
 
+/// How often the actor runtime times a message when `--metrics` is on: one
+/// observation in this many per message kind gets queue-wait and handler-time
+/// samples. Counters and gauges count every message either way.
+///
+/// The peer table handles every discovery packet and every connection's
+/// bookkeeping, so timing all of them would read the clock twice per message
+/// on the busiest actor for histograms that sample just as well at 1 in 16.
+#[cfg(feature = "metrics")]
+const ACTOR_TIMING_SAMPLE_EVERY: u64 = 16;
+
+/// Sets how the actor runtime samples its timings. It must run before the
+/// first actor starts; the configuration is process-wide and fixed after that.
+/// Without `--metrics` nothing scrapes the timings, so only counters are kept.
+#[cfg(feature = "metrics")]
+fn configure_actor_metrics(metrics_enabled: bool) {
+    let timing_sample_every = if metrics_enabled {
+        ACTOR_TIMING_SAMPLE_EVERY
+    } else {
+        0
+    };
+    if spawned_concurrency::metrics::configure(spawned_concurrency::metrics::Config {
+        timing_sample_every,
+    })
+    .is_err()
+    {
+        debug!("Actor metrics were already configured; keeping that configuration");
+    }
+}
+
+/// Async workers for the `p2p` execution group: what the default
+/// `#[tokio::main]` runtime has, since the actors in it (and the outbound
+/// connections the RLPx initiator starts from it) used to share that runtime.
+fn p2p_workers() -> usize {
+    std::thread::available_parallelism().map_or(4, std::num::NonZero::get)
+}
+
+/// Starts the L1 node. The returned [`L1Node`] owns its actors: keep it alive
+/// while the node runs, and stop the node with
+/// [`shutdown_l1`](crate::shutdown::shutdown_l1).
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(
-    PathBuf,
-    CancellationToken,
-    PeerTable,
-    SharedLocalNode,
-    Store,
-)> {
+) -> eyre::Result<L1Node> {
     let network = get_network(&opts);
     let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
 
     raise_fd_limit()?;
+
+    #[cfg(feature = "metrics")]
+    configure_actor_metrics(opts.metrics_enabled);
 
     migrate_datadir_if_needed(&opts.datadir, &datadir, &network, opts.no_migrate);
 
@@ -960,8 +1011,50 @@ pub async fn init_l1(
         record: local_node_record,
     }));
 
-    let peer_table =
-        PeerTableServer::spawn(local_p2p_node.node_id(), opts.target_peers, store.clone());
+    // The owner of the node's long-lived actors and of the `p2p` runtime they
+    // run on. Nothing else stops them: no actor listens for ctrl-c itself, and
+    // `shutdown_l1` stops them only after the node's token is cancelled and the
+    // peers are saved. Admission order is shutdown order reversed, so the peer
+    // table, which every other actor here calls, is admitted first and stopped
+    // last.
+    //
+    // Only discovery is supervised (see `ethrex_p2p::discovery::supervised`): it
+    // holds soft state and nothing references it. The others are not, on
+    // purpose:
+    //
+    // - The peer table is the node's view of the network: scores, sessions,
+    //   connection registrations and in-flight request counts, none of it
+    //   persisted. A fresh table would lose every registered connection while
+    //   those connections still run, and everything here (the connections, the
+    //   sync, the RPC, the tx broadcaster, discovery) holds an `ActorRef` to
+    //   the old one that a replacement would not rebind.
+    // - The tx broadcaster and the RLPx initiator hold no state worth keeping,
+    //   but `P2PContext` (cloned into every connection) and the RPC's
+    //   `PeerHandler` hold their `ActorRef`s, which a replacement would not
+    //   rebind either: restarting them silently disconnects their callers.
+    // - The subscription manager owns the WebSocket subscriptions; a fresh one
+    //   would drop every subscriber without telling them.
+    //
+    // A crash in any of these still just stops that actor, as before;
+    // supervising them needs reference rebinding first.
+    //
+    // Per-connection actors (`PeerConnectionServer`) are not admitted: they are
+    // created and dropped per peer, and the system only owns a fixed set.
+    let system = ActorSystem::new()
+        .map_err(|err| eyre::eyre!("Failed to create the actor system: {err}"))?;
+    let p2p_group = system
+        .async_group("p2p", p2p_workers())
+        .map_err(|err| eyre::eyre!("Failed to create the p2p execution group: {err}"))?;
+    let mut actor_names = Vec::new();
+
+    let peer_table = PeerTableServer::spawn_on(
+        local_p2p_node.node_id(),
+        opts.target_peers,
+        store.clone(),
+        &p2p_group,
+    )
+    .map_err(|err| eyre::eyre!("Failed to start the peer table: {err}"))?;
+    actor_names.push((peer_table.id(), "peer_table"));
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -980,12 +1073,25 @@ pub async fn init_l1(
         None,
         opts.tx_broadcasting_time_interval,
         opts.lookup_interval,
+        Some(&p2p_group),
     )
     .expect("P2P context could not be created");
+    actor_names.push((p2p_context.tx_broadcaster.id(), "tx_broadcaster"));
 
-    let initiator = RLPxInitiator::spawn(p2p_context.clone());
+    let initiator = RLPxInitiator::spawn_on(p2p_context.clone(), &p2p_group)
+        .map_err(|err| eyre::eyre!("Failed to start the RLPx initiator: {err}"))?;
+    actor_names.push((initiator.id(), "rlpx_initiator"));
 
     let peer_handler = PeerHandler::new(peer_table.clone(), initiator);
+
+    let subscription_manager = if opts.ws_enabled {
+        let manager = SubscriptionManager::spawn_on(&p2p_group)
+            .map_err(|err| eyre::eyre!("Failed to start the subscription manager: {err}"))?;
+        actor_names.push((manager.id(), "subscription_manager"));
+        Some(manager)
+    } else {
+        None
+    };
 
     init_rpc_api(
         &opts,
@@ -997,6 +1103,7 @@ pub async fn init_l1(
         cancel_token.clone(),
         tracker.clone(),
         log_filter_handler,
+        subscription_manager,
     )
     .await?;
 
@@ -1005,11 +1112,12 @@ pub async fn init_l1(
         spawn_rocksdb_metrics_collector(store.clone(), &tracker, cancel_token.clone());
     }
 
+    let mut discovery = None;
     if opts.dev {
         #[cfg(feature = "dev")]
         init_dev_network(&opts, &store, tracker.clone(), cancel_token.clone()).await;
     } else if !opts.p2p_disabled {
-        init_network(
+        discovery = init_network(
             &opts,
             &network,
             &datadir,
@@ -1018,19 +1126,68 @@ pub async fn init_l1(
             blockchain.clone(),
             p2p_context,
             shared_local_node.clone(),
+            Some(NetworkActors {
+                system: &system,
+                group: &p2p_group,
+            }),
         )
         .await;
     } else {
         info!("P2P is disabled");
     }
+    if let Some(discovery) = &discovery {
+        install_fault_injection(discovery.clone());
+    }
 
-    Ok((
-        datadir.clone(),
+    Ok(L1Node {
+        datadir: datadir.clone(),
         cancel_token,
-        peer_handler.peer_table,
+        peer_table: peer_handler.peer_table,
         shared_local_node,
         store,
-    ))
+        system,
+        actor_names,
+        discovery,
+    })
+}
+
+/// The environment variable that arms [`install_fault_injection`].
+pub const FAULT_INJECTION_ENV: &str = "ETHREX_FAULT_INJECTION";
+
+/// With `ETHREX_FAULT_INJECTION=1`, crash the current discovery actor on each
+/// SIGUSR1 (`kill -USR1 <pid>`), to exercise its supervisor on a canary node:
+/// each signal is a real handler panic, so the supervisor should log a restart
+/// and a fresh generation should keep finding peers; four within a minute
+/// exhaust the budget and the node runs on without discovery.
+///
+/// Off unless the variable is exactly `1`, and reachable only through a local
+/// signal, never through the network.
+fn install_fault_injection(discovery: SupervisedChild<DiscoveryServer>) {
+    if std::env::var(FAULT_INJECTION_ENV).as_deref() != Ok("1") {
+        return;
+    }
+    use tokio::signal::unix::{SignalKind, signal};
+    let mut usr1 = match signal(SignalKind::user_defined1()) {
+        Ok(usr1) => usr1,
+        Err(err) => {
+            warn!(%err, "Fault injection requested but SIGUSR1 cannot be handled");
+            return;
+        }
+    };
+    warn!("Fault injection armed: SIGUSR1 crashes the discovery server");
+    tokio::spawn(async move {
+        while usr1.recv().await.is_some() {
+            match discovery.current() {
+                Ok(server) => {
+                    warn!(actor = %server.id(), "Fault injection: crashing the discovery server");
+                    let _ = server.send(InjectCrash);
+                }
+                Err(unavailable) => {
+                    warn!(%unavailable, "Fault injection: no discovery server to crash")
+                }
+            }
+        }
+    });
 }
 
 /// Migrates data from a pre-suffix datadir layout to the new network-specific

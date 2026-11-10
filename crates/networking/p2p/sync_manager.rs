@@ -319,6 +319,12 @@ impl SyncManager {
                 // Start the sync cycle
                 diagnostics.write().await.sync_cycles_started += 1;
                 syncer.start_sync(sync_head, store.clone()).await;
+                // A cycle cut short by shutdown leaves its snap checkpoint behind;
+                // the next start resumes from it. Retrying now would only fail
+                // against actors that are stopping.
+                if syncer.is_shutting_down() {
+                    break;
+                }
                 // Continue to the next sync cycle if we have an ongoing snap sync (aka if we still have snap sync checkpoints stored)
                 if store
                     .get_header_download_checkpoint()

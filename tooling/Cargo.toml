@@ -80,8 +80,10 @@ url = { version = "2.5.4", features = ["serde"] }
 kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
-spawned-concurrency = "0.5.0"
-spawned-rt = "0.5.0"
+# spawned 0.7.1 from crates.io. Every spawned crate must name the same version
+# so they share one set of types (ActorRef, protocols, ExitReason).
+spawned-concurrency = "0.7.3"
+spawned-rt = "0.7.3"
 lambdaworks-crypto = "0.13.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 crossbeam = "0.8.4"

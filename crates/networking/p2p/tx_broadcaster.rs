@@ -14,6 +14,7 @@ use spawned_concurrency::{
     actor,
     error::ActorError,
     protocol,
+    system::{ExecutionGroup, SystemError},
     tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, send_interval},
 };
 use tracing::{debug, error, trace};
@@ -178,6 +179,17 @@ impl TxBroadcaster {
         blockchain: Arc<Blockchain>,
         tx_broadcasting_time_interval: u64,
     ) -> Result<ActorRef<TxBroadcaster>, TxBroadcasterError> {
+        Self::spawn_in(kademlia, blockchain, tx_broadcasting_time_interval, None)
+    }
+
+    /// [`Self::spawn`], admitted to `group` when one is given, so its actor
+    /// system stops it on shutdown. `None` starts it on the ambient runtime.
+    pub fn spawn_in(
+        kademlia: PeerTable,
+        blockchain: Arc<Blockchain>,
+        tx_broadcasting_time_interval: u64,
+        group: Option<&ExecutionGroup>,
+    ) -> Result<ActorRef<TxBroadcaster>, TxBroadcasterError> {
         debug!("Starting transaction broadcaster");
 
         let state = TxBroadcaster {
@@ -190,7 +202,10 @@ impl TxBroadcaster {
             tx_broadcasting_time_interval,
         };
 
-        Ok(state.start())
+        match group {
+            Some(group) => Ok(state.start_on(group)?),
+            None => Ok(state.start()),
+        }
     }
 
     #[started]
@@ -477,6 +492,8 @@ pub enum TxBroadcasterError {
     StoreError(#[from] StoreError),
     #[error(transparent)]
     PeerTableError(#[from] ActorError),
+    #[error("Failed to admit the transaction broadcaster to its execution group: {0}")]
+    ActorSystem(#[from] SystemError),
 }
 
 #[cfg(test)]

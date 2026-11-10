@@ -4,6 +4,7 @@ pub mod initializers;
 pub mod l2;
 #[cfg(feature = "partial")]
 pub mod partial;
+pub mod shutdown;
 pub mod utils;
 
 pub mod decode;
