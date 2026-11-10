@@ -7,7 +7,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-ere-platform-sp1 = { git = "https://github.com/eth-act/ere", tag = "v0.19.5" }
+ere-platform-sp1 = { git = "https://github.com/eth-act/ere", tag = "v0.20.0" }
 
 ethrex-stateless-validator = { path = "../..", features = ["ere", "sp1"] }
 
