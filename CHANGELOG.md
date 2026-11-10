@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-11-10
+
+- Key precompile cache entries on the calldata bytes each precompile reads (ECRECOVER and ECADD the first 128, ECMUL the first 96, MODEXP its header and the operands it announces), so calls that differ only in ignored trailing bytes share one entry [#7378](https://github.com/lambdaclass/ethrex/pull/7378)
+
 ### 2026-10-22
 
 - Answer MODEXP inversions modulo well-known 256-bit primes (base^(p − 2) mod p for the BN254 base and scalar fields, the secp256k1 and P-256 base fields and group orders, and the BLS12-381 scalar field) with a safegcd inversion, and build the Montgomery constants with 8 squarings instead of 512 doublings: the dominant mainnet MODEXP call 4.09 → 0.73 µs [#7456](https://github.com/lambdaclass/ethrex/pull/7456)
