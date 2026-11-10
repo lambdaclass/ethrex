@@ -870,6 +870,39 @@ async fn mempool_rejects_oversized_frame_data() {
 }
 
 #[tokio::test]
+async fn mempool_rejects_frame_tx_whose_execution_gas_exceeds_the_eip7825_cap() {
+    let mut frame_tx = minimal_valid_frame_tx();
+    frame_tx.frames.push(Frame {
+        mode: FrameMode::Sender as u8,
+        flags: 0x00,
+        target: Some(Address::from_low_u64_be(0xCAFE)),
+        gas_limit: 0,
+        state_gas_limit: 0,
+        value: U256::zero(),
+        data: Bytes::new(),
+    });
+    let at_cap = POST_OSAKA_GAS_LIMIT_CAP
+        - frame_tx.mandatory_gas()
+        - frame_tx.data_cost()
+        - frame_tx.total_frame_execution_gas();
+
+    for (sender_frame_gas, over_cap) in [(at_cap, false), (at_cap + 1, true)] {
+        let mut frame_tx = frame_tx.clone();
+        frame_tx.frames[1].gas_limit = sender_frame_gas;
+        let tx = Transaction::FrameTransaction(frame_tx);
+        let blockchain = Blockchain::default_with_store(setup_hegota_store().await);
+        let result = blockchain
+            .validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap())
+            .await;
+        assert_eq!(
+            matches!(result, Err(MempoolError::TxMaxGasLimitExceededError(..))),
+            over_cap,
+            "sender frame gas {sender_frame_gas}: got {result:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn mempool_rejects_a_blob_carrying_frame_tx_without_its_blobs_bundle() {
     let store = setup_hegota_store().await;
     let blockchain = Blockchain::default_with_store(store);

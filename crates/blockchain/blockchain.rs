@@ -63,7 +63,8 @@ use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_L
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{
-    EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS, TX_MAX_TOTAL_GAS_LIMIT_AMSTERDAM,
+    EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS, TX_MAX_GAS_LIMIT_AMSTERDAM,
+    TX_MAX_TOTAL_GAS_LIMIT_AMSTERDAM,
 };
 
 use crossbeam::channel::{self as cb, TryRecvError, select};
@@ -3878,6 +3879,19 @@ impl Blockchain {
             frame_tx
                 .validate_static_constraints()
                 .map_err(MempoolError::InvalidFrameTransaction)?;
+
+            // EIP-8141: EIP-7825 cap applies to the execution dimension.
+            let capped_gas = frame_tx
+                .mandatory_gas()
+                .saturating_add(frame_tx.data_cost())
+                .saturating_add(frame_tx.total_frame_execution_gas())
+                .max(frame_tx.calldata_floor_total());
+            if capped_gas > TX_MAX_GAS_LIMIT_AMSTERDAM {
+                return Err(MempoolError::TxMaxGasLimitExceededError(
+                    tx.hash(&NativeCrypto),
+                    capped_gas,
+                ));
+            }
 
             // Frame `data` size is bounded by the wire-size cap below
             // (MAX_TX_SIZE over encode_canonical_len), which covers the
