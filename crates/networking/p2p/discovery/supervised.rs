@@ -156,7 +156,9 @@ pub(crate) async fn start_supervised(
 }
 
 /// Logs every restart of the discovery actor, and the supervisor giving up if
-/// it exhausts its budget. Spawned logs neither itself.
+/// it exhausts its budget. Spawned 0.7.1 logs restarts only at `info` and a
+/// supervisor failure at `warn`; this raises them to `warn` and `error` with
+/// the node's local address.
 fn watch(
     discovery: SupervisedChild<DiscoveryServer>,
     supervisor: Supervisor,
