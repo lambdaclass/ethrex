@@ -451,6 +451,10 @@ impl Blockchain {
         // provider, so it holds complete blob data for every blob tx it may include.
         // Inert unless blob sampling is enabled.
         self.mempool.latch_eager_provider();
+        let mut payloads = self.payloads.lock().await;
+        if payloads.iter().any(|(id, _)| *id == payload_id) {
+            return;
+        }
         let self_clone = self.clone();
         let cancel_token = CancellationToken::new();
         let cancel_token_clone = cancel_token.clone();
@@ -459,10 +463,11 @@ impl Blockchain {
                 .build_payload_loop(payload, cancel_token_clone)
                 .await
         });
-        let mut payloads = self.payloads.lock().await;
         if payloads.len() >= MAX_PAYLOADS {
             // Remove oldest unclaimed payload
-            payloads.remove(0);
+            if let (_, PayloadOrTask::Task(task)) = payloads.remove(0) {
+                task.cancel.cancel();
+            }
         }
         payloads.push((
             payload_id,
@@ -2023,6 +2028,145 @@ mod tests {
             permanent.to_string(),
             "L1GasReservationTooLow and IntrinsicGasTooLow must not share a Display \
              string, or the transient case becomes unclassifiable"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn repeated_payload_build_does_not_evict_txs_valid_on_new_head() {
+        use crate::{Blockchain, fork_choice::apply_fork_choice};
+        use ethrex_common::types::{
+            APPROVE_EXECUTION, APPROVE_EXECUTION_AND_PAYMENT, APPROVE_PAYMENT,
+            DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Frame, FrameMode, FrameTransaction,
+            Genesis, GenesisAccount,
+        };
+        use ethrex_storage::EngineType;
+        use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
+
+        const FUNDER: Address = Address::repeat_byte(0xAA);
+        const SENDER: Address = Address::repeat_byte(0xBB);
+        const PAYMASTER: Address = Address::repeat_byte(0xCC);
+        let approve = |scope: u8| vec![0x60, scope, 0x60, 0x00, 0x60, 0x00, 0xAA];
+        let frame = |mode: FrameMode, flags, target, value| Frame {
+            mode: mode as u8,
+            flags,
+            target: Some(target),
+            gas_limit: 50_000,
+            state_gas_limit: 0,
+            value,
+            data: Bytes::new(),
+        };
+        let frame_tx = |sender, frames| {
+            Transaction::FrameTransaction(FrameTransaction {
+                chain_id: 9,
+                sender,
+                frames,
+                max_fee: U256::from(10_000_000_000u64),
+                max_priority_fee_per_gas: U256::from(1_000_000_000u64),
+                ..Default::default()
+            })
+        };
+        let ether = U256::from(10u64).pow(U256::from(18u64));
+
+        let path = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/genesis/l1-hegota.json"
+        ));
+        let mut genesis = Genesis::try_from(path).expect("load l1-hegota genesis");
+        let mut paymaster_code = vec![0x34, 0x60, 0x0b, 0x57];
+        paymaster_code.extend(approve(APPROVE_PAYMENT));
+        paymaster_code.extend([0x5b, 0x00]);
+        for (address, code, balance) in [
+            (FUNDER, approve(APPROVE_EXECUTION_AND_PAYMENT), ether * 10),
+            (SENDER, approve(APPROVE_EXECUTION), U256::zero()),
+            (PAYMASTER, paymaster_code, U256::zero()),
+        ] {
+            genesis.alloc.insert(
+                address,
+                GenesisAccount {
+                    code: Bytes::from(code),
+                    storage: BTreeMap::new(),
+                    balance,
+                    nonce: 0,
+                },
+            );
+        }
+        genesis.base_fee_per_gas = Some(7);
+        let mut store = Store::new("store.db", EngineType::InMemory).expect("in-memory store");
+        store.add_initial_state(genesis).await.expect("genesis");
+        let blockchain = Arc::new(Blockchain::default_with_store(store.clone()));
+
+        blockchain
+            .add_transaction_to_pool(frame_tx(
+                FUNDER,
+                vec![
+                    frame(
+                        FrameMode::Verify,
+                        APPROVE_EXECUTION_AND_PAYMENT,
+                        FUNDER,
+                        U256::zero(),
+                    ),
+                    frame(FrameMode::Sender, 0, PAYMASTER, ether),
+                ],
+            ))
+            .await
+            .expect("funding tx enters the pool");
+        let parent = store.get_block_header(0).unwrap().unwrap();
+        let args = BuildPayloadArgs {
+            parent: parent.hash(),
+            timestamp: parent.timestamp + 12,
+            fee_recipient: Address::zero(),
+            random: H256::zero(),
+            withdrawals: Some(Vec::new()),
+            beacon_root: Some(H256::zero()),
+            slot_number: Some(1),
+            version: 1,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        };
+        let payload_id = args.id().unwrap();
+        let payload = create_payload(&args, &store, Bytes::new()).unwrap();
+        for _ in 0..2 {
+            blockchain
+                .clone()
+                .initiate_payload_build(payload.clone(), payload_id)
+                .await;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let block = blockchain.get_payload(payload_id).await.unwrap().payload;
+        assert_eq!(
+            block.body.transactions.len(),
+            1,
+            "block 1 funds the paymaster"
+        );
+        blockchain.add_block(block.clone()).unwrap();
+        let hash = block.hash();
+        apply_fork_choice(&store, hash, hash, hash, None)
+            .await
+            .unwrap();
+        blockchain
+            .remove_block_transactions_from_pool(&block)
+            .unwrap();
+
+        let tx_hash = blockchain
+            .add_transaction_to_pool(frame_tx(
+                SENDER,
+                vec![
+                    frame(FrameMode::Verify, APPROVE_EXECUTION, SENDER, U256::zero()),
+                    frame(FrameMode::Verify, APPROVE_PAYMENT, PAYMASTER, U256::zero()),
+                    frame(
+                        FrameMode::Sender,
+                        0,
+                        Address::repeat_byte(0xDD),
+                        U256::zero(),
+                    ),
+                ],
+            ))
+            .await
+            .expect("sponsored tx is valid on the head");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(
+            blockchain.mempool.contains_tx(tx_hash).unwrap(),
+            "a tx valid on the head was evicted by a build on a stale parent"
         );
     }
 }
