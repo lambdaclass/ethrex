@@ -13,7 +13,7 @@ use tracing::debug;
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
-    types::block_identifier::BlockIdentifier,
+    types::block_identifier::{BlockIdentifier, BlockIdentifierOrHash},
     utils::{RpcErr, parse_json_hex},
 };
 use ethrex_storage::Store;
@@ -94,7 +94,13 @@ impl RpcHandler for FeeHistoryRequest {
         );
 
         if self.block_count == 0 {
-            return serde_json::to_value(FeeHistoryResponse::default())
+            // `oldestBlock` is a required QUANTITY, so it can't be empty. Like geth and
+            // reth, answer `0x0` with empty arrays.
+            let response = FeeHistoryResponse {
+                oldest_block: "0x0".to_owned(),
+                ..Default::default()
+            };
+            return serde_json::to_value(response)
                 .map_err(|error| RpcErr::Internal(error.to_string()));
         }
 
@@ -229,6 +235,14 @@ async fn get_range(
         .ok_or(RpcErr::Internal(
             "Could not resolve block number".to_owned(),
         ))?;
+    // A block number above the head names blocks this node doesn't have: answering
+    // for the head instead would return a range that doesn't overlap the requested
+    // one. Tags resolve to known blocks and keep being clamped.
+    if let BlockIdentifier::Number(number) = expected_finish_block
+        && *number > latest_block_num
+    {
+        return Err(BlockIdentifierOrHash::Identifier(expected_finish_block.clone()).not_found());
+    }
     // Calculate start and finish block numbers, considering finish block inclusion
     let finish_block_num = expected_finish_block_num.min(latest_block_num);
     let expected_start_block_num = (finish_block_num + 1).saturating_sub(block_count);
@@ -330,5 +344,57 @@ mod tests {
         );
         assert_eq!(without_rewards, with_rewards);
         assert_eq!(without_rewards["gasUsedRatio"].as_array().unwrap().len(), 5);
+    }
+
+    /// A `newestBlock` above the head is not clamped to the head, which would return
+    /// blocks outside the requested range: like `eth_getBalance` and friends, the
+    /// request fails with "block not found".
+    #[tokio::test]
+    async fn newest_block_above_the_head_is_not_found() {
+        let storage = setup_store().await;
+        add_eip1559_tx_blocks(&storage, 5, 1).await;
+        let context = default_context_with_storage(storage).await;
+
+        let result = FeeHistoryRequest {
+            block_count: 3,
+            newest_block: BlockIdentifier::Number(1005),
+            reward_percentiles: vec![],
+        }
+        .handle(context.clone())
+        .await;
+
+        assert!(matches!(result, Err(RpcErr::ResourceNotFound(_))));
+
+        // The head itself is still served.
+        let at_head = FeeHistoryRequest {
+            block_count: 3,
+            newest_block: BlockIdentifier::Number(5),
+            reward_percentiles: vec![],
+        }
+        .handle(context.clone())
+        .await
+        .unwrap();
+        assert_eq!(at_head["oldestBlock"], "0x3");
+    }
+
+    /// `oldestBlock` is a required QUANTITY, even when no block is requested.
+    #[tokio::test]
+    async fn zero_block_count_has_a_valid_oldest_block() {
+        let storage = setup_store().await;
+        add_eip1559_tx_blocks(&storage, 5, 1).await;
+        let context = default_context_with_storage(storage).await;
+
+        let response = FeeHistoryRequest {
+            block_count: 0,
+            newest_block: BlockIdentifier::Number(5),
+            reward_percentiles: vec![],
+        }
+        .handle(context.clone())
+        .await
+        .unwrap();
+
+        assert_eq!(response["oldestBlock"], "0x0");
+        assert_eq!(response["baseFeePerGas"], serde_json::json!([]));
+        assert_eq!(response["gasUsedRatio"], serde_json::json!([]));
     }
 }
