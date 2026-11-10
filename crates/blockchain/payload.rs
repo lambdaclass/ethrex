@@ -452,9 +452,6 @@ impl Blockchain {
         // Inert unless blob sampling is enabled.
         self.mempool.latch_eager_provider();
         let mut payloads = self.payloads.lock().await;
-        // The CL may repeat a forkchoiceUpdated with the same attributes. A second
-        // build for the same id would never be claimed by `get_payload`, so it would
-        // keep rebuilding on a stale parent and evict txs that are valid on the new head.
         if payloads.iter().any(|(id, _)| *id == payload_id) {
             return;
         }
@@ -467,7 +464,7 @@ impl Blockchain {
                 .await
         });
         if payloads.len() >= MAX_PAYLOADS {
-            // Remove oldest unclaimed payload, stopping its build if still running
+            // Remove oldest unclaimed payload
             if let (_, PayloadOrTask::Task(task)) = payloads.remove(0) {
                 task.cancel.cancel();
             }
@@ -2034,10 +2031,6 @@ mod tests {
         );
     }
 
-    /// The CL may send the same `forkchoiceUpdated` with payload attributes more
-    /// than once per slot. Only one build may run per payload id: a second one
-    /// outlives `getPayload` and keeps rebuilding on the old parent, where a tx
-    /// that is valid on the new head fails and is evicted from the pool.
     #[tokio::test(flavor = "multi_thread")]
     async fn repeated_payload_build_does_not_evict_txs_valid_on_new_head() {
         use crate::{Blockchain, fork_choice::apply_fork_choice};
@@ -2052,7 +2045,6 @@ mod tests {
         const FUNDER: Address = Address::repeat_byte(0xAA);
         const SENDER: Address = Address::repeat_byte(0xBB);
         const PAYMASTER: Address = Address::repeat_byte(0xCC);
-        // `PUSH1 scope PUSH1 0 PUSH1 0 APPROVE`.
         let approve = |scope: u8| vec![0x60, scope, 0x60, 0x00, 0x60, 0x00, 0xAA];
         let frame = |mode: FrameMode, flags, target, value| Frame {
             mode: mode as u8,
@@ -2080,7 +2072,6 @@ mod tests {
             "/../../fixtures/genesis/l1-hegota.json"
         ));
         let mut genesis = Genesis::try_from(path).expect("load l1-hegota genesis");
-        // The paymaster approves payment unless called with value; it starts unfunded.
         let mut paymaster_code = vec![0x34, 0x60, 0x0b, 0x57];
         paymaster_code.extend(approve(APPROVE_PAYMENT));
         paymaster_code.extend([0x5b, 0x00]);
@@ -2104,7 +2095,6 @@ mod tests {
         store.add_initial_state(genesis).await.expect("genesis");
         let blockchain = Arc::new(Blockchain::default_with_store(store.clone()));
 
-        // Block 1 funds the paymaster.
         blockchain
             .add_transaction_to_pool(frame_tx(
                 FUNDER,
@@ -2135,7 +2125,6 @@ mod tests {
         };
         let payload_id = args.id().unwrap();
         let payload = create_payload(&args, &store, Bytes::new()).unwrap();
-        // The same forkchoiceUpdated, delivered twice.
         for _ in 0..2 {
             blockchain
                 .clone()
@@ -2158,7 +2147,6 @@ mod tests {
             .remove_block_transactions_from_pool(&block)
             .unwrap();
 
-        // Valid on block 1, invalid on genesis where the paymaster has no funds.
         let tx_hash = blockchain
             .add_transaction_to_pool(frame_tx(
                 SENDER,
