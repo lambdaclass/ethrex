@@ -2300,7 +2300,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
  "lazy_static",
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5474,7 +5474,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -8824,7 +8824,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes",
- "heck 0.4.1",
+ "heck 0.5.0",
  "itertools 0.12.1",
  "log",
  "multimap",
@@ -8844,7 +8844,7 @@ version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be769465445e8c1474e9c5dac2018218498557af32d9ed057325ec9a41ae81bf"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "itertools 0.14.0",
  "log",
  "multimap",
@@ -8997,7 +8997,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.2",
  "rustls 0.23.38",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -9035,7 +9035,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -12325,9 +12325,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-concurrency"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "717046d6808977888c3b5502073541b67de1637182e4e03c0c862b5e89dce510"
+checksum = "c4a6a099221b42c15c79722b9f9d4bc1b250836b0f41f7d53e74a0aaa4af1c20"
 dependencies = [
  "futures",
  "pin-project-lite",
@@ -12339,9 +12339,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-macros"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87e9cfbcbf8704c21f4f735205107f75c6f55b7bf2e6aa8009d815ed31897388"
+checksum = "247019687261618cfb7675a007693669486fe6b922e17e51bdca545d2692893d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -12350,9 +12350,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-rt"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9dbb50cb23ea48bf974239fe5dbbda93d07e6fcf727e9c2cbfbae6fbdd071839"
+checksum = "459a2fb293cc2e30105ee48c771588821411997cc4d8fff5275573423b5b03a0"
 dependencies = [
  "ctrlc",
  "loom",
@@ -12366,9 +12366,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-test"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4164870a7341dbbb342322b535b4f80a41b8de505915735d99e78603ae56cd20"
+checksum = "180a96fba73270d56c3d17d5a74da5489e1842a6269f66d8df197c5c5dc1522a"
 dependencies = [
  "spawned-concurrency",
  "spawned-rt",
@@ -14016,7 +14016,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
