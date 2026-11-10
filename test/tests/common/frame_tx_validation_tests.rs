@@ -462,9 +462,9 @@ fn prefix_rejection_atomic_batch_in_prefix() {
 #[test]
 fn prefix_rejection_gas_budget_exceeded() {
     // Give the self_verify frame a gas_limit that, combined with sig cost,
-    // exceeds MAX_VERIFY_GAS (100_000). Sig cost for one SECP256K1 = 2800.
+    // exceeds MAX_VERIFY_GAS (300_000). Sig cost for one SECP256K1 = 2800.
     let mut frame = self_verify_frame();
-    frame.gas_limit = FRAME_TX_MAX_VERIFY_GAS; // 100_000 alone already == limit
+    frame.gas_limit = FRAME_TX_MAX_VERIFY_GAS; // 300_000 alone already == limit
     let mut tx = base_frame_tx_with_frames(vec![frame]);
     // Ensure exactly one SECP256K1 sig so sig cost = 2800.
     tx.signatures = vec![FrameSignature {
@@ -474,7 +474,7 @@ fn prefix_rejection_gas_budget_exceeded() {
         signature: Bytes::from(vec![0u8; 65]),
     }];
     let prefix = tx.validation_prefix().expect("SelfVerify recognized");
-    // 100_000 + 2_800 > 100_000 → budget exceeded.
+    // 300_000 + 2_800 > 300_000 → budget exceeded.
     assert!(matches!(
         tx.validate_prefix_structure(&prefix, FRAME_TX_MAX_VERIFY_GAS)
             .unwrap_err(),
