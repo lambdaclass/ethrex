@@ -2292,7 +2292,7 @@ pub const FRAME_SIG_SCHEME_P256: u8 = 2;
 /// validation prefix. Signature validation counts against this budget (rule #6),
 /// so a frame tx whose `signature_verification_cost()` alone exceeds it can never
 /// satisfy the prefix budget and must be rejected at admission.
-pub const FRAME_TX_MAX_VERIFY_GAS: u64 = 100_000;
+pub const FRAME_TX_MAX_VERIFY_GAS: u64 = 300_000;
 /// EIP-8141 `MAX_VERIFY_STATE_GAS`: the most state gas the frames of a validation
 /// prefix may declare between them (structural rule 6). It bounds the state growth
 /// a public-mempool transaction can buy while establishing its payer -- a deploy
