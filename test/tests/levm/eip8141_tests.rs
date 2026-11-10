@@ -2643,6 +2643,41 @@ mod validation_observer_tests {
     }
 
     #[test]
+    fn extcode_on_existing_account_without_code_is_rejected() {
+        // EIP-8141 §Validation Trace Rules: `CALL*`/`EXTCODE*` must target an
+        // existing contract or a precompile. A funded account with no code is
+        // neither, so reading its code hash or size is a violation, while the
+        // same read of a contract is allowed.
+        let sender = addr(0xEC_0D);
+        let codeless = addr(0xBEEF);
+        let contract = addr(0xC0DE);
+        for (opcode, name) in [(0x3F, "EXTCODEHASH"), (0x3B, "EXTCODESIZE")] {
+            for (target, expected) in [
+                (
+                    codeless,
+                    Some(FrameSimViolation::CallToNonexistentOrDelegated(codeless)),
+                ),
+                (contract, None),
+            ] {
+                let mut code = vec![0x73]; // PUSH20 target
+                code.extend_from_slice(target.as_bytes());
+                code.extend_from_slice(&[opcode, 0x50, 0x00]); // EXTCODE*, POP, STOP
+                let tx = frame_tx_for_obs(
+                    sender,
+                    vec![verify_frame_obs(sender, 100_000, 0x03, Bytes::new())],
+                );
+                let mut db = build_db(vec![
+                    (sender, account_with_code(0, Bytes::from(code))),
+                    (codeless, account_with_code(1, Bytes::new())),
+                    (contract, account_with_code(0, Bytes::from(vec![0x00]))),
+                ]);
+                let (_result, violation) = run(&tx, &mut db, sender, &[0], None);
+                assert_eq!(violation, expected, "{name} on {target:?}");
+            }
+        }
+    }
+
+    #[test]
     fn reverting_prefix_frame_fails_and_sets_no_payer() {
         let sender = addr(0x5E_FF);
         let code = Bytes::from(vec![0x60, 0x00, 0x60, 0x00, 0xFD]);

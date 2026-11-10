@@ -50,8 +50,8 @@ pub enum FrameSimViolation {
     /// An `SLOAD` read storage of an account other than the sender.
     StorageReadNonSender,
     /// A `CALL`/`CALLCODE`/`DELEGATECALL`/`STATICCALL`/`EXTCODE*` referenced a
-    /// target that does not exist (no code, no balance, no nonce, not a
-    /// precompile) or that is EIP-7702-delegated; carries the offending target.
+    /// target that is neither an existing contract nor a precompile, or that is
+    /// EIP-7702-delegated; carries the offending target.
     CallToNonexistentOrDelegated(Address),
     /// A deploy frame finished without leaving non-empty code installed at the
     /// sender's address.

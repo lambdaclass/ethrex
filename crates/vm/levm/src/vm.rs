@@ -3919,7 +3919,7 @@ impl<'a> VM<'a> {
     /// EIP-8141 validation-trace `CALL*`/`EXTCODE*` target check (mempool
     /// simulation only).
     ///
-    /// The target must be an existing account or a precompile and must NOT be
+    /// The target must be an existing contract or a precompile and must NOT be
     /// EIP-7702-delegated, except the sender running its own default code (the
     /// sender is exempt — its existence is a transaction precondition and it may
     /// have no code). `is_delegation_7702` is the flag already computed by
@@ -3950,8 +3950,8 @@ impl<'a> VM<'a> {
         if precompiles::is_precompile(&target, self.env.config.fork, self.vm_type) {
             return Ok(());
         }
-        // Otherwise the target must be an existing (non-empty) account.
-        if self.db.get_account(target)?.is_empty() {
+        // Otherwise the target must be an existing contract.
+        if !self.db.get_account(target)?.has_code() {
             self.validation_observer
                 .record_violation(FrameSimViolation::CallToNonexistentOrDelegated(target));
         }
