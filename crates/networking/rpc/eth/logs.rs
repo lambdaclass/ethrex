@@ -404,7 +404,7 @@ pub(crate) async fn fetch_logs_with_filter(
                 .ok_or_else(|| {
                     RpcErr::ServerError(format!("Unknown block hash {block_hash:#x}"))
                 })?;
-            // Before the bloom check, as geth does.
+            // Before the bloom check, as geth and reth do.
             ensure_history_retained(&storage, block_header.number).await?;
             let work = LogQueryWork::new(1, &address_filter, &filter.topics);
             limits.check_work(&work)?;
@@ -448,6 +448,8 @@ pub(crate) async fn fetch_logs_with_filter(
                     "block range extends beyond current head block".to_string(),
                 ));
             }
+            // Before the scan, so the answer does not depend on the blooms, as in reth.
+            ensure_history_retained(&storage, from).await?;
             limits.check_block_range(from, to)?;
             let work = LogQueryWork::new(to - from + 1, &address_filter, &filter.topics);
             limits.check_work(&work)?;

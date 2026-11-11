@@ -116,8 +116,15 @@ impl RpcHandler for GetBlockByHashRequest {
         let Some(header) = storage.get_block_header_by_hash(self.block)? else {
             return Ok(Value::Null);
         };
-        let Some(body) = storage.get_block_body_by_hash(self.block).await? else {
-            ensure_history_retained(storage, header.number).await?;
+        let body = match storage.get_block_body_by_hash(self.block).await? {
+            Some(body) => Some(body),
+            None => {
+                ensure_history_retained(storage, header.number).await?;
+                // As in `get_block_body`.
+                storage.get_block_body_by_hash(self.block).await?
+            }
+        };
+        let Some(body) = body else {
             return Ok(Value::Null);
         };
         let block = RpcBlock::build(header, body, self.block, self.hydrated)?;
@@ -453,23 +460,34 @@ async fn ensure_retained(
         return Ok(());
     }
     let earliest = storage.get_earliest_block_number().await?;
-    if number < earliest || (including_earliest && number == earliest) {
+    if number < earliest {
+        return Err(pruned_history(number, earliest));
+    }
+    if including_earliest && number == earliest {
         return Err(RpcErr::PrunedHistoryUnavailable(format!(
-            "history of block {number} is unavailable, the earliest block with history is {earliest}"
+            "receipts of block {number} are unavailable, receipts are available from block {}",
+            number + 1
         )));
     }
     Ok(())
+}
+
+pub(crate) fn pruned_history(number: BlockNumber, earliest: BlockNumber) -> RpcErr {
+    RpcErr::PrunedHistoryUnavailable(format!(
+        "history of block {number} is unavailable, the earliest block with history is {earliest}"
+    ))
 }
 
 pub(crate) async fn get_block_body(
     storage: &Store,
     number: BlockNumber,
 ) -> Result<Option<BlockBody>, RpcErr> {
-    let body = storage.get_block_body(number).await?;
-    if body.is_none() {
-        ensure_history_retained(storage, number).await?;
+    if let Some(body) = storage.get_block_body(number).await? {
+        return Ok(Some(body));
     }
-    Ok(body)
+    ensure_history_retained(storage, number).await?;
+    // Backfill may have stored the body and lowered the earliest block since the first read.
+    Ok(storage.get_block_body(number).await?)
 }
 
 /// The blob base fee of `header`'s block, as its receipts report it.
@@ -570,6 +588,7 @@ pub async fn get_block_rpc_receipt(
     }
     let blob_base_fee_u64 = receipt_blob_base_fee(&header, storage)?;
     let base_fee_per_gas = header.base_fee_per_gas;
+    let block_number = header.number;
     let block_hash = header.hash();
     let block_timestamp = header.timestamp;
     let block_info = RpcReceiptBlockInfo::from_block_header(header);
@@ -580,6 +599,7 @@ pub async fn get_block_rpc_receipt(
     // Return 500 on receipt count mismatch — this indicates data corruption
     // (missing receipts for a block that exists).
     if receipts.len() != fetch_count {
+        ensure_receipts_retained(storage, block_number).await?;
         return Err(RpcErr::Internal(format!(
             "Expected {} receipts, got {}",
             fetch_count,
@@ -893,32 +913,29 @@ mod tests {
         }
 
         let other_address = format!("{:#x}", Address::repeat_byte(0xbb));
-        let bloom_excluded_range = dispatch(
-            &context,
-            "eth_getLogs",
+        for bloom_excluded in [
             json!([{"fromBlock": "0x1", "toBlock": "0x1", "address": other_address}]),
-        )
-        .await;
-        assert_eq!(bloom_excluded_range.unwrap(), json!([]));
-        let bloom_excluded_hash = dispatch(
-            &context,
-            "eth_getLogs",
+            json!([{"fromBlock": "0x1", "toBlock": "0x2", "address": other_address}]),
             json!([{"blockHash": format!("{block_one:#x}"), "address": other_address}]),
-        )
-        .await;
-        assert!(
-            matches!(
-                bloom_excluded_hash,
-                Err(RpcErr::PrunedHistoryUnavailable(_))
-            ),
-            "{bloom_excluded_hash:?}"
-        );
+        ] {
+            let result = dispatch(&context, "eth_getLogs", bloom_excluded.clone()).await;
+            assert!(
+                matches!(result, Err(RpcErr::PrunedHistoryUnavailable(_))),
+                "{bloom_excluded} gave {result:?}"
+            );
+        }
 
         let fee_history = dispatch(&context, "eth_feeHistory", json!(["0x2", "0x2", []]))
             .await
             .unwrap();
         assert_eq!(fee_history["oldestBlock"], "0x1");
         assert_eq!(fee_history["gasUsedRatio"], json!([0.0, 0.0]));
+        let with_rewards = dispatch(&context, "eth_feeHistory", json!(["0x2", "0x2", [50.0]]))
+            .await
+            .unwrap();
+        assert_eq!(with_rewards["oldestBlock"], "0x2");
+        assert_eq!(with_rewards["gasUsedRatio"], json!([0.0]));
+        assert_eq!(with_rewards["reward"], json!([["0x1"]]));
         let below_earliest = dispatch(&context, "eth_feeHistory", json!(["0x1", "0x1", []]))
             .await
             .unwrap();
@@ -1002,8 +1019,14 @@ mod tests {
     async fn missing_receipts_are_pruned_history_up_to_the_earliest_block() {
         let store = setup_store().await;
         let (block_one, _, _) = store_with_history_from_block_two(&store, true).await;
+        let tx_hash =
+            store.get_block_body(1).await.unwrap().unwrap().transactions[0].hash(&NativeCrypto);
         let context = crate::test_utils::context_without_p2p(store.clone());
         let receipt_reads = [
+            (
+                "eth_getTransactionReceipt",
+                serde_json::json!([format!("{tx_hash:#x}")]),
+            ),
             ("eth_getBlockReceipts", serde_json::json!(["0x1"])),
             ("debug_getRawReceipts", serde_json::json!(["0x1"])),
             (
@@ -1026,6 +1049,15 @@ mod tests {
                 );
             }
         }
+        let Err(RpcErr::PrunedHistoryUnavailable(message)) =
+            dispatch(&context, "eth_getBlockReceipts", serde_json::json!(["0x1"])).await
+        else {
+            unreachable!()
+        };
+        assert!(
+            message.ends_with("receipts are available from block 2"),
+            "{message}"
+        );
 
         store.update_earliest_block_number(0).await.unwrap();
         for (method, params) in receipt_reads {
