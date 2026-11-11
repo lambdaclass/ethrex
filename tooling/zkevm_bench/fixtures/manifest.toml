@@ -157,7 +157,7 @@ source = "stress/stress_ecrecover_150M.json.gz"
 #
 # Amsterdam compute benchmarks at fixed 30M/60M/100M/150M/200M gas targets, filled
 # at execution-specs ad678168 with go-ethereum's `evm` as t8n. The release targets
-# the same stateless wire format as `tests-zkevm@v21.0.1`, which `.fixtures_url_zkevm`
+# the same stateless wire format as `tests-zkevm@v21.0.7`, which `.fixtures_url_zkevm`
 # pins, but the two pins move independently, so treat schema compatibility as
 # something to re-check on each bump rather than something the shared "zkevm"
 # name guarantees.

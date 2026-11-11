@@ -345,14 +345,46 @@ impl HashTreeRoot for ExecutionRequests {
 
 // ── NewPayloadRequest ──────────────────────────────────────────────
 
+/// `MAX_BLOB_COMMITMENTS_PER_BLOCK`, the CL `VersionedHashes` limit.
+pub const MAX_BLOB_COMMITMENTS_PER_BLOCK: usize = 4096;
+
 /// SSZ `NewPayloadRequest` — the key container whose `hash_tree_root` is
 /// the public input committed to by an execution proof.
-#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+///
+/// A `ProgressiveContainer(active_fields=[1; 4])` whose `versioned_hashes` is
+/// bounded at [`MAX_BLOB_COMMITMENTS_PER_BLOCK`], matching the Gloas
+/// `NewPayloadRequest` since execution-specs #3913 (`tests-zkevm@v21.0.7`).
+/// Before that it was a plain container with a progressive `versioned_hashes`.
+/// Both encode the same bytes, so only the root moved.
+///
+/// `HashTreeRoot` is hand-written; see [`ExecutionPayload`].
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode)]
 pub struct NewPayloadRequest {
     pub execution_payload: ExecutionPayload,
-    pub versioned_hashes: ProgressiveList<[u8; 32]>,
+    pub versioned_hashes: SszList<[u8; 32], MAX_BLOB_COMMITMENTS_PER_BLOCK>,
     pub parent_beacon_block_root: [u8; 32],
     pub execution_requests: ExecutionRequests,
+}
+
+impl HashTreeRoot for NewPayloadRequest {
+    fn hash_tree_root(&self, hasher: &impl Sha256Hasher) -> Node {
+        // Destructured without `..` — see [`ExecutionPayload`].
+        let Self {
+            execution_payload,
+            versioned_hashes,
+            parent_beacon_block_root,
+            execution_requests,
+        } = self;
+        progressive_container_root(
+            hasher,
+            [
+                execution_payload.hash_tree_root(hasher),
+                versioned_hashes.hash_tree_root(hasher),
+                parent_beacon_block_root.hash_tree_root(hasher),
+                execution_requests.hash_tree_root(hasher),
+            ],
+        )
+    }
 }
 
 // ── PublicInput ────────────────────────────────────────────────────
@@ -413,9 +445,11 @@ const MAX_BYTES_PER_HEADER: usize = 1_024; // 2^10
 /// `tests-zkevm@v0.6.2`, then #3248 + #3278, then #3356 (which moved `state`,
 /// `codes` and `public_keys` to `ProgressiveList`), then #3652 (which removed
 /// `public_keys` altogether, in `tests-zkevm@v21.0.1`). ethrex speaks the last one.
-/// Releases since have only rearranged the Python that declares it, and SSZ
-/// encoding is positional, so renames and module moves leave the wire alone;
-/// which bundle is actually pinned lives in `tooling/ef_tests/.fixtures_url_zkevm`.
+/// Releases since have mostly rearranged the Python that declares it, and SSZ
+/// encoding is positional, so renames and module moves leave the wire alone.
+/// #3913 (`tests-zkevm@v21.0.7`) changed the request and result roots without
+/// changing their bytes; see [`NewPayloadRequest`]. Which bundle is actually
+/// pinned lives in `tooling/ef_tests/.fixtures_url_zkevm`.
 /// A bundle from an older dialect will not be caught by this prefix — it fails
 /// later, in decode or on a mismatched root.
 pub const STATELESS_INPUT_SCHEMA_ID: u16 = 0x1501;
@@ -457,7 +491,13 @@ pub struct SszStatelessInput {
 }
 
 /// SSZ `StatelessValidationResult` — the output of `verify_stateless_new_payload`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+///
+/// A `ProgressiveContainer(active_fields=[1; 4])` since execution-specs #3913,
+/// so its root matches the CL `PublicInput` the proof is verified against. The
+/// encoding is unchanged.
+///
+/// `HashTreeRoot` is hand-written; see [`ExecutionPayload`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, SszEncode, SszDecode)]
 pub struct SszStatelessValidationResult {
     pub new_payload_request_root: [u8; 32],
     pub successful_validation: bool,
@@ -468,6 +508,27 @@ pub struct SszStatelessValidationResult {
     /// Public so a verifier can pin which fork rules and encoding were used, for
     /// forks that share a payload shape. Added by execution-specs #3278.
     pub schema_id: u16,
+}
+
+impl HashTreeRoot for SszStatelessValidationResult {
+    fn hash_tree_root(&self, hasher: &impl Sha256Hasher) -> Node {
+        // Destructured without `..` — see [`ExecutionPayload`].
+        let Self {
+            new_payload_request_root,
+            successful_validation,
+            chain_id,
+            schema_id,
+        } = self;
+        progressive_container_root(
+            hasher,
+            [
+                new_payload_request_root.hash_tree_root(hasher),
+                successful_validation.hash_tree_root(hasher),
+                chain_id.hash_tree_root(hasher),
+                schema_id.hash_tree_root(hasher),
+            ],
+        )
+    }
 }
 
 // ── Conversions to internal types ────────────────────────────────
@@ -552,7 +613,7 @@ mod tests {
     fn sample_request() -> NewPayloadRequest {
         NewPayloadRequest {
             execution_payload: sample_payload(),
-            versioned_hashes: Vec::new().into(),
+            versioned_hashes: SszList::new(),
             parent_beacon_block_root: [8u8; 32],
             execution_requests: empty_requests(),
         }
@@ -811,7 +872,7 @@ mod tests {
         let ep = sample_execution_payload();
         let npr = NewPayloadRequest {
             execution_payload: ep,
-            versioned_hashes: ProgressiveList::new(),
+            versioned_hashes: SszList::new(),
             parent_beacon_block_root: [0x00; 32],
             execution_requests: ExecutionRequests {
                 deposits: ProgressiveList::new(),
