@@ -156,8 +156,8 @@ pub(crate) async fn reconcile_frontier(store: &Store) -> Result<BlockNumber, Syn
 /// One-time correction of the stored history bounds for nodes that synced or
 /// backfilled before they were tracked: `earliest_block_number` left at genesis
 /// by snap sync, and a missing transaction index floor below a
-/// `--history.transactions` horizon.
-async fn reconcile_history_bounds(store: &Store, tx_index_horizon: u64) -> Result<(), SyncError> {
+/// `--history.transactions` horizon, which may no longer be configured.
+async fn reconcile_history_bounds(store: &Store) -> Result<(), SyncError> {
     let recorded = store.get_earliest_block_number().await?;
     let actual = reconcile_frontier(store).await?;
     if recorded != actual {
@@ -167,7 +167,7 @@ async fn reconcile_history_bounds(store: &Store, tx_index_horizon: u64) -> Resul
         );
         store.update_earliest_block_number(actual).await?;
     }
-    if tx_index_horizon > 0 && store.get_tx_index_floor().await?.is_none() {
+    if store.get_tx_index_floor().await?.is_none() {
         let floor = find_tx_index_floor(store).await?;
         if floor > actual {
             info!(
@@ -222,12 +222,11 @@ async fn find_tx_index_floor(store: &Store) -> Result<BlockNumber, SyncError> {
 pub async fn reconcile_history_bounds_when_synced(
     store: Store,
     blockchain: Arc<Blockchain>,
-    tx_index_horizon: u64,
     cancel_token: CancellationToken,
 ) {
     loop {
         if blockchain.is_synced() {
-            match reconcile_history_bounds(&store, tx_index_horizon).await {
+            match reconcile_history_bounds(&store).await {
                 Ok(()) => return,
                 Err(e) => warn!("Reconciling the history bounds failed (will retry): {e}"),
             }
@@ -412,7 +411,7 @@ async fn backfill_step(
     // Without this, backfill would see `frontier == 0` on a node that snap-synced
     // before the frontier was tracked and conclude there is nothing to do.
     if !*reconciled {
-        reconcile_history_bounds(store, config.tx_index_horizon).await?;
+        reconcile_history_bounds(store).await?;
         *reconciled = true;
     }
 
@@ -689,7 +688,7 @@ mod tests {
     async fn reconcile_history_bounds_corrects_a_frontier_left_at_genesis() {
         let store = store_with_bodies_from(50, 100).await;
         store.update_earliest_block_number(0).await.unwrap();
-        reconcile_history_bounds(&store, 0).await.unwrap();
+        reconcile_history_bounds(&store).await.unwrap();
         assert_eq!(store.get_earliest_block_number().await.unwrap(), 50);
         assert_eq!(store.get_tx_index_floor().await.unwrap(), None);
     }
@@ -740,11 +739,13 @@ mod tests {
         store
     }
 
+    /// Independent of the current horizon: a node restarted without
+    /// `--history.transactions` still has the unindexed blocks.
     #[tokio::test]
     async fn reconcile_history_bounds_records_a_missing_tx_index_floor() {
         // 44 and 45 are empty, so the highest unindexed block with transactions is 43.
         let store = store_with_unindexed_backfill(40, 45, 100, &[44, 45]).await;
-        reconcile_history_bounds(&store, 10).await.unwrap();
+        reconcile_history_bounds(&store).await.unwrap();
         assert_eq!(store.get_earliest_block_number().await.unwrap(), 40);
         assert_eq!(store.get_tx_index_floor().await.unwrap(), Some(44));
     }
@@ -752,7 +753,7 @@ mod tests {
     #[tokio::test]
     async fn reconcile_history_bounds_leaves_a_fully_indexed_history_alone() {
         let store = store_with_unindexed_backfill(40, 40, 100, &[41]).await;
-        reconcile_history_bounds(&store, 10).await.unwrap();
+        reconcile_history_bounds(&store).await.unwrap();
         assert_eq!(store.get_tx_index_floor().await.unwrap(), None);
     }
 

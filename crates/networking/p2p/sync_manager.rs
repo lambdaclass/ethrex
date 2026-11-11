@@ -160,7 +160,6 @@ impl SyncManager {
             tracker.spawn(reconcile_history_bounds_when_synced(
                 store.clone(),
                 backfill_blockchain,
-                backfill_config.tx_index_horizon,
                 backfill_cancel,
             ));
         }
