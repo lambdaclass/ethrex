@@ -507,43 +507,37 @@ impl ChainConfig {
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
         // EIP-7892: from Prague onward the blob schedule only changes at BPO forks.
         // Named forks (Osaka, Amsterdam, Hegotá, LStar) carry no blob params of their own
-        // and inherit the highest activated BPO entry, so resolution falls through the BPO
-        // chain. A genesis that pins an entry for the named fork anyway takes precedence.
-        if (self.is_lstar_activated(block_timestamp)
-            || self.is_hegota_activated(block_timestamp)
-            || self.is_amsterdam_activated(block_timestamp))
-            && let Some(schedule) = self.blob_schedule.amsterdam
-        {
-            return Some(schedule);
-        }
-        if self.is_bpo5_activated(block_timestamp)
-            && let Some(schedule) = self.blob_schedule.bpo5
-        {
-            return Some(schedule);
-        }
-        if self.is_bpo4_activated(block_timestamp)
-            && let Some(schedule) = self.blob_schedule.bpo4
-        {
-            return Some(schedule);
-        }
-        if self.is_bpo3_activated(block_timestamp)
-            && let Some(schedule) = self.blob_schedule.bpo3
-        {
-            return Some(schedule);
-        }
-        if self.is_bpo2_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo2)
-        } else if self.is_bpo1_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo1)
-        } else if self.is_osaka_activated(block_timestamp) {
-            Some(self.blob_schedule.osaka)
-        } else if self.is_prague_activated(block_timestamp) {
-            Some(self.blob_schedule.prague)
-        } else if self.is_cancun_activated(block_timestamp) {
-            Some(self.blob_schedule.cancun)
-        } else {
-            None
-        }
+        // and inherit the latest activated BPO entry. A genesis that pins an entry for
+        // Amsterdam anyway applies from the first of Amsterdam, Hegotá and LStar to
+        // activate.
+        //
+        // The entry in force is the one activated last. BPO3 and later may come after
+        // Amsterdam, as they do on the test forks since tests@v21.0.2, so a fixed
+        // precedence between the two cannot work. Entries that activate at the same
+        // timestamp resolve in the order below, where BPO3 and later follow Amsterdam.
+        let amsterdam_time = [self.amsterdam_time, self.hegota_time, self.lstar_time]
+            .into_iter()
+            .flatten()
+            .min();
+        [
+            (self.cancun_time, Some(self.blob_schedule.cancun)),
+            (self.prague_time, Some(self.blob_schedule.prague)),
+            (self.osaka_time, Some(self.blob_schedule.osaka)),
+            (self.bpo1_time, Some(self.blob_schedule.bpo1)),
+            (self.bpo2_time, Some(self.blob_schedule.bpo2)),
+            (amsterdam_time, self.blob_schedule.amsterdam),
+            (self.bpo3_time, self.blob_schedule.bpo3),
+            (self.bpo4_time, self.blob_schedule.bpo4),
+            (self.bpo5_time, self.blob_schedule.bpo5),
+        ]
+        .into_iter()
+        .enumerate()
+        .filter_map(|(pos, (time, schedule))| {
+            let time = time.filter(|&time| time <= block_timestamp)?;
+            Some((time, pos, schedule?))
+        })
+        .max_by_key(|&(time, pos, _)| (time, pos))
+        .map(|(_, _, schedule)| schedule)
     }
 
     pub fn fork(&self, block_timestamp: u64) -> Fork {
@@ -1635,5 +1629,36 @@ mod tests {
         };
         config.blob_schedule.amsterdam = Some(pinned);
         assert_eq!(config.get_fork_blob_schedule(100), Some(pinned));
+    }
+
+    #[test]
+    fn bpo3_after_amsterdam_replaces_its_schedule() {
+        // tests@v21.0.2 schedules BPO3 after Amsterdam (`AmsterdamBPOIncrease`), with
+        // the Amsterdam entry pinned to the BPO2 values. BPO3 must take over from its
+        // activation on, including when both activate at the same timestamp.
+        let bpo3 = ForkBlobSchedule {
+            target: 21,
+            max: 32,
+            base_fee_update_fraction: 17527006,
+        };
+        let mut config = ChainConfig {
+            osaka_time: Some(0),
+            bpo1_time: Some(0),
+            bpo2_time: Some(0),
+            amsterdam_time: Some(0),
+            bpo3_time: Some(15_000),
+            ..Default::default()
+        };
+        config.blob_schedule.amsterdam = Some(default_bpo2_schedule());
+        config.blob_schedule.bpo3 = Some(bpo3);
+
+        assert_eq!(
+            config.get_fork_blob_schedule(14_999),
+            Some(default_bpo2_schedule())
+        );
+        assert_eq!(config.get_fork_blob_schedule(15_000), Some(bpo3));
+
+        config.bpo3_time = Some(0);
+        assert_eq!(config.get_fork_blob_schedule(0), Some(bpo3));
     }
 }
