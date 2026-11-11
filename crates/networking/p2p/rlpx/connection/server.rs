@@ -542,7 +542,13 @@ pub struct PeerConnectionServer {
     _admission_permit: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
-#[actor(protocol = PeerConnectionServerProtocol)]
+// Shared state is deliberate: the negotiated eth/snap versions are written
+// once, after Hello, for the `RLPxCodec`, which by then is sealed inside the
+// split `Framed` (sink and stream halves; the stream half goes on to a
+// listener task). The codec is not an actor and reads the versions on every
+// frame, so a message to it would not do; the lock is uncontended after
+// negotiation.
+#[actor(protocol = PeerConnectionServerProtocol, allow_shared_state)]
 impl PeerConnectionServer {
     #[started]
     async fn started(&mut self, ctx: &Context<Self>) {
