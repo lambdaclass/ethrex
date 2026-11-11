@@ -72,7 +72,11 @@ use spawned_concurrency::{
     actor,
     error::ActorError,
     protocol,
-    tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, send_interval, spawn_listener},
+    response::Response,
+    tasks::{
+        Actor, ActorRef, ActorStart as _, Context, Handler, InsertError, PendingReplies,
+        PendingReply, send_interval, spawn_listener,
+    },
 };
 use spawned_rt::tasks::BroadcastStream;
 use std::{
@@ -83,7 +87,7 @@ use std::{
 };
 use tokio::{
     net::TcpStream,
-    sync::{broadcast, oneshot},
+    sync::broadcast,
     task::{self, Id},
 };
 use tokio_stream::StreamExt;
@@ -114,6 +118,10 @@ const MAX_MISSED_PONGS: u8 = 3;
 /// the socket; if a peer can't keep up the queue fills and the peer is dropped, so outbound
 /// buffering per connection is bounded to this many messages instead of growing unbounded.
 const OUTBOUND_QUEUE_CAP: usize = 1024;
+/// Requests awaiting a response per connection (`Established::current_requests`).
+/// Peer selection caps a peer at `MAX_CONCURRENT_REQUESTS_PER_PEER` (100)
+/// requests; the rest is headroom for the paths that request directly.
+pub(crate) const MAX_PENDING_REQUESTS: usize = 256;
 /// How often to flush buffered transaction hash requests into a single
 /// batched GetPooledTransactions message.
 const TX_REQUEST_BATCH_INTERVAL: Duration = Duration::from_millis(50);
@@ -139,12 +147,10 @@ pub(crate) type PeerConnBroadcastSender = broadcast::Sender<(tokio::task::Id, Ar
 pub trait PeerConnectionServerProtocol: Send + Sync {
     fn incoming_message(&self, message: Message) -> Result<(), ActorError>;
     fn outgoing_message(&self, message: Message) -> Result<(), ActorError>;
-    fn outgoing_request(
-        &self,
-        message: Message,
-        sender: Arc<oneshot::Sender<Message>>,
-    ) -> Result<(), ActorError>;
-    fn request_timeout(&self, id: u64) -> Result<(), ActorError>;
+    /// Send a request to the peer and answer with its response, matched by
+    /// request id. Deferred on the actor (`PendingReplies`); the caller's
+    /// timeout is the request's deadline.
+    fn outgoing_request(&self, message: Message) -> Response<Message>;
     fn send_ping(&self) -> Result<(), ActorError>;
     fn block_range_update(&self) -> Result<(), ActorError>;
     fn broadcast_message(&self, task_id: Id, msg: Arc<Message>) -> Result<(), ActorError>;
@@ -247,28 +253,27 @@ impl PeerConnection {
         message: Message,
         timeout: Duration,
     ) -> Result<Message, PeerConnectionError> {
-        let id = message
-            .request_id()
-            .expect("Cannot wait on request without id");
-        let (oneshot_tx, oneshot_rx) = oneshot::channel::<Message>();
-
+        assert!(
+            message.request_id().is_some(),
+            "Cannot wait on request without id"
+        );
+        // One deadline, fixed now: the caller's timeout and the actor's pending
+        // entry expire together, and dropping this future abandons the entry.
         self.handle
-            .outgoing_request(message, Arc::new(oneshot_tx))
-            .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?;
-
-        // Wait for the response or timeout. This blocks the calling task (and not the ConnectionServer task)
-        match tokio::time::timeout(timeout, oneshot_rx).await {
-            Ok(Ok(response)) => Ok(response),
-            Ok(Err(error)) => Err(PeerConnectionError::RecvError(error.to_string())),
-            Err(_timeout) => {
-                // Notify timeout on request id
-                self.handle
-                    .request_timeout(id)
-                    .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?;
-                // Return timeout error
-                Err(PeerConnectionError::Timeout)
-            }
-        }
+            .with_request_timeout(timeout)
+            .outgoing_request(message)
+            .await
+            .map_err(|err| match err {
+                ActorError::RequestTimeout => PeerConnectionError::Timeout,
+                // The connection is gone, or dropped the request (not
+                // established, a duplicate id, or the send failed): what a
+                // dropped oneshot sender used to report.
+                ActorError::ActorStopped | ActorError::ReplyDropped => {
+                    PeerConnectionError::RecvError(err.to_string())
+                }
+                // `Overloaded`: MAX_PENDING_REQUESTS already in flight.
+                err => PeerConnectionError::InternalError(err.to_string()),
+            })
     }
 }
 
@@ -418,7 +423,10 @@ pub struct Established {
     #[cfg(feature = "l2")]
     pub(crate) l2_state: L2ConnState,
     pub(crate) tx_broadcaster: ActorRef<TxBroadcaster>,
-    pub(crate) current_requests: HashMap<u64, (String, oneshot::Sender<Message>)>,
+    /// Requests awaiting the peer's response, by request id. Bounded; an
+    /// expired or abandoned entry is purged on the next insert, and every
+    /// entry left at teardown is answered `ActorStopped`.
+    pub(crate) current_requests: PendingReplies<u64, Message>,
     // We store the disconnection reason to handle it in the teardown
     pub(crate) disconnect_reason: Option<DisconnectReason>,
     // Indicates if the peer has been validated (ie. the connection was established successfully)
@@ -536,6 +544,11 @@ pub struct PeerConnectionServer {
 impl PeerConnectionServer {
     #[started]
     async fn started(&mut self, ctx: &Context<Self>) {
+        // Tests start a connection already established (`tx_announcement_tests::session`).
+        #[cfg(test)]
+        if matches!(self.state, ConnectionState::Established(_)) {
+            return;
+        }
         // Set a default eth version that we can update after we negotiate peer capabilities.
         // This eth version will only be used to encode & decode the initial `Hello` messages.
         let eth_version = Arc::new(RwLock::new(EthCapVersion::default()));
@@ -708,48 +721,49 @@ impl PeerConnectionServer {
         }
     }
 
-    #[send_handler]
+    #[deferred_handler]
     async fn handle_outgoing_request(
         &mut self,
         msg: peer_connection_server_protocol::OutgoingRequest,
+        reply: PendingReply<'_, Message>,
         ctx: &Context<Self>,
     ) {
-        if let ConnectionState::Established(ref mut established_state) = self.state {
-            trace!(
-                peer=%established_state.node,
-                message=%msg.message,
-                "Received outgoing request",
-            );
-            let Some(sender) = Arc::<oneshot::Sender<Message>>::into_inner(msg.sender) else {
-                debug!("Could not obtain sender channel: Arc has multiple references");
+        let ConnectionState::Established(ref mut established_state) = self.state else {
+            // Dropped in the turn: the caller gets ReplyDropped at once.
+            debug!("Connection not yet established");
+            return;
+        };
+        trace!(
+            peer=%established_state.node,
+            message=%msg.message,
+            "Received outgoing request",
+        );
+        let Some(id) = msg.message.request_id() else {
+            return;
+        };
+        // Closed: the caller already timed out or left, so skip the send.
+        let Ok(token) = reply.defer() else {
+            return;
+        };
+        match established_state.current_requests.insert(id, token) {
+            Ok(()) => {}
+            // The new caller gets ReplyDropped; the first one keeps waiting.
+            Err(InsertError::Duplicate(token)) => {
+                debug!(peer=%established_state.node, %id, "Duplicate request id");
+                drop(token);
                 return;
-            };
-            let result = handle_outgoing_request(established_state, msg.message, sender).await;
-            Self::process_cast_error(&self.state, result, ctx);
-        } else {
-            debug!("Connection not yet established");
-        }
-    }
-
-    #[send_handler]
-    async fn handle_request_timeout(
-        &mut self,
-        msg: peer_connection_server_protocol::RequestTimeout,
-        _ctx: &Context<Self>,
-    ) {
-        if let ConnectionState::Established(ref mut established_state) = self.state {
-            // Discard the request from current requests
-            if let Some((msg_type, _)) = established_state.current_requests.remove(&msg.id) {
-                debug!(
-                    peer=%established_state.node,
-                    %msg_type,
-                    id=%msg.id,
-                    "Request timedout",
-                );
             }
-        } else {
-            debug!("Connection not yet established");
+            Err(InsertError::Full(token)) => {
+                token.overloaded();
+                return;
+            }
         }
+        let result = handle_outgoing_request(established_state, msg.message).await;
+        if result.is_err() {
+            // Not sent: answer now instead of at the deadline.
+            drop(established_state.current_requests.take(&id));
+        }
+        Self::process_cast_error(&self.state, result, ctx);
     }
 
     #[send_handler]
@@ -2508,12 +2522,14 @@ async fn handle_incoming_message(
         | message @ Message::Receipts70(_)
         | message @ Message::BlockAccessLists(_)
         | message @ Message::Snap2BlockAccessLists(_) => {
-            if let Some((_, tx)) = message
+            // An id no longer pending (expired, abandoned or never sent) is a
+            // late or unknown response. The caller may have left meanwhile;
+            // the response is then dropped, which is fine.
+            if let Some(token) = message
                 .request_id()
-                .and_then(|id| state.current_requests.remove(&id))
+                .and_then(|id| state.current_requests.take(&id))
             {
-                tx.send(message)
-                    .map_err(|e| PeerConnectionError::SendMessage(e.to_string()))?
+                token.reply(message);
             } else {
                 return Err(PeerConnectionError::ExpectedRequestId(format!("{message}")));
             }
@@ -2661,14 +2677,7 @@ async fn handle_outgoing_message(
 async fn handle_outgoing_request(
     state: &mut Established,
     message: Message,
-    sender: oneshot::Sender<Message>,
 ) -> Result<(), PeerConnectionError> {
-    // Insert the request in the request map if it supports a request id.
-    message.request_id().and_then(|id| {
-        state
-            .current_requests
-            .insert(id, (format!("{message}"), sender))
-    });
     trace!(
         peer=%state.node,
         %message,
@@ -3241,7 +3250,7 @@ mod tx_announcement_tests {
 
     /// An established, synced session with a peer speaking `eth_version`, and the receiving end
     /// of its outbound queue, to see what the handler sends back.
-    fn session(eth_version: u8) -> (Established, mpsc::Receiver<Message>) {
+    pub(super) fn session(eth_version: u8) -> (Established, mpsc::Receiver<Message>) {
         let store = Store::new("memory", EngineType::InMemory).expect("in-memory store");
         let blockchain = Arc::new(Blockchain::default_with_store(store.clone()));
         blockchain.set_synced();
@@ -3283,7 +3292,7 @@ mod tx_announcement_tests {
             #[cfg(feature = "l2")]
             l2_state: L2ConnState::Unsupported,
             tx_broadcaster,
-            current_requests: HashMap::new(),
+            current_requests: PendingReplies::with_capacity(MAX_PENDING_REQUESTS),
             disconnect_reason: None,
             is_validated: true,
             serve_requests: WindowCounter::new(),
@@ -3989,5 +3998,161 @@ mod bal_serving_tests {
 
         assert!(resp.bals.len() < BAL_MAX_REQUEST_HASHES);
         assert!(encoded_len(&resp.bals) < BAL_RESPONSE_SOFT_CAP_BYTES + one);
+    }
+}
+
+/// `outgoing_request` as a deferred reply (spawned 0.8): one deadline, exactly
+/// one answer, and no entry left behind by a caller that timed out or left.
+#[cfg(test)]
+mod outgoing_request_tests {
+    use super::*;
+    use crate::rlpx::eth::blocks::{GetBlockHeaders, HashOrNumber};
+    use tokio::sync::mpsc;
+
+    /// A running connection actor on an established session, and the
+    /// receiving end of its outbound queue.
+    fn connection() -> (PeerConnection, mpsc::Receiver<Message>) {
+        let (state, outbound) = tx_announcement_tests::session(68);
+        let server = PeerConnectionServer {
+            state: ConnectionState::Established(Box::new(state)),
+            _admission_permit: None,
+        };
+        (
+            PeerConnection {
+                handle: server.start(),
+            },
+            outbound,
+        )
+    }
+
+    fn request(id: u64) -> Message {
+        Message::GetBlockHeaders(GetBlockHeaders::new(
+            id,
+            HashOrNumber::Number(1),
+            1,
+            0,
+            false,
+        ))
+    }
+
+    fn response(id: u64) -> Message {
+        Message::BlockHeaders(BlockHeaders::new(id, Vec::new()))
+    }
+
+    /// The request reached the outbound queue.
+    async fn sent(outbound: &mut mpsc::Receiver<Message>) -> Message {
+        tokio::time::timeout(Duration::from_secs(5), outbound.recv())
+            .await
+            .expect("the request is sent")
+            .expect("the queue is open")
+    }
+
+    #[tokio::test]
+    async fn a_response_answers_its_request() {
+        let (connection, mut outbound) = connection();
+        let mut caller = connection.clone();
+        let pending = tokio::spawn(async move {
+            caller
+                .outgoing_request(request(7), Duration::from_secs(5))
+                .await
+        });
+        assert_eq!(sent(&mut outbound).await.request_id(), Some(7));
+        connection.handle.incoming_message(response(7)).unwrap();
+        let answer = pending.await.unwrap().expect("answered");
+        assert!(matches!(answer, Message::BlockHeaders(ref h) if h.id == 7));
+    }
+
+    #[tokio::test]
+    async fn a_timed_out_request_leaves_nothing_behind() {
+        let (mut connection, mut outbound) = connection();
+        let timed_out = connection
+            .outgoing_request(request(1), Duration::from_millis(50))
+            .await;
+        assert!(
+            matches!(timed_out, Err(PeerConnectionError::Timeout)),
+            "{timed_out:?}"
+        );
+        sent(&mut outbound).await;
+        // The late response finds nothing pending (no `request_timeout`
+        // message needed), and the id can be used again.
+        connection.handle.incoming_message(response(1)).unwrap();
+        let mut caller = connection.clone();
+        let again = tokio::spawn(async move {
+            caller
+                .outgoing_request(request(1), Duration::from_secs(5))
+                .await
+        });
+        sent(&mut outbound).await;
+        connection.handle.incoming_message(response(1)).unwrap();
+        assert!(again.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_caller_that_leaves_frees_its_entry() {
+        let (connection, mut outbound) = connection();
+        let mut caller = connection.clone();
+        // The request is enqueued when the method is called; then the caller
+        // is dropped before any answer, with no timeout message sent.
+        let abandoned = tokio::spawn(async move {
+            caller
+                .outgoing_request(request(3), Duration::from_secs(60))
+                .await
+        });
+        sent(&mut outbound).await;
+        abandoned.abort();
+        assert!(abandoned.await.unwrap_err().is_cancelled());
+        // A new request reusing the id is not refused as a duplicate.
+        let mut caller = connection.clone();
+        let again = tokio::spawn(async move {
+            caller
+                .outgoing_request(request(3), Duration::from_secs(5))
+                .await
+        });
+        sent(&mut outbound).await;
+        connection.handle.incoming_message(response(3)).unwrap();
+        assert!(again.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_duplicate_id_is_refused_and_the_first_caller_kept() {
+        let (connection, mut outbound) = connection();
+        let mut first_caller = connection.clone();
+        let first = tokio::spawn(async move {
+            first_caller
+                .outgoing_request(request(5), Duration::from_secs(5))
+                .await
+        });
+        sent(&mut outbound).await;
+        let mut second_caller = connection.clone();
+        let second = second_caller
+            .outgoing_request(request(5), Duration::from_secs(5))
+            .await;
+        assert!(
+            matches!(second, Err(PeerConnectionError::RecvError(_))),
+            "{second:?}"
+        );
+        connection.handle.incoming_message(response(5)).unwrap();
+        assert!(first.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_stopping_connection_answers_its_pending_requests() {
+        let (connection, mut outbound) = connection();
+        let mut caller = connection.clone();
+        let pending = tokio::spawn(async move {
+            caller
+                .outgoing_request(request(9), Duration::from_secs(60))
+                .await
+        });
+        sent(&mut outbound).await;
+        connection.handle.child_handle().stop();
+        let answer = tokio::time::timeout(Duration::from_secs(5), pending)
+            .await
+            .expect("answered at teardown, not at the 60 s timeout")
+            .unwrap();
+        assert!(
+            matches!(answer, Err(PeerConnectionError::RecvError(_))),
+            "{answer:?}"
+        );
     }
 }

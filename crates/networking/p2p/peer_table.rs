@@ -32,9 +32,10 @@ use spawned_concurrency::{
     error::ActorError,
     protocol,
     system::{ExecutionGroup, SystemError},
-    tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response},
+    tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, PendingReply, ReplyTo, Response},
 };
 use std::{
+    collections::VecDeque,
     net::IpAddr,
     time::{Duration, Instant},
 };
@@ -403,6 +404,15 @@ pub struct RequestPermit {
 /// depends on it (receipts differ between eth/69 and eth/70).
 pub type SelectedPeer = (H256, PeerConnection, RequestPermit, Vec<Capability>);
 
+/// A peer picked for one request, holding its request slot until the permit
+/// drops: what `get_best_peer` answers when it finds one.
+pub type PeerLease = (H256, PeerConnection, RequestPermit);
+
+/// Most callers that may wait in `wait_for_best_peer` at once; one more is
+/// answered `Overloaded`. Sync runs a handful of download loops, each waiting
+/// for at most one peer at a time.
+const MAX_PEER_WAITERS: usize = 64;
+
 impl RequestPermit {
     pub(crate) fn new(peer_table: PeerTable, peer_id: H256) -> Self {
         Self {
@@ -514,6 +524,13 @@ pub trait PeerTableServerProtocol: Send + Sync {
         capabilities: Vec<Capability>,
         excluded: Vec<H256>,
     ) -> Response<Option<(H256, PeerConnection, RequestPermit)>>;
+    /// Like `get_best_peer`, but waits instead of answering `None`: the
+    /// caller is answered when a matching peer has a free request slot (a
+    /// permit returns, a peer connects or its score rises), first come first
+    /// served. Errs `RequestTimeout` after `PEER_SELECTION_TIMEOUT`, and
+    /// `Overloaded` at once when `MAX_PEER_WAITERS` callers already wait.
+    #[request_timeout(PEER_SELECTION_TIMEOUT)]
+    fn wait_for_best_peer(&self, capabilities: Vec<Capability>) -> Response<PeerLease>;
     #[request_timeout(PEER_SELECTION_TIMEOUT)]
     fn get_best_n_peers(
         &self,
@@ -559,6 +576,9 @@ pub struct PeerTableServer {
     /// allows (k-buckets: 256 × 16 = 4,096 max; this pool: up to 50,000).
     /// K-buckets are still used for all Kademlia protocol operations.
     connection_pool: IndexMap<H256, Node>,
+    /// Callers of `wait_for_best_peer` that no peer could serve yet, oldest
+    /// first, with the capabilities each needs. At most `MAX_PEER_WAITERS`.
+    peer_waiters: VecDeque<(Vec<Capability>, ReplyTo<PeerLease>)>,
 }
 
 // Hand-written because `Box<dyn PeerFilter>` is not `Debug`, and requiring that
@@ -629,6 +649,7 @@ impl PeerTableServer {
             filter,
             sessions: Default::default(),
             connection_pool: IndexMap::with_capacity(MAX_CONNECTION_POOL_SIZE),
+            peer_waiters: VecDeque::new(),
         }
     }
 
@@ -656,7 +677,7 @@ impl PeerTableServer {
     async fn handle_new_connected_peer(
         &mut self,
         msg: peer_table_server_protocol::NewConnectedPeer,
-        _ctx: &Context<Self>,
+        ctx: &Context<Self>,
     ) -> bool {
         let new_peer_id = msg.node.node_id();
         if self.peers.contains_key(&new_peer_id) {
@@ -673,6 +694,7 @@ impl PeerTableServer {
         new_peer.is_connection_inbound = msg.is_inbound;
         new_peer.connection_id = Some(msg.connection_id);
         self.peers.insert(new_peer_id, new_peer);
+        self.serve_peer_waiters(ctx);
         true
     }
 
@@ -714,7 +736,7 @@ impl PeerTableServer {
     async fn handle_dec_requests(
         &mut self,
         msg: peer_table_server_protocol::DecRequests,
-        _ctx: &Context<Self>,
+        ctx: &Context<Self>,
     ) {
         self.peers.entry(msg.node_id).and_modify(|peer_data| {
             if peer_data.requests <= 0 {
@@ -729,6 +751,7 @@ impl PeerTableServer {
             }
             peer_data.requests = peer_data.requests.saturating_sub(1).max(0)
         });
+        self.serve_peer_waiters(ctx);
     }
 
     #[send_handler]
@@ -746,7 +769,7 @@ impl PeerTableServer {
     async fn handle_record_success(
         &mut self,
         msg: peer_table_server_protocol::RecordSuccess,
-        _ctx: &Context<Self>,
+        ctx: &Context<Self>,
     ) {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -756,6 +779,8 @@ impl PeerTableServer {
             peer_data.score = (peer_data.score + 1).min(MAX_SCORE);
             peer_data.last_response_time = Some(now);
         });
+        // A higher score raises the peer's request cap.
+        self.serve_peer_waiters(ctx);
     }
 
     #[send_handler]
@@ -964,12 +989,34 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::GetBestPeer,
         ctx: &Context<Self>,
     ) -> Option<(H256, PeerConnection, RequestPermit)> {
-        let (peer_id, conn) = self.do_get_best_peer(&msg.capabilities)?;
-        self.peers
-            .get_mut(&peer_id)
-            .expect("peer returned by do_get_best_peer must be present in self.peers")
-            .requests += 1;
-        Some((peer_id, conn, RequestPermit::new(ctx.actor_ref(), peer_id)))
+        self.take_best_peer(&msg.capabilities, ctx)
+    }
+
+    #[deferred_handler]
+    async fn handle_wait_for_best_peer(
+        &mut self,
+        msg: peer_table_server_protocol::WaitForBestPeer,
+        reply: PendingReply<'_, PeerLease>,
+        ctx: &Context<Self>,
+    ) {
+        // Expired while queued behind other traffic: reserve nothing for it.
+        if reply.is_closed() {
+            return;
+        }
+        if let Some(lease) = self.take_best_peer(&msg.capabilities, ctx) {
+            reply.reply(lease);
+            return;
+        }
+        self.peer_waiters.retain(|(_, waiter)| !waiter.is_closed());
+        if self.peer_waiters.len() >= MAX_PEER_WAITERS {
+            reply.overloaded();
+            return;
+        }
+        // Err: the caller left or timed out meanwhile, or this actor is at
+        // its deferred-reply bound (the caller was told `Overloaded`).
+        if let Ok(waiter) = reply.defer() {
+            self.peer_waiters.push_back((msg.capabilities, waiter));
+        }
     }
 
     #[request_handler]
@@ -1295,6 +1342,43 @@ impl PeerTableServer {
         let score_ratio = (score - MIN_SCORE) as f64 / (MAX_SCORE - MIN_SCORE) as f64;
         let max_requests = (MAX_CONCURRENT_REQUESTS_PER_PEER as f64 * score_ratio).max(1.0);
         (*requests as f64) < max_requests
+    }
+
+    /// Pick the best peer for `capabilities` and reserve one of its request
+    /// slots, returned when the permit drops.
+    fn take_best_peer(
+        &mut self,
+        capabilities: &[Capability],
+        ctx: &Context<Self>,
+    ) -> Option<PeerLease> {
+        let (peer_id, conn) = self.do_get_best_peer(capabilities)?;
+        self.peers
+            .get_mut(&peer_id)
+            .expect("peer returned by do_get_best_peer must be present in self.peers")
+            .requests += 1;
+        Some((peer_id, conn, RequestPermit::new(ctx.actor_ref(), peer_id)))
+    }
+
+    /// Answer the waiters a peer can serve now, oldest first. A waiter whose
+    /// caller has left meanwhile drops its lease, whose permit returns the
+    /// slot and wakes the next one.
+    fn serve_peer_waiters(&mut self, ctx: &Context<Self>) {
+        if self.peer_waiters.is_empty() {
+            return;
+        }
+        self.peer_waiters.retain(|(_, waiter)| !waiter.is_closed());
+        let mut index = 0;
+        while index < self.peer_waiters.len() {
+            let Some(lease) = self.take_best_peer(&self.peer_waiters[index].0.clone(), ctx) else {
+                index += 1;
+                continue;
+            };
+            let (_, waiter) = self
+                .peer_waiters
+                .remove(index)
+                .expect("index is within the queue");
+            waiter.reply(lease);
+        }
     }
 
     fn do_get_best_peer(&self, capabilities: &[Capability]) -> Option<(H256, PeerConnection)> {
@@ -1740,6 +1824,27 @@ impl PeerTableServer {
 }
 
 pub type PeerTable = ActorRef<PeerTableServer>;
+
+/// Wait for a peer with a free request slot that matches `capabilities`,
+/// without polling (`wait_for_best_peer`). `Ok(None)` when none freed up
+/// within `PEER_SELECTION_TIMEOUT`, or when too many callers already wait
+/// (after a short pause, so a caller looping on `None` does not spin): the
+/// caller re-checks its own state and asks again, as it did on `None` from
+/// `get_best_peer`.
+pub async fn wait_for_best_peer(
+    peer_table: &PeerTable,
+    capabilities: Vec<Capability>,
+) -> Result<Option<PeerLease>, ActorError> {
+    match peer_table.wait_for_best_peer(capabilities).await {
+        Ok(lease) => Ok(Some(lease)),
+        Err(ActorError::RequestTimeout) => Ok(None),
+        Err(ActorError::Overloaded) => {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            Ok(None)
+        }
+        Err(err) => Err(err),
+    }
+}
 
 /// Whether `record` is validly signed and its `secp256k1` key belongs to `node_id`.
 fn is_signed_record_of(record: &NodeRecord, node_id: H256) -> bool {
@@ -2288,5 +2393,112 @@ mod tests {
         let mut remote = H256::zero();
         remote.0[0] = 0x80;
         assert_eq!(bucket_index(&local, &remote), Some(255));
+    }
+
+    // ---- wait_for_best_peer: waiters instead of 10 ms polling (spawned 0.8) ----
+
+    const ETH: fn() -> Vec<Capability> = || vec![Capability::eth(69)];
+
+    fn waiting_table() -> PeerTable {
+        PeerTableServer::spawn_with_filter(H256::zero(), 10, FixedAnswer(true))
+    }
+
+    async fn connect(table: &PeerTable, seed: u8) {
+        let (_, contact) = dummy_contact(seed);
+        assert!(
+            table
+                .new_connected_peer(
+                    contact.node,
+                    PeerConnection::unestablished(),
+                    ConnectionId::next(),
+                    ETH(),
+                    ETH(),
+                    Some(Capability::eth(69)),
+                    false,
+                )
+                .await
+                .unwrap()
+        );
+    }
+
+    /// Take every request slot the table's peers have.
+    async fn take_all(table: &PeerTable) -> Vec<PeerLease> {
+        let mut leases = Vec::new();
+        while let Some(lease) = table.get_best_peer(ETH()).await.unwrap() {
+            leases.push(lease);
+        }
+        leases
+    }
+
+    fn waiter(table: &PeerTable) -> tokio::task::JoinHandle<Result<PeerLease, ActorError>> {
+        let table = table.clone();
+        tokio::spawn(async move { table.wait_for_best_peer(ETH()).await })
+    }
+
+    async fn answered(
+        waiter: tokio::task::JoinHandle<Result<PeerLease, ActorError>>,
+    ) -> Result<PeerLease, ActorError> {
+        tokio::time::timeout(Duration::from_secs(5), waiter)
+            .await
+            .expect("answered without polling")
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_waiter_is_answered_when_a_peer_connects() {
+        let table = waiting_table();
+        let waiting = waiter(&table);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!waiting.is_finished(), "no peer yet");
+        connect(&table, 1).await;
+        assert!(answered(waiting).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_waiter_is_answered_when_a_permit_returns() {
+        let table = waiting_table();
+        connect(&table, 1).await;
+        let mut leases = take_all(&table).await;
+        assert!(!leases.is_empty());
+        let waiting = waiter(&table);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!waiting.is_finished(), "every slot is taken");
+        drop(leases.pop());
+        assert!(answered(waiting).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_full_waiter_queue_is_refused_at_once() {
+        let table = waiting_table();
+        let waiting: Vec<_> = (0..MAX_PEER_WAITERS).map(|_| waiter(&table)).collect();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let refused = tokio::time::timeout(Duration::from_secs(1), table.wait_for_best_peer(ETH()))
+            .await
+            .expect("refused at once, not after the timeout");
+        assert!(
+            matches!(refused, Err(ActorError::Overloaded)),
+            "{refused:?}"
+        );
+        assert!(waiting.iter().all(|w| !w.is_finished()));
+    }
+
+    #[tokio::test]
+    async fn a_waiter_that_left_takes_no_slot() {
+        let cap = {
+            let table = waiting_table();
+            connect(&table, 1).await;
+            take_all(&table).await.len()
+        };
+        let table = waiting_table();
+        let gone = waiter(&table);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        gone.abort();
+        let _ = gone.await;
+        connect(&table, 1).await;
+        // Every slot is still there for callers that are present: the left
+        // waiter is purged, or the lease it can no longer take is dropped and
+        // its permit returns the slot.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(take_all(&table).await.len(), cap);
     }
 }

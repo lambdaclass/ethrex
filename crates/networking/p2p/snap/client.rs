@@ -6,7 +6,7 @@ use crate::rlpx::message::Message as RLPxMessage;
 use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_handler::PeerHandler,
-    peer_table::{PeerTableServerProtocol as _, RequestPermit},
+    peer_table::{PeerTableServerProtocol as _, RequestPermit, wait_for_best_peer},
     rlpx::{
         connection::server::PeerConnection,
         error::PeerConnectionError,
@@ -210,8 +210,6 @@ pub async fn request_account_range(
     let mut last_update: SystemTime = SystemTime::now();
     let mut write_set = tokio::task::JoinSet::new();
 
-    let mut logged_no_free_peers_count = 0;
-
     loop {
         if all_accounts_state.len() * size_of::<AccountState>() >= RANGE_FILE_CHUNK_SIZE {
             let current_account_hashes = std::mem::take(&mut all_account_hashes);
@@ -276,21 +274,14 @@ pub async fn request_account_range(
             all_accounts_state.extend(accounts.iter().map(|unit| unit.account));
         }
 
-        let Some((peer_id, connection, permit)) = peers
-            .peer_table
-            .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
-            .await
-            .inspect_err(|err| warn!(%err, "Error requesting a peer for account range"))
-            .unwrap_or(None)
+        // Waits for a free peer instead of polling.
+        let Some((peer_id, connection, permit)) =
+            wait_for_best_peer(&peers.peer_table, SUPPORTED_SNAP_CAPABILITIES.to_vec())
+                .await
+                .inspect_err(|err| warn!(%err, "Error requesting a peer for account range"))
+                .unwrap_or(None)
         else {
-            // Log ~ once every 10 seconds
-            if logged_no_free_peers_count == 0 {
-                trace!("We are missing peers in request_account_range");
-                logged_no_free_peers_count = 1000;
-            }
-            logged_no_free_peers_count -= 1;
-            // Sleep a bit to avoid busy polling
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            trace!("We are missing peers in request_account_range");
             continue;
         };
 
@@ -423,8 +414,6 @@ pub async fn request_bytecodes(
 
     let mut completed_tasks = 0;
 
-    let mut logged_no_free_peers_count = 0;
-
     loop {
         if let Ok(result) = task_receiver.try_recv() {
             let TaskResult {
@@ -458,21 +447,14 @@ pub async fn request_bytecodes(
             }
         }
 
-        let Some((peer_id, mut connection, permit)) = peers
-            .peer_table
-            .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
-            .await
-            .inspect_err(|err| warn!(%err, "Error requesting a peer for bytecodes"))
-            .unwrap_or(None)
+        // Waits for a free peer instead of polling.
+        let Some((peer_id, mut connection, permit)) =
+            wait_for_best_peer(&peers.peer_table, SUPPORTED_SNAP_CAPABILITIES.to_vec())
+                .await
+                .inspect_err(|err| warn!(%err, "Error requesting a peer for bytecodes"))
+                .unwrap_or(None)
         else {
-            // Log ~ once every 10 seconds
-            if logged_no_free_peers_count == 0 {
-                trace!("We are missing peers in request_bytecodes");
-                logged_no_free_peers_count = 1000;
-            }
-            logged_no_free_peers_count -= 1;
-            // Sleep a bit to avoid busy polling
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            trace!("We are missing peers in request_bytecodes");
             continue;
         };
 
@@ -680,8 +662,6 @@ pub async fn request_storage_ranges(
     // Maps storage root to vector of hashed addresses matching that root and
     // vector of hashed storage keys and storage values.
     let mut current_account_storages: BTreeMap<H256, AccountsWithStorage> = BTreeMap::new();
-
-    let mut logged_no_free_peers_count = 0;
 
     debug!("Starting request_storage_ranges loop");
     loop {
@@ -1026,21 +1006,14 @@ pub async fn request_storage_ranges(
             break;
         }
 
-        let Some((peer_id, connection, permit)) = peers
-            .peer_table
-            .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
-            .await
-            .inspect_err(|err| warn!(%err, "Error requesting a peer for storage ranges"))
-            .unwrap_or(None)
+        // Waits for a free peer instead of polling.
+        let Some((peer_id, connection, permit)) =
+            wait_for_best_peer(&peers.peer_table, SUPPORTED_SNAP_CAPABILITIES.to_vec())
+                .await
+                .inspect_err(|err| warn!(%err, "Error requesting a peer for storage ranges"))
+                .unwrap_or(None)
         else {
-            // Log ~ once every 10 seconds
-            if logged_no_free_peers_count == 0 {
-                trace!("We are missing peers in request_storage_ranges");
-                logged_no_free_peers_count = 1000;
-            }
-            logged_no_free_peers_count -= 1;
-            // Sleep a bit to avoid busy polling
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            trace!("We are missing peers in request_storage_ranges");
             continue;
         };
 
