@@ -281,7 +281,7 @@ fn address_filter(addresses: &[u64]) -> LogSubscriptionFilter {
             .iter()
             .map(|a| Address::from_low_u64_be(*a))
             .collect(),
-        topics: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -314,6 +314,7 @@ async fn logs_subscription_matches_topics() {
     let filter = LogSubscriptionFilter {
         addresses: Default::default(),
         topics: vec![TopicFilter::Topic(Some(H256::from_low_u64_be(11)))],
+        ..Default::default()
     };
     manager.subscribe_logs(tx, filter).await.unwrap().unwrap();
 
@@ -485,4 +486,48 @@ async fn logs_subscription_gets_only_the_head_after_a_long_jump() {
         received_logs(&manager, &mut rx).await,
         vec![(head.number, 1, false)]
     );
+}
+
+#[tokio::test]
+async fn logs_subscription_applies_its_block_bounds() {
+    let store = test_store();
+    let manager = SubscriptionManager::spawn(store.clone());
+    let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    let filter = LogSubscriptionFilter {
+        from_block: Some(2),
+        to_block: Some(3),
+        ..Default::default()
+    };
+    manager.subscribe_logs(tx, filter).await.unwrap().unwrap();
+
+    let one = add_block(&store, &BlockHeader::default(), 0, &[(1, 1)]).await;
+    let two = add_block(&store, &one, 0, &[(2, 1)]).await;
+    let three = add_block(&store, &two, 0, &[(3, 1)]).await;
+    let four = add_block(&store, &three, 0, &[(4, 1)]).await;
+    manager.new_head(one).unwrap();
+    manager.new_head(four).unwrap();
+    manager.new_head(two).unwrap();
+
+    assert_eq!(
+        received_logs(&manager, &mut rx).await,
+        vec![(2, 2, false), (3, 3, false), (3, 3, true)]
+    );
+}
+
+#[tokio::test]
+async fn new_head_removes_closed_logs_subscribers_without_matching_logs() {
+    let store = test_store();
+    let manager = SubscriptionManager::spawn(store.clone());
+    let (tx, rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    let id = manager
+        .subscribe_logs(tx, address_filter(&[2]))
+        .await
+        .unwrap()
+        .unwrap();
+    drop(rx);
+
+    let one = add_block(&store, &BlockHeader::default(), 0, &[(1, 1)]).await;
+    manager.new_head(one).unwrap();
+
+    assert!(!manager.unsubscribe(id).await.unwrap());
 }

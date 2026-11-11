@@ -13,7 +13,7 @@ use crate::{
 use ethereum_types::{Bloom, BloomInput};
 use ethrex_common::{
     H160, H256,
-    types::{BlockBody, BlockHeader, BlockNumber},
+    types::{BlockBody, BlockHeader, BlockNumber, Receipt},
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_storage::Store;
@@ -617,7 +617,7 @@ async fn bloom_matching_headers(
 
 /// Collect every log of one block that matches the filter's addresses and topics into
 /// `logs`, pairing the block's transactions with their receipts by index.
-pub(crate) async fn collect_block_logs(
+async fn collect_block_logs(
     storage: &Store,
     block_header: &BlockHeader,
     block_body: &BlockBody,
@@ -625,15 +625,32 @@ pub(crate) async fn collect_block_logs(
     topic_filter: &[TopicFilter],
     logs: &mut Vec<RpcLog>,
 ) -> Result<(), RpcErr> {
-    let block_num = block_header.number;
-    let block_hash = block_header.hash();
-
     // Fetch all of the block's receipts in a single bulk read instead of a
     // point lookup per transaction (each of which also re-resolved the
     // canonical block hash). For mainnet blocks with hundreds of txs this
     // is the dominant cost of eth_getLogs.
-    let receipts = storage.get_receipts_for_block(&block_hash).await?;
+    let receipts = storage.get_receipts_for_block(&block_header.hash()).await?;
+    collect_receipt_logs(
+        block_header,
+        block_body,
+        &receipts,
+        address_filter,
+        topic_filter,
+        logs,
+    )
+}
 
+/// [`collect_block_logs`] over receipts the caller already read.
+pub(crate) fn collect_receipt_logs(
+    block_header: &BlockHeader,
+    block_body: &BlockBody,
+    receipts: &[Receipt],
+    address_filter: &HashSet<&H160>,
+    topic_filter: &[TopicFilter],
+    logs: &mut Vec<RpcLog>,
+) -> Result<(), RpcErr> {
+    let block_num = block_header.number;
+    let block_hash = block_header.hash();
     let mut block_log_index = 0_u64;
 
     // Transactions share indices with their receipts; pair them by index.

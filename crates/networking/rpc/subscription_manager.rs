@@ -14,7 +14,7 @@
 
 pub use crate::eth::logs::TopicFilter;
 use crate::{
-    eth::logs::{collect_block_logs, matches_topics},
+    eth::logs::{collect_receipt_logs, matches_topics},
     types::receipt::RpcLog,
     utils::RpcErr,
 };
@@ -62,11 +62,16 @@ pub const MAX_LOGS_ROUTE_BLOCKS: usize = 128;
 pub struct LogSubscriptionFilter {
     pub addresses: HashSet<H160>,
     pub topics: Vec<TopicFilter>,
+    /// Lowest and highest block whose logs are delivered; `None` for no bound.
+    pub from_block: Option<BlockNumber>,
+    pub to_block: Option<BlockNumber>,
 }
 
 impl LogSubscriptionFilter {
-    fn matches(&self, address: &H160, topics: &[H256]) -> bool {
-        (self.addresses.is_empty() || self.addresses.contains(address))
+    fn matches(&self, block: BlockNumber, address: &H160, topics: &[H256]) -> bool {
+        self.from_block.is_none_or(|from| block >= from)
+            && self.to_block.is_none_or(|to| block <= to)
+            && (self.addresses.is_empty() || self.addresses.contains(address))
             && matches_topics(topics, &self.topics)
     }
 }
@@ -151,6 +156,8 @@ impl SubscriptionManager {
         if !self.subscribers.is_empty() {
             self.notify_new_head(&header, block_hash);
         }
+        self.log_subscribers
+            .retain(|_, (sender, _)| !sender.is_closed());
         if !self.log_subscribers.is_empty() {
             self.notify_logs(previous_head, &header).await;
         }
@@ -301,7 +308,7 @@ impl SubscriptionManager {
             .any(|log| {
                 self.log_subscribers
                     .values()
-                    .any(|(_, filter)| filter.matches(&log.address, &log.topics))
+                    .any(|(_, filter)| filter.matches(header.number, &log.address, &log.topics))
             });
         if !matched {
             return Ok(Vec::new());
@@ -312,7 +319,7 @@ impl SubscriptionManager {
             .await?
             .ok_or_else(|| RpcErr::Internal("block body not found".to_string()))?;
         let mut logs = Vec::new();
-        collect_block_logs(&self.store, header, &body, &HashSet::new(), &[], &mut logs).await?;
+        collect_receipt_logs(header, &body, &receipts, &HashSet::new(), &[], &mut logs)?;
         Ok(logs)
     }
 
@@ -381,7 +388,7 @@ fn fan_out_logs(
         }
         let mut batch = String::new();
         for (log, json) in logs.iter().zip(serialized.iter_mut()) {
-            if !filter.matches(&log.log.address, &log.log.topics) {
+            if !filter.matches(log.block_number, &log.log.address, &log.log.topics) {
                 continue;
             }
             if json.is_none() {

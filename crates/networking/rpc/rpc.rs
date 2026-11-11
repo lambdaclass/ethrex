@@ -1413,7 +1413,7 @@ pub async fn handle_websocket<F, Fut, E>(
     // tells the types apart by ID.
     let mut subscription_ids: Vec<String> = Vec::new();
 
-    loop {
+    'conn: loop {
         tokio::select! {
             msg = socket.recv() => {
                 let Some(msg) = msg else { break };
@@ -1438,7 +1438,7 @@ pub async fn handle_websocket<F, Fut, E>(
                 // One entry can hold several notifications, one per line.
                 for notification in msg.split('\n') {
                     if socket.send(Message::Text(notification.into())).await.is_err() {
-                        return;
+                        break 'conn;
                     }
                 }
             }
@@ -1639,12 +1639,32 @@ fn parse_log_subscription_filter(
         return Ok(Default::default());
     };
     let filter = crate::eth::logs::LogsFilter::parse(&Some(vec![param.to_owned()]))?;
-    let latest = |block: &BlockIdentifier| matches!(block, BlockIdentifier::Tag(BlockTag::Latest));
-    if filter.block_hash.is_some() || !latest(&filter.from_block) || !latest(&filter.to_block) {
+    if filter.block_hash.is_some() {
         return Err(RpcErr::BadParams(
-            "logs subscriptions do not take fromBlock, toBlock or blockHash".to_string(),
+            "logs subscriptions do not take blockHash".to_string(),
         ));
     }
+    let pending =
+        |block: &BlockIdentifier| matches!(block, BlockIdentifier::Tag(BlockTag::Pending));
+    if pending(&filter.from_block) || pending(&filter.to_block) {
+        return Err(RpcErr::BadParams(
+            "pending logs are not supported".to_string(),
+        ));
+    }
+    // As geth: numeric bounds, `latest` for none, `earliest` for block 0.
+    let bound = |block: &BlockIdentifier| match block {
+        BlockIdentifier::Number(number) => Ok(Some(*number)),
+        BlockIdentifier::Tag(BlockTag::Earliest) => Ok(Some(0)),
+        BlockIdentifier::Tag(BlockTag::Latest) => Ok(None),
+        _ => Err(()),
+    };
+    let (from_block, to_block) = match (bound(&filter.from_block), bound(&filter.to_block)) {
+        (Ok(None), Ok(None)) => (None, None),
+        (Ok(Some(from)), Ok(to)) if to.is_none_or(|to| to >= from) => (Some(from), to),
+        _ => {
+            return Err(RpcErr::BadParams("invalid block range params".to_string()));
+        }
+    };
     let addresses = filter
         .address_filters
         .as_ref()
@@ -1671,6 +1691,8 @@ fn parse_log_subscription_filter(
             .map(|addresses| addresses.as_ref().iter().copied().collect())
             .unwrap_or_default(),
         topics: filter.topics,
+        from_block,
+        to_block,
     })
 }
 
@@ -2557,8 +2579,12 @@ mod tests {
         };
 
         for refused in [
-            r#"["logs",{"fromBlock":"0x1"}]"#,
-            r#"["logs",{"toBlock":"earliest"}]"#,
+            r#"["logs",{"fromBlock":"pending"}]"#,
+            r#"["logs",{"fromBlock":"0x0","toBlock":"pending"}]"#,
+            r#"["logs",{"fromBlock":"safe"}]"#,
+            r#"["logs",{"fromBlock":"0x1","toBlock":"finalized"}]"#,
+            r#"["logs",{"fromBlock":"0x2","toBlock":"0x1"}]"#,
+            r#"["logs",{"toBlock":"0x1"}]"#,
             r#"["logs",{"blockHash":"0x0000000000000000000000000000000000000000000000000000000000000001"}]"#,
             r#"["logs",{"address":"0x12"}]"#,
             r#"["logs","0x1"]"#,
@@ -2570,16 +2596,26 @@ mod tests {
                 "for {refused}: {response}"
             );
         }
-        for accepted in [r#"["logs"]"#, r#"["logs",null]"#, r#"["logs",{}]"#] {
+        for accepted in [
+            r#"["logs"]"#,
+            r#"["logs",null]"#,
+            r#"["logs",{}]"#,
+            r#"["logs",{"fromBlock":"earliest","toBlock":"latest"}]"#,
+            r#"["logs",{"fromBlock":"0x1","toBlock":"0x1"}]"#,
+        ] {
             let response = subscribe(accepted).await;
             assert!(response["result"].is_string(), "for {accepted}: {response}");
         }
+        // go-ethereum's `ethclient` sends an unset range as fromBlock 0x0, toBlock latest.
         let response = subscribe(
-            r#"["logs",{"address":["0x0000000000000000000000000000000000000002"],"topics":[null,["0x0000000000000000000000000000000000000000000000000000000000000007"]]}]"#,
+            r#"["logs",{"fromBlock":"0x0","toBlock":"latest","address":["0x0000000000000000000000000000000000000002"],"topics":[null,["0x0000000000000000000000000000000000000000000000000000000000000007"]]}]"#,
         )
         .await;
         let id = response["result"].clone();
         assert!(id.is_string(), "{response}");
+        let response = subscribe(r#"["logs",{"fromBlock":"0x2"}]"#).await;
+        let later_id = response["result"].clone();
+        assert!(later_id.is_string(), "{response}");
 
         let log = |address: u64, topics: &[u64]| Log {
             address: H160::from_low_u64_be(address),
@@ -2624,6 +2660,7 @@ mod tests {
                 if notification["params"]["subscription"] == id {
                     matched.push(notification["params"]["result"].clone());
                 }
+                assert_ne!(notification["params"]["subscription"], later_id);
             }
         }
         assert_eq!(matched.len(), 1, "{matched:?}");
