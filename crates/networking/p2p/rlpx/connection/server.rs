@@ -263,16 +263,18 @@ impl PeerConnection {
             .with_request_timeout(timeout)
             .outgoing_request(message)
             .await
-            .map_err(|err| match err {
-                ActorError::RequestTimeout => PeerConnectionError::Timeout,
-                // The connection is gone, or dropped the request (not
-                // established, a duplicate id, or the send failed): what a
-                // dropped oneshot sender used to report.
-                ActorError::ActorStopped(_) | ActorError::NoProc | ActorError::ReplyDropped => {
+            .map_err(|err| {
+                if err.is_timeout() {
+                    PeerConnectionError::Timeout
+                } else if err.target_gone() || matches!(err, ActorError::ReplyDropped) {
+                    // The connection is gone, or dropped the request (not
+                    // established, a duplicate id, or the send failed): what a
+                    // dropped oneshot sender used to report.
                     PeerConnectionError::RecvError(err.to_string())
+                } else {
+                    // `Overloaded`: MAX_PENDING_REQUESTS already in flight.
+                    PeerConnectionError::InternalError(err.to_string())
                 }
-                // `Overloaded`: MAX_PENDING_REQUESTS already in flight.
-                err => PeerConnectionError::InternalError(err.to_string()),
             })
     }
 }

@@ -1837,7 +1837,7 @@ pub async fn wait_for_best_peer(
 ) -> Result<Option<PeerLease>, ActorError> {
     match peer_table.wait_for_best_peer(capabilities).await {
         Ok(lease) => Ok(Some(lease)),
-        Err(ActorError::RequestTimeout) => Ok(None),
+        Err(err) if err.is_timeout() => Ok(None),
         Err(ActorError::Overloaded) => {
             tokio::time::sleep(Duration::from_millis(10)).await;
             Ok(None)
