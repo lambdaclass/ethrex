@@ -22,7 +22,7 @@ env:
 jobs:
   run-hive:
     name: Hive - ${{ matrix.test.name }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -233,7 +233,7 @@ jobs:
     name: Generate and Save report
     needs: run-hive
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       artifact_name: results_daily.md
     steps:
@@ -305,7 +305,7 @@ jobs:
   post-daily-report:
     name: Post report to slack
     needs: [hive-report]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0
