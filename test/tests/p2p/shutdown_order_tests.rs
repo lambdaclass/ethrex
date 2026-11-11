@@ -63,8 +63,7 @@ fn sync_failure_when_stopped(
     let cancel_token = cancel_token.clone();
     tokio::spawn(async move {
         peer_table.wait_exit().await;
-        SyncError::PeerTableError(ActorError::NoProc)
-            .failure_action(cancel_token.is_cancelled())
+        SyncError::PeerTableError(ActorError::NoProc).failure_action(cancel_token.is_cancelled())
     })
 }
 
