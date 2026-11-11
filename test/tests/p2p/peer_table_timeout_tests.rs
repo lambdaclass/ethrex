@@ -17,7 +17,7 @@ use ethrex_p2p::{
     snap::SnapError,
     sync::{SyncError, SyncFailureAction},
 };
-use spawned_concurrency::error::ActorError;
+use spawned_concurrency::error::{ActorError, ExitReason};
 use spawned_test::tasks::Mock;
 
 /// Longer than spawned's default request timeout, shorter than the ones set
@@ -98,7 +98,10 @@ fn a_dropped_or_refused_peer_table_request_retries_the_sync_cycle() {
 
 #[test]
 fn a_stopped_peer_table_exits_only_while_the_node_runs() {
-    for error in peer_table_errors(|| ActorError::ActorStopped) {
+    for error in peer_table_errors(|| ActorError::ActorStopped(ExitReason::Shutdown))
+        .into_iter()
+        .chain(peer_table_errors(|| ActorError::NoProc))
+    {
         assert!(!error.is_recoverable(), "{error:?}");
         assert_eq!(error.failure_action(false), SyncFailureAction::Exit);
         assert_eq!(

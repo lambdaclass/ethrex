@@ -1239,15 +1239,17 @@ impl PeerHandlerError {
 /// A reply the table dropped, or a request it refused at a bound
 /// (`Overloaded`, e.g. a full peer-waiter queue), is transient too.
 ///
+/// A table that died while answering (`ActorStopped`, with its exit reason)
+/// or was already gone when asked (`NoProc`) is not.
+///
 /// Every kind spawned 0.8 has is named, so the classification stays explicit.
 /// `ActorError` is `#[non_exhaustive]` from spawned 0.8, so the compiler no
 /// longer flags a kind added later: one lands in the wildcard, which treats it
-/// like a stopped table (spawned plans to report a dead actor's exit reason
-/// in a new kind). Classify it here when upgrading.
+/// like a stopped table. Classify it here when upgrading.
 pub fn peer_table_error_is_recoverable(err: &ActorError) -> bool {
     match err {
         ActorError::RequestTimeout | ActorError::ReplyDropped | ActorError::Overloaded => true,
-        ActorError::ActorStopped => false,
+        ActorError::ActorStopped(_) | ActorError::NoProc => false,
         _ => false,
     }
 }

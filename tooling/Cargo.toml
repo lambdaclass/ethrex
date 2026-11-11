@@ -81,10 +81,10 @@ kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
 # spawned 0.8 pre-release: git rev of lambdaclass/spawned `feat/otp-exit-signals`
-# (PR #240, stacked on #239 deferred replies). Rev 22a18db7 (22a18db71f04e75c2a9942a78ccd3695c17315e7).
+# (PR #240, stacked on #239 deferred replies). Rev 43aba082 (43aba082c70f12ed69c6e246b0cd137d507752bb).
 # Every spawned crate must come from the same rev so they share one set of types.
-spawned-concurrency = { git = "https://github.com/lambdaclass/spawned", rev = "22a18db71f04e75c2a9942a78ccd3695c17315e7" }
-spawned-rt = { git = "https://github.com/lambdaclass/spawned", rev = "22a18db71f04e75c2a9942a78ccd3695c17315e7" }
+spawned-concurrency = { git = "https://github.com/lambdaclass/spawned", rev = "43aba082c70f12ed69c6e246b0cd137d507752bb" }
+spawned-rt = { git = "https://github.com/lambdaclass/spawned", rev = "43aba082c70f12ed69c6e246b0cd137d507752bb" }
 lambdaworks-crypto = "0.13.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 crossbeam = "0.8.4"

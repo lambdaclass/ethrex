@@ -52,7 +52,8 @@ fn shared_local_node() -> SharedLocalNode {
 }
 
 /// Waits for `peer_table` to stop, then decides what a sync cycle failing on
-/// it at that moment would do: the `ActorStopped` it gets, judged against
+/// it at that moment would do: the `NoProc` it gets (spawned 0.8: the table is
+/// past its death point; `ActorStopped` before 0.8), judged against
 /// whether the node had begun shutting down (`Syncer::is_shutting_down`).
 fn sync_failure_when_stopped(
     peer_table: &PeerTable,
@@ -62,7 +63,7 @@ fn sync_failure_when_stopped(
     let cancel_token = cancel_token.clone();
     tokio::spawn(async move {
         peer_table.wait_exit().await;
-        SyncError::PeerTableError(ActorError::ActorStopped)
+        SyncError::PeerTableError(ActorError::NoProc)
             .failure_action(cancel_token.is_cancelled())
     })
 }

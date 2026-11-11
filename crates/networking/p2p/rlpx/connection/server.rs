@@ -268,7 +268,7 @@ impl PeerConnection {
                 // The connection is gone, or dropped the request (not
                 // established, a duplicate id, or the send failed): what a
                 // dropped oneshot sender used to report.
-                ActorError::ActorStopped | ActorError::ReplyDropped => {
+                ActorError::ActorStopped(_) | ActorError::NoProc | ActorError::ReplyDropped => {
                     PeerConnectionError::RecvError(err.to_string())
                 }
                 // `Overloaded`: MAX_PENDING_REQUESTS already in flight.
