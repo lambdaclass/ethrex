@@ -40,16 +40,17 @@ pub struct Syncing;
 /// forkchoice head, so this absorbs normal per-slot lag and brief batch imports
 /// without flapping, while a genuine fall-behind (hundreds of blocks) is reported as
 /// syncing even though the `is_synced()` latch is still set.
-const SYNCED_HEAD_TOLERANCE: u64 = 8;
+pub(crate) const SYNCED_HEAD_TOLERANCE: u64 = 8;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// How far the executed head may trail before a node already reported as synced
+/// is reported as syncing again. Wider than [`SYNCED_HEAD_TOLERANCE`] so the
+/// `syncing` subscription does not flap for a node lagging by about that much.
+pub(crate) const SYNCING_HEAD_TOLERANCE: u64 = 32;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SyncingStatusRpc {
-    #[serde(with = "serde_utils::u64::hex_str")]
     pub starting_block: u64,
-    #[serde(with = "serde_utils::u64::hex_str")]
     pub current_block: u64,
-    #[serde(with = "serde_utils::u64::hex_str")]
     pub highest_block: u64,
 }
 
@@ -57,6 +58,30 @@ pub struct SyncingStatusRpc {
 pub enum SyncStatus {
     Synced,
     Syncing(SyncingStatusRpc),
+}
+
+impl SyncStatus {
+    /// `eth_syncing`'s result: `false`, or `{startingBlock, currentBlock, highestBlock}`.
+    pub fn to_rpc_value(self) -> Value {
+        match self {
+            Self::Synced => Value::Bool(false),
+            Self::Syncing(status) => serde_json::json!({
+                "startingBlock": format!("{:#x}", status.starting_block),
+                "currentBlock": format!("{:#x}", status.current_block),
+                "highestBlock": format!("{:#x}", status.highest_block),
+            }),
+        }
+    }
+
+    /// A `syncing` subscription's result, in reth's format: `eth_syncing`'s
+    /// with `syncing: true` added to the object.
+    pub fn to_subscription_value(self) -> Value {
+        let mut value = self.to_rpc_value();
+        if let Value::Object(fields) = &mut value {
+            fields.insert("syncing".to_string(), Value::Bool(true));
+        }
+        value
+    }
 }
 
 impl RpcHandler for Syncing {
@@ -71,19 +96,24 @@ impl RpcHandler for Syncing {
                 "Syncing status requested but syncer is not initialized".to_string(),
             ));
         };
-        match sync_status(&context.storage, &context.blockchain, syncer).await? {
-            SyncStatus::Synced => Ok(Value::Bool(false)),
-            SyncStatus::Syncing(status) => {
-                serde_json::to_value(status).map_err(|error| RpcErr::Internal(error.to_string()))
-            }
-        }
+        let status = sync_status(
+            &context.storage,
+            &context.blockchain,
+            syncer,
+            SYNCED_HEAD_TOLERANCE,
+        )
+        .await?;
+        Ok(status.to_rpc_value())
     }
 }
 
+/// The node counts as synced while its executed head trails the forkchoice
+/// target by at most `head_tolerance` blocks.
 pub(crate) async fn sync_status(
     storage: &Store,
     blockchain: &Blockchain,
     syncer: &SyncManager,
+    head_tolerance: u64,
 ) -> Result<SyncStatus, RpcErr> {
     // `current_block` must reflect the executed/state head, not the canonical
     // pointer. An FCU can canonicalize blocks before their state is computed
@@ -125,7 +155,7 @@ pub(crate) async fn sync_status(
     // it alone makes `eth_syncing` report `false` for a wedged/lagging node. Treat
     // the node as synced only if the latch is set AND the executed head has reached
     // (within a small following tolerance) the forkchoice target.
-    let synced = blockchain.is_synced() && current_block + SYNCED_HEAD_TOLERANCE >= highest_block;
+    let synced = blockchain.is_synced() && current_block + head_tolerance >= highest_block;
 
     if synced {
         return Ok(SyncStatus::Synced);

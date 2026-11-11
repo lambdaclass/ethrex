@@ -5,7 +5,9 @@
 //! handlers, and `NewPendingTransaction` messages from the mempool feed (see
 //! [`spawn_pending_transactions_feed`]), and fans out notifications to the
 //! connected WebSocket clients subscribed to each through per-connection `mpsc`
-//! channels.
+//! channels. `syncing` subscribers get the current sync status once after
+//! subscribing, then each switch between syncing and synced (see
+//! [`spawn_syncing_feed`]). All types share [`MAX_TOTAL_SUBSCRIPTIONS`].
 //!
 //! Using an actor removes the need for a `broadcast` channel and eliminates
 //! the "lagged subscriber" problem: when a connection drops, its sender is
@@ -13,10 +15,12 @@
 //! unread messages.
 
 pub use crate::eth::client::{SyncStatus, SyncingStatusRpc};
-use crate::{eth::client::sync_status, rpc::RpcApiContext};
+use crate::{
+    eth::client::{SYNCED_HEAD_TOLERANCE, SYNCING_HEAD_TOLERANCE, sync_status},
+    rpc::RpcApiContext,
+};
 use ethrex_common::{H256, types::BlockHeader};
 use rand::RngCore;
-use serde::Serialize;
 use serde_json::Value;
 use spawned_concurrency::{
     actor,
@@ -57,8 +61,9 @@ pub const MAX_TOTAL_SUBSCRIPTIONS: usize = 10_000;
 pub struct SubscriptionManager {
     /// `newHeads` subscribers.
     subscribers: HashMap<String, Sender<String>>,
-    syncing_subscribers: HashMap<String, Sender<String>>,
-    sync_status: Option<SyncStatus>,
+    /// `syncing` subscribers, each with whether it was last told the node is
+    /// synced (`None` until its initial status is delivered).
+    syncing_subscribers: HashMap<String, (Sender<String>, Option<bool>)>,
     /// `newPendingTransactions` subscribers.
     pending_tx_subscribers: HashMap<String, Sender<String>>,
 }
@@ -77,8 +82,13 @@ pub trait SubscriptionManagerProtocol: Send + Sync {
     /// `newPendingTransactions` subscribers.
     fn new_pending_transaction(&self, hash: H256) -> Result<(), ActorError>;
 
-    /// Record the sync status; `syncing` subscribers only hear syncing/synced switches.
+    /// Send `status` to the `syncing` subscribers last told otherwise, and to the
+    /// ones still owed their initial status. A subscriber whose channel is full
+    /// is retried with the next status.
     fn new_sync_status(&self, status: SyncStatus) -> Result<(), ActorError>;
+
+    /// Whether any `syncing` subscriber is registered.
+    fn has_syncing_subscribers(&self) -> Response<bool>;
 
     /// Register a new subscriber.
     ///
@@ -87,6 +97,9 @@ pub trait SubscriptionManagerProtocol: Send + Sync {
     /// [`MAX_TOTAL_SUBSCRIPTIONS`] has been reached.
     fn subscribe(&self, sender: Sender<String>) -> Response<Option<String>>;
 
+    /// Register a new `syncing` subscriber. Returns its ID like [`Self::subscribe`],
+    /// under the same global cap. Its initial status is sent with the next
+    /// [`Self::new_sync_status`].
     fn subscribe_syncing(&self, sender: Sender<String>) -> Response<Option<String>>;
 
     /// Register a new `newPendingTransactions` subscriber. Returns its ID like
@@ -160,18 +173,36 @@ impl SubscriptionManager {
         msg: subscription_manager_protocol::NewSyncStatus,
         _ctx: &Context<Self>,
     ) {
-        let status = msg.status;
-        let is_synced = |status: SyncStatus| matches!(status, SyncStatus::Synced);
-        let changed = self
-            .sync_status
-            .replace(status)
-            .is_none_or(|last| is_synced(last) != is_synced(status));
-        if changed
-            && !self.syncing_subscribers.is_empty()
-            && let Some(result) = sync_status_result(status)
-        {
-            fan_out(&mut self.syncing_subscribers, &result, "syncing");
+        let synced = matches!(msg.status, SyncStatus::Synced);
+        let result = msg.status.to_subscription_value();
+        let mut dead_ids: Vec<String> = Vec::new();
+        for (sub_id, (sender, last_synced)) in self.syncing_subscribers.iter_mut() {
+            if *last_synced == Some(synced) {
+                continue;
+            }
+            match sender.try_send(build_subscription_notification(sub_id, &result)) {
+                Ok(()) => *last_synced = Some(synced),
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                    dead_ids.push(sub_id.clone());
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                    warn!(sub_id = %sub_id, "Subscriber channel full, deferring the sync status");
+                }
+            }
         }
+        for id in dead_ids {
+            debug!(sub_id = %id, "Removing closed syncing subscriber");
+            self.syncing_subscribers.remove(&id);
+        }
+    }
+
+    #[request_handler]
+    async fn handle_has_syncing_subscribers(
+        &mut self,
+        _msg: subscription_manager_protocol::HasSyncingSubscribers,
+        _ctx: &Context<Self>,
+    ) -> bool {
+        !self.syncing_subscribers.is_empty()
     }
 
     #[request_handler]
@@ -198,13 +229,8 @@ impl SubscriptionManager {
             return None;
         }
         let id = generate_subscription_id();
-        if let Some(result) = self.sync_status.and_then(sync_status_result) {
-            let notification = build_subscription_notification(&id, &result);
-            if msg.sender.try_send(notification).is_err() {
-                warn!(sub_id = %id, "Failed to send the current sync status to a new subscriber");
-            }
-        }
-        self.syncing_subscribers.insert(id.clone(), msg.sender);
+        self.syncing_subscribers
+            .insert(id.clone(), (msg.sender, None));
         Some(id)
     }
 
@@ -303,9 +329,14 @@ pub fn spawn_pending_transactions_feed(
     });
 }
 
-pub const SYNC_STATUS_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+/// How long the syncing feed waits before retrying a failed sync status read.
+const SYNC_STATUS_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// Polls the sync status for `syncing` subscribers; a no-op without a sync manager.
+/// Recomputes the sync status for `syncing` subscribers whenever the store
+/// signals that one of its inputs changed, skipping it while there are none.
+/// Signals that arrive during a recompute collapse into one more, so a state
+/// that lasts only between two of them may go unreported. A no-op without a
+/// sync manager.
 pub fn spawn_syncing_feed(
     context: &RpcApiContext,
     manager: ActorRef<SubscriptionManager>,
@@ -316,42 +347,54 @@ pub fn spawn_syncing_feed(
     };
     let storage = context.storage.clone();
     let blockchain = context.blockchain.clone();
+    let mut changes = storage.sync_status_changes();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(SYNC_STATUS_POLL_INTERVAL);
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut synced = false;
+        let mut failing = false;
         loop {
             tokio::select! {
-                _ = interval.tick() => match sync_status(&storage, &blockchain, &syncer).await {
-                    Ok(status) => {
-                        if manager.new_sync_status(status).is_err() {
-                            break;
-                        }
-                    }
-                    Err(e) => debug!("Failed to read the sync status for syncing subscribers: {e:?}"),
+                changed = changes.changed() => if changed.is_err() {
+                    break;
                 },
                 _ = cancel_token.cancelled() => break,
             }
+            match manager.has_syncing_subscribers().await {
+                Ok(true) => {}
+                Ok(false) => {
+                    synced = false;
+                    continue;
+                }
+                Err(_) => break,
+            }
+            let tolerance = if synced {
+                SYNCING_HEAD_TOLERANCE
+            } else {
+                SYNCED_HEAD_TOLERANCE
+            };
+            match sync_status(&storage, &blockchain, &syncer, tolerance).await {
+                Ok(status) => {
+                    failing = false;
+                    synced = matches!(status, SyncStatus::Synced);
+                    if manager.new_sync_status(status).is_err() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    if !failing {
+                        warn!(
+                            "Failed to read the sync status for syncing subscribers, retrying: {e:?}"
+                        );
+                    }
+                    failing = true;
+                    changes.mark_changed();
+                    tokio::select! {
+                        _ = tokio::time::sleep(SYNC_STATUS_RETRY_DELAY) => {}
+                        _ = cancel_token.cancelled() => break,
+                    }
+                }
+            }
         }
     });
-}
-
-/// reth's format: `false`, or `{syncing: true, startingBlock, currentBlock, highestBlock}`.
-fn sync_status_result(status: SyncStatus) -> Option<Value> {
-    #[derive(Serialize)]
-    struct Syncing {
-        syncing: bool,
-        #[serde(flatten)]
-        status: SyncingStatusRpc,
-    }
-    let SyncStatus::Syncing(status) = status else {
-        return Some(Value::Bool(false));
-    };
-    serde_json::to_value(Syncing {
-        syncing: true,
-        status,
-    })
-    .inspect_err(|e| warn!("Failed to serialize the sync status for syncing subscribers: {e}"))
-    .ok()
 }
 
 /// Build the standard Ethereum subscription notification envelope.

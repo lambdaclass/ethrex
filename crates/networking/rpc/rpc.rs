@@ -1605,9 +1605,13 @@ pub async fn handle_eth_subscribe(
                     "Syncing status requested but syncer is not initialized".to_string(),
                 ));
             }
-            ws.subscription_manager
+            let subscribed = ws
+                .subscription_manager
                 .subscribe_syncing(out_tx.clone())
-                .await
+                .await;
+            // Has the syncing feed send the new subscriber its initial status.
+            context.storage.notify_sync_status_changed();
+            subscribed
         }
         "newPendingTransactions" => {
             // geth's optional second param asks for full transaction objects.
@@ -2069,7 +2073,7 @@ mod tests {
     use super::*;
     use crate::test_utils::default_context_with_storage;
     use ethrex_common::{
-        H160,
+        H160, H256,
         types::{BlockHeader, ChainConfig, Genesis},
     };
     use ethrex_crypto::keccak::keccak_hash;
@@ -2444,45 +2448,90 @@ mod tests {
             addr: "127.0.0.1:0".parse().unwrap(),
             subscription_manager: subscription_manager.clone(),
         });
+        let cancel_token = CancellationToken::new();
         crate::subscription_manager::spawn_syncing_feed(
             &context,
             subscription_manager,
-            CancellationToken::new(),
+            cancel_token.clone(),
         );
 
-        let response = process_ws_request(
-            request("eth_subscribe", r#"["syncing"]"#),
-            &context,
-            &out_tx,
-            &mut subscription_ids,
-            &route_request,
-        )
-        .await
-        .unwrap();
-        let id = response["result"].clone();
-        assert!(id.is_string(), "{response}");
-
-        let mut next_result = async || -> Value {
+        let mut subscribe = async |out_tx: &tokio::sync::mpsc::Sender<String>| -> Value {
+            let response = process_ws_request(
+                request("eth_subscribe", r#"["syncing"]"#),
+                &context,
+                out_tx,
+                &mut subscription_ids,
+                &route_request,
+            )
+            .await
+            .unwrap();
+            assert!(response["result"].is_string(), "{response}");
+            response["result"].clone()
+        };
+        let next_result = async |out_rx: &mut tokio::sync::mpsc::Receiver<String>, id: &Value| {
             let notification = tokio::time::timeout(Duration::from_secs(10), out_rx.recv())
                 .await
                 .expect("timed out waiting for the notification")
                 .unwrap();
             let notification: Value = serde_json::from_str(&notification).unwrap();
             assert_eq!(notification["method"], "eth_subscription");
-            assert_eq!(notification["params"]["subscription"], id);
+            assert_eq!(&notification["params"]["subscription"], id);
             notification["params"]["result"].clone()
         };
-        assert_eq!(
-            next_result().await,
+        let syncing = |current_block: &str, highest_block: &str| {
             serde_json::json!({
                 "syncing": true,
                 "startingBlock": "0x0",
-                "currentBlock": "0x0",
-                "highestBlock": "0x0",
+                "currentBlock": current_block,
+                "highestBlock": highest_block,
             })
-        );
+        };
+
+        let id = subscribe(&out_tx).await;
+        assert_eq!(next_result(&mut out_rx, &id).await, syncing("0x0", "0x0"));
         context.blockchain.set_synced();
-        assert_eq!(next_result().await, Value::Bool(false));
+        assert_eq!(next_result(&mut out_rx, &id).await, Value::Bool(false));
+
+        // A canonical head without state makes the executed head the current block.
+        let head = BlockHeader {
+            number: 40,
+            state_root: H256::repeat_byte(1),
+            ..Default::default()
+        };
+        let head_hash = head.hash();
+        context.storage.add_block_headers(vec![head]).await.unwrap();
+        let set_executed_head = async |number: u64| {
+            let syncer = context.syncer.as_ref().unwrap();
+            syncer.diagnostics().write().await.executed_head = number;
+            context.storage.notify_sync_status_changed();
+        };
+        set_executed_head(20).await;
+        context
+            .storage
+            .forkchoice_update(vec![(40, head_hash)], 40, head_hash, None, None)
+            .await
+            .unwrap();
+
+        // 20 blocks behind is within the tolerance for staying synced...
+        let (late_tx, mut late_rx) = tokio::sync::mpsc::channel::<String>(16);
+        let late_id = subscribe(&late_tx).await;
+        assert_eq!(
+            next_result(&mut late_rx, &late_id).await,
+            Value::Bool(false)
+        );
+        set_executed_head(5).await;
+        assert_eq!(next_result(&mut out_rx, &id).await, syncing("0x5", "0x28"));
+        // ...but not for becoming synced again.
+        set_executed_head(20).await;
+        let (late_tx, mut late_rx) = tokio::sync::mpsc::channel::<String>(16);
+        let late_id = subscribe(&late_tx).await;
+        assert_eq!(
+            next_result(&mut late_rx, &late_id).await,
+            syncing("0x14", "0x28")
+        );
+        set_executed_head(36).await;
+        assert_eq!(next_result(&mut out_rx, &id).await, Value::Bool(false));
+        assert!(out_rx.try_recv().is_err());
 
         let response = process_ws_request(
             request("eth_unsubscribe", &format!("[{id}]")),
@@ -2494,6 +2543,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(response["result"], true, "{response}");
+        cancel_token.cancel();
     }
 
     /// `newPendingTransactions` delivers the hash of each transaction the mempool
