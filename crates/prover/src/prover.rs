@@ -7,8 +7,8 @@ use ethrex_guest_program::input::ProgramInput;
 use serde::{Serialize, de::DeserializeOwned};
 use spawned_concurrency::{
     error::ActorError,
-    protocol,
-    tasks::{Actor, ActorStart as _, Backend, Context, Handler, PendingReply, send_after},
+    protocol, send_handler,
+    tasks::{Actor, ActorStart as _, Backend, Context, Handler, send_after},
 };
 use std::time::Duration;
 use tokio::{
@@ -206,17 +206,13 @@ where
 {
 }
 
+#[send_handler]
 impl<B, I> Handler<prover_protocol::Poll> for Prover<B, I>
 where
     B: ProverBackend + Send + Sync + 'static,
     I: Into<ProgramInput> + Serialize + DeserializeOwned + Send + Sync + 'static,
 {
-    async fn handle(
-        &mut self,
-        _msg: prover_protocol::Poll,
-        _reply: PendingReply<'_, ()>,
-        ctx: &Context<Self>,
-    ) {
+    async fn handle(&mut self, _msg: prover_protocol::Poll, ctx: &Context<Self>) {
         self.poll_endpoints().await;
         send_after(
             Duration::from_millis(self.config.proving_time_ms),
@@ -226,17 +222,13 @@ where
     }
 }
 
+#[send_handler]
 impl<B, I> Handler<prover_protocol::Abort> for Prover<B, I>
 where
     B: ProverBackend + Send + Sync + 'static,
     I: Into<ProgramInput> + Serialize + DeserializeOwned + Send + Sync + 'static,
 {
-    async fn handle(
-        &mut self,
-        _msg: prover_protocol::Abort,
-        _reply: PendingReply<'_, ()>,
-        ctx: &Context<Self>,
-    ) {
+    async fn handle(&mut self, _msg: prover_protocol::Abort, ctx: &Context<Self>) {
         // Stopping the actor ends the blocking runner cleanly.
         ctx.stop();
     }
