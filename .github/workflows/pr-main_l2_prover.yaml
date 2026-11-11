@@ -21,7 +21,7 @@ env:
 
 jobs:
   detect-changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
@@ -39,7 +39,7 @@ jobs:
     name: Lint ${{ matrix.backend }} backend
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     strategy:
       matrix:
         # Note: openvm backend linting is disabled due to a problem in the installation https://github.com/lambdaclass/ethrex/issues/5509
@@ -115,7 +115,7 @@ jobs:
     name: Lint exec backend
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0
@@ -133,7 +133,7 @@ jobs:
     name: Lint tdx backend
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0
@@ -152,7 +152,7 @@ jobs:
   all-tests:
     # "Lint" is a required check, don't change the name
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [detect-changes, lint_exec, lint_tdx, lint_zk]
     # Make sure this job runs even if the previous jobs failed or were skipped
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.lint_exec.result != 'skipped' && needs.lint_tdx.result != 'skipped' && needs.lint_zk.result != 'skipped' }}

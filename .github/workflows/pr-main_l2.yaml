@@ -24,7 +24,7 @@ env:
 
 jobs:
   detect-changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
@@ -74,7 +74,7 @@ jobs:
   lint:
     # "Lint L2" is a required check, don't change the name
     name: Lint L2
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
@@ -135,7 +135,7 @@ jobs:
     # - docs/workflows/regenerate-blobs.md (agent workflow)
     # - docs/developers/l2/state-reconstruction-blobs.md (step-by-step guide)
     name: Validate Blob Fixtures
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
@@ -154,7 +154,7 @@ jobs:
 
   build-docker:
     name: Build docker image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
@@ -186,7 +186,7 @@ jobs:
   # The build args for l2.
   build-docker-l2:
     name: Build docker image L2
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
@@ -218,7 +218,7 @@ jobs:
 
   uniswap-swap:
     name: Uniswap Swap Token Flow
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [detect-changes]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     timeout-minutes: 60
@@ -326,7 +326,7 @@ jobs:
 
   integration-test:
     name: Integration Test - ${{ matrix.name }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [detect-changes, build-docker, build-docker-l2]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     strategy:
@@ -510,7 +510,7 @@ jobs:
 
   integration-test-tdx:
     name: Integration Test - TDX
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [detect-changes, build-docker, build-docker-l2]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
@@ -659,7 +659,7 @@ jobs:
     # - docs/workflows/regenerate-blobs.md (agent workflow)
     # - docs/developers/l2/state-reconstruction-blobs.md (step-by-step guide)
     name: State Reconstruction Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [detect-changes, build-docker, build-docker-l2, validate-blobs]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
@@ -720,7 +720,7 @@ jobs:
 
   integration-test-shared-bridge:
     name: Integration Test Shared Bridge - ${{ matrix.name }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [detect-changes, build-docker, build-docker-l2]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     strategy:
@@ -965,7 +965,7 @@ jobs:
   all-tests:
     # "Integration Test L2" is a required check, don't change the name
     name: Integration Test L2
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs:
       [
         detect-changes,
