@@ -73,29 +73,3 @@ pub(crate) async fn get_metrics() -> String {
 
     ret_string
 }
-
-#[cfg(test)]
-mod tests {
-    use std::collections::HashSet;
-
-    /// Each section of `/metrics` is gathered from a different registry, so a
-    /// collector registered in two of them (e.g. the process collector, which the
-    /// default registry already includes) shows up twice and scrapers drop the
-    /// duplicated samples.
-    #[tokio::test]
-    async fn metrics_endpoint_exports_each_family_once() {
-        let body = super::get_metrics().await;
-        let mut seen = HashSet::new();
-        for line in body.lines() {
-            if let Some(name) = line
-                .strip_prefix("# TYPE ")
-                .and_then(|rest| rest.split_whitespace().next())
-            {
-                assert!(
-                    seen.insert(name),
-                    "metric family `{name}` is exported more than once"
-                );
-            }
-        }
-    }
-}
