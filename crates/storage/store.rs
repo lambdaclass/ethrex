@@ -856,9 +856,14 @@ impl Store {
         blocks: Vec<BackfilledBlock>,
         new_earliest: BlockNumber,
     ) -> Result<(), StoreError> {
+        // The frontier block is already stored, and indexed if it is a snap pivot.
+        let earliest = self
+            .read_chain_data_block_number(ChainDataIndex::EarliestBlockNumber)
+            .await?
+            .unwrap_or(BlockNumber::MAX);
         let unindexed_top = blocks
             .iter()
-            .filter(|block| !block.index_transactions)
+            .filter(|block| !block.index_transactions && block.header.number < earliest)
             .map(|block| block.header.number)
             .max();
         let mut tx_index_floor = None;
@@ -1720,6 +1725,12 @@ impl Store {
     /// Lowest block from which every stored block is in the transaction index, if backfill skipped any.
     pub async fn get_tx_index_floor(&self) -> Result<Option<BlockNumber>, StoreError> {
         self.read_chain_data_block_number(ChainDataIndex::TxIndexFloor)
+            .await
+    }
+
+    pub async fn update_tx_index_floor(&self, block_number: BlockNumber) -> Result<(), StoreError> {
+        let key = chain_data_key(ChainDataIndex::TxIndexFloor);
+        self.write_async(CHAIN_DATA, key, block_number.to_le_bytes().to_vec())
             .await
     }
 
@@ -8540,10 +8551,21 @@ mod backfill_write_tests {
         };
 
         store
-            .add_backfilled_blocks(vec![backfilled(99, true), backfilled(98, true)], 98)
+            .add_backfilled_blocks(
+                vec![
+                    backfilled(100, false),
+                    backfilled(99, true),
+                    backfilled(98, true),
+                ],
+                98,
+            )
             .await
             .unwrap();
-        assert_eq!(store.get_tx_index_floor().await.unwrap(), None);
+        assert_eq!(
+            store.get_tx_index_floor().await.unwrap(),
+            None,
+            "the re-fetched frontier block must not raise the floor"
+        );
 
         store
             .add_backfilled_blocks(vec![backfilled(97, true), backfilled(96, false)], 96)

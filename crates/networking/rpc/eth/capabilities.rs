@@ -34,6 +34,7 @@ impl RpcHandler for CapabilitiesRequest {
         let tx = earliest.max(storage.get_tx_index_floor().await?.unwrap_or_default());
         let logs = oldest_block_with_receipts(storage, earliest).await?;
 
+        // A block count: forkchoice keeps the state of the blocks down to `head - retention`.
         let retention = storage.reorg_retention()?;
         let state_storage = storage.clone();
         let oldest_state = tokio::task::spawn_blocking(move || {
@@ -55,7 +56,8 @@ impl RpcHandler for CapabilitiesRequest {
             "state": state,
             "tx": available_from(tx, head_number),
             "logs": available_from(logs, head_number),
-            // `eth_getTransactionReceipt` finds the transaction through the index.
+            // `eth_getTransactionReceipt` needs the tx index, so this stays at `tx` even
+            // where `eth_getBlockReceipts` serves from `logs`.
             "receipts": available_from(logs.max(tx), head_number),
             "blocks": available_from(earliest, head_number),
             "stateproofs": state,
@@ -72,6 +74,7 @@ fn available_from(oldest_block: u64, head: u64) -> Value {
 }
 
 /// A snap pivot's body is stored but its receipts only arrive with history backfill.
+/// Every other block from `earliest` up was executed or backfilled, which stores receipts.
 async fn oldest_block_with_receipts(storage: &Store, earliest: u64) -> Result<u64, RpcErr> {
     if storage.get_receipt(earliest, 0).await?.is_some() {
         return Ok(earliest);
@@ -93,17 +96,18 @@ fn oldest_block_with_state(
     if !holds_state(storage, head.state_root)? {
         return Ok(None);
     }
-    let mut oldest = head.number;
-    while oldest > 0 && head.number - oldest < retention {
-        let Some(parent) = storage.get_block_header(oldest - 1)? else {
+    // Follow parent hashes so a concurrent reorg cannot move the walk to another fork.
+    let mut oldest = head.clone();
+    while oldest.number > 0 && head.number - oldest.number < retention {
+        let Some(parent) = storage.get_block_header_by_hash(oldest.parent_hash)? else {
             break;
         };
         if !holds_state(storage, parent.state_root)? {
             break;
         }
-        oldest -= 1;
+        oldest = parent;
     }
-    Ok(Some(oldest))
+    Ok(Some(oldest.number))
 }
 
 /// Recent states are layer-cache hits, which spares opening a trie for each.
@@ -212,6 +216,36 @@ mod tests {
         assert_eq!(
             oldest_block_with_state(&context.storage, &head, 1).unwrap(),
             Some(2)
+        );
+    }
+
+    #[tokio::test]
+    async fn state_walk_follows_the_head_fork_after_a_reorg() {
+        let storage = setup_store().await;
+        let genesis = storage.get_block_header(0).unwrap().unwrap();
+        add_block_with_state_root(&storage, genesis.state_root).await;
+        let old_head = add_block_with_state_root(&storage, genesis.state_root).await;
+        // Reorg to a block 1 whose state is not held.
+        let other = BlockHeader {
+            hash: Default::default(),
+            number: 1,
+            parent_hash: genesis.hash(),
+            state_root: H256::repeat_byte(0xaa),
+            ..genesis
+        };
+        let other_hash = other.hash();
+        storage
+            .add_block(Block::new(other, BlockBody::default()))
+            .await
+            .unwrap();
+        storage
+            .forkchoice_update(vec![], 1, other_hash, None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            oldest_block_with_state(&storage, &old_head, 10).unwrap(),
+            Some(0)
         );
     }
 
