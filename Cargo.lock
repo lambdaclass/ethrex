@@ -12326,8 +12326,7 @@ dependencies = [
 [[package]]
 name = "spawned-concurrency"
 version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df828af70c1f649ea251c68ed2fbd6b25286cbce17ff85bdba88982fa0744636"
+source = "git+https://github.com/lambdaclass/spawned?rev=60ae442c82fbcbf82a7596c10c66f40b72d570dd#60ae442c82fbcbf82a7596c10c66f40b72d570dd"
 dependencies = [
  "futures",
  "pin-project-lite",
@@ -12340,8 +12339,7 @@ dependencies = [
 [[package]]
 name = "spawned-macros"
 version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5cc490dbf2a9c9d2d83d567c3a10dad8595213e11d653296d6d3917107485301"
+source = "git+https://github.com/lambdaclass/spawned?rev=60ae442c82fbcbf82a7596c10c66f40b72d570dd#60ae442c82fbcbf82a7596c10c66f40b72d570dd"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -12351,8 +12349,7 @@ dependencies = [
 [[package]]
 name = "spawned-rt"
 version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "759eb3b98790ef4d1ee7c6f5f4e35474c533282961813d96c53f42f3149f4d36"
+source = "git+https://github.com/lambdaclass/spawned?rev=60ae442c82fbcbf82a7596c10c66f40b72d570dd#60ae442c82fbcbf82a7596c10c66f40b72d570dd"
 dependencies = [
  "ctrlc",
  "loom",
@@ -12367,8 +12364,7 @@ dependencies = [
 [[package]]
 name = "spawned-test"
 version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8de6676d49ca7b1828a37bb5fa4d9516c93727878745f5de0f18a4b12278539"
+source = "git+https://github.com/lambdaclass/spawned?rev=60ae442c82fbcbf82a7596c10c66f40b72d570dd#60ae442c82fbcbf82a7596c10c66f40b72d570dd"
 dependencies = [
  "spawned-concurrency",
  "spawned-rt",

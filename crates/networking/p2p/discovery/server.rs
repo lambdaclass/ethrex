@@ -216,10 +216,16 @@ impl DiscoveryServer {
             fork_id,
         };
 
-        // Ping discv4 bootnodes
+        // Ping discv4 bootnodes, best-effort. This runs in the supervised
+        // child's factory, and from spawned 0.8 any first-start failure fails
+        // the supervisor's `start()` (OTP), which would abort `init_network`.
+        // An unreachable bootnode is not a reason to run without discovery:
+        // revalidation and lookups reach it again later.
         if server.discv4.is_some() {
             for bootnode in &bootnodes {
-                server.discv4_send_ping(bootnode).await?;
+                if let Err(err) = server.discv4_send_ping(bootnode).await {
+                    warn!(%err, bootnode = %bootnode.public_key, "Could not ping a discv4 bootnode");
+                }
             }
         }
 
@@ -546,7 +552,12 @@ impl spawned_concurrency::message::Message for InjectCrash {
 }
 
 impl Handler<InjectCrash> for DiscoveryServer {
-    async fn handle(&mut self, _msg: InjectCrash, _ctx: &Context<Self>) {
+    async fn handle(
+        &mut self,
+        _msg: InjectCrash,
+        _reply: spawned_concurrency::tasks::PendingReply<'_, ()>,
+        _ctx: &Context<Self>,
+    ) {
         panic!("fault injection: crashing the discovery server");
     }
 }

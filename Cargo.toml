@@ -144,11 +144,12 @@ kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
 aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", rev = "54ca2471624700536561b6bd369ed9f4d327991e", package = "agg_mode_sdk" }
-# spawned 0.7.1 from crates.io. Every spawned crate must name the same version
-# so they share one set of types (ActorRef, protocols, ExitReason).
-spawned-concurrency = "0.7.3"
-spawned-rt = "0.7.3"
-spawned-test = "0.7.3"
+# spawned 0.8 pre-release: git rev of lambdaclass/spawned `feat/otp-exit-signals`
+# (PR #240, stacked on #239 deferred replies). Rev 60ae442c (60ae442c82fbcbf82a7596c10c66f40b72d570dd).
+# Every spawned crate must come from the same rev so they share one set of types.
+spawned-concurrency = { git = "https://github.com/lambdaclass/spawned", rev = "60ae442c82fbcbf82a7596c10c66f40b72d570dd" }
+spawned-rt = { git = "https://github.com/lambdaclass/spawned", rev = "60ae442c82fbcbf82a7596c10c66f40b72d570dd" }
+spawned-test = { git = "https://github.com/lambdaclass/spawned", rev = "60ae442c82fbcbf82a7596c10c66f40b72d570dd" }
 lambdaworks-crypto = "0.13.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 crossbeam = "0.8.4"

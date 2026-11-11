@@ -3,7 +3,7 @@ use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_table::{
         PeerData, PeerDiagnostics, PeerTable, PeerTableServerProtocol as _, RequestPermit,
-        SelectedPeer,
+        SelectedPeer, wait_for_best_peer,
     },
     rlpx::{
         connection::server::PeerConnection,
@@ -324,8 +324,6 @@ impl PeerHandler {
 
         *METRICS.headers_download_start_time.lock().await = Some(SystemTime::now());
 
-        let mut logged_no_free_peers_count = 0;
-
         loop {
             if let Ok((headers, peer_id, _connection, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
@@ -377,19 +375,11 @@ impl PeerHandler {
                 self.peer_table.record_success(peer_id)?;
                 debug!("Downloader {peer_id} freed");
             }
-            let Some((peer_id, mut connection, permit)) = self
-                .peer_table
-                .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
-                .await?
+            // Waits for a free peer instead of polling.
+            let Some((peer_id, mut connection, permit)) =
+                wait_for_best_peer(&self.peer_table, SUPPORTED_ETH_CAPABILITIES.to_vec()).await?
             else {
-                // Log ~ once every 10 seconds
-                if logged_no_free_peers_count == 0 {
-                    trace!("We are missing peers in request_block_headers");
-                    logged_no_free_peers_count = 1000;
-                }
-                logged_no_free_peers_count -= 1;
-                // Sleep a bit to avoid busy polling
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                trace!("We are missing peers in request_block_headers");
                 continue;
             };
 
@@ -1246,12 +1236,19 @@ impl PeerHandlerError {
 /// During shutdown the sync cycle never gets this far; see
 /// [`SyncError::failure_action`](crate::sync::SyncError::failure_action).
 ///
-/// The match is exhaustive on purpose, so a new spawned error kind has to be
-/// classified here.
+/// A reply the table dropped, or a request it refused at a bound
+/// (`Overloaded`, e.g. a full peer-waiter queue), is transient too.
+///
+/// Every kind spawned 0.8 has is named, so the classification stays explicit.
+/// `ActorError` is `#[non_exhaustive]` from spawned 0.8, so the compiler no
+/// longer flags a kind added later: one lands in the wildcard, which treats it
+/// like a stopped table (spawned plans to report a dead actor's exit reason
+/// in a new kind). Classify it here when upgrading.
 pub fn peer_table_error_is_recoverable(err: &ActorError) -> bool {
     match err {
-        ActorError::RequestTimeout => true,
+        ActorError::RequestTimeout | ActorError::ReplyDropped | ActorError::Overloaded => true,
         ActorError::ActorStopped => false,
+        _ => false,
     }
 }
 

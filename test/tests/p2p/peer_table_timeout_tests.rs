@@ -85,6 +85,17 @@ fn a_peer_table_timeout_retries_the_sync_cycle() {
     }
 }
 
+/// spawned 0.8: a dropped reply and a refusal at a bound are transient.
+#[test]
+fn a_dropped_or_refused_peer_table_request_retries_the_sync_cycle() {
+    for err in [|| ActorError::ReplyDropped, || ActorError::Overloaded] {
+        for error in peer_table_errors(err) {
+            assert!(error.is_recoverable(), "{error:?}");
+            assert_eq!(error.failure_action(false), SyncFailureAction::Retry);
+        }
+    }
+}
+
 #[test]
 fn a_stopped_peer_table_exits_only_while_the_node_runs() {
     for error in peer_table_errors(|| ActorError::ActorStopped) {
