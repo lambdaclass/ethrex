@@ -28,7 +28,7 @@ permissions:
 jobs:
   notify-on-failure:
     name: Notify Slack on failure (main)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # `cancelled` runs are deliberately not alerted: a manually cancelled run
     # on main is not a CI failure.
     if: >-

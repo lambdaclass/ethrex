@@ -166,7 +166,7 @@ jobs:
           - zisk
           - sp1
           - openvm
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout code
         uses: actions/checkout@v6.1.0
@@ -206,7 +206,6 @@ jobs:
           compiler_env=()
           if [ "${{ matrix.zkvm }}" = "zisk" ]; then
             compiler_env+=(-e "ERE_PROFILE=ethrex")
-            compiler_env+=(-e "ERE_RUSTFLAGS=-C target-feature=+unaligned-scalar-mem")
           fi
           mkdir -p output
           docker run \
@@ -364,7 +363,7 @@ jobs:
   package-contracts:
     needs:
       - build-ethrex
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout code
         uses: actions/checkout@v6.1.0
@@ -391,10 +390,10 @@ jobs:
     strategy:
       matrix:
         platform:
-          - ubuntu-latest
+          - ubuntu-26.04
           - ubuntu-22.04-arm
         include:
-          - platform: ubuntu-latest
+          - platform: ubuntu-26.04
             arch: amd64
           - platform: ubuntu-22.04-arm
             arch: arm64
@@ -471,7 +470,7 @@ jobs:
 
   publish-docker:
     name: "Create and push multi-arch Docker manifests"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     if: ${{ github.event_name != 'workflow_dispatch'}}
     needs: build-docker
 
@@ -510,7 +509,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     needs:
       - build-stateless-validator-guest
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       HAS_MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY != '' }}
     steps:
@@ -603,7 +602,7 @@ jobs:
       - build-docker
       - publish-docker
       - package-contracts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       # Signing is skipped entirely when the secret is absent, so forks and
       # repos that have not configured a keypair still produce a release.
