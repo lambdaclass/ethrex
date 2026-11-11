@@ -31,7 +31,10 @@ use spawned_concurrency::{
     protocol,
     tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response},
 };
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Write as _,
+};
 use tokio::sync::{broadcast, mpsc::Sender};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
@@ -68,9 +71,13 @@ pub struct LogSubscriptionFilter {
 }
 
 impl LogSubscriptionFilter {
-    fn matches(&self, block: BlockNumber, address: &H160, topics: &[H256]) -> bool {
+    fn covers(&self, block: BlockNumber) -> bool {
         self.from_block.is_none_or(|from| block >= from)
             && self.to_block.is_none_or(|to| block <= to)
+    }
+
+    fn matches(&self, block: BlockNumber, address: &H160, topics: &[H256]) -> bool {
+        self.covers(block)
             && (self.addresses.is_empty() || self.addresses.contains(address))
             && matches_topics(topics, &self.topics)
     }
@@ -117,6 +124,8 @@ pub trait SubscriptionManagerProtocol: Send + Sync {
     /// [`Self::subscribe`], under the same global cap.
     fn subscribe_pending_transactions(&self, sender: Sender<String>) -> Response<Option<String>>;
 
+    /// Register a new `logs` subscriber that gets the logs matching `filter`.
+    /// Returns its ID like [`Self::subscribe`], under the same global cap.
     fn subscribe_logs(
         &self,
         sender: Sender<String>,
@@ -152,14 +161,14 @@ impl SubscriptionManager {
     ) {
         let header = msg.header;
         let block_hash = header.hash();
-        let previous_head = self.last_head.replace((header.number, block_hash));
         if !self.subscribers.is_empty() {
             self.notify_new_head(&header, block_hash);
         }
         self.log_subscribers
             .retain(|_, (sender, _)| !sender.is_closed());
-        if !self.log_subscribers.is_empty() {
-            self.notify_logs(previous_head, &header).await;
+        // A head whose logs could not be read is retried from the same previous head.
+        if self.log_subscribers.is_empty() || self.notify_logs(self.last_head, &header).await {
+            self.last_head = Some((header.number, block_hash));
         }
     }
 
@@ -269,37 +278,51 @@ impl SubscriptionManager {
         fan_out(&mut self.subscribers, &header_value, "newHeads");
     }
 
+    /// Returns `false`, having sent nothing, when a block's logs could not be read.
     async fn notify_logs(
         &mut self,
         previous_head: Option<(BlockNumber, H256)>,
         head: &BlockHeader,
-    ) {
+    ) -> bool {
         let (removed, added) = match self.logs_route(previous_head, head) {
             Ok(route) => route,
             Err(e) => {
                 warn!("Failed to find the blocks for logs notifications: {e}");
-                return;
+                return false;
             }
         };
         let blocks = removed
             .iter()
             .map(|header| (header, true))
             .chain(added.iter().map(|header| (header, false)));
+        let mut block_logs = Vec::new();
         for (header, removed) in blocks {
             match self.matching_block_logs(header).await {
-                Ok(logs) if !logs.is_empty() => {
-                    fan_out_logs(&mut self.log_subscribers, logs, removed)
-                }
+                Ok(logs) if !logs.is_empty() => block_logs.push((logs, removed)),
                 Ok(_) => {}
-                Err(e) => warn!(
-                    block = header.number,
-                    "Failed to read logs for logs subscribers: {e:?}"
-                ),
+                Err(e) => {
+                    warn!(
+                        block = header.number,
+                        "Failed to read logs for logs subscribers: {e:?}"
+                    );
+                    return false;
+                }
             }
         }
+        for (logs, removed) in block_logs {
+            fan_out_logs(&mut self.log_subscribers, logs, removed);
+        }
+        true
     }
 
     async fn matching_block_logs(&self, header: &BlockHeader) -> Result<Vec<RpcLog>, RpcErr> {
+        let covered = self
+            .log_subscribers
+            .values()
+            .any(|(_, filter)| filter.covers(header.number));
+        if !covered || header.logs_bloom.is_zero() {
+            return Ok(Vec::new());
+        }
         let hash = header.hash();
         let receipts = self.store.get_receipts_for_block(&hash).await?;
         let matched = receipts
@@ -334,6 +357,11 @@ impl SubscriptionManager {
         };
         // Past the limit only a head above the previous one is new.
         let past_limit = || {
+            warn!(
+                previous = previous_number,
+                head = head.number,
+                "Logs route past its limit, notifying only the new head's logs"
+            );
             let added = if head.number >= previous_number {
                 vec![head.clone()]
             } else {
@@ -341,6 +369,9 @@ impl SubscriptionManager {
             };
             Ok((Vec::new(), added))
         };
+        if head.hash() == previous_hash {
+            return Ok((Vec::new(), Vec::new()));
+        }
         if head.parent_hash == previous_hash {
             return Ok((Vec::new(), vec![head.clone()]));
         }
@@ -406,9 +437,10 @@ fn fan_out_logs(
             if !batch.is_empty() {
                 batch.push('\n');
             }
-            batch.push_str(&format!(
+            let _ = write!(
+                batch,
                 r#"{{"jsonrpc":"2.0","method":"eth_subscription","params":{{"subscription":"{sub_id}","result":{json}}}}}"#
-            ));
+            );
         }
         if batch.is_empty() {
             continue;

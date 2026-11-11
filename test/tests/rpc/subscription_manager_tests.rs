@@ -1,7 +1,11 @@
 use ethrex_common::{
     Address, H256,
-    types::{Block, BlockBody, BlockHeader, LegacyTransaction, Log, Receipt, Transaction, TxType},
+    types::{
+        Block, BlockBody, BlockHeader, LegacyTransaction, Log, Receipt, Transaction, TxType,
+        bloom_from_logs,
+    },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_rpc::subscription_manager::{
     LogSubscriptionFilter, MAX_LOGS_ROUTE_BLOCKS, MAX_TOTAL_SUBSCRIPTIONS,
     SUBSCRIBER_CHANNEL_CAPACITY, SubscriptionManager, SubscriptionManagerProtocol, TopicFilter,
@@ -211,16 +215,18 @@ async fn add_block(
     timestamp: u64,
     logs: &[(u64, u64)],
 ) -> BlockHeader {
-    let transactions = (0..logs.len() as u64)
-        .map(|nonce| {
-            Transaction::LegacyTransaction(LegacyTransaction {
-                nonce,
-                ..Default::default()
-            })
-        })
-        .collect();
-    let receipts = logs
-        .iter()
+    let block = new_block(parent, timestamp, logs);
+    let header = block.header.clone();
+    store.add_block(block).await.unwrap();
+    store
+        .add_receipts(header.hash(), block_receipts(logs))
+        .await
+        .unwrap();
+    header
+}
+
+fn block_receipts(logs: &[(u64, u64)]) -> Vec<Receipt> {
+    logs.iter()
         .map(|&(address, topic)| {
             let log = Log {
                 address: Address::from_low_u64_be(address),
@@ -229,12 +235,28 @@ async fn add_block(
             };
             Receipt::new(TxType::Legacy, true, 21_000, vec![log])
         })
+        .collect()
+}
+
+fn new_block(parent: &BlockHeader, timestamp: u64, logs: &[(u64, u64)]) -> Block {
+    let transactions = (0..logs.len() as u64)
+        .map(|nonce| {
+            Transaction::LegacyTransaction(LegacyTransaction {
+                nonce,
+                ..Default::default()
+            })
+        })
         .collect();
-    let block = Block::new(
+    let block_logs: Vec<Log> = block_receipts(logs)
+        .into_iter()
+        .flat_map(|receipt| receipt.logs)
+        .collect();
+    Block::new(
         BlockHeader {
             parent_hash: parent.hash(),
             number: parent.number + 1,
             timestamp,
+            logs_bloom: bloom_from_logs(&block_logs, &NativeCrypto),
             ..Default::default()
         },
         BlockBody {
@@ -242,11 +264,7 @@ async fn add_block(
             ommers: Default::default(),
             withdrawals: Default::default(),
         },
-    );
-    let header = block.header.clone();
-    store.add_block(block).await.unwrap();
-    store.add_receipts(header.hash(), receipts).await.unwrap();
-    header
+    )
 }
 
 async fn received_logs(
@@ -530,4 +548,41 @@ async fn new_head_removes_closed_logs_subscribers_without_matching_logs() {
     manager.new_head(one).unwrap();
 
     assert!(!manager.unsubscribe(id).await.unwrap());
+}
+
+#[tokio::test]
+async fn logs_subscription_retries_a_head_whose_block_could_not_be_read() {
+    let store = test_store();
+    let manager = SubscriptionManager::spawn(store.clone());
+    let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    manager
+        .subscribe_logs(tx, LogSubscriptionFilter::default())
+        .await
+        .unwrap()
+        .unwrap();
+    let one = add_block(&store, &BlockHeader::default(), 0, &[(1, 1)]).await;
+    manager.new_head(one.clone()).unwrap();
+    received_logs(&manager, &mut rx).await;
+
+    // Block two's body is missing, so its logs cannot be read yet.
+    let two = new_block(&one, 0, &[(2, 1)]);
+    store
+        .add_block_header(two.hash(), two.header.clone())
+        .await
+        .unwrap();
+    store
+        .add_receipts(two.hash(), block_receipts(&[(2, 1)]))
+        .await
+        .unwrap();
+    manager.new_head(two.header.clone()).unwrap();
+    assert!(received_logs(&manager, &mut rx).await.is_empty());
+
+    store.add_block(two.clone()).await.unwrap();
+    let three = add_block(&store, &two.header, 0, &[(3, 1)]).await;
+    manager.new_head(three).unwrap();
+
+    assert_eq!(
+        received_logs(&manager, &mut rx).await,
+        vec![(2, 2, false), (3, 3, false)]
+    );
 }

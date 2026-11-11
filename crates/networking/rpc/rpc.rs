@@ -1669,17 +1669,15 @@ fn parse_log_subscription_filter(
         .address_filters
         .as_ref()
         .map_or(0, |addresses| addresses.as_ref().len());
-    let alternatives = filter.topics.iter().map(|topic| match topic {
-        crate::eth::logs::TopicFilter::Topic(_) => 1,
-        crate::eth::logs::TopicFilter::Topics(topics) => topics.len(),
-    });
     if filter.topics.len() > MAX_LOG_SUBSCRIPTION_TOPICS {
         return Err(RpcErr::BadParams("exceed max topics".to_string()));
     }
+    let mut alternatives = filter.topics.iter().map(|topic| match topic {
+        crate::eth::logs::TopicFilter::Topic(_) => 1,
+        crate::eth::logs::TopicFilter::Topics(topics) => topics.len(),
+    });
     if addresses > MAX_LOG_SUBSCRIPTION_VALUES
-        || alternatives
-            .into_iter()
-            .any(|n| n > MAX_LOG_SUBSCRIPTION_VALUES)
+        || alternatives.any(|n| n > MAX_LOG_SUBSCRIPTION_VALUES)
     {
         return Err(RpcErr::BadParams(
             "exceed max addresses or topics per search position".to_string(),
@@ -2546,7 +2544,7 @@ mod tests {
     #[tokio::test]
     async fn ws_subscribe_logs_filters_and_delivers() {
         use ethrex_common::types::{
-            Block, BlockBody, BlockHeader, Log, Receipt, Transaction, TxType,
+            Block, BlockBody, BlockHeader, Log, Receipt, Transaction, TxType, bloom_from_logs,
         };
         let storage = Store::new("temp.db", EngineType::InMemory).expect("in-memory store");
         let mut context = default_context_with_storage(storage).await;
@@ -2629,6 +2627,7 @@ mod tests {
         let block = Block::new(
             BlockHeader {
                 number: 1,
+                logs_bloom: bloom_from_logs(&logs, &ethrex_crypto::NativeCrypto),
                 ..Default::default()
             },
             BlockBody {
@@ -2649,6 +2648,7 @@ mod tests {
             .unwrap();
         subscription_manager.new_head(header.clone()).unwrap();
 
+        // Waits for the actor to handle the head.
         subscription_manager
             .unsubscribe(String::new())
             .await
