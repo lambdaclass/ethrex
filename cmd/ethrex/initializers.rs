@@ -406,7 +406,7 @@ pub async fn init_rpc_api(
     let ws_config = if opts.ws_enabled {
         Some(WebSocketConfig {
             addr: get_ws_socket_addr(opts),
-            subscription_manager: ethrex_rpc::SubscriptionManager::spawn(),
+            subscription_manager: ethrex_rpc::SubscriptionManager::spawn(store.clone()),
         })
     } else {
         None
