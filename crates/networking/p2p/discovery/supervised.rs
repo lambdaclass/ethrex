@@ -48,18 +48,16 @@ use crate::{
 /// supervision. Its other actors are not in this supervisor, so giving up
 /// stops nothing else.
 pub fn supervisor_config() -> SupervisorConfig {
-    SupervisorConfig {
-        strategy: SupervisorStrategy::OneForOne,
-        max_restarts: 3,
-        restart_window: Duration::from_secs(60),
-        backoff: Backoff {
-            initial: Duration::from_secs(1),
-            maximum: Duration::from_secs(10),
-            stable_after: Duration::from_secs(60),
-            ..Backoff::default()
-        },
-        ..SupervisorConfig::default()
-    }
+    SupervisorConfig::new()
+        .strategy(SupervisorStrategy::OneForOne)
+        .max_restarts(3)
+        .restart_window(Duration::from_secs(60))
+        .backoff(
+            Backoff::new()
+                .initial(Duration::from_secs(1))
+                .maximum(Duration::from_secs(10))
+                .stable_after(Duration::from_secs(60)),
+        )
 }
 
 /// What every discovery generation is built from.

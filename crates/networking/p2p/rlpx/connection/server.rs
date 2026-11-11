@@ -759,6 +759,9 @@ impl PeerConnectionServer {
                 token.overloaded();
                 return;
             }
+            // `InsertError` is non-exhaustive: a future refusal drops the
+            // token, so the caller gets ReplyDropped.
+            Err(_) => return,
         }
         let result = handle_outgoing_request(established_state, msg.message).await;
         if result.is_err() {

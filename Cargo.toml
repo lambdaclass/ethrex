@@ -145,11 +145,11 @@ libsql = "0.9.10"
 futures = "0.3.31"
 aligned-sdk = { git = "https://github.com/yetanotherco/aligned_layer", rev = "54ca2471624700536561b6bd369ed9f4d327991e", package = "agg_mode_sdk" }
 # spawned 0.8 pre-release: git rev of lambdaclass/spawned `feat/otp-exit-signals`
-# (PR #240, stacked on #239 deferred replies). Rev 850fd785 (850fd785bc5dd241e833cb5bc98eda5ac7ef4282).
+# (PR #240, stacked on #239 deferred replies). Rev 4667d633 (4667d633c8a51a69db88a7896971115ed20aa5fe).
 # Every spawned crate must come from the same rev so they share one set of types.
-spawned-concurrency = { git = "https://github.com/lambdaclass/spawned", rev = "850fd785bc5dd241e833cb5bc98eda5ac7ef4282" }
-spawned-rt = { git = "https://github.com/lambdaclass/spawned", rev = "850fd785bc5dd241e833cb5bc98eda5ac7ef4282" }
-spawned-test = { git = "https://github.com/lambdaclass/spawned", rev = "850fd785bc5dd241e833cb5bc98eda5ac7ef4282" }
+spawned-concurrency = { git = "https://github.com/lambdaclass/spawned", rev = "4667d633c8a51a69db88a7896971115ed20aa5fe" }
+spawned-rt = { git = "https://github.com/lambdaclass/spawned", rev = "4667d633c8a51a69db88a7896971115ed20aa5fe" }
+spawned-test = { git = "https://github.com/lambdaclass/spawned", rev = "4667d633c8a51a69db88a7896971115ed20aa5fe" }
 lambdaworks-crypto = "0.13.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 crossbeam = "0.8.4"

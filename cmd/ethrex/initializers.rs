@@ -881,9 +881,9 @@ fn configure_actor_metrics(metrics_enabled: bool) {
     } else {
         0
     };
-    if spawned_concurrency::metrics::configure(spawned_concurrency::metrics::Config {
-        timing_sample_every,
-    })
+    if spawned_concurrency::metrics::configure(
+        spawned_concurrency::metrics::Config::new().timing_sample_every(timing_sample_every),
+    )
     .is_err()
     {
         debug!("Actor metrics were already configured; keeping that configuration");
