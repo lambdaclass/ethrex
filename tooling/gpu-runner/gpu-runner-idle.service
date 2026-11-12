@@ -1,0 +1,9 @@
+[Unit]
+Description=Stop this Paperspace machine when the GitHub Actions runner is idle
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/gpu-runner-idle.env
+ExecStart=/opt/gpu-runner/idle-stop.sh

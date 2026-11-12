@@ -1,0 +1,27 @@
+name: "Start Paperspace machine"
+description: "Start a Paperspace machine (e.g. the on-demand GPU runner) and wait until it is ready"
+
+inputs:
+  machine-id:
+    description: "Paperspace machine ID"
+    required: true
+  api-key:
+    description: "Paperspace API key"
+    required: true
+  timeout-secs:
+    description: "How long to wait for the machine to be ready"
+    required: false
+    default: "600"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Start machine
+      shell: bash
+      env:
+        PAPERSPACE_API_KEY: ${{ inputs.api-key }}
+        PAPERSPACE_MACHINE_ID: ${{ inputs.machine-id }}
+        START_TIMEOUT_SECS: ${{ inputs.timeout-secs }}
+      run: |
+        set -euo pipefail
+        "$GITHUB_WORKSPACE/tooling/gpu-runner/paperspace-machine.sh" start
