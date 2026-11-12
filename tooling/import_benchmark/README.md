@@ -50,7 +50,7 @@ Example:
 
 `make run-bench BENCH_ID=1 NETWORK=mainnet`
 
-## View Output
+## Output
 
-You can view and compare benchmark results with:
-`python3 parse_bench.py <bench_file_1> <bench_file_2> <...>`
+Each run's log is saved to `tooling/import_benchmark/bench_results/bench-<id>.log`.
+Per-block throughput and timings are in the `[METRIC] BLOCK ...` lines.

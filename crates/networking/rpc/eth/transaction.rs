@@ -227,7 +227,7 @@ impl RpcHandler for GetTransactionByBlockNumberAndIndexRequest {
             Some(block_number) => block_number,
             _ => return Ok(Value::Null),
         };
-        let block_body = match context.storage.get_block_body(block_number).await? {
+        let block_body = match block::get_block_body(&context.storage, block_number).await? {
             Some(block_body) => block_body,
             _ => return Ok(Value::Null),
         };
@@ -278,7 +278,7 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
             Some(number) => number,
             _ => return Ok(Value::Null),
         };
-        let block_body = match context.storage.get_block_body(block_number).await? {
+        let block_body = match block::get_block_body(&context.storage, block_number).await? {
             Some(block_body) => block_body,
             _ => return Ok(Value::Null),
         };
@@ -502,7 +502,7 @@ impl RpcHandler for GetRawTransactionByBlockAndIndex {
         let Some(block_number) = self.block.resolve_block_number(&context.storage).await? else {
             return Ok(Value::Null);
         };
-        let Some(block_body) = context.storage.get_block_body(block_number).await? else {
+        let Some(block_body) = block::get_block_body(&context.storage, block_number).await? else {
             return Ok(Value::Null);
         };
         let Some(tx) = block_body.transactions.get(self.transaction_index) else {

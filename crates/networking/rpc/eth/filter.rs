@@ -1256,6 +1256,7 @@ mod tests {
     #[tokio::test]
     async fn filter_logs_return_every_matching_log_in_range() {
         let storage = Store::new("in-mem", EngineType::InMemory).unwrap();
+        storage.update_earliest_block_number(0).await.unwrap();
         add_head_block(&storage, 0, 1).await;
         add_head_block(&storage, 1, 1).await;
         add_head_block(&storage, 2, 2).await;
@@ -1305,6 +1306,7 @@ mod tests {
     #[tokio::test]
     async fn filter_logs_by_block_hash() {
         let storage = Store::new("in-mem", EngineType::InMemory).unwrap();
+        storage.update_earliest_block_number(0).await.unwrap();
         for number in 0..=3 {
             add_head_block(&storage, number, 1).await;
         }
