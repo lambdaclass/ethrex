@@ -1,13 +1,25 @@
-use ethrex_common::{H256, types::BlockHeader};
-use ethrex_rpc::subscription_manager::{
-    MAX_TOTAL_SUBSCRIPTIONS, SUBSCRIBER_CHANNEL_CAPACITY, SubscriptionManager,
-    SubscriptionManagerProtocol,
+use ethrex_common::{
+    Address, H256,
+    types::{
+        Block, BlockBody, BlockHeader, LegacyTransaction, Log, Receipt, Transaction, TxType,
+        bloom_from_logs,
+    },
 };
+use ethrex_crypto::NativeCrypto;
+use ethrex_rpc::subscription_manager::{
+    LogSubscriptionFilter, MAX_LOGS_ROUTE_BLOCKS, MAX_TOTAL_SUBSCRIPTIONS,
+    SUBSCRIBER_CHANNEL_CAPACITY, SubscriptionManager, SubscriptionManagerProtocol, TopicFilter,
+};
+use ethrex_storage::{EngineType, Store};
 use tokio::sync::mpsc;
+
+fn test_store() -> Store {
+    Store::new("", EngineType::InMemory).expect("in-memory store")
+}
 
 #[tokio::test]
 async fn subscribe_returns_unique_ids() {
-    let manager = SubscriptionManager::spawn();
+    let manager = SubscriptionManager::spawn(test_store());
 
     let (tx1, _rx1) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
     let (tx2, _rx2) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
@@ -22,7 +34,7 @@ async fn subscribe_returns_unique_ids() {
 
 #[tokio::test]
 async fn unsubscribe_existing_returns_true() {
-    let manager = SubscriptionManager::spawn();
+    let manager = SubscriptionManager::spawn(test_store());
 
     let (tx, _rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
     let id = manager.subscribe(tx).await.unwrap().unwrap();
@@ -33,7 +45,7 @@ async fn unsubscribe_existing_returns_true() {
 
 #[tokio::test]
 async fn unsubscribe_nonexistent_returns_false() {
-    let manager = SubscriptionManager::spawn();
+    let manager = SubscriptionManager::spawn(test_store());
 
     let removed = manager.unsubscribe("0xdeadbeef".to_string()).await.unwrap();
     assert!(!removed);
@@ -41,7 +53,7 @@ async fn unsubscribe_nonexistent_returns_false() {
 
 #[tokio::test]
 async fn unsubscribe_twice_returns_false_second_time() {
-    let manager = SubscriptionManager::spawn();
+    let manager = SubscriptionManager::spawn(test_store());
 
     let (tx, _rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
     let id = manager.subscribe(tx).await.unwrap().unwrap();
@@ -52,7 +64,7 @@ async fn unsubscribe_twice_returns_false_second_time() {
 
 #[tokio::test]
 async fn new_head_fans_out_to_all_subscribers() {
-    let manager = SubscriptionManager::spawn();
+    let manager = SubscriptionManager::spawn(test_store());
 
     let (tx1, mut rx1) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
     let (tx2, mut rx2) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
@@ -85,7 +97,7 @@ async fn new_head_fans_out_to_all_subscribers() {
 
 #[tokio::test]
 async fn new_head_removes_dead_subscribers() {
-    let manager = SubscriptionManager::spawn();
+    let manager = SubscriptionManager::spawn(test_store());
 
     let (tx_alive, mut rx_alive) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
     let (tx_dead, rx_dead) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
@@ -115,7 +127,7 @@ async fn new_head_removes_dead_subscribers() {
 
 #[tokio::test]
 async fn new_head_with_no_subscribers_does_not_panic() {
-    let manager = SubscriptionManager::spawn();
+    let manager = SubscriptionManager::spawn(test_store());
     let header = BlockHeader::default();
     // Should not panic or error.
     manager.new_head(header).unwrap();
@@ -123,7 +135,7 @@ async fn new_head_with_no_subscribers_does_not_panic() {
 
 #[tokio::test]
 async fn notification_contains_block_hash() {
-    let manager = SubscriptionManager::spawn();
+    let manager = SubscriptionManager::spawn(test_store());
 
     let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
     let _id = manager.subscribe(tx).await.unwrap().unwrap();
@@ -162,7 +174,7 @@ fn next_result(rx: &mut mpsc::Receiver<String>) -> Option<serde_json::Value> {
 #[tokio::test]
 async fn sync_status_change_reaches_only_syncing_subscribers() {
     use ethrex_rpc::subscription_manager::SyncStatus;
-    let manager = SubscriptionManager::spawn();
+    let manager = SubscriptionManager::spawn(test_store());
 
     let (heads_tx, mut heads_rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
     let (tx1, mut rx1) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
@@ -193,7 +205,7 @@ async fn sync_status_change_reaches_only_syncing_subscribers() {
 #[tokio::test]
 async fn sync_status_is_notified_only_when_it_changes() {
     use ethrex_rpc::subscription_manager::SyncStatus;
-    let manager = SubscriptionManager::spawn();
+    let manager = SubscriptionManager::spawn(test_store());
 
     let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
     manager.subscribe_syncing(tx).await.unwrap().unwrap();
@@ -223,7 +235,7 @@ async fn sync_status_is_notified_only_when_it_changes() {
 #[tokio::test]
 async fn sync_status_owed_to_a_full_channel_is_sent_later() {
     use ethrex_rpc::subscription_manager::SyncStatus;
-    let manager = SubscriptionManager::spawn();
+    let manager = SubscriptionManager::spawn(test_store());
 
     let (tx, mut rx) = mpsc::channel(1);
     tx.try_send("busy".to_string()).unwrap();
@@ -242,7 +254,7 @@ async fn sync_status_owed_to_a_full_channel_is_sent_later() {
 #[tokio::test]
 async fn unsubscribe_stops_sync_status_notifications() {
     use ethrex_rpc::subscription_manager::SyncStatus;
-    let manager = SubscriptionManager::spawn();
+    let manager = SubscriptionManager::spawn(test_store());
 
     let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
     let id = manager.subscribe_syncing(tx).await.unwrap().unwrap();
@@ -257,7 +269,7 @@ async fn unsubscribe_stops_sync_status_notifications() {
 
 #[tokio::test]
 async fn subscribe_returns_none_at_global_cap() {
-    let manager = SubscriptionManager::spawn();
+    let manager = SubscriptionManager::spawn(test_store());
 
     // Fill the actor to the cap. Senders are kept alive in `keep_alive` so
     // the channels do not get cleaned up.
@@ -277,7 +289,7 @@ async fn subscribe_returns_none_at_global_cap() {
 
 #[tokio::test]
 async fn new_pending_transaction_reaches_only_its_subscribers() {
-    let manager = SubscriptionManager::spawn();
+    let manager = SubscriptionManager::spawn(test_store());
 
     let (heads_tx, mut heads_rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
     let (pending_tx, mut pending_rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
@@ -305,4 +317,382 @@ async fn new_pending_transaction_reaches_only_its_subscribers() {
 
     assert!(manager.unsubscribe(pending_id.clone()).await.unwrap());
     assert!(!manager.unsubscribe(pending_id).await.unwrap());
+}
+
+async fn add_block(
+    store: &Store,
+    parent: &BlockHeader,
+    timestamp: u64,
+    logs: &[(u64, u64)],
+) -> BlockHeader {
+    let block = new_block(parent, timestamp, logs);
+    let header = block.header.clone();
+    store.add_block(block).await.unwrap();
+    store
+        .add_receipts(header.hash(), block_receipts(logs))
+        .await
+        .unwrap();
+    header
+}
+
+fn block_receipts(logs: &[(u64, u64)]) -> Vec<Receipt> {
+    logs.iter()
+        .map(|&(address, topic)| {
+            let log = Log {
+                address: Address::from_low_u64_be(address),
+                topics: vec![H256::from_low_u64_be(topic)],
+                data: Default::default(),
+            };
+            Receipt::new(TxType::Legacy, true, 21_000, vec![log])
+        })
+        .collect()
+}
+
+fn new_block(parent: &BlockHeader, timestamp: u64, logs: &[(u64, u64)]) -> Block {
+    let transactions = (0..logs.len() as u64)
+        .map(|nonce| {
+            Transaction::LegacyTransaction(LegacyTransaction {
+                nonce,
+                ..Default::default()
+            })
+        })
+        .collect();
+    let block_logs: Vec<Log> = block_receipts(logs)
+        .into_iter()
+        .flat_map(|receipt| receipt.logs)
+        .collect();
+    Block::new(
+        BlockHeader {
+            parent_hash: parent.hash(),
+            number: parent.number + 1,
+            timestamp,
+            logs_bloom: bloom_from_logs(&block_logs, &NativeCrypto),
+            ..Default::default()
+        },
+        BlockBody {
+            transactions,
+            ommers: Default::default(),
+            withdrawals: Default::default(),
+        },
+    )
+}
+
+async fn received_logs(
+    manager: &impl SubscriptionManagerProtocol,
+    rx: &mut mpsc::Receiver<String>,
+) -> Vec<(u64, u64, bool)> {
+    // Waits for the actor to handle the messages sent before it.
+    manager.unsubscribe("0x00".to_string()).await.unwrap();
+    let mut logs = Vec::new();
+    while let Ok(entry) = rx.try_recv() {
+        for msg in entry.split('\n') {
+            let v: serde_json::Value = serde_json::from_str(msg).unwrap();
+            let log = &v["params"]["result"];
+            let number = |field: &str| {
+                u64::from_str_radix(log[field].as_str().unwrap().trim_start_matches("0x"), 16)
+                    .unwrap()
+            };
+            let address = log["address"].as_str().unwrap().parse::<Address>().unwrap();
+            logs.push((
+                number("blockNumber"),
+                address.to_low_u64_be(),
+                log["removed"].as_bool().unwrap(),
+            ));
+        }
+    }
+    logs
+}
+
+fn address_filter(addresses: &[u64]) -> LogSubscriptionFilter {
+    LogSubscriptionFilter {
+        addresses: addresses
+            .iter()
+            .map(|a| Address::from_low_u64_be(*a))
+            .collect(),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn logs_subscription_gets_the_matching_logs_of_each_new_head() {
+    let store = test_store();
+    let manager = SubscriptionManager::spawn(store.clone());
+    let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    manager
+        .subscribe_logs(tx, address_filter(&[1]))
+        .await
+        .unwrap()
+        .unwrap();
+
+    let genesis = BlockHeader::default();
+    let one = add_block(&store, &genesis, 0, &[(1, 10), (2, 10), (1, 11)]).await;
+    manager.new_head(one).unwrap();
+
+    assert_eq!(
+        received_logs(&manager, &mut rx).await,
+        vec![(1, 1, false), (1, 1, false)]
+    );
+}
+
+#[tokio::test]
+async fn logs_subscription_matches_topics() {
+    let store = test_store();
+    let manager = SubscriptionManager::spawn(store.clone());
+    let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    let filter = LogSubscriptionFilter {
+        addresses: Default::default(),
+        topics: vec![TopicFilter::Topic(Some(H256::from_low_u64_be(11)))],
+        ..Default::default()
+    };
+    manager.subscribe_logs(tx, filter).await.unwrap().unwrap();
+
+    let one = add_block(&store, &BlockHeader::default(), 0, &[(1, 10), (2, 11)]).await;
+    manager.new_head(one).unwrap();
+
+    assert_eq!(received_logs(&manager, &mut rx).await, vec![(1, 2, false)]);
+}
+
+#[tokio::test]
+async fn logs_subscription_covers_every_block_a_head_adds() {
+    let store = test_store();
+    let manager = SubscriptionManager::spawn(store.clone());
+    let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    manager
+        .subscribe_logs(tx, LogSubscriptionFilter::default())
+        .await
+        .unwrap()
+        .unwrap();
+
+    let one = add_block(&store, &BlockHeader::default(), 0, &[(1, 1)]).await;
+    let two = add_block(&store, &one, 0, &[(2, 1)]).await;
+    let three = add_block(&store, &two, 0, &[(3, 1)]).await;
+    manager.new_head(one).unwrap();
+    manager.new_head(three.clone()).unwrap();
+    manager.new_head(three).unwrap();
+
+    assert_eq!(
+        received_logs(&manager, &mut rx).await,
+        vec![(1, 1, false), (2, 2, false), (3, 3, false)]
+    );
+}
+
+#[tokio::test]
+async fn logs_subscription_removes_the_logs_of_a_reorged_out_chain() {
+    let store = test_store();
+    let manager = SubscriptionManager::spawn(store.clone());
+    let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    manager
+        .subscribe_logs(tx, LogSubscriptionFilter::default())
+        .await
+        .unwrap()
+        .unwrap();
+
+    let one = add_block(&store, &BlockHeader::default(), 0, &[(1, 1)]).await;
+    let two_a = add_block(&store, &one, 0, &[(2, 1)]).await;
+    let three_a = add_block(&store, &two_a, 0, &[(3, 1)]).await;
+    let two_b = add_block(&store, &one, 1, &[(4, 1)]).await;
+    manager.new_head(one).unwrap();
+    manager.new_head(three_a).unwrap();
+    received_logs(&manager, &mut rx).await;
+
+    manager.new_head(two_b).unwrap();
+
+    assert_eq!(
+        received_logs(&manager, &mut rx).await,
+        vec![(2, 2, true), (3, 3, true), (2, 4, false)]
+    );
+}
+
+#[tokio::test]
+async fn logs_subscription_stops_after_unsubscribe() {
+    let store = test_store();
+    let manager = SubscriptionManager::spawn(store.clone());
+    let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    let id = manager
+        .subscribe_logs(tx, LogSubscriptionFilter::default())
+        .await
+        .unwrap()
+        .unwrap();
+    let one = add_block(&store, &BlockHeader::default(), 0, &[(1, 1)]).await;
+    let two = add_block(&store, &one, 0, &[(2, 1)]).await;
+    manager.new_head(one).unwrap();
+    assert_eq!(received_logs(&manager, &mut rx).await, vec![(1, 1, false)]);
+
+    assert!(manager.unsubscribe(id).await.unwrap());
+    manager.new_head(two).unwrap();
+
+    assert!(received_logs(&manager, &mut rx).await.is_empty());
+}
+
+#[tokio::test]
+async fn logs_subscription_removes_logs_when_the_head_moves_back() {
+    let store = test_store();
+    let manager = SubscriptionManager::spawn(store.clone());
+    let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    manager
+        .subscribe_logs(tx, LogSubscriptionFilter::default())
+        .await
+        .unwrap()
+        .unwrap();
+    let one = add_block(&store, &BlockHeader::default(), 0, &[(1, 1)]).await;
+    let two = add_block(&store, &one, 0, &[(2, 1)]).await;
+    let three = add_block(&store, &two, 0, &[(3, 1)]).await;
+    manager.new_head(three).unwrap();
+    received_logs(&manager, &mut rx).await;
+
+    manager.new_head(one).unwrap();
+
+    assert_eq!(
+        received_logs(&manager, &mut rx).await,
+        vec![(2, 2, true), (3, 3, true)]
+    );
+}
+
+#[tokio::test]
+async fn logs_subscription_sends_nothing_when_the_head_moves_back_past_the_limit() {
+    let store = test_store();
+    let manager = SubscriptionManager::spawn(store.clone());
+    let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    manager
+        .subscribe_logs(tx, LogSubscriptionFilter::default())
+        .await
+        .unwrap()
+        .unwrap();
+    let first = add_block(&store, &BlockHeader::default(), 0, &[(1, 1)]).await;
+    let mut head = first.clone();
+    for _ in 0..=MAX_LOGS_ROUTE_BLOCKS {
+        head = add_block(&store, &head, 0, &[(2, 1)]).await;
+    }
+    manager.new_head(head).unwrap();
+    received_logs(&manager, &mut rx).await;
+
+    manager.new_head(first).unwrap();
+
+    assert!(received_logs(&manager, &mut rx).await.is_empty());
+}
+
+#[tokio::test]
+async fn logs_subscription_gets_every_log_of_a_block_larger_than_its_channel() {
+    let store = test_store();
+    let manager = SubscriptionManager::spawn(store.clone());
+    let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    manager
+        .subscribe_logs(tx, LogSubscriptionFilter::default())
+        .await
+        .unwrap()
+        .unwrap();
+    let logs = vec![(1, 1); SUBSCRIBER_CHANNEL_CAPACITY * 2];
+    let one = add_block(&store, &BlockHeader::default(), 0, &logs).await;
+    manager.new_head(one).unwrap();
+
+    assert_eq!(
+        received_logs(&manager, &mut rx).await.len(),
+        SUBSCRIBER_CHANNEL_CAPACITY * 2
+    );
+}
+
+#[tokio::test]
+async fn logs_subscription_gets_only_the_head_after_a_long_jump() {
+    let store = test_store();
+    let manager = SubscriptionManager::spawn(store.clone());
+    let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    manager
+        .subscribe_logs(tx, LogSubscriptionFilter::default())
+        .await
+        .unwrap()
+        .unwrap();
+
+    let first = add_block(&store, &BlockHeader::default(), 0, &[]).await;
+    let mut head = first.clone();
+    for _ in 0..=MAX_LOGS_ROUTE_BLOCKS {
+        head = add_block(&store, &head, 0, &[(1, 1)]).await;
+    }
+    manager.new_head(first).unwrap();
+    manager.new_head(head.clone()).unwrap();
+
+    assert_eq!(
+        received_logs(&manager, &mut rx).await,
+        vec![(head.number, 1, false)]
+    );
+}
+
+#[tokio::test]
+async fn logs_subscription_applies_its_block_bounds() {
+    let store = test_store();
+    let manager = SubscriptionManager::spawn(store.clone());
+    let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    let filter = LogSubscriptionFilter {
+        from_block: Some(2),
+        to_block: Some(3),
+        ..Default::default()
+    };
+    manager.subscribe_logs(tx, filter).await.unwrap().unwrap();
+
+    let one = add_block(&store, &BlockHeader::default(), 0, &[(1, 1)]).await;
+    let two = add_block(&store, &one, 0, &[(2, 1)]).await;
+    let three = add_block(&store, &two, 0, &[(3, 1)]).await;
+    let four = add_block(&store, &three, 0, &[(4, 1)]).await;
+    manager.new_head(one).unwrap();
+    manager.new_head(four).unwrap();
+    manager.new_head(two).unwrap();
+
+    assert_eq!(
+        received_logs(&manager, &mut rx).await,
+        vec![(2, 2, false), (3, 3, false), (3, 3, true)]
+    );
+}
+
+#[tokio::test]
+async fn new_head_removes_closed_logs_subscribers_without_matching_logs() {
+    let store = test_store();
+    let manager = SubscriptionManager::spawn(store.clone());
+    let (tx, rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    let id = manager
+        .subscribe_logs(tx, address_filter(&[2]))
+        .await
+        .unwrap()
+        .unwrap();
+    drop(rx);
+
+    let one = add_block(&store, &BlockHeader::default(), 0, &[(1, 1)]).await;
+    manager.new_head(one).unwrap();
+
+    assert!(!manager.unsubscribe(id).await.unwrap());
+}
+
+#[tokio::test]
+async fn logs_subscription_retries_a_head_whose_block_could_not_be_read() {
+    let store = test_store();
+    let manager = SubscriptionManager::spawn(store.clone());
+    let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    manager
+        .subscribe_logs(tx, LogSubscriptionFilter::default())
+        .await
+        .unwrap()
+        .unwrap();
+    let one = add_block(&store, &BlockHeader::default(), 0, &[(1, 1)]).await;
+    manager.new_head(one.clone()).unwrap();
+    received_logs(&manager, &mut rx).await;
+
+    // Block two's body is missing, so its logs cannot be read yet.
+    let two = new_block(&one, 0, &[(2, 1)]);
+    store
+        .add_block_header(two.hash(), two.header.clone())
+        .await
+        .unwrap();
+    store
+        .add_receipts(two.hash(), block_receipts(&[(2, 1)]))
+        .await
+        .unwrap();
+    manager.new_head(two.header.clone()).unwrap();
+    assert!(received_logs(&manager, &mut rx).await.is_empty());
+
+    store.add_block(two.clone()).await.unwrap();
+    let three = add_block(&store, &two.header, 0, &[(3, 1)]).await;
+    manager.new_head(three).unwrap();
+
+    assert_eq!(
+        received_logs(&manager, &mut rx).await,
+        vec![(2, 2, false), (3, 3, false)]
+    );
 }
