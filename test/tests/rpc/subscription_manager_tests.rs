@@ -158,8 +158,8 @@ async fn notification_contains_block_hash() {
 }
 
 fn syncing(current_block: u64) -> ethrex_rpc::subscription_manager::SyncStatus {
-    use ethrex_rpc::subscription_manager::{SyncStatus, SyncingStatusRpc};
-    SyncStatus::Syncing(SyncingStatusRpc {
+    use ethrex_rpc::subscription_manager::{SyncProgress, SyncStatus};
+    SyncStatus::Syncing(SyncProgress {
         starting_block: 0,
         current_block,
         highest_block: 100,
@@ -265,6 +265,25 @@ async fn unsubscribe_stops_sync_status_notifications() {
     manager.new_sync_status(SyncStatus::Synced).unwrap();
     assert!(!manager.unsubscribe(id).await.unwrap());
     assert!(next_result(&mut rx).is_none());
+}
+
+/// A `syncing` subscriber whose connection closed without unsubscribing is
+/// dropped before the next recompute, even once it was told the current status,
+/// when the fan-out skips it and never sees the closed channel.
+#[tokio::test]
+async fn closed_syncing_subscriber_is_dropped() {
+    use ethrex_rpc::subscription_manager::SyncStatus;
+    let manager = SubscriptionManager::spawn(test_store());
+
+    let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    manager.subscribe_syncing(tx).await.unwrap().unwrap();
+    manager.new_sync_status(SyncStatus::Synced).unwrap();
+    assert!(manager.has_syncing_subscribers().await.unwrap());
+    assert_eq!(next_result(&mut rx), Some(serde_json::Value::Bool(false)));
+
+    drop(rx);
+    manager.new_sync_status(SyncStatus::Synced).unwrap();
+    assert!(!manager.has_syncing_subscribers().await.unwrap());
 }
 
 #[tokio::test]

@@ -49,17 +49,19 @@ pub(crate) const SYNCED_HEAD_TOLERANCE: u64 = 8;
 /// blocks of lag it can be told `false` while `eth_syncing` reports syncing.
 pub(crate) const SYNCING_HEAD_TOLERANCE: u64 = 32;
 
+/// A syncing node's progress, as block numbers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SyncingStatusRpc {
+pub struct SyncProgress {
     pub starting_block: u64,
     pub current_block: u64,
     pub highest_block: u64,
 }
 
+/// What `eth_syncing` and the `syncing` subscription report.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncStatus {
     Synced,
-    Syncing(SyncingStatusRpc),
+    Syncing(SyncProgress),
 }
 
 impl SyncStatus {
@@ -67,10 +69,10 @@ impl SyncStatus {
     pub fn to_rpc_value(self) -> Value {
         match self {
             Self::Synced => Value::Bool(false),
-            Self::Syncing(status) => serde_json::json!({
-                "startingBlock": format!("{:#x}", status.starting_block),
-                "currentBlock": format!("{:#x}", status.current_block),
-                "highestBlock": format!("{:#x}", status.highest_block),
+            Self::Syncing(progress) => serde_json::json!({
+                "startingBlock": format!("{:#x}", progress.starting_block),
+                "currentBlock": format!("{:#x}", progress.current_block),
+                "highestBlock": format!("{:#x}", progress.highest_block),
             }),
         }
     }
@@ -163,7 +165,7 @@ pub(crate) async fn sync_status(
         return Ok(SyncStatus::Synced);
     }
 
-    Ok(SyncStatus::Syncing(SyncingStatusRpc {
+    Ok(SyncStatus::Syncing(SyncProgress {
         // `starting_block` reuses `earliest_block_number` as a proxy. Note
         // this is the backfill frontier on a node with `--history.chain`
         // enabled, so it descends as historical backfill progresses rather

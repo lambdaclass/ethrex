@@ -11,10 +11,11 @@
 //!
 //! Using an actor removes the need for a `broadcast` channel and eliminates
 //! the "lagged subscriber" problem: when a connection drops, its sender is
-//! removed during the next `new_head` fan-out rather than silently accumulating
-//! unread messages.
+//! removed during the next fan-out of its subscription type (for `syncing`,
+//! before the feed's next recompute) rather than silently accumulating unread
+//! messages.
 
-pub use crate::eth::client::{SyncStatus, SyncingStatusRpc};
+pub use crate::eth::client::{SyncProgress, SyncStatus};
 pub use crate::eth::logs::TopicFilter;
 use crate::{
     eth::{
@@ -128,7 +129,9 @@ pub trait SubscriptionManagerProtocol: Send + Sync {
     /// is retried with the next status.
     fn new_sync_status(&self, status: SyncStatus) -> Result<(), ActorError>;
 
-    /// Whether any `syncing` subscriber is registered.
+    /// Whether any `syncing` subscriber is registered. First drops the ones
+    /// whose connection closed, since the fan-out skips a subscriber already
+    /// told the current status and so would not notice.
     fn has_syncing_subscribers(&self) -> Response<bool>;
 
     /// Register a new subscriber.
@@ -630,6 +633,10 @@ pub fn spawn_syncing_feed(
             match manager.has_syncing_subscribers().await {
                 Ok(true) => {}
                 Ok(false) => {
+                    // Unsubscribing does not signal, so this reset waits for the
+                    // first signal after the last subscriber left. One who subscribes
+                    // before then gets the previous band and failure flag, which are
+                    // still current: no signal has arrived since they were set.
                     synced = false;
                     failing = false;
                     continue;
