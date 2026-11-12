@@ -248,6 +248,10 @@ impl SubscriptionManager {
         _msg: subscription_manager_protocol::HasSyncingSubscribers,
         _ctx: &Context<Self>,
     ) -> bool {
+        // A subscriber already told the current status is skipped by the fan-out, so
+        // drop closed ones here, before each recompute.
+        self.syncing_subscribers
+            .retain(|_, (sender, _)| !sender.is_closed());
         !self.syncing_subscribers.is_empty()
     }
 
@@ -594,14 +598,14 @@ pub fn spawn_pending_transactions_feed(
     });
 }
 
-/// How long the syncing feed waits before retrying a failed sync status read.
-const SYNC_STATUS_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
-
 /// Recomputes the sync status for `syncing` subscribers whenever the store
 /// signals that one of its inputs changed, skipping it while there are none.
 /// Signals that arrive during a recompute collapse into one more, so a state
-/// that lasts only between two of them may go unreported. A no-op without a
-/// sync manager.
+/// that lasts only between two of them may go unreported. Two inputs change
+/// without a signal of their own: the forkchoice target's number once its header
+/// is stored, and the head's state becoming available. The next forkchoice update
+/// follows within about a slot, so a switch can be reported that late. A failed
+/// read is retried on the next signal. A no-op without a sync manager.
 pub fn spawn_syncing_feed(
     context: &RpcApiContext,
     manager: ActorRef<SubscriptionManager>,
@@ -627,6 +631,7 @@ pub fn spawn_syncing_feed(
                 Ok(true) => {}
                 Ok(false) => {
                     synced = false;
+                    failing = false;
                     continue;
                 }
                 Err(_) => break,
@@ -647,15 +652,10 @@ pub fn spawn_syncing_feed(
                 Err(e) => {
                     if !failing {
                         warn!(
-                            "Failed to read the sync status for syncing subscribers, retrying: {e:?}"
+                            "Failed to read the sync status for syncing subscribers, retrying on the next change: {e:?}"
                         );
                     }
                     failing = true;
-                    changes.mark_changed();
-                    tokio::select! {
-                        _ = tokio::time::sleep(SYNC_STATUS_RETRY_DELAY) => {}
-                        _ = cancel_token.cancelled() => break,
-                    }
                 }
             }
         }

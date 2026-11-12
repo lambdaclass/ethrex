@@ -45,6 +45,8 @@ pub(crate) const SYNCED_HEAD_TOLERANCE: u64 = 8;
 /// How far the executed head may trail before a node already reported as synced
 /// is reported as syncing again. Wider than [`SYNCED_HEAD_TOLERANCE`] so the
 /// `syncing` subscription does not flap for a node lagging by about that much.
+/// A new subscriber gets the status for the feed's current band, so with 9 to 32
+/// blocks of lag it can be told `false` while `eth_syncing` reports syncing.
 pub(crate) const SYNCING_HEAD_TOLERANCE: u64 = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

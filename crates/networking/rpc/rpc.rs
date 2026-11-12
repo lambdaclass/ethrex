@@ -2622,6 +2622,19 @@ mod tests {
         cancel_token.cancel();
     }
 
+    /// A `syncing` subscriber whose connection closed without unsubscribing is
+    /// dropped before the next recompute, though it is owed no status.
+    #[tokio::test]
+    async fn closed_syncing_subscriber_is_dropped() {
+        let storage = Store::new("temp.db", EngineType::InMemory).expect("in-memory store");
+        let manager = SubscriptionManager::spawn(storage);
+        let (out_tx, out_rx) = tokio::sync::mpsc::channel::<String>(1);
+        assert!(manager.subscribe_syncing(out_tx).await.unwrap().is_some());
+        assert!(manager.has_syncing_subscribers().await.unwrap());
+        drop(out_rx);
+        assert!(!manager.has_syncing_subscribers().await.unwrap());
+    }
+
     /// `newPendingTransactions` delivers the hash of each transaction the mempool
     /// admits, and refuses the full-transaction form it does not support.
     #[tokio::test]
