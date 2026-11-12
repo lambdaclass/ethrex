@@ -398,7 +398,7 @@ pub async fn init_l2(
     let ws_config = if opts.node_opts.ws_enabled {
         Some(WebSocketConfig {
             addr: get_ws_socket_addr(&opts.node_opts),
-            subscription_manager: SubscriptionManager::spawn(),
+            subscription_manager: SubscriptionManager::spawn(store.clone()),
         })
     } else {
         None
