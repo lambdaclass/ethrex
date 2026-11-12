@@ -404,11 +404,11 @@ pub(crate) async fn fetch_logs_with_filter(
                 .ok_or_else(|| {
                     RpcErr::ServerError(format!("Unknown block hash {block_hash:#x}"))
                 })?;
-            // Before the bloom check, as geth and reth do.
-            ensure_history_retained(&storage, block_header.number).await?;
             let work = LogQueryWork::new(1, &address_filter, &filter.topics);
             limits.check_work(&work)?;
             let _reservation = limits.reserve(&work)?;
+            // Before the bloom check, as geth and reth do.
+            ensure_history_retained(&storage, block_header.number).await?;
             if bloom_matcher.matches(&block_header.logs_bloom) {
                 let Some(block_body) = storage.get_block_body_by_hash(block_hash).await? else {
                     return Err(RpcErr::Internal(format!(
@@ -448,12 +448,12 @@ pub(crate) async fn fetch_logs_with_filter(
                     "block range extends beyond current head block".to_string(),
                 ));
             }
-            // Before the scan, so the answer does not depend on the blooms, as in reth.
-            ensure_history_retained(&storage, from).await?;
             limits.check_block_range(from, to)?;
             let work = LogQueryWork::new(to - from + 1, &address_filter, &filter.topics);
             limits.check_work(&work)?;
             let _reservation = limits.reserve(&work)?;
+            // Before the scan, so the answer does not depend on the blooms, as in reth.
+            ensure_history_retained(&storage, from).await?;
             // A single block cannot be split any further, so it is exempt from the cap on
             // results, as in reth.
             let max_logs = limits.max_logs_per_response.filter(|_| from != to);
@@ -634,6 +634,9 @@ async fn collect_block_logs(
     // canonical block hash). For mainnet blocks with hundreds of txs this
     // is the dominant cost of eth_getLogs.
     let receipts = storage.get_receipts_for_block(&block_header.hash()).await?;
+    if receipts.len() < block_body.transactions.len() {
+        ensure_receipts_retained(storage, block_header.number).await?;
+    }
     collect_receipt_logs(
         block_header,
         block_body,
@@ -661,7 +664,6 @@ pub(crate) fn collect_receipt_logs(
     for (tx_index, tx) in block_body.transactions.iter().enumerate() {
         let tx_hash = tx.hash(&NativeCrypto);
         let Some(receipt) = receipts.get(tx_index) else {
-            ensure_receipts_retained(storage, block_num).await?;
             return Err(RpcErr::Internal(format!(
                 "Missing receipt for block {block_num} tx {tx_index}"
             )));
