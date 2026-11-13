@@ -121,7 +121,10 @@ if [[ -n $new_zkevm ]]; then
     [[ $notes =~ [Bb]ased\ on[^A-Za-z0-9]*tests@(v[0-9]+\.[0-9]+\.[0-9]+) ]] ||
         die "the notes of tests-zkevm@$new_zkevm do not state the tests@ release it is based on"
     new_zkevm_base=${BASH_REMATCH[1]}
-    zkevm_bundle=$(sed "s|tests-zkevm%40$old_zkevm/|tests-zkevm%40$new_zkevm/|" "$ZKEVM_URL")
+    if [[ $(printf '%s\n%s\n' "$old_zkevm" "$new_zkevm" | sort -V | tail -1) != "$new_zkevm" ]]; then
+        die "tests-zkevm@$new_zkevm is older than the pinned tests-zkevm@$old_zkevm; refusing to downgrade"
+    fi
+    zkevm_bundle="https://github.com/$SPECS/releases/download/tests-zkevm%40$new_zkevm/fixtures_zkevm.tar.gz"
     curl -fsIL -o /dev/null "$zkevm_bundle" || die "tests-zkevm@$new_zkevm has no bundle at $zkevm_bundle"
 fi
 # Checked before any edit, so a refused bump leaves the tree as it was.
@@ -136,7 +139,7 @@ fi
 OLD="$old" NEW="$new" perl -pi -e 's/tests%40\Q$ENV{OLD}\E\/fixtures\.tar\.gz/tests%40$ENV{NEW}\/fixtures.tar.gz/' "$FIXTURES_URL" "$HIVE_DOC"
 OLD="$old" NEW="$new" perl -pi -e 's/^tag: \Q$ENV{OLD}\E$/tag: $ENV{NEW}/' "$PINS"
 OLD="$old" NEW="$new" perl -pi -e '
-    if (/^- Fixtures: \[`tests\@/) { s/tests\@\Q$ENV{OLD}\E/tests\@$ENV{NEW}/g }
+    if (/^- Fixtures: \[`tests\@/) { s/(tests(?:\@|%40))\Q$ENV{OLD}\E/$1$ENV{NEW}/g }
     s/^(- EELS simulator image tag: `)\Q$ENV{OLD}\E(`)$/$1$ENV{NEW}$2/;
     if (/^- Status: /) { s/the \Q$ENV{OLD}\E bundle/the $ENV{NEW} bundle/ }
 ' "$ROADMAP"
