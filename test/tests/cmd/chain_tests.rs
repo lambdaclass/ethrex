@@ -1,7 +1,7 @@
 //! A chain defined outside the `ethrex` crate.
 //!
 //! `Example` is an invented chain. It uses everything a chain can add to the node:
-//! named networks, its own flag, an RPC namespace, and a transaction pool rule. The
+//! named networks, its own flag, an RPC namespace, and a mempool rule. The
 //! tests check each one separately, and then all of them on a running node.
 
 use std::sync::Arc;
@@ -12,7 +12,7 @@ use ethrex::{
     cli::CLI,
     initializers::{get_network, init_node},
 };
-use ethrex_blockchain::{Blockchain, BlockchainOptions, TxPoolPolicy, error::MempoolError};
+use ethrex_blockchain::{Blockchain, BlockchainOptions, MempoolPolicy, error::MempoolError};
 use ethrex_common::{
     Address, H160, U256,
     types::{BlockHeader, EIP1559Transaction, Genesis, Transaction, TxKind},
@@ -59,7 +59,7 @@ const EXAMPLE: Chain<ExampleArgs> = Chain {
 fn example_components(args: &ExampleArgs, _genesis: &Genesis) -> eyre::Result<NodeComponents> {
     let mut components = NodeComponents::default();
     components.rpc.push(Arc::new(ExampleRpc));
-    components.tx_pool_policy = Some(Arc::new(MaxTxGas(args.max_tx_gas)));
+    components.mempool_policy = Some(Arc::new(MaxTxGas(args.max_tx_gas)));
     Ok(components)
 }
 
@@ -87,7 +87,7 @@ impl RpcExtension for ExampleRpc {
 #[derive(Debug)]
 struct MaxTxGas(u64);
 
-impl TxPoolPolicy for MaxTxGas {
+impl MempoolPolicy for MaxTxGas {
     fn admit(&self, tx: &Transaction, _sender: Address, _head: &BlockHeader) -> Result<(), String> {
         if tx.gas_limit() > self.0 {
             return Err(format!(
@@ -145,13 +145,13 @@ fn chain_flag_is_unknown_to_another_binary() {
 #[test]
 fn preset_name_selects_the_preset() {
     let (cli, _) = parse(&EXAMPLE, &["--network", "example-test"]);
-    assert_eq!(cli.opts.network, Some(Network::Custom(EXAMPLE_TEST)));
+    assert_eq!(cli.opts.network, Some(Network::Preset(EXAMPLE_TEST)));
 }
 
 #[test]
 fn first_preset_is_the_default_network() {
     let (cli, _) = parse(&EXAMPLE, &[]);
-    assert_eq!(cli.opts.network, Some(Network::Custom(EXAMPLE_DEV)));
+    assert_eq!(cli.opts.network, Some(Network::Preset(EXAMPLE_DEV)));
 }
 
 #[test]
@@ -291,16 +291,16 @@ fn extension_namespaces_are_validated() {
     }
 }
 
-// ---- transaction pool ----
+// ---- mempool ----
 
-async fn blockchain_with(tx_pool_policy: Option<Arc<dyn TxPoolPolicy>>) -> Blockchain {
+async fn blockchain_with(mempool_policy: Option<Arc<dyn MempoolPolicy>>) -> Blockchain {
     let genesis: Genesis = serde_json::from_str(LOCAL_DEVNET_GENESIS_CONTENTS).unwrap();
     let mut store = Store::new("", EngineType::InMemory).unwrap();
     store.add_initial_state(genesis).await.unwrap();
     Blockchain::new(
         store,
         BlockchainOptions {
-            tx_pool_policy,
+            mempool_policy,
             mempool_prewarm_enabled: false,
             ..Default::default()
         },
@@ -318,7 +318,7 @@ fn transfer(gas_limit: u64) -> Transaction {
 }
 
 #[tokio::test]
-async fn pool_policy_rejects_before_the_standard_checks() {
+async fn mempool_policy_rejects_before_the_standard_checks() {
     let blockchain = blockchain_with(Some(Arc::new(MaxTxGas(100_000)))).await;
     let result = blockchain
         .validate_transaction(&transfer(100_001), Address::repeat_byte(1))
@@ -335,11 +335,11 @@ async fn pool_policy_rejects_before_the_standard_checks() {
 }
 
 #[tokio::test]
-async fn pool_policy_sees_the_chain_head() {
+async fn mempool_policy_sees_the_chain_head() {
     /// Rejects everything, naming the block it was shown.
     #[derive(Debug)]
     struct NameTheHead;
-    impl TxPoolPolicy for NameTheHead {
+    impl MempoolPolicy for NameTheHead {
         fn admit(&self, _: &Transaction, _: Address, head: &BlockHeader) -> Result<(), String> {
             Err(format!(
                 "head is block {} ({:#x})",
@@ -364,7 +364,7 @@ async fn pool_policy_sees_the_chain_head() {
 }
 
 #[tokio::test]
-async fn pool_policy_does_not_reject_what_it_admits() {
+async fn mempool_policy_does_not_reject_what_it_admits() {
     let blockchain = blockchain_with(Some(Arc::new(MaxTxGas(100_000)))).await;
     let result = blockchain
         .validate_transaction(&transfer(100_000), Address::repeat_byte(1))
@@ -470,7 +470,7 @@ async fn node_runs_with_the_chain_components() {
     let chain = rpc(&http_port, "example_chainId", json!([])).await;
     assert_eq!(chain["result"], json!(format!("{chain_id:#x}")), "{chain}");
 
-    // Pool rule: above the cap the submitter gets the chain's reason.
+    // Mempool rule: above the cap the submitter gets the chain's reason.
     let above = signed_transfer(100_001, 0, chain_id).await;
     let rejected = rpc(&http_port, "eth_sendRawTransaction", json!([above])).await;
     let message = rejected["error"]["message"].as_str().unwrap_or_default();
@@ -487,7 +487,8 @@ async fn node_runs_with_the_chain_components() {
     cancel_token.cancel();
 }
 
-/// The same start without the chain's components: no extra namespace, no extra pool rule.
+/// The same start without the chain's components: no extra namespace, no extra mempool
+/// rule.
 #[tokio::test(flavor = "multi_thread")]
 async fn node_without_components_behaves_as_ethereum() {
     let dir = tempfile::tempdir().unwrap();

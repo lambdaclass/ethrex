@@ -177,7 +177,7 @@ pub enum MempoolError {
     GapAdmissionDeniedUnderPressure { occupancy_pct: u8, nonce_gap: u64 },
     #[error("L2-only transaction type is not valid on an L1 node")]
     L2OnlyTransactionType,
-    #[error("Transaction rejected by the pool policy: {0}")]
+    #[error("Transaction rejected by the mempool policy: {0}")]
     RejectedByPolicy(String),
 }
 

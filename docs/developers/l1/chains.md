@@ -9,7 +9,7 @@ A chain can add:
 | Named networks for `--network` | `Chain::networks` |
 | Its own command line flags | The type parameter of `Chain` |
 | RPC namespaces | `NodeComponents::rpc` |
-| Transaction pool rules | `NodeComponents::tx_pool_policy` |
+| Mempool rules | `NodeComponents::mempool_policy` |
 
 Everything a chain leaves out behaves as on Ethereum. A chain cannot change how blocks are validated or executed.
 
@@ -49,7 +49,7 @@ Use the Rust version in ethrex's `rust-toolchain.toml`.
 use std::sync::Arc;
 
 use ethrex::chain::{Chain, NodeComponents};
-use ethrex_blockchain::TxPoolPolicy;
+use ethrex_blockchain::MempoolPolicy;
 use ethrex_common::{
     Address,
     types::{BlockHeader, Genesis, Transaction},
@@ -78,7 +78,7 @@ pub const EXAMPLE: Chain<ExampleArgs> = Chain {
 fn components(args: &ExampleArgs, _genesis: &Genesis) -> eyre::Result<NodeComponents> {
     let mut components = NodeComponents::default();
     components.rpc.push(Arc::new(ExampleRpc));
-    components.tx_pool_policy = Some(Arc::new(MaxTxGas(args.max_tx_gas)));
+    components.mempool_policy = Some(Arc::new(MaxTxGas(args.max_tx_gas)));
     Ok(components)
 }
 ```
@@ -119,13 +119,13 @@ impl RpcExtension for ExampleRpc {
 - `context` is the same `RpcApiContext` the built-in handlers receive: the store, the blockchain, the node's configuration.
 - An extension is served whenever it is in `NodeComponents::rpc`. `--http.api` selects built-in namespaces only. To let operators turn a namespace off, give the chain a flag and leave the extension out of the components.
 
-### 4. Add a transaction pool rule
+### 4. Add a mempool rule
 
 ```rust
 #[derive(Debug)]
 struct MaxTxGas(u64);
 
-impl TxPoolPolicy for MaxTxGas {
+impl MempoolPolicy for MaxTxGas {
     fn admit(&self, tx: &Transaction, _sender: Address, _head: &BlockHeader) -> Result<(), String> {
         if tx.gas_limit() > self.0 {
             return Err(format!("gas limit {} is above the cap of {}", tx.gas_limit(), self.0));
@@ -135,7 +135,7 @@ impl TxPoolPolicy for MaxTxGas {
 }
 ```
 
-- `admit` runs for every transaction offered to the pool, from RPC or from a peer, before the standard checks.
+- `admit` runs for every transaction offered to the mempool, from RPC or from a peer, before the standard checks.
 - `head` is the header of the latest block, for rules that depend on the state of the chain.
 - It can only reject. A transaction it admits still has to pass the standard checks.
 - The `Err` text is returned to whoever submitted the transaction.
@@ -175,7 +175,7 @@ curl -s localhost:8545 -H 'content-type: application/json' \
 A transaction with a gas limit above 500000, sent with `eth_sendRawTransaction`, is answered with:
 
 ```
-Transaction rejected by the pool policy: gas limit 600000 is above the cap of 500000
+Transaction rejected by the mempool policy: gas limit 600000 is above the cap of 500000
 ```
 
 ## How it works
@@ -189,9 +189,9 @@ main() ── run(EXAMPLE) ───────────────▶ pars
                                         load the genesis
 components(args, genesis) ◀──────────── build the components    (once)
         │
-        └─ NodeComponents { rpc, tx_pool_policy }
+        └─ NodeComponents { rpc, mempool_policy }
                                         open the database
-                 tx_pool_policy ──────▶ blockchain: checked on every pool admission
+                 mempool_policy ──────▶ blockchain: checked on every pool admission
                  rpc ─────────────────▶ RPC server: unknown namespaces go to extensions
                                         start p2p and sync, serve until shutdown
 ```
@@ -220,5 +220,5 @@ cargo test --release -p ethrex-test --test ethrex_tests cmd::chain_tests
 
 - `cmd/ethrex/chain.rs`: `Chain`, `NodeComponents`, `run`, `ETHEREUM`.
 - `crates/networking/rpc/rpc.rs`: `RpcExtension`, `validate_rpc_extensions`.
-- `crates/blockchain/blockchain.rs`: `TxPoolPolicy`.
+- `crates/blockchain/blockchain.rs`: `MempoolPolicy`.
 - `crates/common/config/networks.rs`: `NetworkPreset`.

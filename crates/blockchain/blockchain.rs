@@ -343,14 +343,13 @@ impl Drop for ReorgGuard<'_> {
 /// Effectively just rejects zero-tip transactions at admission.
 pub const DEFAULT_MIN_TIP_WEI: u64 = 1;
 
-/// Extra admission rules for the transaction pool, applied on top of the standard
-/// checks.
+/// Extra admission rules for the mempool, applied on top of the standard checks.
 ///
 /// A policy can only make the pool stricter: it sees a transaction before the
 /// standard checks run and may reject it, and it cannot admit a transaction those
 /// checks reject. It applies to every transaction offered to the pool, whether it
 /// arrives over RPC or from a peer. It has no effect on block validation.
-pub trait TxPoolPolicy: Send + Sync + std::fmt::Debug {
+pub trait MempoolPolicy: Send + Sync + std::fmt::Debug {
     /// Returns `Err` with the reason shown to the submitter to keep `tx` out of the
     /// pool. `head` is the header of the latest block, for rules that depend on the
     /// state of the chain, such as a price floor published in the header.
@@ -448,9 +447,9 @@ pub struct BlockchainOptions {
     /// spawning it is both cheaper and simpler than plumbing a `JoinHandle`
     /// through `PrewarmHandle` to join it. See `for_test_harness`.
     pub mempool_prewarm_enabled: bool,
-    /// Extra admission rules for the transaction pool. `None` applies the standard
-    /// checks only.
-    pub tx_pool_policy: Option<Arc<dyn TxPoolPolicy>>,
+    /// Extra admission rules for the mempool. `None` applies the standard checks
+    /// only.
+    pub mempool_policy: Option<Arc<dyn MempoolPolicy>>,
 }
 
 impl Default for BlockchainOptions {
@@ -475,7 +474,7 @@ impl Default for BlockchainOptions {
             max_reorg_depth: None,
             gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
             mempool_prewarm_enabled: true,
-            tx_pool_policy: None,
+            mempool_policy: None,
         }
     }
 }
@@ -3797,7 +3796,7 @@ impl Blockchain {
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config();
 
-        if let Some(policy) = &self.options.tx_pool_policy {
+        if let Some(policy) = &self.options.mempool_policy {
             policy
                 .admit(tx, sender, &header)
                 .map_err(MempoolError::RejectedByPolicy)?;

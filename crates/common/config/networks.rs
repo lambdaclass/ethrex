@@ -43,7 +43,7 @@ pub enum Network {
     GenesisPath(PathBuf),
     /// A named network defined outside this crate (see [`NetworkPreset`]).
     #[serde(skip)]
-    Custom(NetworkPreset),
+    Preset(NetworkPreset),
 }
 
 /// A named network of a chain this crate does not know about: what
@@ -133,7 +133,7 @@ impl fmt::Display for Network {
             Network::LocalDevnetL2 => write!(f, "local-devnet-l2"),
             Network::L2Chain(chain_id) => write!(f, "l2-chain-{}", chain_id),
             Network::GenesisPath(path_buf) => write!(f, "{path_buf:?}"),
-            Network::Custom(preset) => write!(f, "{}", preset.name),
+            Network::Preset(preset) => write!(f, "{}", preset.name),
         }
     }
 }
@@ -159,7 +159,7 @@ impl Network {
                 ..Default::default()
             }),
             Network::GenesisPath(s) => Genesis::try_from(s.as_path()),
-            Network::Custom(preset) => Ok(serde_json::from_str(preset.genesis)?),
+            Network::Preset(preset) => Ok(serde_json::from_str(preset.genesis)?),
         }
     }
 
@@ -179,7 +179,7 @@ impl Network {
                 let chain_id = self.get_genesis().ok()?.config.chain_id;
                 Some(format!("chain-{chain_id}"))
             }
-            Network::Custom(preset) => Some(preset.name.to_owned()),
+            Network::Preset(preset) => Some(preset.name.to_owned()),
         }
     }
 
@@ -203,7 +203,7 @@ impl Network {
             Network::PublicNetwork(PublicNetwork::Mainnet) => MAINNET_BOOTNODES,
             Network::PublicNetwork(PublicNetwork::Sepolia) => SEPOLIA_BOOTNODES,
             Network::PublicNetwork(PublicNetwork::Plataberget) => PLATABERGET_BOOTNODES,
-            Network::Custom(preset) => preset.bootnodes,
+            Network::Preset(preset) => preset.bootnodes,
             _ => return vec![],
         };
         serde_json::from_str(bootnodes).expect("bootnodes file should be valid JSON")
@@ -347,7 +347,7 @@ mod tests {
     #[test]
     fn custom_preset_supplies_genesis_bootnodes_and_datadir() {
         EXAMPLE_PRESET.validate().unwrap();
-        let network = Network::Custom(EXAMPLE_PRESET);
+        let network = Network::Preset(EXAMPLE_PRESET);
         assert_eq!(network.to_string(), "example");
         assert_eq!(network.datadir_suffix(), Some("example".into()));
         assert_eq!(

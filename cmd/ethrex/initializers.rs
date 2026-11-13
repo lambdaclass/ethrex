@@ -890,7 +890,7 @@ pub async fn init_node(
     let genesis = network.get_genesis()?;
     let NodeComponents {
         rpc: rpc_extensions,
-        tx_pool_policy,
+        mempool_policy,
     } = components(&genesis)?;
     ethrex_rpc::validate_rpc_extensions(&rpc_extensions).map_err(|err| eyre::eyre!(err))?;
     display_chain_initialization(&genesis);
@@ -968,7 +968,7 @@ pub async fn init_node(
             max_reorg_depth: opts.max_reorg_depth,
             gap_admit_occupancy_threshold: opts.mempool_gap_admit_occupancy_threshold,
             mempool_prewarm_enabled: true,
-            tx_pool_policy,
+            mempool_policy,
         },
     );
 

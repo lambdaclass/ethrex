@@ -7,14 +7,14 @@
 //! A chain can add:
 //! - named networks for `--network` ([`Chain::networks`]),
 //! - its own command line flags (the type parameter of [`Chain`]),
-//! - RPC namespaces and transaction pool rules ([`NodeComponents`]).
+//! - RPC namespaces and mempool rules ([`NodeComponents`]).
 //!
 //! Everything a chain leaves out behaves as on Ethereum.
 
 use std::{path::Path, sync::Arc, time::Duration};
 
 use clap::{Args, CommandFactory, FromArgMatches, builder::Resettable};
-use ethrex_blockchain::TxPoolPolicy;
+use ethrex_blockchain::MempoolPolicy;
 use ethrex_common::types::Genesis;
 use ethrex_config::networks::{Network, NetworkPreset};
 use ethrex_p2p::{peer_table::PeerTable, types::SharedLocalNode};
@@ -63,8 +63,8 @@ pub struct Chain<A> {
 pub struct NodeComponents {
     /// RPC namespaces served in addition to the built-in ones.
     pub rpc: Vec<Arc<dyn RpcExtension>>,
-    /// Extra admission rules for the transaction pool.
-    pub tx_pool_policy: Option<Arc<dyn TxPoolPolicy>>,
+    /// Extra admission rules for the mempool.
+    pub mempool_policy: Option<Arc<dyn MempoolPolicy>>,
 }
 
 /// The flags of a chain without flags of its own.
@@ -156,7 +156,7 @@ fn resolve_network(opts: &mut Options, presets: &[NetworkPreset]) -> Result<(), 
     };
     if let Some(preset) = selected {
         preset.validate()?;
-        opts.network = Some(Network::Custom(*preset));
+        opts.network = Some(Network::Preset(*preset));
     }
     Ok(())
 }
