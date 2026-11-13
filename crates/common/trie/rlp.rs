@@ -171,7 +171,7 @@ impl RLPDecode for Node {
                     // Decode as Extension
                     ExtensionNode {
                         prefix: path,
-                        child: decode_child(rlp_items[1].expect("we already checked the length"))
+                        child: decode_child(rlp_items[1].expect("we already checked the length"))?
                             .into(),
                     }
                     .into()
@@ -179,9 +179,10 @@ impl RLPDecode for Node {
             }
             // Branch Node
             17 => {
-                let choices = array::from_fn(|i| {
-                    decode_child(rlp_items[i].expect("we already checked the length")).into()
-                });
+                let mut choices = BranchNode::EMPTY_CHOICES;
+                for (choice, item) in choices.iter_mut().zip(&rlp_items) {
+                    *choice = decode_child(item.expect("we already checked the length"))?.into();
+                }
                 let (value, _) =
                     decode_bytes(rlp_items[16].expect("we already checked the length"))?;
                 BranchNode {
@@ -200,10 +201,65 @@ impl RLPDecode for Node {
     }
 }
 
-fn decode_child(rlp: &[u8]) -> NodeHash {
+/// Decodes a child reference: an empty string for no child, a 32-byte string
+/// for the child's hash, or the child itself embedded as a list. A child is
+/// embedded exactly when its encoding is shorter than a hash, so an embedded
+/// child of 32 bytes or more is rejected, as is a string of any other length.
+/// `NodeHash::from_slice` would otherwise panic on a longer one and read one of
+/// exactly 32 bytes as a hash (execution-specs #3934).
+fn decode_child(rlp: &[u8]) -> Result<NodeHash, RLPDecodeError> {
     match decode_bytes(rlp) {
-        Ok((hash, &[])) if hash.len() == 32 => NodeHash::from_slice(hash),
-        Ok((&[], &[])) => NodeHash::default(),
-        _ => NodeHash::from_slice(rlp),
+        Ok((hash, &[])) if hash.len() == 32 => Ok(NodeHash::from_slice(hash)),
+        Ok((&[], &[])) => Ok(NodeHash::default()),
+        Ok(_) => Err(RLPDecodeError::InvalidLength),
+        Err(_) if rlp.len() < 32 => Ok(NodeHash::from_slice(rlp)),
+        Err(_) => Err(RLPDecodeError::InvalidLength),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A branch whose first child is `child` spliced in as is, with the other
+    /// fifteen slots and the value empty.
+    fn branch_with_raw_child(child: &[u8]) -> Vec<u8> {
+        let mut payload = child.to_vec();
+        payload.extend_from_slice(&[RLP_NULL; 16]);
+        let mut encoded = Vec::new();
+        encode_length(payload.len(), &mut encoded);
+        encoded.extend_from_slice(&payload);
+        encoded
+    }
+
+    fn leaf(value_len: usize) -> Vec<u8> {
+        LeafNode::new(Nibbles::from_hex(vec![1, 16]), vec![0xab; value_len]).encode_to_vec()
+    }
+
+    #[test]
+    fn decodes_an_embedded_child_shorter_than_a_hash() {
+        let child = leaf(20);
+        assert!(child.len() < 32);
+        let Node::Branch(branch) = Node::decode(&branch_with_raw_child(&child)).unwrap() else {
+            panic!("expected a branch");
+        };
+        assert_eq!(branch.choices[0], NodeHash::from_slice(&child).into());
+    }
+
+    #[test]
+    fn rejects_an_embedded_child_of_32_bytes_or_more() {
+        // 32 bytes used to be read as a hash, and longer ones panicked.
+        for value_len in [29, 30, 60] {
+            let child = leaf(value_len);
+            assert!(child.len() >= 32);
+            assert!(Node::decode(&branch_with_raw_child(&child)).is_err());
+        }
+    }
+
+    #[test]
+    fn rejects_a_child_string_that_is_not_a_hash() {
+        let mut child = vec![0x80 + 20];
+        child.extend_from_slice(&[0xab; 20]);
+        assert!(Node::decode(&branch_with_raw_child(&child)).is_err());
     }
 }
