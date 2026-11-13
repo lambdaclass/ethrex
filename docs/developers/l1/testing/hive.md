@@ -283,8 +283,8 @@ PR CI (`pr-main_l1.yaml`) and the daily report (`daily_hive_report.yaml`) both g
 
 ```bash
 $ .github/scripts/hive-flags.sh --simulation ethereum/eels/consume-enginex
-flags=--sim.parallelism 4 --sim.loglevel 3 --docker.buildoutput --sim.buildarg tag=v21.0.2
-hive_version=11864a701d331535f4ed487e4d538bead457d760
+flags=--sim.parallelism 4 --sim.loglevel 3 --docker.buildoutput --sim.buildarg tag=<tag>
+hive_version=<hive_version>
 ```
 
 The root `Makefile` reads `tag` and `hive_version` from the same file, so `make setup-hive` checks out the hive commit CI runs and the local `run-hive-eels*` targets run the image CI runs. Set `HIVE_BRANCH` to a branch or another commit to try a different hive.
@@ -312,10 +312,12 @@ https://github.com/ethereum/execution-specs/releases/download/tests%40v21.0.2/fi
 1. **Fixture release.** Run the bump script, which moves `tooling/ef_tests/.fixtures_url`, `tag` in the pin file and the documents that name the release, after checking that the release has a fixture bundle and that execution-specs has published the image of every simulator we run for it:
 
    ```bash
-   .github/scripts/bump-fixtures.sh v<version>
-   # A zkEVM bundle is filled from one tests@ release, so move it with the base:
    .github/scripts/bump-fixtures.sh v<version> --zkevm v<zkevm version>
    ```
+
+   A zkEVM bundle is filled from one `tests@` release, so a new base needs `--zkevm` with a zkEVM release filled from it, and the script refuses the bump without one, before it edits anything. With the base unchanged, the same command moves only the zkEVM bundle.
+
+   consume-wirex does not move with the bump: it keeps the image in `consume_wirex_tag`, with the fixtures that image was built from, until that pin is moved by hand.
 
    `make check-fixture-pins` fails when these places name different releases. It runs in PR CI.
 

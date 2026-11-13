@@ -13,14 +13,18 @@
 #     `docs/developers/l1/testing/hive.md`;
 #   - with `--zkevm`, `tooling/ef_tests/.fixtures_url_zkevm` and `zkevm_base`,
 #     read from that zkEVM release's notes.
-# Before editing anything it checks that the release has a fixture bundle and
-# that execution-specs has published the image of every simulator we run for it.
+# Before editing anything it checks that the release has a fixture bundle, that
+# execution-specs has published the image of every simulator we run for it, and
+# that the zkEVM bundle is filled from it. A zkEVM bundle is filled from one
+# `tests@` release, so a bump of the base needs `--zkevm` with a zkEVM release
+# filled from the new base, and is refused without one: the two pins have to
+# move in the same change for the pin check to pass.
 #
 # Not mechanical, and left to the pull request: new forks or networks the
 # release adds to the fixtures, which the ef-test runners have to learn, and
-# whatever the new tests catch in the client. A zkEVM bundle is filled from one
-# `tests@` release, so when the base moves without `--zkevm` the check at the
-# end fails until a zkEVM release filled from the new base is pinned too.
+# whatever the new tests catch in the client. consume-wirex keeps the image in
+# `consume_wirex_tag`, which no release publishes yet, so its fixtures stay on
+# the release that image was built from until that pin is moved by hand.
 #
 # Exit status: 0 when bumped or already current, 1 on any error. If
 # BUMP_FIXTURES_SUMMARY is set, a Markdown summary is written there, for use as
@@ -99,7 +103,7 @@ for simulator in "${SIMULATORS[@]}"; do
     code=$(curl -s -o /dev/null -w '%{http_code}' \
         -H "Authorization: Bearer $token" \
         -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
-        "https://ghcr.io/v2/$repository/manifests/$new")
+        "https://ghcr.io/v2/$repository/manifests/$new") || true
     [[ $code == 200 ]] || missing+=("ghcr.io/$repository:$new (HTTP $code)")
 done
 if [[ ${#missing[@]} -gt 0 ]]; then
@@ -112,11 +116,20 @@ old_zkevm=$(sed -n 's|.*/download/tests-zkevm%40\(v[0-9][0-9.]*\)/.*|\1|p' "$ZKE
 old_zkevm_base=$(pin zkevm_base)
 new_zkevm_base=$old_zkevm_base
 if [[ -n $new_zkevm ]]; then
-    new_zkevm_base=$(gh release view "tests-zkevm@$new_zkevm" --repo "$SPECS" --json body --jq .body |
-        grep -oiE 'based on[^a-z0-9]*tests@v[0-9]+\.[0-9]+\.[0-9]+' | head -1 | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+') ||
-        die "could not read the base release from the notes of tests-zkevm@$new_zkevm"
-    [[ $new_zkevm_base == "$new" ]] ||
+    notes=$(gh release view "tests-zkevm@$new_zkevm" --repo "$SPECS" --json body --jq .body) ||
+        die "could not read the release notes of tests-zkevm@$new_zkevm"
+    [[ $notes =~ [Bb]ased\ on[^A-Za-z0-9]*tests@(v[0-9]+\.[0-9]+\.[0-9]+) ]] ||
+        die "the notes of tests-zkevm@$new_zkevm do not state the tests@ release it is based on"
+    new_zkevm_base=${BASH_REMATCH[1]}
+    zkevm_bundle=$(sed "s|tests-zkevm%40$old_zkevm/|tests-zkevm%40$new_zkevm/|" "$ZKEVM_URL")
+    curl -fsIL -o /dev/null "$zkevm_bundle" || die "tests-zkevm@$new_zkevm has no bundle at $zkevm_bundle"
+fi
+# Checked before any edit, so a refused bump leaves the tree as it was.
+if [[ $new_zkevm_base != "$new" ]]; then
+    if [[ -n $new_zkevm ]]; then
         die "tests-zkevm@$new_zkevm is filled from tests@$new_zkevm_base, not tests@$new"
+    fi
+    die "the pinned tests-zkevm@$old_zkevm is filled from tests@$old_zkevm_base: pass --zkevm with a zkEVM release filled from tests@$new"
 fi
 
 # From here on the tree is edited.
@@ -148,6 +161,8 @@ summary=$(
     echo
     echo "Simulator images checked at \`$new\`: ${SIMULATORS[*]}."
     echo
+    echo "consume-wirex does not move with this bump: it runs the image pinned in \`consume_wirex_tag\`, with the fixtures that image was built from, until that pin is moved by hand."
+    echo
     echo "**Before merging:** check the release notes for forks or networks the ef-test runners do not know yet, and review the wording of the Fixtures line in \`$ROADMAP\`, which this script only re-versions."
 )
 echo "$summary"
@@ -155,6 +170,4 @@ if [[ -n ${BUMP_FIXTURES_SUMMARY:-} ]]; then
     echo "$summary" >"$BUMP_FIXTURES_SUMMARY"
 fi
 
-# Last, so the summary is printed even when the zkEVM bundle still has to follow.
-.github/scripts/check-fixture-pins.sh ||
-    die "the pins disagree after the bump, see above; a base bump usually needs --zkevm with a release filled from tests@$new"
+.github/scripts/check-fixture-pins.sh || die "the pins disagree after the bump, see above"
