@@ -34,7 +34,7 @@
             const path_to_root = "../../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../../searchindex-b59b4e0f.js";
+            window.path_to_searchindex_js = "../../../searchindex-8a5a43b5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../../toc-a6a3d26a.js"></script>
@@ -385,7 +385,7 @@ fi
 <p>There is no separate Amsterdam file any more. The mainnet bundle absorbed the <code>tests-glamsterdam-devnet</code> series and ships more Amsterdam fixtures than it did, so overlaying the devnet bundle on top would replace the richer subtrees with poorer ones.</p>
 <p>Contents:</p>
 <pre><code># .fixtures_url
-https://github.com/ethereum/execution-specs/releases/download/tests%40v21.0.1/fixtures.tar.gz
+https://github.com/ethereum/execution-specs/releases/download/tests%40v21.0.2/fixtures.tar.gz
 </code></pre>
 <p>The CI hive config lives in <code>.github/config/hive/{mainnet,amsterdam}.yaml</code>, each pinning a <code>tag</code>: the EELS simulator image tag of a fixture release. The images, <code>ghcr.io/ethereum/execution-specs/hive/&lt;simulator&gt;:&lt;tag&gt;</code>, are published by execution-specs and carry that release’s fixtures and framework, so hive pulls them instead of building the simulator from source; release tags such as <code>v21.0.1</code> are immutable.</p>
 <h2 id="updating-repository-versions"><a class="header" href="#updating-repository-versions">Updating Repository Versions</a></h2>
