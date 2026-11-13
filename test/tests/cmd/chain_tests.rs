@@ -22,10 +22,10 @@ use ethrex_config::networks::{
 };
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_rpc::{
-    RpcApiContext, RpcErr, RpcExtension, RpcExtensionFuture, map_http_requests,
+    RpcApiContext, RpcErr, RpcExtension, RpcExtensionFuture, RpcExtensions, map_http_requests,
+    rpc::map_authrpc_requests,
     test_utils::{context_without_p2p, setup_store},
     utils::RpcRequest,
-    validate_rpc_extensions,
 };
 use ethrex_storage::{EngineType, Store};
 use secp256k1::SecretKey;
@@ -64,7 +64,8 @@ fn example_components(args: &ExampleArgs, _genesis: &Genesis) -> eyre::Result<No
     Ok(components)
 }
 
-/// Serves `example_ping`, and `example_chainId` by calling the built-in `eth_chainId`.
+/// Serves `example_ping`, `example_chainId` by calling the built-in `eth_chainId`, and
+/// `example_pingItself` by calling `example_ping` the same way.
 struct ExampleRpc;
 
 impl RpcExtension for ExampleRpc {
@@ -78,6 +79,9 @@ impl RpcExtension for ExampleRpc {
                 "example_ping" => Ok(json!("pong")),
                 "example_chainId" => {
                     map_http_requests(&RpcRequest::new("eth_chainId", None), context).await
+                }
+                "example_pingItself" => {
+                    map_http_requests(&RpcRequest::new("example_ping", None), context).await
                 }
                 _ => Err(RpcErr::MethodNotFound(req.method.clone())),
             }
@@ -195,20 +199,32 @@ fn help_lists_the_presets() {
 }
 
 #[test]
-fn malformed_preset_is_rejected_when_selected() {
-    let broken: Chain<NoArgs> = Chain {
-        name: "ethrex-broken",
-        networks: &[NetworkPreset {
-            name: "broken",
-            genesis: "{",
-            bootnodes: "[]",
-        }],
-        components: |_, _| Ok(NodeComponents::default()),
+fn malformed_preset_is_rejected_at_startup() {
+    const BROKEN: NetworkPreset = NetworkPreset {
+        name: "broken",
+        genesis: "{",
+        bootnodes: "[]",
     };
+    fn chain(networks: &'static [NetworkPreset]) -> Chain<NoArgs> {
+        Chain {
+            name: "ethrex-broken",
+            networks,
+            components: |_, _| Ok(NodeComponents::default()),
+        }
+    }
 
-    let err = parse_args(&broken, ["ethrex-broken"])
+    let err = parse_args(&chain(&[BROKEN]), ["ethrex-broken"])
         .err()
         .expect("a preset whose genesis does not parse must be rejected");
+    assert!(err.to_string().contains("invalid genesis"), "{err}");
+
+    // Also when another network is the one selected.
+    let err = parse_args(
+        &chain(&[EXAMPLE_DEV, BROKEN]),
+        ["ethrex-broken", "--network", "example-dev"],
+    )
+    .err()
+    .expect("a malformed preset must be rejected even when it is not selected");
     assert!(err.to_string().contains("invalid genesis"), "{err}");
 }
 
@@ -255,7 +271,7 @@ fn preset_names_must_be_distinct_from_each_other_and_from_built_in_networks() {
 
 async fn example_context() -> ethrex_rpc::test_utils::TestContext {
     let mut context = context_without_p2p(setup_store().await);
-    context.extensions = vec![Arc::new(ExampleRpc) as Arc<dyn RpcExtension>].into();
+    context.extensions = RpcExtensions::new(vec![Arc::new(ExampleRpc)]).unwrap();
     context
 }
 
@@ -274,6 +290,26 @@ async fn extension_can_call_a_built_in_method() {
     let context = example_context().await;
     let built_in = call(&context, "eth_chainId").await.unwrap();
     assert_eq!(call(&context, "example_chainId").await.unwrap(), built_in);
+}
+
+#[tokio::test]
+async fn extension_namespace_is_not_served_on_the_authenticated_port() {
+    let context = example_context().await;
+    let request = RpcRequest::new("example_ping", None);
+    assert!(matches!(
+        map_authrpc_requests(&request, context.clone()).await,
+        Err(RpcErr::MethodNotFound(method)) if method == "example_ping"
+    ));
+}
+
+#[tokio::test]
+async fn extension_cannot_call_an_extension() {
+    let context = example_context().await;
+    // The call back into the dispatcher finds no extension, so it cannot recurse.
+    assert!(matches!(
+        call(&context, "example_pingItself").await,
+        Err(RpcErr::MethodNotFound(method)) if method == "example_ping"
+    ));
 }
 
 #[tokio::test]
@@ -323,18 +359,20 @@ fn extension_namespaces_are_validated() {
             .collect()
     };
 
-    assert!(validate_rpc_extensions(&extensions(&[])).is_ok());
-    assert!(validate_rpc_extensions(&extensions(&["example", "other2"])).is_ok());
+    assert!(RpcExtensions::new(extensions(&[])).is_ok());
+    assert!(RpcExtensions::new(extensions(&["example", "other2"])).is_ok());
     for built_in in [
         "eth", "engine", "debug", "admin", "net", "web3", "txpool", "testing",
     ] {
-        let err = validate_rpc_extensions(&extensions(&[built_in])).unwrap_err();
+        let err = RpcExtensions::new(extensions(&[built_in])).err().unwrap();
         assert!(err.contains("built-in"), "{err}");
     }
-    let err = validate_rpc_extensions(&extensions(&["example", "example"])).unwrap_err();
+    let err = RpcExtensions::new(extensions(&["example", "example"]))
+        .err()
+        .unwrap();
     assert!(err.contains("more than once"), "{err}");
     for malformed in ["", "with_underscore", "Upper"] {
-        assert!(validate_rpc_extensions(&extensions(&[malformed])).is_err());
+        assert!(RpcExtensions::new(extensions(&[malformed])).is_err());
     }
 }
 
@@ -552,6 +590,9 @@ async fn node_runs_with_the_chain_components() {
     let node = Node::start(&["--example.max-tx-gas", "100000"], true).await;
     let http_port = &node.http_port;
     let chain_id = node.store.get_chain_config().chain_id;
+    // The node runs on the preset's genesis, not on a built-in network.
+    let preset_genesis: Genesis = serde_json::from_str(EXAMPLE_TEST.genesis).unwrap();
+    assert_eq!(chain_id, preset_genesis.config.chain_id);
 
     // RPC namespace.
     let pong = rpc(http_port, "example_ping", json!([])).await;

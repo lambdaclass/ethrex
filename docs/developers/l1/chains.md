@@ -84,7 +84,7 @@ fn components(args: &ExampleArgs, _genesis: &Genesis) -> eyre::Result<NodeCompon
 ```
 
 - **`name`** is the name of the binary, shown in `--help`.
-- **`networks`** are the networks `--network <name>` accepts in addition to the Ethereum ones. The first one is the default network of the binary. `genesis` is the contents of a genesis file. `bootnodes` is a JSON array of enode URLs, or `"[]"`. Each network keeps its data in a subdirectory of the datadir named after it, so a name is lowercase letters, digits and hyphens, and cannot be one ethrex already uses (`mainnet`, `sepolia`, `hoodi`, `plataberget`, `dev`, or anything starting with `chain-`). The node refuses to start otherwise.
+- **`networks`** are the networks `--network <name>` accepts in addition to the Ethereum ones. The first one is the default network of the binary. `genesis` is the contents of a genesis file. `bootnodes` is a JSON array of enode URLs, or `"[]"`. Each network keeps its data in a subdirectory of the datadir named after it, so a name is lowercase letters, digits and hyphens, and cannot be one ethrex already uses (`mainnet`, `sepolia`, `hoodi`, `plataberget`, `dev`, or anything starting with `chain-`). The node refuses to start otherwise, and also when the genesis or the bootnodes of any of the chain's networks do not parse. A network's name wins over a file of the same name in the current directory; pass `./<name>` to use the file.
 - **The type parameter** is the chain's flags, a `clap::Args` struct. Prefix the flag names with the chain's name so they cannot collide with the node's. Use `ethrex::chain::NoArgs` if there are none.
 - **`components`** is a function called once per start, after the command line is parsed and the genesis is loaded, and before the database is opened. It receives the chain's flags and the genesis of the selected network. Returning an error aborts the start. `NodeComponents` is built by filling in the fields of `NodeComponents::default()`.
 
@@ -116,7 +116,7 @@ impl RpcExtension for ExampleRpc {
 
 - Every method named `<namespace>_<name>` is routed to `handle`, on the HTTP and WebSocket endpoints. Extensions are not served on the authenticated port.
 - The namespace must be lowercase letters and digits, and cannot be a built-in one (`eth`, `engine`, `debug`, `admin`, `net`, `web3`, `txpool`, `testing`). The node refuses to start otherwise.
-- `context` is the same `RpcApiContext` the built-in handlers receive: the store, the blockchain, the node's configuration.
+- `context` is the same `RpcApiContext` the built-in handlers receive: the store, the blockchain, the node's configuration. Through it an extension can call built-in methods, but not methods of an extension.
 - An extension is served whenever it is in `NodeComponents::rpc`. `--http.api` selects built-in namespaces only. To let operators turn a namespace off, give the chain a flag and leave the extension out of the components.
 - Calls to an extension are not counted in the node's RPC metrics.
 
@@ -136,7 +136,7 @@ impl MempoolPolicy for MaxTxGas {
 }
 ```
 
-- `admit` runs for every transaction offered to the mempool, from RPC or from a peer, before the standard checks.
+- `admit` runs for every transaction offered to the mempool, from RPC or from a peer, before the standard checks. Keep it cheap, and never block in it.
 - `head` is the header of the latest block, for rules that depend on the state of the chain.
 - It can only reject. A transaction it admits still has to pass the standard checks.
 - The `Err` text is returned to whoever submitted the transaction.
@@ -155,7 +155,7 @@ fn main() -> eyre::Result<()> {
 }
 ```
 
-- `run` parses the command line, starts the node, and returns when the node shuts down.
+- `run` parses the command line, starts the node, and returns when the node shuts down. It sets up the whole process (async runtime, thread pool, logging, signals), so call it once and from `main`.
 - `global_allocator!` declares the memory allocator and tuning the `ethrex` binary uses. Without it the binary runs on the system allocator, which is slower.
 
 ### 6. Run it
@@ -222,6 +222,6 @@ cargo test --release -p ethrex-test --test ethrex_tests cmd::chain_tests
 ## References
 
 - `cmd/ethrex/chain.rs`: `Chain`, `NodeComponents`, `run`, `ETHEREUM`.
-- `crates/networking/rpc/rpc.rs`: `RpcExtension`, `validate_rpc_extensions`.
+- `crates/networking/rpc/rpc.rs`: `RpcExtension`, `RpcExtensions`.
 - `crates/blockchain/blockchain.rs`: `MempoolPolicy`.
 - `crates/common/config/networks.rs`: `NetworkPreset`.

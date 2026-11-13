@@ -9,7 +9,7 @@ pub mod utils;
 
 pub mod decode;
 
-#[cfg(feature = "jemalloc")]
+#[cfg(all(feature = "jemalloc", not(target_env = "msvc")))]
 #[doc(hidden)]
 pub use tikv_jemallocator;
 

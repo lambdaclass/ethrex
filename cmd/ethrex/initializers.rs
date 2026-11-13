@@ -11,7 +11,7 @@ use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::{BlockNumber, Genesis};
 use ethrex_config::networks::Network;
-use ethrex_rpc::{RpcExtension, WebSocketConfig};
+use ethrex_rpc::{RpcExtensions, WebSocketConfig};
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_metrics::rpc::initialize_rpc_metrics;
@@ -363,7 +363,7 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-    rpc_extensions: Vec<Arc<dyn RpcExtension>>,
+    rpc_extensions: RpcExtensions,
 ) -> eyre::Result<()> {
     if !is_memory_datadir(datadir) {
         init_datadir(datadir);
@@ -560,7 +560,10 @@ pub fn get_network(opts: &Options) -> Network {
 pub fn get_bootnodes(opts: &Options, network: &Network, datadir: &Path) -> Vec<Node> {
     let mut bootnodes: Vec<Node> = opts.bootnodes.clone();
 
-    bootnodes.extend(network.get_bootnodes());
+    match network.get_bootnodes() {
+        Ok(network_bootnodes) => bootnodes.extend(network_bootnodes),
+        Err(e) => warn!("Could not read the bootnodes of {network}: {e}"),
+    }
 
     debug!("Loading known peers from config");
 
@@ -892,7 +895,7 @@ pub async fn init_node(
         rpc: rpc_extensions,
         mempool_policy,
     } = components(&genesis)?;
-    ethrex_rpc::validate_rpc_extensions(&rpc_extensions).map_err(|err| eyre::eyre!(err))?;
+    let rpc_extensions = RpcExtensions::new(rpc_extensions).map_err(|err| eyre::eyre!(err))?;
     display_chain_initialization(&genesis);
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();

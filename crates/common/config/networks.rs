@@ -228,16 +228,18 @@ impl Network {
         ]
     }
 
-    pub fn get_bootnodes(&self) -> Vec<Node> {
+    /// The bootnodes of the network. An error is only possible for a
+    /// [`Network::Preset`], whose bootnode list comes from outside this crate.
+    pub fn get_bootnodes(&self) -> Result<Vec<Node>, serde_json::Error> {
         let bootnodes = match self {
             Network::PublicNetwork(PublicNetwork::Hoodi) => HOODI_BOOTNODES,
             Network::PublicNetwork(PublicNetwork::Mainnet) => MAINNET_BOOTNODES,
             Network::PublicNetwork(PublicNetwork::Sepolia) => SEPOLIA_BOOTNODES,
             Network::PublicNetwork(PublicNetwork::Plataberget) => PLATABERGET_BOOTNODES,
             Network::Preset(preset) => preset.bootnodes,
-            _ => return vec![],
+            _ => return Ok(vec![]),
         };
-        serde_json::from_str(bootnodes).expect("bootnodes file should be valid JSON")
+        serde_json::from_str(bootnodes)
     }
 }
 
@@ -385,7 +387,7 @@ mod tests {
             network.get_genesis().unwrap().config.chain_id,
             Network::LocalDevnet.get_genesis().unwrap().config.chain_id
         );
-        assert_eq!(network.get_bootnodes().len(), 1);
+        assert_eq!(network.get_bootnodes().unwrap().len(), 1);
     }
 
     #[test]
@@ -410,6 +412,8 @@ mod tests {
                 .unwrap_err()
                 .contains("invalid bootnodes")
         );
+        // Used without validation, it is an error and not a panic.
+        assert!(Network::Preset(bad_bootnodes).get_bootnodes().is_err());
     }
 
     #[test]
@@ -443,8 +447,17 @@ mod tests {
 
     #[test]
     fn test_get_bootnodes_works_for_public_networks() {
-        Network::PublicNetwork(PublicNetwork::Hoodi).get_bootnodes();
-        Network::PublicNetwork(PublicNetwork::Mainnet).get_bootnodes();
-        Network::PublicNetwork(PublicNetwork::Sepolia).get_bootnodes();
+        for network in [
+            PublicNetwork::Hoodi,
+            PublicNetwork::Mainnet,
+            PublicNetwork::Sepolia,
+        ] {
+            assert!(
+                !Network::PublicNetwork(network)
+                    .get_bootnodes()
+                    .unwrap()
+                    .is_empty()
+            );
+        }
     }
 }

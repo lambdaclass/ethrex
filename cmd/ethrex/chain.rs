@@ -83,6 +83,10 @@ pub const ETHEREUM: Chain<NoArgs> = Chain {
 ///
 /// The binary declares its global allocator with [`crate::global_allocator!`], as
 /// `cmd/ethrex/ethrex.rs` does.
+///
+/// `run` sets up the process: the async runtime, the global thread pool, logging
+/// and signal handling. Call it once, from `main`, and nothing else that sets those
+/// up.
 pub fn run<A: Args>(chain: Chain<A>) -> eyre::Result<()> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -143,10 +147,10 @@ where
 
 /// Replaces a `--network` value that names a preset with that preset, and selects
 /// the first preset when no network was given. A malformed preset is an error here,
-/// before anything reads it.
+/// before anything reads it, whether or not it is the one selected.
 fn resolve_network(opts: &mut Options, presets: &[NetworkPreset]) -> Result<(), String> {
     for (index, preset) in presets.iter().enumerate() {
-        preset.validate_name()?;
+        preset.validate()?;
         if presets[..index]
             .iter()
             .any(|other| other.name == preset.name)
@@ -159,15 +163,15 @@ fn resolve_network(opts: &mut Options, presets: &[NetworkPreset]) -> Result<(), 
     }
     let selected = match &opts.network {
         // The CLI parser reads a name it does not know as a genesis file path.
+        // Compared as text: path equality is looser on some platforms.
         Some(Network::GenesisPath(path)) => presets
             .iter()
-            .find(|preset| Path::new(preset.name) == path.as_path()),
+            .find(|preset| path.to_str() == Some(preset.name)),
         // Dev mode runs its own local network.
         None if !opts.dev => presets.first(),
         _ => None,
     };
     if let Some(preset) = selected {
-        preset.validate()?;
         opts.network = Some(Network::Preset(*preset));
     }
     Ok(())

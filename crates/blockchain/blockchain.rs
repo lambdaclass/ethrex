@@ -354,6 +354,9 @@ pub const DEFAULT_MIN_TIP_WEI: u64 = 1;
 /// admitted under one head stays in the pool when the head changes, and block
 /// building does not consult the policy. A rejection only keeps the transaction out
 /// of this node's pool; the peer that sent it is not penalized.
+///
+/// `admit` is called on the transaction admission path, for every transaction a
+/// peer or a client offers: keep it cheap and never block in it.
 pub trait MempoolPolicy: Send + Sync + std::fmt::Debug {
     /// Returns `Err` with the reason shown to the submitter to keep `tx` out of the
     /// pool. `head` is the header of the latest block, for rules that depend on the

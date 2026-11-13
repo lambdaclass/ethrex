@@ -276,11 +276,12 @@ pub type RpcExtensionFuture<'a> =
 /// Every method whose name starts with `<namespace>_` is routed to
 /// [`RpcExtension::handle`] on the HTTP and WebSocket endpoints. Extensions are never
 /// served on the authenticated port. A built-in namespace cannot be extended or
-/// replaced: [`validate_rpc_extensions`] rejects an extension that names one.
+/// replaced: [`RpcExtensions::new`] rejects an extension that names one.
 ///
 /// The extension receives the same [`RpcApiContext`] as the built-in handlers, so it
 /// can read the store and the chain, and call built-in methods in-process through
-/// [`map_http_requests`].
+/// [`map_http_requests`]. That context carries no extensions: an extension cannot
+/// call another extension, or itself.
 pub trait RpcExtension: Send + Sync {
     /// Method prefix, without the underscore: `"foo"` serves `foo_*`.
     fn namespace(&self) -> &'static str;
@@ -290,34 +291,50 @@ pub trait RpcExtension: Send + Sync {
     fn handle<'a>(&'a self, req: &'a RpcRequest, context: RpcApiContext) -> RpcExtensionFuture<'a>;
 }
 
-/// Checks a set of RPC extensions before the server starts: a namespace must be a
-/// non-empty prefix of lowercase letters and digits, must not be a built-in namespace,
-/// and must not be registered twice.
-pub fn validate_rpc_extensions(extensions: &[Arc<dyn RpcExtension>]) -> Result<(), String> {
-    let mut seen = HashSet::new();
-    for extension in extensions {
-        let namespace = extension.namespace();
-        let well_formed = !namespace.is_empty()
-            && namespace
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
-        if !well_formed {
-            return Err(format!(
-                "RPC extension namespace {namespace:?} must be non-empty and contain only lowercase letters and digits"
-            ));
+/// The RPC extensions of a node: a set of [`RpcExtension`]s whose namespaces were
+/// checked when the set was built.
+#[derive(Clone, Default)]
+pub struct RpcExtensions(Arc<[Arc<dyn RpcExtension>]>);
+
+impl RpcExtensions {
+    /// Checks the namespaces: each must be a non-empty prefix of lowercase letters
+    /// and digits, must not be a built-in namespace, and must not be given twice.
+    pub fn new(extensions: Vec<Arc<dyn RpcExtension>>) -> Result<Self, String> {
+        let mut seen = HashSet::new();
+        for extension in &extensions {
+            let namespace = extension.namespace();
+            let well_formed = !namespace.is_empty()
+                && namespace
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+            if !well_formed {
+                return Err(format!(
+                    "RPC extension namespace {namespace:?} must be non-empty and contain only lowercase letters and digits"
+                ));
+            }
+            if RpcNamespace::from_prefix(namespace).is_some() {
+                return Err(format!(
+                    "RPC extension namespace {namespace:?} is a built-in namespace"
+                ));
+            }
+            if !seen.insert(namespace) {
+                return Err(format!(
+                    "RPC extension namespace {namespace:?} is registered more than once"
+                ));
+            }
         }
-        if RpcNamespace::from_prefix(namespace).is_some() {
-            return Err(format!(
-                "RPC extension namespace {namespace:?} is a built-in namespace"
-            ));
-        }
-        if !seen.insert(namespace) {
-            return Err(format!(
-                "RPC extension namespace {namespace:?} is registered more than once"
-            ));
-        }
+        Ok(Self(extensions.into()))
     }
-    Ok(())
+
+    /// The extension that serves `method`, which must have the form
+    /// `<namespace>_<name>`.
+    fn serving(&self, method: &str) -> Option<Arc<dyn RpcExtension>> {
+        let (namespace, _) = method.split_once('_')?;
+        self.0
+            .iter()
+            .find(|extension| extension.namespace() == namespace)
+            .cloned()
+    }
 }
 
 /// This struct contains all the dependencies that RPC handlers need to process requests,
@@ -363,7 +380,7 @@ pub struct RpcApiContext {
     /// What `eth_getLogs` and log-filter polls may cost, and the work budget they share.
     pub log_query_limits: LogQueryLimits,
     /// Namespaces served in addition to the built-in ones. Empty on a stock node.
-    pub extensions: Arc<[Arc<dyn RpcExtension>]>,
+    pub extensions: RpcExtensions,
 }
 
 /// Configuration for the WebSocket RPC server.
@@ -700,8 +717,7 @@ pub fn start_block_executor(
 /// * `allowed_namespaces` - Namespaces served on the public HTTP/WS endpoints
 /// * `authrpc_max_inflight_body_size` - Request body bytes the Auth-RPC listener may hold
 ///   at once across all connections
-/// * `extensions` - Namespaces served in addition to the built-in ones; check them with
-///   [`validate_rpc_extensions`] first
+/// * `extensions` - Namespaces served in addition to the built-in ones
 ///
 /// # Errors
 ///
@@ -729,7 +745,7 @@ pub async fn bind_api(
     allowed_namespaces: HashSet<RpcNamespace>,
     log_query_limits: LogQueryLimits,
     authrpc_max_inflight_body_size: usize,
-    extensions: Vec<Arc<dyn RpcExtension>>,
+    extensions: RpcExtensions,
 ) -> Result<BoundRpc, RpcStartupError> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -757,7 +773,7 @@ pub async fn bind_api(
         ws: ws.clone(),
         allowed_namespaces: Arc::new(allowed_namespaces),
         log_query_limits,
-        extensions: extensions.into(),
+        extensions,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -1198,7 +1214,7 @@ pub async fn start_api(
         allowed_namespaces,
         LogQueryLimits::default(),
         authrpc_max_inflight_body_size,
-        Vec::new(),
+        RpcExtensions::default(),
     )
     .await?
     .serve()
@@ -1822,17 +1838,17 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
     let namespace = match req.namespace() {
         Ok(ns) => ns,
         Err(rpc_err) => {
-            // Not a built-in namespace: it may belong to an extension. Only a
-            // method of the form `<namespace>_<name>` does.
-            let extension = req.method.split_once('_').and_then(|(prefix, _)| {
-                context
-                    .extensions
-                    .iter()
-                    .find(|extension| extension.namespace() == prefix)
-                    .cloned()
-            });
-            return match extension {
-                Some(extension) => extension.handle(req, context).await,
+            // Not a built-in namespace: it may belong to an extension. The
+            // extension gets a context without extensions, so a call it makes back
+            // into this function can only reach built-in methods and cannot recurse.
+            return match context.extensions.serving(&req.method) {
+                Some(extension) => {
+                    let context = RpcApiContext {
+                        extensions: RpcExtensions::default(),
+                        ..context
+                    };
+                    extension.handle(req, context).await
+                }
                 None => Err(rpc_err),
             };
         }
