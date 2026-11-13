@@ -352,8 +352,9 @@ pub const DEFAULT_MIN_TIP_WEI: u64 = 1;
 /// arrives over RPC or from a peer. It has no effect on block validation.
 pub trait TxPoolPolicy: Send + Sync + std::fmt::Debug {
     /// Returns `Err` with the reason shown to the submitter to keep `tx` out of the
-    /// pool.
-    fn admit(&self, tx: &Transaction, sender: Address) -> Result<(), String>;
+    /// pool. `head` is the header of the latest block, for rules that depend on the
+    /// state of the chain, such as a price floor published in the header.
+    fn admit(&self, tx: &Transaction, sender: Address, head: &BlockHeader) -> Result<(), String>;
 }
 
 /// Configuration options for the blockchain.
@@ -3786,12 +3787,6 @@ impl Blockchain {
             return Ok((None, None));
         }
 
-        if let Some(policy) = &self.options.tx_pool_policy {
-            policy
-                .admit(tx, sender)
-                .map_err(MempoolError::RejectedByPolicy)?;
-        }
-
         // Frame transactions: skip balance/EOA checks (payer unknown until execution)
         let is_frame_tx = matches!(tx, Transaction::FrameTransaction(_));
 
@@ -3801,6 +3796,12 @@ impl Blockchain {
             .get_block_header(header_no)?
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config();
+
+        if let Some(policy) = &self.options.tx_pool_policy {
+            policy
+                .admit(tx, sender, &header)
+                .map_err(MempoolError::RejectedByPolicy)?;
+        }
 
         // Every fork gate below must resolve the fork exactly like execution does,
         // i.e. through the fork ordinal. A per-field activation check

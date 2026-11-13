@@ -15,7 +15,7 @@ use ethrex::{
 use ethrex_blockchain::{Blockchain, BlockchainOptions, TxPoolPolicy, error::MempoolError};
 use ethrex_common::{
     Address, H160, U256,
-    types::{EIP1559Transaction, Genesis, Transaction, TxKind},
+    types::{BlockHeader, EIP1559Transaction, Genesis, Transaction, TxKind},
 };
 use ethrex_config::networks::{
     LOCAL_DEVNET_GENESIS_CONTENTS, LOCAL_DEVNET_PRIVATE_KEYS, Network, NetworkPreset, PublicNetwork,
@@ -93,7 +93,7 @@ impl RpcExtension for ExampleRpc {
 struct MaxTxGas(u64);
 
 impl TxPoolPolicy for MaxTxGas {
-    fn admit(&self, tx: &Transaction, _sender: Address) -> Result<(), String> {
+    fn admit(&self, tx: &Transaction, _sender: Address, _head: &BlockHeader) -> Result<(), String> {
         if tx.gas_limit() > self.0 {
             return Err(format!(
                 "gas limit {} is above the example chain's cap of {}",
@@ -337,6 +337,35 @@ async fn pool_policy_rejects_before_the_standard_checks() {
                 reason,
                 "gas limit 100001 is above the example chain's cap of 100000"
             );
+        }
+        other => panic!("expected a policy rejection, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn pool_policy_sees_the_chain_head() {
+    /// Rejects everything, naming the block it was shown.
+    #[derive(Debug)]
+    struct NameTheHead;
+    impl TxPoolPolicy for NameTheHead {
+        fn admit(&self, _: &Transaction, _: Address, head: &BlockHeader) -> Result<(), String> {
+            Err(format!(
+                "head is block {} ({:#x})",
+                head.number,
+                head.hash()
+            ))
+        }
+    }
+
+    let blockchain = blockchain_with(Some(Arc::new(NameTheHead))).await;
+    let genesis: Genesis = serde_json::from_str(LOCAL_DEVNET_GENESIS_CONTENTS).unwrap();
+    let genesis_hash = genesis.get_block().hash();
+    let result = blockchain
+        .validate_transaction(&transfer(21_000), Address::repeat_byte(1))
+        .await;
+    match result {
+        Err(MempoolError::RejectedByPolicy(reason)) => {
+            assert_eq!(reason, format!("head is block 0 ({genesis_hash:#x})"));
         }
         other => panic!("expected a policy rejection, got {other:?}"),
     }

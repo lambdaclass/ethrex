@@ -41,7 +41,10 @@ use std::sync::Arc;
 
 use ethrex::integration::{ChainInfo, Components, Integration};
 use ethrex_blockchain::TxPoolPolicy;
-use ethrex_common::{Address, types::Transaction};
+use ethrex_common::{
+    Address,
+    types::{BlockHeader, Transaction},
+};
 use ethrex_config::networks::NetworkPreset;
 use ethrex_rpc::{RpcApiContext, RpcErr, RpcExtension, RpcExtensionFuture, utils::RpcRequest};
 
@@ -119,7 +122,7 @@ impl RpcExtension for ExampleRpc {
 struct MaxTxGas(u64);
 
 impl TxPoolPolicy for MaxTxGas {
-    fn admit(&self, tx: &Transaction, _sender: Address) -> Result<(), String> {
+    fn admit(&self, tx: &Transaction, _sender: Address, _head: &BlockHeader) -> Result<(), String> {
         if tx.gas_limit() > self.0 {
             return Err(format!("gas limit {} is above the cap of {}", tx.gas_limit(), self.0));
         }
@@ -129,6 +132,7 @@ impl TxPoolPolicy for MaxTxGas {
 ```
 
 - `admit` runs for every transaction offered to the pool, from RPC or from a peer, before the standard checks.
+- `head` is the header of the latest block, for rules that depend on the state of the chain.
 - It can only reject. A transaction it admits still has to pass the standard checks.
 - The `Err` text is returned to whoever submitted the transaction.
 - It has no effect on block validation: a block that contains a transaction the policy would reject is still valid.
