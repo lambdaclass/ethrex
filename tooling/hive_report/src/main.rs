@@ -69,6 +69,7 @@ impl HiveResult {
             "sync" => ("Sync", "Node Syncing"),
             "eels/consume-rlp" => ("EVM - Consume RLP", fork.as_str()),
             "eels/consume-engine" => ("EVM - Consume Engine", fork.as_str()),
+            "eels/consume-wirex" => ("EVM - Consume WireX", fork.as_str()),
             // The name the simulator registers its suite under, which is not the
             // `--sim` name `eels/execute-blobs`; matching the latter silently
             // dropped every execute run as an unknown suite.
@@ -248,10 +249,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            // Both of these simulators have only 1 suite where we can find tests for 3 different forks.
+            // These simulators report a single suite holding the tests of every fork.
             // To get the total tests and the passed tests a filtes is done each time so we do not clone the test cases each time.
             if json_data.name.as_str() == "eels/consume-rlp"
                 || json_data.name.as_str() == "eels/consume-engine"
+                || json_data.name.as_str() == "eels/consume-wirex"
             {
                 let result_paris = create_fork_result(&json_data, "Paris", "fork_Paris");
                 // Shanghai
