@@ -8,6 +8,9 @@
 # client, so a bump that misses one of them either fails every fixture the two
 # releases disagree on or documents a release that is not the one being run.
 #
+# The base of the zkEVM bundle is only stated in that release's notes, so it is
+# taken from `zkevm_base` in the pin file, not derived from the bundle's URL.
+#
 #   .github/scripts/check-fixture-pins.sh          # check this repository
 #   .github/scripts/check-fixture-pins.sh <root>   # check another tree
 #
@@ -19,17 +22,25 @@ set -euo pipefail
 ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 PINS="$ROOT/.github/config/hive/pins.yaml"
 FIXTURES_URL="$ROOT/tooling/ef_tests/.fixtures_url"
+ZKEVM_URL="$ROOT/tooling/ef_tests/.fixtures_url_zkevm"
 ROADMAP="$ROOT/docs/roadmaps/forks-roadmap.md"
 HIVE_DOC="$ROOT/docs/developers/l1/testing/hive.md"
 
 status=0
 mismatch() { echo "check-fixture-pins: $*" >&2; status=1; }
 
-for file in "$PINS" "$FIXTURES_URL" "$ROADMAP" "$HIVE_DOC"; do
+for file in "$PINS" "$FIXTURES_URL" "$ZKEVM_URL" "$ROADMAP" "$HIVE_DOC"; do
     [[ -f $file ]] || { echo "check-fixture-pins: no file at $file" >&2; exit 1; }
 done
 
 pin() { sed -n "s/^$1:[[:space:]]*//p" "$PINS"; }
+
+# The scripts and the Makefile read a pin as the text after `key: `, so a pin
+# line has to be exactly that. A trailing space or comment would become part of
+# a hive flag.
+while IFS= read -r line; do
+    mismatch "${PINS#"$ROOT"/} has a pin that is not a bare \`key: value\` line: '$line'"
+done < <(grep -E '^[A-Za-z_]+:' "$PINS" | grep -vE '^[a-z_]+: [^[:space:]#]+$' || true)
 
 tag=$(pin tag)
 if [[ ! $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -49,6 +60,10 @@ fi
 zkevm_base=$(pin zkevm_base)
 if [[ $zkevm_base != "$tag" ]]; then
     mismatch "\`zkevm_base\` is '$zkevm_base' but the hive image tag is $tag: the zkEVM bundle and the base bundle describe different chains"
+fi
+
+if ! grep -qxE 'https://github\.com/ethereum/execution-specs/releases/download/tests-zkevm%40v[0-9]+\.[0-9]+\.[0-9]+/fixtures_zkevm\.tar\.gz' "$ZKEVM_URL"; then
+    mismatch "${ZKEVM_URL#"$ROOT"/} is not an execution-specs tests-zkevm@ release URL"
 fi
 
 # The forks roadmap states the fixture release and the image tag.
