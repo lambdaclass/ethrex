@@ -9,7 +9,7 @@ This project uses three key repositories for Hive testing:
 1. **[ethereum/hive](https://github.com/ethereum/hive)** - The main Hive testing framework
    - Current commit: `0921fb7833e3de180eacdc9f26de6e51dcab0dba`
 2. **[ethereum/execution-specs](https://github.com/ethereum/execution-specs)** - Test fixtures and vectors (the former `ethereum/execution-spec-tests` repo is archived)
-   - Mainnet: `tests@v20.0.1` (Osaka + BPO1 + BPO2); Amsterdam: `tests-glamsterdam-devnet@v8.0.0`
+   - Fixtures: the release pinned in `tooling/ef_tests/.fixtures_url`, which carries every fork through Amsterdam
 3. **[ethereum/execution-specs](https://github.com/ethereum/execution-specs)** - Fork specifications
    - Current branch: `forks/amsterdam`
 
@@ -284,16 +284,12 @@ HIVE_BRANCH ?= master
 
 ### Workflow Configuration (.github/workflows/daily_hive_report.yaml)
 
-Fixtures come from [ethereum/execution-specs](https://github.com/ethereum/execution-specs) (the archived `ethereum/execution-spec-tests` repo is no longer used). The workflow uses fork-specific fixtures to ensure comprehensive test coverage, pinned via config files under `.github/config/hive/`:
+Fixtures come from [ethereum/execution-specs](https://github.com/ethereum/execution-specs) (the archived `ethereum/execution-spec-tests` repo is no longer used). Every EELS simulator runs from the image of one fixture release, pinned in `.github/config/hive/mainnet.yaml`:
 
-```yaml
-# Amsterdam tests read their pin from .github/config/hive/amsterdam.yaml
-if [[ "$SIM_LIMIT" == *"fork_Amsterdam"* ]]; then
-  FLAGS+=" --sim.buildarg tag=$AMSTERDAM_TAG"
-else
-  # Other forks use the mainnet bundle (.github/config/hive/mainnet.yaml),
-  # which includes comprehensive coverage including ported static tests.
-  FLAGS+=" --sim.buildarg tag=$MAINNET_TAG"
+```bash
+# EELS_TAG is the `tag` of .github/config/hive/mainnet.yaml.
+if [[ "$SIMULATION" == ethereum/eels/* ]]; then
+  FLAGS+=" --sim.buildarg tag=$EELS_TAG"
 fi
 ```
 
@@ -313,7 +309,7 @@ Contents:
 https://github.com/ethereum/execution-specs/releases/download/tests%40v21.0.2/fixtures.tar.gz
 ```
 
-The CI hive config lives in `.github/config/hive/{mainnet,amsterdam}.yaml`, each pinning a `tag`: the EELS simulator image tag of a fixture release. The images, `ghcr.io/ethereum/execution-specs/hive/<simulator>:<tag>`, are published by execution-specs and carry that release's fixtures and framework, so hive pulls them instead of building the simulator from source; release tags such as `v21.0.1` are immutable.
+The CI hive config lives in `.github/config/hive/mainnet.yaml`, which pins a `tag`: the EELS simulator image tag of a fixture release. The images, `ghcr.io/ethereum/execution-specs/hive/<simulator>:<tag>`, are published by execution-specs and carry that release's fixtures and framework, so hive pulls them instead of building the simulator from source; release tags such as `v21.0.1` are immutable.
 
 ## Updating Repository Versions
 
@@ -325,9 +321,7 @@ To update to a different fork or newer versions:
    HIVE_BRANCH ?= <new-commit-hash>
    ```
 
-2. **Update the hive fixture versions** in `.github/config/hive/`:
-
-   For mainnet forks, edit `.github/config/hive/mainnet.yaml`:
+2. **Update the hive fixture version** in `.github/config/hive/mainnet.yaml`:
 
    ```yaml
    tag: v<version>
@@ -335,7 +329,7 @@ To update to a different fork or newer versions:
 
    The image for that tag must exist under `ghcr.io/ethereum/execution-specs/hive/`; execution-specs publishes one per `tests@` release from `tests@v21.0.1` on.
 
-   Edit `.github/config/hive/amsterdam.yaml` the same way. It takes the same `tests@` bundle as mainnet, kept on its own file because the Amsterdam sims may need to run against a different release while a fork is in flight. The local `run-hive-eels-amsterdam` and `run-hive-build-block` targets read this file too, so a bump here reaches both CI and local runs.
+   The local `run-hive-eels*` and `run-hive-build-block` targets read this file too, so a bump here reaches both CI and local runs.
 
 3. **Update fixtures URL files** shared by the local runners (blockchain / state / engine):
 

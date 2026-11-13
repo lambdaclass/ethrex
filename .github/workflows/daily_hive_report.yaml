@@ -78,7 +78,6 @@ jobs:
               file_name: consume-engine-amsterdam,
               simulation: ethereum/eels/consume-engine,
               limit: ".*fork_.*Amsterdam.*",
-              amsterdam: true,
               parallelism: 2,
             }
           - {
@@ -100,7 +99,6 @@ jobs:
               file_name: consume-rlp-amsterdam,
               simulation: ethereum/eels/consume-rlp,
               limit: ".*fork_.*Amsterdam.*",
-              amsterdam: true,
               parallelism: 2,
             }
           - {
@@ -108,13 +106,14 @@ jobs:
               file_name: execute-blobs-osaka,
               simulation: ethereum/eels/execute-blobs,
               limit: "",
+              fork: Osaka,
             }
           - {
               name: "Execute Blobs tests (Amsterdam)",
               file_name: execute-blobs-amsterdam,
               simulation: ethereum/eels/execute-blobs,
               limit: "",
-              amsterdam: true,
+              fork: Amsterdam,
             }
 
     steps:
@@ -129,14 +128,8 @@ jobs:
 
       # Pin the EELS simulator image tags, see
       # https://github.com/ethereum/hive/blob/master/simulators/ethereum/eels/README.md
-      - name: Load Amsterdam config
-        id: amsterdam-config
-        shell: bash
-        run: |
-          echo "tag=$(yq -r '.tag' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
-
-      - name: Load mainnet config
-        id: mainnet-config
+      - name: Load EELS config
+        id: eels-config
         shell: bash
         run: |
           echo "tag=$(yq -r '.tag' .github/config/hive/mainnet.yaml)" >> "$GITHUB_OUTPUT"
@@ -147,38 +140,26 @@ jobs:
         env:
           SIMULATION: ${{ matrix.test.simulation }}
           SIM_LIMIT: ${{ matrix.test.limit || '' }}
-          AMSTERDAM: ${{ matrix.test.amsterdam || 'false' }}
-          AMSTERDAM_TAG: ${{ steps.amsterdam-config.outputs.tag }}
-          MAINNET_TAG: ${{ steps.mainnet-config.outputs.tag }}
+          SIM_FORK: ${{ matrix.test.fork || '' }}
+          EELS_TAG: ${{ steps.eels-config.outputs.tag }}
         run: |
           FLAGS="--sim.parallelism ${{ matrix.test.parallelism || 4 }} --sim.loglevel 1"
+          # The EELS simulators run from the image execution-specs publishes for
+          # the fixture release pinned in .github/config/hive/mainnet.yaml, which
+          # carries every fork through Amsterdam.
+          if [[ "$SIMULATION" == ethereum/eels/* ]]; then
+            FLAGS+=" --sim.buildarg tag=$EELS_TAG"
+          fi
+
           if [[ "$SIMULATION" == "ethereum/eels/consume-engine" || "$SIMULATION" == "ethereum/eels/consume-rlp" ]]; then
-            # Use fork-specific fixtures to ensure comprehensive test coverage. Keyed off an
-            # explicit flag rather than a substring of the limit, which no longer contains a
-            # literal fork name; matching on the limit would fall through to the mainnet
-            # bundle, which carries no Amsterdam fixtures at all.
-            if [[ "$AMSTERDAM" == "true" ]]; then
-              # Amsterdam config loaded from .github/config/hive/amsterdam.yaml
-              FLAGS+=" --sim.buildarg tag=$AMSTERDAM_TAG"
-            else
-              # All other forks (Prague, Osaka, Cancun, Shanghai, Paris) use the
-              # mainnet bundle, which includes comprehensive coverage including
-              # ported static tests.
-              # Config loaded from .github/config/hive/mainnet.yaml
-              FLAGS+=" --sim.buildarg tag=$MAINNET_TAG"
-            fi
             FLAGS+=" --client.checktimelimit=180s"
           fi
 
           # The execute simulators drive a live client over RPC instead of consuming
-          # fixtures, so they take `fork` and fall back to Osaka when it is not
-          # given. Both fork runs share the Amsterdam image, which carries every fork.
+          # fixtures, so each entry names the fork to run in its `fork`.
           if [[ "$SIMULATION" == "ethereum/eels/execute-blobs" ]]; then
-            FLAGS+=" --sim.buildarg tag=$AMSTERDAM_TAG"
-            if [[ "$AMSTERDAM" == "true" ]]; then
-              FLAGS+=" --sim.buildarg fork=Amsterdam"
-            else
-              FLAGS+=" --sim.buildarg fork=Osaka"
+            if [[ -n "$SIM_FORK" ]]; then
+              FLAGS+=" --sim.buildarg fork=$SIM_FORK"
             fi
             FLAGS+=" --client.checktimelimit=300s"
           fi

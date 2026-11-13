@@ -161,7 +161,7 @@ run-hive-debug: build-image setup-hive ## 🐞 Run Hive testing suite in debug m
 # EELS Hive
 TEST_PATTERN_EELS ?= .*fork_Paris.*|.*fork_Shanghai.*|.*fork_Cancun.*|.*fork_Prague.*
 run-hive-eels: build-image setup-hive ## 🧪 Generic command for running Hive EELS tests. Specify EELS_SIM
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(EELS_SIM) --sim.limit "$(TEST_PATTERN_EELS)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg tag=$(MAINNET_HIVE_TAG)
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim $(EELS_SIM) --sim.limit "$(TEST_PATTERN_EELS)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg tag=$(HIVE_EELS_TAG)
 
 run-hive-snap2: build-image ## 🧪 Run the hive devp2p snap/2 (EIP-8189) conformance suite
 	cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim devp2p --sim.limit "snap2" --sim.loglevel $(SIM_LOG_LEVEL)
@@ -175,22 +175,20 @@ run-hive-eels-rlp: ## Run hive EELS RLP tests
 run-hive-eels-blobs: ## Run hive EELS Blobs tests
 	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/execute-blobs
 
-# Local hive runs read the same pins CI does, so a bundle bump lands in one place
-# and the two can't drift. Each file pins `tag`, the EELS simulator image tag of a
+# Local hive runs read the same pin CI does, so a bundle bump lands in one place
+# and the two can't drift. The file pins `tag`, the EELS simulator image tag of the
 # fixture release, which hive passes as `--sim.buildarg tag=`. The key is a plain
 # scalar, so `sed` extracts it without making the Makefile depend on `yq`.
-AMSTERDAM_HIVE_CONFIG := .github/config/hive/amsterdam.yaml
-AMSTERDAM_HIVE_TAG ?= $(shell sed -n 's/^tag: *//p' $(AMSTERDAM_HIVE_CONFIG))
-MAINNET_HIVE_CONFIG := .github/config/hive/mainnet.yaml
-MAINNET_HIVE_TAG ?= $(shell sed -n 's/^tag: *//p' $(MAINNET_HIVE_CONFIG))
+HIVE_EELS_CONFIG := .github/config/hive/mainnet.yaml
+HIVE_EELS_TAG ?= $(shell sed -n 's/^tag: *//p' $(HIVE_EELS_CONFIG))
 # `fork_.*Amsterdam` rather than `fork_Amsterdam` so the BPO2->Amsterdam activation
 # fixtures (`fork_BPO2ToAmsterdamAtTime15k`) are swept alongside the Amsterdam ones.
 AMSTERDAM_FORK_PATTERN ?= .*fork_.*Amsterdam.*
 run-hive-eels-amsterdam: build-image setup-hive ## 🧪 Run hive EELS Amsterdam Engine tests
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit "$(AMSTERDAM_FORK_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg tag=$(AMSTERDAM_HIVE_TAG)
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit "$(AMSTERDAM_FORK_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg tag=$(HIVE_EELS_TAG)
 
 run-hive-eels-bal-quick: build-image setup-hive ## 🧪 Run hive EELS quick tests for the Amsterdam EIPs
-	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit ".*(2780|7708|7732|7778|7843|7928|7954|7975|7976|7981|7997|8024|8037|8038|8045|8061|8070|8159|8246|8282).*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg tag=$(AMSTERDAM_HIVE_TAG)
+	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit ".*(2780|7708|7732|7778|7843|7928|7954|7975|7976|7981|7997|8024|8037|8038|8045|8061|8070|8159|8246|8282).*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg tag=$(HIVE_EELS_TAG)
 
 # Block-building simulator (execution-specs PR #2679). Not yet upstream in Hive,
 # so we install the simulator Dockerfile into the hive clone and patch the
@@ -202,9 +200,9 @@ run-hive-eels-bal-quick: build-image setup-hive ## 🧪 Run hive EELS quick test
 BUILD_BLOCK_TEST_PATTERN ?= .*(7708|7778|7843|7928|7954|7976|7981|8024|8037).*
 # This simulator is still built from source (fixtures/hive/build-block.Dockerfile),
 # so it takes the release's fixture bundle and git tag, both derived from the
-# Amsterdam image tag, rather than the image tag itself.
-BUILD_BLOCK_FIXTURES_URL ?= https://github.com/ethereum/execution-specs/releases/download/tests%40$(AMSTERDAM_HIVE_TAG)/fixtures.tar.gz
-BUILD_BLOCK_EELS_REF ?= tests@$(AMSTERDAM_HIVE_TAG)
+# image tag, rather than the image tag itself.
+BUILD_BLOCK_FIXTURES_URL ?= https://github.com/ethereum/execution-specs/releases/download/tests%40$(HIVE_EELS_TAG)/fixtures.tar.gz
+BUILD_BLOCK_EELS_REF ?= tests@$(HIVE_EELS_TAG)
 run-hive-build-block: build-image setup-hive ## 🧱 Run hive build-block simulator (testing_buildBlockV1)
 	mkdir -p hive/simulators/ethereum/eels/build-block
 	cp fixtures/hive/build-block.Dockerfile hive/simulators/ethereum/eels/build-block/Dockerfile
