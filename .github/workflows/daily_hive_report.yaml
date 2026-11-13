@@ -28,8 +28,6 @@ jobs:
     name: Hive - ${{ matrix.test.name }}
     runs-on: ubuntu-26.04
     continue-on-error: true
-    env:
-      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
@@ -173,12 +171,25 @@ jobs:
           .github/scripts/hive-flags.sh --simulation "$SIMULATION" --limit "$SIM_LIMIT" \
             --fork "$SIM_FORK" --parallelism "$SIM_PARALLELISM" --loglevel 1 >> "$GITHUB_OUTPUT"
 
+      # A pull request from a fork has no secrets, and the login fails without
+      # one. `if` cannot read a secret, so this step reports whether it is set,
+      # which keeps the token out of the environment of every other step.
+      - name: Check for the Docker Hub token
+        id: dockerhub
+        shell: bash
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [[ -n "$DOCKERHUB_TOKEN" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Log in to the Container registry
-        if: ${{ env.DOCKERHUB_TOKEN != '' }}
+        if: ${{ steps.dockerhub.outputs.available == 'true' }}
         uses: docker/login-action@v4.7.0
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ env.DOCKERHUB_TOKEN }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Run Hive Simulation
         id: run-hive-action
