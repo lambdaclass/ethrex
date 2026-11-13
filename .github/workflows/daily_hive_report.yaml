@@ -123,7 +123,9 @@ jobs:
           # protocol, not only the engine API. It has its own hive commit and
           # image in .github/config/hive/pins.yaml. The run includes the
           # Amsterdam fixtures, so it takes the same lower parallelism as the
-          # Amsterdam entries above.
+          # Amsterdam entries above. More workers do not make it faster on the
+          # hosted runner: four took as long as two, about 55 minutes, because
+          # the end of the run does not speed up, and six exhausted the runner.
           - {
               name: "Consume WireX tests",
               file_name: consume-wirex,
