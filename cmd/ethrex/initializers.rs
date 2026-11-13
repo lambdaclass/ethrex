@@ -1,6 +1,6 @@
 use crate::{
+    chain::NodeComponents,
     cli::{LogColor, Options},
-    integration::Components,
     utils::{
         display_chain_initialization, get_channel, get_client_version, get_client_version_string,
         init_datadir, is_memory_datadir, parse_socket_addr, read_jwtsecret_file,
@@ -859,7 +859,7 @@ pub async fn init_l1(
     SharedLocalNode,
     Store,
 )> {
-    init_node(opts, |_| Ok(Components::default()), log_filter_handler).await
+    init_node(opts, |_| Ok(NodeComponents::default()), log_filter_handler).await
 }
 
 /// Starts a node that runs with `components` in addition to its Ethereum behavior.
@@ -867,7 +867,7 @@ pub async fn init_l1(
 /// database is opened.
 pub async fn init_node(
     opts: Options,
-    components: impl FnOnce(&Genesis) -> eyre::Result<Components>,
+    components: impl FnOnce(&Genesis) -> eyre::Result<NodeComponents>,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<(
     PathBuf,
@@ -888,7 +888,7 @@ pub async fn init_node(
     }
 
     let genesis = network.get_genesis()?;
-    let Components {
+    let NodeComponents {
         rpc: rpc_extensions,
         tx_pool_policy,
     } = components(&genesis)?;

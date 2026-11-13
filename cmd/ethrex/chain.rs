@@ -1,15 +1,15 @@
 //! Running an ethrex node for a chain defined outside this repository.
 //!
-//! A chain integration is a crate that implements [`Integration`] and builds its own
+//! Support for a chain is a crate that implements [`Chain`] and builds its own
 //! binary with [`run`]. The `ethrex` binary is the same thing for Ethereum:
 //! `run(Ethereum)`.
 //!
-//! An integration can add:
-//! - named networks for `--network` ([`Integration::presets`]),
-//! - its own command line flags ([`Integration::Args`]),
-//! - RPC namespaces and transaction pool rules ([`Components`]).
+//! A chain can add:
+//! - named networks for `--network` ([`Chain::networks`]),
+//! - its own command line flags ([`Chain::Args`]),
+//! - RPC namespaces and transaction pool rules ([`NodeComponents`]).
 //!
-//! Everything an integration leaves out behaves as on Ethereum.
+//! Everything a chain leaves out behaves as on Ethereum.
 
 use std::{path::Path, sync::Arc, time::Duration};
 
@@ -34,88 +34,76 @@ use crate::{
 
 const LATEST_VERSION_URL: &str = "https://api.github.com/repos/lambdaclass/ethrex/releases/latest";
 
-/// Support for one chain, plugged into the node at build time.
+/// A chain the node can run on, compiled into the binary.
 ///
-/// Every method has a default that means "as on Ethereum", so an integration
+/// Every method has a default that means "as on Ethereum", so an implementation
 /// overrides only what its chain does differently.
-pub trait Integration {
-    /// Command line flags of this integration, added to the node's own. Use
-    /// [`NoArgs`] for none. Prefix the flag names with the integration's name
-    /// (`--<name>.<flag>`) so they cannot collide with the node's.
+pub trait Chain {
+    /// Command line flags of this chain, added to the node's own. Use [`NoArgs`]
+    /// for none. Prefix the flag names with the chain's name (`--<chain>.<flag>`)
+    /// so they cannot collide with the node's.
     type Args: Args;
 
     /// Name of the binary, shown in `--help` and in startup errors.
     const NAME: &'static str;
 
-    /// Networks this integration adds to `--network`. When there is at least one,
+    /// Networks of this chain, added to `--network`. When there is at least one,
     /// the first is the default network of the binary.
-    fn presets(&self) -> &'static [NetworkPreset] {
+    fn networks(&self) -> &'static [NetworkPreset] {
         &[]
     }
 
-    /// What the node runs with in addition to its Ethereum behavior.
+    /// What the node runs with on this chain, in addition to its Ethereum behavior.
     ///
     /// Called once per start, after the command line is parsed and the genesis is
-    /// loaded, and before the database is opened. An error aborts the start.
-    fn components(&self, _args: &Self::Args, _chain: &ChainInfo<'_>) -> eyre::Result<Components> {
-        Ok(Components::default())
+    /// loaded, and before the database is opened. `genesis` is the genesis of the
+    /// network selected with `--network`. An error aborts the start.
+    fn components(&self, _args: &Self::Args, _genesis: &Genesis) -> eyre::Result<NodeComponents> {
+        Ok(NodeComponents::default())
     }
 }
 
-/// The chain the node is starting on, as seen by [`Integration::components`].
-#[non_exhaustive]
-pub struct ChainInfo<'a> {
-    /// Genesis of the network selected with `--network`.
-    pub genesis: &'a Genesis,
-}
-
-impl<'a> From<&'a Genesis> for ChainInfo<'a> {
-    fn from(genesis: &'a Genesis) -> Self {
-        Self { genesis }
-    }
-}
-
-/// The parts of the node an integration can add to. `Components::default()` adds
+/// The parts of the node a chain can add to. `NodeComponents::default()` adds
 /// nothing, which is a node that behaves as on Ethereum.
 ///
 /// Build it by filling in the fields of the default value. New fields may be added
 /// in later versions.
 #[derive(Default)]
 #[non_exhaustive]
-pub struct Components {
+pub struct NodeComponents {
     /// RPC namespaces served in addition to the built-in ones.
     pub rpc: Vec<Arc<dyn RpcExtension>>,
     /// Extra admission rules for the transaction pool.
     pub tx_pool_policy: Option<Arc<dyn TxPoolPolicy>>,
 }
 
-/// [`Integration::Args`] of an integration without flags of its own.
+/// [`Chain::Args`] of a chain without flags of its own.
 #[derive(Args, Debug, Clone, Default)]
 pub struct NoArgs {}
 
-/// The built-in integration: Ethereum, with nothing added.
+/// The built-in chain: Ethereum, which adds nothing.
 pub struct Ethereum;
 
-impl Integration for Ethereum {
+impl Chain for Ethereum {
     type Args = NoArgs;
     const NAME: &'static str = "ethrex";
 }
 
-/// Runs the node for `integration` with the arguments of the current process, until
-/// it is shut down. This is the whole `main` of an integration's binary.
+/// Runs the node for `chain` with the arguments of the current process, until it is
+/// shut down. This is the whole `main` of a chain's binary.
 ///
 /// The binary declares its global allocator with [`crate::global_allocator!`], as
 /// `cmd/ethrex/ethrex.rs` does.
-pub fn run<I: Integration>(integration: I) -> eyre::Result<()> {
+pub fn run<C: Chain>(chain: C) -> eyre::Result<()> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
-        .block_on(run_node(integration))
+        .block_on(run_node(chain))
 }
 
-/// The command line of `integration`'s binary: the node's own, plus the
-/// integration's flags and networks.
-pub fn command<I: Integration>(integration: &I) -> clap::Command {
+/// The command line of `chain`'s binary: the node's own, plus the chain's flags and
+/// networks.
+pub fn command<C: Chain>(chain: &C) -> clap::Command {
     let node = CLI::command();
     // `augment_args` replaces the command's description with the doc comment of the
     // flags struct; keep the node's.
@@ -124,11 +112,11 @@ pub fn command<I: Integration>(integration: &I) -> clap::Command {
     };
     let about = keep(node.get_about());
     let long_about = keep(node.get_long_about());
-    let mut command = I::Args::augment_args(node)
-        .name(I::NAME)
+    let mut command = C::Args::augment_args(node)
+        .name(C::NAME)
         .about(about)
         .long_about(long_about);
-    let presets = integration.presets();
+    let presets = chain.networks();
     if let Some(default) = presets.first() {
         let names = presets
             .iter()
@@ -145,21 +133,21 @@ pub fn command<I: Integration>(integration: &I) -> clap::Command {
     command
 }
 
-/// Parses `argv` for `integration`'s binary and resolves `--network` against the
-/// integration's presets.
-pub fn parse_args<I, T>(
-    integration: &I,
+/// Parses `argv` for `chain`'s binary and resolves `--network` against the chain's
+/// networks.
+pub fn parse_args<C, T>(
+    chain: &C,
     argv: impl IntoIterator<Item = T>,
-) -> Result<(CLI, I::Args), clap::Error>
+) -> Result<(CLI, C::Args), clap::Error>
 where
-    I: Integration,
+    C: Chain,
     T: Into<std::ffi::OsString> + Clone,
 {
-    let mut command = command(integration);
+    let mut command = command(chain);
     let matches = command.try_get_matches_from_mut(argv)?;
     let mut cli = CLI::from_arg_matches(&matches)?;
-    let args = I::Args::from_arg_matches(&matches)?;
-    resolve_network(&mut cli.opts, integration.presets())
+    let args = C::Args::from_arg_matches(&matches)?;
+    resolve_network(&mut cli.opts, chain.networks())
         .map_err(|err| command.error(clap::error::ErrorKind::ValueValidation, err))?;
     Ok((cli, args))
 }
@@ -184,9 +172,9 @@ fn resolve_network(opts: &mut Options, presets: &[NetworkPreset]) -> Result<(), 
     Ok(())
 }
 
-async fn run_node<I: Integration>(integration: I) -> eyre::Result<()> {
+async fn run_node<C: Chain>(chain: C) -> eyre::Result<()> {
     let (CLI { opts, command }, args) =
-        parse_args(&integration, std::env::args_os()).unwrap_or_else(|err| err.exit());
+        parse_args(&chain, std::env::args_os()).unwrap_or_else(|err| err.exit());
 
     rayon::ThreadPoolBuilder::default()
         .thread_name(|i| format!("rayon-worker-{i}"))
@@ -215,9 +203,9 @@ async fn run_node<I: Integration>(integration: I) -> eyre::Result<()> {
     let (datadir, cancel_token, peer_table, shared_local_node, store) = init_node(
         opts,
         |genesis| {
-            integration
-                .components(&args, &ChainInfo::from(genesis))
-                .wrap_err_with(|| format!("{}: failed to build the node's components", I::NAME))
+            chain
+                .components(&args, genesis)
+                .wrap_err_with(|| format!("{}: failed to build the node's components", C::NAME))
         },
         Some(log_filter_handler),
     )

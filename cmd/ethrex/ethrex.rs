@@ -1,4 +1,4 @@
-use ethrex::integration::{Ethereum, run};
+use ethrex::chain::{Ethereum, run};
 
 ethrex::global_allocator!();
 

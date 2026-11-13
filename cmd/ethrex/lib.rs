@@ -1,6 +1,6 @@
+pub mod chain;
 pub mod cli;
 pub mod initializers;
-pub mod integration;
 #[cfg(feature = "l2")]
 pub mod l2;
 #[cfg(feature = "partial")]

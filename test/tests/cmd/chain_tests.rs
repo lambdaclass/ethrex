@@ -1,6 +1,6 @@
-//! A chain integration defined outside the `ethrex` crate.
+//! A chain defined outside the `ethrex` crate.
 //!
-//! `Example` is an invented chain. It uses every extension point an integration has:
+//! `Example` is an invented chain. It uses everything a chain can add to the node:
 //! named networks, its own flag, an RPC namespace, and a transaction pool rule. The
 //! tests check each one separately, and then all of them on a running node.
 
@@ -8,9 +8,9 @@ use std::sync::Arc;
 
 use clap::CommandFactory;
 use ethrex::{
+    chain::{Chain, Ethereum, NodeComponents, command, parse_args},
     cli::CLI,
     initializers::{get_network, init_node},
-    integration::{ChainInfo, Components, Ethereum, Integration, command, parse_args},
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, TxPoolPolicy, error::MempoolError};
 use ethrex_common::{
@@ -52,16 +52,16 @@ struct ExampleArgs {
     max_tx_gas: u64,
 }
 
-impl Integration for Example {
+impl Chain for Example {
     type Args = ExampleArgs;
     const NAME: &'static str = "ethrex-example";
 
-    fn presets(&self) -> &'static [NetworkPreset] {
+    fn networks(&self) -> &'static [NetworkPreset] {
         &[EXAMPLE_DEV, EXAMPLE_TEST]
     }
 
-    fn components(&self, args: &ExampleArgs, _chain: &ChainInfo<'_>) -> eyre::Result<Components> {
-        let mut components = Components::default();
+    fn components(&self, args: &ExampleArgs, _genesis: &Genesis) -> eyre::Result<NodeComponents> {
+        let mut components = NodeComponents::default();
         components.rpc.push(Arc::new(ExampleRpc));
         components.tx_pool_policy = Some(Arc::new(MaxTxGas(args.max_tx_gas)));
         Ok(components)
@@ -105,9 +105,9 @@ impl TxPoolPolicy for MaxTxGas {
     }
 }
 
-fn parse<I: Integration>(integration: &I, args: &[&str]) -> (CLI, I::Args) {
-    let argv = std::iter::once(I::NAME).chain(args.iter().copied());
-    match parse_args(integration, argv) {
+fn parse<C: Chain>(chain: &C, args: &[&str]) -> (CLI, C::Args) {
+    let argv = std::iter::once(C::NAME).chain(args.iter().copied());
+    match parse_args(chain, argv) {
         Ok(parsed) => parsed,
         Err(err) => panic!("arguments {args:?} should parse: {err}"),
     }
@@ -127,7 +127,7 @@ fn ethereum_adds_nothing_to_the_command_line() {
 }
 
 #[test]
-fn integration_flag_is_parsed_with_the_node_flags() {
+fn chain_flag_is_parsed_with_the_node_flags() {
     let (cli, args) = parse(
         &Example,
         &["--example.max-tx-gas", "5", "--http.port", "1234"],
@@ -140,10 +140,10 @@ fn integration_flag_is_parsed_with_the_node_flags() {
 }
 
 #[test]
-fn integration_flag_is_unknown_to_another_binary() {
+fn chain_flag_is_unknown_to_another_binary() {
     let err = parse_args(&Ethereum, ["ethrex", "--example.max-tx-gas", "5"])
         .err()
-        .expect("the stock binary must reject another integration's flag");
+        .expect("the stock binary must reject another chain's flag");
     assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
 }
 
@@ -201,10 +201,10 @@ fn help_lists_the_presets() {
 #[test]
 fn malformed_preset_is_rejected_when_selected() {
     struct Broken;
-    impl Integration for Broken {
-        type Args = ethrex::integration::NoArgs;
+    impl Chain for Broken {
+        type Args = ethrex::chain::NoArgs;
         const NAME: &'static str = "ethrex-broken";
-        fn presets(&self) -> &'static [NetworkPreset] {
+        fn networks(&self) -> &'static [NetworkPreset] {
             &[NetworkPreset {
                 name: "broken",
                 genesis: "{",
@@ -437,9 +437,9 @@ async fn signed_transfer(gas_limit: u64, nonce: u64, chain_id: u64) -> String {
 }
 
 /// Starts a node from the example chain's command line and checks, over HTTP, that
-/// everything the integration returned from `components` is in effect.
+/// everything the chain returned from `components` is in effect.
 #[tokio::test(flavor = "multi_thread")]
-async fn node_runs_with_the_integration_components() {
+async fn node_runs_with_the_chain_components() {
     let dir = tempfile::tempdir().unwrap();
     let jwt = dir.path().join("jwt.hex");
     let http_port = free_port();
@@ -463,13 +463,10 @@ async fn node_runs_with_the_integration_components() {
         ],
     );
 
-    let (_, cancel_token, _, _, store) = init_node(
-        cli.opts,
-        |genesis| Example.components(&args, &ChainInfo::from(genesis)),
-        None,
-    )
-    .await
-    .unwrap();
+    let (_, cancel_token, _, _, store) =
+        init_node(cli.opts, |genesis| Example.components(&args, genesis), None)
+            .await
+            .unwrap();
     let chain_id = store.get_chain_config().chain_id;
 
     // RPC namespace.
@@ -478,7 +475,7 @@ async fn node_runs_with_the_integration_components() {
     let chain = rpc(&http_port, "example_chainId", json!([])).await;
     assert_eq!(chain["result"], json!(format!("{chain_id:#x}")), "{chain}");
 
-    // Pool rule: above the cap the submitter gets the integration's reason.
+    // Pool rule: above the cap the submitter gets the chain's reason.
     let above = signed_transfer(100_001, 0, chain_id).await;
     let rejected = rpc(&http_port, "eth_sendRawTransaction", json!([above])).await;
     let message = rejected["error"]["message"].as_str().unwrap_or_default();
@@ -495,7 +492,7 @@ async fn node_runs_with_the_integration_components() {
     cancel_token.cancel();
 }
 
-/// The same start without the integration: no extra namespace, no extra pool rule.
+/// The same start without the chain's components: no extra namespace, no extra pool rule.
 #[tokio::test(flavor = "multi_thread")]
 async fn node_without_components_behaves_as_ethereum() {
     let dir = tempfile::tempdir().unwrap();
@@ -519,9 +516,10 @@ async fn node_without_components_behaves_as_ethereum() {
         ],
     );
 
-    let (_, cancel_token, _, _, store) = init_node(cli.opts, |_| Ok(Components::default()), None)
-        .await
-        .unwrap();
+    let (_, cancel_token, _, _, store) =
+        init_node(cli.opts, |_| Ok(NodeComponents::default()), None)
+            .await
+            .unwrap();
     let chain_id = store.get_chain_config().chain_id;
 
     let ping = rpc(&http_port, "example_ping", json!([])).await;

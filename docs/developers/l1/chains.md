@@ -1,19 +1,19 @@
-# Chain integrations
+# Supporting other chains
 
-A chain integration adds support for a chain to ethrex from a crate outside this repository. The crate implements one trait, `Integration`, and builds its own binary. The `ethrex` binary is built the same way: it is the integration for Ethereum, which adds nothing.
+ethrex can run on a chain other than Ethereum without knowing about it. Support for the chain lives in a crate outside this repository, which implements one trait, `Chain`, and builds its own binary. The `ethrex` binary is built the same way: it runs the `Ethereum` chain, which adds nothing.
 
-An integration can add:
+A chain can add:
 
 | What | How |
 |---|---|
-| Named networks for `--network` | `Integration::presets` |
-| Its own command line flags | `Integration::Args` |
-| RPC namespaces | `Components::rpc` |
-| Transaction pool rules | `Components::tx_pool_policy` |
+| Named networks for `--network` | `Chain::networks` |
+| Its own command line flags | `Chain::Args` |
+| RPC namespaces | `NodeComponents::rpc` |
+| Transaction pool rules | `NodeComponents::tx_pool_policy` |
 
-Everything an integration leaves out behaves as on Ethereum. An integration cannot change how blocks are validated or executed.
+Everything a chain leaves out behaves as on Ethereum. A chain cannot change how blocks are validated or executed.
 
-## Writing an integration
+## Adding a chain
 
 ### 1. Create the crate
 
@@ -32,25 +32,34 @@ ethrex-rpc = { git = "https://github.com/lambdaclass/ethrex" }
 clap = { version = "4.3", features = ["derive"] }
 eyre = "0.6"
 serde_json = "1"
+
+# The release profile of the ethrex workspace. Build settings do not carry over
+# from the ethrex repository.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
 ```
 
-### 2. Implement `Integration`
+Use the Rust version in ethrex's `rust-toolchain.toml`.
+
+### 2. Implement `Chain`
 
 ```rust
 use std::sync::Arc;
 
-use ethrex::integration::{ChainInfo, Components, Integration};
+use ethrex::chain::{Chain, NodeComponents};
 use ethrex_blockchain::TxPoolPolicy;
 use ethrex_common::{
     Address,
-    types::{BlockHeader, Transaction},
+    types::{BlockHeader, Genesis, Transaction},
 };
 use ethrex_config::networks::NetworkPreset;
 use ethrex_rpc::{RpcApiContext, RpcErr, RpcExtension, RpcExtensionFuture, utils::RpcRequest};
 
 pub struct Example;
 
-/// Flags of this integration, added to the node's own.
+/// Flags of the example chain, added to the node's own.
 #[derive(clap::Args)]
 pub struct ExampleArgs {
     /// Highest gas limit a transaction may have to enter the pool.
@@ -58,11 +67,11 @@ pub struct ExampleArgs {
     max_tx_gas: u64,
 }
 
-impl Integration for Example {
+impl Chain for Example {
     type Args = ExampleArgs;
     const NAME: &'static str = "ethrex-example";
 
-    fn presets(&self) -> &'static [NetworkPreset] {
+    fn networks(&self) -> &'static [NetworkPreset] {
         &[NetworkPreset {
             name: "example-mainnet",
             genesis: include_str!("../networks/example-mainnet/genesis.json"),
@@ -70,8 +79,8 @@ impl Integration for Example {
         }]
     }
 
-    fn components(&self, args: &ExampleArgs, _chain: &ChainInfo<'_>) -> eyre::Result<Components> {
-        let mut components = Components::default();
+    fn components(&self, args: &ExampleArgs, _genesis: &Genesis) -> eyre::Result<NodeComponents> {
+        let mut components = NodeComponents::default();
         components.rpc.push(Arc::new(ExampleRpc));
         components.tx_pool_policy = Some(Arc::new(MaxTxGas(args.max_tx_gas)));
         Ok(components)
@@ -80,9 +89,9 @@ impl Integration for Example {
 ```
 
 - **`NAME`** is the name of the binary, shown in `--help`.
-- **`presets`** are the networks `--network <name>` accepts in addition to the Ethereum ones. The first preset is the default network of the binary. `genesis` is the contents of a genesis file. `bootnodes` is a JSON array of enode URLs, or `"[]"`. Each network keeps its data in a subdirectory of the datadir named after the preset.
-- **`Args`** is a `clap::Args` struct. Prefix the flag names with the integration's name so they cannot collide with the node's. Use `ethrex::integration::NoArgs` if there are none.
-- **`components`** is called once per start, after the command line is parsed and the genesis is loaded, and before the database is opened. `chain.genesis` is the genesis of the selected network. Returning an error aborts the start. `Components` is built by filling in the fields of `Components::default()`.
+- **`networks`** are the networks `--network <name>` accepts in addition to the Ethereum ones. The first one is the default network of the binary. `genesis` is the contents of a genesis file. `bootnodes` is a JSON array of enode URLs, or `"[]"`. Each network keeps its data in a subdirectory of the datadir named after it.
+- **`Args`** is a `clap::Args` struct. Prefix the flag names with the chain's name so they cannot collide with the node's. Use `ethrex::chain::NoArgs` if there are none.
+- **`components`** is called once per start, after the command line is parsed and the genesis is loaded, and before the database is opened. `genesis` is the genesis of the selected network. Returning an error aborts the start. `NodeComponents` is built by filling in the fields of `NodeComponents::default()`.
 
 ### 3. Add an RPC namespace
 
@@ -113,7 +122,7 @@ impl RpcExtension for ExampleRpc {
 - Every method named `<namespace>_...` is routed to `handle`, on the HTTP and WebSocket endpoints. Extensions are not served on the authenticated port.
 - The namespace must be lowercase letters and digits, and cannot be a built-in one (`eth`, `engine`, `debug`, `admin`, `net`, `web3`, `txpool`, `testing`). The node refuses to start otherwise.
 - `context` is the same `RpcApiContext` the built-in handlers receive: the store, the blockchain, the node's configuration.
-- An extension is served whenever it is in `Components::rpc`. `--http.api` selects built-in namespaces only. To let operators turn a namespace off, give the integration a flag and leave the extension out of `Components`.
+- An extension is served whenever it is in `NodeComponents::rpc`. `--http.api` selects built-in namespaces only. To let operators turn a namespace off, give the chain a flag and leave the extension out of the components.
 
 ### 4. Add a transaction pool rule
 
@@ -144,24 +153,12 @@ impl TxPoolPolicy for MaxTxGas {
 ethrex::global_allocator!();
 
 fn main() -> eyre::Result<()> {
-    ethrex::integration::run(ethrex_example::Example)
+    ethrex::chain::run(ethrex_example::Example)
 }
 ```
 
 - `run` parses the command line, starts the node, and returns when the node shuts down.
 - `global_allocator!` declares the memory allocator and tuning the `ethrex` binary uses. Without it the binary runs on the system allocator, which is slower.
-
-Build settings do not carry over from the ethrex repository, so copy them:
-
-```toml
-# Cargo.toml: the release profile of the ethrex workspace
-[profile.release]
-opt-level = 3
-lto = "thin"
-codegen-units = 1
-```
-
-Use the Rust version in ethrex's `rust-toolchain.toml`.
 
 ### 6. Run it
 
@@ -193,40 +190,40 @@ your crate                              ethrex
 ──────────                              ──────
 main() ── run(Example) ───────────────▶ parse the command line
                                           node flags + Example::Args
-                                          --network resolved against presets()
+                                          --network resolved against networks()
                                         load the genesis
-components(args, chain) ◀────────────── build components        (once)
+components(args, genesis) ◀──────────── build the components    (once)
         │
-        └─ Components { rpc, tx_pool_policy }
+        └─ NodeComponents { rpc, tx_pool_policy }
                                         open the database
                  tx_pool_policy ──────▶ blockchain: checked on every pool admission
                  rpc ─────────────────▶ RPC server: unknown namespaces go to extensions
                                         start p2p and sync, serve until shutdown
 ```
 
-- The integration is compiled into the binary. There is no runtime loading: one binary per chain.
-- `run(Ethereum)` and `run(Example)` go through the same code. A node whose integration returns `Components::default()` behaves exactly like `ethrex`.
-- Components are built once, before the database, the pool or the RPC server exist. Nothing can be added to a running node.
+- The chain is compiled into the binary. There is no runtime loading: one binary per chain.
+- `run(Ethereum)` and `run(Example)` go through the same code. A node whose chain returns `NodeComponents::default()` behaves exactly like `ethrex`.
+- The components are built once, before the database, the pool or the RPC server exist. Nothing can be added to a running node.
 
 ## Design decisions
 
-- **Compiled in, not loaded.** Rust has no stable ABI, so an integration is a crate, and each chain ships its own binary.
-- **Defaults mean Ethereum.** Every method of `Integration` and every field of `Components` has a default, so an integration states only what its chain does differently.
-- **Fail at startup.** A preset that does not parse, an invalid RPC namespace, or an error from `components` aborts the start with a message naming the cause. Nothing an integration adds is optional at run time.
-- **Extensions receive the node's own types** (`RpcApiContext`, `Transaction`). These are not a stable API: an integration is built against a specific ethrex commit and may need changes when it moves to a newer one.
-- **`Components` can grow.** It is `#[non_exhaustive]`, so later versions can add fields without breaking integrations that fill in the ones they use.
+- **Compiled in, not loaded.** Rust has no stable ABI, so support for a chain is a crate, and each chain ships its own binary.
+- **Defaults mean Ethereum.** Every method of `Chain` and every field of `NodeComponents` has a default, so an implementation states only what its chain does differently.
+- **Fail at startup.** A network whose genesis does not parse, an invalid RPC namespace, or an error from `components` aborts the start with a message naming the cause. Nothing a chain adds is optional at run time.
+- **Extensions receive the node's own types** (`RpcApiContext`, `Transaction`, `BlockHeader`). These are not a stable API: a chain's crate is built against a specific ethrex commit and may need changes when it moves to a newer one.
+- **`NodeComponents` can grow.** It is `#[non_exhaustive]`, so later versions can add fields without breaking chains that fill in the ones they use.
 
 ## Testing
 
-`test/tests/cmd/integration_tests.rs` defines an invented chain against the public API, as an outside crate would, and checks each extension point alone and on a running node. Extend it when adding an extension point.
+`test/tests/cmd/chain_tests.rs` defines an invented chain against the public API, as an outside crate would, and checks everything it adds, alone and on a running node. Extend it when adding something a chain can supply.
 
 ```sh
-cargo test --release -p ethrex-test --test ethrex_tests cmd::integration_tests
+cargo test --release -p ethrex-test --test ethrex_tests cmd::chain_tests
 ```
 
 ## References
 
-- `cmd/ethrex/integration.rs`: `Integration`, `Components`, `run`.
+- `cmd/ethrex/chain.rs`: `Chain`, `NodeComponents`, `run`.
 - `crates/networking/rpc/rpc.rs`: `RpcExtension`, `validate_rpc_extensions`.
 - `crates/blockchain/blockchain.rs`: `TxPoolPolicy`.
 - `crates/common/config/networks.rs`: `NetworkPreset`.

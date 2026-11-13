@@ -46,8 +46,8 @@ pub enum Network {
     Custom(NetworkPreset),
 }
 
-/// A named network supplied by a chain integration: what `--network <name>`
-/// loads for a network this crate does not know about.
+/// A named network of a chain this crate does not know about: what
+/// `--network <name>` loads for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NetworkPreset {
     /// Name accepted by `--network`. Also the datadir subdirectory.
