@@ -335,6 +335,12 @@ jobs:
             simulation: ethereum/rpc-compat
             # https://github.com/ethereum/execution-apis/pull/627 changed the simulation to use a pre-merge genesis block, so we need to pin to a commit before that
             buildarg: "branch=d08382ae5c808680e976fce4b73f4ba91647199b"
+            # Stays on the hive this job ran on before the eels switch: from
+            # ethereum/hive#1623 the simulator image runs `make build` in the
+            # execution-apis checkout to generate refs-openrpc.json, and the
+            # commit pinned above predates the Makefile (execution-apis#751), so
+            # the image does not build there. Drop this once that pin moves.
+            hive_version: 7c4c99ebb79955f23e1952fb0282a0dadcb6e181
             artifact_prefix: rpc_compat
           - name: "Devp2p tests"
             simulation: devp2p
@@ -404,8 +410,7 @@ jobs:
         id: amsterdam-config
         shell: bash
         run: |
-          echo "fixtures=$(yq -r '.fixtures' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
-          echo "eels_commit=$(yq -r '.eels_commit' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
+          echo "tag=$(yq -r '.tag' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
 
       - name: Determine hive flags
         id: hive-flags
@@ -414,8 +419,7 @@ jobs:
           SIM_LIMIT: ${{ matrix.limit }}
           SIM_BUILDARG: ${{ matrix.buildarg }}
           AMSTERDAM: ${{ matrix.amsterdam || 'false' }}
-          AMSTERDAM_FIXTURES: ${{ steps.amsterdam-config.outputs.fixtures }}
-          AMSTERDAM_EELS_COMMIT: ${{ steps.amsterdam-config.outputs.eels_commit }}
+          AMSTERDAM_TAG: ${{ steps.amsterdam-config.outputs.tag }}
         run: |
           FLAGS='--sim.parallelism 4 --sim.loglevel 3'
           if [[ -n "$SIM_LIMIT" ]]; then
@@ -423,8 +427,7 @@ jobs:
             FLAGS+=" --sim.limit '$escaped_limit'"
           fi
           if [[ "$AMSTERDAM" == "true" ]]; then
-            FLAGS+=" --sim.buildarg fixtures=$AMSTERDAM_FIXTURES"
-            FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
+            FLAGS+=" --sim.buildarg tag=$AMSTERDAM_TAG"
           else
             for arg in $SIM_BUILDARG; do
               FLAGS+=" --sim.buildarg $arg"
@@ -444,8 +447,11 @@ jobs:
         uses: ethpandaops/hive-github-action@v0.5.0
         with:
           hive_repository: ethereum/hive
-          # ethereum/hive#1530 merge (deposit contract address mapper fix)
-          hive_version: 7c4c99ebb79955f23e1952fb0282a0dadcb6e181
+          # ethereum/hive#1609's merge commit: the eels simulators run from the
+          # images execution-specs publishes, selected with `tag=`. After
+          # ethereum/hive#1530 (deposit contract address mapper fix). A matrix
+          # entry can pin its own version, see "Rpc Compat tests".
+          hive_version: ${{ matrix.hive_version || '11864a701d331535f4ed487e4d538bead457d760' }}
           simulator: ${{ matrix.simulation }}
           client: ethrex
           client_config: ${{ steps.client-config.outputs.config }}
