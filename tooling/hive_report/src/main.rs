@@ -126,13 +126,15 @@ const NO_FORK: &str = "No fork";
 /// The fork a test case ran on, read from the `fork_<Name>` parameter of its id,
 /// as in `test_x.py::test_x[fork_Prague-blockchain_test_engine-case]`.
 ///
-/// Only the parameter list is searched, so a `fork_` in a file or test name is
-/// not taken for one. The name is returned whole: `BPO2ToAmsterdamAtTime15k` is
-/// its own fork, not a `BPO2` or an `Amsterdam` case.
+/// Only the parameter list is searched, from the first `[` to the last `]`, so
+/// a `fork_` in a file or test name, or after the list, is not taken for one.
+/// The name is returned whole: `BPO2ToAmsterdamAtTime15k` is its own fork, not
+/// a `BPO2` or an `Amsterdam` case.
 fn fork_of(test_name: &str) -> Option<&str> {
-    let (_, params) = test_name.split_once('[')?;
+    let (_, rest) = test_name.split_once('[')?;
+    let (params, _) = rest.rsplit_once(']')?;
     params
-        .split(['-', ']'])
+        .split('-')
         .find_map(|param| param.strip_prefix("fork_"))
         .filter(|fork| !fork.is_empty())
 }
@@ -454,6 +456,8 @@ mod tests {
         );
         assert_eq!(fork_of("a test without parameters"), None);
         assert_eq!(fork_of("t.py::test_t[fork_-case]"), None);
+        assert_eq!(fork_of("t.py::test_t[case_1]-fork_Osaka"), None);
+        assert_eq!(fork_of("t.py::test_t[fork_Osaka-case_1"), None);
     }
 
     #[test]
