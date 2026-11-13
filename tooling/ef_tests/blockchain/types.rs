@@ -102,6 +102,10 @@ pub struct BlobSchedule {
     #[serde(rename = "BPO5")]
     pub bpo5: Option<ForkBlobSchedule>,
     pub amsterdam: Option<ForkBlobSchedule>,
+    /// The test-only BPO fork after Amsterdam, which runs in the BPO3 slot. A
+    /// fixture names it `AmsterdamBPOIncrease` or `AmsterdamBPODecrease`, never both.
+    #[serde(rename = "AmsterdamBPOIncrease", alias = "AmsterdamBPODecrease")]
+    pub amsterdam_bpo: Option<ForkBlobSchedule>,
 }
 
 impl From<BlobSchedule> for ethrex_common::types::BlobSchedule {
@@ -133,6 +137,9 @@ impl From<BlobSchedule> for ethrex_common::types::BlobSchedule {
         }
         if let Some(amsterdam_schedule) = val.amsterdam {
             blob_schedule.amsterdam = Some(amsterdam_schedule.into())
+        }
+        if let Some(amsterdam_bpo_schedule) = val.amsterdam_bpo {
+            blob_schedule.bpo3 = Some(amsterdam_bpo_schedule.into())
         }
         blob_schedule
     }

@@ -23,7 +23,7 @@ env:
 
 jobs:
   detect-changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
@@ -56,7 +56,7 @@ jobs:
   lint:
     # "Lint" is a required check, don't change the name
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
@@ -191,7 +191,7 @@ jobs:
 
   known-issues-comment:
     name: Post Known Issues sticky comment
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Only on PRs from the same repo (forks lack write perms for comments).
     if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false }}
     permissions:
@@ -252,7 +252,7 @@ jobs:
 
   docker_build:
     name: Build Docker
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
@@ -280,7 +280,7 @@ jobs:
 
   run-assertoor:
     name: Assertoor - ${{ matrix.name }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [detect-changes, docker_build]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     strategy:
@@ -322,7 +322,7 @@ jobs:
 
   run-hive:
     name: Hive - ${{ matrix.name }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [detect-changes, docker_build]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     env:
@@ -335,6 +335,12 @@ jobs:
             simulation: ethereum/rpc-compat
             # https://github.com/ethereum/execution-apis/pull/627 changed the simulation to use a pre-merge genesis block, so we need to pin to a commit before that
             buildarg: "branch=d08382ae5c808680e976fce4b73f4ba91647199b"
+            # Stays on the hive this job ran on before the eels switch: from
+            # ethereum/hive#1623 the simulator image runs `make build` in the
+            # execution-apis checkout to generate refs-openrpc.json, and the
+            # commit pinned above predates the Makefile (execution-apis#751), so
+            # the image does not build there. Drop this once that pin moves.
+            hive_version: 7c4c99ebb79955f23e1952fb0282a0dadcb6e181
             artifact_prefix: rpc_compat
           - name: "Devp2p tests"
             simulation: devp2p
@@ -362,16 +368,12 @@ jobs:
             simulation: ethereum/engine
             limit: "engine-withdrawals"
             artifact_prefix: engine_withdrawals
-          # Fixtures are loaded from .github/config/hive/mainnet.yaml, whose
-          # release carries every fork through Amsterdam.
-          # consume-enginex runs the same test cases as consume-engine, in the
-          # engine_x fixture format: tests that share a pre-allocation reuse one
-          # client instead of starting a client per test, which makes the run
-          # several times faster.
-          - name: "Consume EngineX"
-            simulation: ethereum/eels/consume-enginex
-            mainnet: true
-            artifact_prefix: consume_enginex
+          # Amsterdam config is loaded from .github/config/hive/amsterdam.yaml
+          - name: "Consume Engine Amsterdam"
+            simulation: ethereum/eels/consume-engine
+            limit: ".*(2780|7708|7732|7778|7843|7928|7954|7975|7976|7981|7997|8024|8037|8038|8045|8061|8070|8159|8246|8282).*"
+            amsterdam: true
+            artifact_prefix: consume_engine_amsterdam
           # Investigate this test
           # - name: "Sync"
           #   simulation: ethereum/sync
@@ -404,12 +406,11 @@ jobs:
             echo "EOF"
           } >>"$GITHUB_OUTPUT"
 
-      - name: Load mainnet config
-        id: mainnet-config
+      - name: Load Amsterdam config
+        id: amsterdam-config
         shell: bash
         run: |
-          echo "fixtures=$(yq -r '.fixtures' .github/config/hive/mainnet.yaml)" >> "$GITHUB_OUTPUT"
-          echo "eels_commit=$(yq -r '.eels_commit' .github/config/hive/mainnet.yaml)" >> "$GITHUB_OUTPUT"
+          echo "tag=$(yq -r '.tag' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
 
       - name: Determine hive flags
         id: hive-flags
@@ -417,18 +418,16 @@ jobs:
         env:
           SIM_LIMIT: ${{ matrix.limit }}
           SIM_BUILDARG: ${{ matrix.buildarg }}
-          MAINNET: ${{ matrix.mainnet || 'false' }}
-          MAINNET_FIXTURES: ${{ steps.mainnet-config.outputs.fixtures }}
-          MAINNET_EELS_COMMIT: ${{ steps.mainnet-config.outputs.eels_commit }}
+          AMSTERDAM: ${{ matrix.amsterdam || 'false' }}
+          AMSTERDAM_TAG: ${{ steps.amsterdam-config.outputs.tag }}
         run: |
           FLAGS='--sim.parallelism 4 --sim.loglevel 3'
           if [[ -n "$SIM_LIMIT" ]]; then
             escaped_limit=${SIM_LIMIT//\'/\'\\\'\'}
             FLAGS+=" --sim.limit '$escaped_limit'"
           fi
-          if [[ "$MAINNET" == "true" ]]; then
-            FLAGS+=" --sim.buildarg fixtures=$MAINNET_FIXTURES"
-            FLAGS+=" --sim.buildarg branch=$MAINNET_EELS_COMMIT"
+          if [[ "$AMSTERDAM" == "true" ]]; then
+            FLAGS+=" --sim.buildarg tag=$AMSTERDAM_TAG"
           else
             for arg in $SIM_BUILDARG; do
               FLAGS+=" --sim.buildarg $arg"
@@ -448,8 +447,11 @@ jobs:
         uses: ethpandaops/hive-github-action@v0.5.0
         with:
           hive_repository: ethereum/hive
-          # ethereum/hive#1530 merge (deposit contract address mapper fix)
-          hive_version: 7c4c99ebb79955f23e1952fb0282a0dadcb6e181
+          # ethereum/hive#1609's merge commit: the eels simulators run from the
+          # images execution-specs publishes, selected with `tag=`. After
+          # ethereum/hive#1530 (deposit contract address mapper fix). A matrix
+          # entry can pin its own version, see "Rpc Compat tests".
+          hive_version: ${{ matrix.hive_version || '11864a701d331535f4ed487e4d538bead457d760' }}
           simulator: ${{ matrix.simulation }}
           client: ethrex
           client_config: ${{ steps.client-config.outputs.config }}
@@ -473,7 +475,7 @@ jobs:
   unit-tests:
     # "Test" is a required check, don't change the name
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [detect-changes, test]
     # Make sure this job runs even if the previous jobs failed or were skipped
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() }}
@@ -487,7 +489,7 @@ jobs:
 
   check-cargo-locks:
     name: Check Cargo.lock
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
@@ -513,7 +515,7 @@ jobs:
   all-tests:
     # "Integration Test" is a required check, don't change the name
     name: Integration Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: [detect-changes, run-assertoor, run-hive, check-cargo-locks, engine-ef-tests]
     # Make sure this job runs even if the previous jobs failed or were skipped
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() && needs.run-assertoor.result != 'skipped' && needs.run-hive.result != 'skipped' }}
@@ -538,7 +540,7 @@ jobs:
 
   reorg-tests:
     name: Reorg Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:

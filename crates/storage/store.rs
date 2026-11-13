@@ -496,6 +496,10 @@ pub struct Store {
     /// ends (the pruned range starts at the lowest entry still present).
     journal_pruning_paused: Arc<std::sync::atomic::AtomicBool>,
 
+    /// Signalled when an input of the node's sync status may have changed: the
+    /// canonical head, the sync target, the executed head or the synced flag.
+    sync_status_changed: Arc<tokio::sync::watch::Sender<()>>,
+
     background_threads: Arc<ThreadList>,
 }
 
@@ -1716,6 +1720,17 @@ impl Store {
         Ok(self.latest_block_header.get().number)
     }
 
+    /// Wakes the receivers of [`Self::sync_status_changes`].
+    pub fn notify_sync_status_changed(&self) {
+        self.sync_status_changed.send_replace(());
+    }
+
+    /// Resolves `changed()` after each [`Self::notify_sync_status_changed`];
+    /// signals sent before it is awaited collapse into one.
+    pub fn sync_status_changes(&self) -> tokio::sync::watch::Receiver<()> {
+        self.sync_status_changed.subscribe()
+    }
+
     /// Update pending block number
     pub async fn update_pending_block_number(
         &self,
@@ -2523,6 +2538,7 @@ impl Store {
             fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
             safe_commit_root,
             journal_pruning_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            sync_status_changed: Arc::new(tokio::sync::watch::Sender::new(())),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -3512,6 +3528,7 @@ impl Store {
             self.latest_block_header.update((*previous_head).clone());
             return Err(err);
         }
+        self.notify_sync_status_changed();
 
         // Refresh the canonical safe-commit root now that the canonical tables reflect the new
         // head. `None` (chain shorter than the threshold, e.g. genesis init at head 0) leaves the

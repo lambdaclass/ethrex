@@ -3,6 +3,9 @@ self-hosted-runner:
   labels:
     - gpu
     - ethrex-sync
+    # GitHub-hosted, not self-hosted: actionlint 1.7.12 predates the
+    # ubuntu-26.04 image and rejects the label as unknown.
+    - ubuntu-26.04
 paths:
   .github/workflows/**/*.{yml,yaml}:
     ignore:
