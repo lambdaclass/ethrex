@@ -17,7 +17,9 @@ pub use tikv_jemallocator;
 /// the top level of the binary's `main.rs`.
 ///
 /// With the `jemalloc` feature of this crate (on by default) the allocator is
-/// jemalloc; without it the macro declares nothing and the binary uses the system
+/// jemalloc; without it the binary uses the system allocator. Either way the macro
+/// defines the constant `GLOBAL_ALLOCATOR`, which says which one it is and which
+/// [`chain::run`] takes: a binary cannot start the node without having declared its
 /// allocator.
 // Tune jemalloc for throughput: use a background thread for memory purging instead
 // of doing it inline during malloc/free (which adds ~12% of total block execution CPU time
@@ -29,6 +31,12 @@ macro_rules! global_allocator {
         #[cfg(not(target_env = "msvc"))]
         #[global_allocator]
         static ALLOC: $crate::tikv_jemallocator::Jemalloc = $crate::tikv_jemallocator::Jemalloc;
+        #[cfg(not(target_env = "msvc"))]
+        const GLOBAL_ALLOCATOR: $crate::chain::GlobalAllocator =
+            $crate::chain::GlobalAllocator::Jemalloc;
+        #[cfg(target_env = "msvc")]
+        const GLOBAL_ALLOCATOR: $crate::chain::GlobalAllocator =
+            $crate::chain::GlobalAllocator::System;
 
         #[cfg(not(target_env = "msvc"))]
         #[allow(non_upper_case_globals)]
@@ -48,6 +56,12 @@ macro_rules! global_allocator {
         #[cfg(not(target_env = "msvc"))]
         #[global_allocator]
         static ALLOC: $crate::tikv_jemallocator::Jemalloc = $crate::tikv_jemallocator::Jemalloc;
+        #[cfg(not(target_env = "msvc"))]
+        const GLOBAL_ALLOCATOR: $crate::chain::GlobalAllocator =
+            $crate::chain::GlobalAllocator::Jemalloc;
+        #[cfg(target_env = "msvc")]
+        const GLOBAL_ALLOCATOR: $crate::chain::GlobalAllocator =
+            $crate::chain::GlobalAllocator::System;
 
         #[cfg(not(target_env = "msvc"))]
         #[allow(non_upper_case_globals)]
@@ -60,5 +74,8 @@ macro_rules! global_allocator {
 #[cfg(not(feature = "jemalloc"))]
 #[macro_export]
 macro_rules! global_allocator {
-    () => {};
+    () => {
+        const GLOBAL_ALLOCATOR: $crate::chain::GlobalAllocator =
+            $crate::chain::GlobalAllocator::System;
+    };
 }

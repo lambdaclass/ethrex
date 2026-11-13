@@ -2,7 +2,7 @@
 //!
 //! Support for a chain is a crate that describes it with a [`Chain`] and builds its
 //! own binary with [`run`]. The `ethrex` binary is the same thing for Ethereum:
-//! `run(ETHEREUM)`.
+//! `run(ETHEREUM, GLOBAL_ALLOCATOR)`.
 //!
 //! A chain can add:
 //! - named networks for `--network` ([`Chain::networks`]),
@@ -27,7 +27,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use crate::{
-    cli::{CLI, Options},
+    cli::{CLI, NETWORK_LONG_HELP, Options},
     initializers::{fatal_shutdown_cause, init_node, init_tracing},
     utils::{NodeConfigFile, get_client_version, is_memory_datadir, store_node_config_file},
 };
@@ -50,6 +50,7 @@ pub struct Chain<A> {
     /// Called once per start, after the command line is parsed and the genesis is
     /// loaded, and before the database is opened, with the chain's flags and the
     /// genesis of the network selected with `--network`. An error aborts the start.
+    /// It is called on the node's async runtime: do not block on async work in it.
     pub components: fn(&A, &Genesis) -> eyre::Result<NodeComponents>,
 }
 
@@ -78,20 +79,28 @@ pub const ETHEREUM: Chain<NoArgs> = Chain {
     components: |_, _| Ok(NodeComponents::default()),
 };
 
+/// The global allocator of a node binary, as [`crate::global_allocator!`] declared
+/// it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GlobalAllocator {
+    Jemalloc,
+    System,
+}
+
 /// Runs the node for `chain` with the arguments of the current process, until it is
 /// shut down. This is the whole `main` of a chain's binary.
 ///
-/// The binary declares its global allocator with [`crate::global_allocator!`], as
-/// `cmd/ethrex/ethrex.rs` does.
+/// `allocator` is the `GLOBAL_ALLOCATOR` constant that [`crate::global_allocator!`]
+/// defines in the binary, as in `cmd/ethrex/ethrex.rs`.
 ///
 /// `run` sets up the process: the async runtime, the global thread pool, logging
 /// and signal handling. Call it once, from `main`, and nothing else that sets those
 /// up.
-pub fn run<A: Args>(chain: Chain<A>) -> eyre::Result<()> {
+pub fn run<A: Args>(chain: Chain<A>, allocator: GlobalAllocator) -> eyre::Result<()> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
-        .block_on(run_node(chain))
+        .block_on(run_node(chain, allocator))
 }
 
 /// The command line of `chain`'s binary: the node's own, plus the chain's flags and
@@ -118,7 +127,7 @@ pub fn command<A: Args>(chain: &Chain<A>) -> clap::Command {
             .join(", ");
         command = command.mut_arg("network", |arg| {
             arg.long_help(format!(
-                "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include {names}. If not specified, defaults to {}.",
+                "{NETWORK_LONG_HELP} This binary adds {names}. If not specified, defaults to {}. A genesis file named like one of the networks is given as ./<name>.",
                 default.name
             ))
         });
@@ -177,7 +186,7 @@ fn resolve_network(opts: &mut Options, presets: &[NetworkPreset]) -> Result<(), 
     Ok(())
 }
 
-async fn run_node<A: Args>(chain: Chain<A>) -> eyre::Result<()> {
+async fn run_node<A: Args>(chain: Chain<A>, allocator: GlobalAllocator) -> eyre::Result<()> {
     let (CLI { opts, command }, args) =
         parse_args(&chain, std::env::args_os()).unwrap_or_else(|err| err.exit());
 
@@ -203,7 +212,11 @@ async fn run_node<A: Args>(chain: Chain<A>) -> eyre::Result<()> {
     };
 
     info!("ethrex version: {}", get_client_version());
-    tokio::spawn(periodically_check_version_update());
+    // The check announces releases of the `ethrex` binary. Another chain's binary
+    // is released on its own schedule and should not call out on ethrex's behalf.
+    if chain.name == ETHEREUM.name {
+        tokio::spawn(periodically_check_version_update());
+    }
 
     let (datadir, cancel_token, peer_table, shared_local_node, store) = init_node(
         opts,
@@ -217,7 +230,7 @@ async fn run_node<A: Args>(chain: Chain<A>) -> eyre::Result<()> {
 
     let mut signal_terminate = signal(SignalKind::terminate())?;
 
-    log_global_allocator();
+    log_global_allocator(allocator);
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
@@ -249,11 +262,12 @@ async fn run_node<A: Args>(chain: Chain<A>) -> eyre::Result<()> {
     Ok(())
 }
 
-fn log_global_allocator() {
-    if cfg!(all(feature = "jemalloc", not(target_env = "msvc"))) {
-        tracing::info!("Global allocator: jemalloc (tikv-jemallocator)");
-    } else {
-        tracing::info!("Global allocator: system (std::alloc::System)");
+fn log_global_allocator(allocator: GlobalAllocator) {
+    match allocator {
+        GlobalAllocator::Jemalloc => {
+            tracing::info!("Global allocator: jemalloc (tikv-jemallocator)")
+        }
+        GlobalAllocator::System => tracing::info!("Global allocator: system (std::alloc::System)"),
     }
 }
 

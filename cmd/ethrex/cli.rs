@@ -60,6 +60,15 @@ pub fn compute_effective_datadir(base: &Path, network: &Network, dev: bool) -> P
     }
 }
 
+/// The part of the `--network` help that holds for every binary built from this
+/// crate, whatever networks it adds.
+macro_rules! network_long_help {
+    () => {
+        "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi, plataberget and mainnet."
+    };
+}
+pub(crate) const NETWORK_LONG_HELP: &str = network_long_help!();
+
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
 #[command(name="ethrex", author = "Lambdaclass", version=get_client_version_string(), about = "ethrex Execution client", args_override_self = true)]
@@ -76,7 +85,7 @@ pub struct Options {
         long = "network",
         value_name = "GENESIS_FILE_PATH",
         help = "Receives a `Genesis` struct in json format. You can look at some example genesis files at `fixtures/genesis/*`.",
-        long_help = "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi, plataberget and mainnet. If not specified, defaults to mainnet.",
+        long_help = concat!(network_long_help!(), " If not specified, defaults to mainnet."),
         help_heading = "Node options",
         env = "ETHREX_NETWORK",
         value_parser = clap::value_parser!(Network),

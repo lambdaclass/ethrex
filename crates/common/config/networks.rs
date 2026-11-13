@@ -61,17 +61,20 @@ pub struct NetworkPreset {
 
 impl NetworkPreset {
     /// Checks that the name can be told apart from every other network and is safe
-    /// to use as the datadir subdirectory: lowercase letters, digits and hyphens,
-    /// and not a name `--network` or the datadir already gives a meaning to.
+    /// to use as the datadir subdirectory: lowercase letters, digits and inner
+    /// hyphens, and not a name `--network` or the datadir already gives a meaning to.
     pub fn validate_name(&self) -> Result<(), String> {
+        // A leading hyphen would make `--network <name>` read as a flag.
         let well_formed = !self.name.is_empty()
+            && !self.name.starts_with('-')
+            && !self.name.ends_with('-')
             && self
                 .name
                 .chars()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
         if !well_formed {
             return Err(format!(
-                "network preset {:?}: the name must be non-empty and contain only lowercase letters, digits and hyphens",
+                "network preset {:?}: the name must be non-empty, contain only lowercase letters, digits and hyphens, and not start or end with a hyphen",
                 self.name
             ));
         }
@@ -426,7 +429,17 @@ mod tests {
             assert!(named(ok).validate_name().is_ok(), "{ok}");
         }
         // Not a single plain directory name.
-        for malformed in ["", "..", "a/b", "/abs", "Upper", "with space", "dot.ted"] {
+        for malformed in [
+            "",
+            "..",
+            "a/b",
+            "/abs",
+            "Upper",
+            "with space",
+            "dot.ted",
+            "-leading",
+            "trailing-",
+        ] {
             let err = named(malformed).validate_name().unwrap_err();
             assert!(err.contains("lowercase letters"), "{malformed}: {err}");
         }

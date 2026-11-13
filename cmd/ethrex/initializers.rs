@@ -891,11 +891,22 @@ pub async fn init_node(
     }
 
     let genesis = network.get_genesis()?;
+    // Checked here so a network whose bootnodes do not parse fails the start.
+    network
+        .get_bootnodes()
+        .map_err(|err| eyre::eyre!("the bootnodes of {network} do not parse: {err}"))?;
     let NodeComponents {
         rpc: rpc_extensions,
         mempool_policy,
     } = components(&genesis)?;
     let rpc_extensions = RpcExtensions::new(rpc_extensions).map_err(|err| eyre::eyre!(err))?;
+    let extension_namespaces: Vec<_> = rpc_extensions.namespaces().collect();
+    if !extension_namespaces.is_empty() {
+        info!(
+            "Serving RPC namespaces in addition to the built-in ones: {}",
+            extension_namespaces.join(", ")
+        );
+    }
     display_chain_initialization(&genesis);
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();

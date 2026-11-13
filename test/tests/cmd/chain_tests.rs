@@ -22,7 +22,8 @@ use ethrex_config::networks::{
 };
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_rpc::{
-    RpcApiContext, RpcErr, RpcExtension, RpcExtensionFuture, RpcExtensions, map_http_requests,
+    RpcApiContext, RpcErr, RpcExtension, RpcExtensionFuture, RpcExtensions, RpcStartupError,
+    map_http_requests,
     rpc::map_authrpc_requests,
     test_utils::{context_without_p2p, setup_store},
     utils::RpcRequest,
@@ -195,6 +196,12 @@ fn help_lists_the_presets() {
     let help = command(&EXAMPLE).render_long_help().to_string();
     assert!(help.contains("example-dev, example-test"), "{help}");
     assert!(help.contains("defaults to example-dev"), "{help}");
+    // The built-in networks are still accepted, and still listed.
+    assert!(
+        help.contains("sepolia, hoodi, plataberget and mainnet"),
+        "{help}"
+    );
+    assert!(!help.contains("defaults to mainnet"), "{help}");
     assert!(help.contains("--example.max-tx-gas"), "{help}");
 }
 
@@ -570,7 +577,9 @@ impl Node {
                         _dir: dir,
                     };
                 }
-                Err(err) if err.to_string().contains("failed to bind") => last_error = Some(err),
+                Err(err) if err.downcast_ref::<RpcStartupError>().is_some() => {
+                    last_error = Some(err)
+                }
                 Err(err) => panic!("the node failed to start: {err}"),
             }
         }

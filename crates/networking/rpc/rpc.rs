@@ -294,14 +294,14 @@ pub trait RpcExtension: Send + Sync {
 /// The RPC extensions of a node: a set of [`RpcExtension`]s whose namespaces were
 /// checked when the set was built.
 #[derive(Clone, Default)]
-pub struct RpcExtensions(Arc<[Arc<dyn RpcExtension>]>);
+pub struct RpcExtensions(Arc<[(&'static str, Arc<dyn RpcExtension>)]>);
 
 impl RpcExtensions {
     /// Checks the namespaces: each must be a non-empty prefix of lowercase letters
     /// and digits, must not be a built-in namespace, and must not be given twice.
     pub fn new(extensions: Vec<Arc<dyn RpcExtension>>) -> Result<Self, String> {
-        let mut seen = HashSet::new();
-        for extension in &extensions {
+        let mut checked = Vec::with_capacity(extensions.len());
+        for extension in extensions {
             let namespace = extension.namespace();
             let well_formed = !namespace.is_empty()
                 && namespace
@@ -317,13 +317,19 @@ impl RpcExtensions {
                     "RPC extension namespace {namespace:?} is a built-in namespace"
                 ));
             }
-            if !seen.insert(namespace) {
+            if checked.iter().any(|(seen, _)| *seen == namespace) {
                 return Err(format!(
                     "RPC extension namespace {namespace:?} is registered more than once"
                 ));
             }
+            checked.push((namespace, extension));
         }
-        Ok(Self(extensions.into()))
+        Ok(Self(checked.into()))
+    }
+
+    /// The namespaces served, as they were checked.
+    pub fn namespaces(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.0.iter().map(|(namespace, _)| *namespace)
     }
 
     /// The extension that serves `method`, which must have the form
@@ -332,8 +338,8 @@ impl RpcExtensions {
         let (namespace, _) = method.split_once('_')?;
         self.0
             .iter()
-            .find(|extension| extension.namespace() == namespace)
-            .cloned()
+            .find(|(served, _)| *served == namespace)
+            .map(|(_, extension)| extension.clone())
     }
 }
 

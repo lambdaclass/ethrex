@@ -84,9 +84,9 @@ fn components(args: &ExampleArgs, _genesis: &Genesis) -> eyre::Result<NodeCompon
 ```
 
 - **`name`** is the name of the binary, shown in `--help`.
-- **`networks`** are the networks `--network <name>` accepts in addition to the Ethereum ones. The first one is the default network of the binary. `genesis` is the contents of a genesis file. `bootnodes` is a JSON array of enode URLs, or `"[]"`. Each network keeps its data in a subdirectory of the datadir named after it, so a name is lowercase letters, digits and hyphens, and cannot be one ethrex already uses (`mainnet`, `sepolia`, `hoodi`, `plataberget`, `dev`, or anything starting with `chain-`). The node refuses to start otherwise, and also when the genesis or the bootnodes of any of the chain's networks do not parse. A network's name wins over a file of the same name in the current directory; pass `./<name>` to use the file.
+- **`networks`** are the networks `--network <name>` accepts in addition to the Ethereum ones. The first one is the default network of the binary. `genesis` is the contents of a genesis file. `bootnodes` is a JSON array of enode URLs, or `"[]"`. Each network keeps its data in a subdirectory of the datadir named after it, so a name is lowercase letters, digits and inner hyphens, and cannot be one ethrex already uses (`mainnet`, `sepolia`, `hoodi`, `plataberget`, `dev`, or anything starting with `chain-`). The node refuses to start otherwise, and also when the genesis or the bootnodes of any of the chain's networks do not parse. A network's name wins over a file of the same name in the current directory; pass `./<name>` to use the file.
 - **The type parameter** is the chain's flags, a `clap::Args` struct. Prefix the flag names with the chain's name so they cannot collide with the node's. Use `ethrex::chain::NoArgs` if there are none.
-- **`components`** is a function called once per start, after the command line is parsed and the genesis is loaded, and before the database is opened. It receives the chain's flags and the genesis of the selected network. Returning an error aborts the start. `NodeComponents` is built by filling in the fields of `NodeComponents::default()`.
+- **`components`** is a function called once per start, after the command line is parsed and the genesis is loaded, and before the database is opened. It receives the chain's flags and the genesis of the selected network. Returning an error aborts the start. It is called on the node's async runtime, so it must not block on async work. `NodeComponents` is built by filling in the fields of `NodeComponents::default()`.
 
 ### 3. Add an RPC namespace
 
@@ -151,12 +151,12 @@ impl MempoolPolicy for MaxTxGas {
 ethrex::global_allocator!();
 
 fn main() -> eyre::Result<()> {
-    ethrex::chain::run(ethrex_example::EXAMPLE)
+    ethrex::chain::run(ethrex_example::EXAMPLE, GLOBAL_ALLOCATOR)
 }
 ```
 
 - `run` parses the command line, starts the node, and returns when the node shuts down. It sets up the whole process (async runtime, thread pool, logging, signals), so call it once and from `main`.
-- `global_allocator!` declares the memory allocator and tuning the `ethrex` binary uses. Without it the binary runs on the system allocator, which is slower.
+- `global_allocator!` declares the memory allocator and tuning the `ethrex` binary uses, and defines the `GLOBAL_ALLOCATOR` constant that `run` takes. A binary cannot start the node without it, so it cannot end up on the slower system allocator by omission.
 
 ### 6. Run it
 
@@ -186,7 +186,7 @@ Transaction rejected by the mempool policy: gas limit 600000 is above the cap of
 ```
 your crate                              ethrex
 ──────────                              ──────
-main() ── run(EXAMPLE) ───────────────▶ parse the command line
+main() ── run(EXAMPLE, ..) ───────────▶ parse the command line
                                           node flags + ExampleArgs
                                           --network resolved against networks
                                         load the genesis
@@ -200,7 +200,8 @@ components(args, genesis) ◀──────────── build the comp
 ```
 
 - The chain is compiled into the binary. There is no runtime loading: one binary per chain.
-- `run(ETHEREUM)` and `run(EXAMPLE)` go through the same code. A node whose chain returns `NodeComponents::default()` behaves exactly like `ethrex`.
+- The node still identifies itself as ethrex, the client it is built from, to its peers and in `web3_clientVersion`. It does not look for new ethrex releases, which only the `ethrex` binary does.
+- `run(ETHEREUM, ..)` and `run(EXAMPLE, ..)` go through the same code. A node whose chain returns `NodeComponents::default()` behaves exactly like `ethrex`.
 - The components are built once, before the database, the pool or the RPC server exist. Nothing can be added to a running node.
 
 ## Design decisions
