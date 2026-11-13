@@ -613,8 +613,8 @@ pub fn start_block_executor(
 ///    (`eth_*`, `debug_*`, `net_*`, `admin_*`, `web3_*`, `txpool_*`).
 ///
 /// 2. **WebSocket** (`ws`): Optional endpoint that serves the same methods as HTTP plus
-///    the subscription methods `eth_subscribe` / `eth_unsubscribe` (`"newHeads"` and
-///    `"newPendingTransactions"`). Enabled by passing a [`WebSocketConfig`] containing
+///    the subscription methods `eth_subscribe` / `eth_unsubscribe` (`"newHeads"`,
+///    `"newPendingTransactions"`, `"logs"` and `"syncing"`). Enabled by passing a [`WebSocketConfig`] containing
 ///    the listen address and the [`SubscriptionManager`] actor handle. When its address
 ///    equals `http_addr`, no separate listener is bound: both protocols share the HTTP
 ///    listener (`POST` → JSON-RPC, `GET` + `Upgrade` → WebSocket).
@@ -725,6 +725,11 @@ pub async fn bind_api(
                 .blockchain
                 .mempool
                 .subscribe_new_transactions(),
+            ws.subscription_manager.clone(),
+            cancel_token.clone(),
+        );
+        crate::subscription_manager::spawn_syncing_feed(
+            &service_context,
             ws.subscription_manager.clone(),
             cancel_token.clone(),
         );
@@ -1391,7 +1396,7 @@ pub(crate) async fn handle_authrpc_request(
 
 /// Handle a WebSocket connection.
 ///
-/// Supports eth_subscribe / eth_unsubscribe for "newHeads" in addition to
+/// Supports eth_subscribe / eth_unsubscribe (see [`handle_eth_subscribe`]) in addition to
 /// regular JSON-RPC request-response calls that work the same as over HTTP.
 ///
 /// The `route_request` closure handles non-subscription JSON-RPC methods.
@@ -1413,7 +1418,7 @@ pub async fn handle_websocket<F, Fut, E>(
     // tells the types apart by ID.
     let mut subscription_ids: Vec<String> = Vec::new();
 
-    loop {
+    'conn: loop {
         tokio::select! {
             msg = socket.recv() => {
                 let Some(msg) = msg else { break };
@@ -1435,8 +1440,11 @@ pub async fn handle_websocket<F, Fut, E>(
             }
 
             Some(msg) = out_rx.recv() => {
-                if socket.send(Message::Text(msg.into())).await.is_err() {
-                    break;
+                // One entry can hold several notifications, one per line.
+                for notification in msg.split('\n') {
+                    if socket.send(Message::Text(notification.into())).await.is_err() {
+                        break 'conn;
+                    }
                 }
             }
         }
@@ -1563,8 +1571,8 @@ fn ws_error_response(id: Option<RpcRequestId>, code: i32, message: &str) -> Stri
 
 /// Handle `eth_subscribe`.
 ///
-/// Supports `"newHeads"` and `"newPendingTransactions"` (hashes only). Registers
-/// this connection with the `SubscriptionManager` actor and returns the
+/// Supports `"newHeads"`, `"newPendingTransactions"` (hashes only), `"logs"` and
+/// `"syncing"`. Registers this connection with the `SubscriptionManager` actor and returns the
 /// subscription ID.
 pub async fn handle_eth_subscribe(
     req: &crate::utils::RpcRequest,
@@ -1594,6 +1602,20 @@ pub async fn handle_eth_subscribe(
         .ok_or_else(|| RpcErr::Internal("WebSocket server not enabled".to_string()))?;
     let subscribed = match sub_type.as_str() {
         "newHeads" => ws.subscription_manager.subscribe(out_tx.clone()).await,
+        "syncing" => {
+            if context.syncer.is_none() {
+                return Err(RpcErr::Internal(
+                    "Syncing status requested but syncer is not initialized".to_string(),
+                ));
+            }
+            let subscribed = ws
+                .subscription_manager
+                .subscribe_syncing(out_tx.clone())
+                .await;
+            // Has the syncing feed send the new subscriber its initial status.
+            context.storage.notify_sync_status_changed();
+            subscribed
+        }
         "newPendingTransactions" => {
             // geth's optional second param asks for full transaction objects.
             crate::eth::filter::parse_pending_full_txs(
@@ -1602,6 +1624,12 @@ pub async fn handle_eth_subscribe(
             )?;
             ws.subscription_manager
                 .subscribe_pending_transactions(out_tx.clone())
+                .await
+        }
+        "logs" => {
+            let filter = parse_log_subscription_filter(params.get(1).map(|v| &**v))?;
+            ws.subscription_manager
+                .subscribe_logs(out_tx.clone(), filter)
                 .await
         }
         other => {
@@ -1616,6 +1644,73 @@ pub async fn handle_eth_subscribe(
 
     subscription_ids.push(id.clone());
     Ok(Value::String(id))
+}
+
+/// geth's limits on a logs filter.
+const MAX_LOG_SUBSCRIPTION_TOPICS: usize = 4;
+const MAX_LOG_SUBSCRIPTION_VALUES: usize = 1000;
+
+fn parse_log_subscription_filter(
+    param: Option<&serde_json::value::RawValue>,
+) -> Result<crate::subscription_manager::LogSubscriptionFilter, RpcErr> {
+    use crate::types::block_identifier::{BlockIdentifier, BlockTag};
+    let Some(param) = param.filter(|param| param.get() != "null") else {
+        return Ok(Default::default());
+    };
+    let filter = crate::eth::logs::LogsFilter::parse(&Some(vec![param.to_owned()]))?;
+    if filter.block_hash.is_some() {
+        return Err(RpcErr::BadParams(
+            "logs subscriptions do not take blockHash".to_string(),
+        ));
+    }
+    let pending =
+        |block: &BlockIdentifier| matches!(block, BlockIdentifier::Tag(BlockTag::Pending));
+    if pending(&filter.from_block) || pending(&filter.to_block) {
+        return Err(RpcErr::BadParams(
+            "pending logs are not supported".to_string(),
+        ));
+    }
+    // As geth: numeric bounds, `latest` for none, `earliest` for block 0.
+    let bound = |block: &BlockIdentifier| match block {
+        BlockIdentifier::Number(number) => Ok(Some(*number)),
+        BlockIdentifier::Tag(BlockTag::Earliest) => Ok(Some(0)),
+        BlockIdentifier::Tag(BlockTag::Latest) => Ok(None),
+        _ => Err(()),
+    };
+    let (from_block, to_block) = match (bound(&filter.from_block), bound(&filter.to_block)) {
+        (Ok(None), Ok(None)) => (None, None),
+        (Ok(Some(from)), Ok(to)) if to.is_none_or(|to| to >= from) => (Some(from), to),
+        _ => {
+            return Err(RpcErr::BadParams("invalid block range params".to_string()));
+        }
+    };
+    let addresses = filter
+        .address_filters
+        .as_ref()
+        .map_or(0, |addresses| addresses.as_ref().len());
+    if filter.topics.len() > MAX_LOG_SUBSCRIPTION_TOPICS {
+        return Err(RpcErr::BadParams("exceed max topics".to_string()));
+    }
+    let mut alternatives = filter.topics.iter().map(|topic| match topic {
+        crate::eth::logs::TopicFilter::Topic(_) => 1,
+        crate::eth::logs::TopicFilter::Topics(topics) => topics.len(),
+    });
+    if addresses > MAX_LOG_SUBSCRIPTION_VALUES
+        || alternatives.any(|n| n > MAX_LOG_SUBSCRIPTION_VALUES)
+    {
+        return Err(RpcErr::BadParams(
+            "exceed max addresses or topics per search position".to_string(),
+        ));
+    }
+    Ok(crate::subscription_manager::LogSubscriptionFilter {
+        addresses: filter
+            .address_filters
+            .map(|addresses| addresses.as_ref().iter().copied().collect())
+            .unwrap_or_default(),
+        topics: filter.topics,
+        from_block,
+        to_block,
+    })
 }
 
 /// Handle `eth_unsubscribe`.
@@ -2054,7 +2149,7 @@ mod tests {
     use super::*;
     use crate::test_utils::default_context_with_storage;
     use ethrex_common::{
-        H160,
+        H160, H256,
         types::{BlockHeader, ChainConfig, Genesis},
     };
     use ethrex_crypto::keccak::keccak_hash;
@@ -2389,6 +2484,144 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn ws_subscribe_syncing_reports_status_changes() {
+        let route_request = |_req: RpcRequest| async move {
+            panic!("eth_subscribe must not be routed");
+            #[allow(unreachable_code)]
+            Ok::<Value, RpcErr>(Value::Null)
+        };
+        let request = |method: &str, params: &str| -> RpcRequest {
+            serde_json::from_str(&format!(
+                r#"{{"jsonrpc":"2.0","method":"{method}","params":{params},"id":1}}"#
+            ))
+            .unwrap()
+        };
+        let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<String>(16);
+        let mut subscription_ids: Vec<String> = Vec::new();
+
+        let storage = Store::new("temp.db", EngineType::InMemory).expect("in-memory store");
+        let mut no_syncer = crate::test_utils::context_without_p2p(storage.clone());
+        no_syncer.ws = Some(WebSocketConfig {
+            addr: "127.0.0.1:0".parse().unwrap(),
+            subscription_manager: SubscriptionManager::spawn(storage),
+        });
+        let response = process_ws_request(
+            request("eth_subscribe", r#"["syncing"]"#),
+            &no_syncer,
+            &out_tx,
+            &mut subscription_ids,
+            &route_request,
+        )
+        .await
+        .unwrap();
+        assert!(response.get("error").is_some(), "{response}");
+
+        let mut context =
+            default_context_with_storage(crate::test_utils::setup_store().await).await;
+        let subscription_manager = SubscriptionManager::spawn(context.storage.clone());
+        context.ws = Some(WebSocketConfig {
+            addr: "127.0.0.1:0".parse().unwrap(),
+            subscription_manager: subscription_manager.clone(),
+        });
+        let cancel_token = CancellationToken::new();
+        crate::subscription_manager::spawn_syncing_feed(
+            &context,
+            subscription_manager,
+            cancel_token.clone(),
+        );
+
+        let mut subscribe = async |out_tx: &tokio::sync::mpsc::Sender<String>| -> Value {
+            let response = process_ws_request(
+                request("eth_subscribe", r#"["syncing"]"#),
+                &context,
+                out_tx,
+                &mut subscription_ids,
+                &route_request,
+            )
+            .await
+            .unwrap();
+            assert!(response["result"].is_string(), "{response}");
+            response["result"].clone()
+        };
+        let next_result = async |out_rx: &mut tokio::sync::mpsc::Receiver<String>, id: &Value| {
+            let notification = tokio::time::timeout(Duration::from_secs(10), out_rx.recv())
+                .await
+                .expect("timed out waiting for the notification")
+                .unwrap();
+            let notification: Value = serde_json::from_str(&notification).unwrap();
+            assert_eq!(notification["method"], "eth_subscription");
+            assert_eq!(&notification["params"]["subscription"], id);
+            notification["params"]["result"].clone()
+        };
+        let syncing = |current_block: &str, highest_block: &str| {
+            serde_json::json!({
+                "syncing": true,
+                "startingBlock": "0x0",
+                "currentBlock": current_block,
+                "highestBlock": highest_block,
+            })
+        };
+
+        let id = subscribe(&out_tx).await;
+        assert_eq!(next_result(&mut out_rx, &id).await, syncing("0x0", "0x0"));
+        context.blockchain.set_synced();
+        assert_eq!(next_result(&mut out_rx, &id).await, Value::Bool(false));
+
+        // A canonical head without state makes the executed head the current block.
+        let head = BlockHeader {
+            number: 40,
+            state_root: H256::repeat_byte(1),
+            ..Default::default()
+        };
+        let head_hash = head.hash();
+        context.storage.add_block_headers(vec![head]).await.unwrap();
+        let set_executed_head = async |number: u64| {
+            let syncer = context.syncer.as_ref().unwrap();
+            syncer.diagnostics().write().await.executed_head = number;
+            context.storage.notify_sync_status_changed();
+        };
+        set_executed_head(20).await;
+        context
+            .storage
+            .forkchoice_update(vec![(40, head_hash)], 40, head_hash, None, None)
+            .await
+            .unwrap();
+
+        // 20 blocks behind is within the tolerance for staying synced...
+        let (late_tx, mut late_rx) = tokio::sync::mpsc::channel::<String>(16);
+        let late_id = subscribe(&late_tx).await;
+        assert_eq!(
+            next_result(&mut late_rx, &late_id).await,
+            Value::Bool(false)
+        );
+        set_executed_head(5).await;
+        assert_eq!(next_result(&mut out_rx, &id).await, syncing("0x5", "0x28"));
+        // ...but not for becoming synced again.
+        set_executed_head(20).await;
+        let (late_tx, mut late_rx) = tokio::sync::mpsc::channel::<String>(16);
+        let late_id = subscribe(&late_tx).await;
+        assert_eq!(
+            next_result(&mut late_rx, &late_id).await,
+            syncing("0x14", "0x28")
+        );
+        set_executed_head(36).await;
+        assert_eq!(next_result(&mut out_rx, &id).await, Value::Bool(false));
+        assert!(out_rx.try_recv().is_err());
+
+        let response = process_ws_request(
+            request("eth_unsubscribe", &format!("[{id}]")),
+            &context,
+            &out_tx,
+            &mut subscription_ids,
+            &route_request,
+        )
+        .await
+        .unwrap();
+        assert_eq!(response["result"], true, "{response}");
+        cancel_token.cancel();
+    }
+
     /// `newPendingTransactions` delivers the hash of each transaction the mempool
     /// admits, and refuses the full-transaction form it does not support.
     #[tokio::test]
@@ -2396,7 +2629,7 @@ mod tests {
         use ethrex_common::types::{MempoolTransaction, Transaction};
         let storage = Store::new("temp.db", EngineType::InMemory).expect("in-memory store");
         let mut context = default_context_with_storage(storage).await;
-        let subscription_manager = SubscriptionManager::spawn();
+        let subscription_manager = SubscriptionManager::spawn(context.storage.clone());
         context.ws = Some(WebSocketConfig {
             addr: "127.0.0.1:0".parse().unwrap(),
             subscription_manager: subscription_manager.clone(),
@@ -2463,6 +2696,134 @@ mod tests {
         assert_eq!(notification["params"]["subscription"], id);
         assert_eq!(notification["params"]["result"], format!("{hash:#x}"));
         cancel_token.cancel();
+    }
+
+    #[tokio::test]
+    async fn ws_subscribe_logs_filters_and_delivers() {
+        use ethrex_common::types::{
+            Block, BlockBody, BlockHeader, Log, Receipt, Transaction, TxType, bloom_from_logs,
+        };
+        let storage = Store::new("temp.db", EngineType::InMemory).expect("in-memory store");
+        let mut context = default_context_with_storage(storage).await;
+        let subscription_manager = SubscriptionManager::spawn(context.storage.clone());
+        context.ws = Some(WebSocketConfig {
+            addr: "127.0.0.1:0".parse().unwrap(),
+            subscription_manager: subscription_manager.clone(),
+        });
+        let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<String>(16);
+        let mut subscription_ids: Vec<String> = Vec::new();
+        let route_request = |_req: RpcRequest| async move {
+            panic!("eth_subscribe must not be routed");
+            #[allow(unreachable_code)]
+            Ok::<Value, RpcErr>(Value::Null)
+        };
+        let mut subscribe = async |params: &str| -> Value {
+            let request = serde_json::from_str(&format!(
+                r#"{{"jsonrpc":"2.0","method":"eth_subscribe","params":{params},"id":1}}"#
+            ))
+            .unwrap();
+            process_ws_request(
+                request,
+                &context,
+                &out_tx,
+                &mut subscription_ids,
+                &route_request,
+            )
+            .await
+            .unwrap()
+        };
+
+        for refused in [
+            r#"["logs",{"fromBlock":"pending"}]"#,
+            r#"["logs",{"fromBlock":"0x0","toBlock":"pending"}]"#,
+            r#"["logs",{"fromBlock":"safe"}]"#,
+            r#"["logs",{"fromBlock":"0x1","toBlock":"finalized"}]"#,
+            r#"["logs",{"fromBlock":"0x2","toBlock":"0x1"}]"#,
+            r#"["logs",{"toBlock":"0x1"}]"#,
+            r#"["logs",{"blockHash":"0x0000000000000000000000000000000000000000000000000000000000000001"}]"#,
+            r#"["logs",{"address":"0x12"}]"#,
+            r#"["logs","0x1"]"#,
+            r#"["logs",{"topics":[null,null,null,null,null]}]"#,
+        ] {
+            let response = subscribe(refused).await;
+            assert_eq!(
+                response["error"]["code"], -32602,
+                "for {refused}: {response}"
+            );
+        }
+        for accepted in [
+            r#"["logs"]"#,
+            r#"["logs",null]"#,
+            r#"["logs",{}]"#,
+            r#"["logs",{"fromBlock":"earliest","toBlock":"latest"}]"#,
+            r#"["logs",{"fromBlock":"0x1","toBlock":"0x1"}]"#,
+        ] {
+            let response = subscribe(accepted).await;
+            assert!(response["result"].is_string(), "for {accepted}: {response}");
+        }
+        // go-ethereum's `ethclient` sends an unset range as fromBlock 0x0, toBlock latest.
+        let response = subscribe(
+            r#"["logs",{"fromBlock":"0x0","toBlock":"latest","address":["0x0000000000000000000000000000000000000002"],"topics":[null,["0x0000000000000000000000000000000000000000000000000000000000000007"]]}]"#,
+        )
+        .await;
+        let id = response["result"].clone();
+        assert!(id.is_string(), "{response}");
+        let response = subscribe(r#"["logs",{"fromBlock":"0x2"}]"#).await;
+        let later_id = response["result"].clone();
+        assert!(later_id.is_string(), "{response}");
+
+        let log = |address: u64, topics: &[u64]| Log {
+            address: H160::from_low_u64_be(address),
+            topics: topics
+                .iter()
+                .map(|t| ethrex_common::H256::from_low_u64_be(*t))
+                .collect(),
+            data: Default::default(),
+        };
+        let logs = vec![log(1, &[0, 7]), log(2, &[0, 8]), log(2, &[0, 7])];
+        let block = Block::new(
+            BlockHeader {
+                number: 1,
+                logs_bloom: bloom_from_logs(&logs, &ethrex_crypto::NativeCrypto),
+                ..Default::default()
+            },
+            BlockBody {
+                transactions: vec![Transaction::LegacyTransaction(Default::default())],
+                ommers: Default::default(),
+                withdrawals: Default::default(),
+            },
+        );
+        let header = block.header.clone();
+        context.storage.add_block(block).await.unwrap();
+        context
+            .storage
+            .add_receipts(
+                header.hash(),
+                vec![Receipt::new(TxType::Legacy, true, 21_000, logs)],
+            )
+            .await
+            .unwrap();
+        subscription_manager.new_head(header.clone()).unwrap();
+
+        // Waits for the actor to handle the head.
+        subscription_manager
+            .unsubscribe(String::new())
+            .await
+            .unwrap();
+        let mut matched = Vec::new();
+        while let Ok(entry) = out_rx.try_recv() {
+            for notification in entry.split('\n') {
+                let notification: Value = serde_json::from_str(notification).unwrap();
+                if notification["params"]["subscription"] == id {
+                    matched.push(notification["params"]["result"].clone());
+                }
+                assert_ne!(notification["params"]["subscription"], later_id);
+            }
+        }
+        assert_eq!(matched.len(), 1, "{matched:?}");
+        assert_eq!(matched[0]["logIndex"], "0x2");
+        assert_eq!(matched[0]["blockHash"], format!("{:#x}", header.hash()));
+        assert_eq!(matched[0]["removed"], false);
     }
 
     /// WebSocket subscriptions live in the `eth` namespace and must obey the

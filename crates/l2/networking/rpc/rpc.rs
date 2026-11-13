@@ -173,6 +173,11 @@ pub async fn bind_api(
             ws.subscription_manager.clone(),
             cancel_token.clone(),
         );
+        ethrex_rpc::spawn_syncing_feed(
+            &service_context.l1_ctx,
+            ws.subscription_manager.clone(),
+            cancel_token.clone(),
+        );
     }
 
     // All request headers allowed.

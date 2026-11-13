@@ -5,5 +5,6 @@
 # Keep this in lock-step with `tooling/ef_tests/.fixtures_url`: the two pins grade
 # the same client, so a release that only one of them follows fails every fixture
 # the other release changed.
-fixtures: https://github.com/ethereum/execution-specs/releases/download/tests%40v21.0.2/fixtures.tar.gz
-eels_commit: e27f097ec7b3e6e8ee9c2c1873c183e8f7da7a6e
+# EELS simulator image tag of that release: its fixtures and test sources
+# with the execution-specs framework it was published with.
+tag: v21.0.2

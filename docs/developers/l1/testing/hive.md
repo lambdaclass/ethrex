@@ -289,13 +289,11 @@ Fixtures come from [ethereum/execution-specs](https://github.com/ethereum/execut
 ```yaml
 # Amsterdam tests read their pin from .github/config/hive/amsterdam.yaml
 if [[ "$SIM_LIMIT" == *"fork_Amsterdam"* ]]; then
-  FLAGS+=" --sim.buildarg fixtures=$AMSTERDAM_FIXTURES"
-  FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
+  FLAGS+=" --sim.buildarg tag=$AMSTERDAM_TAG"
 else
   # Other forks use the mainnet bundle (.github/config/hive/mainnet.yaml),
   # which includes comprehensive coverage including ported static tests.
-  FLAGS+=" --sim.buildarg fixtures=$MAINNET_FIXTURES"
-  FLAGS+=" --sim.buildarg branch=$MAINNET_EELS_COMMIT"
+  FLAGS+=" --sim.buildarg tag=$MAINNET_TAG"
 fi
 ```
 
@@ -315,7 +313,7 @@ Contents:
 https://github.com/ethereum/execution-specs/releases/download/tests%40v21.0.2/fixtures.tar.gz
 ```
 
-The CI hive config lives in `.github/config/hive/{mainnet,amsterdam}.yaml`, each pinning a `fixtures` URL and an `eels_commit` (the execution-specs commit used to build the hive consumer).
+The CI hive config lives in `.github/config/hive/{mainnet,amsterdam}.yaml`, each pinning a `tag`: the EELS simulator image tag of a fixture release. The images, `ghcr.io/ethereum/execution-specs/hive/<simulator>:<tag>`, are published by execution-specs and carry that release's fixtures and framework, so hive pulls them instead of building the simulator from source; release tags such as `v21.0.1` are immutable.
 
 ## Updating Repository Versions
 
@@ -332,9 +330,10 @@ To update to a different fork or newer versions:
    For mainnet forks, edit `.github/config/hive/mainnet.yaml`:
 
    ```yaml
-   fixtures: https://github.com/ethereum/execution-specs/releases/download/tests%40<version>/fixtures.tar.gz
-   eels_commit: <execution-specs-commit>
+   tag: v<version>
    ```
+
+   The image for that tag must exist under `ghcr.io/ethereum/execution-specs/hive/`; execution-specs publishes one per `tests@` release from `tests@v21.0.1` on.
 
    Edit `.github/config/hive/amsterdam.yaml` the same way. It takes the same `tests@` bundle as mainnet, kept on its own file because the Amsterdam sims may need to run against a different release while a fork is in flight. The local `run-hive-eels-amsterdam` and `run-hive-build-block` targets read this file too, so a bump here reaches both CI and local runs.
 
