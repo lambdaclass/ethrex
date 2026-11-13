@@ -8,4 +8,4 @@ pub mod runner;
 pub use fixture::{EngineFixture, EngineFixtureFile};
 pub use harness::{Backend, EngineApiHarness};
 pub use report::{render_failures, render_summary};
-pub use runner::{FixtureFailure, RunOptions, run_fixture};
+pub use runner::{FixtureFailure, Rejection, RunOptions, run_fixture};

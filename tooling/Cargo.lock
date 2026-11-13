@@ -2914,6 +2914,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2938,6 +2939,22 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "ef_tests-runners"
+version = "4.0.0"
+dependencies = [
+ "clap 4.6.0",
+ "ef_tests-blockchain",
+ "ef_tests-engine",
+ "ethrex-vm",
+ "regex",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.23",
 ]
 
 [[package]]
