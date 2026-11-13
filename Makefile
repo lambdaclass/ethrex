@@ -123,8 +123,11 @@ HIVE_PINS := .github/config/hive/pins.yaml
 HIVE_BRANCH ?= $(shell sed -n 's/^hive_version: *//p' $(HIVE_PINS))
 
 # Fetching the ref and checking out FETCH_HEAD works for a commit and for a
-# branch alike, which `git clone --branch` and `git pull` do not.
+# branch alike, which `git clone --branch` and `git pull` do not. An empty ref
+# would make `git fetch` take the default branch and build a hive other than
+# the pinned one without saying so, hence the check.
 setup-hive: ## 🐝 Set up Hive testing framework
+	@test -n "$(HIVE_BRANCH)" || { echo "setup-hive: no hive_version in $(HIVE_PINS)"; exit 1; }
 	if [ ! -d "hive" ]; then git clone https://github.com/ethereum/hive; fi
 	cd hive && \
 		git fetch origin $(HIVE_BRANCH) && \
@@ -180,6 +183,8 @@ run-hive-eels-blobs: ## Run hive EELS Blobs tests
 HIVE_EELS_TAG ?= $(shell sed -n 's/^tag: *//p' $(HIVE_PINS))
 # `fork_.*Amsterdam` rather than `fork_Amsterdam` so the BPO2->Amsterdam activation
 # fixtures (`fork_BPO2ToAmsterdamAtTime15k`) are swept alongside the Amsterdam ones.
+# The daily report's Amsterdam jobs use `fork_Amsterdam` instead, because there
+# those fixtures run in the Osaka and BPO jobs.
 AMSTERDAM_FORK_PATTERN ?= .*fork_.*Amsterdam.*
 run-hive-eels-amsterdam: build-image setup-hive ## 🧪 Run hive EELS Amsterdam Engine tests
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit "$(AMSTERDAM_FORK_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg tag=$(HIVE_EELS_TAG)
