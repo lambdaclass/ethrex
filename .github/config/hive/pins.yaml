@@ -1,6 +1,7 @@
 # Pins for the hive runs. PR CI (pr-main_l1.yaml) and the daily report
 # (daily_hive_report.yaml) read them through .github/scripts/hive-flags.sh, and
-# the root Makefile reads `tag` and `hive_version` for the local targets.
+# the root Makefile reads `tag`, `hive_version` and the two rpc-compat pins for
+# the local targets.
 # Every key is a plain scalar on its own line, so `sed` can read the file
 # without `yq`. `make check-fixture-pins` fails when these pins and the fixture
 # files disagree, and .github/scripts/bump-fixtures.sh moves them together.

@@ -119,8 +119,16 @@ stop-localnet: ## 🛑 Stop local network
 # the two can't drift. Each pin is a plain scalar, so `sed` extracts it without
 # making the Makefile depend on `yq`.
 HIVE_PINS := .github/config/hive/pins.yaml
+hive_pin = $(shell sed -n 's/^$(1): *//p' $(HIVE_PINS))
 # The hive commit CI runs. Override with a branch or another commit to try one.
-HIVE_BRANCH ?= $(shell sed -n 's/^hive_version: *//p' $(HIVE_PINS))
+# rpc-compat has its own hive commit and execution-apis commit, as in CI; the
+# pin file says why.
+ifeq ($(SIMULATION),ethereum/rpc-compat)
+HIVE_BRANCH ?= $(call hive_pin,rpc_compat_hive_version)
+SIM_BUILDARG_FLAG = --sim.buildarg "branch=$(call hive_pin,rpc_compat_branch)"
+else
+HIVE_BRANCH ?= $(call hive_pin,hive_version)
+endif
 
 # Fetching the ref and checking out FETCH_HEAD works for a commit and for a
 # branch alike, which `git clone --branch` and `git pull` do not. An empty ref
@@ -137,10 +145,6 @@ setup-hive: ## 🐝 Set up Hive testing framework
 TEST_PATTERN ?= /
 SIM_LOG_LEVEL ?= 3
 SIM_PARALLELISM ?= 16
-# https://github.com/ethereum/execution-apis/pull/627 changed the simulation to use a pre-merge genesis block, so we need to pin to a commit before that
-ifeq ( $(SIMULATION) , ethereum/rpc-compat )
-SIM_BUILDARG_FLAG = --sim.buildarg "branch=d08382ae5c808680e976fce4b73f4ba91647199b"
-endif
 
 # Runs a Hive testing suite. A web interface showing the results is available at http://127.0.0.1:8080 via the `view-hive` target.
 # The endpoints tested can be filtered by supplying a test pattern in the form "/endpoint_1|endpoint_2|..|endpoint_n".
@@ -180,7 +184,7 @@ run-hive-eels-blobs: ## Run hive EELS Blobs tests
 
 # `tag` is the EELS simulator image tag of the pinned fixture release, which hive
 # takes as `--sim.buildarg tag=`.
-HIVE_EELS_TAG ?= $(shell sed -n 's/^tag: *//p' $(HIVE_PINS))
+HIVE_EELS_TAG ?= $(call hive_pin,tag)
 # `fork_.*Amsterdam` rather than `fork_Amsterdam` so the BPO2->Amsterdam activation
 # fixtures (`fork_BPO2ToAmsterdamAtTime15k`) are swept alongside the Amsterdam ones.
 # The daily report's Amsterdam jobs use `fork_Amsterdam` instead, because there
