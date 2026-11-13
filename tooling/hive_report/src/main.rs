@@ -176,13 +176,21 @@ const FORK_ORDER: [&str; 8] = [
     "Paris",
 ];
 
-/// Sort key that lists a fork's own row first and the forks built on it, such
-/// as `OsakaToBPO1AtTime15k`, right after it. `None` for a name that starts
-/// with no known fork.
+/// Sort key that lists a fork's own row first and, right after it, the rows
+/// whose name starts with that fork: the transitions out of it, such as
+/// `OsakaToBPO1AtTime15k`, and its variants, such as `AmsterdamBPOIncrease`.
+/// `None` for a name that starts with no known fork.
+///
+/// A digit after the fork's name makes it another fork, so `BPO10` is not
+/// ranked under `BPO1`.
 fn fork_rank(display_name: &str) -> Option<(usize, bool, &str)> {
     FORK_ORDER
         .iter()
-        .position(|fork| display_name.starts_with(fork))
+        .position(|fork| {
+            display_name
+                .strip_prefix(fork)
+                .is_some_and(|rest| !rest.starts_with(|c: char| c.is_ascii_digit()))
+        })
         .map(|index| (index, display_name != FORK_ORDER[index], display_name))
 }
 
@@ -521,6 +529,8 @@ mod tests {
             ]
         );
         assert_eq!(fork_rank("Auth"), None);
+        assert_eq!(fork_rank("BPO10"), None);
+        assert_eq!(fork_rank("BPO1"), Some((2, false, "BPO1")));
     }
 
     fn row(category: &str, display_name: &str, passed_tests: usize) -> HiveResult {
