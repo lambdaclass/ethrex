@@ -104,6 +104,7 @@ pub use rpc::{
 };
 pub use subscription_manager::{
     SubscriptionManager, SubscriptionManagerProtocol, spawn_pending_transactions_feed,
+    spawn_syncing_feed,
 };
 pub use utils::{RpcErr, RpcErrorMetadata, RpcNamespace};
 
