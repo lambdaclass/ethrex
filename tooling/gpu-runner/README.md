@@ -5,8 +5,8 @@ the hour. It only needs to be on while `main_prover.yaml` runs, so:
 
 - **Start:** the `start-gpu-runner` job in `.github/workflows/main_prover.yaml`
   starts the machine through the Paperspace API, using
-  `.github/actions/start-paperspace-machine`. The `test` job waits in the queue
-  until the runner comes online.
+  `.github/actions/start-paperspace-machine`. The `test` job needs it, then
+  waits in the queue until the runner comes online.
 - **Stop:** `idle-stop.sh` runs every minute on the machine, triggered by a
   systemd timer. It stops the machine once no job has run, and no GPU workflow
   run has been queued or in progress, for `IDLE_MINUTES` (default 15).
@@ -45,10 +45,14 @@ $45 of extra compute.
    ```
    PAPERSPACE_API_KEY=...
    PAPERSPACE_MACHINE_ID=pszj5x2xbgeb
-   GITHUB_TOKEN=...        # fine-grained token, Actions: read on lambdaclass/ethrex
+   # Fine-grained token, Actions: read on lambdaclass/ethrex
+   GITHUB_TOKEN=...
    IDLE_MINUTES=15
-   DRY_RUN=1               # set to 0 once the logs look right
+   # Set to 0 once the logs look right
+   DRY_RUN=1
    ```
+   Keep comments on their own lines: systemd's `EnvironmentFile` treats a
+   trailing `# ...` as part of the value.
 4. Enable the timer and watch it:
    ```bash
    sudo systemctl daemon-reload && sudo systemctl enable --now gpu-runner-idle.timer

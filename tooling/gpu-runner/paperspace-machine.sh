@@ -20,10 +20,15 @@ API="https://api.paperspace.com/v1"
 START_TIMEOUT_SECS="${START_TIMEOUT_SECS:-600}"
 
 api() {
-  local method=$1 path=$2
-  curl --silent --show-error --fail --max-time 30 --retry 3 --retry-all-errors \
+  local method=$1 path=$2 retry=()
+  # Only retry reads: a retried start/stop that got a 4xx ("already
+  # starting") would just fail again.
+  [[ $method == GET ]] && retry=(--retry 3 --retry-all-errors)
+  # The key goes through a config file descriptor, not argv, so it does not
+  # show up in `ps`.
+  curl --silent --show-error --fail --max-time 30 ${retry[@]+"${retry[@]}"} \
     -X "$method" \
-    -H "Authorization: Bearer ${PAPERSPACE_API_KEY}" \
+    --config <(printf 'header = "Authorization: Bearer %s"\n' "$PAPERSPACE_API_KEY") \
     -H "Content-Type: application/json" \
     "${API}${path}"
 }
@@ -33,7 +38,7 @@ api() {
 # "Shutting Down", ... and the API example shows "off".
 state() {
   api GET "/machines/${PAPERSPACE_MACHINE_ID}" |
-    python3 -c 'import json,sys; print(json.load(sys.stdin)["state"].lower())'
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["state"].lower())' 2>/dev/null
 }
 
 is_ready() { [[ $1 == ready || $1 == on || $1 == running ]]; }
@@ -44,21 +49,34 @@ case "${1:-}" in
     ;;
   start)
     deadline=$((SECONDS + START_TIMEOUT_SECS))
-    start_sent=false
+    off_polls=0 # polls that saw "off" since the last start request
+    ready_polls=0
     while ((SECONDS < deadline)); do
-      s=$(state)
+      if ! s=$(state); then
+        echo "state query failed, retrying" >&2
+        sleep 15
+        continue
+      fi
       echo "machine ${PAPERSPACE_MACHINE_ID}: ${s}"
       if is_ready "$s"; then
-        exit 0
+        # Require two ready polls 30s apart: a stop the idle watchdog sent
+        # just before this run was created may not show up in the state yet.
+        ((++ready_polls >= 2)) && exit 0
+        sleep 30
+        continue
       fi
-      if [[ $s == off && $start_sent == false ]]; then
-        echo "starting machine ${PAPERSPACE_MACHINE_ID}"
-        if api PATCH "/machines/${PAPERSPACE_MACHINE_ID}/start" >/dev/null; then
-          start_sent=true
+      ready_polls=0
+      if [[ $s == off ]]; then
+        # Send start, and send it again if the machine still reports off
+        # a minute later (4 polls).
+        if ((off_polls % 4 == 0)); then
+          echo "starting machine ${PAPERSPACE_MACHINE_ID}"
+          api PATCH "/machines/${PAPERSPACE_MACHINE_ID}/start" >/dev/null ||
+            echo "start request failed, retrying" >&2
         fi
-      elif [[ $s == off ]]; then
-        # Start was accepted but the machine is still reported off: retry it.
-        start_sent=false
+        off_polls=$((off_polls + 1))
+      else
+        off_polls=0
       fi
       sleep 15
     done

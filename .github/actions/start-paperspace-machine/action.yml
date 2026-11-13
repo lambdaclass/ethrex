@@ -1,5 +1,5 @@
 name: "Start Paperspace machine"
-description: "Start a Paperspace machine (e.g. the on-demand GPU runner) and wait until it is ready"
+description: "Start a Paperspace machine (e.g. the on-demand GPU runner) and wait until it is ready. Needs tooling/gpu-runner in the checkout."
 
 inputs:
   machine-id:

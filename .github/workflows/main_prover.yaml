@@ -39,9 +39,9 @@ env:
 
 jobs:
   # The GPU runner (Paperspace machine) is off while idle: it stops itself
-  # after 15 idle minutes (tooling/gpu-runner). This job turns it on. The
-  # `test` job does not wait for it: GitHub keeps it queued until a runner
-  # with the `gpu` label comes online.
+  # after 15 idle minutes (tooling/gpu-runner). This job turns it on and
+  # `test` needs it, so a failed start fails the run instead of leaving
+  # `test` queued for up to 24h.
   start-gpu-runner:
     name: Start GPU runner
     # Same guard as `test`: fork PRs must not be able to start the machine.
@@ -68,6 +68,7 @@ jobs:
 
   test:
     name: Integration Test Prover SP1
+    needs: start-gpu-runner
     # Self-hosted GPU runner: only fire for non-PR events or in-org PRs.
     # Fork PRs would otherwise execute attacker-controlled code on the GPU CI machine.
     if: >-
