@@ -333,14 +333,6 @@ jobs:
         include:
           - name: "Rpc Compat tests"
             simulation: ethereum/rpc-compat
-            # https://github.com/ethereum/execution-apis/pull/627 changed the simulation to use a pre-merge genesis block, so we need to pin to a commit before that
-            buildarg: "branch=d08382ae5c808680e976fce4b73f4ba91647199b"
-            # Stays on the hive this job ran on before the eels switch: from
-            # ethereum/hive#1623 the simulator image runs `make build` in the
-            # execution-apis checkout to generate refs-openrpc.json, and the
-            # commit pinned above predates the Makefile (execution-apis#751), so
-            # the image does not build there. Drop this once that pin moves.
-            hive_version: 7c4c99ebb79955f23e1952fb0282a0dadcb6e181
             artifact_prefix: rpc_compat
           - name: "Devp2p tests"
             simulation: devp2p
@@ -372,7 +364,7 @@ jobs:
           # fixture format: tests that share a pre-allocation reuse one client
           # instead of starting a client per test, which makes the run several
           # times faster. It runs the whole fixture release pinned in
-          # .github/config/hive/mainnet.yaml, which carries every fork through
+          # .github/config/hive/pins.yaml, which carries every fork through
           # Amsterdam.
           - name: "Consume EngineX"
             simulation: ethereum/eels/consume-enginex
@@ -409,35 +401,15 @@ jobs:
             echo "EOF"
           } >>"$GITHUB_OUTPUT"
 
-      - name: Load EELS config
-        id: eels-config
-        shell: bash
-        run: |
-          echo "tag=$(yq -r '.tag' .github/config/hive/mainnet.yaml)" >> "$GITHUB_OUTPUT"
-
+      # The flags and the hive commit come from .github/config/hive/pins.yaml.
       - name: Determine hive flags
         id: hive-flags
         shell: bash
         env:
           SIMULATION: ${{ matrix.simulation }}
           SIM_LIMIT: ${{ matrix.limit }}
-          SIM_BUILDARG: ${{ matrix.buildarg }}
-          EELS_TAG: ${{ steps.eels-config.outputs.tag }}
         run: |
-          FLAGS='--sim.parallelism 4 --sim.loglevel 3'
-          if [[ -n "$SIM_LIMIT" ]]; then
-            escaped_limit=${SIM_LIMIT//\'/\'\\\'\'}
-            FLAGS+=" --sim.limit '$escaped_limit'"
-          fi
-          # The EELS simulators run from the image execution-specs publishes for
-          # the pinned fixture release.
-          if [[ "$SIMULATION" == ethereum/eels/* ]]; then
-            FLAGS+=" --sim.buildarg tag=$EELS_TAG"
-          fi
-          for arg in $SIM_BUILDARG; do
-            FLAGS+=" --sim.buildarg $arg"
-          done
-          echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
+          .github/scripts/hive-flags.sh --simulation "$SIMULATION" --limit "$SIM_LIMIT" >> "$GITHUB_OUTPUT"
 
       - name: Log in to the Container registry
         if: ${{ env.DOCKERHUB_TOKEN != '' }}
@@ -451,11 +423,7 @@ jobs:
         uses: ethpandaops/hive-github-action@v0.5.0
         with:
           hive_repository: ethereum/hive
-          # ethereum/hive#1609's merge commit: the eels simulators run from the
-          # images execution-specs publishes, selected with `tag=`. After
-          # ethereum/hive#1530 (deposit contract address mapper fix). A matrix
-          # entry can pin its own version, see "Rpc Compat tests".
-          hive_version: ${{ matrix.hive_version || '11864a701d331535f4ed487e4d538bead457d760' }}
+          hive_version: ${{ steps.hive-flags.outputs.hive_version }}
           simulator: ${{ matrix.simulation }}
           client: ethrex
           client_config: ${{ steps.client-config.outputs.config }}

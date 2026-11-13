@@ -115,21 +115,21 @@ stop-localnet: ## 🛑 Stop local network
 	kurtosis enclave stop $(ENCLAVE)
 	kurtosis enclave rm $(ENCLAVE) --force
 
-HIVE_BRANCH ?= master
+# Local hive runs read the same pins CI does, so a bump lands in one place and
+# the two can't drift. Each pin is a plain scalar, so `sed` extracts it without
+# making the Makefile depend on `yq`.
+HIVE_PINS := .github/config/hive/pins.yaml
+# The hive commit CI runs. Override with a branch or another commit to try one.
+HIVE_BRANCH ?= $(shell sed -n 's/^hive_version: *//p' $(HIVE_PINS))
 
+# Fetching the ref and checking out FETCH_HEAD works for a commit and for a
+# branch alike, which `git clone --branch` and `git pull` do not.
 setup-hive: ## 🐝 Set up Hive testing framework
-	if [ -d "hive" ]; then \
-		cd hive && \
-		git fetch origin && \
-		git checkout $(HIVE_BRANCH) && \
-		git pull origin $(HIVE_BRANCH) && \
-		go build .; \
-	else \
-		git clone --branch $(HIVE_BRANCH) https://github.com/ethereum/hive && \
-		cd hive && \
-		git checkout $(HIVE_BRANCH) && \
-		go build .; \
-	fi
+	if [ ! -d "hive" ]; then git clone https://github.com/ethereum/hive; fi
+	cd hive && \
+		git fetch origin $(HIVE_BRANCH) && \
+		git checkout --detach FETCH_HEAD && \
+		go build .
 
 TEST_PATTERN ?= /
 SIM_LOG_LEVEL ?= 3
@@ -175,12 +175,9 @@ run-hive-eels-rlp: ## Run hive EELS RLP tests
 run-hive-eels-blobs: ## Run hive EELS Blobs tests
 	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/execute-blobs
 
-# Local hive runs read the same pin CI does, so a bundle bump lands in one place
-# and the two can't drift. The file pins `tag`, the EELS simulator image tag of the
-# fixture release, which hive passes as `--sim.buildarg tag=`. The key is a plain
-# scalar, so `sed` extracts it without making the Makefile depend on `yq`.
-HIVE_EELS_CONFIG := .github/config/hive/mainnet.yaml
-HIVE_EELS_TAG ?= $(shell sed -n 's/^tag: *//p' $(HIVE_EELS_CONFIG))
+# `tag` is the EELS simulator image tag of the pinned fixture release, which hive
+# takes as `--sim.buildarg tag=`.
+HIVE_EELS_TAG ?= $(shell sed -n 's/^tag: *//p' $(HIVE_PINS))
 # `fork_.*Amsterdam` rather than `fork_Amsterdam` so the BPO2->Amsterdam activation
 # fixtures (`fork_BPO2ToAmsterdamAtTime15k`) are swept alongside the Amsterdam ones.
 AMSTERDAM_FORK_PATTERN ?= .*fork_.*Amsterdam.*
