@@ -184,6 +184,30 @@ fn fork_rank(display_name: &str) -> Option<(usize, bool, &str)> {
         .map(|index| (index, display_name != FORK_ORDER[index], display_name))
 }
 
+/// Order of the report's rows: by category, then the fork rows from newest to
+/// oldest, then the rows that name no known fork, the one with most passed
+/// tests first.
+///
+/// A row with a fork rank sorts before every row without one. Comparing by
+/// rank only when both rows have one, and by passed tests otherwise, is not a
+/// total order: it can put A before B, B before C and C before A, and
+/// `sort_by` may panic on such a comparison.
+fn compare_rows(a: &HiveResult, b: &HiveResult) -> Ordering {
+    a.category
+        .cmp(&b.category)
+        .then_with(
+            || match (fork_rank(&a.display_name), fork_rank(&b.display_name)) {
+                (Some(rank_a), Some(rank_b)) => rank_a.cmp(&rank_b),
+                (Some(_), None) => Ordering::Less,
+                (None, Some(_)) => Ordering::Greater,
+                (None, None) => Ordering::Equal,
+            },
+        )
+        .then_with(|| b.passed_tests.cmp(&a.passed_tests))
+        .then_with(|| b.success_percentage.total_cmp(&a.success_percentage))
+        .then_with(|| a.display_name.cmp(&b.display_name))
+}
+
 fn calculate_success_percentage(passed_tests: usize, total_tests: usize) -> f64 {
     if total_tests == 0 {
         0.0
@@ -338,28 +362,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .collect();
 
-    // First by category ascending, use fork ordering newest → oldest when applicable, then by passed tests descending.
-    results.sort_by(|a, b| {
-        let category_cmp = a.category.cmp(&b.category);
-        if category_cmp != Ordering::Equal {
-            return category_cmp;
-        }
-
-        if let (Some(rank_a), Some(rank_b)) =
-            (fork_rank(&a.display_name), fork_rank(&b.display_name))
-        {
-            let order_cmp = rank_a.cmp(&rank_b);
-            if order_cmp != Ordering::Equal {
-                return order_cmp;
-            }
-        }
-
-        b.passed_tests.cmp(&a.passed_tests).then_with(|| {
-            b.success_percentage
-                .partial_cmp(&a.success_percentage)
-                .unwrap()
-        })
-    });
+    results.sort_by(compare_rows);
 
     let mut grouped_results: Vec<CategoryResults> = Vec::new();
     for result in results {
@@ -514,5 +517,56 @@ mod tests {
             ]
         );
         assert_eq!(fork_rank("Auth"), None);
+    }
+
+    fn row(category: &str, display_name: &str, passed_tests: usize) -> HiveResult {
+        HiveResult {
+            category: category.to_string(),
+            display_name: display_name.to_string(),
+            passed_tests,
+            total_tests: passed_tests,
+            success_percentage: 100.0,
+        }
+    }
+
+    #[test]
+    fn rows_without_a_fork_come_after_the_fork_rows_whatever_they_passed() {
+        // Ranking only pairs of fork rows and comparing passed tests otherwise
+        // made a cycle of these three: Amsterdam before Osaka by rank, Osaka
+        // before "No fork" by passed tests, "No fork" before Amsterdam by
+        // passed tests.
+        let rows = [
+            row("EVM - Consume Engine", "Amsterdam", 1),
+            row("EVM - Consume Engine", "Osaka", 3),
+            row("EVM - Consume Engine", NO_FORK, 2),
+            row("Engine", "Auth", 9),
+            row("Engine", "Paris", 1),
+            row("Engine", "Exchange Capabilities", 5),
+        ];
+        let expected = [
+            "Amsterdam",
+            "Osaka",
+            NO_FORK,
+            "Paris",
+            "Auth",
+            "Exchange Capabilities",
+        ];
+        // Every starting order has to give the same result.
+        for rotation in 0..rows.len() {
+            let mut sorted: Vec<&HiveResult> = rows
+                .iter()
+                .cycle()
+                .skip(rotation)
+                .take(rows.len())
+                .collect();
+            sorted.sort_by(|a, b| compare_rows(a, b));
+            let names: Vec<&str> = sorted.iter().map(|r| r.display_name.as_str()).collect();
+            assert_eq!(names, expected);
+        }
+        for a in &rows {
+            for b in &rows {
+                assert_eq!(compare_rows(a, b), compare_rows(b, a).reverse());
+            }
+        }
     }
 }
