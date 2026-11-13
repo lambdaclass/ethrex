@@ -63,10 +63,13 @@ impl HiveResult {
             "engine-exchange-capabilities" => ("Engine", "Exchange Capabilities"),
             "engine-withdrawals" => ("Engine", "Shanghai"),
             "discv4" => ("P2P", "Discovery V4"),
+            "discv5" => ("P2P", "Discovery V5"),
             "eth" => ("P2P", "Eth capability"),
             "snap" => ("P2P", "Snap capability"),
+            "snap2" => ("P2P", "Snap/2 capability"),
             "rpc-compat" => ("RPC", "RPC API Compatibility"),
             "sync" => ("Sync", "Node Syncing"),
+            "snapsync" => ("Sync", "Snap Syncing"),
             "eels/consume-rlp" => ("EVM - Consume RLP", fork.as_str()),
             "eels/consume-engine" => ("EVM - Consume Engine", fork.as_str()),
             "eels/consume-wirex" => ("EVM - Consume WireX", fork.as_str()),
@@ -106,25 +109,79 @@ impl std::fmt::Display for HiveResult {
     }
 }
 
-fn create_fork_result(json_data: &JsonFile, fork: &str, test_pattern: &str) -> HiveResult {
-    let total_tests = json_data
-        .test_cases
-        .iter()
-        .filter(|(_, test_case)| test_case.name.contains(test_pattern))
-        .count();
-    let passed_tests = json_data
-        .test_cases
-        .iter()
-        .filter(|(_, test_case)| {
-            test_case.name.contains(test_pattern) && test_case.summary_result.pass
+/// Suites of the EELS simulators, which hold the tests of every fork in one suite.
+const FORK_SPLIT_SUITES: [&str; 4] = [
+    "eels/consume-rlp",
+    "eels/consume-engine",
+    "eels/consume-wirex",
+    // Runs once per fork (see daily_hive_report.yaml). Without the split both
+    // runs land in the same row and a fork-specific regression is invisible.
+    "eels/execute, hive mode",
+];
+
+/// Row for the test cases whose id names no fork, which are the simulator's own
+/// harness cases, such as its client launch.
+const NO_FORK: &str = "No fork";
+
+/// The fork a test case ran on, read from the `fork_<Name>` parameter of its id,
+/// as in `test_x.py::test_x[fork_Prague-blockchain_test_engine-case]`.
+///
+/// Only the parameter list is searched, so a `fork_` in a file or test name is
+/// not taken for one. The name is returned whole: `BPO2ToAmsterdamAtTime15k` is
+/// its own fork, not a `BPO2` or an `Amsterdam` case.
+fn fork_of(test_name: &str) -> Option<&str> {
+    let (_, params) = test_name.split_once('[')?;
+    params
+        .split(['-', ']'])
+        .find_map(|param| param.strip_prefix("fork_"))
+        .filter(|fork| !fork.is_empty())
+}
+
+/// One result per fork found in the suite, so every test case lands in a row.
+fn fork_results(json_data: &JsonFile) -> Vec<HiveResult> {
+    let mut per_fork: HashMap<&str, (usize, usize)> = HashMap::new();
+    for test_case in json_data.test_cases.values() {
+        let (passed, total) = per_fork
+            .entry(fork_of(&test_case.name).unwrap_or(NO_FORK))
+            .or_insert((0, 0));
+        *total += 1;
+        if test_case.summary_result.pass {
+            *passed += 1;
+        }
+    }
+    per_fork
+        .into_iter()
+        .map(|(fork, (passed_tests, total_tests))| {
+            HiveResult::new(
+                json_data.name.clone(),
+                fork.to_string(),
+                passed_tests,
+                total_tests,
+            )
         })
-        .count();
-    HiveResult::new(
-        json_data.name.clone(),
-        fork.to_string(),
-        passed_tests,
-        total_tests,
-    )
+        .collect()
+}
+
+/// Forks from newest to oldest, the order their rows are listed in.
+const FORK_ORDER: [&str; 8] = [
+    "Amsterdam",
+    "BPO2",
+    "BPO1",
+    "Osaka",
+    "Prague",
+    "Cancun",
+    "Shanghai",
+    "Paris",
+];
+
+/// Sort key that lists a fork's own row first and the forks built on it, such
+/// as `OsakaToBPO1AtTime15k`, right after it. `None` for a name that starts
+/// with no known fork.
+fn fork_rank(display_name: &str) -> Option<(usize, bool, &str)> {
+    FORK_ORDER
+        .iter()
+        .position(|fork| display_name.starts_with(fork))
+        .map(|index| (index, display_name != FORK_ORDER[index], display_name))
 }
 
 fn calculate_success_percentage(passed_tests: usize, total_tests: usize) -> f64 {
@@ -249,43 +306,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            // These simulators report a single suite holding the tests of every fork.
-            // To get the total tests and the passed tests a filtes is done each time so we do not clone the test cases each time.
-            if json_data.name.as_str() == "eels/consume-rlp"
-                || json_data.name.as_str() == "eels/consume-engine"
-                || json_data.name.as_str() == "eels/consume-wirex"
-            {
-                let result_paris = create_fork_result(&json_data, "Paris", "fork_Paris");
-                // Shanghai
-                let result_shanghai = create_fork_result(&json_data, "Shanghai", "fork_Shanghai");
-                // Cancun
-                let result_cancun = create_fork_result(&json_data, "Cancun", "fork_Cancun");
-                // Prague
-                let result_prague = create_fork_result(&json_data, "Prague", "fork_Prague");
-                // Osaka
-                let result_osaka = create_fork_result(&json_data, "Osaka", "fork_Osaka");
-
-                let result_amsterdam =
-                    create_fork_result(&json_data, "Amsterdam", "fork_Amsterdam");
-
-                aggregate_result(&mut aggregated_results, result_paris);
-                aggregate_result(&mut aggregated_results, result_shanghai);
-                aggregate_result(&mut aggregated_results, result_cancun);
-                aggregate_result(&mut aggregated_results, result_prague);
-                aggregate_result(&mut aggregated_results, result_osaka);
-                aggregate_result(&mut aggregated_results, result_amsterdam);
-            } else if json_data.name.as_str() == "eels/execute, hive mode" {
-                // Runs once per fork (see daily_hive_report.yaml). Without the split
-                // both runs land in the same row and a fork-specific regression is
-                // invisible.
-                aggregate_result(
-                    &mut aggregated_results,
-                    create_fork_result(&json_data, "Osaka", "fork_Osaka"),
-                );
-                aggregate_result(
-                    &mut aggregated_results,
-                    create_fork_result(&json_data, "Amsterdam", "fork_Amsterdam"),
-                );
+            if FORK_SPLIT_SUITES.contains(&json_data.name.as_str()) {
+                for result in fork_results(&json_data) {
+                    aggregate_result(&mut aggregated_results, result);
+                }
             } else {
                 let total_tests = json_data.test_cases.len();
                 let passed_tests = json_data
@@ -320,16 +344,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if category_cmp != Ordering::Equal {
             return category_cmp;
         }
-
-        let fork_rank = |display_name: &str| match display_name {
-            "Amsterdam" => Some(0),
-            "Osaka" => Some(1),
-            "Prague" => Some(2),
-            "Cancun" => Some(3),
-            "Shanghai" => Some(4),
-            "Paris" => Some(5),
-            _ => None,
-        };
 
         if let (Some(rank_a), Some(rank_b)) =
             (fork_rank(&a.display_name), fork_rank(&b.display_name))
@@ -391,4 +405,114 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn suite(name: &str, cases: &[(&str, bool)]) -> JsonFile {
+        JsonFile {
+            name: name.to_string(),
+            test_cases: cases
+                .iter()
+                .enumerate()
+                .map(|(index, (case, pass))| {
+                    (
+                        index.to_string(),
+                        TestCase {
+                            summary_result: SummaryResult { pass: *pass },
+                            name: case.to_string(),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn fork_is_read_from_the_parameter_list() {
+        assert_eq!(
+            fork_of("tests/prague/x.py::test_x[fork_Prague-blockchain_test_engine-case]-ethrex"),
+            Some("Prague")
+        );
+        assert_eq!(
+            fork_of("t.py::test_t[fork_BPO2ToAmsterdamAtTime15k-blockchain_test]"),
+            Some("BPO2ToAmsterdamAtTime15k")
+        );
+        assert_eq!(fork_of("t.py::test_t[case_1-fork_Osaka]"), Some("Osaka"));
+    }
+
+    #[test]
+    fn a_fork_in_a_file_or_test_name_is_not_taken_for_one() {
+        assert_eq!(
+            fork_of("tests/x/test_fork_transition.py::test_fork_transition[case_1]"),
+            None
+        );
+        assert_eq!(fork_of("a test without parameters"), None);
+        assert_eq!(fork_of("t.py::test_t[fork_-case]"), None);
+    }
+
+    #[test]
+    fn every_case_lands_in_exactly_one_row() {
+        let json = suite(
+            "eels/consume-engine",
+            &[
+                ("t.py::a[fork_Amsterdam-x]", true),
+                ("t.py::b[fork_Amsterdam-x]", false),
+                ("t.py::c[fork_AmsterdamBPOIncrease-x]", true),
+                ("t.py::d[fork_BPO2ToAmsterdamAtTime15k-x]", true),
+                ("t.py::e[fork_BPO1-x]", true),
+                ("t.py::f[fork_Osaka-x]", true),
+                ("t.py::g[no_fork_here]", false),
+            ],
+        );
+        let mut rows: Vec<(String, usize, usize)> = fork_results(&json)
+            .into_iter()
+            .map(|r| (r.display_name, r.passed_tests, r.total_tests))
+            .collect();
+        rows.sort();
+        assert_eq!(
+            rows,
+            vec![
+                ("Amsterdam".to_string(), 1, 2),
+                ("AmsterdamBPOIncrease".to_string(), 1, 1),
+                ("BPO1".to_string(), 1, 1),
+                ("BPO2ToAmsterdamAtTime15k".to_string(), 1, 1),
+                (NO_FORK.to_string(), 0, 1),
+                ("Osaka".to_string(), 1, 1),
+            ]
+        );
+        let total: usize = rows.iter().map(|(_, _, total)| total).sum();
+        assert_eq!(total, json.test_cases.len());
+    }
+
+    #[test]
+    fn forks_are_listed_newest_first_and_a_fork_before_the_forks_built_on_it() {
+        let mut names = vec![
+            "Paris",
+            "OsakaToBPO1AtTime15k",
+            "BPO1",
+            "Amsterdam",
+            "Osaka",
+            "AmsterdamBPOIncrease",
+            "BPO2ToAmsterdamAtTime15k",
+            "BPO2",
+        ];
+        names.sort_by_key(|name| fork_rank(name));
+        assert_eq!(
+            names,
+            vec![
+                "Amsterdam",
+                "AmsterdamBPOIncrease",
+                "BPO2",
+                "BPO2ToAmsterdamAtTime15k",
+                "BPO1",
+                "Osaka",
+                "OsakaToBPO1AtTime15k",
+                "Paris",
+            ]
+        );
+        assert_eq!(fork_rank("Auth"), None);
+    }
 }

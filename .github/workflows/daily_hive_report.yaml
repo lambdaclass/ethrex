@@ -78,8 +78,18 @@ jobs:
               name: "Consume Engine tests (Amsterdam)",
               file_name: consume-engine-amsterdam,
               simulation: ethereum/eels/consume-engine,
-              limit: ".*fork_.*Amsterdam.*",
+              limit: ".*fork_Amsterdam.*",
               parallelism: 2,
+            }
+          # Osaka, BPO1 and BPO2 with their transitions, the one from BPO2 to
+          # Amsterdam included, which is why the Amsterdam limits match
+          # `fork_Amsterdam` by prefix: `fork_.*Amsterdam` would run that
+          # transition in both jobs.
+          - {
+              name: "Consume Engine tests (Osaka and BPO)",
+              file_name: consume-engine-osaka-bpo,
+              simulation: ethereum/eels/consume-engine,
+              limit: ".*fork_Osaka.*|.*fork_BPO.*",
             }
           - {
               name: "Consume RLP tests (Rest)",
@@ -99,8 +109,14 @@ jobs:
               name: "Consume RLP tests (Amsterdam)",
               file_name: consume-rlp-amsterdam,
               simulation: ethereum/eels/consume-rlp,
-              limit: ".*fork_.*Amsterdam.*",
+              limit: ".*fork_Amsterdam.*",
               parallelism: 2,
+            }
+          - {
+              name: "Consume RLP tests (Osaka and BPO)",
+              file_name: consume-rlp-osaka-bpo,
+              simulation: ethereum/eels/consume-rlp,
+              limit: ".*fork_Osaka.*|.*fork_BPO.*",
             }
           # consume-wirex has the client sync each test's chain from a mock devp2p
           # peer, so the EELS fixtures also exercise full sync over the eth wire
