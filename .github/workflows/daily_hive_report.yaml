@@ -101,6 +101,24 @@ jobs:
               limit: ".*fork_.*Amsterdam.*",
               parallelism: 2,
             }
+          # consume-wirex has the client sync each test's chain from a mock devp2p
+          # peer, so the EELS fixtures also exercise full sync over the eth wire
+          # protocol, not only the engine API. It carries two pins of its own: the
+          # hive pin below predates the simulator (ethereum/hive#1640), and
+          # execution-specs publishes no consume-wirex image per fixture release,
+          # so `tag` pins the digest of the `latest` image built on 2026-11-01
+          # (fixtures tests@v21.0.2, framework forks/bogota at fd9298410). The
+          # run includes the Amsterdam fixtures, so it takes the same lower
+          # parallelism as the Amsterdam entries above.
+          - {
+              name: "Consume WireX tests",
+              file_name: consume-wirex,
+              simulation: ethereum/eels/consume-wirex,
+              limit: "",
+              parallelism: 2,
+              hive_version: 64d7af92c63962779d0c9bbf404bb58733bd1b05,
+              tag: "latest@sha256:7b9f515c21e8b9ee44f535c21103f7c9143a99820cccf3ad1537d68192ade46a",
+            }
           - {
               name: "Execute Blobs tests (Osaka)",
               file_name: execute-blobs-osaka,
@@ -140,15 +158,17 @@ jobs:
         env:
           SIMULATION: ${{ matrix.test.simulation }}
           SIM_LIMIT: ${{ matrix.test.limit || '' }}
+          SIM_TAG: ${{ matrix.test.tag || '' }}
           SIM_FORK: ${{ matrix.test.fork || '' }}
           EELS_TAG: ${{ steps.eels-config.outputs.tag }}
         run: |
           FLAGS="--sim.parallelism ${{ matrix.test.parallelism || 4 }} --sim.loglevel 1"
           # The EELS simulators run from the image execution-specs publishes for
           # the fixture release pinned in .github/config/hive/mainnet.yaml, which
-          # carries every fork through Amsterdam.
+          # carries every fork through Amsterdam. An entry can pin another image
+          # with its own `tag`.
           if [[ "$SIMULATION" == ethereum/eels/* ]]; then
-            FLAGS+=" --sim.buildarg tag=$EELS_TAG"
+            FLAGS+=" --sim.buildarg tag=${SIM_TAG:-$EELS_TAG}"
           fi
 
           if [[ "$SIMULATION" == "ethereum/eels/consume-engine" || "$SIMULATION" == "ethereum/eels/consume-rlp" ]]; then
@@ -200,7 +220,7 @@ jobs:
           # instead of floating on the action's default. Now at ethereum/hive#1609's
           # merge commit, which runs the eels simulators from the images
           # execution-specs publishes, selected with `tag=`. A matrix entry can
-          # pin its own version, see "Rpc Compat tests".
+          # pin its own version, as "Rpc Compat tests" and "Consume WireX tests" do.
           hive_version: ${{ matrix.test.hive_version || '11864a701d331535f4ed487e4d538bead457d760' }}
           extra_flags: ${{ steps.hive-flags.outputs.flags }}
           workflow_artifact_upload: true

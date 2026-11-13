@@ -287,9 +287,10 @@ HIVE_BRANCH ?= master
 Fixtures come from [ethereum/execution-specs](https://github.com/ethereum/execution-specs) (the archived `ethereum/execution-spec-tests` repo is no longer used). Every EELS simulator runs from the image of one fixture release, pinned in `.github/config/hive/mainnet.yaml`:
 
 ```bash
-# EELS_TAG is the `tag` of .github/config/hive/mainnet.yaml.
+# EELS_TAG is the `tag` of .github/config/hive/mainnet.yaml; a matrix entry can
+# pin another image with its own `tag` (SIM_TAG).
 if [[ "$SIMULATION" == ethereum/eels/* ]]; then
-  FLAGS+=" --sim.buildarg tag=$EELS_TAG"
+  FLAGS+=" --sim.buildarg tag=${SIM_TAG:-$EELS_TAG}"
 fi
 ```
 
