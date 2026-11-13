@@ -458,13 +458,16 @@ pub trait RpcHandler: Sized {
         };
         let method = req.method.as_str();
 
-        let result =
-            record_async_duration(
-                namespace,
-                method,
-                async move { request.handle(context).await },
-            )
-            .await;
+        // The handler future is boxed so it is not part of this one. The dispatchers
+        // await one `call` per method in a single `match`, and an unoptimized build
+        // reserves stack for every arm's future at once, so with the handlers inline
+        // each new method grew that frame until a request overflowed the 2 MiB stack.
+        let result = record_async_duration(
+            namespace,
+            method,
+            Box::pin(async move { request.handle(context).await }),
+        )
+        .await;
 
         let outcome = match &result {
             Ok(_) => RpcOutcome::Success,
