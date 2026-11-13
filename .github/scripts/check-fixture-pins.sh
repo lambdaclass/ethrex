@@ -10,6 +10,8 @@
 #
 # The base of the zkEVM bundle is only stated in that release's notes, so it is
 # taken from `zkevm_base` in the pin file, not derived from the bundle's URL.
+# The pin file names the zkEVM release next to that base, and the URL has to
+# name the same release, so the bundle cannot move without the pin file.
 #
 #   .github/scripts/check-fixture-pins.sh          # check this repository
 #   .github/scripts/check-fixture-pins.sh <root>   # check another tree
@@ -66,8 +68,12 @@ if [[ $zkevm_base != "$tag" ]]; then
     mismatch "\`zkevm_base\` is '$zkevm_base' but the hive image tag is $tag: the zkEVM bundle and the base bundle describe different chains"
 fi
 
-if ! grep -qxE 'https://github\.com/ethereum/execution-specs/releases/download/tests-zkevm%40v[0-9]+\.[0-9]+\.[0-9]+/fixtures_zkevm\.tar\.gz' "$ZKEVM_URL"; then
+zkevm_url_release=$(sed -n 's|^https://github\.com/ethereum/execution-specs/releases/download/tests-zkevm%40\(v[0-9][0-9.]*\)/fixtures_zkevm\.tar\.gz$|\1|p' "$ZKEVM_URL")
+zkevm_release=$(pin zkevm_release)
+if [[ -z $zkevm_url_release ]]; then
     mismatch "${ZKEVM_URL#"$ROOT"/} is not an execution-specs tests-zkevm@ release URL"
+elif [[ $zkevm_url_release != "$zkevm_release" ]]; then
+    mismatch "${ZKEVM_URL#"$ROOT"/} is at tests-zkevm@$zkevm_url_release but \`zkevm_release\` is '$zkevm_release': move both, and \`zkevm_base\` to the base that release is filled from"
 fi
 
 # The forks roadmap states the fixture release and the image tag.

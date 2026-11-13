@@ -11,8 +11,8 @@
 #   - `tag` in `.github/config/hive/pins.yaml`, the EELS simulator image hive runs;
 #   - the release named in `docs/roadmaps/forks-roadmap.md` and
 #     `docs/developers/l1/testing/hive.md`;
-#   - with `--zkevm`, `tooling/ef_tests/.fixtures_url_zkevm` and `zkevm_base`,
-#     read from that zkEVM release's notes.
+#   - with `--zkevm`, `tooling/ef_tests/.fixtures_url_zkevm`, `zkevm_release`
+#     and `zkevm_base`, the last read from that zkEVM release's notes.
 # Before editing anything it checks that the release has a fixture bundle, that
 # execution-specs has published the image of every simulator we run for it, and
 # that the zkEVM bundle is filled from it. A zkEVM bundle is filled from one
@@ -145,6 +145,7 @@ OLD="$old" NEW="$new" perl -pi -e '
 ' "$ROADMAP"
 if [[ -n $new_zkevm ]]; then
     OLD="$old_zkevm" NEW="$new_zkevm" perl -pi -e 's/tests-zkevm%40\Q$ENV{OLD}\E\//tests-zkevm%40$ENV{NEW}\//' "$ZKEVM_URL"
+    OLD="$old_zkevm" NEW="$new_zkevm" perl -pi -e 's/^zkevm_release: \Q$ENV{OLD}\E$/zkevm_release: $ENV{NEW}/' "$PINS"
     OLD="$old_zkevm_base" NEW="$new_zkevm_base" perl -pi -e 's/^zkevm_base: \Q$ENV{OLD}\E$/zkevm_base: $ENV{NEW}/' "$PINS"
 fi
 

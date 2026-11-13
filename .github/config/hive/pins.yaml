@@ -16,10 +16,12 @@
 # INVALID_SIGNATURE_VRS exception mappings.
 tag: v21.0.2
 
-# The `tests@` release that the zkEVM bundle in
-# `tooling/ef_tests/.fixtures_url_zkevm` is filled from, as that bundle's release
-# notes state. It has to equal `tag`: when they drift, the two bundles describe
-# slightly different chains.
+# The zkEVM bundle in `tooling/ef_tests/.fixtures_url_zkevm`: its release, and
+# the `tests@` release it is filled from, as that release's notes state. The URL
+# has to name `zkevm_release`, so whoever moves the bundle edits these two lines
+# as well and sees the base. `zkevm_base` has to equal `tag`: when they drift,
+# the two bundles describe slightly different chains.
+zkevm_release: v21.0.7
 zkevm_base: v21.0.2
 
 # Hive commit every job runs unless it has its own below. This is
