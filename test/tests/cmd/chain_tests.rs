@@ -594,25 +594,44 @@ impl Node {
 }
 
 /// `init_node` is public, so a preset can reach it without having gone through the
-/// command line. Its name is still checked before it is used as a directory.
+/// command line. It is still checked, before anything is created: its name is used
+/// as a directory, and with p2p disabled its bootnodes would never be read.
 #[tokio::test]
-async fn node_refuses_a_preset_name_that_was_not_checked() {
-    let dir = tempfile::tempdir().unwrap();
-    let datadir = dir.path().join("data");
-    let (mut cli, _) = parse(&EXAMPLE, &["--datadir", datadir.to_str().unwrap()]);
-    cli.opts.network = Some(Network::Preset(NetworkPreset {
-        name: "../outside",
-        ..EXAMPLE_TEST
-    }));
+async fn node_refuses_a_preset_that_was_not_checked() {
+    let unchecked = [
+        (
+            NetworkPreset {
+                name: "../outside",
+                ..EXAMPLE_TEST
+            },
+            "lowercase letters",
+        ),
+        (
+            NetworkPreset {
+                bootnodes: "not a list",
+                ..EXAMPLE_TEST
+            },
+            "invalid bootnodes",
+        ),
+    ];
+    for (preset, reason) in unchecked {
+        let dir = tempfile::tempdir().unwrap();
+        let datadir = dir.path().join("data");
+        let (mut cli, _) = parse(
+            &EXAMPLE,
+            &["--datadir", datadir.to_str().unwrap(), "--p2p.disabled"],
+        );
+        cli.opts.network = Some(Network::Preset(preset));
 
-    let err = init_node(cli.opts, |_| Ok(NodeComponents::default()), None)
-        .await
-        .err()
-        .unwrap();
+        let err = init_node(cli.opts, |_| Ok(NodeComponents::default()), None)
+            .await
+            .err()
+            .unwrap();
 
-    assert!(err.to_string().contains("lowercase letters"), "{err}");
-    assert!(!datadir.exists(), "nothing is created under the datadir");
-    assert!(!dir.path().join("outside").exists());
+        assert!(err.to_string().contains(reason), "{err}");
+        assert!(!datadir.exists(), "nothing is created under the datadir");
+        assert!(!dir.path().join("outside").exists());
+    }
 }
 
 /// Starts a node from the example chain's command line and checks, over HTTP, that

@@ -346,8 +346,8 @@ pub const DEFAULT_MIN_TIP_WEI: u64 = 1;
 /// Extra admission rules for the mempool, applied on top of the standard checks.
 ///
 /// A policy can only make the pool stricter: it sees a transaction before the
-/// standard checks run and may reject it, and it cannot admit a transaction those
-/// checks reject. It applies to every transaction offered to the pool, whether it
+/// standard checks run (a blob transaction, once its blobs are verified) and may
+/// reject it, and it cannot admit a transaction those checks reject. It applies to every transaction offered to the pool, whether it
 /// arrives over RPC or from a peer. It has no effect on block validation.
 ///
 /// The policy runs when a transaction is offered and not again: a transaction

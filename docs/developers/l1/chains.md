@@ -117,7 +117,7 @@ impl RpcExtension for ExampleRpc {
 - Every method named `<namespace>_<name>` is routed to `handle`, on the HTTP and WebSocket endpoints. Extensions are not served on the authenticated port.
 - The namespace must be lowercase letters and digits, and cannot be a built-in one (`eth`, `engine`, `debug`, `admin`, `net`, `web3`, `txpool`, `testing`). The node refuses to start otherwise.
 - `context` is the same `RpcApiContext` the built-in handlers receive: the store, the blockchain, the node's configuration. Through it an extension can call built-in methods, but not methods of an extension. Such a call is subject to `--http.api` like one from outside: a built-in namespace the operator turned off is off for extensions too.
-- An extension is served whenever it is in `NodeComponents::rpc`. `--http.api` selects built-in namespaces only. To let operators turn a namespace off, give the chain a flag and leave the extension out of the components.
+- An extension is served whenever it is in `NodeComponents::rpc`. `--http.api` selects built-in namespaces only, and the node logs at startup which namespaces it serves besides them. To let operators turn a namespace off, give the chain a flag and leave the extension out of the components.
 - Calls to an extension are not counted in the node's RPC metrics.
 
 ### 4. Add a mempool rule
@@ -136,7 +136,7 @@ impl MempoolPolicy for MaxTxGas {
 }
 ```
 
-- `admit` runs for every transaction offered to the mempool, from RPC or from a peer, before the standard checks. Keep it cheap, and never block in it.
+- `admit` runs for every transaction offered to the mempool, from RPC or from a peer, before the standard checks (for a blob transaction, once its blobs are verified). Keep it cheap, and never block in it.
 - `head` is the header of the latest block, for rules that depend on the state of the chain.
 - It can only reject. A transaction it admits still has to pass the standard checks.
 - The `Err` text is returned to whoever submitted the transaction.
@@ -156,7 +156,7 @@ fn main() -> eyre::Result<()> {
 ```
 
 - `run` parses the command line, starts the node, and returns when the node shuts down. It sets up the whole process (async runtime, thread pool, logging, signals), so call it once and from `main`.
-- `global_allocator!` declares the memory allocator and tuning the `ethrex` binary uses, and defines the `GLOBAL_ALLOCATOR` constant that `run` takes. A binary cannot start the node without it, so it cannot end up on the slower system allocator by omission.
+- `global_allocator!` declares the memory allocator and tuning the `ethrex` binary uses, and defines the `GLOBAL_ALLOCATOR` constant that `run` takes. A binary that leaves the macro out does not compile until it names an allocator itself, so it cannot end up on the slower system allocator by omission.
 
 ### 6. Run it
 

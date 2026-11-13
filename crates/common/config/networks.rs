@@ -464,6 +464,7 @@ mod tests {
             PublicNetwork::Hoodi,
             PublicNetwork::Mainnet,
             PublicNetwork::Sepolia,
+            PublicNetwork::Plataberget,
         ] {
             assert!(
                 !Network::PublicNetwork(network)

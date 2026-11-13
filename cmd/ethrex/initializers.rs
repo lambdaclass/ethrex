@@ -882,10 +882,12 @@ pub async fn init_node(
     Store,
 )> {
     let network = get_network(&opts);
-    // The name of a preset becomes a directory under the datadir. It was checked if
-    // the options come from `chain::parse_args`, but not if the caller built them.
+    // A preset was checked if the options come from `chain::parse_args`, but not if
+    // the caller built them. It is checked before anything is created: its name
+    // becomes a directory under the datadir, and its bootnodes are otherwise only
+    // read when p2p starts.
     if let Network::Preset(preset) = &network {
-        preset.validate_name().map_err(|err| eyre::eyre!(err))?;
+        preset.validate().map_err(|err| eyre::eyre!(err))?;
     }
     let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
 
@@ -908,7 +910,7 @@ pub async fn init_node(
     let extension_namespaces: Vec<_> = rpc_extensions.namespaces().collect();
     if !extension_namespaces.is_empty() {
         info!(
-            "Serving RPC namespaces in addition to the built-in ones: {}",
+            "Serving the chain's RPC namespaces, which --http.api does not turn off: {}",
             extension_namespaces.join(", ")
         );
     }

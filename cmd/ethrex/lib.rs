@@ -19,8 +19,8 @@ pub use tikv_jemallocator;
 /// With the `jemalloc` feature of this crate (on by default) the allocator is
 /// jemalloc; without it the binary uses the system allocator. Either way the macro
 /// defines the constant `GLOBAL_ALLOCATOR`, which says which one it is and which
-/// [`chain::run`] takes: a binary cannot start the node without having declared its
-/// allocator.
+/// [`chain::run`] takes: a binary that leaves the macro out does not compile until
+/// it names an allocator itself.
 // Tune jemalloc for throughput: use a background thread for memory purging instead
 // of doing it inline during malloc/free (which adds ~12% of total block execution CPU time
 // to jemalloc purge calls, measured via perf profiling on mainnet blocks).
