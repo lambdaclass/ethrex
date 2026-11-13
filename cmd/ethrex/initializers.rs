@@ -1,5 +1,6 @@
 use crate::{
     cli::{LogColor, Options},
+    integration::Components,
     utils::{
         display_chain_initialization, get_channel, get_client_version, get_client_version_string,
         init_datadir, is_memory_datadir, parse_socket_addr, read_jwtsecret_file,
@@ -10,7 +11,7 @@ use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::{BlockNumber, Genesis};
 use ethrex_config::networks::Network;
-use ethrex_rpc::WebSocketConfig;
+use ethrex_rpc::{RpcExtension, WebSocketConfig};
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_metrics::rpc::initialize_rpc_metrics;
@@ -362,6 +363,7 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    rpc_extensions: Vec<Arc<dyn RpcExtension>>,
 ) -> eyre::Result<()> {
     if !is_memory_datadir(datadir) {
         init_datadir(datadir);
@@ -443,7 +445,7 @@ pub async fn init_rpc_api(
         get_log_query_limits(opts),
         // Saturating: the budget is clamped to what the semaphore can count anyway.
         usize::try_from(opts.authrpc_max_inflight_body_size).unwrap_or(usize::MAX),
-        Vec::new(),
+        rpc_extensions,
     )
     .await?;
 
@@ -857,6 +859,23 @@ pub async fn init_l1(
     SharedLocalNode,
     Store,
 )> {
+    init_node(opts, |_| Ok(Components::default()), log_filter_handler).await
+}
+
+/// Starts a node that runs with `components` in addition to its Ethereum behavior.
+/// `components` is called once, with the genesis of the selected network, before the
+/// database is opened.
+pub async fn init_node(
+    opts: Options,
+    components: impl FnOnce(&Genesis) -> eyre::Result<Components>,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+) -> eyre::Result<(
+    PathBuf,
+    CancellationToken,
+    PeerTable,
+    SharedLocalNode,
+    Store,
+)> {
     let network = get_network(&opts);
     let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
 
@@ -869,6 +888,11 @@ pub async fn init_l1(
     }
 
     let genesis = network.get_genesis()?;
+    let Components {
+        rpc: rpc_extensions,
+        tx_pool_policy,
+    } = components(&genesis)?;
+    ethrex_rpc::validate_rpc_extensions(&rpc_extensions).map_err(|err| eyre::eyre!(err))?;
     display_chain_initialization(&genesis);
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
@@ -944,7 +968,7 @@ pub async fn init_l1(
             max_reorg_depth: opts.max_reorg_depth,
             gap_admit_occupancy_threshold: opts.mempool_gap_admit_occupancy_threshold,
             mempool_prewarm_enabled: true,
-            tx_pool_policy: None,
+            tx_pool_policy,
         },
     );
 
@@ -999,6 +1023,7 @@ pub async fn init_l1(
         cancel_token.clone(),
         tracker.clone(),
         log_filter_handler,
+        rpc_extensions,
     )
     .await?;
 

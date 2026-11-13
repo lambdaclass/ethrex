@@ -60,6 +60,11 @@ tempfile.workspace = true
 ethrex-l2.workspace = true
 ethrex-l2-rpc.workspace = true
 reqwest.workspace = true
+# Chain integration tests: an integration is written against these, like an
+# out-of-tree crate would be.
+ethrex-config.workspace = true
+clap.workspace = true
+eyre.workspace = true
 tokio-util.workspace = true
 futures.workspace = true
 ethrex-guest-program = { workspace = true, default-features = false }
