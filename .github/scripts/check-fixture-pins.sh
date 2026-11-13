@@ -41,6 +41,10 @@ pin() { sed -n "s/^$1:[[:space:]]*//p" "$PINS"; }
 while IFS= read -r line; do
     mismatch "${PINS#"$ROOT"/} has a pin that is not a bare \`key: value\` line: '$line'"
 done < <(grep -E '^[A-Za-z_]+:' "$PINS" | grep -vE '^[a-z_]+: [^[:space:]#]+$' || true)
+# A key that appears twice would be read as a value of two lines.
+while IFS= read -r key; do
+    mismatch "${PINS#"$ROOT"/} has more than one \`$key\` line"
+done < <(grep -oE '^[a-z_]+:' "$PINS" | sort | uniq -d)
 
 tag=$(pin tag)
 if [[ ! $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -76,12 +80,17 @@ if [[ $roadmap_tag != "$tag" ]]; then
     mismatch "${ROADMAP#"$ROOT"/} lists image tag '$roadmap_tag', not $tag"
 fi
 
-# The hive guide shows the content of `.fixtures_url`.
+# The hive guide shows the content of `.fixtures_url`. No URL there at all is a
+# mismatch too, or the guide could lose it without this check noticing.
+doc_releases=$(grep -o 'releases/download/tests%40v[0-9][0-9.]*/fixtures\.tar\.gz' "$HIVE_DOC" | sed 's|.*tests%40\(v[0-9][0-9.]*\)/.*|\1|' | sort -u || true)
+if [[ -z $doc_releases ]]; then
+    mismatch "${HIVE_DOC#"$ROOT"/} shows no tests@ fixtures URL"
+fi
 while IFS= read -r doc_release; do
-    if [[ $doc_release != "$tag" ]]; then
+    if [[ -n $doc_release && $doc_release != "$tag" ]]; then
         mismatch "${HIVE_DOC#"$ROOT"/} shows a tests@$doc_release fixtures URL, not tests@$tag"
     fi
-done < <(grep -o 'releases/download/tests%40v[0-9][0-9.]*/fixtures\.tar\.gz' "$HIVE_DOC" | sed 's|.*tests%40\(v[0-9][0-9.]*\)/.*|\1|' | sort -u)
+done <<<"$doc_releases"
 
 if [[ $status -eq 0 ]]; then
     echo "fixture pins agree: tests@$tag"
