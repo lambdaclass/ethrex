@@ -47,6 +47,12 @@ done < <(grep -E '^[A-Za-z_]+:' "$PINS" | grep -vE '^[a-z_]+: [^[:space:]#]+$' |
 while IFS= read -r key; do
     mismatch "${PINS#"$ROOT"/} has more than one \`$key\` line"
 done < <(grep -oE '^[a-z_]+:' "$PINS" | sort | uniq -d)
+# Every pin a hive job or a local target reads. Some are only read by the daily
+# jobs, which report a failure without blocking anything.
+for key in tag zkevm_release zkevm_base hive_version rpc_compat_hive_version rpc_compat_branch \
+    consume_wirex_hive_version consume_wirex_tag; do
+    [[ -n $(pin "$key") ]] || mismatch "${PINS#"$ROOT"/} has no \`$key\` pin"
+done
 
 tag=$(pin tag)
 if [[ ! $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -84,6 +90,11 @@ fi
 roadmap_tag=$(sed -n 's|^- EELS simulator image tag: `\(.*\)`$|\1|p' "$ROADMAP")
 if [[ $roadmap_tag != "$tag" ]]; then
     mismatch "${ROADMAP#"$ROOT"/} lists image tag '$roadmap_tag', not $tag"
+fi
+# Its status line names the bundle the suites were last green on.
+roadmap_status=$(sed -n 's|^- Status: .* on the \(v[0-9][0-9.]*\) bundle.*|\1|p' "$ROADMAP")
+if [[ -n $roadmap_status && $roadmap_status != "$tag" ]]; then
+    mismatch "${ROADMAP#"$ROOT"/} reports status on the $roadmap_status bundle, not $tag"
 fi
 
 # The hive guide shows the content of `.fixtures_url`. No URL there at all is a
