@@ -315,7 +315,11 @@ https://github.com/ethereum/execution-specs/releases/download/tests%40v21.0.2/fi
    .github/scripts/bump-fixtures.sh v<version> --zkevm v<zkevm version>
    ```
 
-   A zkEVM bundle is filled from one `tests@` release, so a new base needs `--zkevm` with a zkEVM release filled from it, and the script refuses the bump without one, before it edits anything. With the base unchanged, the same command moves only the zkEVM bundle.
+   A zkEVM bundle is filled from one `tests@` release, so a new base needs `--zkevm` with a zkEVM release filled from it, and the script refuses the bump without one, before it edits anything. To move only the zkEVM bundle, leave the base out:
+
+   ```bash
+   .github/scripts/bump-fixtures.sh --zkevm v<zkevm version>
+   ```
 
    consume-wirex does not move with the bump: it keeps the image in `consume_wirex_tag`, with the fixtures that image was built from, until that pin is moved by hand.
 

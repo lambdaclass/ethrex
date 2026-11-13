@@ -2,9 +2,9 @@
 #
 # Moves the EF fixture release pins to an execution-specs `tests@` release.
 #
-#   .github/scripts/bump-fixtures.sh                   # the newest tests@ release
-#   .github/scripts/bump-fixtures.sh v21.0.3           # a specific release
-#   .github/scripts/bump-fixtures.sh v21.0.3 --zkevm v21.0.8
+#   .github/scripts/bump-fixtures.sh v21.0.3 --zkevm v21.0.8   # a release and its zkEVM bundle
+#   .github/scripts/bump-fixtures.sh --zkevm v21.0.8           # the zkEVM bundle, on the pinned release
+#   .github/scripts/bump-fixtures.sh                           # the newest tests@ release
 #
 # It does the mechanical part of a bump:
 #   - `tooling/ef_tests/.fixtures_url`, the bundle the ef-test runners download;
@@ -72,7 +72,10 @@ done
     die "the pins disagree before the bump; fix that first (make check-fixture-pins)"
 old=$(pin tag)
 
-if [[ -z $new ]]; then
+if [[ -z $new && -n $new_zkevm ]]; then
+    # Only a zkEVM release was named: the base stays where it is.
+    new=$old
+elif [[ -z $new ]]; then
     new=$(gh release list --repo "$SPECS" --exclude-drafts --exclude-pre-releases --limit 200 \
         --json tagName --jq '.[].tagName' | sed -n 's/^tests@\(v[0-9][0-9.]*\)$/\1/p' | sort -V | tail -1)
     [[ -n $new ]] || die "could not list the tests@ releases of $SPECS"
@@ -139,7 +142,7 @@ fi
 OLD="$old" NEW="$new" perl -pi -e 's/tests%40\Q$ENV{OLD}\E\/fixtures\.tar\.gz/tests%40$ENV{NEW}\/fixtures.tar.gz/' "$FIXTURES_URL" "$HIVE_DOC"
 OLD="$old" NEW="$new" perl -pi -e 's/^tag: \Q$ENV{OLD}\E$/tag: $ENV{NEW}/' "$PINS"
 OLD="$old" NEW="$new" perl -pi -e '
-    if (/^- Fixtures: \[`tests\@/) { s/(tests(?:\@|%40))\Q$ENV{OLD}\E/$1$ENV{NEW}/g }
+    if (/^- Fixtures: \[`tests\@/) { s/(tests(?:\@|%40))\Q$ENV{OLD}\E(?![0-9])/$1$ENV{NEW}/g }
     s/^(- EELS simulator image tag: `)\Q$ENV{OLD}\E(`)$/$1$ENV{NEW}$2/;
     if (/^- Status: /) { s/the \Q$ENV{OLD}\E bundle/the $ENV{NEW} bundle/ }
 ' "$ROADMAP"
