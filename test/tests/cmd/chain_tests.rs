@@ -30,6 +30,7 @@ use ethrex_rpc::{
 use ethrex_storage::{EngineType, Store};
 use secp256k1::SecretKey;
 use serde_json::{Value, json};
+use tokio_util::sync::CancellationToken;
 
 const EXAMPLE_DEV: NetworkPreset = NetworkPreset {
     name: "example-dev",
@@ -211,6 +212,45 @@ fn malformed_preset_is_rejected_when_selected() {
     assert!(err.to_string().contains("invalid genesis"), "{err}");
 }
 
+#[test]
+fn preset_names_must_be_distinct_from_each_other_and_from_built_in_networks() {
+    fn chain(networks: &'static [NetworkPreset]) -> Chain<NoArgs> {
+        Chain {
+            name: "ethrex-misnamed",
+            networks,
+            components: |_, _| Ok(NodeComponents::default()),
+        }
+    }
+    const NAMED_LIKE_ETHEREUM: NetworkPreset = NetworkPreset {
+        name: "mainnet",
+        ..EXAMPLE_DEV
+    };
+    const OUTSIDE_THE_DATADIR: NetworkPreset = NetworkPreset {
+        name: "../example",
+        ..EXAMPLE_DEV
+    };
+
+    // Checked whichever network is selected, so a chain cannot ship a preset that
+    // `--network` would resolve to something else.
+    let err = parse_args(
+        &chain(&[EXAMPLE_DEV, NAMED_LIKE_ETHEREUM]),
+        ["ethrex-misnamed", "--network", "example-dev"],
+    )
+    .err()
+    .expect("a preset named like a built-in network must be rejected");
+    assert!(err.to_string().contains("reserved"), "{err}");
+
+    let err = parse_args(&chain(&[OUTSIDE_THE_DATADIR]), ["ethrex-misnamed"])
+        .err()
+        .expect("a preset whose name is not a plain directory name must be rejected");
+    assert!(err.to_string().contains("lowercase letters"), "{err}");
+
+    let err = parse_args(&chain(&[EXAMPLE_DEV, EXAMPLE_DEV]), ["ethrex-misnamed"])
+        .err()
+        .expect("two presets with one name must be rejected");
+    assert!(err.to_string().contains("more than once"), "{err}");
+}
+
 // ---- RPC namespace ----
 
 async fn example_context() -> ethrex_rpc::test_utils::TestContext {
@@ -249,6 +289,11 @@ async fn unknown_methods_are_not_found() {
         call(&context, "other_ping").await,
         Err(RpcErr::MethodNotFound(method)) if method == "other_ping"
     ));
+    // The namespace alone is not a method of the namespace.
+    assert!(matches!(
+        call(&context, "example").await,
+        Err(RpcErr::MethodNotFound(method)) if method == "example"
+    ));
 }
 
 #[tokio::test]
@@ -280,7 +325,9 @@ fn extension_namespaces_are_validated() {
 
     assert!(validate_rpc_extensions(&extensions(&[])).is_ok());
     assert!(validate_rpc_extensions(&extensions(&["example", "other2"])).is_ok());
-    for built_in in ["eth", "engine", "debug", "admin", "net", "web3", "txpool"] {
+    for built_in in [
+        "eth", "engine", "debug", "admin", "net", "web3", "txpool", "testing",
+    ] {
         let err = validate_rpc_extensions(&extensions(&[built_in])).unwrap_err();
         assert!(err.contains("built-in"), "{err}");
     }
@@ -428,51 +475,93 @@ async fn signed_transfer(gas_limit: u64, nonce: u64, chain_id: u64) -> String {
     format!("0x{}", hex::encode(tx.encode_canonical_to_vec()))
 }
 
+/// A node started from the example chain's command line, in memory and without p2p.
+struct Node {
+    http_port: String,
+    cancel_token: CancellationToken,
+    store: Store,
+    /// Holds the JWT secret for as long as the node runs.
+    _dir: tempfile::TempDir,
+}
+
+impl Node {
+    /// `with_components` chooses between the example chain's components and none.
+    ///
+    /// The ports are found by binding and releasing them, so another process can
+    /// take one before the node binds it. The start is retried when that happens.
+    async fn start(extra_args: &[&str], with_components: bool) -> Node {
+        let dir = tempfile::tempdir().unwrap();
+        let jwt = dir.path().join("jwt.hex");
+        let mut last_error = None;
+        for _ in 0..5 {
+            let http_port = free_port();
+            let authrpc_port = free_port();
+            let mut argv = vec![
+                "--network",
+                "example-test",
+                "--datadir",
+                "memory",
+                "--p2p.disabled",
+                "--http.port",
+                &http_port,
+                "--authrpc.port",
+                &authrpc_port,
+                "--authrpc.jwtsecret",
+                jwt.to_str().unwrap(),
+            ];
+            argv.extend(extra_args);
+            let (cli, args) = parse(&EXAMPLE, &argv);
+            let started = init_node(
+                cli.opts,
+                |genesis| {
+                    if with_components {
+                        (EXAMPLE.components)(&args, genesis)
+                    } else {
+                        Ok(NodeComponents::default())
+                    }
+                },
+                None,
+            )
+            .await;
+            match started {
+                Ok((_, cancel_token, _, _, store)) => {
+                    return Node {
+                        http_port,
+                        cancel_token,
+                        store,
+                        _dir: dir,
+                    };
+                }
+                Err(err) if err.to_string().contains("failed to bind") => last_error = Some(err),
+                Err(err) => panic!("the node failed to start: {err}"),
+            }
+        }
+        panic!("no free port after 5 attempts: {last_error:?}");
+    }
+
+    async fn stop(self) {
+        self.cancel_token.cancel();
+        self.store.shutdown().await.unwrap();
+    }
+}
+
 /// Starts a node from the example chain's command line and checks, over HTTP, that
 /// everything the chain returned from `components` is in effect.
 #[tokio::test(flavor = "multi_thread")]
 async fn node_runs_with_the_chain_components() {
-    let dir = tempfile::tempdir().unwrap();
-    let jwt = dir.path().join("jwt.hex");
-    let http_port = free_port();
-    let authrpc_port = free_port();
-    let (cli, args) = parse(
-        &EXAMPLE,
-        &[
-            "--network",
-            "example-test",
-            "--datadir",
-            "memory",
-            "--p2p.disabled",
-            "--http.port",
-            &http_port,
-            "--authrpc.port",
-            &authrpc_port,
-            "--authrpc.jwtsecret",
-            jwt.to_str().unwrap(),
-            "--example.max-tx-gas",
-            "100000",
-        ],
-    );
-
-    let (_, cancel_token, _, _, store) = init_node(
-        cli.opts,
-        |genesis| (EXAMPLE.components)(&args, genesis),
-        None,
-    )
-    .await
-    .unwrap();
-    let chain_id = store.get_chain_config().chain_id;
+    let node = Node::start(&["--example.max-tx-gas", "100000"], true).await;
+    let http_port = &node.http_port;
+    let chain_id = node.store.get_chain_config().chain_id;
 
     // RPC namespace.
-    let pong = rpc(&http_port, "example_ping", json!([])).await;
+    let pong = rpc(http_port, "example_ping", json!([])).await;
     assert_eq!(pong["result"], json!("pong"), "{pong}");
-    let chain = rpc(&http_port, "example_chainId", json!([])).await;
+    let chain = rpc(http_port, "example_chainId", json!([])).await;
     assert_eq!(chain["result"], json!(format!("{chain_id:#x}")), "{chain}");
 
     // Mempool rule: above the cap the submitter gets the chain's reason.
     let above = signed_transfer(100_001, 0, chain_id).await;
-    let rejected = rpc(&http_port, "eth_sendRawTransaction", json!([above])).await;
+    let rejected = rpc(http_port, "eth_sendRawTransaction", json!([above])).await;
     let message = rejected["error"]["message"].as_str().unwrap_or_default();
     assert!(
         message.contains("gas limit 100001 is above the example chain's cap of 100000"),
@@ -481,49 +570,26 @@ async fn node_runs_with_the_chain_components() {
 
     // At the cap the transaction enters the pool.
     let at_cap = signed_transfer(100_000, 0, chain_id).await;
-    let accepted = rpc(&http_port, "eth_sendRawTransaction", json!([at_cap])).await;
+    let accepted = rpc(http_port, "eth_sendRawTransaction", json!([at_cap])).await;
     assert!(accepted["result"].is_string(), "{accepted}");
 
-    cancel_token.cancel();
+    node.stop().await;
 }
 
 /// The same start without the chain's components: no extra namespace, no extra mempool
 /// rule.
 #[tokio::test(flavor = "multi_thread")]
 async fn node_without_components_behaves_as_ethereum() {
-    let dir = tempfile::tempdir().unwrap();
-    let jwt = dir.path().join("jwt.hex");
-    let http_port = free_port();
-    let authrpc_port = free_port();
-    let (cli, _) = parse(
-        &EXAMPLE,
-        &[
-            "--network",
-            "example-test",
-            "--datadir",
-            "memory",
-            "--p2p.disabled",
-            "--http.port",
-            &http_port,
-            "--authrpc.port",
-            &authrpc_port,
-            "--authrpc.jwtsecret",
-            jwt.to_str().unwrap(),
-        ],
-    );
+    let node = Node::start(&[], false).await;
+    let http_port = &node.http_port;
+    let chain_id = node.store.get_chain_config().chain_id;
 
-    let (_, cancel_token, _, _, store) =
-        init_node(cli.opts, |_| Ok(NodeComponents::default()), None)
-            .await
-            .unwrap();
-    let chain_id = store.get_chain_config().chain_id;
-
-    let ping = rpc(&http_port, "example_ping", json!([])).await;
+    let ping = rpc(http_port, "example_ping", json!([])).await;
     assert_eq!(ping["error"]["code"], json!(-32601), "{ping}");
 
     let above = signed_transfer(100_001, 0, chain_id).await;
-    let accepted = rpc(&http_port, "eth_sendRawTransaction", json!([above])).await;
+    let accepted = rpc(http_port, "eth_sendRawTransaction", json!([above])).await;
     assert!(accepted["result"].is_string(), "{accepted}");
 
-    cancel_token.cancel();
+    node.stop().await;
 }

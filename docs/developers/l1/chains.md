@@ -84,7 +84,7 @@ fn components(args: &ExampleArgs, _genesis: &Genesis) -> eyre::Result<NodeCompon
 ```
 
 - **`name`** is the name of the binary, shown in `--help`.
-- **`networks`** are the networks `--network <name>` accepts in addition to the Ethereum ones. The first one is the default network of the binary. `genesis` is the contents of a genesis file. `bootnodes` is a JSON array of enode URLs, or `"[]"`. Each network keeps its data in a subdirectory of the datadir named after it.
+- **`networks`** are the networks `--network <name>` accepts in addition to the Ethereum ones. The first one is the default network of the binary. `genesis` is the contents of a genesis file. `bootnodes` is a JSON array of enode URLs, or `"[]"`. Each network keeps its data in a subdirectory of the datadir named after it, so a name is lowercase letters, digits and hyphens, and cannot be one ethrex already uses (`mainnet`, `sepolia`, `hoodi`, `plataberget`, `dev`, or anything starting with `chain-`). The node refuses to start otherwise.
 - **The type parameter** is the chain's flags, a `clap::Args` struct. Prefix the flag names with the chain's name so they cannot collide with the node's. Use `ethrex::chain::NoArgs` if there are none.
 - **`components`** is a function called once per start, after the command line is parsed and the genesis is loaded, and before the database is opened. It receives the chain's flags and the genesis of the selected network. Returning an error aborts the start. `NodeComponents` is built by filling in the fields of `NodeComponents::default()`.
 
@@ -114,10 +114,11 @@ impl RpcExtension for ExampleRpc {
 }
 ```
 
-- Every method named `<namespace>_...` is routed to `handle`, on the HTTP and WebSocket endpoints. Extensions are not served on the authenticated port.
+- Every method named `<namespace>_<name>` is routed to `handle`, on the HTTP and WebSocket endpoints. Extensions are not served on the authenticated port.
 - The namespace must be lowercase letters and digits, and cannot be a built-in one (`eth`, `engine`, `debug`, `admin`, `net`, `web3`, `txpool`, `testing`). The node refuses to start otherwise.
 - `context` is the same `RpcApiContext` the built-in handlers receive: the store, the blockchain, the node's configuration.
 - An extension is served whenever it is in `NodeComponents::rpc`. `--http.api` selects built-in namespaces only. To let operators turn a namespace off, give the chain a flag and leave the extension out of the components.
+- Calls to an extension are not counted in the node's RPC metrics.
 
 ### 4. Add a mempool rule
 
@@ -140,6 +141,8 @@ impl MempoolPolicy for MaxTxGas {
 - It can only reject. A transaction it admits still has to pass the standard checks.
 - The `Err` text is returned to whoever submitted the transaction.
 - It has no effect on block validation: a block that contains a transaction the policy would reject is still valid.
+- It runs when a transaction is offered and not again. A transaction admitted under one head stays in the mempool when the head changes, and block building does not consult the policy.
+- A rejected transaction that came from a peer does not count against that peer.
 
 ### 5. Write `main`
 

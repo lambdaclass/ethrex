@@ -1822,13 +1822,15 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
     let namespace = match req.namespace() {
         Ok(ns) => ns,
         Err(rpc_err) => {
-            // Not a built-in namespace: it may belong to an extension.
-            let prefix = req.method.split('_').next().unwrap_or_default();
-            let extension = context
-                .extensions
-                .iter()
-                .find(|extension| extension.namespace() == prefix)
-                .cloned();
+            // Not a built-in namespace: it may belong to an extension. Only a
+            // method of the form `<namespace>_<name>` does.
+            let extension = req.method.split_once('_').and_then(|(prefix, _)| {
+                context
+                    .extensions
+                    .iter()
+                    .find(|extension| extension.namespace() == prefix)
+                    .cloned()
+            });
             return match extension {
                 Some(extension) => extension.handle(req, context).await,
                 None => Err(rpc_err),

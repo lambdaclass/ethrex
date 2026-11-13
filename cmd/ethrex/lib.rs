@@ -41,7 +41,7 @@ macro_rules! global_allocator {
 /// See the documentation of the default variant of this macro.
 // This could be also enabled via `MALLOC_CONF` env var, but for consistency with the previous jemalloc feature
 // usage, we keep it in the code and enable the profiling feature only with the `jemalloc_profiling` feature flag.
-#[cfg(feature = "jemalloc_profiling")]
+#[cfg(all(feature = "jemalloc", feature = "jemalloc_profiling"))]
 #[macro_export]
 macro_rules! global_allocator {
     () => {

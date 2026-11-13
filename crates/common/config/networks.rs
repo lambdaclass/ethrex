@@ -60,9 +60,40 @@ pub struct NetworkPreset {
 }
 
 impl NetworkPreset {
-    /// Checks that the genesis and the bootnodes parse, so a malformed preset is
-    /// reported once at startup instead of wherever it is first used.
+    /// Checks that the name can be told apart from every other network and is safe
+    /// to use as the datadir subdirectory: lowercase letters, digits and hyphens,
+    /// and not a name `--network` or the datadir already gives a meaning to.
+    pub fn validate_name(&self) -> Result<(), String> {
+        let well_formed = !self.name.is_empty()
+            && self
+                .name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        if !well_formed {
+            return Err(format!(
+                "network preset {:?}: the name must be non-empty and contain only lowercase letters, digits and hyphens",
+                self.name
+            ));
+        }
+        // A built-in network name is parsed before any preset is looked up, and its
+        // datadir subdirectory already belongs to that network. Subdirectories
+        // named `chain-<id>` belong to networks given by a genesis file.
+        let reserved = !matches!(Network::from(self.name), Network::GenesisPath(_))
+            || Network::all_datadir_suffixes().contains(&self.name)
+            || self.name.starts_with("chain-");
+        if reserved {
+            return Err(format!(
+                "network preset {:?}: the name is reserved by a built-in network or datadir",
+                self.name
+            ));
+        }
+        Ok(())
+    }
+
+    /// Checks the name, and that the genesis and the bootnodes parse, so a malformed
+    /// preset is reported once at startup instead of wherever it is first used.
     pub fn validate(&self) -> Result<(), String> {
+        self.validate_name()?;
         serde_json::from_str::<Genesis>(self.genesis)
             .map_err(|err| format!("network preset {:?}: invalid genesis: {err}", self.name))?;
         serde_json::from_str::<Vec<Node>>(self.bootnodes)
@@ -379,6 +410,35 @@ mod tests {
                 .unwrap_err()
                 .contains("invalid bootnodes")
         );
+    }
+
+    #[test]
+    fn preset_names_are_safe_and_unambiguous() {
+        let named = |name| NetworkPreset {
+            name,
+            ..EXAMPLE_PRESET
+        };
+        for ok in ["example", "example-testnet", "net2"] {
+            assert!(named(ok).validate_name().is_ok(), "{ok}");
+        }
+        // Not a single plain directory name.
+        for malformed in ["", "..", "a/b", "/abs", "Upper", "with space", "dot.ted"] {
+            let err = named(malformed).validate_name().unwrap_err();
+            assert!(err.contains("lowercase letters"), "{malformed}: {err}");
+        }
+        // Already a network or a datadir subdirectory of this crate.
+        for reserved in [
+            "mainnet",
+            "sepolia",
+            "hoodi",
+            "plataberget",
+            "dev",
+            "chain-1",
+        ] {
+            let err = named(reserved).validate_name().unwrap_err();
+            assert!(err.contains("reserved"), "{reserved}: {err}");
+            assert!(named(reserved).validate().is_err(), "{reserved}");
+        }
     }
 
     #[test]

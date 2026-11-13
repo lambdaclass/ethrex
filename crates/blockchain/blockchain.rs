@@ -349,6 +349,11 @@ pub const DEFAULT_MIN_TIP_WEI: u64 = 1;
 /// standard checks run and may reject it, and it cannot admit a transaction those
 /// checks reject. It applies to every transaction offered to the pool, whether it
 /// arrives over RPC or from a peer. It has no effect on block validation.
+///
+/// The policy runs when a transaction is offered and not again: a transaction
+/// admitted under one head stays in the pool when the head changes, and block
+/// building does not consult the policy. A rejection only keeps the transaction out
+/// of this node's pool; the peer that sent it is not penalized.
 pub trait MempoolPolicy: Send + Sync + std::fmt::Debug {
     /// Returns `Err` with the reason shown to the submitter to keep `tx` out of the
     /// pool. `head` is the header of the latest block, for rules that depend on the

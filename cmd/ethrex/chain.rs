@@ -145,6 +145,18 @@ where
 /// the first preset when no network was given. A malformed preset is an error here,
 /// before anything reads it.
 fn resolve_network(opts: &mut Options, presets: &[NetworkPreset]) -> Result<(), String> {
+    for (index, preset) in presets.iter().enumerate() {
+        preset.validate_name()?;
+        if presets[..index]
+            .iter()
+            .any(|other| other.name == preset.name)
+        {
+            return Err(format!(
+                "network preset {:?} is defined more than once",
+                preset.name
+            ));
+        }
+    }
     let selected = match &opts.network {
         // The CLI parser reads a name it does not know as a genesis file path.
         Some(Network::GenesisPath(path)) => presets
