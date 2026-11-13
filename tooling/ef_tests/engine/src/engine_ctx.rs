@@ -92,5 +92,6 @@ pub async fn engine_only_context(storage: Store) -> RpcApiContext {
         ws: None,
         log_query_limits: Default::default(),
         allowed_namespaces: Arc::new(all_namespaces_for_tests()),
+        extensions: Default::default(),
     }
 }

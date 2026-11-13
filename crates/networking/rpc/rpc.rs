@@ -267,6 +267,59 @@ impl BlockWorkerChannel {
 /// uses, and well above any mainnet block gas limit a single call could be asked to spend.
 pub const DEFAULT_RPC_GAS_CAP: u64 = 50_000_000;
 
+/// Future returned by [`RpcExtension::handle`].
+pub type RpcExtensionFuture<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, RpcErr>> + Send + 'a>>;
+
+/// An RPC namespace served in addition to the built-in ones.
+///
+/// Every method whose name starts with `<namespace>_` is routed to
+/// [`RpcExtension::handle`] on the HTTP and WebSocket endpoints. Extensions are never
+/// served on the authenticated port. A built-in namespace cannot be extended or
+/// replaced: [`validate_rpc_extensions`] rejects an extension that names one.
+///
+/// The extension receives the same [`RpcApiContext`] as the built-in handlers, so it
+/// can read the store and the chain, and call built-in methods in-process through
+/// [`map_http_requests`].
+pub trait RpcExtension: Send + Sync {
+    /// Method prefix, without the underscore: `"foo"` serves `foo_*`.
+    fn namespace(&self) -> &'static str;
+
+    /// Handles one request of this namespace. Answer a method the extension does not
+    /// know with [`RpcErr::MethodNotFound`].
+    fn handle<'a>(&'a self, req: &'a RpcRequest, context: RpcApiContext) -> RpcExtensionFuture<'a>;
+}
+
+/// Checks a set of RPC extensions before the server starts: a namespace must be a
+/// non-empty prefix of lowercase letters and digits, must not be a built-in namespace,
+/// and must not be registered twice.
+pub fn validate_rpc_extensions(extensions: &[Arc<dyn RpcExtension>]) -> Result<(), String> {
+    let mut seen = HashSet::new();
+    for extension in extensions {
+        let namespace = extension.namespace();
+        let well_formed = !namespace.is_empty()
+            && namespace
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+        if !well_formed {
+            return Err(format!(
+                "RPC extension namespace {namespace:?} must be non-empty and contain only lowercase letters and digits"
+            ));
+        }
+        if RpcNamespace::from_prefix(namespace).is_some() {
+            return Err(format!(
+                "RPC extension namespace {namespace:?} is a built-in namespace"
+            ));
+        }
+        if !seen.insert(namespace) {
+            return Err(format!(
+                "RPC extension namespace {namespace:?} is registered more than once"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// This struct contains all the dependencies that RPC handlers need to process requests,
 /// including storage access, blockchain state, P2P networking, and configuration.
 ///
@@ -309,6 +362,8 @@ pub struct RpcApiContext {
     pub allowed_namespaces: Arc<HashSet<RpcNamespace>>,
     /// What `eth_getLogs` and log-filter polls may cost, and the work budget they share.
     pub log_query_limits: LogQueryLimits,
+    /// Namespaces served in addition to the built-in ones. Empty on a stock node.
+    pub extensions: Arc<[Arc<dyn RpcExtension>]>,
 }
 
 /// Configuration for the WebSocket RPC server.
@@ -645,6 +700,8 @@ pub fn start_block_executor(
 /// * `allowed_namespaces` - Namespaces served on the public HTTP/WS endpoints
 /// * `authrpc_max_inflight_body_size` - Request body bytes the Auth-RPC listener may hold
 ///   at once across all connections
+/// * `extensions` - Namespaces served in addition to the built-in ones; check them with
+///   [`validate_rpc_extensions`] first
 ///
 /// # Errors
 ///
@@ -672,6 +729,7 @@ pub async fn bind_api(
     allowed_namespaces: HashSet<RpcNamespace>,
     log_query_limits: LogQueryLimits,
     authrpc_max_inflight_body_size: usize,
+    extensions: Vec<Arc<dyn RpcExtension>>,
 ) -> Result<BoundRpc, RpcStartupError> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -699,6 +757,7 @@ pub async fn bind_api(
         ws: ws.clone(),
         allowed_namespaces: Arc::new(allowed_namespaces),
         log_query_limits,
+        extensions: extensions.into(),
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -1139,6 +1198,7 @@ pub async fn start_api(
         allowed_namespaces,
         LogQueryLimits::default(),
         authrpc_max_inflight_body_size,
+        Vec::new(),
     )
     .await?
     .serve()
@@ -1761,7 +1821,19 @@ fn engine_not_on_http(method: &str) -> RpcErr {
 pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     let namespace = match req.namespace() {
         Ok(ns) => ns,
-        Err(rpc_err) => return Err(rpc_err),
+        Err(rpc_err) => {
+            // Not a built-in namespace: it may belong to an extension.
+            let prefix = req.method.split('_').next().unwrap_or_default();
+            let extension = context
+                .extensions
+                .iter()
+                .find(|extension| extension.namespace() == prefix)
+                .cloned();
+            return match extension {
+                Some(extension) => extension.handle(req, context).await,
+                None => Err(rpc_err),
+            };
+        }
     };
     // Engine is served on the authenticated port only. The CLI parser already
     // rejects `--http.api engine`, but `allowed_namespaces` can also be built
