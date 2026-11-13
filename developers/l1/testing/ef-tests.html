@@ -34,7 +34,7 @@
             const path_to_root = "../../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../../searchindex-8b62467d.js";
+            window.path_to_searchindex_js = "../../../searchindex-1b5f6cab.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../../toc-a6a3d26a.js"></script>
@@ -200,6 +200,23 @@ See <a href="https://steel.ethereum.foundation/docs/execution-specs/running_test
 <p>then run the tests:</p>
 <pre><code class="language-sh">make test-levm
 </code></pre>
+<h3 id="standalone-runners"><a class="header" href="#standalone-runners">Standalone runners</a></h3>
+<p><code>blocktest</code> and <code>enginetest</code> run fixtures from any directory and print one result per fixture, which is how EELS <code>consume direct</code> calls them. From <code>tooling/</code>:</p>
+<pre><code class="language-sh">cargo run --profile release-fast -p ef_tests-runners --bin blocktest -- &lt;path&gt;... [--workers N] [--run REGEX] [--json] [--bal-sequential] [--bal-withhold] [--no-precompile-cache] [--bal-report]
+cargo run --profile release-fast -p ef_tests-runners --bin enginetest -- &lt;path&gt;... [same flags]
+</code></pre>
+<ul>
+<li>Each <code>&lt;path&gt;</code> is a fixture file or a directory searched recursively for <code>.json</code> files; all of them run in one process and print one set of results. <code>-p/--path &lt;path&gt;</code> still works and may repeat. Both runners exit 0 when every fixture ran and passed, 1 when every fixture ran and at least one failed, and 2 when they could not run all of their input: a path that does not exist, or a file or directory that cannot be read, whether named or found under a directory (reported on stderr before any fixture runs), or a fixture file that does not parse (reported on stderr and left out of the results; the other files still run and are reported).</li>
+<li><code>blocktest</code> imports each <code>blockchain_test</code> block through the blockchain ef_tests harness, handing it the fixture’s <code>blockAccessList</code> (or <code>rlp_decoded.blockAccessList</code> for a block expected to be invalid) when the keccak of its RLP, in the order given, equals <code>blockAccessListHash</code>. A list that does not match or does not parse is dropped, as full sync drops a peer’s, and the block runs without it.</li>
+<li><code>enginetest</code> sends each <code>blockchain_test_engine</code> payload and forkchoice update to ethrex’s own <code>engine_newPayloadV&lt;n&gt;</code> and <code>engine_forkchoiceUpdatedV&lt;n&gt;</code> handlers, in process. After the last payload, the chain’s head must be the fixture’s <code>lastblockhash</code>.</li>
+<li>Each <code>blocktest</code> and <code>enginetest</code> result lists the blocks or payloads ethrex rejected in <code>rejections</code>, <code>[]</code> when none: <code>{"index":0,"hash":"0x…","error":"…"}</code>, where <code>index</code> is the position in <code>blocks</code> or <code>engineNewPayloads</code> and <code>error</code> is ethrex’s error as given. A block that does not decode has the decoder’s error and no hash; a payload rejected with a JSON-RPC error has <code>&lt;code&gt;: &lt;message&gt;</code> (plus <code>: &lt;data&gt;</code> when the error has data) and no hash. The runners never compare these errors with the fixture’s expected exception: a fixture passes when what it expects to be rejected is rejected, whatever the reason, and a harness reading the results can check the reasons with EEST’s mapping. <code>enginetest</code> does compare a JSON-RPC error’s code with the payload’s <code>errorCode</code>. <code>ETHREX_ENGINE_STRICT_EXCEPTIONS</code> applies to the cargo engine harness only.</li>
+<li>ethrex’s <code>statetest</code> is <code>ef_tests-statev2 statetest</code> (see <code>tooling/ef_tests/state_v2</code>).</li>
+<li><code>--version</code> prints one line naming the client and the tool, <code>ethrex-blocktest &lt;version&gt;</code>, <code>ethrex-enginetest &lt;version&gt;</code>, or <code>ethrex-statetest &lt;version&gt;</code> for <code>ef_tests-statev2 statetest --version</code>, where the version is the tooling workspace’s; harnesses identify a runner by it.</li>
+<li><code>--bal-sequential</code> runs every block on the sequential executor, like the node’s <code>--no-bal-parallel-exec</code>.</li>
+<li><code>--no-precompile-cache</code> (or <code>ETHREX_NO_PRECOMPILE_CACHE</code>) runs every block without the per-block precompile result cache, like the node flag of the same name.</li>
+<li><code>blocktest --bal-withhold</code> never delivers the fixture’s access list, so every block runs without one and ethrex checks the list it builds against the header, as for a block received without its list.</li>
+<li>With <code>--bal-report</code>, <code>blocktest</code> and <code>enginetest</code> print the executor chosen for each block as one JSON line on stderr, for example <code>{"event":"balExecution","block":1,"hash":"0x…","path":"sequential","reason":"disabled"}</code>. <code>reason</code> is <code>bad-access-list</code> when the runner dropped the block’s delivered list and <code>withheld</code> when <code>--bal-withhold</code> kept back the list the block has, whatever ran the block; a block without a list keeps its own reason under <code>--bal-withhold</code>. Otherwise it is empty for <code>parallel</code>, and for <code>sequential</code> the first condition that ruled parallel out: <code>no-access-list</code>, <code>pre-amsterdam</code>, <code>disabled</code> or <code>no-rayon</code>. A list over the EIP-7928 item cap shows as <code>no-access-list</code>, because the node drops it before the executor. Without the flag these lines are off. stdout carries only the results.</li>
+</ul>
 
                     </main>
 
