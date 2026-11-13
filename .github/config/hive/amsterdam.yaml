@@ -1,5 +1,5 @@
 # Amsterdam (BAL) hive test configuration
-# Pinned to tests@v21.0.1, the coverage follow-up to tests@v21.0.0, the first
+# Pinned to tests@v21.0.2, a patch follow-up to tests@v21.0.0, the first
 # mainnet fixture release to carry Amsterdam (it supersedes the
 # tests-glamsterdam-devnet series, whose Amsterdam subtrees it now contains).
 # Keep this in lock-step with `tooling/ef_tests/.fixtures_url`: the two pins grade
@@ -7,4 +7,4 @@
 # the other release changed.
 # EELS simulator image tag of that release: its fixtures and test sources
 # with the execution-specs framework it was published with.
-tag: v21.0.1
+tag: v21.0.2

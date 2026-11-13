@@ -310,7 +310,7 @@ Contents:
 
 ```
 # .fixtures_url
-https://github.com/ethereum/execution-specs/releases/download/tests%40v21.0.1/fixtures.tar.gz
+https://github.com/ethereum/execution-specs/releases/download/tests%40v21.0.2/fixtures.tar.gz
 ```
 
 The CI hive config lives in `.github/config/hive/{mainnet,amsterdam}.yaml`, each pinning a `tag`: the EELS simulator image tag of a fixture release. The images, `ghcr.io/ethereum/execution-specs/hive/<simulator>:<tag>`, are published by execution-specs and carry that release's fixtures and framework, so hive pulls them instead of building the simulator from source; release tags such as `v21.0.1` are immutable.
