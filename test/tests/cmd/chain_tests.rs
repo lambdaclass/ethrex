@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use clap::CommandFactory;
 use ethrex::{
-    chain::{Chain, Ethereum, NodeComponents, command, parse_args},
+    chain::{Chain, ETHEREUM, NoArgs, NodeComponents, command, parse_args},
     cli::CLI,
     initializers::{get_network, init_node},
 };
@@ -43,8 +43,6 @@ const EXAMPLE_TEST: NetworkPreset = NetworkPreset {
     bootnodes: "[]",
 };
 
-struct Example;
-
 #[derive(clap::Args)]
 struct ExampleArgs {
     /// Highest gas limit a transaction may have to enter the pool.
@@ -52,20 +50,17 @@ struct ExampleArgs {
     max_tx_gas: u64,
 }
 
-impl Chain for Example {
-    type Args = ExampleArgs;
-    const NAME: &'static str = "ethrex-example";
+const EXAMPLE: Chain<ExampleArgs> = Chain {
+    name: "ethrex-example",
+    networks: &[EXAMPLE_DEV, EXAMPLE_TEST],
+    components: example_components,
+};
 
-    fn networks(&self) -> &'static [NetworkPreset] {
-        &[EXAMPLE_DEV, EXAMPLE_TEST]
-    }
-
-    fn components(&self, args: &ExampleArgs, _genesis: &Genesis) -> eyre::Result<NodeComponents> {
-        let mut components = NodeComponents::default();
-        components.rpc.push(Arc::new(ExampleRpc));
-        components.tx_pool_policy = Some(Arc::new(MaxTxGas(args.max_tx_gas)));
-        Ok(components)
-    }
+fn example_components(args: &ExampleArgs, _genesis: &Genesis) -> eyre::Result<NodeComponents> {
+    let mut components = NodeComponents::default();
+    components.rpc.push(Arc::new(ExampleRpc));
+    components.tx_pool_policy = Some(Arc::new(MaxTxGas(args.max_tx_gas)));
+    Ok(components)
 }
 
 /// Serves `example_ping`, and `example_chainId` by calling the built-in `eth_chainId`.
@@ -105,8 +100,8 @@ impl TxPoolPolicy for MaxTxGas {
     }
 }
 
-fn parse<C: Chain>(chain: &C, args: &[&str]) -> (CLI, C::Args) {
-    let argv = std::iter::once(C::NAME).chain(args.iter().copied());
+fn parse<A: clap::Args>(chain: &Chain<A>, args: &[&str]) -> (CLI, A) {
+    let argv = std::iter::once(chain.name).chain(args.iter().copied());
     match parse_args(chain, argv) {
         Ok(parsed) => parsed,
         Err(err) => panic!("arguments {args:?} should parse: {err}"),
@@ -118,10 +113,10 @@ fn parse<C: Chain>(chain: &C, args: &[&str]) -> (CLI, C::Args) {
 #[test]
 fn ethereum_adds_nothing_to_the_command_line() {
     let stock = CLI::command().render_long_help().to_string();
-    let ethereum = command(&Ethereum).render_long_help().to_string();
+    let ethereum = command(&ETHEREUM).render_long_help().to_string();
     assert_eq!(stock, ethereum);
 
-    let (cli, _) = parse(&Ethereum, &[]);
+    let (cli, _) = parse(&ETHEREUM, &[]);
     assert_eq!(cli.opts.network, None);
     assert_eq!(get_network(&cli.opts), Network::mainnet());
 }
@@ -129,19 +124,19 @@ fn ethereum_adds_nothing_to_the_command_line() {
 #[test]
 fn chain_flag_is_parsed_with_the_node_flags() {
     let (cli, args) = parse(
-        &Example,
+        &EXAMPLE,
         &["--example.max-tx-gas", "5", "--http.port", "1234"],
     );
     assert_eq!(args.max_tx_gas, 5);
     assert_eq!(cli.opts.http_port, "1234");
 
-    let (_, args) = parse(&Example, &[]);
+    let (_, args) = parse(&EXAMPLE, &[]);
     assert_eq!(args.max_tx_gas, 1_000_000);
 }
 
 #[test]
 fn chain_flag_is_unknown_to_another_binary() {
-    let err = parse_args(&Ethereum, ["ethrex", "--example.max-tx-gas", "5"])
+    let err = parse_args(&ETHEREUM, ["ethrex", "--example.max-tx-gas", "5"])
         .err()
         .expect("the stock binary must reject another chain's flag");
     assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
@@ -149,32 +144,32 @@ fn chain_flag_is_unknown_to_another_binary() {
 
 #[test]
 fn preset_name_selects_the_preset() {
-    let (cli, _) = parse(&Example, &["--network", "example-test"]);
+    let (cli, _) = parse(&EXAMPLE, &["--network", "example-test"]);
     assert_eq!(cli.opts.network, Some(Network::Custom(EXAMPLE_TEST)));
 }
 
 #[test]
 fn first_preset_is_the_default_network() {
-    let (cli, _) = parse(&Example, &[]);
+    let (cli, _) = parse(&EXAMPLE, &[]);
     assert_eq!(cli.opts.network, Some(Network::Custom(EXAMPLE_DEV)));
 }
 
 #[test]
 fn dev_mode_keeps_its_local_network() {
-    let (cli, _) = parse(&Example, &["--dev"]);
+    let (cli, _) = parse(&EXAMPLE, &["--dev"]);
     assert_eq!(cli.opts.network, None);
     assert_eq!(get_network(&cli.opts), Network::LocalDevnet);
 }
 
 #[test]
 fn ethereum_networks_and_genesis_paths_are_still_accepted() {
-    let (cli, _) = parse(&Example, &["--network", "hoodi"]);
+    let (cli, _) = parse(&EXAMPLE, &["--network", "hoodi"]);
     assert_eq!(
         cli.opts.network,
         Some(Network::PublicNetwork(PublicNetwork::Hoodi))
     );
 
-    let (cli, _) = parse(&Example, &["--network", "/some/genesis.json"]);
+    let (cli, _) = parse(&EXAMPLE, &["--network", "/some/genesis.json"]);
     assert_eq!(
         cli.opts.network,
         Some(Network::GenesisPath("/some/genesis.json".into()))
@@ -183,7 +178,7 @@ fn ethereum_networks_and_genesis_paths_are_still_accepted() {
 
 #[test]
 fn preset_name_is_a_genesis_path_for_another_binary() {
-    let (cli, _) = parse(&Ethereum, &["--network", "example-test"]);
+    let (cli, _) = parse(&ETHEREUM, &["--network", "example-test"]);
     assert_eq!(
         cli.opts.network,
         Some(Network::GenesisPath("example-test".into()))
@@ -192,7 +187,7 @@ fn preset_name_is_a_genesis_path_for_another_binary() {
 
 #[test]
 fn help_lists_the_presets() {
-    let help = command(&Example).render_long_help().to_string();
+    let help = command(&EXAMPLE).render_long_help().to_string();
     assert!(help.contains("example-dev, example-test"), "{help}");
     assert!(help.contains("defaults to example-dev"), "{help}");
     assert!(help.contains("--example.max-tx-gas"), "{help}");
@@ -200,20 +195,17 @@ fn help_lists_the_presets() {
 
 #[test]
 fn malformed_preset_is_rejected_when_selected() {
-    struct Broken;
-    impl Chain for Broken {
-        type Args = ethrex::chain::NoArgs;
-        const NAME: &'static str = "ethrex-broken";
-        fn networks(&self) -> &'static [NetworkPreset] {
-            &[NetworkPreset {
-                name: "broken",
-                genesis: "{",
-                bootnodes: "[]",
-            }]
-        }
-    }
+    let broken: Chain<NoArgs> = Chain {
+        name: "ethrex-broken",
+        networks: &[NetworkPreset {
+            name: "broken",
+            genesis: "{",
+            bootnodes: "[]",
+        }],
+        components: |_, _| Ok(NodeComponents::default()),
+    };
 
-    let err = parse_args(&Broken, ["ethrex-broken"])
+    let err = parse_args(&broken, ["ethrex-broken"])
         .err()
         .expect("a preset whose genesis does not parse must be rejected");
     assert!(err.to_string().contains("invalid genesis"), "{err}");
@@ -445,7 +437,7 @@ async fn node_runs_with_the_chain_components() {
     let http_port = free_port();
     let authrpc_port = free_port();
     let (cli, args) = parse(
-        &Example,
+        &EXAMPLE,
         &[
             "--network",
             "example-test",
@@ -463,10 +455,13 @@ async fn node_runs_with_the_chain_components() {
         ],
     );
 
-    let (_, cancel_token, _, _, store) =
-        init_node(cli.opts, |genesis| Example.components(&args, genesis), None)
-            .await
-            .unwrap();
+    let (_, cancel_token, _, _, store) = init_node(
+        cli.opts,
+        |genesis| (EXAMPLE.components)(&args, genesis),
+        None,
+    )
+    .await
+    .unwrap();
     let chain_id = store.get_chain_config().chain_id;
 
     // RPC namespace.
@@ -500,7 +495,7 @@ async fn node_without_components_behaves_as_ethereum() {
     let http_port = free_port();
     let authrpc_port = free_port();
     let (cli, _) = parse(
-        &Example,
+        &EXAMPLE,
         &[
             "--network",
             "example-test",

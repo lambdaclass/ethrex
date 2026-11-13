@@ -1,13 +1,13 @@
 # Supporting other chains
 
-ethrex can run on a chain other than Ethereum without knowing about it. Support for the chain lives in a crate outside this repository, which implements one trait, `Chain`, and builds its own binary. The `ethrex` binary is built the same way: it runs the `Ethereum` chain, which adds nothing.
+ethrex can run on a chain other than Ethereum without knowing about it. Support for the chain lives in a crate outside this repository, which describes the chain with a `Chain` value and builds its own binary. The `ethrex` binary is built the same way: it runs the `ETHEREUM` chain, which adds nothing.
 
 A chain can add:
 
 | What | How |
 |---|---|
 | Named networks for `--network` | `Chain::networks` |
-| Its own command line flags | `Chain::Args` |
+| Its own command line flags | The type parameter of `Chain` |
 | RPC namespaces | `NodeComponents::rpc` |
 | Transaction pool rules | `NodeComponents::tx_pool_policy` |
 
@@ -43,7 +43,7 @@ codegen-units = 1
 
 Use the Rust version in ethrex's `rust-toolchain.toml`.
 
-### 2. Implement `Chain`
+### 2. Describe the chain
 
 ```rust
 use std::sync::Arc;
@@ -57,8 +57,6 @@ use ethrex_common::{
 use ethrex_config::networks::NetworkPreset;
 use ethrex_rpc::{RpcApiContext, RpcErr, RpcExtension, RpcExtensionFuture, utils::RpcRequest};
 
-pub struct Example;
-
 /// Flags of the example chain, added to the node's own.
 #[derive(clap::Args)]
 pub struct ExampleArgs {
@@ -67,31 +65,28 @@ pub struct ExampleArgs {
     max_tx_gas: u64,
 }
 
-impl Chain for Example {
-    type Args = ExampleArgs;
-    const NAME: &'static str = "ethrex-example";
+pub const EXAMPLE: Chain<ExampleArgs> = Chain {
+    name: "ethrex-example",
+    networks: &[NetworkPreset {
+        name: "example-mainnet",
+        genesis: include_str!("../networks/example-mainnet/genesis.json"),
+        bootnodes: include_str!("../networks/example-mainnet/bootnodes.json"),
+    }],
+    components,
+};
 
-    fn networks(&self) -> &'static [NetworkPreset] {
-        &[NetworkPreset {
-            name: "example-mainnet",
-            genesis: include_str!("../networks/example-mainnet/genesis.json"),
-            bootnodes: include_str!("../networks/example-mainnet/bootnodes.json"),
-        }]
-    }
-
-    fn components(&self, args: &ExampleArgs, _genesis: &Genesis) -> eyre::Result<NodeComponents> {
-        let mut components = NodeComponents::default();
-        components.rpc.push(Arc::new(ExampleRpc));
-        components.tx_pool_policy = Some(Arc::new(MaxTxGas(args.max_tx_gas)));
-        Ok(components)
-    }
+fn components(args: &ExampleArgs, _genesis: &Genesis) -> eyre::Result<NodeComponents> {
+    let mut components = NodeComponents::default();
+    components.rpc.push(Arc::new(ExampleRpc));
+    components.tx_pool_policy = Some(Arc::new(MaxTxGas(args.max_tx_gas)));
+    Ok(components)
 }
 ```
 
-- **`NAME`** is the name of the binary, shown in `--help`.
+- **`name`** is the name of the binary, shown in `--help`.
 - **`networks`** are the networks `--network <name>` accepts in addition to the Ethereum ones. The first one is the default network of the binary. `genesis` is the contents of a genesis file. `bootnodes` is a JSON array of enode URLs, or `"[]"`. Each network keeps its data in a subdirectory of the datadir named after it.
-- **`Args`** is a `clap::Args` struct. Prefix the flag names with the chain's name so they cannot collide with the node's. Use `ethrex::chain::NoArgs` if there are none.
-- **`components`** is called once per start, after the command line is parsed and the genesis is loaded, and before the database is opened. `genesis` is the genesis of the selected network. Returning an error aborts the start. `NodeComponents` is built by filling in the fields of `NodeComponents::default()`.
+- **The type parameter** is the chain's flags, a `clap::Args` struct. Prefix the flag names with the chain's name so they cannot collide with the node's. Use `ethrex::chain::NoArgs` if there are none.
+- **`components`** is a function called once per start, after the command line is parsed and the genesis is loaded, and before the database is opened. It receives the chain's flags and the genesis of the selected network. Returning an error aborts the start. `NodeComponents` is built by filling in the fields of `NodeComponents::default()`.
 
 ### 3. Add an RPC namespace
 
@@ -153,7 +148,7 @@ impl TxPoolPolicy for MaxTxGas {
 ethrex::global_allocator!();
 
 fn main() -> eyre::Result<()> {
-    ethrex::chain::run(ethrex_example::Example)
+    ethrex::chain::run(ethrex_example::EXAMPLE)
 }
 ```
 
@@ -188,9 +183,9 @@ Transaction rejected by the pool policy: gas limit 600000 is above the cap of 50
 ```
 your crate                              ethrex
 ──────────                              ──────
-main() ── run(Example) ───────────────▶ parse the command line
-                                          node flags + Example::Args
-                                          --network resolved against networks()
+main() ── run(EXAMPLE) ───────────────▶ parse the command line
+                                          node flags + ExampleArgs
+                                          --network resolved against networks
                                         load the genesis
 components(args, genesis) ◀──────────── build the components    (once)
         │
@@ -202,13 +197,13 @@ components(args, genesis) ◀──────────── build the comp
 ```
 
 - The chain is compiled into the binary. There is no runtime loading: one binary per chain.
-- `run(Ethereum)` and `run(Example)` go through the same code. A node whose chain returns `NodeComponents::default()` behaves exactly like `ethrex`.
+- `run(ETHEREUM)` and `run(EXAMPLE)` go through the same code. A node whose chain returns `NodeComponents::default()` behaves exactly like `ethrex`.
 - The components are built once, before the database, the pool or the RPC server exist. Nothing can be added to a running node.
 
 ## Design decisions
 
 - **Compiled in, not loaded.** Rust has no stable ABI, so support for a chain is a crate, and each chain ships its own binary.
-- **Defaults mean Ethereum.** Every method of `Chain` and every field of `NodeComponents` has a default, so an implementation states only what its chain does differently.
+- **Defaults mean Ethereum.** Every field of `NodeComponents` has a default, so a chain states only what it does differently.
 - **Fail at startup.** A network whose genesis does not parse, an invalid RPC namespace, or an error from `components` aborts the start with a message naming the cause. Nothing a chain adds is optional at run time.
 - **Extensions receive the node's own types** (`RpcApiContext`, `Transaction`, `BlockHeader`). These are not a stable API: a chain's crate is built against a specific ethrex commit and may need changes when it moves to a newer one.
 - **`NodeComponents` can grow.** It is `#[non_exhaustive]`, so later versions can add fields without breaking chains that fill in the ones they use.
@@ -223,7 +218,7 @@ cargo test --release -p ethrex-test --test ethrex_tests cmd::chain_tests
 
 ## References
 
-- `cmd/ethrex/chain.rs`: `Chain`, `NodeComponents`, `run`.
+- `cmd/ethrex/chain.rs`: `Chain`, `NodeComponents`, `run`, `ETHEREUM`.
 - `crates/networking/rpc/rpc.rs`: `RpcExtension`, `validate_rpc_extensions`.
 - `crates/blockchain/blockchain.rs`: `TxPoolPolicy`.
 - `crates/common/config/networks.rs`: `NetworkPreset`.

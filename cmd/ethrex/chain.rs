@@ -1,12 +1,12 @@
 //! Running an ethrex node for a chain defined outside this repository.
 //!
-//! Support for a chain is a crate that implements [`Chain`] and builds its own
-//! binary with [`run`]. The `ethrex` binary is the same thing for Ethereum:
-//! `run(Ethereum)`.
+//! Support for a chain is a crate that describes it with a [`Chain`] and builds its
+//! own binary with [`run`]. The `ethrex` binary is the same thing for Ethereum:
+//! `run(ETHEREUM)`.
 //!
 //! A chain can add:
 //! - named networks for `--network` ([`Chain::networks`]),
-//! - its own command line flags ([`Chain::Args`]),
+//! - its own command line flags (the type parameter of [`Chain`]),
 //! - RPC namespaces and transaction pool rules ([`NodeComponents`]).
 //!
 //! Everything a chain leaves out behaves as on Ethereum.
@@ -36,31 +36,21 @@ const LATEST_VERSION_URL: &str = "https://api.github.com/repos/lambdaclass/ethre
 
 /// A chain the node can run on, compiled into the binary.
 ///
-/// Every method has a default that means "as on Ethereum", so an implementation
-/// overrides only what its chain does differently.
-pub trait Chain {
-    /// Command line flags of this chain, added to the node's own. Use [`NoArgs`]
-    /// for none. Prefix the flag names with the chain's name (`--<chain>.<flag>`)
-    /// so they cannot collide with the node's.
-    type Args: Args;
-
+/// `A` is the chain's own command line flags, added to the node's: a
+/// `clap::Args` struct, or [`NoArgs`] for none. Prefix the flag names with the
+/// chain's name (`--<chain>.<flag>`) so they cannot collide with the node's.
+pub struct Chain<A> {
     /// Name of the binary, shown in `--help` and in startup errors.
-    const NAME: &'static str;
-
+    pub name: &'static str,
     /// Networks of this chain, added to `--network`. When there is at least one,
     /// the first is the default network of the binary.
-    fn networks(&self) -> &'static [NetworkPreset] {
-        &[]
-    }
-
+    pub networks: &'static [NetworkPreset],
     /// What the node runs with on this chain, in addition to its Ethereum behavior.
     ///
     /// Called once per start, after the command line is parsed and the genesis is
-    /// loaded, and before the database is opened. `genesis` is the genesis of the
-    /// network selected with `--network`. An error aborts the start.
-    fn components(&self, _args: &Self::Args, _genesis: &Genesis) -> eyre::Result<NodeComponents> {
-        Ok(NodeComponents::default())
-    }
+    /// loaded, and before the database is opened, with the chain's flags and the
+    /// genesis of the network selected with `--network`. An error aborts the start.
+    pub components: fn(&A, &Genesis) -> eyre::Result<NodeComponents>,
 }
 
 /// The parts of the node a chain can add to. `NodeComponents::default()` adds
@@ -77,24 +67,23 @@ pub struct NodeComponents {
     pub tx_pool_policy: Option<Arc<dyn TxPoolPolicy>>,
 }
 
-/// [`Chain::Args`] of a chain without flags of its own.
+/// The flags of a chain without flags of its own.
 #[derive(Args, Debug, Clone, Default)]
 pub struct NoArgs {}
 
 /// The built-in chain: Ethereum, which adds nothing.
-pub struct Ethereum;
-
-impl Chain for Ethereum {
-    type Args = NoArgs;
-    const NAME: &'static str = "ethrex";
-}
+pub const ETHEREUM: Chain<NoArgs> = Chain {
+    name: "ethrex",
+    networks: &[],
+    components: |_, _| Ok(NodeComponents::default()),
+};
 
 /// Runs the node for `chain` with the arguments of the current process, until it is
 /// shut down. This is the whole `main` of a chain's binary.
 ///
 /// The binary declares its global allocator with [`crate::global_allocator!`], as
 /// `cmd/ethrex/ethrex.rs` does.
-pub fn run<C: Chain>(chain: C) -> eyre::Result<()> {
+pub fn run<A: Args>(chain: Chain<A>) -> eyre::Result<()> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
@@ -103,7 +92,7 @@ pub fn run<C: Chain>(chain: C) -> eyre::Result<()> {
 
 /// The command line of `chain`'s binary: the node's own, plus the chain's flags and
 /// networks.
-pub fn command<C: Chain>(chain: &C) -> clap::Command {
+pub fn command<A: Args>(chain: &Chain<A>) -> clap::Command {
     let node = CLI::command();
     // `augment_args` replaces the command's description with the doc comment of the
     // flags struct; keep the node's.
@@ -112,11 +101,11 @@ pub fn command<C: Chain>(chain: &C) -> clap::Command {
     };
     let about = keep(node.get_about());
     let long_about = keep(node.get_long_about());
-    let mut command = C::Args::augment_args(node)
-        .name(C::NAME)
+    let mut command = A::augment_args(node)
+        .name(chain.name)
         .about(about)
         .long_about(long_about);
-    let presets = chain.networks();
+    let presets = chain.networks;
     if let Some(default) = presets.first() {
         let names = presets
             .iter()
@@ -135,19 +124,19 @@ pub fn command<C: Chain>(chain: &C) -> clap::Command {
 
 /// Parses `argv` for `chain`'s binary and resolves `--network` against the chain's
 /// networks.
-pub fn parse_args<C, T>(
-    chain: &C,
+pub fn parse_args<A, T>(
+    chain: &Chain<A>,
     argv: impl IntoIterator<Item = T>,
-) -> Result<(CLI, C::Args), clap::Error>
+) -> Result<(CLI, A), clap::Error>
 where
-    C: Chain,
+    A: Args,
     T: Into<std::ffi::OsString> + Clone,
 {
     let mut command = command(chain);
     let matches = command.try_get_matches_from_mut(argv)?;
     let mut cli = CLI::from_arg_matches(&matches)?;
-    let args = C::Args::from_arg_matches(&matches)?;
-    resolve_network(&mut cli.opts, chain.networks())
+    let args = A::from_arg_matches(&matches)?;
+    resolve_network(&mut cli.opts, chain.networks)
         .map_err(|err| command.error(clap::error::ErrorKind::ValueValidation, err))?;
     Ok((cli, args))
 }
@@ -172,7 +161,7 @@ fn resolve_network(opts: &mut Options, presets: &[NetworkPreset]) -> Result<(), 
     Ok(())
 }
 
-async fn run_node<C: Chain>(chain: C) -> eyre::Result<()> {
+async fn run_node<A: Args>(chain: Chain<A>) -> eyre::Result<()> {
     let (CLI { opts, command }, args) =
         parse_args(&chain, std::env::args_os()).unwrap_or_else(|err| err.exit());
 
@@ -203,9 +192,8 @@ async fn run_node<C: Chain>(chain: C) -> eyre::Result<()> {
     let (datadir, cancel_token, peer_table, shared_local_node, store) = init_node(
         opts,
         |genesis| {
-            chain
-                .components(&args, genesis)
-                .wrap_err_with(|| format!("{}: failed to build the node's components", C::NAME))
+            (chain.components)(&args, genesis)
+                .wrap_err_with(|| format!("{}: failed to build the node's components", chain.name))
         },
         Some(log_filter_handler),
     )
