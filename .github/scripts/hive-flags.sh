@@ -58,6 +58,7 @@ pin() {
     local value
     value=$(sed -n "s/^$1:[[:space:]]*//p" "$PINS")
     [[ -n $value ]] || die "pin '$1' is missing from $PINS"
+    [[ $value != *$'\n'* ]] || die "pin '$1' appears more than once in $PINS"
     printf '%s' "$value"
 }
 
