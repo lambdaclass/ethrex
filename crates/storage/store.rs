@@ -1738,25 +1738,26 @@ impl Store {
             .await
     }
 
-    /// Whether the transaction index floor of a history backfilled before it was tracked
-    /// has been located.
-    pub async fn is_tx_index_floor_reconciled(&self) -> Result<bool, StoreError> {
+    /// Whether the history bounds (`earliest_block_number` and the transaction index
+    /// floor) can be trusted. A database created before they were tracked holds stale
+    /// ones until they are reconciled.
+    pub async fn history_bounds_reconciled(&self) -> Result<bool, StoreError> {
         Ok(self
-            .read_chain_data_block_number(ChainDataIndex::TxIndexFloorReconciled)
+            .read_chain_data_block_number(ChainDataIndex::HistoryBoundsReconciled)
             .await?
             .is_some())
     }
 
-    /// Records that the transaction index floor has been located, together with the
-    /// floor if one was found.
-    pub async fn record_reconciled_tx_index_floor(
+    /// Marks the history bounds as reconciled, recording the transaction index floor
+    /// if the reconciliation found one.
+    pub async fn mark_history_bounds_reconciled(
         &self,
-        floor: Option<BlockNumber>,
+        tx_index_floor: Option<BlockNumber>,
     ) -> Result<(), StoreError> {
         let backend = self.backend.clone();
         tokio::task::spawn_blocking(move || {
             let mut txn = backend.begin_write()?;
-            if let Some(floor) = floor {
+            if let Some(floor) = tx_index_floor {
                 txn.put(
                     CHAIN_DATA,
                     &chain_data_key(ChainDataIndex::TxIndexFloor),
@@ -1765,7 +1766,7 @@ impl Store {
             }
             txn.put(
                 CHAIN_DATA,
-                &chain_data_key(ChainDataIndex::TxIndexFloorReconciled),
+                &chain_data_key(ChainDataIndex::HistoryBoundsReconciled),
                 &1u64.to_le_bytes(),
             )?;
             txn.commit()
@@ -3404,6 +3405,9 @@ impl Store {
         self.add_block(genesis_block).await?;
         self.update_earliest_block_number(genesis_block_number)
             .await?;
+        // A new database tracks its history bounds from the first block, so it has
+        // nothing to reconcile.
+        self.mark_history_bounds_reconciled(None).await?;
         self.forkchoice_update(vec![], genesis_block_number, genesis_hash, None, None)
             .await?;
         Ok(())
