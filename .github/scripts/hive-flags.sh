@@ -99,8 +99,10 @@ esac
 if [[ -n $limit ]]; then
     # Single-quote the limit so regex metacharacters, such as the `|` of a
     # multi-fork limit, survive the hive action's shell re-evaluation of the
-    # flags.
-    flags+=" --sim.limit '${limit//\'/\'\\\'\'}'"
+    # flags. The quote escaping is an assignment of its own: inside a
+    # double-quoted string bash 3.2 keeps the backslashes of the replacement.
+    escaped_limit=${limit//\'/\'\\\'\'}
+    flags+=" --sim.limit '$escaped_limit'"
 fi
 
 echo "flags=$flags"
