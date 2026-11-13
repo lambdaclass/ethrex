@@ -102,6 +102,10 @@ fn oldest_block_with_state(
         let Some(parent) = storage.get_block_header_by_hash(oldest.parent_hash)? else {
             break;
         };
+        // Guards against a corrupt parent link looping or passing the head.
+        if parent.number.checked_add(1) != Some(oldest.number) {
+            break;
+        }
         if !holds_state(storage, parent.state_root)? {
             break;
         }

@@ -167,15 +167,21 @@ async fn reconcile_history_bounds(store: &Store) -> Result<(), SyncError> {
         );
         store.update_earliest_block_number(actual).await?;
     }
-    if store.get_tx_index_floor().await?.is_none() {
-        let floor = find_tx_index_floor(store).await?;
-        if floor > actual {
-            info!(
-                floor,
-                "Recorded the transaction index floor of an earlier backfill"
-            );
-            store.update_tx_index_floor(floor).await?;
+    // Marked done even when nothing is recorded, so a fully indexed history is
+    // not searched again on every start.
+    if !store.is_tx_index_floor_reconciled().await? {
+        let mut found = None;
+        if store.get_tx_index_floor().await?.is_none() {
+            let floor = find_tx_index_floor(store).await?;
+            if floor > actual {
+                info!(
+                    floor,
+                    "Recorded the transaction index floor of an earlier backfill"
+                );
+                found = Some(floor);
+            }
         }
+        store.record_reconciled_tx_index_floor(found).await?;
     }
     Ok(())
 }
@@ -184,7 +190,13 @@ async fn reconcile_history_bounds(store: &Store) -> Result<(), SyncError> {
 ///
 /// Backfill leaves out blocks more than the horizon below the head of its run,
 /// and each run starts below the last with a later head, so the indexed blocks
-/// form a run ending at the head and we bisect for its start.
+/// form a run ending at the head and we bisect for its start. A history whose
+/// horizon was raised between runs breaks that assumption; since this runs once
+/// per database, only histories backfilled before the floor was tracked are affected.
+///
+/// The forward scan past empty blocks covers at most the halved window of each
+/// step, so the whole search reads about one pass over the range in the worst
+/// case, when nearly every block is empty.
 async fn find_tx_index_floor(store: &Store) -> Result<BlockNumber, SyncError> {
     let mut lo = store.get_earliest_block_number().await?;
     let mut hi = store.get_latest_block_number()?.saturating_add(1);
@@ -226,7 +238,11 @@ pub async fn reconcile_history_bounds_when_synced(
 ) {
     loop {
         if blockchain.is_synced() {
-            match reconcile_history_bounds(&store).await {
+            let result = tokio::select! {
+                result = reconcile_history_bounds(&store) => result,
+                _ = cancel_token.cancelled() => return,
+            };
+            match result {
                 Ok(()) => return,
                 Err(e) => warn!("Reconciling the history bounds failed (will retry): {e}"),
             }
@@ -755,16 +771,23 @@ mod tests {
         let store = store_with_unindexed_backfill(40, 40, 100, &[41]).await;
         reconcile_history_bounds(&store).await.unwrap();
         assert_eq!(store.get_tx_index_floor().await.unwrap(), None);
+        assert!(store.is_tx_index_floor_reconciled().await.unwrap());
     }
 
-    #[test]
-    fn tx_index_floor_bisect_finds_every_boundary() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
+    /// The search runs once per database: a later start trusts the recorded result.
+    #[tokio::test]
+    async fn reconcile_history_bounds_searches_the_tx_index_once() {
+        let store = store_with_unindexed_backfill(40, 61, 100, &[41]).await;
+        store.record_reconciled_tx_index_floor(None).await.unwrap();
+        reconcile_history_bounds(&store).await.unwrap();
+        assert_eq!(store.get_tx_index_floor().await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn tx_index_floor_bisect_finds_every_boundary() {
         for indexed_from in 40..=60 {
-            let found = rt.block_on(async {
-                let store = store_with_unindexed_backfill(40, indexed_from, 60, &[50, 51]).await;
-                find_tx_index_floor(&store).await.unwrap()
-            });
+            let store = store_with_unindexed_backfill(40, indexed_from, 60, &[50, 51]).await;
+            let found = find_tx_index_floor(&store).await.unwrap();
             let expected = match indexed_from {
                 51 | 52 => 50,
                 other => other,

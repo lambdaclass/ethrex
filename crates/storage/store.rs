@@ -857,13 +857,19 @@ impl Store {
         new_earliest: BlockNumber,
     ) -> Result<(), StoreError> {
         // The frontier block is already stored, and indexed if it is a snap pivot.
+        // `earliest` and the floor are read outside the write transaction: backfill is
+        // their only writer once the node is synced, and it writes one batch at a time.
         let earliest = self
             .read_chain_data_block_number(ChainDataIndex::EarliestBlockNumber)
             .await?
             .unwrap_or(BlockNumber::MAX);
         let unindexed_top = blocks
             .iter()
-            .filter(|block| !block.index_transactions && block.header.number < earliest)
+            .filter(|block| {
+                !block.index_transactions
+                    && !block.body.transactions.is_empty()
+                    && block.header.number < earliest
+            })
             .map(|block| block.header.number)
             .max();
         let mut tx_index_floor = None;
@@ -1728,10 +1734,40 @@ impl Store {
             .await
     }
 
-    pub async fn update_tx_index_floor(&self, block_number: BlockNumber) -> Result<(), StoreError> {
-        let key = chain_data_key(ChainDataIndex::TxIndexFloor);
-        self.write_async(CHAIN_DATA, key, block_number.to_le_bytes().to_vec())
-            .await
+    /// Whether the transaction index floor of a history backfilled before it was tracked
+    /// has been located.
+    pub async fn is_tx_index_floor_reconciled(&self) -> Result<bool, StoreError> {
+        Ok(self
+            .read_chain_data_block_number(ChainDataIndex::TxIndexFloorReconciled)
+            .await?
+            .is_some())
+    }
+
+    /// Records that the transaction index floor has been located, together with the
+    /// floor if one was found.
+    pub async fn record_reconciled_tx_index_floor(
+        &self,
+        floor: Option<BlockNumber>,
+    ) -> Result<(), StoreError> {
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut txn = backend.begin_write()?;
+            if let Some(floor) = floor {
+                txn.put(
+                    CHAIN_DATA,
+                    &chain_data_key(ChainDataIndex::TxIndexFloor),
+                    &floor.to_le_bytes(),
+                )?;
+            }
+            txn.put(
+                CHAIN_DATA,
+                &chain_data_key(ChainDataIndex::TxIndexFloorReconciled),
+                &1u64.to_le_bytes(),
+            )?;
+            txn.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Floor write task panicked: {e}")))?
     }
 
     /// Obtain finalized block number
@@ -8578,6 +8614,25 @@ mod backfill_write_tests {
             .await
             .unwrap();
         assert_eq!(store.get_tx_index_floor().await.unwrap(), Some(97));
+
+        // An empty block has nothing to index, so it does not raise the floor.
+        let empty = BackfilledBlock {
+            header: test_header(98),
+            body: BlockBody {
+                transactions: vec![],
+                ommers: vec![],
+                withdrawals: Some(vec![]),
+            },
+            receipts: vec![],
+            index_transactions: false,
+        };
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        store.update_earliest_block_number(99).await.unwrap();
+        store
+            .add_backfilled_blocks(vec![empty, backfilled(97, false)], 97)
+            .await
+            .unwrap();
+        assert_eq!(store.get_tx_index_floor().await.unwrap(), Some(98));
     }
 
     /// End-to-end at the storage/RPC boundary: the getters the RPC handlers use

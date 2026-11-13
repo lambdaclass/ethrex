@@ -9,6 +9,7 @@ pub enum ChainDataIndex {
     LatestBlockNumber = 4,
     PendingBlockNumber = 5,
     TxIndexFloor = 6,
+    TxIndexFloorReconciled = 7,
 }
 
 /// Represents the key for each unique value of the snap state stored in the db

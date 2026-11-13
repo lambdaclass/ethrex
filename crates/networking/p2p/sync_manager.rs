@@ -144,7 +144,7 @@ impl SyncManager {
         // Spawn the optional historical-chain backfill task. It idles until
         // initial sync finishes, then fills bodies/receipts below the pivot down
         // to the configured floor, resuming across restarts via the persisted
-        // frontier.
+        // frontier. With history off, only the history bounds are reconciled.
         if backfill_config.mode != HistoryChain::Off {
             // Tracked like every other long-lived task, so shutdown waits for it
             // rather than dropping it mid-batch.
