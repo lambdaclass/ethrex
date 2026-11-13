@@ -302,6 +302,9 @@ check-ere-pins: ## 🔍 Check the stateless-validator guests agree on one ere re
 	# image tags the release workflow pulls.
 	@tag=$$(.github/scripts/zkvm-version.sh --ere-tag) && echo "ere pins agree: $$tag"
 
+check-fixture-pins: ## 🔍 Check the EF fixtures, the hive image tag and the docs name one fixture release
+	@.github/scripts/check-fixture-pins.sh
+
 check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
 	cargo metadata --locked > /dev/null
 	cargo metadata --locked --manifest-path crates/guest-program/bin/sp1/Cargo.toml > /dev/null

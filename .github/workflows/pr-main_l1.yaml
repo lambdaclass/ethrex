@@ -483,6 +483,14 @@ jobs:
         run: |
           make check-ere-pins
 
+      # The EF fixture bundle, the hive image tag, the base of the zkEVM bundle
+      # and two documents name one execution-specs release. They grade the same
+      # client, so a bump that misses one of them fails every fixture the two
+      # releases disagree on, in a hive job that does not say why.
+      - name: Check the fixture pins agree
+        run: |
+          make check-fixture-pins
+
   # The purpose of this job is to add it as a required check in GitHub so that we don't have to add every individual job as a required check
   all-tests:
     # "Integration Test" is a required check, don't change the name

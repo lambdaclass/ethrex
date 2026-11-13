@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+#
+# Fails when the places that name the EF fixture release disagree.
+#
+# One execution-specs `tests@` release is named in several files: the bundle
+# the ef-test runners download, the EELS simulator image hive runs, the base
+# the zkEVM bundle is filled from, and two documents. They grade the same
+# client, so a bump that misses one of them either fails every fixture the two
+# releases disagree on or documents a release that is not the one being run.
+#
+#   .github/scripts/check-fixture-pins.sh          # check this repository
+#   .github/scripts/check-fixture-pins.sh <root>   # check another tree
+#
+# Prints the release on success. Exit status: 0 when every pin agrees, 1
+# otherwise, with one line per disagreement.
+
+set -euo pipefail
+
+ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+PINS="$ROOT/.github/config/hive/pins.yaml"
+FIXTURES_URL="$ROOT/tooling/ef_tests/.fixtures_url"
+ROADMAP="$ROOT/docs/roadmaps/forks-roadmap.md"
+HIVE_DOC="$ROOT/docs/developers/l1/testing/hive.md"
+
+status=0
+mismatch() { echo "check-fixture-pins: $*" >&2; status=1; }
+
+for file in "$PINS" "$FIXTURES_URL" "$ROADMAP" "$HIVE_DOC"; do
+    [[ -f $file ]] || { echo "check-fixture-pins: no file at $file" >&2; exit 1; }
+done
+
+pin() { sed -n "s/^$1:[[:space:]]*//p" "$PINS"; }
+
+tag=$(pin tag)
+if [[ ! $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "check-fixture-pins: \`tag\` in ${PINS#"$ROOT"/} is '$tag', not a release such as v21.0.2" >&2
+    exit 1
+fi
+
+# The bundle the blockchain, state and engine ef-test runners download.
+url_release=$(sed -n 's|^https://github.com/ethereum/execution-specs/releases/download/tests%40\(v[0-9][0-9.]*\)/fixtures\.tar\.gz$|\1|p' "$FIXTURES_URL")
+if [[ -z $url_release ]]; then
+    mismatch "${FIXTURES_URL#"$ROOT"/} is not an execution-specs tests@ release URL"
+elif [[ $url_release != "$tag" ]]; then
+    mismatch "${FIXTURES_URL#"$ROOT"/} is at tests@$url_release but the hive image tag is $tag"
+fi
+
+# The release the zkEVM bundle is filled from.
+zkevm_base=$(pin zkevm_base)
+if [[ $zkevm_base != "$tag" ]]; then
+    mismatch "\`zkevm_base\` is '$zkevm_base' but the hive image tag is $tag: the zkEVM bundle and the base bundle describe different chains"
+fi
+
+# The forks roadmap states the fixture release and the image tag.
+roadmap_release=$(sed -n 's|^- Fixtures: \[`tests@\(v[0-9][0-9.]*\)`\].*|\1|p' "$ROADMAP")
+if [[ $roadmap_release != "$tag" ]]; then
+    mismatch "${ROADMAP#"$ROOT"/} lists fixtures 'tests@$roadmap_release', not tests@$tag"
+fi
+roadmap_tag=$(sed -n 's|^- EELS simulator image tag: `\(.*\)`$|\1|p' "$ROADMAP")
+if [[ $roadmap_tag != "$tag" ]]; then
+    mismatch "${ROADMAP#"$ROOT"/} lists image tag '$roadmap_tag', not $tag"
+fi
+
+# The hive guide shows the content of `.fixtures_url`.
+while IFS= read -r doc_release; do
+    if [[ $doc_release != "$tag" ]]; then
+        mismatch "${HIVE_DOC#"$ROOT"/} shows a tests@$doc_release fixtures URL, not tests@$tag"
+    fi
+done < <(grep -o 'releases/download/tests%40v[0-9][0-9.]*/fixtures\.tar\.gz' "$HIVE_DOC" | sed 's|.*tests%40\(v[0-9][0-9.]*\)/.*|\1|' | sort -u)
+
+if [[ $status -eq 0 ]]; then
+    echo "fixture pins agree: tests@$tag"
+fi
+exit "$status"
