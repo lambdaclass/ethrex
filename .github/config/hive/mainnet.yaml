@@ -1,10 +1,12 @@
-# Mainnet hive test configuration
-# Pinned to tests@v20.0.1 (execution-specs mainnet fixture release:
-# Osaka + BPO1 + BPO2). Replaces the archived
-# ethereum/execution-spec-tests `fixtures_develop` bundle.
-fixtures: https://github.com/ethereum/execution-specs/releases/download/tests%40v20.0.1/fixtures.tar.gz
-# The tests@v20.0.1 tag commit. Any future pin must still descend from
-# execution-specs ecd94a47 (PR #3104), which carries the ethrex
-# INVALID_SIGNATURE_VRS exception mappings; older commits silently fail
-# 80 consume-engine bad_v_r_s cases.
-eels_commit: 87aba1a38a476b31f819a2390eb481527e6dc683
+# Hive EELS simulator configuration
+# Pinned to tests@v21.0.2 (execution-specs mainnet fixture release). From
+# tests@v21.0.0 on, the mainnet release carries every fork through Amsterdam, so
+# every EELS hive job reads this one file.
+# Keep this in lock-step with `tooling/ef_tests/.fixtures_url`: the two pins grade
+# the same client, so a release that only one of them follows fails every fixture
+# the other release changed.
+# EELS simulator image tag of that release: its fixtures and test sources with
+# the execution-specs framework it was published with. The image's framework
+# descends from execution-specs ecd94a47 (PR #3104), which carries the ethrex
+# INVALID_SIGNATURE_VRS exception mappings.
+tag: v21.0.2

@@ -88,6 +88,35 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
+/// Tracing target of the per-block event that names the executor chosen for a block
+/// (`path`: `parallel` or `sequential`) and, for the sequential one, the first
+/// condition that ruled parallel out (`reason`). Test runners turn it on to report
+/// the choice; a node logs it only when that target is enabled at debug level.
+pub const BAL_EXECUTION_TARGET: &str = "ethrex_vm::bal_execution";
+
+/// The first condition, in gate order, that keeps a block off the parallel executor,
+/// or `None` when it runs there. `disabled` covers every caller that turns parallel
+/// off: `--no-bal-parallel-exec`, and witness collection.
+fn sequential_execution_reason(
+    has_access_list: bool,
+    is_amsterdam: bool,
+    bal_parallel_exec_enabled: bool,
+) -> Option<&'static str> {
+    if !cfg!(feature = "rayon") {
+        return Some("no-rayon");
+    }
+    if !has_access_list {
+        return Some("no-access-list");
+    }
+    if !is_amsterdam {
+        return Some("pre-amsterdam");
+    }
+    if !bal_parallel_exec_enabled {
+        return Some("disabled");
+    }
+    None
+}
+
 /// Accounts per task in [`LEVM::warm_block_from_bal`]. Small enough that the first
 /// warmed states and code reach the executor within a few point reads, large enough
 /// to keep the per-chunk batch read worthwhile.
@@ -628,6 +657,9 @@ impl LEVM {
     /// `merkleizer` is `Some` on the streaming (non-BAL) path; the BAL validation path
     /// passes `None` because the caller merkleizes optimistically from the input BAL and
     /// the EVM-side `bal_to_account_updates` send is then redundant work.
+    ///
+    /// Emits one debug event per block on [`BAL_EXECUTION_TARGET`] naming the executor
+    /// chosen and, for the sequential one, why.
     #[allow(clippy::too_many_arguments)]
     pub fn execute_block_pipeline(
         block: &Block,
@@ -662,6 +694,19 @@ impl LEVM {
                     EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
                 })?;
 
+        let sequential_reason = sequential_execution_reason(
+            header_bal.is_some(),
+            is_amsterdam,
+            bal_parallel_exec_enabled,
+        );
+        ::tracing::debug!(
+            target: BAL_EXECUTION_TARGET,
+            block = block.header.number,
+            hash = %format_args!("{:#x}", block.hash()),
+            path = if sequential_reason.is_some() { "sequential" } else { "parallel" },
+            reason = sequential_reason.unwrap_or_default(),
+            "Executing block"
+        );
         #[cfg(not(feature = "rayon"))]
         // Without rayon there is no parallel BAL path, so these are unused.
         // Adding dummy let to avoid unused warnings.
@@ -672,9 +717,9 @@ impl LEVM {
         // optimistic merkleization it feeds) is only correct on Amsterdam+; a
         // pre-Amsterdam call here in release would skip the inner debug_assert.
         // `--no-bal-parallel-exec` opts out and falls through to the sequential pipeline below.
+        // See `sequential_execution_reason` for the full gate.
         if let Some(bal) = header_bal
-            && is_amsterdam
-            && bal_parallel_exec_enabled
+            && sequential_reason.is_none()
         {
             // Validate header BAL structural properties before execution.
             // This catches index-out-of-bounds early, before wasting execution time.
@@ -5736,5 +5781,27 @@ mod first_failure_by_key_tests {
             })
         });
         assert_eq!(result, Err((7, 3)));
+    }
+}
+
+#[cfg(all(test, feature = "rayon"))]
+mod sequential_execution_reason_tests {
+    use super::sequential_execution_reason;
+
+    #[test]
+    fn names_the_first_gate_that_rules_out_parallel() {
+        assert_eq!(sequential_execution_reason(true, true, true), None);
+        assert_eq!(
+            sequential_execution_reason(false, false, false),
+            Some("no-access-list")
+        );
+        assert_eq!(
+            sequential_execution_reason(true, false, false),
+            Some("pre-amsterdam")
+        );
+        assert_eq!(
+            sequential_execution_reason(true, true, false),
+            Some("disabled")
+        );
     }
 }

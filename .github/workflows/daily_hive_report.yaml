@@ -28,11 +28,16 @@ jobs:
       fail-fast: false
       matrix:
         test:
+          # rpc-compat stays on the hive it ran on before the eels switch: from
+          # ethereum/hive#1623 its image runs `make build` in the execution-apis
+          # checkout, and the execution-apis commit pinned below predates the
+          # Makefile (execution-apis#751). Drop the pin once that commit moves.
           - {
               name: "Rpc Compat tests",
               file_name: rpc-compat,
               simulation: ethereum/rpc-compat,
               limit: "",
+              hive_version: 7c4c99ebb79955f23e1952fb0282a0dadcb6e181,
             }
           - {
               name: "Devp2p eth tests",
@@ -73,7 +78,6 @@ jobs:
               file_name: consume-engine-amsterdam,
               simulation: ethereum/eels/consume-engine,
               limit: ".*fork_.*Amsterdam.*",
-              amsterdam: true,
               parallelism: 2,
             }
           - {
@@ -95,21 +99,39 @@ jobs:
               file_name: consume-rlp-amsterdam,
               simulation: ethereum/eels/consume-rlp,
               limit: ".*fork_.*Amsterdam.*",
-              amsterdam: true,
               parallelism: 2,
+            }
+          # consume-wirex has the client sync each test's chain from a mock devp2p
+          # peer, so the EELS fixtures also exercise full sync over the eth wire
+          # protocol, not only the engine API. It carries two pins of its own: the
+          # hive pin below predates the simulator (ethereum/hive#1640), and
+          # execution-specs publishes no consume-wirex image per fixture release,
+          # so `tag` pins the digest of the `latest` image built on 2026-11-01
+          # (fixtures tests@v21.0.2, framework forks/bogota at fd9298410). The
+          # run includes the Amsterdam fixtures, so it takes the same lower
+          # parallelism as the Amsterdam entries above.
+          - {
+              name: "Consume WireX tests",
+              file_name: consume-wirex,
+              simulation: ethereum/eels/consume-wirex,
+              limit: "",
+              parallelism: 2,
+              hive_version: 64d7af92c63962779d0c9bbf404bb58733bd1b05,
+              tag: "latest@sha256:7b9f515c21e8b9ee44f535c21103f7c9143a99820cccf3ad1537d68192ade46a",
             }
           - {
               name: "Execute Blobs tests (Osaka)",
               file_name: execute-blobs-osaka,
               simulation: ethereum/eels/execute-blobs,
               limit: "",
+              fork: Osaka,
             }
           - {
               name: "Execute Blobs tests (Amsterdam)",
               file_name: execute-blobs-amsterdam,
               simulation: ethereum/eels/execute-blobs,
               limit: "",
-              amsterdam: true,
+              fork: Amsterdam,
             }
 
     steps:
@@ -122,21 +144,13 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0
 
-      # Set custom args defined in Dockerfile to pin execution-spec-tests versions
-      # See: https://github.com/ethereum/hive/blob/c2dab60f898b94afe8eeac505f60dcde59205e77/simulators/ethereum/eest/consume-rlp/Dockerfile#L4-L8
-      - name: Load Amsterdam config
-        id: amsterdam-config
+      # Pin the EELS simulator image tags, see
+      # https://github.com/ethereum/hive/blob/master/simulators/ethereum/eels/README.md
+      - name: Load EELS config
+        id: eels-config
         shell: bash
         run: |
-          echo "fixtures=$(yq -r '.fixtures' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
-          echo "eels_commit=$(yq -r '.eels_commit' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
-
-      - name: Load mainnet config
-        id: mainnet-config
-        shell: bash
-        run: |
-          echo "fixtures=$(yq -r '.fixtures' .github/config/hive/mainnet.yaml)" >> "$GITHUB_OUTPUT"
-          echo "eels_commit=$(yq -r '.eels_commit' .github/config/hive/mainnet.yaml)" >> "$GITHUB_OUTPUT"
+          echo "tag=$(yq -r '.tag' .github/config/hive/mainnet.yaml)" >> "$GITHUB_OUTPUT"
 
       - name: Determine hive flags
         id: hive-flags
@@ -144,48 +158,28 @@ jobs:
         env:
           SIMULATION: ${{ matrix.test.simulation }}
           SIM_LIMIT: ${{ matrix.test.limit || '' }}
-          AMSTERDAM: ${{ matrix.test.amsterdam || 'false' }}
-          AMSTERDAM_FIXTURES: ${{ steps.amsterdam-config.outputs.fixtures }}
-          AMSTERDAM_EELS_COMMIT: ${{ steps.amsterdam-config.outputs.eels_commit }}
-          MAINNET_FIXTURES: ${{ steps.mainnet-config.outputs.fixtures }}
-          MAINNET_EELS_COMMIT: ${{ steps.mainnet-config.outputs.eels_commit }}
+          SIM_TAG: ${{ matrix.test.tag || '' }}
+          SIM_FORK: ${{ matrix.test.fork || '' }}
+          EELS_TAG: ${{ steps.eels-config.outputs.tag }}
         run: |
           FLAGS="--sim.parallelism ${{ matrix.test.parallelism || 4 }} --sim.loglevel 1"
+          # The EELS simulators run from the image execution-specs publishes for
+          # the fixture release pinned in .github/config/hive/mainnet.yaml, which
+          # carries every fork through Amsterdam. An entry can pin another image
+          # with its own `tag`.
+          if [[ "$SIMULATION" == ethereum/eels/* ]]; then
+            FLAGS+=" --sim.buildarg tag=${SIM_TAG:-$EELS_TAG}"
+          fi
+
           if [[ "$SIMULATION" == "ethereum/eels/consume-engine" || "$SIMULATION" == "ethereum/eels/consume-rlp" ]]; then
-            # Use fork-specific fixtures to ensure comprehensive test coverage. Keyed off an
-            # explicit flag rather than a substring of the limit, which no longer contains a
-            # literal fork name; matching on the limit would fall through to the mainnet
-            # bundle, which carries no Amsterdam fixtures at all.
-            if [[ "$AMSTERDAM" == "true" ]]; then
-              # Amsterdam config loaded from .github/config/hive/amsterdam.yaml
-              FLAGS+=" --sim.buildarg fixtures=$AMSTERDAM_FIXTURES"
-              FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
-            else
-              # All other forks (Prague, Osaka, Cancun, Shanghai, Paris) use the
-              # mainnet bundle, which includes comprehensive coverage including
-              # ported static tests.
-              # Config loaded from .github/config/hive/mainnet.yaml
-              FLAGS+=" --sim.buildarg fixtures=$MAINNET_FIXTURES"
-              FLAGS+=" --sim.buildarg branch=$MAINNET_EELS_COMMIT"
-            fi
             FLAGS+=" --client.checktimelimit=180s"
           fi
 
           # The execute simulators drive a live client over RPC instead of consuming
-          # fixtures, so they take `fork` where the consume ones take `fixtures`, and
-          # fall back to Osaka when it is not given. Left unpinned the image also
-          # clones whatever execution-specs default branch happens to be; that has
-          # drifted far enough that collection aborts with "No spec type format found
-          # in the test item" and the job uploads zero suites while still reporting
-          # success. Both fork runs share the Amsterdam EELS pin because it carries
-          # every fork and collects cleanly, whereas the mainnet pin (tests@v20.0.1)
-          # aborts collection here inside its own fork-filter plugin.
+          # fixtures, so each entry names the fork to run in its `fork`.
           if [[ "$SIMULATION" == "ethereum/eels/execute-blobs" ]]; then
-            FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
-            if [[ "$AMSTERDAM" == "true" ]]; then
-              FLAGS+=" --sim.buildarg fork=Amsterdam"
-            else
-              FLAGS+=" --sim.buildarg fork=Osaka"
+            if [[ -n "$SIM_FORK" ]]; then
+              FLAGS+=" --sim.buildarg fork=$SIM_FORK"
             fi
             FLAGS+=" --client.checktimelimit=300s"
           fi
@@ -223,8 +217,11 @@ jobs:
           # restored the mainnet deposit contract address as the fallback (the
           # zero-address default made every eip6110 deposit / eip7685 request
           # test fail). Also gives the daily report a reproducible hive version
-          # instead of floating on the action's default.
-          hive_version: 7c4c99ebb79955f23e1952fb0282a0dadcb6e181
+          # instead of floating on the action's default. Now at ethereum/hive#1609's
+          # merge commit, which runs the eels simulators from the images
+          # execution-specs publishes, selected with `tag=`. A matrix entry can
+          # pin its own version, as "Rpc Compat tests" and "Consume WireX tests" do.
+          hive_version: ${{ matrix.test.hive_version || '11864a701d331535f4ed487e4d538bead457d760' }}
           extra_flags: ${{ steps.hive-flags.outputs.flags }}
           workflow_artifact_upload: true
           workflow_artifact_prefix: ${{ matrix.test.file_name }}_daily

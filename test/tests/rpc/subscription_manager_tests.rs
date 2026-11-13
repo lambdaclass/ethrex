@@ -157,6 +157,135 @@ async fn notification_contains_block_hash() {
     );
 }
 
+fn syncing(current_block: u64) -> ethrex_rpc::subscription_manager::SyncStatus {
+    use ethrex_rpc::subscription_manager::{SyncProgress, SyncStatus};
+    SyncStatus::Syncing(SyncProgress {
+        starting_block: 0,
+        current_block,
+        highest_block: 100,
+    })
+}
+
+fn next_result(rx: &mut mpsc::Receiver<String>) -> Option<serde_json::Value> {
+    let notification: serde_json::Value = serde_json::from_str(&rx.try_recv().ok()?).unwrap();
+    Some(notification["params"]["result"].clone())
+}
+
+#[tokio::test]
+async fn sync_status_change_reaches_only_syncing_subscribers() {
+    use ethrex_rpc::subscription_manager::SyncStatus;
+    let manager = SubscriptionManager::spawn(test_store());
+
+    let (heads_tx, mut heads_rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    let (tx1, mut rx1) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    let (tx2, mut rx2) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    manager.subscribe(heads_tx).await.unwrap().unwrap();
+    manager.subscribe_syncing(tx1).await.unwrap().unwrap();
+    manager.subscribe_syncing(tx2).await.unwrap().unwrap();
+    assert!(next_result(&mut rx1).is_none());
+
+    manager.new_sync_status(syncing(5)).unwrap();
+    manager.new_sync_status(SyncStatus::Synced).unwrap();
+    manager.unsubscribe(String::new()).await.unwrap();
+
+    let expected = serde_json::json!({
+        "syncing": true,
+        "startingBlock": "0x0",
+        "currentBlock": "0x5",
+        "highestBlock": "0x64",
+    });
+    for rx in [&mut rx1, &mut rx2] {
+        assert_eq!(next_result(rx), Some(expected.clone()));
+        assert_eq!(next_result(rx), Some(serde_json::Value::Bool(false)));
+        assert!(next_result(rx).is_none());
+    }
+    assert!(heads_rx.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn sync_status_is_notified_only_when_it_changes() {
+    use ethrex_rpc::subscription_manager::SyncStatus;
+    let manager = SubscriptionManager::spawn(test_store());
+
+    let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    manager.subscribe_syncing(tx).await.unwrap().unwrap();
+
+    manager.new_sync_status(syncing(5)).unwrap();
+    manager.new_sync_status(syncing(6)).unwrap();
+    manager.new_sync_status(SyncStatus::Synced).unwrap();
+    manager.new_sync_status(SyncStatus::Synced).unwrap();
+    manager.unsubscribe(String::new()).await.unwrap();
+
+    assert_eq!(next_result(&mut rx).unwrap()["currentBlock"], "0x5");
+    assert_eq!(next_result(&mut rx), Some(serde_json::Value::Bool(false)));
+    assert!(next_result(&mut rx).is_none());
+
+    manager.new_sync_status(syncing(7)).unwrap();
+    let (late_tx, mut late_rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    manager.subscribe_syncing(late_tx).await.unwrap().unwrap();
+    assert!(next_result(&mut late_rx).is_none());
+    manager.new_sync_status(syncing(8)).unwrap();
+    manager.unsubscribe(String::new()).await.unwrap();
+    assert_eq!(next_result(&mut late_rx).unwrap()["currentBlock"], "0x8");
+    assert!(next_result(&mut late_rx).is_none());
+    assert_eq!(next_result(&mut rx).unwrap()["currentBlock"], "0x7");
+    assert!(next_result(&mut rx).is_none());
+}
+
+#[tokio::test]
+async fn sync_status_owed_to_a_full_channel_is_sent_later() {
+    use ethrex_rpc::subscription_manager::SyncStatus;
+    let manager = SubscriptionManager::spawn(test_store());
+
+    let (tx, mut rx) = mpsc::channel(1);
+    tx.try_send("busy".to_string()).unwrap();
+    manager.subscribe_syncing(tx).await.unwrap().unwrap();
+    manager.new_sync_status(SyncStatus::Synced).unwrap();
+    manager.unsubscribe(String::new()).await.unwrap();
+    assert_eq!(rx.try_recv().unwrap(), "busy");
+    assert!(next_result(&mut rx).is_none());
+
+    manager.new_sync_status(SyncStatus::Synced).unwrap();
+    manager.unsubscribe(String::new()).await.unwrap();
+    assert_eq!(next_result(&mut rx), Some(serde_json::Value::Bool(false)));
+    assert!(next_result(&mut rx).is_none());
+}
+
+#[tokio::test]
+async fn unsubscribe_stops_sync_status_notifications() {
+    use ethrex_rpc::subscription_manager::SyncStatus;
+    let manager = SubscriptionManager::spawn(test_store());
+
+    let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    let id = manager.subscribe_syncing(tx).await.unwrap().unwrap();
+    manager.new_sync_status(syncing(5)).unwrap();
+    assert!(manager.unsubscribe(id.clone()).await.unwrap());
+    assert_eq!(next_result(&mut rx).unwrap()["syncing"], true);
+
+    manager.new_sync_status(SyncStatus::Synced).unwrap();
+    assert!(!manager.unsubscribe(id).await.unwrap());
+    assert!(next_result(&mut rx).is_none());
+}
+
+/// A `syncing` subscriber whose connection closed without unsubscribing is
+/// dropped before the next recompute, even once it was told the current status,
+/// when the fan-out skips it and never sees the closed channel.
+#[tokio::test]
+async fn closed_syncing_subscriber_is_dropped() {
+    use ethrex_rpc::subscription_manager::SyncStatus;
+    let manager = SubscriptionManager::spawn(test_store());
+
+    let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    manager.subscribe_syncing(tx).await.unwrap().unwrap();
+    manager.new_sync_status(SyncStatus::Synced).unwrap();
+    assert!(manager.has_syncing_subscribers().await.unwrap());
+    assert_eq!(next_result(&mut rx), Some(serde_json::Value::Bool(false)));
+
+    drop(rx);
+    manager.new_sync_status(SyncStatus::Synced).unwrap();
+    assert!(!manager.has_syncing_subscribers().await.unwrap());
+}
+
 #[tokio::test]
 async fn subscribe_returns_none_at_global_cap() {
     let manager = SubscriptionManager::spawn(test_store());

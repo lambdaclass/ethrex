@@ -183,6 +183,7 @@ impl SyncManager {
     /// Sets the latest fcu head and starts the next sync cycle if the syncer is currently inactive
     pub fn sync_to_head(&self, fcu_head: H256) {
         self.set_head(fcu_head);
+        self.store.notify_sync_status_changed();
         if !self.is_active() {
             self.start_sync();
         }
