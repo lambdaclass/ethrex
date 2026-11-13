@@ -249,7 +249,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            // These simulators have only 1 suite where we can find tests for 3 different forks.
+            // These simulators report a single suite holding the tests of every fork.
             // To get the total tests and the passed tests a filtes is done each time so we do not clone the test cases each time.
             if json_data.name.as_str() == "eels/consume-rlp"
                 || json_data.name.as_str() == "eels/consume-engine"
