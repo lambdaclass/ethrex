@@ -28,11 +28,16 @@ jobs:
       fail-fast: false
       matrix:
         test:
+          # rpc-compat stays on the hive it ran on before the eels switch: from
+          # ethereum/hive#1623 its image runs `make build` in the execution-apis
+          # checkout, and the execution-apis commit pinned below predates the
+          # Makefile (execution-apis#751). Drop the pin once that commit moves.
           - {
               name: "Rpc Compat tests",
               file_name: rpc-compat,
               simulation: ethereum/rpc-compat,
               limit: "",
+              hive_version: 7c4c99ebb79955f23e1952fb0282a0dadcb6e181,
             }
           - {
               name: "Devp2p eth tests",
@@ -211,9 +216,11 @@ jobs:
           # restored the mainnet deposit contract address as the fallback (the
           # zero-address default made every eip6110 deposit / eip7685 request
           # test fail). Also gives the daily report a reproducible hive version
-          # instead of floating on the action's default. It also runs the eels
-          # simulators from published images.
-          hive_version: 20a5677651c4ccb021be272587a7333078e68a48
+          # instead of floating on the action's default. Now at ethereum/hive#1609's
+          # merge commit, which runs the eels simulators from the images
+          # execution-specs publishes, selected with `tag=`. A matrix entry can
+          # pin its own version, see "Rpc Compat tests".
+          hive_version: ${{ matrix.test.hive_version || '11864a701d331535f4ed487e4d538bead457d760' }}
           extra_flags: ${{ steps.hive-flags.outputs.flags }}
           workflow_artifact_upload: true
           workflow_artifact_prefix: ${{ matrix.test.file_name }}_daily
