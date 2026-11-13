@@ -204,7 +204,7 @@ impl PartialCommand {
             p2p_context,
             shared_local_node,
         )
-        .await;
+        .await?;
         let peers: Arc<dyn Peers> = Arc::new(P2pPeers::new(peer_table, peer_handler, store));
 
         let beacon = BeaconApi::new(partial.beacon_url.clone(), Duration::from_secs(30))?;

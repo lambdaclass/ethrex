@@ -386,7 +386,7 @@ async fn check_version_update() {
     }
 }
 
-/// Checks if there is a newer ethrex verison available every hour
+/// Checks if there is a newer ethrex version available every hour
 async fn periodically_check_version_update() {
     let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
     loop {

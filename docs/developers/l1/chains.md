@@ -84,7 +84,7 @@ fn components(args: &ExampleArgs, _genesis: &Genesis) -> eyre::Result<NodeCompon
 ```
 
 - **`name`** is the name of the binary, shown in `--help`.
-- **`networks`** are the networks `--network <name>` accepts in addition to the Ethereum ones. The first one is the default network of the binary. `genesis` is the contents of a genesis file. `bootnodes` is a JSON array of enode URLs, or `"[]"`. Each network keeps its data in a subdirectory of the datadir named after it, so a name is lowercase letters, digits and inner hyphens, and cannot be one ethrex already uses (`mainnet`, `sepolia`, `hoodi`, `plataberget`, `dev`, or anything starting with `chain-`). The node refuses to start otherwise, and also when the genesis or the bootnodes of any of the chain's networks do not parse. A network's name wins over a file of the same name in the current directory; pass `./<name>` to use the file.
+- **`networks`** are the networks `--network <name>` accepts in addition to the Ethereum ones. The first one is the default network of the binary. `genesis` is the contents of a genesis file. `bootnodes` is a JSON array of enode URLs, or `"[]"`. Each network keeps its data in a subdirectory of the datadir named after it, so a name is lowercase letters, digits and inner hyphens, and cannot be one ethrex already uses (`mainnet`, `sepolia`, `hoodi`, `plataberget`, `dev`, or anything starting with `chain-`). The node refuses to start otherwise, and also when the genesis or the bootnodes of any of the chain's networks do not parse. A network's name wins over a file of the same name in the current directory; pass `./<name>` to use the file. The `ETHREX_NETWORK` environment variable takes the same names as `--network`.
 - **The type parameter** is the chain's flags, a `clap::Args` struct. Prefix the flag names with the chain's name so they cannot collide with the node's. Use `ethrex::chain::NoArgs` if there are none.
 - **`components`** is a function called once per start, after the command line is parsed and the genesis is loaded, and before the database is opened. It receives the chain's flags and the genesis of the selected network. Returning an error aborts the start. It is called on the node's async runtime, so it must not block on async work. `NodeComponents` is built by filling in the fields of `NodeComponents::default()`.
 
@@ -116,7 +116,7 @@ impl RpcExtension for ExampleRpc {
 
 - Every method named `<namespace>_<name>` is routed to `handle`, on the HTTP and WebSocket endpoints. Extensions are not served on the authenticated port.
 - The namespace must be lowercase letters and digits, and cannot be a built-in one (`eth`, `engine`, `debug`, `admin`, `net`, `web3`, `txpool`, `testing`). The node refuses to start otherwise.
-- `context` is the same `RpcApiContext` the built-in handlers receive: the store, the blockchain, the node's configuration. Through it an extension can call built-in methods, but not methods of an extension.
+- `context` is the same `RpcApiContext` the built-in handlers receive: the store, the blockchain, the node's configuration. Through it an extension can call built-in methods, but not methods of an extension. Such a call is subject to `--http.api` like one from outside: a built-in namespace the operator turned off is off for extensions too.
 - An extension is served whenever it is in `NodeComponents::rpc`. `--http.api` selects built-in namespaces only. To let operators turn a namespace off, give the chain a flag and leave the extension out of the components.
 - Calls to an extension are not counted in the node's RPC metrics.
 
@@ -208,7 +208,7 @@ components(args, genesis) ◀──────────── build the comp
 
 - **Compiled in, not loaded.** Rust has no stable ABI, so support for a chain is a crate, and each chain ships its own binary.
 - **Defaults mean Ethereum.** Every field of `NodeComponents` has a default, so a chain states only what it does differently.
-- **Fail at startup.** A network whose genesis does not parse, an invalid RPC namespace, or an error from `components` aborts the start with a message naming the cause. Nothing a chain adds is optional at run time.
+- **Fail at startup.** A network whose name, genesis or bootnodes are not valid, an invalid RPC namespace, or an error from `components` aborts the start with a message naming the cause. Nothing a chain adds is optional at run time.
 - **Extensions receive the node's own types** (`RpcApiContext`, `Transaction`, `BlockHeader`). These are not a stable API: a chain's crate is built against a specific ethrex commit and may need changes when it moves to a newer one.
 - **`NodeComponents` can grow.** It is `#[non_exhaustive]`, so later versions can add fields without breaking chains that fill in the ones they use.
 

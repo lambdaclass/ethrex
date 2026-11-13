@@ -3804,6 +3804,9 @@ impl Blockchain {
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config();
 
+        // Before the standard checks: a policy reads only the transaction and the
+        // head, so what it rejects never costs the state lookups and the frame
+        // simulation below.
         if let Some(policy) = &self.options.mempool_policy {
             policy
                 .admit(tx, sender, &header)

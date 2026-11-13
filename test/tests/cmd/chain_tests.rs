@@ -379,7 +379,8 @@ fn extension_namespaces_are_validated() {
         .unwrap();
     assert!(err.contains("more than once"), "{err}");
     for malformed in ["", "with_underscore", "Upper"] {
-        assert!(RpcExtensions::new(extensions(&[malformed])).is_err());
+        let err = RpcExtensions::new(extensions(&[malformed])).err().unwrap();
+        assert!(err.contains("lowercase letters and digits"), "{err}");
     }
 }
 
@@ -590,6 +591,28 @@ impl Node {
         self.cancel_token.cancel();
         self.store.shutdown().await.unwrap();
     }
+}
+
+/// `init_node` is public, so a preset can reach it without having gone through the
+/// command line. Its name is still checked before it is used as a directory.
+#[tokio::test]
+async fn node_refuses_a_preset_name_that_was_not_checked() {
+    let dir = tempfile::tempdir().unwrap();
+    let datadir = dir.path().join("data");
+    let (mut cli, _) = parse(&EXAMPLE, &["--datadir", datadir.to_str().unwrap()]);
+    cli.opts.network = Some(Network::Preset(NetworkPreset {
+        name: "../outside",
+        ..EXAMPLE_TEST
+    }));
+
+    let err = init_node(cli.opts, |_| Ok(NodeComponents::default()), None)
+        .await
+        .err()
+        .unwrap();
+
+    assert!(err.to_string().contains("lowercase letters"), "{err}");
+    assert!(!datadir.exists(), "nothing is created under the datadir");
+    assert!(!dir.path().join("outside").exists());
 }
 
 /// Starts a node from the example chain's command line and checks, over HTTP, that

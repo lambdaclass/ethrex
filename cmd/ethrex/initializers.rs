@@ -467,7 +467,7 @@ pub async fn init_network(
     blockchain: Arc<Blockchain>,
     context: P2PContext,
     shared_local_node: SharedLocalNode,
-) {
+) -> eyre::Result<()> {
     #[cfg(not(feature = "l2"))]
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
@@ -476,7 +476,7 @@ pub async fn init_network(
         );
     }
 
-    let bootnodes = get_bootnodes(opts, network, datadir);
+    let bootnodes = get_bootnodes(opts, network, datadir)?;
 
     let discovery_config = DiscoveryConfig {
         discv4_enabled: opts.discv4_enabled,
@@ -492,6 +492,7 @@ pub async fn init_network(
         blockchain,
         peer_handler.peer_table,
     ));
+    Ok(())
 }
 
 #[cfg(feature = "dev")]
@@ -557,13 +558,14 @@ pub fn get_network(opts: &Options) -> Network {
     opts.network.clone().unwrap_or(default)
 }
 
-pub fn get_bootnodes(opts: &Options, network: &Network, datadir: &Path) -> Vec<Node> {
+pub fn get_bootnodes(opts: &Options, network: &Network, datadir: &Path) -> eyre::Result<Vec<Node>> {
     let mut bootnodes: Vec<Node> = opts.bootnodes.clone();
 
-    match network.get_bootnodes() {
-        Ok(network_bootnodes) => bootnodes.extend(network_bootnodes),
-        Err(e) => warn!("Could not read the bootnodes of {network}: {e}"),
-    }
+    bootnodes.extend(
+        network
+            .get_bootnodes()
+            .map_err(|err| eyre::eyre!("the bootnodes of {network} do not parse: {err}"))?,
+    );
 
     debug!("Loading known peers from config");
 
@@ -577,7 +579,7 @@ pub fn get_bootnodes(opts: &Options, network: &Network, datadir: &Path) -> Vec<N
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
     }
 
-    bootnodes
+    Ok(bootnodes)
 }
 
 pub fn get_signer(datadir: &Path) -> SecretKey {
@@ -880,6 +882,11 @@ pub async fn init_node(
     Store,
 )> {
     let network = get_network(&opts);
+    // The name of a preset becomes a directory under the datadir. It was checked if
+    // the options come from `chain::parse_args`, but not if the caller built them.
+    if let Network::Preset(preset) = &network {
+        preset.validate_name().map_err(|err| eyre::eyre!(err))?;
+    }
     let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
 
     raise_fd_limit()?;
@@ -891,10 +898,8 @@ pub async fn init_node(
     }
 
     let genesis = network.get_genesis()?;
-    // Checked here so a network whose bootnodes do not parse fails the start.
-    network
-        .get_bootnodes()
-        .map_err(|err| eyre::eyre!("the bootnodes of {network} do not parse: {err}"))?;
+    // Destructured in full, so a field added to `NodeComponents` cannot be left
+    // unused here.
     let NodeComponents {
         rpc: rpc_extensions,
         mempool_policy,
@@ -1060,7 +1065,7 @@ pub async fn init_node(
             p2p_context,
             shared_local_node.clone(),
         )
-        .await;
+        .await?;
     } else {
         info!("P2P is disabled");
     }

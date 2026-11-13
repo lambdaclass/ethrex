@@ -380,7 +380,7 @@ pub async fn init_l2(
             p2p_context,
             shared_local_node.clone(),
         )
-        .await;
+        .await?;
         (Some(peer_handler), Some(Arc::new(syncer)))
     } else {
         (None, None)
