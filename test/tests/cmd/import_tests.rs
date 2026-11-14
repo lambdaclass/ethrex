@@ -1,5 +1,9 @@
 use bytes::Bytes;
-use ethrex::{cli::import_blocks, decode::chain_file, initializers::load_store};
+use ethrex::{
+    cli::import_blocks,
+    decode::chain_file,
+    initializers::{init_store, load_store},
+};
 use ethrex_blockchain::{
     Blockchain, BlockchainOptions,
     error::ChainError,
@@ -213,6 +217,31 @@ async fn directory_import_leaves_the_head_when_a_failed_file_stored_nothing() {
     assert_eq!(err.to_string(), "1 of 2 files failed to import");
 
     assert_canonical_chain(datadir.path(), &blocks[..3]).await;
+}
+
+/// A database failure, unlike a block the import rejects, stops a directory import:
+/// every remaining file would fail the same way.
+#[tokio::test]
+async fn directory_import_stops_on_a_database_failure() {
+    let (blocks, genesis) = chain_and_genesis();
+    let datadir = tempfile::tempdir().unwrap();
+    {
+        // The first four blocks without their execution: the store knows the blocks
+        // but not the state of block 4, the first one to change it.
+        let store = init_store(datadir.path(), genesis.clone()).await.unwrap();
+        store.add_blocks(blocks[..4].to_vec()).await.unwrap();
+    }
+    let blocks_dir = tempfile::tempdir().unwrap();
+    write_chain_file(blocks_dir.path(), "0005.rlp", &blocks[4..5]);
+    write_chain_file(blocks_dir.path(), "0006.rlp", &blocks[5..6]);
+
+    let err = import(blocks_dir.path(), datadir.path(), genesis)
+        .await
+        .expect_err("a missing parent state fails the import");
+    assert!(
+        err.to_string().contains("state root missing for block 4"),
+        "unexpected error: {err}"
+    );
 }
 
 /// A single file import stops at the first failure, and the blocks before it become

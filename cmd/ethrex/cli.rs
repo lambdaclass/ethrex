@@ -25,6 +25,7 @@ use ethrex_p2p::{
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{DB_COMMIT_THRESHOLD, Store, error::StoreError, has_valid_db};
+use ethrex_vm::EvmError;
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, error, info, warn};
 
@@ -1158,9 +1159,16 @@ fn chain_file_sort_key(path: &Path) -> (bool, Option<u64>, PathBuf) {
 
 /// Whether an import error comes from the database rather than from the blocks being
 /// imported. Such a failure would recur for every remaining file, so a directory
-/// import stops instead of skipping the file.
+/// import stops instead of skipping the file. The store errors raised while a block
+/// executes, the missing state of its parent among them, arrive as EVM errors.
 fn is_store_failure(err: &ChainError) -> bool {
-    matches!(err, ChainError::StoreError(_) | ChainError::TrieError(_))
+    matches!(
+        err,
+        ChainError::StoreError(_)
+            | ChainError::TrieError(_)
+            | ChainError::ParentStateNotFound
+            | ChainError::EvmError(EvmError::DB(_))
+    )
 }
 
 /// Adds one chain of blocks and makes its last block the canonical head. Returns the
