@@ -115,29 +115,46 @@ stop-localnet: ## 🛑 Stop local network
 	kurtosis enclave stop $(ENCLAVE)
 	kurtosis enclave rm $(ENCLAVE) --force
 
-HIVE_BRANCH ?= master
+# Local hive runs read the same pins CI does, so a bump lands in one place and
+# the two can't drift. Each pin is a plain scalar, so `sed` extracts it without
+# making the Makefile depend on `yq`.
+HIVE_PINS := .github/config/hive/pins.yaml
+hive_pin = $(shell sed -n 's/^$(1): *//p' $(HIVE_PINS))
+# The hive commit CI runs. Override with a branch or another commit to try one.
+# rpc-compat has its own hive commit and execution-apis commit, and
+# consume-wirex its own hive commit and image, as in CI; the pin file says why.
+# The simulator is the one `run-hive` (SIMULATION) or `run-hive-eels` (EELS_SIM)
+# is given.
+HIVE_SIM := $(or $(SIMULATION),$(EELS_SIM))
+ifeq ($(HIVE_SIM),ethereum/rpc-compat)
+HIVE_BRANCH ?= $(call hive_pin,rpc_compat_hive_version)
+SIM_BUILDARG_FLAG = --sim.buildarg "branch=$(call hive_pin,rpc_compat_branch)"
+else ifeq ($(HIVE_SIM),ethereum/eels/consume-wirex)
+HIVE_BRANCH ?= $(call hive_pin,consume_wirex_hive_version)
+HIVE_EELS_TAG ?= $(call hive_pin,consume_wirex_tag)
+else
+HIVE_BRANCH ?= $(call hive_pin,hive_version)
+endif
+# An EELS simulator takes its image tag also when `run-hive` runs it.
+ifneq ($(filter ethereum/eels/%,$(SIMULATION)),)
+SIM_BUILDARG_FLAG = --sim.buildarg "tag=$(HIVE_EELS_TAG)"
+endif
 
+# Fetching the ref and checking out FETCH_HEAD works for a commit and for a
+# branch alike, which `git clone --branch` and `git pull` do not. An empty ref
+# would make `git fetch` take the default branch and build a hive other than
+# the pinned one without saying so, hence the check.
 setup-hive: ## 🐝 Set up Hive testing framework
-	if [ -d "hive" ]; then \
-		cd hive && \
-		git fetch origin && \
-		git checkout $(HIVE_BRANCH) && \
-		git pull origin $(HIVE_BRANCH) && \
-		go build .; \
-	else \
-		git clone --branch $(HIVE_BRANCH) https://github.com/ethereum/hive && \
-		cd hive && \
-		git checkout $(HIVE_BRANCH) && \
-		go build .; \
-	fi
+	@test -n "$(HIVE_BRANCH)" || { echo "setup-hive: no hive commit for this simulation in $(HIVE_PINS)"; exit 1; }
+	if [ ! -d "hive" ]; then git clone https://github.com/ethereum/hive; fi
+	cd hive && \
+		git fetch origin "$(HIVE_BRANCH)" && \
+		git checkout --detach FETCH_HEAD && \
+		go build .
 
 TEST_PATTERN ?= /
 SIM_LOG_LEVEL ?= 3
 SIM_PARALLELISM ?= 16
-# https://github.com/ethereum/execution-apis/pull/627 changed the simulation to use a pre-merge genesis block, so we need to pin to a commit before that
-ifeq ( $(SIMULATION) , ethereum/rpc-compat )
-SIM_BUILDARG_FLAG = --sim.buildarg "branch=d08382ae5c808680e976fce4b73f4ba91647199b"
-endif
 
 # Runs a Hive testing suite. A web interface showing the results is available at http://127.0.0.1:8080 via the `view-hive` target.
 # The endpoints tested can be filtered by supplying a test pattern in the form "/endpoint_1|endpoint_2|..|endpoint_n".
@@ -175,14 +192,13 @@ run-hive-eels-rlp: ## Run hive EELS RLP tests
 run-hive-eels-blobs: ## Run hive EELS Blobs tests
 	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/execute-blobs
 
-# Local hive runs read the same pin CI does, so a bundle bump lands in one place
-# and the two can't drift. The file pins `tag`, the EELS simulator image tag of the
-# fixture release, which hive passes as `--sim.buildarg tag=`. The key is a plain
-# scalar, so `sed` extracts it without making the Makefile depend on `yq`.
-HIVE_EELS_CONFIG := .github/config/hive/mainnet.yaml
-HIVE_EELS_TAG ?= $(shell sed -n 's/^tag: *//p' $(HIVE_EELS_CONFIG))
+# `tag` is the EELS simulator image tag of the pinned fixture release, which hive
+# takes as `--sim.buildarg tag=`.
+HIVE_EELS_TAG ?= $(call hive_pin,tag)
 # `fork_.*Amsterdam` rather than `fork_Amsterdam` so the BPO2->Amsterdam activation
 # fixtures (`fork_BPO2ToAmsterdamAtTime15k`) are swept alongside the Amsterdam ones.
+# The daily report's Amsterdam jobs use `fork_Amsterdam` instead, because there
+# those fixtures run in the Osaka and BPO jobs.
 AMSTERDAM_FORK_PATTERN ?= .*fork_.*Amsterdam.*
 run-hive-eels-amsterdam: build-image setup-hive ## 🧪 Run hive EELS Amsterdam Engine tests
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit "$(AMSTERDAM_FORK_PATTERN)" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg tag=$(HIVE_EELS_TAG)
@@ -304,6 +320,9 @@ check-ere-pins: ## 🔍 Check the stateless-validator guests agree on one ere re
 	# to a bare rev -- a rev cannot be matched against the ere compiler/server
 	# image tags the release workflow pulls.
 	@tag=$$(.github/scripts/zkvm-version.sh --ere-tag) && echo "ere pins agree: $$tag"
+
+check-fixture-pins: ## 🔍 Check the EF fixtures, the hive image tag and the docs name one fixture release
+	@.github/scripts/check-fixture-pins.sh
 
 check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
 	cargo metadata --locked > /dev/null

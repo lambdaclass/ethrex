@@ -9,6 +9,11 @@ on:
     paths:
       - .github/workflows/daily_hive_report.yaml
       - .github/scripts/publish_hive.sh
+      # What the jobs run, and whether one of them ran anything, comes from
+      # these, so a change to one of them is a change to this workflow.
+      - .github/scripts/hive-flags.sh
+      - .github/scripts/count-hive-tests.sh
+      - .github/config/hive/pins.yaml
 
 permissions:
   contents: read
@@ -28,16 +33,11 @@ jobs:
       fail-fast: false
       matrix:
         test:
-          # rpc-compat stays on the hive it ran on before the eels switch: from
-          # ethereum/hive#1623 its image runs `make build` in the execution-apis
-          # checkout, and the execution-apis commit pinned below predates the
-          # Makefile (execution-apis#751). Drop the pin once that commit moves.
           - {
               name: "Rpc Compat tests",
               file_name: rpc-compat,
               simulation: ethereum/rpc-compat,
               limit: "",
-              hive_version: 7c4c99ebb79955f23e1952fb0282a0dadcb6e181,
             }
           - {
               name: "Devp2p eth tests",
@@ -77,8 +77,19 @@ jobs:
               name: "Consume Engine tests (Amsterdam)",
               file_name: consume-engine-amsterdam,
               simulation: ethereum/eels/consume-engine,
-              limit: ".*fork_.*Amsterdam.*",
+              limit: ".*fork_Amsterdam.*",
               parallelism: 2,
+            }
+          # Osaka, BPO1 and BPO2 with their transitions, the one from BPO2 to
+          # Amsterdam included, which is why the Amsterdam limits match
+          # `fork_Amsterdam` by prefix: `fork_.*Amsterdam` would run that
+          # transition in both jobs. The Rest and Prague limits name their forks
+          # the same way, so no test runs in two jobs.
+          - {
+              name: "Consume Engine tests (Osaka and BPO)",
+              file_name: consume-engine-osaka-bpo,
+              simulation: ethereum/eels/consume-engine,
+              limit: ".*fork_Osaka.*|.*fork_BPO.*",
             }
           - {
               name: "Consume RLP tests (Rest)",
@@ -98,26 +109,29 @@ jobs:
               name: "Consume RLP tests (Amsterdam)",
               file_name: consume-rlp-amsterdam,
               simulation: ethereum/eels/consume-rlp,
-              limit: ".*fork_.*Amsterdam.*",
+              limit: ".*fork_Amsterdam.*",
               parallelism: 2,
+            }
+          - {
+              name: "Consume RLP tests (Osaka and BPO)",
+              file_name: consume-rlp-osaka-bpo,
+              simulation: ethereum/eels/consume-rlp,
+              limit: ".*fork_Osaka.*|.*fork_BPO.*",
             }
           # consume-wirex has the client sync each test's chain from a mock devp2p
           # peer, so the EELS fixtures also exercise full sync over the eth wire
-          # protocol, not only the engine API. It carries two pins of its own: the
-          # hive pin below predates the simulator (ethereum/hive#1640), and
-          # execution-specs publishes no consume-wirex image per fixture release,
-          # so `tag` pins the digest of the `latest` image built on 2026-11-01
-          # (fixtures tests@v21.0.2, framework forks/bogota at fd9298410). The
-          # run includes the Amsterdam fixtures, so it takes the same lower
-          # parallelism as the Amsterdam entries above.
+          # protocol, not only the engine API. It has its own hive commit and
+          # image in .github/config/hive/pins.yaml. The run includes the
+          # Amsterdam fixtures, so it takes the same lower parallelism as the
+          # Amsterdam entries above. More workers do not make it faster on the
+          # hosted runner: four took as long as two, about 55 minutes, because
+          # the end of the run does not speed up, and six exhausted the runner.
           - {
               name: "Consume WireX tests",
               file_name: consume-wirex,
               simulation: ethereum/eels/consume-wirex,
               limit: "",
               parallelism: 2,
-              hive_version: 64d7af92c63962779d0c9bbf404bb58733bd1b05,
-              tag: "latest@sha256:7b9f515c21e8b9ee44f535c21103f7c9143a99820cccf3ad1537d68192ade46a",
             }
           - {
               name: "Execute Blobs tests (Osaka)",
@@ -146,58 +160,34 @@ jobs:
 
       # Pin the EELS simulator image tags, see
       # https://github.com/ethereum/hive/blob/master/simulators/ethereum/eels/README.md
-      - name: Load EELS config
-        id: eels-config
-        shell: bash
-        run: |
-          echo "tag=$(yq -r '.tag' .github/config/hive/mainnet.yaml)" >> "$GITHUB_OUTPUT"
-
+      # The flags and the hive commit come from .github/config/hive/pins.yaml.
       - name: Determine hive flags
         id: hive-flags
         shell: bash
         env:
           SIMULATION: ${{ matrix.test.simulation }}
           SIM_LIMIT: ${{ matrix.test.limit || '' }}
-          SIM_TAG: ${{ matrix.test.tag || '' }}
           SIM_FORK: ${{ matrix.test.fork || '' }}
-          EELS_TAG: ${{ steps.eels-config.outputs.tag }}
+          SIM_PARALLELISM: ${{ matrix.test.parallelism || 4 }}
         run: |
-          FLAGS="--sim.parallelism ${{ matrix.test.parallelism || 4 }} --sim.loglevel 1"
-          # The EELS simulators run from the image execution-specs publishes for
-          # the fixture release pinned in .github/config/hive/mainnet.yaml, which
-          # carries every fork through Amsterdam. An entry can pin another image
-          # with its own `tag`.
-          if [[ "$SIMULATION" == ethereum/eels/* ]]; then
-            FLAGS+=" --sim.buildarg tag=${SIM_TAG:-$EELS_TAG}"
-          fi
+          .github/scripts/hive-flags.sh --simulation "$SIMULATION" --limit "$SIM_LIMIT" \
+            --fork "$SIM_FORK" --parallelism "$SIM_PARALLELISM" --loglevel 1 >> "$GITHUB_OUTPUT"
 
-          if [[ "$SIMULATION" == "ethereum/eels/consume-engine" || "$SIMULATION" == "ethereum/eels/consume-rlp" ]]; then
-            FLAGS+=" --client.checktimelimit=180s"
+      # A pull request from a fork has no secrets, and the login fails without
+      # one. `if` cannot read a secret, so this step reports whether it is set,
+      # which keeps the token out of the environment of every other step.
+      - name: Check for the Docker Hub token
+        id: dockerhub
+        shell: bash
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [[ -n "$DOCKERHUB_TOKEN" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
           fi
-
-          # The execute simulators drive a live client over RPC instead of consuming
-          # fixtures, so each entry names the fork to run in its `fork`.
-          if [[ "$SIMULATION" == "ethereum/eels/execute-blobs" ]]; then
-            if [[ -n "$SIM_FORK" ]]; then
-              FLAGS+=" --sim.buildarg fork=$SIM_FORK"
-            fi
-            FLAGS+=" --client.checktimelimit=300s"
-          fi
-
-          if [[ "$SIMULATION" == "ethereum/rpc-compat" ]]; then
-            FLAGS+=" --sim.buildarg branch=d08382ae5c808680e976fce4b73f4ba91647199b"
-          fi
-
-          if [[ -n "$SIM_LIMIT" ]]; then
-            # Single-quote the limit so regex metacharacters (e.g. the `|` in
-            # multi-fork limits) survive the action's shell re-evaluation of
-            # extra_flags. Matches pr-main_l1.yaml's escaping.
-            escaped_limit=${SIM_LIMIT//\'/\'\\\'\'}
-            FLAGS+=" --sim.limit '$escaped_limit'"
-          fi
-          echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
       - name: Log in to the Container registry
+        if: ${{ steps.dockerhub.outputs.available == 'true' }}
         uses: docker/login-action@v4.7.0
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
@@ -210,21 +200,23 @@ jobs:
         with:
           simulator: ${{ matrix.test.simulation }}
           client: ethrex
-          # Pin hive to ethereum/hive#1530's merge commit, which fixes the
-          # clients/ethrex/mapper.jq depositContractAddress bug from #1507:
-          # #1524 wrapped the `//` value in parens (the unparenthesized form was
-          # a jq syntax error that stopped the client from starting), and #1530
-          # restored the mainnet deposit contract address as the fallback (the
-          # zero-address default made every eip6110 deposit / eip7685 request
-          # test fail). Also gives the daily report a reproducible hive version
-          # instead of floating on the action's default. Now at ethereum/hive#1609's
-          # merge commit, which runs the eels simulators from the images
-          # execution-specs publishes, selected with `tag=`. A matrix entry can
-          # pin its own version, as "Rpc Compat tests" and "Consume WireX tests" do.
-          hive_version: ${{ matrix.test.hive_version || '11864a701d331535f4ed487e4d538bead457d760' }}
+          hive_version: ${{ steps.hive-flags.outputs.hive_version }}
           extra_flags: ${{ steps.hive-flags.outputs.flags }}
           workflow_artifact_upload: true
           workflow_artifact_prefix: ${{ matrix.test.file_name }}_daily
+
+      # These jobs keep going when tests fail, which is what the report is for.
+      # A run with no test cases reports nothing at all, though, so it goes
+      # unnoticed: the two execute-blobs jobs ran none for weeks and stayed
+      # green. Failing the job marks it without failing the workflow, because
+      # the job is `continue-on-error`, and the report job below still runs,
+      # because it is `if: always()`.
+      - name: Fail if hive ran no tests
+        shell: bash
+        run: |
+          total=$(.github/scripts/count-hive-tests.sh src/results)
+          echo "hive ran $total tests"
+          [[ $total -gt 0 ]]
 
   hive-report:
     name: Generate and Save report
