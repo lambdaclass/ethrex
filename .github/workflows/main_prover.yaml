@@ -38,8 +38,37 @@ env:
   VERSION: dev-${{ github.sha }}
 
 jobs:
+  # The GPU runner (Paperspace machine) is off while idle: it stops itself
+  # after 15 idle minutes (tooling/gpu-runner). This job turns it on and
+  # `test` needs it, so a failed start fails the run instead of leaving
+  # `test` queued for up to 24h.
+  start-gpu-runner:
+    name: Start GPU runner
+    # Same guard as `test`: fork PRs must not be able to start the machine.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6.1.0
+        with:
+          # The workflow's own commit, which has the start script (inputs.ref
+          # may be an older tag that predates it).
+          sparse-checkout: |
+            .github/actions
+            tooling/gpu-runner
+
+      - name: Start GPU runner
+        uses: $/.github/actions/start-paperspace-machine
+        with:
+          machine-id: ${{ vars.GPU_RUNNER_MACHINE_ID }}
+          api-key: ${{ secrets.PAPERSPACE_API_KEY }}
+
   test:
     name: Integration Test Prover SP1
+    needs: start-gpu-runner
     # Self-hosted GPU runner: only fire for non-PR events or in-org PRs.
     # Fork PRs would otherwise execute attacker-controlled code on the GPU CI machine.
     if: >-

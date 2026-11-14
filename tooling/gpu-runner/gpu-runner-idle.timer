@@ -1,0 +1,10 @@
+[Unit]
+Description=Check every minute whether the GPU runner is idle
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

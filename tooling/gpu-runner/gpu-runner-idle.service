@@ -1,0 +1,11 @@
+[Unit]
+Description=Stop this Paperspace machine when the GitHub Actions runner is idle
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# A hung API call must not block the next timer run.
+TimeoutStartSec=2min
+EnvironmentFile=/etc/gpu-runner-idle.env
+ExecStart=/opt/gpu-runner/idle-stop.sh
