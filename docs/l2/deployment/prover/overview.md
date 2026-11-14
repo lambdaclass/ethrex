@@ -23,7 +23,8 @@ Ensure you have the following installed on your system:
 - Solidity compiler v0.8.31 (refer to [Solidity documentation](https://docs.soliditylang.org/en/latest/installing-solidity.html))
 - SP1 Toolchain (if you plan to use SP1 proving, refer to [SP1 documentation](https://docs.succinct.xyz/docs/sp1/getting-started/install))
 - RISC0 Toolchain (if you plan to use RISC0 proving, refer to [RISC0 documentation](https://dev.risczero.com/api/zkvm/install))
-- CUDA Toolkit 12.9 (if you plan to use GPU acceleration for SP1 or RISC0 proving)
+- ZisK bundle v1.3.2-alpha with its proving keys (if you plan to use ZisK proving, Linux x86-64 only; see [Run an ethrex ZisK prover](./zisk.md))
+- CUDA Toolkit 12.9 (if you plan to use GPU acceleration for SP1, RISC0 or ZisK proving)
 
 1. Clone the official ethrex repository:
 
@@ -52,6 +53,12 @@ Ensure you have the following installed on your system:
 
     # For SP1 and RISC0 GPU proving
     cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql,sp1,risc0,gpu
+
+    # For ZisK CPU proving (Linux x86-64 only, very slow, not recommended)
+    cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql,zisk
+
+    # For ZisK GPU proving (Linux x86-64 only)
+    cargo install --locked --path cmd/ethrex --bin ethrex --features l2,l2-sql,zisk,gpu
     ```
 
     `cargo install` places the binary at `~/.cargo/bin/ethrex`; ensure that directory is on your `$PATH`. Add `--force` if you need to reinstall.

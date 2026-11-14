@@ -42,16 +42,16 @@ any invocation directory (see [Running](#running) below).
 
 ## Setup
 
-1. **ZisK toolchain v1.1.0-alpha** (Linux only). From the repo root:
+1. **ZisK toolchain v1.3.2-alpha** (Linux only). From the repo root:
 
    ```bash
    make zkevm-bench-setup
    ```
 
-   This installs ZisK's apt build dependencies, runs `ziskup -v 1.1.0-alpha`
+   This installs ZisK's apt build dependencies, runs `ziskup -v 1.3.2-alpha`
    with `--nokey` (skipping the large proving key, which emulation via
    `ziskemu` doesn't need), and pins the zisk Rust toolchain to the same
-   release CI uses (`zisk-3.0.0` at the time of writing; the root `Makefile`
+   release CI uses (`zisk-4.0.0` at the time of writing; the root `Makefile`
    is the source of truth) so a locally built guest links the same way as
    CI's. Afterwards, add
    `~/.zisk/bin` to `PATH` (it provides both `ziskemu` and the `cargo-zisk`

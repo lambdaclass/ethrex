@@ -1,3 +1,17 @@
+//! ZisK prover backend.
+//!
+//! The backend has two tiers, selected by cargo features:
+//!
+//! - `zisk`: the guest ELF, input serialization, `cargo-zisk execute` dry runs
+//!   and the `ziskemu -X` profiling used by the zkEVM benchmark. This tier only
+//!   shells out to the ZisK CLI tools, so it builds on every host.
+//! - `zisk-sdk`: in-process proving, verification and calldata extraction through
+//!   the `zisk-sdk` crate. The SDK compiles pil2-stark (with CUDA when a toolkit
+//!   is installed) and links MPI, OpenMP and GMP, so it is Linux x86-64 only and
+//!   needs the ZisK bundle installed by `ziskup` for the proving keys. It keeps
+//!   the STARK and PLONK proving keys loaded between proofs, which a
+//!   `cargo-zisk prove` subprocess per batch cannot.
+
 use std::{
     io::ErrorKind,
     process::{Command, Stdio},
@@ -11,26 +25,40 @@ use crate::backend::zisk_profile::{ZiskAirCost, parse_air_cost};
 use crate::backend::{BackendError, ProverBackend};
 
 const INPUT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_input.bin");
-const OUTPUT_DIR_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output");
-const PROOF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zisk_output/proof.bin");
 const ELF_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/zkvm-zisk-program");
 
-/// ZisK-specific proof output containing the proof bytes.
-pub struct ZiskProveOutput(pub Vec<u8>);
+/// Proof produced by the `zisk-sdk` tier. Without that feature the backend
+/// cannot prove, so the type carries nothing.
+pub struct ZiskProveOutput(#[cfg(feature = "zisk-sdk")] pub zisk_sdk::Proof);
 
-/// ZisK prover backend.
-///
-/// This backend drives the `cargo-zisk` CLI (ZisK v1.0.0-alpha and later) to
-/// execute and prove programs: `cargo-zisk execute` for a dry run and
-/// `cargo-zisk prove` / `cargo-zisk verify` for proving and verification.
-/// Profiling ([`ZiskBackend::execute_profiled`]) instead uses the `ziskemu`
-/// emulator with `-X`, the only tool that emits the AIR-cost breakdown.
+/// ZisK prover backend. See the module docs for the two feature tiers.
 #[derive(Default)]
 pub struct ZiskBackend;
 
 impl ZiskBackend {
     pub fn new() -> Self {
         Self
+    }
+
+    /// Initializes the in-process prover (client, program setup, verification
+    /// key) so that the first batch does not pay for it and configuration errors
+    /// surface at startup. Fails without the `zisk-sdk` feature.
+    pub fn warm_up(&self) -> Result<(), BackendError> {
+        #[cfg(feature = "zisk-sdk")]
+        {
+            sdk::setup().map(|_| ())
+        }
+        #[cfg(not(feature = "zisk-sdk"))]
+        {
+            Err(Self::sdk_missing())
+        }
+    }
+
+    #[cfg(not(feature = "zisk-sdk"))]
+    fn sdk_missing() -> BackendError {
+        BackendError::not_implemented(
+            "ZisK proving needs the `zisk-sdk` feature (Linux x86-64 with the ZisK bundle installed)",
+        )
     }
 
     fn write_elf_file() -> Result<(), BackendError> {
@@ -69,6 +97,22 @@ impl ZiskBackend {
         Ok(())
     }
 
+    /// Writes the input to `INPUT_PATH` in ZiskStdin format: an 8-byte
+    /// little-endian length prefix, the data, then zero-padding to 8-byte
+    /// alignment. The guest reads it back via `ziskos::io::read_slice()`.
+    fn write_stdin_file(input_bytes: &[u8]) -> Result<(), BackendError> {
+        let data_len = input_bytes.len();
+        let total_len = 8 + data_len;
+        let padding = (8 - (total_len % 8)) % 8;
+
+        let mut buf = Vec::with_capacity(total_len + padding);
+        buf.extend_from_slice(&data_len.to_le_bytes());
+        buf.extend_from_slice(input_bytes);
+        buf.extend(std::iter::repeat_n(0u8, padding));
+
+        std::fs::write(INPUT_PATH, &buf).map_err(BackendError::serialization)
+    }
+
     /// Execute assuming input is already serialized to INPUT_PATH.
     fn execute_core(&self) -> Result<(), BackendError> {
         let output = Command::new("cargo-zisk")
@@ -88,51 +132,11 @@ impl ZiskBackend {
         Ok(())
     }
 
-    /// Prove assuming input is already serialized to INPUT_PATH.
-    fn prove_core(&self, format: ProofFormat) -> Result<ZiskProveOutput, BackendError> {
-        std::fs::create_dir_all(OUTPUT_DIR_PATH).map_err(BackendError::proving)?;
-
-        // Proof shape:
-        // - Groth16 -> `--plonk`: PLONK-wrapped SNARK for on-chain EVM verification.
-        // - Compressed -> `--minimal`: smaller fixed-size STARK proof.
-        let format_arg: &[&str] = match format {
-            ProofFormat::Groth16 => &["--plonk"],
-            ProofFormat::Compressed => &["--minimal"],
-        };
-
-        // Use GPU acceleration when built with the `gpu` feature. This requires the
-        // GPU build of the ZisK toolchain (installed via `ziskup --gpu`).
-        #[cfg(feature = "gpu")]
-        let gpu_arg: &[&str] = &["--gpu"];
-        #[cfg(not(feature = "gpu"))]
-        let gpu_arg: &[&str] = &[];
-
-        let output = Command::new("cargo-zisk")
-            .args(["prove", "-e", ELF_PATH, "-i", INPUT_PATH, "-o", PROOF_PATH])
-            .args(format_arg)
-            .args(gpu_arg)
-            .stdin(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .output()
-            .map_err(BackendError::proving)?;
-
-        if !output.status.success() {
-            return Err(BackendError::proving(format!(
-                "ZisK proof generation failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
-
-        let proof_bytes = std::fs::read(PROOF_PATH).map_err(BackendError::proving)?;
-
-        Ok(ZiskProveOutput(proof_bytes))
-    }
-
     /// Run the guest under ziskemu with profiling and return the AIR-cost
     /// breakdown. No proof generated.
     pub fn execute_profiled(&self, input: ProgramInput) -> Result<ZiskAirCost, BackendError> {
         Self::write_elf_file()?;
-        self.serialize_input(&input)?;
+        Self::write_stdin_file(&self.serialize_input(&input)?)?;
         const PROFILE_FLAGS: &[&str] = &["-X"];
         let mut args: Vec<&str> = vec!["--elf", ELF_PATH, "--inputs", INPUT_PATH];
         args.extend_from_slice(PROFILE_FLAGS);
@@ -156,10 +160,11 @@ impl ZiskBackend {
 
 impl ProverBackend for ZiskBackend {
     type ProofOutput = ZiskProveOutput;
-    type SerializedInput = ();
+    /// The raw guest input, before ZiskStdin framing.
+    type SerializedInput = Vec<u8>;
 
     fn prover_type(&self) -> ProverType {
-        unimplemented!("ZisK is not yet enabled as a backend for the L2")
+        ProverType::ZisK
     }
 
     fn serialize_input(&self, input: &ProgramInput) -> Result<Self::SerializedInput, BackendError> {
@@ -167,30 +172,18 @@ impl ProverBackend for ZiskBackend {
         // must reach the guest byte-for-byte — rkyv-wrapping it would make the
         // guest's schema-prefix check fail. Only the L2 batch input is rkyv.
         #[cfg(feature = "l2")]
-        let input_bytes =
-            rkyv::to_bytes::<rkyv::rancor::Error>(input).map_err(BackendError::serialization)?;
+        let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(input)
+            .map_err(BackendError::serialization)?
+            .to_vec();
         #[cfg(not(feature = "l2"))]
-        let input_bytes = input;
+        let input_bytes = input.clone();
 
-        // ZisK expects input in ZiskStdin format: an 8-byte little-endian length
-        // prefix, the data, then zero-padding to 8-byte alignment. The guest reads
-        // it back via `ziskos::io::read_slice()` (the standard `read_input` C ABI).
-        let data_len = input_bytes.len();
-        let total_len = 8 + data_len;
-        let padding = (8 - (total_len % 8)) % 8;
-
-        let mut buf = Vec::with_capacity(total_len + padding);
-        buf.extend_from_slice(&data_len.to_le_bytes());
-        buf.extend_from_slice(&input_bytes);
-        buf.extend(std::iter::repeat_n(0u8, padding));
-
-        std::fs::write(INPUT_PATH, &buf).map_err(BackendError::serialization)?;
-        Ok(())
+        Ok(input_bytes)
     }
 
     fn execute(&self, input: ProgramInput) -> Result<(), BackendError> {
         Self::write_elf_file()?;
-        self.serialize_input(&input)?;
+        Self::write_stdin_file(&self.serialize_input(&input)?)?;
         self.execute_core()
     }
 
@@ -199,60 +192,247 @@ impl ProverBackend for ZiskBackend {
         input: ProgramInput,
         format: ProofFormat,
     ) -> Result<Self::ProofOutput, BackendError> {
-        Self::write_elf_file()?;
-        self.serialize_input(&input)?;
-        self.prove_core(format)
+        #[cfg(feature = "zisk-sdk")]
+        {
+            let input_bytes = self.serialize_input(&input)?;
+            sdk::prove(sdk::setup()?, input_bytes, format).map(ZiskProveOutput)
+        }
+        #[cfg(not(feature = "zisk-sdk"))]
+        {
+            let _ = (input, format);
+            Err(Self::sdk_missing())
+        }
     }
 
     fn execute_timed(&self, input: ProgramInput) -> Result<Duration, BackendError> {
         Self::write_elf_file()?;
-        self.serialize_input(&input)?;
+        Self::write_stdin_file(&self.serialize_input(&input)?)?;
         let start = Instant::now();
         self.execute_core()?;
         Ok(start.elapsed())
     }
 
-    fn prove_timed(
-        &self,
-        input: ProgramInput,
-        format: ProofFormat,
-    ) -> Result<(Self::ProofOutput, Duration), BackendError> {
-        Self::write_elf_file()?;
-        self.serialize_input(&input)?;
-        let start = Instant::now();
-        let proof = self.prove_core(format)?;
-        Ok((proof, start.elapsed()))
-    }
-
     fn verify(&self, proof: &Self::ProofOutput) -> Result<(), BackendError> {
-        // `cargo-zisk verify` reads the proof from a file and auto-detects its kind.
-        std::fs::create_dir_all(OUTPUT_DIR_PATH).map_err(BackendError::verification)?;
-        std::fs::write(PROOF_PATH, &proof.0).map_err(BackendError::verification)?;
-
-        let output = Command::new("cargo-zisk")
-            .args(["verify", "-p", PROOF_PATH])
-            .stdin(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .output()
-            .map_err(BackendError::verification)?;
-
-        if !output.status.success() {
-            return Err(BackendError::verification(format!(
-                "ZisK proof verification failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
+        #[cfg(feature = "zisk-sdk")]
+        {
+            sdk::verify(sdk::setup()?, &proof.0)
         }
-
-        Ok(())
+        #[cfg(not(feature = "zisk-sdk"))]
+        {
+            let _ = proof;
+            Err(Self::sdk_missing())
+        }
     }
 
     fn to_proof_bytes(
         &self,
-        _proof: Self::ProofOutput,
-        _format: ProofFormat,
+        proof: Self::ProofOutput,
+        format: ProofFormat,
     ) -> Result<ProverOutput, BackendError> {
-        Err(BackendError::not_implemented(
-            "to_proof_bytes is not implemented for ZisK backend",
-        ))
+        #[cfg(feature = "zisk-sdk")]
+        {
+            sdk::to_proof_bytes(proof.0, format)
+        }
+        #[cfg(not(feature = "zisk-sdk"))]
+        {
+            let _ = (proof, format);
+            Err(Self::sdk_missing())
+        }
+    }
+}
+
+/// In-process proving through `zisk-sdk`.
+#[cfg(feature = "zisk-sdk")]
+mod sdk {
+    use std::sync::OnceLock;
+
+    use ethrex_common::types::prover::{ProofBytes, ProofFormat, ProverOutput, ProverType};
+    use ethrex_guest_program::ZKVM_ZISK_PROGRAM_ELF;
+    use tracing::{info, warn};
+    use zisk_sdk::{
+        EmbeddedClient, GuestProgram, ProgramVK, Proof, ProofBody, ProofKind, ProverClient,
+        ZiskStdin,
+    };
+
+    use crate::backend::BackendError;
+
+    /// Name the ZisK cache files are keyed under (together with the ELF hash).
+    const PROGRAM_NAME: &str = "ethrex-guest-zisk";
+    /// Directory to save every generated proof into, when set.
+    const PROOF_DUMP_DIR_ENV: &str = "ETHREX_ZISK_PROOF_DIR";
+
+    /// Everything a proof needs that is built once per process.
+    pub struct ZiskSetup {
+        client: EmbeddedClient,
+        program: GuestProgram,
+        /// The program verification key, as the Solidity verifier hashes it.
+        vk: ProgramVK,
+    }
+
+    // The SDK allows one prover client per process, so a failed initialization
+    // is cached too: the operator has to restart the prover after fixing it.
+    static SETUP: OnceLock<Result<ZiskSetup, String>> = OnceLock::new();
+
+    /// The process-wide prover, initialized on first use.
+    pub fn setup() -> Result<&'static ZiskSetup, BackendError> {
+        SETUP
+            .get_or_init(init)
+            .as_ref()
+            .map_err(BackendError::proving)
+    }
+
+    fn init() -> Result<ZiskSetup, String> {
+        let program = GuestProgram::from_bytes(PROGRAM_NAME, ZKVM_ZISK_PROGRAM_ELF.to_vec());
+
+        // The assembly executor is the fast native witness generator; it is
+        // available wherever the SDK builds (Linux x86-64). `.gpu()` is a
+        // runtime switch: the CUDA kernels are compiled in whenever the toolkit
+        // was present at build time.
+        let mut builder = ProverClient::embedded().assembly().plonk();
+        if cfg!(feature = "gpu") {
+            builder = builder.gpu();
+        }
+        let client = builder
+            .build()
+            .map_err(|e| format!("failed to build the ZisK prover client: {e}"))?;
+
+        info!("Running the ZisK program setup (cached under the ZisK home after the first run)");
+        client
+            .setup(&program)
+            .run_sync()
+            .map_err(|e| format!("ZisK program setup failed: {e}"))?;
+
+        let vk = program
+            .vk()
+            .map_err(|e| format!("failed to derive the ZisK program verification key: {e}"))?;
+        info!(
+            program_vk = %format!("0x{}", hex::encode(vk_bytes32(&vk.vk))),
+            gpu = cfg!(feature = "gpu"),
+            "ZisK prover ready"
+        );
+
+        Ok(ZiskSetup {
+            client,
+            program,
+            vk,
+        })
+    }
+
+    /// Proves one execution and wraps the proof in the requested shape.
+    pub fn prove(
+        setup: &ZiskSetup,
+        input_bytes: Vec<u8>,
+        format: ProofFormat,
+    ) -> Result<Proof, BackendError> {
+        // `Groth16` is ethrex's name for the EVM-verifiable shape; for ZisK that
+        // is the PLONK wrap. `Compressed` is the smaller fixed-size STARK.
+        let kind = match format {
+            ProofFormat::Groth16 => ProofKind::Plonk,
+            ProofFormat::Compressed => ProofKind::VadcopFinalMinimal,
+        };
+        // Alongside the proof dump: the raw guest input, for replaying the run
+        // under `ziskemu` (which needs the 8-byte length prefix `ZiskStdin` adds).
+        if let Some(dir) = std::env::var_os(PROOF_DUMP_DIR_ENV) {
+            let path = std::path::Path::new(&dir).join(format!("zisk-input-{}.bin", unix_now()));
+            if let Err(e) = std::fs::write(&path, &input_bytes) {
+                warn!(path = %path.display(), "could not save the ZisK input: {e}");
+            }
+        }
+        let stdin = ZiskStdin::from_bytes(input_bytes);
+        let result = setup
+            .client
+            .prove(&setup.program, stdin)
+            .wrap(kind)
+            .run_sync()
+            .map_err(BackendError::proving)?;
+        info!(
+            steps = result.get_execution_steps(),
+            proving_time_ms = result.get_proving_time(),
+            "ZisK proof generated"
+        );
+        let proof = result.get_proof().clone();
+        // Keeps the proof file around for `cargo-zisk verify` and
+        // `cargo-zisk-dev export-solidity-calldata` when an on-chain rejection
+        // needs to be inspected.
+        if let Some(dir) = std::env::var_os(PROOF_DUMP_DIR_ENV) {
+            let path = std::path::Path::new(&dir).join(format!("zisk-proof-{}.bin", unix_now()));
+            match proof.save(&path) {
+                Ok(()) => info!(path = %path.display(), "ZisK proof saved"),
+                Err(e) => warn!(path = %path.display(), "could not save the ZisK proof: {e}"),
+            }
+        }
+        Ok(proof)
+    }
+
+    /// Verifies the proof against the embedded program's verification key, so a
+    /// proof of a different ELF is rejected even though it would verify on its own.
+    pub fn verify(setup: &ZiskSetup, proof: &Proof) -> Result<(), BackendError> {
+        proof
+            .with_program_vk(&setup.vk)
+            .verify()
+            .map_err(BackendError::verification)
+    }
+
+    /// Converts the proof into what the proof sender submits.
+    ///
+    /// For the EVM shape only the PLONK proof bytes travel: the OnChainProposer
+    /// rebuilds the public values from the batch commitment and takes the program
+    /// key and the recursion root from its own storage and the verifier contract.
+    pub fn to_proof_bytes(proof: Proof, format: ProofFormat) -> Result<ProverOutput, BackendError> {
+        match format {
+            ProofFormat::Groth16 => {
+                let ProofBody::Plonk {
+                    proof_bytes, rootc, ..
+                } = &proof.body
+                else {
+                    return Err(BackendError::proof_conversion(format!(
+                        "expected a PLONK proof, got {:?}",
+                        proof.kind()
+                    )));
+                };
+                let mut digest = [0u8; 32];
+                proof.publics().read_slice(&mut digest);
+                info!(
+                    program_vk = %format!("0x{}", hex::encode(vk_bytes32(&proof.program_vk.vk))),
+                    root_c_vadcop_final = %format!("0x{}", hex::encode(vk_bytes32(rootc))),
+                    committed_output_digest = %format!("0x{}", hex::encode(digest)),
+                    proof_len = proof_bytes.len(),
+                    "ZisK PLONK proof ready for L1"
+                );
+                Ok(ProverOutput::Proof(ProofBytes {
+                    prover_type: ProverType::ZisK,
+                    proof: proof_bytes.clone(),
+                }))
+            }
+            ProofFormat::Compressed => {
+                // The guest commits sha256(ProgramOutput.encode()) into the first
+                // eight 32-bit public slots; the rest stay zero.
+                let mut digest = [0u8; 32];
+                proof.publics().read_slice(&mut digest);
+                Ok(ProverOutput::ProofWithPublicValues {
+                    proof_bytes: ProofBytes {
+                        prover_type: ProverType::ZisK,
+                        proof: proof
+                            .get_proof_bytes()
+                            .map_err(BackendError::proof_conversion)?,
+                    },
+                    public_values: digest.to_vec(),
+                })
+            }
+        }
+    }
+
+    /// Packs four u64 words big-endian, the `bytes32` form `ZiskVerifier.sol`
+    /// hashes for both the program key and `rootCVadcopFinal`.
+    fn vk_bytes32(words: &[u64]) -> Vec<u8> {
+        words.iter().flat_map(|w| w.to_be_bytes()).collect()
+    }
+
+    /// Seconds since the Unix epoch, for naming dumped files.
+    fn unix_now() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or_default()
     }
 }
