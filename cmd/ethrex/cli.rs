@@ -1147,7 +1147,9 @@ pub async fn import_blocks(
 }
 
 /// Lists the files in a directory of chain files in import order. See
-/// [`chain_file_sort_key`].
+/// [`chain_file_sort_key`]. Hidden files, such as the `.DS_Store` macOS adds to a
+/// directory, and subdirectories are left out: they are not chain files, and each would
+/// count as a file that failed to import.
 fn chain_files_in_dir(dir: &Path) -> Result<Vec<PathBuf>, ChainError> {
     let read_err = |e: io::Error| {
         ChainError::Custom(format!("failed to read directory {}: {e}", dir.display()))
@@ -1157,6 +1159,12 @@ fn chain_files_in_dir(dir: &Path) -> Result<Vec<PathBuf>, ChainError> {
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<Result<Vec<_>, _>>()
         .map_err(read_err)?;
+    files.retain(|path| {
+        let hidden = path
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with('.'));
+        path.is_file() && !hidden
+    });
     files.sort_by_cached_key(|path| chain_file_sort_key(path));
     Ok(files)
 }

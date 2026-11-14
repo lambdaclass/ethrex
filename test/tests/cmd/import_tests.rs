@@ -278,6 +278,24 @@ async fn directory_import_stops_at_a_chain_of_another_network() {
     }
 }
 
+/// A directory import reads the chain files only, not the hidden files and the
+/// subdirectories that sit next to them.
+#[tokio::test]
+async fn directory_import_reads_only_the_chain_files() {
+    let (blocks, genesis) = chain_and_genesis();
+    let blocks_dir = tempfile::tempdir().unwrap();
+    write_chain_file(blocks_dir.path(), "0001.rlp", &blocks[..1]);
+    std::fs::write(blocks_dir.path().join(".DS_Store"), b"not rlp").unwrap();
+    std::fs::create_dir(blocks_dir.path().join("0002.rlp")).unwrap();
+    let datadir = tempfile::tempdir().unwrap();
+
+    import(blocks_dir.path(), datadir.path(), genesis)
+        .await
+        .expect("the only chain file imports");
+
+    assert_canonical_chain(datadir.path(), &blocks[..1]).await;
+}
+
 /// A single file import stops at the first failure, and the blocks before it become
 /// the canonical chain.
 #[tokio::test]
