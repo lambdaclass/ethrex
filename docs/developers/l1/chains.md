@@ -85,7 +85,7 @@ fn components(args: &ExampleArgs, _genesis: &Genesis) -> eyre::Result<NodeCompon
 
 - **`name`** is the name of the binary, shown in `--help`.
 - **`networks`** are the networks `--network <name>` accepts in addition to the Ethereum ones. The first one is the default network of the binary. `genesis` is the contents of a genesis file. `bootnodes` is a JSON array of enode URLs, or `"[]"`. Each network keeps its data in a subdirectory of the datadir named after it, so a name is lowercase letters, digits and inner hyphens, and cannot be one ethrex already uses (`mainnet`, `sepolia`, `hoodi`, `plataberget`, `dev`, or anything starting with `chain-`). The node refuses to start otherwise, and also when the genesis or the bootnodes of any of the chain's networks do not parse. A network's name wins over a file of the same name in the current directory; pass `./<name>` to use the file. The `ETHREX_NETWORK` environment variable takes the same names as `--network`.
-- **The type parameter** is the chain's flags, a `clap::Args` struct. Prefix the flag names with the chain's name so they cannot collide with the node's. Use `ethrex::chain::NoArgs` if there are none.
+- **The type parameter** is the chain's flags, a `clap::Args` struct. Prefix the flag names with the chain's name so they cannot collide with the node's. The field names must differ from the node's too (`datadir`, `network`, and so on), because clap identifies a flag by its field name; the node refuses to start when two flags share one. Use `ethrex::chain::NoArgs` if there are none.
 - **`components`** is a function called once per start, after the command line is parsed and the genesis is loaded, and before the database is opened. It receives the chain's flags and the genesis of the selected network. Returning an error aborts the start. It is called on the node's async runtime, so it must not block on async work. `NodeComponents` is built by filling in the fields of `NodeComponents::default()`.
 
 ### 3. Add an RPC namespace
@@ -136,7 +136,7 @@ impl MempoolPolicy for MaxTxGas {
 }
 ```
 
-- `admit` runs for every transaction offered to the mempool, from RPC or from a peer, before the standard checks (for a blob transaction, once its blobs are verified). Keep it cheap, and never block in it.
+- `admit` runs for every transaction offered to the mempool, from RPC or from a peer, that is not already in it and is within the size limit. It runs before the rest of the standard checks (for a blob transaction, once its blobs are verified). Keep it cheap, and never block in it.
 - `head` is the header of the latest block, for rules that depend on the state of the chain.
 - It can only reject. A transaction it admits still has to pass the standard checks.
 - The `Err` text is returned to whoever submitted the transaction.

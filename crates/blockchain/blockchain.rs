@@ -345,9 +345,10 @@ pub const DEFAULT_MIN_TIP_WEI: u64 = 1;
 
 /// Extra admission rules for the mempool, applied on top of the standard checks.
 ///
-/// A policy can only make the pool stricter: it sees a transaction before the
-/// standard checks run (a blob transaction, once its blobs are verified) and may
-/// reject it, and it cannot admit a transaction those checks reject. It applies to every transaction offered to the pool, whether it
+/// A policy can only make the pool stricter. It sees a transaction that is new to
+/// the pool and within the size limit (a blob transaction, once its blobs are
+/// verified), before the rest of the standard checks, and may reject it. It cannot
+/// admit a transaction those checks reject. It applies to every transaction offered to the pool, whether it
 /// arrives over RPC or from a peer. It has no effect on block validation.
 ///
 /// The policy runs when a transaction is offered and not again: a transaction
@@ -3804,9 +3805,8 @@ impl Blockchain {
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config();
 
-        // Before the standard checks: a policy reads only the transaction and the
-        // head, so what it rejects never costs the state lookups and the frame
-        // simulation below.
+        // Before the checks below: a policy reads only the transaction and the head,
+        // so what it rejects never costs their state lookups and frame simulation.
         if let Some(policy) = &self.options.mempool_policy {
             policy
                 .admit(tx, sender, &header)

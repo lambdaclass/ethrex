@@ -146,6 +146,23 @@ where
     T: Into<std::ffi::OsString> + Clone,
 {
     let mut command = command(chain);
+    // clap identifies a flag by the name of its field, not by its `long`. Two flags
+    // with one id would read each other's value, and clap only checks for that in
+    // debug builds.
+    let mut ids = std::collections::HashSet::new();
+    let repeated = command
+        .get_arguments()
+        .map(|arg| arg.get_id().as_str())
+        .find(|id| !ids.insert(*id))
+        .map(str::to_owned);
+    if let Some(id) = repeated {
+        return Err(command.error(
+            clap::error::ErrorKind::ArgumentConflict,
+            format!(
+                "two flags are named `{id}`: rename the field in the chain's flags, or give it an `id` of its own"
+            ),
+        ));
+    }
     let matches = command.try_get_matches_from_mut(argv)?;
     let mut cli = CLI::from_arg_matches(&matches)?;
     let args = A::from_arg_matches(&matches)?;

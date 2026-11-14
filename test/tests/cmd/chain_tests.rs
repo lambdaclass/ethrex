@@ -148,6 +148,30 @@ fn chain_flag_is_unknown_to_another_binary() {
     assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
 }
 
+/// clap identifies a flag by its field name, so a chain's field named like one of
+/// the node's would share its value. That is refused, in every build profile.
+#[test]
+fn chain_flag_cannot_take_the_id_of_a_node_flag() {
+    #[derive(clap::Args)]
+    struct Clashing {
+        #[arg(long = "example.datadir", default_value = "elsewhere")]
+        datadir: String,
+    }
+    let chain: Chain<Clashing> = Chain {
+        name: "ethrex-example",
+        networks: &[],
+        components: |_, _| Ok(NodeComponents::default()),
+    };
+    let err = match parse_args(&chain, ["ethrex-example"]) {
+        Ok((_, args)) => panic!("parsed with a shared id: {}", args.datadir),
+        Err(err) => err,
+    };
+    assert!(
+        err.to_string().contains("two flags are named `datadir`"),
+        "{err}"
+    );
+}
+
 #[test]
 fn preset_name_selects_the_preset() {
     let (cli, _) = parse(&EXAMPLE, &["--network", "example-test"]);
