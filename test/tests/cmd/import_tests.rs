@@ -244,6 +244,40 @@ async fn directory_import_stops_on_a_database_failure() {
     );
 }
 
+/// Files whose block 1 does not build on the genesis block belong to another network,
+/// where no file can be imported, so a directory import stops at the first of them.
+#[tokio::test]
+async fn directory_import_stops_at_a_chain_of_another_network() {
+    let (blocks, mut genesis) = chain_and_genesis();
+    genesis.nonce += 1;
+    let blocks_dir = tempfile::tempdir().unwrap();
+    for (name, block) in [("0001.rlp", 0), ("0002.rlp", 1), ("0003.rlp", 2)] {
+        write_chain_file(blocks_dir.path(), name, &blocks[block..=block]);
+    }
+    let datadir = tempfile::tempdir().unwrap();
+
+    let err = import(blocks_dir.path(), datadir.path(), genesis)
+        .await
+        .expect_err("a chain of another network fails the import");
+    assert!(
+        err.to_string().contains("does not build on the genesis"),
+        "unexpected error: {err}"
+    );
+
+    let store = load_store(datadir.path()).await.unwrap();
+    for block in &blocks[..3] {
+        assert!(
+            store
+                .get_pending_block(block.hash())
+                .await
+                .unwrap()
+                .is_none(),
+            "block {} was not kept as pending",
+            block.header.number
+        );
+    }
+}
+
 /// A single file import stops at the first failure, and the blocks before it become
 /// the canonical chain.
 #[tokio::test]

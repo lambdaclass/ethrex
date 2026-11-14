@@ -1095,12 +1095,27 @@ pub async fn import_blocks(
         vec![PathBuf::from(path)]
     };
 
+    let genesis_hash = store.get_canonical_block_hash(0).await?;
     let mut total_blocks_imported = 0;
     let mut failed_files = 0;
     for file in &files {
         info!(path = %file.display(), "Importing blocks from file");
         let result = match utils::read_chain_file(file) {
-            Ok(blocks) => import_chain(&store, &blockchain, blocks).await,
+            Ok(blocks) => {
+                // A block 1 that does not build on the genesis block means the files are
+                // of another network. None of them would import, and each attempt would
+                // leave its block in the store as pending, so a directory import stops.
+                let other_network = blocks.iter().any(|block| {
+                    block.header.number == 1 && Some(block.header.parent_hash) != genesis_hash
+                });
+                if is_dir && other_network {
+                    return Err(ChainError::Custom(format!(
+                        "{} does not build on the genesis block. Are you sure you selected the correct network?",
+                        file.display()
+                    )));
+                }
+                import_chain(&store, &blockchain, blocks).await
+            }
             Err(e) => Err(ChainError::Custom(format!(
                 "failed to read chain file {}: {e:#}",
                 file.display()
