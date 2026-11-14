@@ -9,9 +9,10 @@ on:
     paths:
       - .github/workflows/daily_hive_report.yaml
       - .github/scripts/publish_hive.sh
-      # What the jobs run comes from these two, so a change to either is a
-      # change to this workflow.
+      # What the jobs run, and whether one of them ran anything, comes from
+      # these, so a change to one of them is a change to this workflow.
       - .github/scripts/hive-flags.sh
+      - .github/scripts/count-hive-tests.sh
       - .github/config/hive/pins.yaml
 
 permissions:
