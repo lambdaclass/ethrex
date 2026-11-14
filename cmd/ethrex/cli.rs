@@ -1155,10 +1155,12 @@ fn chain_files_in_dir(dir: &Path) -> Result<Vec<PathBuf>, ChainError> {
         let hidden = path
             .file_name()
             .is_some_and(|name| name.to_string_lossy().starts_with('.'));
+        if hidden {
+            continue;
+        }
         // An entry that cannot be inspected is an error, not an entry to leave out:
         // it may be a chain file, and the import would report success without it.
-        let is_file = metadata(&path).map_err(read_err)?.is_file();
-        if is_file && !hidden {
+        if metadata(&path).map_err(read_err)?.is_file() {
             chain_files.push(path);
         }
     }
