@@ -62,7 +62,7 @@ if [[ ! $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 
 # The bundle the blockchain, state and engine ef-test runners download.
-url_release=$(sed -n 's|^https://github.com/ethereum/execution-specs/releases/download/tests%40\(v[0-9][0-9.]*\)/fixtures\.tar\.gz$|\1|p' "$FIXTURES_URL")
+url_release=$(sed -n 's|^https://github\.com/ethereum/execution-specs/releases/download/tests%40\(v[0-9][0-9.]*\)/fixtures\.tar\.gz$|\1|p' "$FIXTURES_URL")
 if [[ -z $url_release ]]; then
     mismatch "${FIXTURES_URL#"$ROOT"/} is not an execution-specs tests@ release URL"
 elif [[ $url_release != "$tag" ]]; then
@@ -87,6 +87,11 @@ fi
 roadmap_release=$(sed -n 's|^- Fixtures: \[`tests@\(v[0-9][0-9.]*\)`\].*|\1|p' "$ROADMAP")
 if [[ $roadmap_release != "$tag" ]]; then
     mismatch "${ROADMAP#"$ROOT"/} lists fixtures 'tests@$roadmap_release', not tests@$tag"
+fi
+# The link of that line names the release as well, as `tests@` or `tests%40`.
+roadmap_link=$(sed -n 's|^- Fixtures: \[`[^`]*`\](\([^)]*\)).*|\1|p' "$ROADMAP")
+if [[ $roadmap_link != *"tests@$tag" && $roadmap_link != *"tests%40$tag" ]]; then
+    mismatch "${ROADMAP#"$ROOT"/} links its fixtures to '$roadmap_link', not to tests@$tag"
 fi
 roadmap_tag=$(sed -n 's|^- EELS simulator image tag: `\(.*\)`$|\1|p' "$ROADMAP")
 if [[ $roadmap_tag != "$tag" ]]; then
