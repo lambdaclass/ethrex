@@ -1165,11 +1165,64 @@ fn is_store_failure(err: &ChainError) -> bool {
 
 /// Adds one chain of blocks and makes its last block the canonical head. Returns the
 /// number of blocks in the chain, including any that were already stored.
+///
+/// If a block fails, the blocks stored before it become canonical instead, as geth's
+/// `import` leaves them, and the error is returned. A later file of a directory import
+/// can build on those blocks, and its own forkchoice update only marks its own blocks,
+/// so without this the canonical chain would have a gap below them.
 async fn import_chain(
     store: &Store,
     blockchain: &Blockchain,
     blocks: Vec<Block>,
 ) -> Result<usize, ChainError> {
+    let size = blocks.len();
+    let mut numbers_and_hashes = blocks
+        .iter()
+        .map(|b| (b.header.number, b.hash()))
+        .collect::<Vec<_>>();
+    let mut first_new_block = None;
+    let result = add_chain_blocks(store, blockchain, blocks, &mut first_new_block).await;
+
+    if result.is_err() {
+        // The blocks ahead of the one that failed are in the store. They only become
+        // canonical if this import stored one of them: a chain that failed before
+        // adding a block leaves the head where it was.
+        let mut stored = 0;
+        for (_, hash) in &numbers_and_hashes {
+            if store.get_block_number(*hash).await?.is_none() {
+                break;
+            }
+            stored += 1;
+        }
+        let stored_a_block =
+            first_new_block.is_some_and(|first_new_block| first_new_block < stored);
+        numbers_and_hashes.truncate(if stored_a_block { stored } else { 0 });
+    }
+
+    // Make head canonical and label all special blocks correctly.
+    if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
+        store
+            .forkchoice_update(
+                numbers_and_hashes,
+                head_number,
+                head_hash,
+                Some(head_number),
+                Some(head_number),
+            )
+            .await?;
+    }
+
+    result.map(|()| size)
+}
+
+/// Executes and stores the blocks of a chain that are not in the store yet. Sets
+/// `first_new_block` to the index of the first of them, also when it returns an error.
+async fn add_chain_blocks(
+    store: &Store,
+    blockchain: &Blockchain,
+    blocks: Vec<Block>,
+    first_new_block: &mut Option<usize>,
+) -> Result<(), ChainError> {
     const IMPORT_BATCH_SIZE: usize = 1024;
     // This value is higher than the spec (128) as the latter block's state nodes will be kept in memory and not committed when using rocksdb
     // This means we need to run some extra-blocks to ensure we commit their state and don't need to regenerate the full block range upon node restart
@@ -1177,10 +1230,6 @@ async fn import_chain(
 
     let mut block_batch = vec![];
     let size = blocks.len();
-    let mut numbers_and_hashes = blocks
-        .iter()
-        .map(|b| (b.header.number, b.hash()))
-        .collect::<Vec<_>>();
     // Execute block by block
     let mut last_progress_log = Instant::now();
     for (index, block) in blocks.into_iter().enumerate() {
@@ -1200,6 +1249,7 @@ async fn import_chain(
             info!("Block {hash:#x} is already in the blockchain");
             continue;
         }
+        first_new_block.get_or_insert(index);
 
         validate_block_body(&block.header, &block.body, &ethrex_crypto::NativeCrypto)
             .map_err(InvalidBlockError::InvalidBody)?;
@@ -1224,20 +1274,7 @@ async fn import_chain(
         }
     }
 
-    // Make head canonical and label all special blocks correctly.
-    if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
-        store
-            .forkchoice_update(
-                numbers_and_hashes,
-                head_number,
-                head_hash,
-                Some(head_number),
-                Some(head_number),
-            )
-            .await?;
-    }
-
-    Ok(size)
+    Ok(())
 }
 
 pub async fn import_blocks_bench(
