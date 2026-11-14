@@ -330,17 +330,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # consume-enginex and consume-wirex each run once for each fork in `fork`,
-        # each run on a runner of its own, and together the runs of a simulation
-        # cover the whole fixture release it is pinned to in
+        # consume-enginex and consume-wirex each run once for each entry of
+        # `fork`, each run on a runner of its own, and together the runs of a
+        # simulation cover the whole fixture release it is pinned to in
         # .github/config/hive/pins.yaml, which carries every fork through
         # Amsterdam. A test id names its fork as `fork_<Name>`, and a transition
         # fork, such as `fork_PragueToOsakaAtTime15k`, runs with the fork it
         # starts from; `BPO` takes BPO1, BPO2 and whatever follows them. A fork
         # that a release adds has to be added to `fork`, or its tests do not
-        # run.
+        # run. Amsterdam is two entries, with their limits further down.
         simulation: [ethereum/eels/consume-enginex, ethereum/eels/consume-wirex]
-        fork: [Paris, Shanghai, Cancun, Prague, Osaka, BPO, Amsterdam]
+        fork: [Paris, Shanghai, Cancun, Prague, Osaka, BPO, Amsterdam-1, Amsterdam-2]
         include:
           # These two name a simulation of the list above, so each one adds its
           # settings to the per-fork jobs of that simulation.
@@ -355,12 +355,30 @@ jobs:
           # consume-wirex runs the same vectors, but the client gets each test's
           # chain by syncing it from a mock devp2p peer, so they also exercise
           # full sync over the eth wire protocol. It has its own hive commit and
-          # image in the pin file. Two workers, as in the daily report, where four
-          # were no faster and six exhausted the runner.
+          # image in the pin file. Two workers: four were no faster, for one fork
+          # or for the whole release, and six exhausted the runner.
           - simulation: ethereum/eels/consume-wirex
             name: "Consume WireX"
             artifact_prefix: consume_wirex
             parallelism: 2
+          # These two name an entry of `fork`, so each one sets the limit of
+          # that entry's job in both simulations.
+          #
+          # Amsterdam takes three times as long as the next fork, and more
+          # workers barely help: most of its tests share one pre-allocation, so
+          # they run on one client, on one worker. It runs as two jobs, which
+          # cuts that group in two. The simulators match a limit as a Python
+          # regular expression from the start of the test id. The first job
+          # takes the Amsterdam tests under three test directories and the
+          # second takes every other Amsterdam test, by negating the same
+          # lookahead, so the two jobs run each Amsterdam test once whatever
+          # directories a release adds. The three directories were picked to
+          # make the two jobs about as long as each other; naming others moves
+          # the balance and nothing else.
+          - fork: Amsterdam-1
+            limit: '(?=.*tests/(amsterdam|cancun|prague)/).*fork_Amsterdam.*'
+          - fork: Amsterdam-2
+            limit: '(?!.*tests/(amsterdam|cancun|prague)/).*fork_Amsterdam.*'
           # The other simulations are one job each. An entry from here on names
           # a simulation that is not in the list above, which makes it a job of
           # its own instead of settings added to the per-fork jobs.
