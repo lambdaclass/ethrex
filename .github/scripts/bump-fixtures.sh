@@ -4,7 +4,7 @@
 #
 #   .github/scripts/bump-fixtures.sh v21.0.3 --zkevm v21.0.8   # a release and its zkEVM bundle
 #   .github/scripts/bump-fixtures.sh --zkevm v21.0.8           # the zkEVM bundle, on the pinned release
-#   .github/scripts/bump-fixtures.sh                           # the newest tests@ release
+#   .github/scripts/bump-fixtures.sh                           # says whether a newer tests@ release exists
 #
 # It does the mechanical part of a bump:
 #   - `tooling/ef_tests/.fixtures_url`, the bundle the ef-test runners download;
@@ -92,6 +92,11 @@ fi
 if [[ $(printf '%s\n%s\n' "$old" "$new" | sort -V | tail -1) != "$new" ]]; then
     die "tests@$new is older than the pinned tests@$old; refusing to downgrade"
 fi
+# A new base needs its zkEVM bundle, see the header. Said here, before any
+# request is made for a bump that cannot go through.
+if [[ $new != "$old" && -z $new_zkevm ]]; then
+    die "tests@$new is newer than the pinned tests@$old: pass --zkevm with a zkEVM release filled from tests@$new"
+fi
 
 # The release has to ship the bundle the runners download.
 bundle="https://github.com/$SPECS/releases/download/tests%40$new/fixtures.tar.gz"
@@ -136,10 +141,7 @@ if [[ -n $new_zkevm ]]; then
 fi
 # Checked before any edit.
 if [[ $new_zkevm_base != "$new" ]]; then
-    if [[ -n $new_zkevm ]]; then
-        die "tests-zkevm@$new_zkevm is filled from tests@$new_zkevm_base, not tests@$new"
-    fi
-    die "the pinned tests-zkevm@$old_zkevm is filled from tests@$old_zkevm_base: pass --zkevm with a zkEVM release filled from tests@$new"
+    die "tests-zkevm@${new_zkevm:-$old_zkevm} is filled from tests@$new_zkevm_base, not tests@$new"
 fi
 
 # From here on the tree is edited. If anything below fails, the files are put
@@ -162,6 +164,8 @@ OLD="$old" NEW="$new" perl -pi -e 's/^tag: \Q$ENV{OLD}\E$/tag: $ENV{NEW}/' "$PIN
 OLD="$old" NEW="$new" perl -pi -e '
     if (/^- Fixtures: \[`tests\@/) { s/(tests(?:\@|%40))\Q$ENV{OLD}\E(?![0-9])/$1$ENV{NEW}/g }
     s/^(- EELS simulator image tag: `)\Q$ENV{OLD}\E(`)$/$1$ENV{NEW}$2/;
+    # The status line follows too: a bump merges only once the ef-test suites
+    # are green on the new bundle, which is what the line then says.
     if (/^- Status: /) { s/the \Q$ENV{OLD}\E bundle/the $ENV{NEW} bundle/ }
 ' "$ROADMAP"
 if [[ -n $new_zkevm ]]; then
