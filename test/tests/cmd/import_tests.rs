@@ -216,6 +216,12 @@ async fn directory_import_keeps_the_blocks_before_a_failed_block_of_a_batch_cano
     assert_eq!(err.to_string(), "1 of 2 files failed to import");
 
     assert_canonical_chain(datadir.path(), &blocks).await;
+    // The batch stored the blocks before the rejected one, and not the rejected one.
+    let store = load_store(datadir.path()).await.unwrap();
+    assert_eq!(
+        store.get_block_number(failing[4].hash()).await.unwrap(),
+        None
+    );
 }
 
 /// A block that is rejected before it is executed, here for its body, does not drop

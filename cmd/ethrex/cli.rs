@@ -1287,7 +1287,7 @@ async fn add_chain_blocks(
             continue;
         }
 
-        if let Err(err) = check_before_adding(store, &block, block_batch.last()).await {
+        if let Err(err) = check_before_adding(store, &block, &block_batch).await {
             add_queued_blocks(blockchain, &mut block_batch).await?;
             return Err(err);
         }
@@ -1311,7 +1311,7 @@ async fn add_chain_blocks(
 }
 
 /// The checks a block passes before it is executed: its parent is known and its body
-/// matches its header. `queued` is the block queued ahead of it, if any, which has not
+/// matches its header. `queued` are the blocks queued ahead of it, which have not
 /// reached the store yet.
 ///
 /// The parent is checked here because adding a block whose parent is unknown keeps it
@@ -1320,10 +1320,14 @@ async fn add_chain_blocks(
 async fn check_before_adding(
     store: &Store,
     block: &Block,
-    queued: Option<&Block>,
+    queued: &[Block],
 ) -> Result<(), ChainError> {
     let parent_hash = block.header.parent_hash;
-    let parent_is_known = queued.is_some_and(|queued| queued.hash() == parent_hash)
+    // The last queued block first: it is the parent in a chain without branches.
+    let parent_is_known = queued
+        .iter()
+        .rev()
+        .any(|queued| queued.hash() == parent_hash)
         || store.get_block_number(parent_hash).await?.is_some();
     if !parent_is_known {
         if block.header.number == 1 {
