@@ -1,100 +1,11 @@
-use clap::Parser;
-use ethrex::{
-    cli::CLI,
-    initializers::{init_l1, init_tracing},
-    utils::{NodeConfigFile, get_client_version, is_memory_datadir, store_node_config_file},
-};
-use ethrex_p2p::{peer_table::PeerTable, types::SharedLocalNode};
-use ethrex_storage::Store;
+use ethrex::chain::{Chain, ETHEREUM, NodeComponents, run};
 use serde::Deserialize;
-use std::{path::Path, time::Duration};
-use tokio::signal::unix::{SignalKind, signal};
-use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use std::time::Duration;
+use tracing::info;
 
 const LATEST_VERSION_URL: &str = "https://api.github.com/repos/lambdaclass/ethrex/releases/latest";
 
-#[cfg(all(feature = "jemalloc", not(target_env = "msvc")))]
-#[global_allocator]
-static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
-
-fn log_global_allocator() {
-    if cfg!(all(feature = "jemalloc", not(target_env = "msvc"))) {
-        tracing::info!("Global allocator: jemalloc (tikv-jemallocator)");
-    } else {
-        tracing::info!("Global allocator: system (std::alloc::System)");
-    }
-}
-
-// Tune jemalloc for throughput: use a background thread for memory purging instead
-// of doing it inline during malloc/free (which adds ~12% of total block execution CPU time
-// to jemalloc purge calls, measured via perf profiling on mainnet blocks).
-#[cfg(all(
-    feature = "jemalloc",
-    not(feature = "jemalloc_profiling"),
-    not(target_env = "msvc")
-))]
-#[allow(non_upper_case_globals)]
-#[unsafe(export_name = "malloc_conf")]
-pub static malloc_conf: &[u8] =
-    b"background_thread:true,dirty_decay_ms:30000,muzzy_decay_ms:30000\0";
-
-// This could be also enabled via `MALLOC_CONF` env var, but for consistency with the previous jemalloc feature
-// usage, we keep it in the code and enable the profiling feature only with the `jemalloc_profiling` feature flag.
-#[cfg(all(feature = "jemalloc_profiling", not(target_env = "msvc")))]
-#[allow(non_upper_case_globals)]
-#[unsafe(export_name = "malloc_conf")]
-pub static malloc_conf: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19,background_thread:true,dirty_decay_ms:30000,muzzy_decay_ms:30000\0";
-
-async fn server_shutdown(
-    datadir: &Path,
-    cancel_token: &CancellationToken,
-    peer_table: PeerTable,
-    shared_local_node: SharedLocalNode,
-    store: &Store,
-) {
-    info!("Server shut down started...");
-    // Stop feeding new blocks before draining, so the persist queue can't grow.
-    cancel_token.cancel();
-    // Drain the persist worker, force-flush the block-data buffer, and fsync the
-    // DB. Without this an abrupt exit (e.g. `docker restart -t 0`) loses the
-    // buffered block-data tail and leaves the DB needing WAL recovery on next
-    // start. In-memory trie diff-layers are intentionally left uncommitted and
-    // re-executed on the next start (see `Store::shutdown`).
-    info!("Flushing database to disk...");
-    if let Err(err) = store.shutdown().await {
-        error!("Failed to flush database on shutdown: {err}");
-    }
-    if !is_memory_datadir(datadir) {
-        let node_config_path = datadir.join("node_config.json");
-        info!("Storing config at {:?}...", node_config_path);
-        // Clone the current (possibly updated) record out and drop the guard.
-        let record = {
-            let guard = shared_local_node
-                .read()
-                .expect("shared_local_node poisoned");
-            guard.record.clone()
-        };
-        let node_config = NodeConfigFile::new(peer_table, record).await;
-        store_node_config_file(node_config, node_config_path);
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
-    info!("Server shutting down!");
-}
-
-/// Builds the CPU profile report and writes it to `profile.pb` in the current directory.
-#[cfg(feature = "cpu_profiling")]
-fn write_cpu_profile(guard: pprof::ProfilerGuard<'_>) -> eyre::Result<()> {
-    use pprof::protos::Message;
-
-    let report = guard.report().build()?;
-    let profile = report.pprof()?;
-    let mut content = Vec::new();
-    profile.encode(&mut content)?;
-    std::fs::write("profile.pb", &content)?;
-    info!("CPU profile written to profile.pb");
-    Ok(())
-}
+ethrex::global_allocator!();
 
 /// Fetches the latest release version on github
 /// Returns None if there was an error when requesting the latest version
@@ -170,67 +81,15 @@ async fn periodically_check_version_update() {
     }
 }
 
-#[tokio::main]
-async fn main() -> eyre::Result<()> {
-    let CLI { opts, command } = CLI::parse();
-
-    rayon::ThreadPoolBuilder::default()
-        .thread_name(|i| format!("rayon-worker-{i}"))
-        .build_global()
-        .expect("failed to build rayon threadpool");
-
-    if let Some(subcommand) = command {
-        return subcommand.run(&opts).await;
-    }
-
-    let (log_filter_handler, _guard) = init_tracing(&opts);
-
-    #[cfg(feature = "cpu_profiling")]
-    let profiler_guard = {
-        let guard = pprof::ProfilerGuardBuilder::default()
-            .frequency(1000)
-            .build()
-            .expect("failed to build CPU profiler");
-        info!("CPU profiling enabled (1000 Hz), will write profile.pb at shutdown");
-        guard
+fn main() -> eyre::Result<()> {
+    // Looking for new releases is this binary's own business, so it is started
+    // here and not by `run`, which treats every chain alike.
+    let chain = Chain {
+        components: |_, _| {
+            tokio::spawn(periodically_check_version_update());
+            Ok(NodeComponents::default())
+        },
+        ..ETHEREUM
     };
-
-    info!("ethrex version: {}", get_client_version());
-    tokio::spawn(periodically_check_version_update());
-
-    let (datadir, cancel_token, peer_table, shared_local_node, store) =
-        init_l1(opts, Some(log_filter_handler)).await?;
-
-    let mut signal_terminate = signal(SignalKind::terminate())?;
-
-    log_global_allocator();
-
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, shared_local_node, &store).await;
-        }
-        _ = signal_terminate.recv() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, shared_local_node, &store).await;
-        }
-        // A fatal subsystem (e.g. the RPC server) cancels the token to abort the node.
-        _ = cancel_token.cancelled() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, shared_local_node, &store).await;
-        }
-    }
-
-    #[cfg(feature = "cpu_profiling")]
-    if let Err(e) = write_cpu_profile(profiler_guard) {
-        tracing::error!("Failed to write CPU profile: {e}");
-    }
-
-    // A shutdown initiated by a failing subsystem exits non-zero so orchestrators
-    // (systemd `Restart=on-failure`, Docker restart policies) can tell a crashed node
-    // from a clean signal-triggered stop.
-    if let Some(cause) = ethrex::initializers::fatal_shutdown_cause() {
-        return Err(eyre::eyre!(
-            "node shut down after a fatal subsystem failure: {cause}"
-        ));
-    }
-
-    Ok(())
+    run(chain, GLOBAL_ALLOCATOR)
 }

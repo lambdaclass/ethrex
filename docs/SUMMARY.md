@@ -112,6 +112,7 @@
   - [DB observability](./developers/l1/db-observability.md)
   - [Profiling](./developers/l1/profiling.md)
   - [Integrating with other DBs](./developers/l1/storage_api.md)
+  - [Supporting other chains](./developers/l1/chains.md)
   - [Testing](./developers/l1/testing/README.md)
     - [Ethereum foundation tests](./developers/l1/testing/ef-tests.md)
     - [Hive tests](./developers/l1/testing/hive.md)
