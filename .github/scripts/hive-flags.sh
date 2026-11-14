@@ -64,6 +64,8 @@ pin() {
     value=$(sed -n "s/^$1:[[:space:]]*//p" "$PINS")
     [[ -n $value ]] || die "pin '$1' is missing from $PINS"
     [[ $value != *$'\n'* ]] || die "pin '$1' appears more than once in $PINS"
+    # The value goes into flags the hive action evaluates in a shell.
+    [[ $value =~ ^[A-Za-z0-9._@:-]+$ ]] || die "pin '$1' in $PINS is not a release, a commit or an image tag: $value"
     printf '%s' "$value"
 }
 

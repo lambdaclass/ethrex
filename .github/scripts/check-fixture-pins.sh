@@ -39,10 +39,11 @@ pin() { sed -n "s/^$1:[[:space:]]*//p" "$PINS"; }
 
 # The scripts and the Makefile read a pin as the text after `key: `, so a pin
 # line has to be exactly that. A trailing space or comment would become part of
-# a hive flag.
+# a hive flag, which a shell evaluates, so a value only has the characters of a
+# release, a commit or an image tag.
 while IFS= read -r line; do
     mismatch "${PINS#"$ROOT"/} has a pin that is not a bare \`key: value\` line: '$line'"
-done < <(grep -E '^[A-Za-z_]+:' "$PINS" | grep -vE '^[a-z_]+: [^[:space:]#]+$' || true)
+done < <(grep -E '^[A-Za-z_]+:' "$PINS" | grep -vE '^[a-z_]+: [A-Za-z0-9._@:-]+$' || true)
 # A key that appears twice would be read as a value of two lines.
 while IFS= read -r key; do
     mismatch "${PINS#"$ROOT"/} has more than one \`$key\` line"
