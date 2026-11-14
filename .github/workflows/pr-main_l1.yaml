@@ -321,7 +321,7 @@ jobs:
           ethereum_package_args: ${{ matrix.ethereum_package_args }}
 
   run-hive:
-    name: Hive - ${{ matrix.name || format('Consume EngineX ({0})', matrix.fork) }}
+    name: Hive - ${{ matrix.fork && format('{0} ({1})', matrix.name, matrix.fork) || matrix.name }}
     runs-on: ubuntu-26.04
     needs: [detect-changes, docker_build]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
@@ -330,23 +330,58 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # consume-enginex runs the test vectors of consume-engine in the engine_x
-        # fixture format: tests that share a pre-allocation reuse one client
-        # instead of starting a client per test, which makes the run several
-        # times faster. It runs once for each fork in `fork`, each run on a
-        # runner of its own, and together the runs cover the whole fixture
-        # release pinned in .github/config/hive/pins.yaml, which carries every
-        # fork through Amsterdam. A test id names its fork as `fork_<Name>`, and
-        # a transition fork, such as `fork_PragueToOsakaAtTime15k`, runs with the
-        # fork it starts from; `BPO` takes BPO1, BPO2 and whatever follows them.
-        # A fork that a release adds has to be added to `fork`, or its tests do
-        # not run.
-        simulation: [ethereum/eels/consume-enginex]
-        fork: [Paris, Shanghai, Cancun, Prague, Osaka, BPO, Amsterdam]
-        # The other simulations are one job each. An entry here names a
-        # simulation other than the one above, which makes it a job of its own
-        # instead of a setting added to the consume-enginex jobs.
+        # consume-enginex and consume-wirex each run once for each entry of
+        # `fork`, each run on a runner of its own, and together the runs of a
+        # simulation cover the whole fixture release it is pinned to in
+        # .github/config/hive/pins.yaml, which carries every fork through
+        # Amsterdam. A test id names its fork as `fork_<Name>`, and a transition
+        # fork, such as `fork_PragueToOsakaAtTime15k`, runs with the fork it
+        # starts from; `BPO` takes BPO1, BPO2 and whatever follows them. A fork
+        # that a release adds has to be added to `fork`, or its tests do not
+        # run. Amsterdam is two entries, with their limits further down.
+        simulation: [ethereum/eels/consume-enginex, ethereum/eels/consume-wirex]
+        fork: [Paris, Shanghai, Cancun, Prague, Osaka, BPO, Amsterdam-1, Amsterdam-2]
         include:
+          # These two name a simulation of the list above, so each one adds its
+          # settings to the per-fork jobs of that simulation.
+          #
+          # consume-enginex runs the test vectors of consume-engine in the
+          # engine_x fixture format: tests that share a pre-allocation reuse one
+          # client instead of starting a client per test, which makes the run
+          # several times faster.
+          - simulation: ethereum/eels/consume-enginex
+            name: "Consume EngineX"
+            artifact_prefix: consume_enginex
+          # consume-wirex runs the same vectors, but the client gets each test's
+          # chain by syncing it from a mock devp2p peer, so they also exercise
+          # full sync over the eth wire protocol. It has its own hive commit and
+          # image in the pin file. Two workers: four were no faster, for one fork
+          # or for the whole release, and six exhausted the runner.
+          - simulation: ethereum/eels/consume-wirex
+            name: "Consume WireX"
+            artifact_prefix: consume_wirex
+            parallelism: 2
+          # These two name an entry of `fork`, so each one sets the limit of
+          # that entry's job in both simulations.
+          #
+          # Amsterdam takes three times as long as the next fork, and more
+          # workers barely help: most of its tests share one pre-allocation, so
+          # they run on one client, on one worker. It runs as two jobs, which
+          # cuts that group in two. The simulators match a limit as a Python
+          # regular expression from the start of the test id. The first job
+          # takes the Amsterdam tests under three test directories and the
+          # second takes every other Amsterdam test, by negating the same
+          # lookahead, so the two jobs run each Amsterdam test once whatever
+          # directories a release adds. The three directories were picked to
+          # make the two jobs about as long as each other in both simulations;
+          # naming others moves the balance and nothing else.
+          - fork: Amsterdam-1
+            limit: '(?=.*tests/(amsterdam|cancun|prague)/).*fork_Amsterdam.*'
+          - fork: Amsterdam-2
+            limit: '(?!.*tests/(amsterdam|cancun|prague)/).*fork_Amsterdam.*'
+          # The other simulations are one job each. An entry from here on names
+          # a simulation that is not in the list above, which makes it a job of
+          # its own instead of settings added to the per-fork jobs.
           - name: "Rpc Compat tests"
             simulation: ethereum/rpc-compat
             artifact_prefix: rpc_compat
@@ -409,14 +444,17 @@ jobs:
           } >>"$GITHUB_OUTPUT"
 
       # The flags and the hive commit come from .github/config/hive/pins.yaml.
+      # A job that sets no `parallelism` runs with the script's worker count.
       - name: Determine hive flags
         id: hive-flags
         shell: bash
         env:
           SIMULATION: ${{ matrix.simulation }}
           SIM_LIMIT: ${{ matrix.limit || (matrix.fork && format('.*fork_{0}.*', matrix.fork)) || '' }}
+          SIM_PARALLELISM: ${{ matrix.parallelism || '' }}
         run: |
-          .github/scripts/hive-flags.sh --simulation "$SIMULATION" --limit "$SIM_LIMIT" >> "$GITHUB_OUTPUT"
+          .github/scripts/hive-flags.sh --simulation "$SIMULATION" --limit "$SIM_LIMIT" \
+            ${SIM_PARALLELISM:+--parallelism "$SIM_PARALLELISM"} >> "$GITHUB_OUTPUT"
 
       - name: Log in to the Container registry
         if: ${{ env.DOCKERHUB_TOKEN != '' }}
@@ -446,7 +484,7 @@ jobs:
         if: ${{ failure() && steps.verify-hive-results.conclusion == 'failure' }}
         uses: actions/upload-artifact@v6.0.0
         with:
-          name: hive_failed_logs_${{ matrix.artifact_prefix || format('consume_enginex_{0}', matrix.fork) }}
+          name: hive_failed_logs_${{ matrix.fork && format('{0}_{1}', matrix.artifact_prefix, matrix.fork) || matrix.artifact_prefix }}
           path: src/results/failed_logs
           if-no-files-found: warn
 
