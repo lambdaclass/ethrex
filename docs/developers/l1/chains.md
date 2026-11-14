@@ -200,7 +200,7 @@ components(args, genesis) ◀──────────── build the comp
 ```
 
 - The chain is compiled into the binary. There is no runtime loading: one binary per chain.
-- The node still identifies itself as ethrex, the client it is built from, to its peers and in `web3_clientVersion`. It does not look for new ethrex releases: that is started by the `ETHEREUM` chain's `components`, for the `ethrex` binary.
+- The node still identifies itself as ethrex, the client it is built from, to its peers and in `web3_clientVersion`. It does not look for new ethrex releases: the `ethrex` binary starts that check itself.
 - `run(ETHEREUM, ..)` and `run(EXAMPLE, ..)` go through the same code. A node whose chain returns `NodeComponents::default()` behaves exactly like `ethrex`.
 - The components are built once, before the database, the pool or the RPC server exist. Nothing can be added to a running node.
 

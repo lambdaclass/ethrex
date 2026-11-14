@@ -3807,6 +3807,8 @@ impl Blockchain {
 
         // Before the checks below: a policy reads only the transaction and the head,
         // so what it rejects never costs their state lookups and frame simulation.
+        // The pool's entry points have already applied the size limit and the
+        // duplicate check and, for a blob transaction, verified the blobs.
         if let Some(policy) = &self.options.mempool_policy {
             policy
                 .admit(tx, sender, &header)
