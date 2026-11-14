@@ -50,6 +50,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 [[ -n $simulation ]] || die "--simulation is required"
+# These three go into the flags as they are, and the hive action evaluates the
+# flags in a shell.
+[[ $parallelism =~ ^[0-9]+$ ]] || die "--parallelism is not a number: $parallelism"
+[[ $loglevel =~ ^[0-9]+$ ]] || die "--loglevel is not a number: $loglevel"
+[[ $fork =~ ^[A-Za-z0-9]*$ ]] || die "--fork is not a fork name: $fork"
 [[ -f $PINS ]] || die "no pin file at $PINS"
 
 # A pin is a `key: value` line. A missing or empty pin is an error rather than
@@ -106,5 +111,4 @@ if [[ -n $limit ]]; then
     flags+=" --sim.limit '$escaped_limit'"
 fi
 
-echo "flags=$flags"
-echo "hive_version=$hive_version"
+printf '%s\n' "flags=$flags" "hive_version=$hive_version"
