@@ -38,4 +38,4 @@ The tests that are run are almost the same, with some small discrepancies:
 ## Daily report vs CI run
 We run some of the same simulations in the CI workflow, with a couple of differences:
 - Both run the hive commit and the fixture release pinned in `.github/config/hive/pins.yaml`, and build their flags with `.github/scripts/hive-flags.sh`, so a simulation runs the same way in both.
-- Of the Hive EELS simulators, the CI runs `consume-enginex` on the whole fixture release, on every push to a pull request. `consume-engine`, `consume-rlp`, `consume-wirex` and `execute-blobs` only run in the daily report, since they take too long for the CI. The CI also runs the lower level "blockchain tests" on the same fixtures.
+- Of the Hive EELS simulators, the CI runs `consume-enginex` on the whole fixture release, in one job per fork, on every push to a pull request. `consume-engine`, `consume-rlp`, `consume-wirex` and `execute-blobs` only run in the daily report, since they take too long for the CI. The CI also runs the lower level "blockchain tests" on the same fixtures.
