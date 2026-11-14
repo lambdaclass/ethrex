@@ -10,7 +10,7 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
-    BlockchainOptions, BlockchainType, DEFAULT_BLOB_PRICE_BUMP_PERCENT,
+    Blockchain, BlockchainOptions, BlockchainType, DEFAULT_BLOB_PRICE_BUMP_PERCENT,
     DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD, DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT, DEFAULT_MIN_TIP_WEI,
     DEFAULT_PRICE_BUMP_PERCENT, L2Config,
     error::{ChainError, InvalidBlockError},
@@ -24,7 +24,8 @@ use ethrex_p2p::{
     types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{DB_COMMIT_THRESHOLD, error::StoreError, has_valid_db};
+use ethrex_storage::{DB_COMMIT_THRESHOLD, Store, error::StoreError, has_valid_db};
+use ethrex_vm::EvmError;
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, error, info, warn};
 
@@ -1057,138 +1058,313 @@ pub fn remove_db(datadir: &Path, force: bool) {
     }
 }
 
+/// Imports blocks from an RLP chain file, or from every file in a directory: files
+/// named by a number (`1.rlp`, `2.rlp`, ..., `10.rlp`) in numeric order, then any
+/// others by name.
+///
+/// A directory import keeps going when one file fails, so the blocks in the other
+/// files are still applied: hive's consume-rlp simulator writes one block per file,
+/// and its fixtures include blocks the client must reject. It still returns an error
+/// once every file has been tried, as geth's `import` does with several files. A
+/// file import stops at the first failure.
 pub async fn import_blocks(
     path: &str,
     datadir: &Path,
     genesis: Genesis,
     blockchain_opts: BlockchainOptions,
 ) -> Result<(), ChainError> {
-    const IMPORT_BATCH_SIZE: usize = 1024;
-    // This value is higher than the spec (128) as the latter block's state nodes will be kept in memory and not committed when using rocksdb
-    // This means we need to run some extra-blocks to ensure we commit their state and don't need to regenerate the full block range upon node restart
-    const MIN_FULL_BLOCKS: usize = 132;
     let start_time = Instant::now();
     init_datadir(datadir);
     let store = init_store(datadir, genesis).await?;
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     // Re-execute any blocks above the last committed state root so the in-memory diff
-    // layers are populated before this import appends. Required for per-file imports
-    // (e.g. EEST consume-rlp fork-transition fixtures) where each invocation's tail
-    // layers are dropped on process exit and the next file's parent state would
+    // layers are populated before this import appends. They are dropped whenever an
+    // earlier import or node run exits, and the next block's parent state would
     // otherwise be unreachable.
     crate::initializers::regenerate_head_state(&store, &blockchain)
         .await
         .map_err(|e| ChainError::Custom(format!("regenerate_head_state failed: {e}")))?;
-    let path_metadata = metadata(path).expect("Failed to read path");
 
-    // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
-    let chains: Vec<Vec<Block>> = if path_metadata.is_dir() {
+    let path_metadata = metadata(path)
+        .map_err(|e| ChainError::Custom(format!("failed to read path {path}: {e}")))?;
+    let is_dir = path_metadata.is_dir();
+    let files = if is_dir {
         info!(path = %path, "Importing blocks from directory");
-        let mut entries: Vec<_> = read_dir(path)
-            .expect("Failed to read blocks directory")
-            .map(|res| res.expect("Failed to open file in directory").path())
-            .collect();
-
-        // Sort entries to process files in order (e.g., 1.rlp, 2.rlp, ...)
-        entries.sort();
-
-        entries
-            .iter()
-            .map(|entry| {
-                let path_str = entry.to_str().expect("Couldn't convert path to string");
-                info!(path = %path_str, "Importing blocks from file");
-                utils::read_chain_file(path_str)
-            })
-            .collect()
+        chain_files_in_dir(Path::new(path))?
     } else {
-        info!(path = %path, "Importing blocks from file");
-        vec![utils::read_chain_file(path)]
+        vec![PathBuf::from(path)]
     };
 
     let mut total_blocks_imported = 0;
-    for blocks in chains {
-        let mut block_batch = vec![];
-        let size = blocks.len();
-        let mut numbers_and_hashes = blocks
-            .iter()
-            .map(|b| (b.header.number, b.hash()))
-            .collect::<Vec<_>>();
-        // Execute block by block
-        let mut last_progress_log = Instant::now();
-        for (index, block) in blocks.into_iter().enumerate() {
-            let hash = block.hash();
-            let number = block.header.number;
-
-            // Log progress every 10 seconds
-            if last_progress_log.elapsed() >= Duration::from_secs(10) {
-                let processed = index + 1;
-                let percent = (((processed as f64 / size as f64) * 100.0) * 10.0).round() / 10.0;
-                info!(processed, total = size, percent, "Import progress");
-                last_progress_log = Instant::now();
+    let mut failed_files = 0;
+    for file in &files {
+        info!(path = %file.display(), "Importing blocks from file");
+        let result = match utils::read_chain_file(file) {
+            Ok(blocks) => import_chain(&store, &blockchain, blocks).await,
+            Err(e) => Err(ChainError::Custom(format!(
+                "failed to read chain file {}: {e:#}",
+                file.display()
+            ))),
+        };
+        match result {
+            Ok(imported) => total_blocks_imported += imported,
+            Err(err) if is_dir && !is_store_failure(&err) => {
+                warn!(path = %file.display(), %err, "Skipping file that failed to import");
+                failed_files += 1;
             }
-
-            // Check if the block is already in the blockchain, if it is do nothing, if not add it
-            let block_number = store.get_block_number(hash).await.map_err(|_e| {
-                ChainError::Custom(String::from(
-                    "Couldn't check if block is already in the blockchain",
-                ))
-            })?;
-
-            if block_number.is_some() {
-                info!("Block {} is already in the blockchain", block.hash());
-                continue;
-            }
-
-            validate_block_body(&block.header, &block.body, &ethrex_crypto::NativeCrypto)
-                .map_err(InvalidBlockError::InvalidBody)?;
-
-            if index + MIN_FULL_BLOCKS < size {
-                block_batch.push(block);
-                if block_batch.len() >= IMPORT_BATCH_SIZE || index + MIN_FULL_BLOCKS + 1 == size {
-                    blockchain
-                        .add_blocks_in_batch(
-                            mem::take(&mut block_batch),
-                            &[],
-                            CancellationToken::new(),
-                        )
-                        .await
-                        .map_err(|(err, _)| err)?;
+            Err(err) => {
+                if is_dir {
+                    warn!(path = %file.display(), %err, "Stopping the import at a file that failed with a database error");
                 }
-            } else {
-                // We need to have the state of the latest 128 blocks
-                blockchain
-                .add_block_pipeline_bounded(block, None, DB_COMMIT_THRESHOLD)
-                .inspect_err(|err| match err {
-                    // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
-                    ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
-                    _ => warn!("Failed to add block {number} with hash {hash:#x}"),
-                })?;
+                return Err(err);
             }
         }
-
-        // Make head canonical and label all special blocks correctly.
-        if let Some((head_number, head_hash)) = numbers_and_hashes.pop() {
-            store
-                .forkchoice_update(
-                    numbers_and_hashes,
-                    head_number,
-                    head_hash,
-                    Some(head_number),
-                    Some(head_number),
-                )
-                .await?;
-        }
-
-        total_blocks_imported += size;
     }
 
     let total_duration = start_time.elapsed();
+    if failed_files > 0 {
+        warn!(
+            blocks = total_blocks_imported,
+            failed_files,
+            seconds = total_duration.as_secs_f64(),
+            "Import completed with files that failed"
+        );
+        return Err(ChainError::Custom(format!(
+            "{failed_files} of {} files failed to import",
+            files.len()
+        )));
+    }
     info!(
         blocks = total_blocks_imported,
         seconds = total_duration.as_secs_f64(),
         "Import completed"
     );
     Ok(())
+}
+
+/// Lists the files in a directory of chain files in import order. See
+/// [`chain_file_sort_key`]. Hidden files, such as the `.DS_Store` macOS adds to a
+/// directory, and subdirectories are left out: they are not chain files, and each would
+/// count as a file that failed to import.
+fn chain_files_in_dir(dir: &Path) -> Result<Vec<PathBuf>, ChainError> {
+    let read_err = |e: io::Error| {
+        ChainError::Custom(format!("failed to read directory {}: {e}", dir.display()))
+    };
+    let entries = read_dir(dir)
+        .map_err(read_err)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(read_err)?;
+    let mut chain_files = Vec::with_capacity(entries.len());
+    for path in entries {
+        let hidden = path
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with('.'));
+        if hidden {
+            continue;
+        }
+        // An entry that cannot be inspected is an error, not an entry to leave out:
+        // it may be a chain file, and the import would report success without it.
+        if metadata(&path).map_err(read_err)?.is_file() {
+            chain_files.push(path);
+        }
+    }
+    chain_files.sort_by_cached_key(|path| chain_file_sort_key(path));
+    Ok(chain_files)
+}
+
+/// Orders files whose name is a number (`2.rlp` before `10.rlp`, and zero-padded
+/// names such as `0001.rlp`) by that number, then any other files by name.
+fn chain_file_sort_key(path: &Path) -> (bool, Option<u64>, PathBuf) {
+    let number = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .and_then(|stem| stem.parse::<u64>().ok());
+    // `None` sorts before `Some`, so lead with a flag that puts numbered files first.
+    (number.is_none(), number, path.to_path_buf())
+}
+
+/// Whether an import error comes from the database rather than from the blocks being
+/// imported. Such a failure would recur for every remaining file, so a directory
+/// import stops instead of skipping the file. The store errors raised while a block
+/// executes, the missing state of its parent among them, arrive as EVM errors.
+///
+/// A missing parent state stops the import on purpose, although it can also be the
+/// state of one old block that is no longer held: the error does not tell the two
+/// apart, and skipping it would report a database that lost state as a list of
+/// failed files.
+///
+/// A block whose parent is not in the store is not such a failure: it is what the
+/// blocks built on a rejected block get, and the files after them can still import.
+fn is_store_failure(err: &ChainError) -> bool {
+    matches!(
+        err,
+        ChainError::StoreError(_)
+            | ChainError::TrieError(_)
+            | ChainError::ParentStateNotFound
+            | ChainError::EvmError(EvmError::DB(_))
+    )
+}
+
+/// Adds one chain of blocks and makes its last block the canonical head. Returns the
+/// number of blocks in the chain, including any that were already stored.
+///
+/// If a block fails, the error is returned and the head stays where it was. The blocks
+/// ahead of the failed one stay in the store, and become canonical once a later chain
+/// builds on them: a chain makes canonical every stored block below it, down to the
+/// first one that already is.
+async fn import_chain(
+    store: &Store,
+    blockchain: &Blockchain,
+    blocks: Vec<Block>,
+) -> Result<usize, ChainError> {
+    let size = blocks.len();
+    let mut numbers_and_hashes = blocks
+        .iter()
+        .map(|b| (b.header.number, b.hash()))
+        .collect::<Vec<_>>();
+    let first_parent = blocks.first().map(|b| b.header.parent_hash);
+    add_chain_blocks(store, blockchain, blocks).await?;
+
+    let Some((head_number, head_hash)) = numbers_and_hashes.pop() else {
+        return Ok(size);
+    };
+
+    // The blocks below this chain that are in the store but not canonical. A chain
+    // that failed leaves the ones ahead of its failed block that way, and the
+    // forkchoice update only marks the blocks it is given, so without them the
+    // canonical chain would have a gap. It is one header read for each of them.
+    let mut ancestor = first_parent;
+    while let Some(hash) = ancestor {
+        let Some(header) = store.get_block_header_by_hash(hash)? else {
+            break;
+        };
+        if store.get_canonical_block_hash(header.number).await? == Some(hash) {
+            break;
+        }
+        numbers_and_hashes.push((header.number, hash));
+        ancestor = (header.number > 0).then_some(header.parent_hash);
+    }
+
+    // Make head canonical and label all special blocks correctly.
+    store
+        .forkchoice_update(
+            numbers_and_hashes,
+            head_number,
+            head_hash,
+            Some(head_number),
+            Some(head_number),
+        )
+        .await?;
+
+    Ok(size)
+}
+
+/// Executes and stores the blocks of a chain that are not in the store yet.
+///
+/// The first blocks of a long chain are queued and added in batches. A block that is
+/// rejected before it is executed does not drop the ones queued ahead of it: they are
+/// added first, so they are in the store when the error is returned.
+async fn add_chain_blocks(
+    store: &Store,
+    blockchain: &Blockchain,
+    blocks: Vec<Block>,
+) -> Result<(), ChainError> {
+    const IMPORT_BATCH_SIZE: usize = 1024;
+    // This value is higher than the spec (128) as the latter block's state nodes will be kept in memory and not committed when using rocksdb
+    // This means we need to run some extra-blocks to ensure we commit their state and don't need to regenerate the full block range upon node restart
+    const MIN_FULL_BLOCKS: usize = 132;
+
+    let mut block_batch: Vec<Block> = vec![];
+    let size = blocks.len();
+    // Execute block by block
+    let mut last_progress_log = Instant::now();
+    for (index, block) in blocks.into_iter().enumerate() {
+        let hash = block.hash();
+        let number = block.header.number;
+
+        // Log progress every 10 seconds
+        if last_progress_log.elapsed() >= Duration::from_secs(10) {
+            let processed = index + 1;
+            let percent = (((processed as f64 / size as f64) * 100.0) * 10.0).round() / 10.0;
+            info!(processed, total = size, percent, "Import progress");
+            last_progress_log = Instant::now();
+        }
+
+        // Check if the block is already in the blockchain, if it is do nothing, if not add it
+        if store.get_block_number(hash).await?.is_some() {
+            info!("Block {hash:#x} is already in the blockchain");
+            continue;
+        }
+
+        if let Err(err) = check_before_adding(store, &block, &block_batch).await {
+            add_queued_blocks(blockchain, &mut block_batch).await?;
+            return Err(err);
+        }
+
+        if index + MIN_FULL_BLOCKS < size {
+            block_batch.push(block);
+            if block_batch.len() >= IMPORT_BATCH_SIZE {
+                add_queued_blocks(blockchain, &mut block_batch).await?;
+            }
+        } else {
+            // We need to have the state of the latest 128 blocks
+            add_queued_blocks(blockchain, &mut block_batch).await?;
+            blockchain
+                .add_block_pipeline_bounded(block, None, DB_COMMIT_THRESHOLD)
+                .inspect_err(|_| warn!("Failed to add block {number} with hash {hash:#x}"))?;
+        }
+    }
+
+    // Nothing is left here unless the chain ended on blocks that were already stored.
+    add_queued_blocks(blockchain, &mut block_batch).await
+}
+
+/// The checks a block passes before it is executed: its parent is known and its body
+/// matches its header. `queued` are the blocks queued ahead of it, which have not
+/// reached the store yet.
+///
+/// The parent is checked here because adding a block whose parent is unknown keeps it
+/// in the store as a pending block, and a chain of another network would leave one
+/// for each of its blocks.
+async fn check_before_adding(
+    store: &Store,
+    block: &Block,
+    queued: &[Block],
+) -> Result<(), ChainError> {
+    let parent_hash = block.header.parent_hash;
+    // The last queued block first: it is the parent in a chain without branches.
+    let parent_is_known = queued
+        .iter()
+        .rev()
+        .any(|queued| queued.hash() == parent_hash)
+        || store.get_block_number(parent_hash).await?.is_some();
+    if !parent_is_known {
+        if block.header.number == 1 {
+            // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
+            warn!(
+                "The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"
+            );
+        }
+        return Err(ChainError::ParentNotFound);
+    }
+    validate_block_body(&block.header, &block.body, &ethrex_crypto::NativeCrypto)
+        .map_err(InvalidBlockError::InvalidBody)?;
+    Ok(())
+}
+
+/// Adds the queued blocks of a chain to the store, in a batch.
+async fn add_queued_blocks(
+    blockchain: &Blockchain,
+    queued: &mut Vec<Block>,
+) -> Result<(), ChainError> {
+    if queued.is_empty() {
+        return Ok(());
+    }
+    blockchain
+        .add_blocks_in_batch(mem::take(queued), &[], CancellationToken::new())
+        .await
+        .map_err(|(err, _)| err)
 }
 
 pub async fn import_blocks_bench(
@@ -1214,25 +1390,22 @@ pub async fn import_blocks_bench(
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
     let chains: Vec<Vec<Block>> = if path_metadata.is_dir() {
         info!(path = %path, "Importing blocks from directory");
-        let mut entries: Vec<_> = read_dir(path)
-            .expect("Failed to read blocks directory")
-            .map(|res| res.expect("Failed to open file in directory").path())
-            .collect();
-
-        // Sort entries to process files in order (e.g., 1.rlp, 2.rlp, ...)
-        entries.sort();
-
-        entries
+        // The files `import` reads, in the same order.
+        chain_files_in_dir(Path::new(path))?
             .iter()
             .map(|entry| {
-                let path_str = entry.to_str().expect("Couldn't convert path to string");
-                info!(path = %path_str, "Importing blocks from file");
-                utils::read_chain_file(path_str)
+                info!(path = %entry.display(), "Importing blocks from file");
+                utils::read_chain_file(entry).unwrap_or_else(|e| {
+                    panic!("failed to read chain file {}: {e:#}", entry.display())
+                })
             })
             .collect()
     } else {
         info!(path = %path, "Importing blocks from file");
-        vec![utils::read_chain_file(path)]
+        vec![
+            utils::read_chain_file(Path::new(path))
+                .unwrap_or_else(|e| panic!("failed to read chain file {path}: {e:#}")),
+        ]
     };
 
     // Pre-load all BALs into memory upfront to avoid per-block I/O during benchmark.
@@ -1515,6 +1688,18 @@ mod tests {
     use super::*;
     use clap::Parser;
     use ethrex_rpc::RpcNamespace;
+
+    /// Numbered chain files import in numeric order whether or not their names are
+    /// zero-padded, ahead of any other files.
+    #[test]
+    fn chain_files_sort_by_number_then_name() {
+        let mut files = ["b.rlp", "10.rlp", "a.rlp", "2.rlp", "0001.rlp"].map(PathBuf::from);
+        files.sort_by_cached_key(|path| chain_file_sort_key(path));
+        assert_eq!(
+            files,
+            ["0001.rlp", "2.rlp", "10.rlp", "a.rlp", "b.rlp"].map(PathBuf::from)
+        );
+    }
 
     /// `--http.addr` must default to `127.0.0.1` so a fresh install on a public
     /// host is not exposed to the open internet.
