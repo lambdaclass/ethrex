@@ -135,7 +135,7 @@ endif
 # would make `git fetch` take the default branch and build a hive other than
 # the pinned one without saying so, hence the check.
 setup-hive: ## 🐝 Set up Hive testing framework
-	@test -n "$(HIVE_BRANCH)" || { echo "setup-hive: no hive_version in $(HIVE_PINS)"; exit 1; }
+	@test -n "$(HIVE_BRANCH)" || { echo "setup-hive: no hive commit for this simulation in $(HIVE_PINS)"; exit 1; }
 	if [ ! -d "hive" ]; then git clone https://github.com/ethereum/hive; fi
 	cd hive && \
 		git fetch origin $(HIVE_BRANCH) && \
