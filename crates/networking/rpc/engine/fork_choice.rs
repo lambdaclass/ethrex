@@ -688,13 +688,8 @@ fn validate_attributes_v4(
     head_block: &BlockHeader,
     context: &RpcApiContext,
 ) -> Result<(), RpcErr> {
-    // Similar validation to V3
-    let chain_config = context.storage.get_chain_config();
-    if !chain_config.is_amsterdam_activated(attributes.timestamp) {
-        return Err(RpcErr::InvalidPayloadAttributes(
-            "V4 payload attributes used for pre-Amsterdam timestamp".to_string(),
-        ));
-    }
+    // Similar validation to V3: structure checks first (-38003), then the
+    // fork check (-38005), per execution-apis amsterdam.md §1.1 then §1.2.
     if attributes.withdrawals.is_none() {
         return Err(RpcErr::InvalidPayloadAttributes(
             "V4 payload attributes missing withdrawals".to_string(),
@@ -703,6 +698,12 @@ fn validate_attributes_v4(
     if attributes.parent_beacon_block_root.is_none() {
         return Err(RpcErr::InvalidPayloadAttributes(
             "V4 payload attributes missing parent_beacon_block_root".to_string(),
+        ));
+    }
+    let chain_config = context.storage.get_chain_config();
+    if !chain_config.is_amsterdam_activated(attributes.timestamp) {
+        return Err(RpcErr::UnsupportedFork(
+            "V4 payload attributes used for pre-Amsterdam timestamp".to_string(),
         ));
     }
     // execution-apis#796: target_gas_limit is required on V4 and enforced at
