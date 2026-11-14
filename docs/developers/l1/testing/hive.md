@@ -287,7 +287,7 @@ flags=--sim.parallelism 4 --sim.loglevel 3 --docker.buildoutput --sim.buildarg t
 hive_version=<hive_version>
 ```
 
-The root `Makefile` reads `tag` and `hive_version` from the same file, so `make setup-hive` checks out the hive commit CI runs and the local `run-hive-eels*` targets run the image CI runs. With `SIMULATION=ethereum/rpc-compat` it takes rpc-compat's own hive commit and execution-apis commit instead, as CI does. Set `HIVE_BRANCH` to a branch or another commit to try a different hive.
+The root `Makefile` reads `tag` and `hive_version` from the same file, so `make setup-hive` checks out the hive commit CI runs and the local `run-hive-eels*` targets run the image CI runs. With `SIMULATION=ethereum/rpc-compat` or `SIMULATION=ethereum/eels/consume-wirex`, `make run-hive` takes that simulator's own pins instead, as CI does. Set `HIVE_BRANCH` to a branch or another commit to try a different hive.
 
 ### Fixtures URL Files
 
