@@ -1213,46 +1213,39 @@ async fn import_chain(
         .iter()
         .map(|b| (b.header.number, b.hash()))
         .collect::<Vec<_>>();
-    let first_parent = blocks
-        .first()
-        .map(|b| (b.header.number, b.header.parent_hash));
+    let first_parent = blocks.first().map(|b| b.header.parent_hash);
     add_chain_blocks(store, blockchain, blocks).await?;
+
+    let Some((head_number, head_hash)) = numbers_and_hashes.pop() else {
+        return Ok(size);
+    };
 
     // The blocks below this chain that are in the store but not canonical. A chain
     // that failed leaves the ones ahead of its failed block that way, and the
     // forkchoice update only marks the blocks it is given, so without them the
-    // canonical chain would have a gap.
-    if let Some((mut number, mut hash)) = first_parent {
-        while number > 0 {
-            number -= 1;
-            if store.get_canonical_block_hash(number).await? == Some(hash) {
-                break;
-            }
-            let Some(header) = store.get_block_header_by_hash(hash)? else {
-                break;
-            };
-            numbers_and_hashes.push((number, hash));
-            hash = header.parent_hash;
+    // canonical chain would have a gap. It is one header read for each of them.
+    let mut ancestor = first_parent;
+    while let Some(hash) = ancestor {
+        let Some(header) = store.get_block_header_by_hash(hash)? else {
+            break;
+        };
+        if store.get_canonical_block_hash(header.number).await? == Some(hash) {
+            break;
         }
+        numbers_and_hashes.push((header.number, hash));
+        ancestor = (header.number > 0).then_some(header.parent_hash);
     }
 
     // Make head canonical and label all special blocks correctly.
-    if let Some((head_number, head_hash)) = numbers_and_hashes
-        .iter()
-        .copied()
-        .max_by_key(|(number, _)| *number)
-    {
-        numbers_and_hashes.retain(|(number, _)| *number != head_number);
-        store
-            .forkchoice_update(
-                numbers_and_hashes,
-                head_number,
-                head_hash,
-                Some(head_number),
-                Some(head_number),
-            )
-            .await?;
-    }
+    store
+        .forkchoice_update(
+            numbers_and_hashes,
+            head_number,
+            head_hash,
+            Some(head_number),
+            Some(head_number),
+        )
+        .await?;
 
     Ok(size)
 }
