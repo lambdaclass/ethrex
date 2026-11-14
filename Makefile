@@ -123,14 +123,21 @@ hive_pin = $(shell sed -n 's/^$(1): *//p' $(HIVE_PINS))
 # The hive commit CI runs. Override with a branch or another commit to try one.
 # rpc-compat has its own hive commit and execution-apis commit, and
 # consume-wirex its own hive commit and image, as in CI; the pin file says why.
-ifeq ($(SIMULATION),ethereum/rpc-compat)
+# The simulator is the one `run-hive` (SIMULATION) or `run-hive-eels` (EELS_SIM)
+# is given.
+HIVE_SIM := $(or $(SIMULATION),$(EELS_SIM))
+ifeq ($(HIVE_SIM),ethereum/rpc-compat)
 HIVE_BRANCH ?= $(call hive_pin,rpc_compat_hive_version)
 SIM_BUILDARG_FLAG = --sim.buildarg "branch=$(call hive_pin,rpc_compat_branch)"
-else ifeq ($(SIMULATION),ethereum/eels/consume-wirex)
+else ifeq ($(HIVE_SIM),ethereum/eels/consume-wirex)
 HIVE_BRANCH ?= $(call hive_pin,consume_wirex_hive_version)
-SIM_BUILDARG_FLAG = --sim.buildarg "tag=$(call hive_pin,consume_wirex_tag)"
+HIVE_EELS_TAG ?= $(call hive_pin,consume_wirex_tag)
 else
 HIVE_BRANCH ?= $(call hive_pin,hive_version)
+endif
+# An EELS simulator takes its image tag also when `run-hive` runs it.
+ifneq ($(filter ethereum/eels/%,$(SIMULATION)),)
+SIM_BUILDARG_FLAG = --sim.buildarg "tag=$(HIVE_EELS_TAG)"
 endif
 
 # Fetching the ref and checking out FETCH_HEAD works for a commit and for a
