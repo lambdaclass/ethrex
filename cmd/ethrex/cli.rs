@@ -1160,19 +1160,25 @@ fn chain_files_in_dir(dir: &Path) -> Result<Vec<PathBuf>, ChainError> {
     let read_err = |e: io::Error| {
         ChainError::Custom(format!("failed to read directory {}: {e}", dir.display()))
     };
-    let mut files = read_dir(dir)
+    let entries = read_dir(dir)
         .map_err(read_err)?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<Result<Vec<_>, _>>()
         .map_err(read_err)?;
-    files.retain(|path| {
+    let mut chain_files = Vec::with_capacity(entries.len());
+    for path in entries {
         let hidden = path
             .file_name()
             .is_some_and(|name| name.to_string_lossy().starts_with('.'));
-        path.is_file() && !hidden
-    });
-    files.sort_by_cached_key(|path| chain_file_sort_key(path));
-    Ok(files)
+        // An entry that cannot be inspected is an error, not an entry to leave out:
+        // it may be a chain file, and the import would report success without it.
+        let is_file = metadata(&path).map_err(read_err)?.is_file();
+        if is_file && !hidden {
+            chain_files.push(path);
+        }
+    }
+    chain_files.sort_by_cached_key(|path| chain_file_sort_key(path));
+    Ok(chain_files)
 }
 
 /// Orders files whose name is a number (`2.rlp` before `10.rlp`, and zero-padded
