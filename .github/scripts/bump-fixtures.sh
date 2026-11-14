@@ -83,8 +83,9 @@ fi
 is_release "$new" || die "not a tests@ release version: $new (expected the form v21.0.3)"
 [[ -z $new_zkevm ]] || is_release "$new_zkevm" || die "not a tests-zkevm release version: $new_zkevm"
 
-if [[ $new == "$old" && -z $new_zkevm ]]; then
-    echo "bump-fixtures: already at tests@$old"
+old_zkevm=$(pin zkevm_release)
+if [[ $new == "$old" && ${new_zkevm:-$old_zkevm} == "$old_zkevm" ]]; then
+    echo "bump-fixtures: already at tests@$old and tests-zkevm@$old_zkevm"
     exit 0
 fi
 if [[ $(printf '%s\n%s\n' "$old" "$new" | sort -V | tail -1) != "$new" ]]; then
@@ -93,12 +94,15 @@ fi
 
 # The release has to ship the bundle the runners download.
 bundle="https://github.com/$SPECS/releases/download/tests%40$new/fixtures.tar.gz"
-curl -fsIL -o /dev/null "$bundle" || die "tests@$new has no fixtures.tar.gz at $bundle"
+[[ $new == "$old" ]] || curl -fsIL -o /dev/null "$bundle" || die "tests@$new has no fixtures.tar.gz at $bundle"
 
 # Every simulator image has to exist at the release tag, or its hive job fails
-# while building the simulator, before running a test.
+# while building the simulator, before running a test. A release that is
+# already pinned is not checked again.
 missing=()
-for simulator in "${SIMULATORS[@]}"; do
+simulators=("${SIMULATORS[@]}")
+[[ $new != "$old" ]] || simulators=()
+for simulator in ${simulators[@]+"${simulators[@]}"}; do
     repository="ethereum/execution-specs/hive/$simulator"
     token=$(curl -fsS "https://ghcr.io/token?scope=repository:$repository:pull" |
         sed -n 's/.*"token":"\([^"]*\)".*/\1/p') || true
@@ -115,7 +119,6 @@ if [[ ${#missing[@]} -gt 0 ]]; then
 fi
 
 # The base of a zkEVM release is stated in its notes: "Is based on tests@vX.Y.Z".
-old_zkevm=$(sed -n 's|.*/download/tests-zkevm%40\(v[0-9][0-9.]*\)/.*|\1|p' "$ZKEVM_URL")
 old_zkevm_base=$(pin zkevm_base)
 new_zkevm_base=$old_zkevm_base
 if [[ -n $new_zkevm ]]; then
@@ -156,7 +159,11 @@ row() {
     if [[ $2 == "$3" ]]; then echo "| $1 | \`$2\` | unchanged |"; else echo "| $1 | \`$2\` | \`$3\` |"; fi
 }
 summary=$(
-    echo "Bump of the EF fixture pins from \`tests@$old\` to \`tests@$new\`."
+    if [[ $new == "$old" ]]; then
+        echo "Bump of the zkEVM fixture bundle from \`tests-zkevm@$old_zkevm\` to \`tests-zkevm@$new_zkevm\`."
+    else
+        echo "Bump of the EF fixture pins from \`tests@$old\` to \`tests@$new\`."
+    fi
     echo
     echo "| | from | to |"
     echo "|---|---|---|"
@@ -164,13 +171,17 @@ summary=$(
     row "zkEVM bundle" "tests-zkevm@$old_zkevm" "tests-zkevm@${new_zkevm:-$old_zkevm}"
     row "zkEVM bundle base" "tests@$old_zkevm_base" "tests@$new_zkevm_base"
     echo
-    echo "Release notes: https://github.com/$SPECS/releases/tag/tests%40$new"
-    echo
-    echo "Simulator images checked at \`$new\`: ${SIMULATORS[*]}."
+    if [[ $new == "$old" ]]; then
+        echo "Release notes: https://github.com/$SPECS/releases/tag/tests-zkevm%40$new_zkevm"
+    else
+        echo "Release notes: https://github.com/$SPECS/releases/tag/tests%40$new"
+        echo
+        echo "Simulator images checked at \`$new\`: ${SIMULATORS[*]}."
+    fi
     echo
     echo "consume-wirex does not move with this bump: it runs the image pinned in \`consume_wirex_tag\`, with the fixtures that image was built from, until that pin is moved by hand."
     echo
-    echo "**Before merging:** check the release notes for forks or networks the ef-test runners do not know yet, and review the wording of the Fixtures line in \`$ROADMAP\`, which this script only re-versions."
+    echo "**Before merging:** check the release notes for forks or networks the ef-test runners do not know yet, and review the Fixtures and Status lines in \`$ROADMAP\`, which this script only re-versions: the Status line says the suites are green on the new bundle, so reword it if this pull request's CI says otherwise."
 )
 echo "$summary"
 if [[ -n ${BUMP_FIXTURES_SUMMARY:-} ]]; then
