@@ -4,7 +4,7 @@
 //! named networks, its own flag, an RPC namespace, and a mempool rule. The
 //! tests check each one separately, and then all of them on a running node.
 
-use std::sync::Arc;
+use std::{net::Ipv4Addr, sync::Arc};
 
 use clap::CommandFactory;
 use ethrex::{
@@ -14,13 +14,15 @@ use ethrex::{
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, MempoolPolicy, error::MempoolError};
 use ethrex_common::{
-    Address, H160, U256,
-    types::{BlockHeader, EIP1559Transaction, Genesis, Transaction, TxKind},
+    Address, H160, H512, U256,
+    types::{BlockHeader, EIP1559Transaction, Genesis, P2PTransaction, Transaction, TxKind},
 };
 use ethrex_config::networks::{
     LOCAL_DEVNET_GENESIS_CONTENTS, LOCAL_DEVNET_PRIVATE_KEYS, Network, NetworkPreset, PublicNetwork,
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
+use ethrex_p2p::{rlpx::eth::transactions::PooledTransactions, types::Node as Peer};
 use ethrex_rpc::{
     RpcApiContext, RpcErr, RpcExtension, RpcExtensionFuture, RpcExtensions, RpcStartupError,
     map_http_requests,
@@ -534,6 +536,32 @@ async fn mempool_policy_does_not_reject_what_it_admits() {
     );
 }
 
+/// A transaction the policy rejects is skipped when a peer sends it. Handling the
+/// message is not an error, and an error is what a peer is disconnected for.
+#[tokio::test]
+async fn mempool_policy_rejection_is_not_held_against_the_peer() {
+    let genesis: Genesis = serde_json::from_str(LOCAL_DEVNET_GENESIS_CONTENTS).unwrap();
+    let tx = signed_transfer_tx(100_001, 0, genesis.config.chain_id).await;
+    let hash = tx.hash(&NativeCrypto);
+    let Transaction::EIP1559Transaction(sent) = tx else {
+        unreachable!("signed_transfer_tx builds a fee-market transaction")
+    };
+    let peer = Peer::new(Ipv4Addr::LOCALHOST.into(), 30303, 30303, H512::zero());
+    let message = PooledTransactions::new(1, vec![P2PTransaction::EIP1559Transaction(sent)]);
+
+    // Without a policy the transaction enters the pool: nothing else is wrong with it.
+    let plain = blockchain_with(None).await;
+    let handled = message.clone().handle(&peer, &plain, false).await;
+    assert!(handled.is_ok(), "{handled:?}");
+    assert!(plain.mempool.contains_tx(hash).unwrap());
+
+    // With the policy it is left out, and the message is still handled without error.
+    let strict = blockchain_with(Some(Arc::new(MaxTxGas(100_000)))).await;
+    let handled = message.handle(&peer, &strict, false).await;
+    assert!(handled.is_ok(), "{handled:?}");
+    assert!(!strict.mempool.contains_tx(hash).unwrap());
+}
+
 #[tokio::test]
 async fn no_policy_means_no_policy_rejection() {
     let blockchain = blockchain_with(None).await;
@@ -569,7 +597,13 @@ async fn rpc(port: &str, method: &str, params: Value) -> Value {
         .unwrap()
 }
 
+/// A signed transfer as `eth_sendRawTransaction` takes it.
 async fn signed_transfer(gas_limit: u64, nonce: u64, chain_id: u64) -> String {
+    let tx = signed_transfer_tx(gas_limit, nonce, chain_id).await;
+    format!("0x{}", hex::encode(tx.encode_canonical_to_vec()))
+}
+
+async fn signed_transfer_tx(gas_limit: u64, nonce: u64, chain_id: u64) -> Transaction {
     let key = LOCAL_DEVNET_PRIVATE_KEYS.lines().next().unwrap();
     let key = SecretKey::from_slice(&hex::decode(key.trim_start_matches("0x")).unwrap()).unwrap();
     let signer: Signer = LocalSigner::new(key).into();
@@ -584,7 +618,7 @@ async fn signed_transfer(gas_limit: u64, nonce: u64, chain_id: u64) -> String {
         ..Default::default()
     });
     tx.sign_inplace(&signer).await.unwrap();
-    format!("0x{}", hex::encode(tx.encode_canonical_to_vec()))
+    tx
 }
 
 /// A node started from the example chain's command line, in memory and without p2p.

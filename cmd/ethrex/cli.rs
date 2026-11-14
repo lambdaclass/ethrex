@@ -61,7 +61,7 @@ pub fn compute_effective_datadir(base: &Path, network: &Network, dev: bool) -> P
 }
 
 /// The part of the `--network` help that holds for every binary built from this
-/// crate, whatever networks it adds.
+/// crate, whatever networks it adds. A macro because `concat!` takes literals.
 macro_rules! network_long_help {
     () => {
         "Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi, plataberget and mainnet."
