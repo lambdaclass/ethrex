@@ -81,6 +81,27 @@ fn with_bad_state_root(block: &Block) -> Block {
     Block::new(header, block.body.clone())
 }
 
+/// `block` with a transactions root that its body does not have. The import rejects it
+/// before executing it.
+fn with_bad_body(block: &Block) -> Block {
+    let header = BlockHeader {
+        hash: Default::default(),
+        transactions_root: H256::repeat_byte(0xcd),
+        ..block.header.clone()
+    };
+    Block::new(header, block.body.clone())
+}
+
+/// `block` on a parent that no chain has.
+fn with_unknown_parent(block: &Block) -> Block {
+    let header = BlockHeader {
+        hash: Default::default(),
+        parent_hash: H256::repeat_byte(0xef),
+        ..block.header.clone()
+    };
+    Block::new(header, block.body.clone())
+}
+
 /// Writes `blocks` to the chain file `name` in `dir`.
 fn write_chain_file(dir: &Path, name: &str, blocks: &[Block]) {
     let bytes: Vec<u8> = blocks
@@ -197,8 +218,30 @@ async fn directory_import_keeps_the_blocks_before_a_failed_block_of_a_batch_cano
     assert_canonical_chain(datadir.path(), &blocks).await;
 }
 
-/// A file that fails without having stored a block leaves the head where it was, even
-/// if its first blocks were already in the store.
+/// A block that is rejected before it is executed, here for its body, does not drop
+/// the blocks of the batch that were queued ahead of it: they are stored, and a later
+/// file builds on them.
+#[tokio::test]
+async fn directory_import_stores_the_blocks_queued_before_a_block_it_rejects() {
+    let genesis = genesis_fixture("execution-api.json");
+    let blocks = built_chain(&genesis, 140).await;
+    let blocks_dir = tempfile::tempdir().unwrap();
+    let mut failing = blocks.clone();
+    failing[4] = with_bad_body(&blocks[4]);
+    write_chain_file(blocks_dir.path(), "0001.rlp", &failing);
+    write_chain_file(blocks_dir.path(), "0002.rlp", &blocks[4..]);
+    let datadir = tempfile::tempdir().unwrap();
+
+    let err = import(blocks_dir.path(), datadir.path(), genesis)
+        .await
+        .expect_err("a directory with a failing file reports failure");
+    assert_eq!(err.to_string(), "1 of 2 files failed to import");
+
+    assert_canonical_chain(datadir.path(), &blocks).await;
+}
+
+/// A file that fails leaves the head where it was, also when its first blocks were
+/// already in the store.
 #[tokio::test]
 async fn directory_import_leaves_the_head_when_a_failed_file_stored_nothing() {
     let (blocks, genesis) = chain_and_genesis();
@@ -242,12 +285,19 @@ async fn directory_import_stops_on_a_database_failure() {
         err.to_string().contains("state root missing for block 4"),
         "unexpected error: {err}"
     );
+
+    // The import stopped there: the next file was not tried.
+    let store = load_store(datadir.path()).await.unwrap();
+    assert_eq!(
+        store.get_block_number(blocks[5].hash()).await.unwrap(),
+        None
+    );
 }
 
-/// Files whose block 1 does not build on the genesis block belong to another network,
-/// where no file can be imported, so a directory import stops at the first of them.
+/// The files of another network all fail, since no block of theirs builds on the
+/// genesis block, and none of their blocks is kept in the store as a pending block.
 #[tokio::test]
-async fn directory_import_stops_at_a_chain_of_another_network() {
+async fn directory_import_of_another_network_keeps_no_pending_blocks() {
     let (blocks, mut genesis) = chain_and_genesis();
     genesis.nonce += 1;
     let blocks_dir = tempfile::tempdir().unwrap();
@@ -259,12 +309,10 @@ async fn directory_import_stops_at_a_chain_of_another_network() {
     let err = import(blocks_dir.path(), datadir.path(), genesis)
         .await
         .expect_err("a chain of another network fails the import");
-    assert!(
-        err.to_string().contains("does not build on the genesis"),
-        "unexpected error: {err}"
-    );
+    assert_eq!(err.to_string(), "3 of 3 files failed to import");
 
     let store = load_store(datadir.path()).await.unwrap();
+    assert_eq!(store.get_latest_block_number().unwrap(), 0);
     for block in &blocks[..3] {
         assert!(
             store
@@ -276,6 +324,39 @@ async fn directory_import_stops_at_a_chain_of_another_network() {
             block.header.number
         );
     }
+}
+
+/// A first block on an unknown parent is one block the import rejects, not a sign that
+/// every file is of another network: the files after it still import.
+#[tokio::test]
+async fn directory_import_continues_past_a_first_block_on_an_unknown_parent() {
+    let (blocks, genesis) = chain_and_genesis();
+    let blocks_dir = tempfile::tempdir().unwrap();
+    let rejected = with_unknown_parent(&blocks[0]);
+    write_chain_file(
+        blocks_dir.path(),
+        "0001.rlp",
+        std::slice::from_ref(&rejected),
+    );
+    write_chain_file(blocks_dir.path(), "0002.rlp", &blocks[..1]);
+    write_chain_file(blocks_dir.path(), "0003.rlp", &blocks[1..2]);
+    let datadir = tempfile::tempdir().unwrap();
+
+    let err = import(blocks_dir.path(), datadir.path(), genesis)
+        .await
+        .expect_err("a directory with a failing file reports failure");
+    assert_eq!(err.to_string(), "1 of 3 files failed to import");
+
+    assert_canonical_chain(datadir.path(), &blocks[..2]).await;
+    let store = load_store(datadir.path()).await.unwrap();
+    assert!(
+        store
+            .get_pending_block(rejected.hash())
+            .await
+            .unwrap()
+            .is_none(),
+        "the rejected block was not kept as pending"
+    );
 }
 
 /// A directory import reads the chain files only, not the hidden files and the

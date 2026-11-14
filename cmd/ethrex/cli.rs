@@ -1095,27 +1095,12 @@ pub async fn import_blocks(
         vec![PathBuf::from(path)]
     };
 
-    let genesis_hash = store.get_canonical_block_hash(0).await?;
     let mut total_blocks_imported = 0;
     let mut failed_files = 0;
     for file in &files {
         info!(path = %file.display(), "Importing blocks from file");
         let result = match utils::read_chain_file(file) {
-            Ok(blocks) => {
-                // A block 1 that does not build on the genesis block means the files are
-                // of another network. None of them would import, and each attempt would
-                // leave its block in the store as pending, so a directory import stops.
-                let other_network = blocks.iter().any(|block| {
-                    block.header.number == 1 && Some(block.header.parent_hash) != genesis_hash
-                });
-                if is_dir && other_network {
-                    return Err(ChainError::Custom(format!(
-                        "{} does not build on the genesis block. Are you sure you selected the correct network?",
-                        file.display()
-                    )));
-                }
-                import_chain(&store, &blockchain, blocks).await
-            }
+            Ok(blocks) => import_chain(&store, &blockchain, blocks).await,
             Err(e) => Err(ChainError::Custom(format!(
                 "failed to read chain file {}: {e:#}",
                 file.display()
@@ -1196,6 +1181,9 @@ fn chain_file_sort_key(path: &Path) -> (bool, Option<u64>, PathBuf) {
 /// imported. Such a failure would recur for every remaining file, so a directory
 /// import stops instead of skipping the file. The store errors raised while a block
 /// executes, the missing state of its parent among them, arrive as EVM errors.
+///
+/// A block whose parent is not in the store is not such a failure: it is what the
+/// blocks built on a rejected block get, and the files after them can still import.
 fn is_store_failure(err: &ChainError) -> bool {
     matches!(
         err,
@@ -1268,6 +1256,10 @@ async fn import_chain(
 }
 
 /// Executes and stores the blocks of a chain that are not in the store yet.
+///
+/// The first blocks of a long chain are queued and added in batches. A block that is
+/// rejected before it is executed does not drop the ones queued ahead of it: they are
+/// added first, so they are in the store when the error is returned.
 async fn add_chain_blocks(
     store: &Store,
     blockchain: &Blockchain,
@@ -1278,7 +1270,7 @@ async fn add_chain_blocks(
     // This means we need to run some extra-blocks to ensure we commit their state and don't need to regenerate the full block range upon node restart
     const MIN_FULL_BLOCKS: usize = 132;
 
-    let mut block_batch = vec![];
+    let mut block_batch: Vec<Block> = vec![];
     let size = blocks.len();
     // Execute block by block
     let mut last_progress_log = Instant::now();
@@ -1300,30 +1292,70 @@ async fn add_chain_blocks(
             continue;
         }
 
-        validate_block_body(&block.header, &block.body, &ethrex_crypto::NativeCrypto)
-            .map_err(InvalidBlockError::InvalidBody)?;
+        if let Err(err) = check_before_adding(store, &block, block_batch.last()).await {
+            add_queued_blocks(blockchain, &mut block_batch).await?;
+            return Err(err);
+        }
 
         if index + MIN_FULL_BLOCKS < size {
             block_batch.push(block);
-            if block_batch.len() >= IMPORT_BATCH_SIZE || index + MIN_FULL_BLOCKS + 1 == size {
-                blockchain
-                    .add_blocks_in_batch(mem::take(&mut block_batch), &[], CancellationToken::new())
-                    .await
-                    .map_err(|(err, _)| err)?;
+            if block_batch.len() >= IMPORT_BATCH_SIZE {
+                add_queued_blocks(blockchain, &mut block_batch).await?;
             }
         } else {
             // We need to have the state of the latest 128 blocks
+            add_queued_blocks(blockchain, &mut block_batch).await?;
             blockchain
                 .add_block_pipeline_bounded(block, None, DB_COMMIT_THRESHOLD)
-                .inspect_err(|err| match err {
-                    // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
-                    ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
-                    _ => warn!("Failed to add block {number} with hash {hash:#x}"),
-                })?;
+                .inspect_err(|_| warn!("Failed to add block {number} with hash {hash:#x}"))?;
         }
     }
 
+    // Nothing is left here unless the chain ended on blocks that were already stored.
+    add_queued_blocks(blockchain, &mut block_batch).await
+}
+
+/// The checks a block passes before it is executed: its parent is known and its body
+/// matches its header. `queued` is the block queued ahead of it, if any, which has not
+/// reached the store yet.
+///
+/// The parent is checked here because adding a block whose parent is unknown keeps it
+/// in the store as a pending block, and a chain of another network would leave one
+/// for each of its blocks.
+async fn check_before_adding(
+    store: &Store,
+    block: &Block,
+    queued: Option<&Block>,
+) -> Result<(), ChainError> {
+    let parent_hash = block.header.parent_hash;
+    let parent_is_known = queued.is_some_and(|queued| queued.hash() == parent_hash)
+        || store.get_block_number(parent_hash).await?.is_some();
+    if !parent_is_known {
+        if block.header.number == 1 {
+            // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
+            warn!(
+                "The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"
+            );
+        }
+        return Err(ChainError::ParentNotFound);
+    }
+    validate_block_body(&block.header, &block.body, &ethrex_crypto::NativeCrypto)
+        .map_err(InvalidBlockError::InvalidBody)?;
     Ok(())
+}
+
+/// Adds the queued blocks of a chain to the store, in a batch.
+async fn add_queued_blocks(
+    blockchain: &Blockchain,
+    queued: &mut Vec<Block>,
+) -> Result<(), ChainError> {
+    if queued.is_empty() {
+        return Ok(());
+    }
+    blockchain
+        .add_blocks_in_batch(mem::take(queued), &[], CancellationToken::new())
+        .await
+        .map_err(|(err, _)| err)
 }
 
 pub async fn import_blocks_bench(
