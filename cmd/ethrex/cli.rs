@@ -1112,7 +1112,12 @@ pub async fn import_blocks(
                 warn!(path = %file.display(), %err, "Skipping file that failed to import");
                 failed_files += 1;
             }
-            Err(err) => return Err(err),
+            Err(err) => {
+                if is_dir {
+                    warn!(path = %file.display(), %err, "Stopping the import at a file that failed with a database error");
+                }
+                return Err(err);
+            }
         }
     }
 
@@ -1183,6 +1188,11 @@ fn chain_file_sort_key(path: &Path) -> (bool, Option<u64>, PathBuf) {
 /// imported. Such a failure would recur for every remaining file, so a directory
 /// import stops instead of skipping the file. The store errors raised while a block
 /// executes, the missing state of its parent among them, arrive as EVM errors.
+///
+/// A missing parent state stops the import on purpose, although it can also be the
+/// state of one old block that is no longer held: the error does not tell the two
+/// apart, and skipping it would report a database that lost state as a list of
+/// failed files.
 ///
 /// A block whose parent is not in the store is not such a failure: it is what the
 /// blocks built on a rejected block get, and the files after them can still import.
