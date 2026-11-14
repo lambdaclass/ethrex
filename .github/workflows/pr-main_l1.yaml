@@ -321,7 +321,7 @@ jobs:
           ethereum_package_args: ${{ matrix.ethereum_package_args }}
 
   run-hive:
-    name: Hive - ${{ matrix.name }}
+    name: Hive - ${{ matrix.name || format('Consume EngineX ({0})', matrix.fork) }}
     runs-on: ubuntu-26.04
     needs: [detect-changes, docker_build]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
@@ -330,6 +330,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # consume-enginex runs the test vectors of consume-engine in the engine_x
+        # fixture format: tests that share a pre-allocation reuse one client
+        # instead of starting a client per test, which makes the run several
+        # times faster. It runs once for each fork in `fork`, each run on a
+        # runner of its own, and together the runs cover the whole fixture
+        # release pinned in .github/config/hive/pins.yaml, which carries every
+        # fork through Amsterdam. A test id names its fork as `fork_<Name>`, and
+        # a transition fork, such as `fork_PragueToOsakaAtTime15k`, runs with the
+        # fork it starts from; `BPO` takes BPO1, BPO2 and whatever follows them.
+        # A fork that a release adds has to be added to `fork`, or its tests do
+        # not run.
+        simulation: [ethereum/eels/consume-enginex]
+        fork: [Paris, Shanghai, Cancun, Prague, Osaka, BPO, Amsterdam]
+        # The other simulations are one job each. An entry here names a
+        # simulation other than the one above, which makes it a job of its own
+        # instead of a setting added to the consume-enginex jobs.
         include:
           - name: "Rpc Compat tests"
             simulation: ethereum/rpc-compat
@@ -360,44 +376,6 @@ jobs:
             simulation: ethereum/engine
             limit: "engine-withdrawals"
             artifact_prefix: engine_withdrawals
-          # consume-enginex runs the test vectors of consume-engine in the engine_x
-          # fixture format: tests that share a pre-allocation reuse one client
-          # instead of starting a client per test, which makes the run several
-          # times faster. Together these jobs run the whole fixture release
-          # pinned in .github/config/hive/pins.yaml, which carries every fork
-          # through Amsterdam, one fork to a job so that each has a runner of its
-          # own. A test id names its fork as `fork_<Name>`, and a transition fork,
-          # such as `fork_PragueToOsakaAtTime15k`, runs in the job of the fork it
-          # starts from; `BPO` takes BPO1, BPO2 and whatever follows them. A fork
-          # that a release adds needs a job here, or its tests do not run.
-          - name: "Consume EngineX (Paris)"
-            simulation: ethereum/eels/consume-enginex
-            limit: ".*fork_Paris.*"
-            artifact_prefix: consume_enginex_paris
-          - name: "Consume EngineX (Shanghai)"
-            simulation: ethereum/eels/consume-enginex
-            limit: ".*fork_Shanghai.*"
-            artifact_prefix: consume_enginex_shanghai
-          - name: "Consume EngineX (Cancun)"
-            simulation: ethereum/eels/consume-enginex
-            limit: ".*fork_Cancun.*"
-            artifact_prefix: consume_enginex_cancun
-          - name: "Consume EngineX (Prague)"
-            simulation: ethereum/eels/consume-enginex
-            limit: ".*fork_Prague.*"
-            artifact_prefix: consume_enginex_prague
-          - name: "Consume EngineX (Osaka)"
-            simulation: ethereum/eels/consume-enginex
-            limit: ".*fork_Osaka.*"
-            artifact_prefix: consume_enginex_osaka
-          - name: "Consume EngineX (BPO)"
-            simulation: ethereum/eels/consume-enginex
-            limit: ".*fork_BPO.*"
-            artifact_prefix: consume_enginex_bpo
-          - name: "Consume EngineX (Amsterdam)"
-            simulation: ethereum/eels/consume-enginex
-            limit: ".*fork_Amsterdam.*"
-            artifact_prefix: consume_enginex_amsterdam
           # Investigate this test
           # - name: "Sync"
           #   simulation: ethereum/sync
@@ -436,7 +414,7 @@ jobs:
         shell: bash
         env:
           SIMULATION: ${{ matrix.simulation }}
-          SIM_LIMIT: ${{ matrix.limit }}
+          SIM_LIMIT: ${{ matrix.limit || (matrix.fork && format('.*fork_{0}.*', matrix.fork)) || '' }}
         run: |
           .github/scripts/hive-flags.sh --simulation "$SIMULATION" --limit "$SIM_LIMIT" >> "$GITHUB_OUTPUT"
 
@@ -468,7 +446,7 @@ jobs:
         if: ${{ failure() && steps.verify-hive-results.conclusion == 'failure' }}
         uses: actions/upload-artifact@v6.0.0
         with:
-          name: hive_failed_logs_${{ matrix.artifact_prefix }}
+          name: hive_failed_logs_${{ matrix.artifact_prefix || format('consume_enginex_{0}', matrix.fork) }}
           path: src/results/failed_logs
           if-no-files-found: warn
 
