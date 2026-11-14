@@ -33,6 +33,17 @@ impl RpcHandler for CapabilitiesRequest {
         let earliest = storage.get_earliest_block_number().await?;
         let tx = earliest.max(storage.get_tx_index_floor().await?.unwrap_or_default());
         let logs = oldest_block_with_receipts(storage, earliest).await?;
+        // A database from before these bounds were tracked may still have `earliest` at
+        // genesis and no floor. They are corrected once the node is synced, and until
+        // then no history is reported from them.
+        let reconciled = storage.history_bounds_reconciled().await?;
+        let history = |oldest_block: u64| {
+            if reconciled {
+                available_from(oldest_block, head_number)
+            } else {
+                json!({"disabled": true})
+            }
+        };
 
         // A block count: forkchoice keeps the state of the blocks down to `head - retention`.
         let retention = storage.reorg_retention()?;
@@ -54,12 +65,12 @@ impl RpcHandler for CapabilitiesRequest {
         Ok(json!({
             "head": {"number": format!("{head_number:#x}"), "hash": head_hash},
             "state": state,
-            "tx": available_from(tx, head_number),
-            "logs": available_from(logs, head_number),
+            "tx": history(tx),
+            "logs": history(logs),
             // `eth_getTransactionReceipt` needs the tx index, so this stays at `tx` even
             // where `eth_getBlockReceipts` serves from `logs`.
-            "receipts": available_from(logs.max(tx), head_number),
-            "blocks": available_from(earliest, head_number),
+            "receipts": history(logs.max(tx)),
+            "blocks": history(earliest),
             "stateproofs": state,
         }))
     }
@@ -124,7 +135,7 @@ mod tests {
     use super::*;
     use crate::test_utils::{add_legacy_tx_blocks, context_without_p2p, setup_store};
     use ethrex_common::types::{Block, BlockBody, Receipt, TxType};
-    use ethrex_storage::BackfilledBlock;
+    use ethrex_storage::{BackfilledBlock, EngineType};
 
     async fn capabilities(context: &RpcApiContext) -> Value {
         let request: crate::utils::RpcRequest = serde_json::from_value(json!({
@@ -197,6 +208,48 @@ mod tests {
                 "stateproofs": state,
             })
         );
+    }
+
+    /// A database created before the history bounds were tracked carries no marker.
+    #[tokio::test]
+    async fn history_is_disabled_until_the_history_bounds_are_reconciled() {
+        let storage = Store::new("", EngineType::InMemory).unwrap();
+        let genesis = BlockHeader {
+            transactions_root: *EMPTY_TRIE_HASH,
+            ..Default::default()
+        };
+        let genesis_hash = genesis.hash();
+        storage
+            .add_block(Block::new(genesis, BlockBody::default()))
+            .await
+            .unwrap();
+        storage.update_earliest_block_number(0).await.unwrap();
+        storage
+            .forkchoice_update(vec![], 0, genesis_hash, None, None)
+            .await
+            .unwrap();
+        let context = context_without_p2p(storage);
+        let history = ["blocks", "tx", "logs", "receipts"];
+
+        let result = capabilities(&context).await;
+        assert_eq!(result["head"]["number"], "0x0");
+        for resource in history {
+            assert_eq!(result[resource], json!({"disabled": true}), "{resource}");
+        }
+
+        context
+            .storage
+            .mark_history_bounds_reconciled(None)
+            .await
+            .unwrap();
+        let result = capabilities(&context).await;
+        for resource in history {
+            assert_eq!(
+                result[resource],
+                json!({"disabled": false, "oldestBlock": "0x0"}),
+                "{resource}"
+            );
+        }
     }
 
     #[tokio::test]
