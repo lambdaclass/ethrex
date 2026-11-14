@@ -330,6 +330,7 @@ https://github.com/ethereum/execution-specs/releases/download/tests%40v21.0.2/fi
 3. **New forks.** If the release adds forks or networks:
    - `tooling/ef_tests/blockchain/fork.rs` and `tooling/ef_tests/engine/src/fixture.rs` - the ef-test runners' fork definitions
    - `.github/workflows/daily_hive_report.yaml` - the fork each daily job's limit selects
+   - `.github/workflows/pr-main_l1.yaml` - the `consume-enginex` jobs, one per fork: a fork without a job does not run in PR CI
    - `tooling/hive_report/src/main.rs` - `FORK_ORDER`, the order the report lists forks in
 
 ## Troubleshooting

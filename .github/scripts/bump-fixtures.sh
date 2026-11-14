@@ -200,7 +200,7 @@ summary=$(
     echo
     echo "consume-wirex does not move with this bump: it runs the image pinned in \`consume_wirex_tag\`, with the fixtures that image was built from, until that pin is moved by hand."
     echo
-    echo "**Before merging:** check the release notes for forks or networks the ef-test runners do not know yet, and review the Fixtures and Status lines in \`$ROADMAP\`, which this script only re-versions: the Status line says the suites are green on the new bundle, so reword it if this pull request's CI says otherwise."
+    echo "**Before merging:** check the release notes for forks or networks that the ef-test runners or the PR CI consume-enginex jobs, which run one fork each, do not know yet, and review the Fixtures and Status lines in \`$ROADMAP\`, which this script only re-versions: the Status line says the suites are green on the new bundle, so reword it if this pull request's CI says otherwise."
 )
 .github/scripts/check-fixture-pins.sh >/dev/null || die "the pins disagree after the bump, see above"
 

@@ -363,12 +363,41 @@ jobs:
           # consume-enginex runs the test vectors of consume-engine in the engine_x
           # fixture format: tests that share a pre-allocation reuse one client
           # instead of starting a client per test, which makes the run several
-          # times faster. It runs the whole fixture release pinned in
-          # .github/config/hive/pins.yaml, which carries every fork through
-          # Amsterdam.
-          - name: "Consume EngineX"
+          # times faster. Together these jobs run the whole fixture release
+          # pinned in .github/config/hive/pins.yaml, which carries every fork
+          # through Amsterdam, one fork to a job so that each has a runner of its
+          # own. A test id names its fork as `fork_<Name>`, and a transition fork,
+          # such as `fork_PragueToOsakaAtTime15k`, runs in the job of the fork it
+          # starts from; `BPO` takes BPO1, BPO2 and whatever follows them. A fork
+          # that a release adds needs a job here, or its tests do not run.
+          - name: "Consume EngineX (Paris)"
             simulation: ethereum/eels/consume-enginex
-            artifact_prefix: consume_enginex
+            limit: ".*fork_Paris.*"
+            artifact_prefix: consume_enginex_paris
+          - name: "Consume EngineX (Shanghai)"
+            simulation: ethereum/eels/consume-enginex
+            limit: ".*fork_Shanghai.*"
+            artifact_prefix: consume_enginex_shanghai
+          - name: "Consume EngineX (Cancun)"
+            simulation: ethereum/eels/consume-enginex
+            limit: ".*fork_Cancun.*"
+            artifact_prefix: consume_enginex_cancun
+          - name: "Consume EngineX (Prague)"
+            simulation: ethereum/eels/consume-enginex
+            limit: ".*fork_Prague.*"
+            artifact_prefix: consume_enginex_prague
+          - name: "Consume EngineX (Osaka)"
+            simulation: ethereum/eels/consume-enginex
+            limit: ".*fork_Osaka.*"
+            artifact_prefix: consume_enginex_osaka
+          - name: "Consume EngineX (BPO)"
+            simulation: ethereum/eels/consume-enginex
+            limit: ".*fork_BPO.*"
+            artifact_prefix: consume_enginex_bpo
+          - name: "Consume EngineX (Amsterdam)"
+            simulation: ethereum/eels/consume-enginex
+            limit: ".*fork_Amsterdam.*"
+            artifact_prefix: consume_enginex_amsterdam
           # Investigate this test
           # - name: "Sync"
           #   simulation: ethereum/sync
