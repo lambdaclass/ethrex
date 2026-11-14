@@ -41,9 +41,7 @@ const LATEST_VERSION_URL: &str = "https://api.github.com/repos/lambdaclass/ethre
 /// `clap::Args` struct, or [`NoArgs`] for none. Prefix the flag names with the
 /// chain's name (`--<chain>.<flag>`) so they cannot collide with the node's.
 pub struct Chain<A> {
-    /// Name of the binary, shown in `--help` and in startup errors. The name
-    /// `ethrex` belongs to the `ethrex` binary: a node with that name also looks
-    /// for new ethrex releases.
+    /// Name of the binary, shown in `--help` and in startup errors.
     pub name: &'static str,
     /// Networks of this chain, added to `--network`. When there is at least one,
     /// the first is the default network of the binary.
@@ -75,11 +73,16 @@ pub struct NodeComponents {
 #[derive(Args, Debug, Clone, Default)]
 pub struct NoArgs {}
 
-/// The built-in chain: Ethereum, which adds nothing.
+/// The built-in chain: Ethereum, which adds nothing to the node. Its binary is the
+/// one whose releases are announced, so looking for them is started here and not
+/// by [`run`], which treats every chain alike.
 pub const ETHEREUM: Chain<NoArgs> = Chain {
     name: "ethrex",
     networks: &[],
-    components: |_, _| Ok(NodeComponents::default()),
+    components: |_, _| {
+        tokio::spawn(periodically_check_version_update());
+        Ok(NodeComponents::default())
+    },
 };
 
 /// The global allocator of a node binary, as [`crate::global_allocator!`] declared
@@ -149,24 +152,13 @@ where
     T: Into<std::ffi::OsString> + Clone,
 {
     let mut command = command(chain);
-    // clap identifies a flag by the name of its field, not by its `long`, and a
-    // flags struct by its type name. Two flags with one id would read each other's
-    // value, and clap only checks for that in debug builds. `help` and `version`
-    // are the flags clap adds itself when it builds the command.
-    let mut ids = std::collections::HashSet::from(["help", "version"]);
-    let repeated = command
-        .get_arguments()
-        .map(|arg| arg.get_id().as_str())
-        .chain(command.get_groups().map(|group| group.get_id().as_str()))
-        .find(|id| !ids.insert(*id))
-        .map(str::to_owned);
-    if let Some(id) = repeated {
+    if let Some(name) = repeated_name(&command) {
         // Not `command.error`: it builds the command, which panics on the very
         // repetition being reported when debug assertions are on.
         return Err(clap::Error::raw(
             clap::error::ErrorKind::ArgumentConflict,
             format!(
-                "`{id}` names two flags or flag groups: rename the field or the struct in the chain's flags, or give the field an `id` of its own\n"
+                "`{name}` is defined twice on the command line: the chain's flags cannot reuse a name of the node's (a field or struct name, a `long` or a `short`)\n"
             ),
         ));
     }
@@ -176,6 +168,39 @@ where
     resolve_network(&mut cli.opts, chain.networks)
         .map_err(|err| command.error(clap::error::ErrorKind::ValueValidation, err))?;
     Ok((cli, args))
+}
+
+/// A name `command` defines more than once, if any. Two flags with one name would
+/// read each other's value or shadow each other, and clap only checks for that in
+/// debug builds.
+///
+/// clap identifies a flag by the name of its field and a flags struct by its type
+/// name, and both share one namespace. The names typed on the command line are
+/// checked as well.
+fn repeated_name(command: &clap::Command) -> Option<String> {
+    // What clap adds itself when it builds the command.
+    let mut seen: std::collections::HashSet<String> =
+        ["help", "version", "--help", "--version", "-h", "-V"]
+            .map(String::from)
+            .into();
+    let ids = command
+        .get_arguments()
+        .map(|arg| arg.get_id().to_string())
+        .chain(command.get_groups().map(|group| group.get_id().to_string()));
+    let typed = command.get_arguments().flat_map(|arg| {
+        let longs = arg
+            .get_long()
+            .into_iter()
+            .chain(arg.get_all_aliases().unwrap_or_default())
+            .map(|long| format!("--{long}"));
+        let shorts = arg
+            .get_short()
+            .into_iter()
+            .chain(arg.get_all_short_aliases().unwrap_or_default())
+            .map(|short| format!("-{short}"));
+        longs.chain(shorts)
+    });
+    ids.chain(typed).find(|name| !seen.insert(name.clone()))
 }
 
 /// Replaces a `--network` value that names a preset with that preset, and selects
@@ -236,11 +261,6 @@ async fn run_node<A: Args>(chain: Chain<A>, allocator: GlobalAllocator) -> eyre:
     };
 
     info!("ethrex version: {}", get_client_version());
-    // The check announces releases of the `ethrex` binary. Another chain's binary
-    // is released on its own schedule and should not call out on ethrex's behalf.
-    if chain.name == ETHEREUM.name {
-        tokio::spawn(periodically_check_version_update());
-    }
 
     let (datadir, cancel_token, peer_table, shared_local_node, store) = init_node(
         opts,

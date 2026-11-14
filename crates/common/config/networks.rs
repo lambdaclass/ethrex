@@ -81,10 +81,12 @@ impl NetworkPreset {
         }
         // A built-in network name is parsed before any preset is looked up, and its
         // datadir subdirectory already belongs to that network. Subdirectories
-        // named `chain-<id>` belong to networks given by a genesis file.
+        // named `chain-<id>` belong to networks given by a genesis file, and a
+        // datadir that ends in `memory` is not written to disk.
         let reserved = !matches!(Network::from(self.name), Network::GenesisPath(_))
             || Network::all_datadir_suffixes().contains(&self.name)
-            || self.name.starts_with("chain-");
+            || self.name.starts_with("chain-")
+            || self.name == "memory";
         if reserved {
             return Err(format!(
                 "network preset {:?}: the name is reserved by a built-in network or datadir",
@@ -452,6 +454,7 @@ mod tests {
             "plataberget",
             "dev",
             "chain-1",
+            "memory",
         ] {
             let err = named(reserved).validate_name().unwrap_err();
             assert!(err.contains("reserved"), "{reserved}: {err}");

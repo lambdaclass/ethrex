@@ -151,8 +151,9 @@ fn chain_flag_is_unknown_to_another_binary() {
 }
 
 /// clap identifies a flag by its field name and a flags struct by its type name,
-/// so a chain that reuses one of the node's would share its value. That is refused,
-/// in every build profile.
+/// so a chain that reuses one of the node's would share its value, and one that
+/// reuses a `long` or a `short` would shadow it. That is refused, in every build
+/// profile.
 #[test]
 fn chain_flags_cannot_take_a_name_the_node_uses() {
     fn refusal<A: clap::Args>() -> String {
@@ -174,7 +175,7 @@ fn chain_flags_cannot_take_a_name_the_node_uses() {
         datadir: String,
     }
     let err = refusal::<SameField>();
-    assert!(err.contains("`datadir` names two flags"), "{err}");
+    assert!(err.contains("`datadir` is defined twice"), "{err}");
 
     /// A field named like a flag clap adds itself.
     #[derive(clap::Args)]
@@ -183,7 +184,7 @@ fn chain_flags_cannot_take_a_name_the_node_uses() {
         help: String,
     }
     let err = refusal::<BuiltInField>();
-    assert!(err.contains("`help` names two flags"), "{err}");
+    assert!(err.contains("`help` is defined twice"), "{err}");
 
     /// A struct named like the node's.
     #[derive(clap::Args)]
@@ -192,7 +193,25 @@ fn chain_flags_cannot_take_a_name_the_node_uses() {
         flag: bool,
     }
     let err = refusal::<Options>();
-    assert!(err.contains("`Options` names two flags"), "{err}");
+    assert!(err.contains("`Options` is defined twice"), "{err}");
+
+    /// A flag typed like a node flag, under another field name.
+    #[derive(clap::Args)]
+    struct SameLong {
+        #[arg(long = "network", default_value = "elsewhere")]
+        example_network: String,
+    }
+    let err = refusal::<SameLong>();
+    assert!(err.contains("`--network` is defined twice"), "{err}");
+
+    /// A short flag clap adds itself.
+    #[derive(clap::Args)]
+    struct BuiltInShort {
+        #[arg(short = 'h', long = "example.height", default_value_t = 0)]
+        example_height: u64,
+    }
+    let err = refusal::<BuiltInShort>();
+    assert!(err.contains("`-h` is defined twice"), "{err}");
 }
 
 #[test]

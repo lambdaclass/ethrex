@@ -334,12 +334,12 @@ impl RpcExtensions {
 
     /// The extension that serves `method`, which must have the form
     /// `<namespace>_<name>`.
-    fn serving(&self, method: &str) -> Option<Arc<dyn RpcExtension>> {
+    fn serving(&self, method: &str) -> Option<&dyn RpcExtension> {
         let (namespace, _) = method.split_once('_')?;
         self.0
             .iter()
             .find(|(served, _)| *served == namespace)
-            .map(|(_, extension)| extension.clone())
+            .map(|(_, extension)| extension.as_ref())
     }
 }
 
@@ -1840,21 +1840,20 @@ fn engine_not_on_http(method: &str) -> RpcErr {
 }
 
 /// Handle requests that can come from either clients or other users
-pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub async fn map_http_requests(
+    req: &RpcRequest,
+    mut context: RpcApiContext,
+) -> Result<Value, RpcErr> {
     let namespace = match req.namespace() {
         Ok(ns) => ns,
         Err(rpc_err) => {
             // Not a built-in namespace: it may belong to an extension. The
-            // extension gets a context without extensions, so a call it makes back
-            // into this function can only reach built-in methods and cannot recurse.
-            return match context.extensions.serving(&req.method) {
-                Some(extension) => {
-                    let context = RpcApiContext {
-                        extensions: RpcExtensions::default(),
-                        ..context
-                    };
-                    extension.handle(req, context).await
-                }
+            // extensions are taken out of the context the extension gets, so a call
+            // it makes back into this function can only reach built-in methods and
+            // cannot recurse.
+            let extensions = std::mem::take(&mut context.extensions);
+            return match extensions.serving(&req.method) {
+                Some(extension) => extension.handle(req, context).await,
                 None => Err(rpc_err),
             };
         }
