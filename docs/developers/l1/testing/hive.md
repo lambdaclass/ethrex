@@ -321,7 +321,7 @@ https://github.com/ethereum/execution-specs/releases/download/tests%40v21.0.2/fi
    .github/scripts/bump-fixtures.sh --zkevm v<zkevm version>
    ```
 
-   consume-wirex does not move with the bump: it keeps the image in `consume_wirex_tag`, with the fixtures that image was built from, until that pin is moved by hand.
+   consume-wirex does not move with the bump: it keeps the image in `consume_wirex_tag`, with the fixtures that image was built from, until that pin is moved by hand. It runs in PR CI on that image, so once the client follows a release that changed what a test expects, the `consume-wirex` jobs fail on those tests until the pin is moved to an image built from the new fixtures.
 
    `make check-fixture-pins` fails when these places name different releases. It runs in PR CI.
 

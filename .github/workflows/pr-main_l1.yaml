@@ -373,8 +373,8 @@ jobs:
           # second takes every other Amsterdam test, by negating the same
           # lookahead, so the two jobs run each Amsterdam test once whatever
           # directories a release adds. The three directories were picked to
-          # make the two jobs about as long as each other; naming others moves
-          # the balance and nothing else.
+          # make the two jobs about as long as each other in both simulations;
+          # naming others moves the balance and nothing else.
           - fork: Amsterdam-1
             limit: '(?=.*tests/(amsterdam|cancun|prague)/).*fork_Amsterdam.*'
           - fork: Amsterdam-2
@@ -444,16 +444,17 @@ jobs:
           } >>"$GITHUB_OUTPUT"
 
       # The flags and the hive commit come from .github/config/hive/pins.yaml.
+      # A job that sets no `parallelism` runs with the script's worker count.
       - name: Determine hive flags
         id: hive-flags
         shell: bash
         env:
           SIMULATION: ${{ matrix.simulation }}
           SIM_LIMIT: ${{ matrix.limit || (matrix.fork && format('.*fork_{0}.*', matrix.fork)) || '' }}
-          SIM_PARALLELISM: ${{ matrix.parallelism || 4 }}
+          SIM_PARALLELISM: ${{ matrix.parallelism || '' }}
         run: |
           .github/scripts/hive-flags.sh --simulation "$SIMULATION" --limit "$SIM_LIMIT" \
-            --parallelism "$SIM_PARALLELISM" >> "$GITHUB_OUTPUT"
+            ${SIM_PARALLELISM:+--parallelism "$SIM_PARALLELISM"} >> "$GITHUB_OUTPUT"
 
       - name: Log in to the Container registry
         if: ${{ env.DOCKERHUB_TOKEN != '' }}
