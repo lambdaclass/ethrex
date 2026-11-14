@@ -82,7 +82,8 @@ jobs:
           # Osaka, BPO1 and BPO2 with their transitions, the one from BPO2 to
           # Amsterdam included, which is why the Amsterdam limits match
           # `fork_Amsterdam` by prefix: `fork_.*Amsterdam` would run that
-          # transition in both jobs.
+          # transition in both jobs. The Rest and Prague limits name their forks
+          # the same way, so no test runs in two jobs.
           - {
               name: "Consume Engine tests (Osaka and BPO)",
               file_name: consume-engine-osaka-bpo,
@@ -206,7 +207,9 @@ jobs:
       # These jobs keep going when tests fail, which is what the report is for.
       # A run with no test cases reports nothing at all, though, so it goes
       # unnoticed: the two execute-blobs jobs ran none for weeks and stayed
-      # green. Failing the job marks it without failing the workflow.
+      # green. Failing the job marks it without failing the workflow, because
+      # the job is `continue-on-error`, and the report job below still runs,
+      # because it is `if: always()`.
       - name: Fail if hive ran no tests
         shell: bash
         run: |
