@@ -312,6 +312,8 @@ impl RpcExtensions {
                     "RPC extension namespace {namespace:?} must be non-empty and contain only lowercase letters and digits"
                 ));
             }
+            // `RpcRequest::namespace` resolves a built-in namespace with this same
+            // function, so a namespace accepted here is always routed to its extension.
             if RpcNamespace::from_prefix(namespace).is_some() {
                 return Err(format!(
                     "RPC extension namespace {namespace:?} is a built-in namespace"

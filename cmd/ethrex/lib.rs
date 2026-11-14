@@ -54,6 +54,7 @@ pub const MALLOC_CONF: &[u8] =
 /// The jemalloc configuration [`global_allocator!`] exports.
 // This could be also enabled via `MALLOC_CONF` env var, but for consistency with the previous jemalloc feature
 // usage, we keep it in the code and enable the profiling feature only with the `jemalloc_profiling` feature flag.
+// The `jemalloc_profiling` feature enables `jemalloc`.
 #[cfg(feature = "jemalloc_profiling")]
 #[doc(hidden)]
 pub const MALLOC_CONF: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19,background_thread:true,dirty_decay_ms:30000,muzzy_decay_ms:30000\0";
