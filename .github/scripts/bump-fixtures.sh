@@ -97,12 +97,11 @@ bundle="https://github.com/$SPECS/releases/download/tests%40$new/fixtures.tar.gz
 [[ $new == "$old" ]] || curl -fsIL -o /dev/null "$bundle" || die "tests@$new has no fixtures.tar.gz at $bundle"
 
 # Every simulator image has to exist at the release tag, or its hive job fails
-# while building the simulator, before running a test. A release that is
-# already pinned is not checked again.
+# while building the simulator, before running a test.
 missing=()
-simulators=("${SIMULATORS[@]}")
-[[ $new != "$old" ]] || simulators=()
-for simulator in ${simulators[@]+"${simulators[@]}"}; do
+for simulator in "${SIMULATORS[@]}"; do
+    # A release that is already pinned is not checked again.
+    [[ $new != "$old" ]] || break
     repository="ethereum/execution-specs/hive/$simulator"
     token=$(curl -fsS "https://ghcr.io/token?scope=repository:$repository:pull" |
         sed -n 's/.*"token":"\([^"]*\)".*/\1/p') || true
