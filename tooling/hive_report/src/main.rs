@@ -120,7 +120,9 @@ const FORK_SPLIT_SUITES: [&str; 4] = [
 ];
 
 /// Row for the test cases whose id names no fork, which are the simulator's own
-/// harness cases, such as its client launch.
+/// harness cases, such as its client launch. The report keeps them so that every
+/// case is in a row; the check that a run executed tests,
+/// `.github/scripts/count-hive-tests.sh`, leaves them out.
 const NO_FORK: &str = "No fork";
 
 /// The fork a test case ran on, read from the `fork_<Name>` parameter of its id,
@@ -164,7 +166,9 @@ fn fork_results(json_data: &JsonFile) -> Vec<HiveResult> {
         .collect()
 }
 
-/// Forks from newest to oldest, the order their rows are listed in.
+/// Forks from newest to oldest, the order their rows are listed in. The daily
+/// jobs select the forks from Paris on. A fork that is not here, an older one
+/// or one this list has not learned yet, is still reported, after these.
 const FORK_ORDER: [&str; 8] = [
     "Amsterdam",
     "BPO2",
