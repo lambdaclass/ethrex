@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use ethrex::{
-    cli::import_blocks,
+    cli::{import_blocks, import_blocks_bench},
     decode::chain_file,
     initializers::{init_store, load_store},
 };
@@ -324,4 +324,27 @@ async fn file_import_fails_on_undecodable_file() {
     )
     .await;
     assert!(result.is_err(), "an undecodable file fails the import");
+}
+
+/// `import-bench` reads the files of a directory in the same order as `import`.
+#[tokio::test]
+async fn import_bench_reads_numbered_files_in_numeric_order() {
+    let (blocks, genesis) = chain_and_genesis();
+    let blocks_dir = tempfile::tempdir().unwrap();
+    write_chain_file(blocks_dir.path(), "2.rlp", &blocks[..1]);
+    write_chain_file(blocks_dir.path(), "10.rlp", &blocks[1..2]);
+    let datadir = tempfile::tempdir().unwrap();
+
+    import_blocks_bench(
+        blocks_dir.path().to_str().unwrap(),
+        datadir.path(),
+        genesis,
+        BlockchainOptions::default(),
+        None,
+        None,
+    )
+    .await
+    .expect("the files import in numeric order");
+
+    assert_canonical_chain(datadir.path(), &blocks[..2]).await;
 }

@@ -1323,15 +1323,8 @@ pub async fn import_blocks_bench(
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
     let chains: Vec<Vec<Block>> = if path_metadata.is_dir() {
         info!(path = %path, "Importing blocks from directory");
-        let mut entries: Vec<_> = read_dir(path)
-            .expect("Failed to read blocks directory")
-            .map(|res| res.expect("Failed to open file in directory").path())
-            .collect();
-
-        // Sort entries to process files in order (e.g., 1.rlp, 2.rlp, ...)
-        entries.sort();
-
-        entries
+        // The files `import` reads, in the same order.
+        chain_files_in_dir(Path::new(path))?
             .iter()
             .map(|entry| {
                 info!(path = %entry.display(), "Importing blocks from file");
