@@ -4321,6 +4321,7 @@ dependencies = [
  "tempfile",
  "tiny-keccak",
  "tokio",
+ "tokio-tungstenite",
  "tokio-util",
 ]
 

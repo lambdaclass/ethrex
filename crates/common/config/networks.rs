@@ -41,7 +41,8 @@ pub enum Network {
     L2Chain(u64),
     #[serde(skip)]
     GenesisPath(PathBuf),
-    /// A named network defined outside this crate (see [`NetworkPreset`]).
+    /// A named network defined outside this crate (see [`NetworkPreset`]). Like a
+    /// genesis path, it cannot be serialized.
     #[serde(skip)]
     Preset(NetworkPreset),
 }
@@ -455,6 +456,17 @@ mod tests {
             let err = named(reserved).validate_name().unwrap_err();
             assert!(err.contains("reserved"), "{reserved}: {err}");
             assert!(named(reserved).validate().is_err(), "{reserved}");
+        }
+        // Every datadir subdirectory another network can have is reserved.
+        for network in [
+            Network::PublicNetwork(PublicNetwork::Mainnet),
+            Network::PublicNetwork(PublicNetwork::Hoodi),
+            Network::PublicNetwork(PublicNetwork::Sepolia),
+            Network::PublicNetwork(PublicNetwork::Plataberget),
+            Network::L2Chain(65536999),
+        ] {
+            let suffix: &'static str = network.datadir_suffix().unwrap().leak();
+            assert!(named(suffix).validate_name().is_err(), "{suffix}");
         }
     }
 

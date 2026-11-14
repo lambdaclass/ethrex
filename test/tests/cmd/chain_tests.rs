@@ -29,8 +29,10 @@ use ethrex_rpc::{
     utils::RpcRequest,
 };
 use ethrex_storage::{EngineType, Store};
+use futures::{SinkExt, StreamExt};
 use secp256k1::SecretKey;
 use serde_json::{Value, json};
+use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 
 const EXAMPLE_DEV: NetworkPreset = NetworkPreset {
@@ -148,28 +150,49 @@ fn chain_flag_is_unknown_to_another_binary() {
     assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
 }
 
-/// clap identifies a flag by its field name, so a chain's field named like one of
-/// the node's would share its value. That is refused, in every build profile.
+/// clap identifies a flag by its field name and a flags struct by its type name,
+/// so a chain that reuses one of the node's would share its value. That is refused,
+/// in every build profile.
 #[test]
-fn chain_flag_cannot_take_the_id_of_a_node_flag() {
+fn chain_flags_cannot_take_a_name_the_node_uses() {
+    fn refusal<A: clap::Args>() -> String {
+        let chain: Chain<A> = Chain {
+            name: "ethrex-example",
+            networks: &[],
+            components: |_, _| Ok(NodeComponents::default()),
+        };
+        match parse_args(&chain, ["ethrex-example"]) {
+            Ok(_) => panic!("parsed with a name used twice"),
+            Err(err) => err.to_string(),
+        }
+    }
+
+    /// A field named like a node flag.
     #[derive(clap::Args)]
-    struct Clashing {
+    struct SameField {
         #[arg(long = "example.datadir", default_value = "elsewhere")]
         datadir: String,
     }
-    let chain: Chain<Clashing> = Chain {
-        name: "ethrex-example",
-        networks: &[],
-        components: |_, _| Ok(NodeComponents::default()),
-    };
-    let err = match parse_args(&chain, ["ethrex-example"]) {
-        Ok((_, args)) => panic!("parsed with a shared id: {}", args.datadir),
-        Err(err) => err,
-    };
-    assert!(
-        err.to_string().contains("two flags are named `datadir`"),
-        "{err}"
-    );
+    let err = refusal::<SameField>();
+    assert!(err.contains("`datadir` names two flags"), "{err}");
+
+    /// A field named like a flag clap adds itself.
+    #[derive(clap::Args)]
+    struct BuiltInField {
+        #[arg(long = "example.help", default_value = "none")]
+        help: String,
+    }
+    let err = refusal::<BuiltInField>();
+    assert!(err.contains("`help` names two flags"), "{err}");
+
+    /// A struct named like the node's.
+    #[derive(clap::Args)]
+    struct Options {
+        #[arg(long = "example.flag")]
+        flag: bool,
+    }
+    let err = refusal::<Options>();
+    assert!(err.contains("`Options` names two flags"), "{err}");
 }
 
 #[test]
@@ -662,7 +685,7 @@ async fn node_refuses_a_preset_that_was_not_checked() {
 /// everything the chain returned from `components` is in effect.
 #[tokio::test(flavor = "multi_thread")]
 async fn node_runs_with_the_chain_components() {
-    let node = Node::start(&["--example.max-tx-gas", "100000"], true).await;
+    let node = Node::start(&["--example.max-tx-gas", "100000", "--ws.enabled"], true).await;
     let http_port = &node.http_port;
     let chain_id = node.store.get_chain_config().chain_id;
     // The node runs on the preset's genesis, not on a built-in network.
@@ -674,6 +697,16 @@ async fn node_runs_with_the_chain_components() {
     assert_eq!(pong["result"], json!("pong"), "{pong}");
     let chain = rpc(http_port, "example_chainId", json!([])).await;
     assert_eq!(chain["result"], json!(format!("{chain_id:#x}")), "{chain}");
+
+    // The same namespace over WebSocket, which shares the HTTP port here.
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{http_port}"))
+        .await
+        .unwrap();
+    let ping = json!({"jsonrpc": "2.0", "id": 1, "method": "example_ping", "params": []});
+    socket.send(Message::text(ping.to_string())).await.unwrap();
+    let pong = socket.next().await.unwrap().unwrap();
+    let pong: Value = serde_json::from_str(pong.to_text().unwrap()).unwrap();
+    assert_eq!(pong["result"], json!("pong"), "{pong}");
 
     // Mempool rule: above the cap the submitter gets the chain's reason.
     let above = signed_transfer(100_001, 0, chain_id).await;

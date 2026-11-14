@@ -22,6 +22,7 @@ use ethrex_rpc::RpcExtension;
 use ethrex_storage::Store;
 use eyre::WrapErr;
 use serde::Deserialize;
+#[cfg(unix)]
 use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
@@ -40,7 +41,9 @@ const LATEST_VERSION_URL: &str = "https://api.github.com/repos/lambdaclass/ethre
 /// `clap::Args` struct, or [`NoArgs`] for none. Prefix the flag names with the
 /// chain's name (`--<chain>.<flag>`) so they cannot collide with the node's.
 pub struct Chain<A> {
-    /// Name of the binary, shown in `--help` and in startup errors.
+    /// Name of the binary, shown in `--help` and in startup errors. The name
+    /// `ethrex` belongs to the `ethrex` binary: a node with that name also looks
+    /// for new ethrex releases.
     pub name: &'static str,
     /// Networks of this chain, added to `--network`. When there is at least one,
     /// the first is the default network of the binary.
@@ -146,20 +149,24 @@ where
     T: Into<std::ffi::OsString> + Clone,
 {
     let mut command = command(chain);
-    // clap identifies a flag by the name of its field, not by its `long`. Two flags
-    // with one id would read each other's value, and clap only checks for that in
-    // debug builds.
-    let mut ids = std::collections::HashSet::new();
+    // clap identifies a flag by the name of its field, not by its `long`, and a
+    // flags struct by its type name. Two flags with one id would read each other's
+    // value, and clap only checks for that in debug builds. `help` and `version`
+    // are the flags clap adds itself when it builds the command.
+    let mut ids = std::collections::HashSet::from(["help", "version"]);
     let repeated = command
         .get_arguments()
         .map(|arg| arg.get_id().as_str())
+        .chain(command.get_groups().map(|group| group.get_id().as_str()))
         .find(|id| !ids.insert(*id))
         .map(str::to_owned);
     if let Some(id) = repeated {
-        return Err(command.error(
+        // Not `command.error`: it builds the command, which panics on the very
+        // repetition being reported when debug assertions are on.
+        return Err(clap::Error::raw(
             clap::error::ErrorKind::ArgumentConflict,
             format!(
-                "two flags are named `{id}`: rename the field in the chain's flags, or give it an `id` of its own"
+                "`{id}` names two flags or flag groups: rename the field or the struct in the chain's flags, or give the field an `id` of its own\n"
             ),
         ));
     }
@@ -245,7 +252,13 @@ async fn run_node<A: Args>(chain: Chain<A>, allocator: GlobalAllocator) -> eyre:
     )
     .await?;
 
+    // SIGTERM is a Unix signal. Elsewhere the node is stopped with Ctrl-C.
+    #[cfg(unix)]
     let mut signal_terminate = signal(SignalKind::terminate())?;
+    #[cfg(unix)]
+    let terminated = signal_terminate.recv();
+    #[cfg(not(unix))]
+    let terminated = std::future::pending::<()>();
 
     log_global_allocator(allocator);
 
@@ -253,7 +266,7 @@ async fn run_node<A: Args>(chain: Chain<A>, allocator: GlobalAllocator) -> eyre:
         _ = tokio::signal::ctrl_c() => {
             server_shutdown(&datadir, &cancel_token, peer_table, shared_local_node, &store).await;
         }
-        _ = signal_terminate.recv() => {
+        _ = terminated => {
             server_shutdown(&datadir, &cancel_token, peer_table, shared_local_node, &store).await;
         }
         // A fatal subsystem (e.g. the RPC server) cancels the token to abort the node.
