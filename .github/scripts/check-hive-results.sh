@@ -444,7 +444,11 @@ fi
 # A run with no tests has nothing to fail, so it would pass. That is how a
 # limit that matches nothing, or a simulator that finds no tests to run, hides
 # behind a green job.
-total_tests="$("$(dirname "${BASH_SOURCE[0]}")/count-hive-tests.sh" "${results_dir}")"
+if ! total_tests="$("$(dirname "${BASH_SOURCE[0]}")/count-hive-tests.sh" "${results_dir}")" ||
+  ! [[ "${total_tests}" =~ ^[0-9]+$ ]]; then
+  echo "Could not count the tests Hive ran in ${results_dir}"
+  exit 1
+fi
 if [ "${total_tests}" -eq 0 ]; then
   echo "Hive ran no tests: the limit matched nothing, or the simulator found no tests to run."
   exit 1
