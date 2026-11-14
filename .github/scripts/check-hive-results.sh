@@ -53,7 +53,6 @@ if [ ${#json_files[@]} -eq 0 ]; then
 fi
 
 failures=0
-total_cases=0
 failed_logs_root="${results_dir}/failed_logs"
 rm -rf "${failed_logs_root}"
 mkdir -p "${failed_logs_root}"
@@ -97,8 +96,6 @@ for json_file in "${json_files[@]}"; do
   fi
 
   suite_name="$(jq -r '.name // empty' "${json_file}")"
-  suite_cases="$(jq '[.testCases[]?] | length' "${json_file}")"
-  total_cases=$((total_cases + suite_cases))
   failed_cases="$(jq '[.testCases[]? | select(.summaryResult.pass != true) | select('"${exclude_filter}"')] | length' "${json_file}")"
 
   skipped_excluded="$(jq '[.testCases[]? | select(.summaryResult.pass != true) | select(('"${exclude_filter}"') | not)] | length' "${json_file}")"
@@ -444,12 +441,13 @@ if [ "${failures}" -gt 0 ]; then
   exit 1
 fi
 
-# A run with no test cases has nothing to fail, so it would pass. That is how a
+# A run with no tests has nothing to fail, so it would pass. That is how a
 # limit that matches nothing, or a simulator that finds no tests to run, hides
 # behind a green job.
-if [ "${total_cases}" -eq 0 ]; then
-  echo "Hive ran no test cases: the limit matched nothing, or the simulator found no tests to run."
+total_tests="$("$(dirname "${BASH_SOURCE[0]}")/count-hive-tests.sh" "${results_dir}")"
+if [ "${total_tests}" -eq 0 ]; then
+  echo "Hive ran no tests: the limit matched nothing, or the simulator found no tests to run."
   exit 1
 fi
 
-echo "Hive reported no failing test cases out of ${total_cases}."
+echo "Hive reported no failing test cases out of ${total_tests} tests."

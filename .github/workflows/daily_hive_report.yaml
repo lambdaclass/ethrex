@@ -210,13 +210,8 @@ jobs:
       - name: Fail if hive ran no tests
         shell: bash
         run: |
-          shopt -s nullglob
-          total=0
-          for file in src/results/*.json; do
-            [[ $file == *hive.json ]] && continue
-            total=$((total + $(jq '[.testCases[]?] | length' "$file")))
-          done
-          echo "hive ran $total test cases"
+          total=$(.github/scripts/count-hive-tests.sh src/results)
+          echo "hive ran $total tests"
           [[ $total -gt 0 ]]
 
   hive-report:
