@@ -134,7 +134,7 @@ fn fork_of(test_name: &str) -> Option<&str> {
     let (_, rest) = test_name.split_once('[')?;
     let (params, _) = rest.rsplit_once(']')?;
     params
-        .split('-')
+        .split(['-', '[', ']'])
         .find_map(|param| param.strip_prefix("fork_"))
         .filter(|fork| !fork.is_empty())
 }
@@ -454,6 +454,7 @@ mod tests {
             Some("BPO2ToAmsterdamAtTime15k")
         );
         assert_eq!(fork_of("t.py::test_t[case_1-fork_Osaka]"), Some("Osaka"));
+        assert_eq!(fork_of("t.py::test_t[fork_Prague][extra]"), Some("Prague"));
     }
 
     #[test]
