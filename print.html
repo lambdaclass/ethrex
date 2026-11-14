@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-b28886a7.js";
+            window.path_to_searchindex_js = "searchindex-d6909f46.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-a6a3d26a.js"></script>
@@ -10403,6 +10403,7 @@ ethrex --network fixtures/genesis/perf-ci.json import  fixtures/blockchain/l2-1k
 <li>The network argument is common to all ethrex commands. It specifies the genesis file, or a public network like hoodi. This is the starting state of the blockchain.</li>
 <li>The import command means that this node will not start rpc endpoints or peer to peer communication. It will just read a file, parse the blocks, execute them, and save the EVM state (accounts info and storage) after each execution.</li>
 <li>The file is an RLP encoded file with a list of blocks.</li>
+<li>The path can also be a directory of such files. Files named by a number (<code>1.rlp</code>, <code>2.rlp</code>, …, <code>10.rlp</code>) are imported in numeric order, then any others by name. Hidden files and subdirectories are ignored. A file that fails to decode or import is skipped and the rest are still applied; the command exits with an error at the end saying how many files failed. A file that fails leaves the head where it was, and the blocks it stored before the failure become canonical when a later file builds on them. A database failure is not skipped: it stops the import at once.</li>
 </ul>
 <h3 id="block-execution"><a class="header" href="#block-execution">Block execution</a></h3>
 <p>The CLI import subcommand executes <code>cmd/ethrex/cli.rs:import_blocks</code>, which can be summarized as:</p>
