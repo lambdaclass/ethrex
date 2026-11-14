@@ -18,7 +18,8 @@
 # that the zkEVM bundle is filled from it. A zkEVM bundle is filled from one
 # `tests@` release, so a bump of the base needs `--zkevm` with a zkEVM release
 # filled from the new base, and is refused without one: the two pins have to
-# move in the same change for the pin check to pass.
+# move in the same change for the pin check to pass. If a step fails after the
+# first edit, the files are put back as they were.
 #
 # Not mechanical, and left to the pull request: new forks or networks the
 # release adds to the fixtures, which the ef-test runners have to learn, and
@@ -99,19 +100,20 @@ bundle="https://github.com/$SPECS/releases/download/tests%40$new/fixtures.tar.gz
 # Every simulator image has to exist at the release tag, or its hive job fails
 # while building the simulator, before running a test.
 missing=()
-for simulator in "${SIMULATORS[@]}"; do
-    # A release that is already pinned is not checked again.
-    [[ $new != "$old" ]] || break
-    repository="ethereum/execution-specs/hive/$simulator"
-    token=$(curl -fsS "https://ghcr.io/token?scope=repository:$repository:pull" |
-        sed -n 's/.*"token":"\([^"]*\)".*/\1/p') || true
-    [[ -n $token ]] || die "could not get a registry token for ghcr.io/$repository"
-    code=$(curl -s -o /dev/null -w '%{http_code}' \
-        -H "Authorization: Bearer $token" \
-        -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
-        "https://ghcr.io/v2/$repository/manifests/$new") || true
-    [[ $code == 200 ]] || missing+=("ghcr.io/$repository:$new (HTTP $code)")
-done
+# A release that is already pinned is not checked again.
+if [[ $new != "$old" ]]; then
+    for simulator in "${SIMULATORS[@]}"; do
+        repository="ethereum/execution-specs/hive/$simulator"
+        token=$(curl -fsS "https://ghcr.io/token?scope=repository:$repository:pull" |
+            sed -n 's/.*"token":"\([^"]*\)".*/\1/p') || true
+        [[ -n $token ]] || die "could not get a registry token for ghcr.io/$repository"
+        code=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $token" \
+            -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
+            "https://ghcr.io/v2/$repository/manifests/$new") || true
+        [[ $code == 200 ]] || missing+=("ghcr.io/$repository:$new (HTTP $code)")
+    done
+fi
 if [[ ${#missing[@]} -gt 0 ]]; then
     printf 'bump-fixtures: missing simulator image: %s\n' "${missing[@]}" >&2
     die "execution-specs has not published every simulator image for tests@$new"
@@ -132,7 +134,7 @@ if [[ -n $new_zkevm ]]; then
     zkevm_bundle="https://github.com/$SPECS/releases/download/tests-zkevm%40$new_zkevm/fixtures_zkevm.tar.gz"
     curl -fsIL -o /dev/null "$zkevm_bundle" || die "tests-zkevm@$new_zkevm has no bundle at $zkevm_bundle"
 fi
-# Checked before any edit, so a refused bump leaves the tree as it was.
+# Checked before any edit.
 if [[ $new_zkevm_base != "$new" ]]; then
     if [[ -n $new_zkevm ]]; then
         die "tests-zkevm@$new_zkevm is filled from tests@$new_zkevm_base, not tests@$new"
@@ -140,7 +142,21 @@ if [[ $new_zkevm_base != "$new" ]]; then
     die "the pinned tests-zkevm@$old_zkevm is filled from tests@$old_zkevm_base: pass --zkevm with a zkEVM release filled from tests@$new"
 fi
 
-# From here on the tree is edited.
+# From here on the tree is edited. If anything below fails, the files are put
+# back, so a bump lands whole or not at all.
+edited=("$FIXTURES_URL" "$ZKEVM_URL" "$PINS" "$ROADMAP" "$HIVE_DOC")
+backup=$(mktemp -d)
+for file in "${edited[@]}"; do cp "$file" "$backup/${file//\//_}"; done
+restore_on_failure() {
+    local status=$?
+    if [[ $status -ne 0 ]]; then
+        for file in "${edited[@]}"; do cp "$backup/${file//\//_}" "$file"; done
+        echo "bump-fixtures: nothing was changed" >&2
+    fi
+    rm -rf "$backup"
+}
+trap restore_on_failure EXIT
+
 OLD="$old" NEW="$new" perl -pi -e 's/tests%40\Q$ENV{OLD}\E\/fixtures\.tar\.gz/tests%40$ENV{NEW}\/fixtures.tar.gz/' "$FIXTURES_URL" "$HIVE_DOC"
 OLD="$old" NEW="$new" perl -pi -e 's/^tag: \Q$ENV{OLD}\E$/tag: $ENV{NEW}/' "$PINS"
 OLD="$old" NEW="$new" perl -pi -e '
@@ -182,9 +198,9 @@ summary=$(
     echo
     echo "**Before merging:** check the release notes for forks or networks the ef-test runners do not know yet, and review the Fixtures and Status lines in \`$ROADMAP\`, which this script only re-versions: the Status line says the suites are green on the new bundle, so reword it if this pull request's CI says otherwise."
 )
+.github/scripts/check-fixture-pins.sh >/dev/null || die "the pins disagree after the bump, see above"
+
 echo "$summary"
 if [[ -n ${BUMP_FIXTURES_SUMMARY:-} ]]; then
     echo "$summary" >"$BUMP_FIXTURES_SUMMARY"
 fi
-
-.github/scripts/check-fixture-pins.sh || die "the pins disagree after the bump, see above"
