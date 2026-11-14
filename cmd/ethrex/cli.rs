@@ -1132,17 +1132,23 @@ pub async fn import_blocks(
     }
 
     let total_duration = start_time.elapsed();
-    info!(
-        blocks = total_blocks_imported,
-        seconds = total_duration.as_secs_f64(),
-        "Import completed"
-    );
     if failed_files > 0 {
+        warn!(
+            blocks = total_blocks_imported,
+            failed_files,
+            seconds = total_duration.as_secs_f64(),
+            "Import completed with files that failed"
+        );
         return Err(ChainError::Custom(format!(
             "{failed_files} of {} files failed to import",
             files.len()
         )));
     }
+    info!(
+        blocks = total_blocks_imported,
+        seconds = total_duration.as_secs_f64(),
+        "Import completed"
+    );
     Ok(())
 }
 
