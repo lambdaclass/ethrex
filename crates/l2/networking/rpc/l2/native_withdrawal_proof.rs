@@ -161,3 +161,171 @@ impl RpcHandler for GetNativeWithdrawalProof {
             .map_err(|error| ethrex_rpc::RpcErr::Internal(error.to_string()).into())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::{
+        AccountState, BlockHeader, Genesis, GenesisAccount, Log, Receipt, TxType,
+    };
+    use ethrex_crypto::NativeCrypto;
+    use ethrex_rlp::decode::RLPDecode;
+    use ethrex_rpc::test_utils::{TEST_GENESIS, default_context_with_storage};
+    use ethrex_storage::{EngineType, Store};
+    use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
+    use ethrex_trie::{Node, Trie};
+    use secp256k1::SecretKey;
+    use std::path::Path;
+
+    async fn withdrawal_proof(available: bool) -> (Result<Value, RpcErr>, H256, H256, H256) {
+        let from = Address::from_low_u64_be(1);
+        let receiver = Address::from_low_u64_be(2);
+        let amount = U256::from(4);
+        let message_id = U256::from(3);
+        let withdrawal_hash = keccak(
+            [
+                from.as_bytes(),
+                receiver.as_bytes(),
+                &amount.to_big_endian(),
+                &message_id.to_big_endian(),
+            ]
+            .concat(),
+        );
+        let slot = keccak([withdrawal_hash.as_bytes(), &U256::from(3).to_big_endian()].concat());
+        let mut genesis: Genesis = serde_json::from_str(TEST_GENESIS).unwrap();
+        genesis.alloc.clear();
+        genesis.alloc.insert(
+            NATIVE_ROLLUP_L2_BRIDGE,
+            GenesisAccount {
+                code: Default::default(),
+                storage: [(U256::from_big_endian(slot.as_bytes()), U256::one())].into(),
+                balance: U256::zero(),
+                nonce: 1,
+            },
+        );
+        let mut storage = Store::new("", EngineType::InMemory).unwrap();
+        storage.add_initial_state(genesis).await.unwrap();
+        let genesis = storage.get_block_header(0).unwrap().unwrap();
+        let storage_root = storage
+            .state_view(genesis.state_root)
+            .unwrap()
+            .unwrap()
+            .account_state(NATIVE_ROLLUP_L2_BRIDGE)
+            .unwrap()
+            .unwrap()
+            .storage_root;
+        let header = BlockHeader {
+            number: 1,
+            parent_hash: genesis.hash(),
+            state_root: if available {
+                genesis.state_root
+            } else {
+                H256::repeat_byte(0xad)
+            },
+            ..Default::default()
+        };
+        let block_hash = header.hash();
+        storage
+            .add_block_headers(vec![header.clone()])
+            .await
+            .unwrap();
+        storage
+            .forkchoice_update(vec![(1, block_hash)], 1, block_hash, None, None)
+            .await
+            .unwrap();
+        let transaction_hash = H256::from_low_u64_be(0x1234);
+        storage
+            .add_transaction_location(transaction_hash, 1, block_hash, 0)
+            .await
+            .unwrap();
+        storage
+            .add_receipt(
+                block_hash,
+                0,
+                Receipt::new(
+                    TxType::Legacy,
+                    true,
+                    21_000,
+                    vec![Log {
+                        address: NATIVE_ROLLUP_L2_BRIDGE,
+                        topics: vec![
+                            withdrawal_initiated_topic(),
+                            H256::from_low_u64_be(1),
+                            H256::from_low_u64_be(2),
+                            H256::from_low_u64_be(3),
+                        ],
+                        data: amount.to_big_endian().to_vec().into(),
+                    }],
+                ),
+            )
+            .await
+            .unwrap();
+        let l1_context = default_context_with_storage(storage).await;
+        let context = RpcApiContext {
+            l1_ctx: l1_context.clone(),
+            valid_delegation_addresses: vec![],
+            sponsor_pk: SecretKey::from_byte_array(&[0xab; 32]).unwrap(),
+            rollup_store: StoreRollup::new(Path::new(""), EngineTypeRollup::InMemory).unwrap(),
+            sponsored_gas_limit: 0,
+            ethrex_namespace_allowed: true,
+        };
+        let response = GetNativeWithdrawalProof { transaction_hash }
+            .handle(context)
+            .await;
+        (response, header.state_root, storage_root, slot)
+    }
+
+    fn proof_value(root: H256, proof: &Value, path: &[u8]) -> Option<Vec<u8>> {
+        let nodes = proof
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|node| {
+                let rlp = hex::decode(node.as_str().unwrap().strip_prefix("0x").unwrap()).unwrap();
+                (keccak(&rlp), Node::decode(&rlp).unwrap())
+            })
+            .collect();
+        let trie = Trie::from_nodes(root, &nodes).unwrap();
+        assert_eq!(trie.hash_no_commit(&NativeCrypto), root);
+        trie.get(path).unwrap()
+    }
+
+    #[tokio::test]
+    async fn native_withdrawal_proof_uses_the_requested_roots() {
+        let (response, state_root, storage_root, slot) = withdrawal_proof(true).await;
+        let response = response.unwrap();
+        assert_eq!(response["amount"], "0x4");
+        assert_eq!(response["messageId"], "0x3");
+        assert_eq!(response["blockNumber"], "0x1");
+        let account = AccountState::decode(
+            &proof_value(
+                state_root,
+                &response["accountProof"],
+                keccak(NATIVE_ROLLUP_L2_BRIDGE.as_bytes()).as_bytes(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(account.storage_root, storage_root);
+        let value = U256::decode(
+            &proof_value(
+                account.storage_root,
+                &response["storageProof"],
+                keccak(slot.as_bytes()).as_bytes(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(value, U256::one());
+    }
+
+    #[tokio::test]
+    async fn native_withdrawal_proof_errors_when_state_is_unavailable() {
+        let (response, _, _, _) = withdrawal_proof(false).await;
+        assert!(matches!(
+            response,
+            Err(RpcErr::Internal(message))
+                if message == "Could not generate account proof for L2Bridge"
+        ));
+    }
+}
