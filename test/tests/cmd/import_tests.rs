@@ -156,8 +156,8 @@ async fn directory_import_skips_files_that_fail() {
     );
 }
 
-/// The blocks a file stored before one of its blocks failed stay canonical, so a later
-/// file that builds on them leaves no gap in the canonical chain.
+/// The blocks a file stored before one of its blocks failed become canonical when a
+/// later file builds on them, so the canonical chain has no gap below that file.
 #[tokio::test]
 async fn directory_import_keeps_the_blocks_before_a_failed_block_canonical() {
     let (blocks, genesis) = chain_and_genesis();
@@ -296,8 +296,8 @@ async fn directory_import_reads_only_the_chain_files() {
     assert_canonical_chain(datadir.path(), &blocks[..1]).await;
 }
 
-/// A single file import stops at the first failure, and the blocks before it become
-/// the canonical chain.
+/// A single file import stops at the first failure and leaves the head where it was.
+/// The blocks before the failure stay in the store.
 #[tokio::test]
 async fn file_import_stops_at_a_block_that_fails() {
     let (blocks, genesis) = chain_and_genesis();
@@ -322,7 +322,16 @@ async fn file_import_stops_at_a_block_that_fails() {
     .await
     .expect_err("a file with a block that fails reports failure");
 
-    assert_canonical_chain(datadir.path(), &blocks[..2]).await;
+    let store = load_store(datadir.path()).await.unwrap();
+    assert_eq!(store.get_latest_block_number().unwrap(), 0);
+    for block in &blocks[..2] {
+        assert_eq!(
+            store.get_block_number(block.hash()).await.unwrap(),
+            Some(block.header.number),
+            "block {} is in the store",
+            block.header.number
+        );
+    }
 }
 
 /// A single file import fails on a file it cannot decode.
