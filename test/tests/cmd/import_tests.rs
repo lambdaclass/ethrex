@@ -334,14 +334,13 @@ async fn file_import_fails_on_undecodable_file() {
     std::fs::write(&file, b"not rlp").unwrap();
     let datadir = tempfile::tempdir().unwrap();
 
-    let result = import_blocks(
-        file.to_str().unwrap(),
-        datadir.path(),
-        genesis,
-        BlockchainOptions::default(),
-    )
-    .await;
-    assert!(result.is_err(), "an undecodable file fails the import");
+    let err = import(&file, datadir.path(), genesis)
+        .await
+        .expect_err("an undecodable file fails the import");
+    assert!(
+        err.to_string().starts_with("failed to read chain file"),
+        "unexpected error: {err}"
+    );
 }
 
 /// `import-bench` reads the files of a directory in the same order as `import`.
