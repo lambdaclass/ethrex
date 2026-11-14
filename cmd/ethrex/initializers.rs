@@ -883,11 +883,14 @@ pub async fn init_node(
 )> {
     let network = get_network(&opts);
     // A preset was checked if the options come from `chain::parse_args`, but not if
-    // the caller built them. It is checked before anything is created: its name
-    // becomes a directory under the datadir, and its bootnodes are otherwise only
-    // read when p2p starts.
+    // the caller built them. Its name becomes a directory under the datadir, and
+    // its bootnodes are otherwise only read when p2p starts, so both are checked
+    // before anything is created. Loading the genesis below checks the genesis.
     if let Network::Preset(preset) = &network {
-        preset.validate().map_err(|err| eyre::eyre!(err))?;
+        preset.validate_name().map_err(|err| eyre::eyre!(err))?;
+        network.get_bootnodes().map_err(|err| {
+            eyre::eyre!("network preset {:?}: invalid bootnodes: {err}", preset.name)
+        })?;
     }
     let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
 
