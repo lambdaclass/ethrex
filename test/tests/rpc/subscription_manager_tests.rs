@@ -470,7 +470,10 @@ async fn managed_logs_subscription_reads_the_supplied_store() {
     manager.new_head(one).unwrap();
     assert_eq!(received_logs(&manager, &mut rx).await, vec![(1, 1, false)]);
     let report = system.shutdown(std::time::Duration::from_secs(5)).await;
-    assert!(report.complete, "{report:?}");
+    assert!(
+        report.complete,
+        "managed subscription actor shutdown timed out"
+    );
 }
 
 #[tokio::test]
