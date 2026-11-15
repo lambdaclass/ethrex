@@ -74,7 +74,7 @@ use spawned_concurrency::{
     protocol,
     response::Response,
     tasks::{
-        Actor, ActorRef, ActorStart as _, Context, Handler, InsertError, PendingReplies,
+        Actor, ActorRef, ActorStart as _, Context, Handler, InsertErrorKind, PendingReplies,
         PendingReply, send_interval, spawn_listener,
     },
 };
@@ -753,21 +753,18 @@ impl PeerConnectionServer {
         let Ok(token) = reply.defer() else {
             return;
         };
-        match established_state.current_requests.insert(id, token) {
-            Ok(()) => {}
-            // The new caller gets ReplyDropped; the first one keeps waiting.
-            Err(InsertError::Duplicate(token)) => {
-                debug!(peer=%established_state.node, %id, "Duplicate request id");
-                drop(token);
-                return;
+        if let Err(refused) = established_state.current_requests.insert(id, token) {
+            let (kind, token) = refused.into_parts();
+            match kind {
+                InsertErrorKind::Duplicate => {
+                    // Keep the first caller; the duplicate gets ReplyDropped.
+                    debug!(peer=%established_state.node, %id, "Duplicate request id");
+                    drop(token);
+                }
+                // Full, and any future refusal: explicitly answer the caller.
+                _ => token.overloaded(),
             }
-            Err(InsertError::Full(token)) => {
-                token.overloaded();
-                return;
-            }
-            // `InsertError` is non-exhaustive: a future refusal drops the
-            // token, so the caller gets ReplyDropped.
-            Err(_) => return,
+            return;
         }
         let result = handle_outgoing_request(established_state, msg.message).await;
         if result.is_err() {
