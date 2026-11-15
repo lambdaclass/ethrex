@@ -27,7 +27,7 @@ concurrency:
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0
@@ -40,7 +40,7 @@ jobs:
 
   actions-lock:
     name: Verify actions lockfile
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -61,7 +61,7 @@ jobs:
 
   image-meta:
     name: build-docker image-meta
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0
@@ -97,7 +97,7 @@ jobs:
 
   stateless-signing:
     name: sign-stateless-artifacts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0
@@ -153,7 +153,7 @@ jobs:
           make_tree() {
             local root="$1"
             rm -rf "$root"
-            for name in stateless-validator-ethrex-sp1-v6.9.0 stateless-validator-ethrex-zisk-v1.3.2-alpha; do
+            for name in stateless-validator-ethrex-sp1-v6.9.0 stateless-validator-ethrex-zisk-v1.4.0-alpha; do
               mkdir -p "$root/$name"
               head -c 256 /dev/urandom > "$root/$name/$name.elf"
               head -c 64 /dev/urandom > "$root/$name/$name.vk"
