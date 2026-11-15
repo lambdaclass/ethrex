@@ -31,6 +31,7 @@
   - [Databases](./l1/fundamentals/databases.md)
   - [Networking](./l1/fundamentals/networking.md)
   - [Sync modes](./l1/fundamentals/sync_modes.md)
+  - [Partial stateful node](./l1/fundamentals/partial_stateful_node.md)
   - [Historical chain backfill](./l1/fundamentals/history_backfill.md)
   - [Snap sync internals](./l1/fundamentals/snap_sync.md)
     - [snap/2 (EIP-8189) internals](./internal/l1/snap_v2.md)
@@ -122,7 +123,9 @@
   - [Ethrex L2 as local development mode](./developers/l2/dev-mode.md)
   - [Integration tests](./developers/l2/integration-tests.md)
   - [Upgrade test](./developers/l2/upgrade-test.md)
+  - [SP1 version upgrade test](./developers/l2/sp1-upgrade-test.md)
   - [L2 integration tests with a SP1 GPU prover](./developers/l2/sp1-gpu-integration-test.md)
+  - [Multiprover test (SP1 GPU + TDX)](./developers/l2/multiprover-test.md)
   - [Running the Prover](./developers/l2/prover.md)
   - [Generate blobs for the state reconstruction test](./developers/l2/state-reconstruction-blobs.md)
 - [Prover](./prover/prover.md)
@@ -145,6 +148,7 @@
 
 - [zkVM Integrations](./zkvm-integrations.md)
 - [Benchmark Comparisons](./l2/bench/zkvm_comparison.md)
+  - [L2 TPS Benchmarking](./l2/tps-benchmarking.md)
   - [Prover Performance](./l2/bench/prover_performance.md)
 - [Case Studies](./case-studies.md)
 

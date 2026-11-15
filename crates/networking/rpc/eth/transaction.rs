@@ -157,10 +157,8 @@ impl RpcHandler for CallRequest {
             .clone()
             .unwrap_or(BlockIdentifierOrHash::Identifier(BlockIdentifier::default()));
         debug!("Requested call on block: {}", block);
-        let header = match block.resolve_block_header(&context.storage).await? {
-            Some(header) => header,
-            // Block not found
-            _ => return Ok(Value::Null),
+        let Some(header) = block.resolve_block_header(&context.storage).await? else {
+            return Err(block.not_found());
         };
         let chain_config = context.storage.get_chain_config();
         // Built once and handed down. `None` means the call runs against the real header.
@@ -229,7 +227,7 @@ impl RpcHandler for GetTransactionByBlockNumberAndIndexRequest {
             Some(block_number) => block_number,
             _ => return Ok(Value::Null),
         };
-        let block_body = match context.storage.get_block_body(block_number).await? {
+        let block_body = match block::get_block_body(&context.storage, block_number).await? {
             Some(block_body) => block_body,
             _ => return Ok(Value::Null),
         };
@@ -280,7 +278,7 @@ impl RpcHandler for GetTransactionByBlockHashAndIndexRequest {
             Some(number) => number,
             _ => return Ok(Value::Null),
         };
-        let block_body = match context.storage.get_block_body(block_number).await? {
+        let block_body = match block::get_block_body(&context.storage, block_number).await? {
             Some(block_body) => block_body,
             _ => return Ok(Value::Null),
         };
@@ -381,12 +379,10 @@ impl RpcHandler for GetTransactionReceiptRequest {
             Some(block) => block,
             None => return Ok(Value::Null),
         };
-        let receipts =
-            block::get_all_block_rpc_receipts(block.header, block.body, storage, Some(index))
-                .await?;
+        let receipt =
+            block::get_block_rpc_receipt(block.header, block.body, storage, index).await?;
 
-        serde_json::to_value(receipts.get(index as usize))
-            .map_err(|error| RpcErr::Internal(error.to_string()))
+        serde_json::to_value(receipt).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
@@ -508,7 +504,7 @@ impl RpcHandler for GetRawTransactionByBlockAndIndex {
         let Some(block_number) = self.block.resolve_block_number(&context.storage).await? else {
             return Ok(Value::Null);
         };
-        let Some(block_body) = context.storage.get_block_body(block_number).await? else {
+        let Some(block_body) = block::get_block_body(&context.storage, block_number).await? else {
             return Ok(Value::Null);
         };
         let Some(tx) = block_body.transactions.get(self.transaction_index) else {
@@ -609,10 +605,8 @@ impl RpcHandler for EstimateGasRequest {
         let chain_config = storage.get_chain_config();
 
         debug!("Requested estimate on block: {}", block);
-        let block_header = match block.resolve_block_header(storage).await? {
-            Some(header) => header,
-            // Block not found
-            _ => return Ok(Value::Null),
+        let Some(block_header) = block.resolve_block_header(storage).await? else {
+            return Err(block.not_found());
         };
         // Fork and the search ceiling have to come from the header the transaction will
         // actually execute against: a `time` override can cross a fork boundary and a

@@ -17,6 +17,7 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
+use ethrex_common::seeded_hash::SeededHashMap;
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -35,7 +36,6 @@ use ethrex_levm::{
     errors::DatabaseError,
 };
 use ethrex_vm::backends::levm::{BalValidationError, LEVM};
-use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Minimal `Database` stub. Every scenario below seeds pre-tx values directly
 /// via `system_seed`, so `validate_tx_execution`'s `store` fallback is never
@@ -90,7 +90,7 @@ fn account_with(balance: U256, nonce: u64, code_hash: H256, status: AccountStatu
             balance,
             nonce,
         },
-        storage: FxHashMap::default(),
+        storage: Default::default(),
         has_storage: false,
         status,
         exists: true,
@@ -116,7 +116,7 @@ fn noop_balance_change_rejected() {
     let address = addr(1);
     let pre_balance = U256::from(100);
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed = CacheDB::default();
     system_seed.insert(
         address,
         account_with(
@@ -128,7 +128,7 @@ fn noop_balance_change_rejected() {
     );
 
     // Post-execution state == pre-state: the "change" is a no-op.
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state = CacheDB::default();
     current_state.insert(
         address,
         account_with(
@@ -143,7 +143,7 @@ fn noop_balance_change_rejected() {
         AccountChanges::new(address).with_balance_changes(vec![BalanceChange::new(1, pre_balance)]),
     ]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
     let system_seed_map: CacheDB = system_seed;
 
     let result = LEVM::validate_tx_execution(
@@ -155,8 +155,8 @@ fn noop_balance_change_rejected() {
         &index,
         &system_seed_map,
         &unused_store(),
-        &FxHashSet::default(),
-        &FxHashMap::default(),
+        &Default::default(),
+        &Default::default(),
     );
     assert_mismatch(&result, "no-op BAL balance change");
 }
@@ -166,7 +166,7 @@ fn noop_nonce_change_rejected() {
     let address = addr(2);
     let pre_nonce = 5u64;
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed = CacheDB::default();
     system_seed.insert(
         address,
         account_with(
@@ -177,7 +177,7 @@ fn noop_nonce_change_rejected() {
         ),
     );
 
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state = CacheDB::default();
     current_state.insert(
         address,
         account_with(
@@ -192,7 +192,7 @@ fn noop_nonce_change_rejected() {
         AccountChanges::new(address).with_nonce_changes(vec![NonceChange::new(1, pre_nonce)]),
     ]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -203,8 +203,8 @@ fn noop_nonce_change_rejected() {
         &index,
         &system_seed,
         &unused_store(),
-        &FxHashSet::default(),
-        &FxHashMap::default(),
+        &Default::default(),
+        &Default::default(),
     );
     assert_mismatch(&result, "no-op BAL nonce change");
 }
@@ -216,13 +216,13 @@ fn noop_code_change_rejected() {
     let code = Code::from_bytecode(code_bytes.clone(), &NativeCrypto);
     let code_hash = code.hash;
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed = CacheDB::default();
     system_seed.insert(
         address,
         account_with(U256::zero(), 0, code_hash, AccountStatus::Unmodified),
     );
 
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state = CacheDB::default();
     current_state.insert(
         address,
         account_with(U256::zero(), 0, code_hash, AccountStatus::Modified),
@@ -232,7 +232,7 @@ fn noop_code_change_rejected() {
         AccountChanges::new(address).with_code_changes(vec![CodeChange::new(1, code_bytes)]),
     ]);
     let index = bal.build_validation_index();
-    let mut codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let mut codes: SeededHashMap<H256, Code> = Default::default();
     codes.insert(code_hash, code);
 
     let result = LEVM::validate_tx_execution(
@@ -244,8 +244,8 @@ fn noop_code_change_rejected() {
         &index,
         &system_seed,
         &unused_store(),
-        &FxHashSet::default(),
-        &FxHashMap::default(),
+        &Default::default(),
+        &Default::default(),
     );
     assert_mismatch(&result, "no-op BAL code change");
 }
@@ -257,7 +257,7 @@ fn noop_storage_change_rejected() {
     let key = u256_to_h256(slot);
     let pre_value = U256::from(42);
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed = CacheDB::default();
     let mut seed_account = account_with(
         U256::zero(),
         0,
@@ -267,7 +267,7 @@ fn noop_storage_change_rejected() {
     seed_account.storage.insert(key, pre_value);
     system_seed.insert(address, seed_account);
 
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state = CacheDB::default();
     let mut current_account = account_with(
         U256::zero(),
         0,
@@ -285,7 +285,7 @@ fn noop_storage_change_rejected() {
             )],
         )]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -296,8 +296,8 @@ fn noop_storage_change_rejected() {
         &index,
         &system_seed,
         &unused_store(),
-        &FxHashSet::default(),
-        &FxHashMap::default(),
+        &Default::default(),
+        &Default::default(),
     );
     assert_mismatch(&result, "no-op BAL storage change");
 }
@@ -309,7 +309,7 @@ fn genuine_balance_change_accepted() {
     let pre_balance = U256::from(100);
     let post_balance = U256::from(80);
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed = CacheDB::default();
     system_seed.insert(
         address,
         account_with(
@@ -320,7 +320,7 @@ fn genuine_balance_change_accepted() {
         ),
     );
 
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state = CacheDB::default();
     current_state.insert(
         address,
         account_with(
@@ -336,7 +336,7 @@ fn genuine_balance_change_accepted() {
             .with_balance_changes(vec![BalanceChange::new(1, post_balance)]),
     ]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -347,8 +347,8 @@ fn genuine_balance_change_accepted() {
         &index,
         &system_seed,
         &unused_store(),
-        &FxHashSet::default(),
-        &FxHashMap::default(),
+        &Default::default(),
+        &Default::default(),
     );
     assert!(result.is_ok(), "expected Ok(()), got: {result:?}");
 }
@@ -364,7 +364,7 @@ fn missing_storage_write_rejected() {
     let pre_value = U256::zero();
     let post_value = U256::from(9);
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed = CacheDB::default();
     let mut seed_account = account_with(
         U256::zero(),
         0,
@@ -374,7 +374,7 @@ fn missing_storage_write_rejected() {
     seed_account.storage.insert(key, pre_value);
     system_seed.insert(address, seed_account);
 
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state = CacheDB::default();
     let mut current_account = account_with(
         U256::zero(),
         0,
@@ -389,7 +389,7 @@ fn missing_storage_write_rejected() {
     // storage_changes entry nor a storage_reads entry.
     let bal = BlockAccessList::from_accounts(vec![AccountChanges::new(address)]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -400,8 +400,8 @@ fn missing_storage_write_rejected() {
         &index,
         &system_seed,
         &unused_store(),
-        &FxHashSet::default(),
-        &FxHashMap::default(),
+        &Default::default(),
+        &Default::default(),
     );
     assert_mismatch(&result, "has no storage_changes entry");
 }
@@ -415,7 +415,7 @@ fn read_only_slot_not_in_changes_accepted() {
     let key = u256_to_h256(slot);
     let value = U256::from(77);
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed = CacheDB::default();
     let mut seed_account = account_with(
         U256::zero(),
         0,
@@ -425,7 +425,7 @@ fn read_only_slot_not_in_changes_accepted() {
     seed_account.storage.insert(key, value);
     system_seed.insert(address, seed_account);
 
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state = CacheDB::default();
     let mut current_account = account_with(
         U256::zero(),
         0,
@@ -439,7 +439,7 @@ fn read_only_slot_not_in_changes_accepted() {
         AccountChanges::new(address).with_storage_reads(vec![slot]),
     ]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -450,8 +450,8 @@ fn read_only_slot_not_in_changes_accepted() {
         &index,
         &system_seed,
         &unused_store(),
-        &FxHashSet::default(),
-        &FxHashMap::default(),
+        &Default::default(),
+        &Default::default(),
     );
     assert!(result.is_ok(), "expected Ok(()), got: {result:?}");
 }
@@ -469,7 +469,7 @@ fn written_slot_misdeclared_as_read_rejected() {
     let pre_value = U256::from(1);
     let post_value = U256::from(2);
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed = CacheDB::default();
     let mut seed_account = account_with(
         U256::zero(),
         0,
@@ -480,7 +480,7 @@ fn written_slot_misdeclared_as_read_rejected() {
     system_seed.insert(address, seed_account);
 
     // Execution wrote the slot to a value differing from its start-of-tx value.
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state = CacheDB::default();
     let mut current_account = account_with(
         U256::zero(),
         0,
@@ -495,7 +495,7 @@ fn written_slot_misdeclared_as_read_rejected() {
         AccountChanges::new(address).with_storage_reads(vec![slot]),
     ]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -506,8 +506,8 @@ fn written_slot_misdeclared_as_read_rejected() {
         &index,
         &system_seed,
         &unused_store(),
-        &FxHashSet::default(),
-        &FxHashMap::default(),
+        &Default::default(),
+        &Default::default(),
     );
     assert_mismatch(&result, "declared_as_read=true");
 }
@@ -526,7 +526,7 @@ fn noop_balance_change_absent_account_rejected() {
     let address = addr(10);
     let pre_balance = U256::from(100);
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed = CacheDB::default();
     system_seed.insert(
         address,
         account_with(
@@ -538,13 +538,13 @@ fn noop_balance_change_absent_account_rejected() {
     );
 
     // Execution never touched the account: absent from current_state.
-    let current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let current_state = CacheDB::default();
 
     let bal = BlockAccessList::from_accounts(vec![
         AccountChanges::new(address).with_balance_changes(vec![BalanceChange::new(1, pre_balance)]),
     ]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -555,8 +555,8 @@ fn noop_balance_change_absent_account_rejected() {
         &index,
         &system_seed,
         &unused_store(),
-        &FxHashSet::default(),
-        &FxHashMap::default(),
+        &Default::default(),
+        &Default::default(),
     );
     assert_mismatch(&result, "spurious no-op BAL balance change");
 }
@@ -567,7 +567,7 @@ fn noop_nonce_change_absent_account_rejected() {
     let address = addr(11);
     let pre_nonce = 5u64;
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed = CacheDB::default();
     system_seed.insert(
         address,
         account_with(
@@ -578,13 +578,13 @@ fn noop_nonce_change_absent_account_rejected() {
         ),
     );
 
-    let current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let current_state = CacheDB::default();
 
     let bal = BlockAccessList::from_accounts(vec![
         AccountChanges::new(address).with_nonce_changes(vec![NonceChange::new(1, pre_nonce)]),
     ]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -595,8 +595,8 @@ fn noop_nonce_change_absent_account_rejected() {
         &index,
         &system_seed,
         &unused_store(),
-        &FxHashSet::default(),
-        &FxHashMap::default(),
+        &Default::default(),
+        &Default::default(),
     );
     assert_mismatch(&result, "spurious no-op BAL nonce change");
 }
@@ -609,19 +609,19 @@ fn noop_code_change_absent_account_rejected() {
     let code = Code::from_bytecode(code_bytes.clone(), &NativeCrypto);
     let code_hash = code.hash;
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed = CacheDB::default();
     system_seed.insert(
         address,
         account_with(U256::zero(), 0, code_hash, AccountStatus::Unmodified),
     );
 
-    let current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let current_state = CacheDB::default();
 
     let bal = BlockAccessList::from_accounts(vec![
         AccountChanges::new(address).with_code_changes(vec![CodeChange::new(1, code_bytes)]),
     ]);
     let index = bal.build_validation_index();
-    let mut codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let mut codes: SeededHashMap<H256, Code> = Default::default();
     codes.insert(code_hash, code);
 
     let result = LEVM::validate_tx_execution(
@@ -633,8 +633,8 @@ fn noop_code_change_absent_account_rejected() {
         &index,
         &system_seed,
         &unused_store(),
-        &FxHashSet::default(),
-        &FxHashMap::default(),
+        &Default::default(),
+        &Default::default(),
     );
     assert_mismatch(&result, "spurious no-op BAL code change");
 }
@@ -647,7 +647,7 @@ fn noop_storage_change_absent_slot_rejected() {
     let key = u256_to_h256(slot);
     let pre_value = U256::from(42);
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed = CacheDB::default();
     let mut seed_account = account_with(
         U256::zero(),
         0,
@@ -658,7 +658,7 @@ fn noop_storage_change_absent_slot_rejected() {
     system_seed.insert(address, seed_account);
 
     // Execution never materialized this slot: absent from current_state.
-    let current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let current_state = CacheDB::default();
 
     let bal =
         BlockAccessList::from_accounts(vec![AccountChanges::new(address).with_storage_changes(
@@ -668,7 +668,7 @@ fn noop_storage_change_absent_slot_rejected() {
             )],
         )]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -679,8 +679,8 @@ fn noop_storage_change_absent_slot_rejected() {
         &index,
         &system_seed,
         &unused_store(),
-        &FxHashSet::default(),
-        &FxHashMap::default(),
+        &Default::default(),
+        &Default::default(),
     );
     assert_mismatch(&result, "spurious no-op BAL storage change");
 }
@@ -697,7 +697,7 @@ fn storage_change_omitted_at_this_index_rejected() {
     let pre_value = U256::zero();
     let post_value = U256::from(9);
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed = CacheDB::default();
     let mut seed_account = account_with(
         U256::zero(),
         0,
@@ -707,7 +707,7 @@ fn storage_change_omitted_at_this_index_rejected() {
     seed_account.storage.insert(key, pre_value);
     system_seed.insert(address, seed_account);
 
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state = CacheDB::default();
     let mut current_account = account_with(
         U256::zero(),
         0,
@@ -727,7 +727,7 @@ fn storage_change_omitted_at_this_index_rejected() {
             )],
         )]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -738,8 +738,8 @@ fn storage_change_omitted_at_this_index_rejected() {
         &index,
         &system_seed,
         &unused_store(),
-        &FxHashSet::default(),
-        &FxHashMap::default(),
+        &Default::default(),
+        &Default::default(),
     );
     assert_mismatch(&result, "has no change at index");
 }
@@ -754,7 +754,7 @@ fn storage_read_at_this_index_with_later_change_accepted() {
     let key = u256_to_h256(slot);
     let value = U256::from(42);
 
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed = CacheDB::default();
     let mut seed_account = account_with(
         U256::zero(),
         0,
@@ -764,7 +764,7 @@ fn storage_read_at_this_index_with_later_change_accepted() {
     seed_account.storage.insert(key, value);
     system_seed.insert(address, seed_account);
 
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state = CacheDB::default();
     let mut current_account = account_with(
         U256::zero(),
         0,
@@ -783,7 +783,7 @@ fn storage_read_at_this_index_with_later_change_accepted() {
             )],
         )]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     let result = LEVM::validate_tx_execution(
         1,
@@ -794,8 +794,8 @@ fn storage_read_at_this_index_with_later_change_accepted() {
         &index,
         &system_seed,
         &unused_store(),
-        &FxHashSet::default(),
-        &FxHashMap::default(),
+        &Default::default(),
+        &Default::default(),
     );
     assert!(result.is_ok(), "expected Ok(()), got: {result:?}");
 }
@@ -815,7 +815,7 @@ fn storage_seed_uses_tx_initial_fast_path() {
     // in-memory) but deliberately leave the slot out of seed storage: the only
     // non-erroring source for the slot's seed is tx_initial. The store errors, so
     // reaching it would surface a Database error.
-    let mut system_seed: CacheDB = FxHashMap::default();
+    let mut system_seed = CacheDB::default();
     system_seed.insert(
         address,
         account_with(
@@ -826,7 +826,7 @@ fn storage_seed_uses_tx_initial_fast_path() {
         ),
     );
 
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state = CacheDB::default();
     let mut current_account = account_with(
         U256::zero(),
         0,
@@ -844,9 +844,9 @@ fn storage_seed_uses_tx_initial_fast_path() {
             )],
         )]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
-    let mut tx_initial: FxHashMap<(Address, U256), U256> = FxHashMap::default();
+    let mut tx_initial: SeededHashMap<(Address, U256), U256> = Default::default();
     tx_initial.insert((address, slot), pre);
 
     let result = LEVM::validate_tx_execution(
@@ -858,7 +858,7 @@ fn storage_seed_uses_tx_initial_fast_path() {
         &index,
         &system_seed,
         &unused_store(),
-        &FxHashSet::default(),
+        &Default::default(),
         &tx_initial,
     );
     // post (9) != pre (5) → genuine change, accepted — and no store error.
@@ -874,9 +874,9 @@ fn storage_noop_detected_via_tx_initial() {
     let slot = U256::from(7);
     let value = U256::from(5);
 
-    let system_seed: CacheDB = FxHashMap::default();
+    let system_seed = CacheDB::default();
 
-    let mut current_state: FxHashMap<Address, LevmAccount> = FxHashMap::default();
+    let mut current_state = CacheDB::default();
     let mut current_account = account_with(
         U256::zero(),
         0,
@@ -894,10 +894,10 @@ fn storage_noop_detected_via_tx_initial() {
             )],
         )]);
     let index = bal.build_validation_index();
-    let codes: FxHashMap<H256, Code> = FxHashMap::default();
+    let codes: SeededHashMap<H256, Code> = Default::default();
 
     // Start-of-tx value == post value → no-op.
-    let mut tx_initial: FxHashMap<(Address, U256), U256> = FxHashMap::default();
+    let mut tx_initial: SeededHashMap<(Address, U256), U256> = Default::default();
     tx_initial.insert((address, slot), value);
 
     let result = LEVM::validate_tx_execution(
@@ -909,8 +909,96 @@ fn storage_noop_detected_via_tx_initial() {
         &index,
         &system_seed,
         &unused_store(),
-        &FxHashSet::default(),
+        &Default::default(),
         &tx_initial,
     );
     assert_mismatch(&result, "no-op BAL storage change");
+}
+
+// --- reproducible rejections: many offenders, the lowest one named ---
+//
+// `current_state` and each account's storage are seeded maps, which walk in a different order
+// on every node and every run. A rejection names the lowest offender, so all of them report
+// the same one.
+
+/// Offenders injected per test. Naming whichever one a map walks to first would name the
+/// lowest with probability 1/256.
+const OFFENDERS: u8 = 255;
+
+/// Many accounts changed by execution and absent from the BAL: the lowest address is named.
+#[test]
+fn names_the_lowest_account_absent_from_bal() {
+    let mut system_seed = CacheDB::default();
+    let mut current_state = CacheDB::default();
+    for byte in 1..=OFFENDERS {
+        let empty = *ethrex_common::constants::EMPTY_KECCAK_HASH;
+        system_seed.insert(
+            addr(byte),
+            account_with(U256::zero(), 0, empty, AccountStatus::Unmodified),
+        );
+        current_state.insert(
+            addr(byte),
+            account_with(U256::one(), 0, empty, AccountStatus::Modified),
+        );
+    }
+    let bal = BlockAccessList::from_accounts(Vec::new());
+    let index = bal.build_validation_index();
+    let codes: SeededHashMap<H256, Code> = Default::default();
+
+    let result = LEVM::validate_tx_execution(
+        1,
+        0,
+        &current_state,
+        &codes,
+        &bal,
+        &index,
+        &system_seed,
+        &unused_store(),
+        &Default::default(),
+        &Default::default(),
+    );
+    assert_mismatch(
+        &result,
+        &format!(
+            "account {:?} was modified by execution but is absent",
+            addr(1)
+        ),
+    );
+}
+
+/// Many slots of one BAL account written by execution with no `storage_changes` entry: the
+/// lowest slot is named.
+#[test]
+fn names_the_lowest_unrecorded_storage_write() {
+    let address = addr(6);
+    let empty = *ethrex_common::constants::EMPTY_KECCAK_HASH;
+    let mut seed_account = account_with(U256::zero(), 0, empty, AccountStatus::Unmodified);
+    let mut current_account = account_with(U256::zero(), 0, empty, AccountStatus::Modified);
+    for slot in 1..=u64::from(OFFENDERS) {
+        let key = u256_to_h256(U256::from(slot));
+        seed_account.storage.insert(key, U256::zero());
+        current_account.storage.insert(key, U256::from(9));
+    }
+    let mut system_seed = CacheDB::default();
+    system_seed.insert(address, seed_account);
+    let mut current_state = CacheDB::default();
+    current_state.insert(address, current_account);
+
+    let bal = BlockAccessList::from_accounts(vec![AccountChanges::new(address)]);
+    let index = bal.build_validation_index();
+    let codes: SeededHashMap<H256, Code> = Default::default();
+
+    let result = LEVM::validate_tx_execution(
+        1,
+        0,
+        &current_state,
+        &codes,
+        &bal,
+        &index,
+        &system_seed,
+        &unused_store(),
+        &Default::default(),
+        &Default::default(),
+    );
+    assert_mismatch(&result, "storage slot 1 was written by execution");
 }

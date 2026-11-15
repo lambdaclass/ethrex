@@ -17,6 +17,8 @@ use crate::PrewarmedEntry;
 use crate::{Blockchain, BlockchainType};
 #[cfg(feature = "rayon")]
 use ethrex_common::H256;
+#[cfg(feature = "rayon")]
+use ethrex_common::seeded_hash::{SeededHashMap, SeededHashSet};
 use ethrex_common::types::{BlockHeader, MempoolTransaction, Transaction};
 use ethrex_common::{Address, U256};
 #[cfg(feature = "rayon")]
@@ -400,8 +402,9 @@ fn run_pass(blockchain: &Blockchain, pool: &rayon::ThreadPool, req: PrewarmReque
     // Presence = account path already walked; the value keeps the hashed
     // address and storage root so later delta passes can open storage tries
     // for new slots of already-walked accounts without re-hashing.
-    let mut walked_accounts: FxHashMap<Address, (H256, H256)> = FxHashMap::default();
-    let mut walked_slots: rustc_hash::FxHashSet<(Address, H256)> = Default::default();
+    // Seeded: pending transactions choose the keys.
+    let mut walked_accounts: SeededHashMap<Address, (H256, H256)> = Default::default();
+    let mut walked_slots: SeededHashSet<(Address, H256)> = Default::default();
     let mut merkle_paths: u64 = 0;
     let mut passes: u32 = 0;
     let mut any_err = false;
@@ -511,8 +514,8 @@ fn warm_merkle_paths(
     blockchain: &Blockchain,
     parent: &BlockHeader,
     cache: &ethrex_vm::backends::CachingDatabase,
-    walked_accounts: &mut FxHashMap<Address, (H256, H256)>,
-    walked_slots: &mut rustc_hash::FxHashSet<(Address, H256)>,
+    walked_accounts: &mut SeededHashMap<Address, (H256, H256)>,
+    walked_slots: &mut SeededHashSet<(Address, H256)>,
     should_stop: &(dyn Fn() -> bool + Sync),
 ) -> u64 {
     use ethrex_common::constants::EMPTY_TRIE_HASH;
@@ -548,7 +551,7 @@ fn warm_merkle_paths(
     }
 
     // Group new slots per account so each storage trie is opened once.
-    let mut by_account: FxHashMap<Address, Vec<H256>> = FxHashMap::default();
+    let mut by_account: SeededHashMap<Address, Vec<H256>> = Default::default();
     for (addr, key) in touched.slots {
         if walked_slots.insert((addr, key)) {
             by_account.entry(addr).or_default().push(key);

@@ -10,24 +10,16 @@
 #   - the ere tag in the four stateless-validator manifests;
 #   - ERE_TAG and the SDK table in zkvm-version.sh, read from ere's own Cargo.lock
 #     at the tag with the same rule ere-catalog uses;
-#   - the SP1 fork patch, when SP1 moves (see below);
 #   - versioned release-asset names, `stateless-validator-ethrex-<zkvm>-<sdk>`;
 #   - the four lockfiles.
-#
-# The SP1 guest patches SP1 to the han0110/sp1 fork, because upstream still lacks
-# the libzkevm conformance fix (succinctlabs/sp1#2865) and ere's own workspace
-# builds against upstream. The fork keeps one branch per SP1 release,
-# `patch/<sp1>/libzkevm`, so when SP1 moves the patch moves to that branch's head.
-# If the branch does not exist yet, the bump cannot be made without silently
-# dropping the fix, so the script stops with exit status 2 and changes nothing.
 #
 # Not mechanical, and left to review: openvm `[patch]` tables and toolchain
 # overrides, which have broken past bumps, and whether the guests still build for
 # their zkVM targets, which PR CI does not do (dispatch tag_release.yaml).
 #
-# Exit status: 0 when bumped or already current, 2 when the SP1 fork is not ready,
-# 1 on any other error. If BUMP_ERE_SUMMARY is set, a Markdown summary of the bump
-# is written there, for use as a PR body.
+# Exit status: 0 when bumped or already current, 1 on any error. If
+# BUMP_ERE_SUMMARY is set, a Markdown summary of the bump is written there, for
+# use as a PR body.
 
 set -euo pipefail
 
@@ -37,9 +29,6 @@ cd "$ROOT"
 VERSION_SCRIPT=.github/scripts/zkvm-version.sh
 BASE=crates/guest-program/stateless-validator
 WORKSPACES=("$BASE" "$BASE/bin/sp1" "$BASE/bin/zisk" "$BASE/bin/openvm")
-SP1_MANIFEST="$BASE/bin/sp1/Cargo.toml"
-SP1_FORK=han0110/sp1
-SP1_FIX_PR=2865
 
 die() { echo "bump-ere: $*" >&2; exit 1; }
 
@@ -131,25 +120,6 @@ new_sp1=$(sdk_version ere-verifier-sp1 sp1-verifier)
 new_zisk=$(sdk_version ere-verifier-zisk zisk-verifier)
 new_openvm=$(sdk_version ere-platform-openvm openvm)
 
-# Resolve the SP1 fork before touching anything, so a missing branch leaves the
-# tree as it was.
-old_fork_rev=$(grep -oE "$SP1_FORK\", rev = \"[0-9a-f]{40}\"" "$SP1_MANIFEST" | head -1 | grep -oE '[0-9a-f]{40}') ||
-    die "no $SP1_FORK rev pinned in $SP1_MANIFEST"
-new_fork_rev=$old_fork_rev
-fork_branch="patch/$new_sp1/libzkevm"
-if [[ $new_sp1 != "$old_sp1" ]]; then
-    if ! new_fork_rev=$(gh api "repos/$SP1_FORK/branches/$fork_branch" --jq .commit.sha 2>/dev/null); then
-        echo "bump-ere: $new_tag moves SP1 to $new_sp1, but $SP1_FORK has no $fork_branch branch yet." >&2
-        echo "bump-ere: bumping now would drop the libzkevm conformance fix; try again once the fork catches up." >&2
-        exit 2
-    fi
-    # The branch must be the upstream release plus patches, nothing else.
-    read -r ahead behind < <(gh api "repos/succinctlabs/sp1/compare/$new_sp1...${SP1_FORK%%/*}:$fork_branch" \
-        --jq '"\(.ahead_by) \(.behind_by)"') || die "could not compare $fork_branch with upstream $new_sp1"
-    [[ $behind -eq 0 && $ahead -ge 1 ]] ||
-        die "$SP1_FORK $fork_branch is not upstream $new_sp1 plus patches (ahead $ahead, behind $behind)"
-fi
-
 # From here on the tree is edited.
 for workspace in "${WORKSPACES[@]}"; do
     OLD="$old_tag" NEW="$new_tag" perl -pi -e 's/(eth-act\/ere", tag = ")\Q$ENV{OLD}\E"/$1$ENV{NEW}"/g' "$workspace/Cargo.toml"
@@ -170,13 +140,6 @@ OLD_TAG="$old_tag" NEW_TAG="$new_tag" \
         (my $new_image = $ENV{NEW_TAG}) =~ s/^v//;
         s/(-> )\Q$old_image\E(\s+\(image tag)/$1$new_image$2/;
     ' "$VERSION_SCRIPT"
-
-if [[ $new_fork_rev != "$old_fork_rev" ]]; then
-    # The fork rev appears once per patched crate; the SP1 version appears only in
-    # the comment naming the branch the rev tracks.
-    OLD="$old_fork_rev" NEW="$new_fork_rev" OLD_SP1="$old_sp1" NEW_SP1="$new_sp1" \
-        perl -pi -e 's/\Q$ENV{OLD}\E/$ENV{NEW}/g; s/\Q$ENV{OLD_SP1}\E/$ENV{NEW_SP1}/g' "$SP1_MANIFEST"
-fi
 
 rename_assets() {
     local old_name="stateless-validator-ethrex-$1-$2" new_name="stateless-validator-ethrex-$1-$3" file
@@ -204,13 +167,6 @@ for workspace in "${WORKSPACES[@]}"; do
         die "$workspace/Cargo.lock still resolves an ere source other than $new_tag"
     fi
 done
-# A [patch] entry that stops matching is only a warning to cargo, and the guest
-# would then build against upstream SP1 without the fix.
-if grep -q 'git+https://github.com/succinctlabs/sp1' "$BASE/bin/sp1/Cargo.lock"; then
-    die "$BASE/bin/sp1/Cargo.lock resolves SP1 from upstream; the $SP1_FORK patch no longer applies"
-fi
-
-fix_state=$(gh pr view "$SP1_FIX_PR" --repo succinctlabs/sp1 --json state --jq .state 2>/dev/null || echo UNKNOWN)
 
 row() {
     if [[ $2 == "$3" ]]; then echo "| $1 | \`$2\` | unchanged |"; else echo "| $1 | \`$2\` | \`$3\` |"; fi
@@ -226,13 +182,6 @@ summary=$(
     row OpenVM "$old_openvm" "$new_openvm"
     echo
     echo "Release notes: https://github.com/eth-act/ere/compare/$old_tag...$new_tag"
-    echo
-    if [[ $new_fork_rev != "$old_fork_rev" ]]; then
-        echo "The SP1 guest's fork patch moves to the head of \`$SP1_FORK\` \`$fork_branch\`, \`$new_fork_rev\`, which is upstream \`$new_sp1\` plus patches."
-    else
-        echo "SP1 does not move, so the SP1 guest's fork patch stays at \`$old_fork_rev\`."
-    fi
-    echo "succinctlabs/sp1#$SP1_FIX_PR, the upstream conformance fix that patch carries, is \`$fix_state\`; once it ships in an SP1 release the patch can go."
     echo
     echo "**Before merging:** PR CI does not build the guest ELFs. This workflow dispatches \`tag_release.yaml\` on the branch, which builds all three guests and dry-runs the release assets without publishing; check that run. Also review any openvm \`[patch]\` tables and toolchain overrides, which past bumps have broken and this script does not touch."
 )

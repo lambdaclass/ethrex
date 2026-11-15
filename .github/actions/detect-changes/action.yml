@@ -16,7 +16,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: dorny/paths-filter@v4
+    - uses: dorny/paths-filter@v4.0.3
       id: filter
       with:
         # `inert` is a positive list, compared against `all_files` in the next

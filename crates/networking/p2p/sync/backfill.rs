@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{BlockHeader, BlockNumber};
+use ethrex_crypto::NativeCrypto;
 use ethrex_storage::{BackfilledBlock, Store};
 use tokio::time::{Duration, sleep};
 use tokio_util::sync::CancellationToken;
@@ -150,6 +151,107 @@ pub(crate) async fn reconcile_frontier(store: &Store) -> Result<BlockNumber, Syn
         }
     }
     Ok(lo)
+}
+
+/// One-time correction of the stored history bounds for nodes that synced or
+/// backfilled before they were tracked: `earliest_block_number` left at genesis
+/// by snap sync, and a missing transaction index floor below a
+/// `--history.transactions` horizon, which may no longer be configured.
+async fn reconcile_history_bounds(store: &Store) -> Result<(), SyncError> {
+    let recorded = store.get_earliest_block_number().await?;
+    let actual = reconcile_frontier(store).await?;
+    if recorded != actual {
+        info!(
+            recorded,
+            actual, "Reconciled backfill frontier to the lowest block with full chain data"
+        );
+        store.update_earliest_block_number(actual).await?;
+    }
+    // Marked done even when nothing is recorded, so a fully indexed history is
+    // not searched again on every start.
+    if !store.is_tx_index_floor_reconciled().await? {
+        let mut found = None;
+        if store.get_tx_index_floor().await?.is_none() {
+            let floor = find_tx_index_floor(store).await?;
+            if floor > actual {
+                info!(
+                    floor,
+                    "Recorded the transaction index floor of an earlier backfill"
+                );
+                found = Some(floor);
+            }
+        }
+        store.record_reconciled_tx_index_floor(found).await?;
+    }
+    Ok(())
+}
+
+/// Lowest block from which every stored block's transactions are indexed.
+///
+/// Backfill leaves out blocks more than the horizon below the head of its run,
+/// and each run starts below the last with a later head, so the indexed blocks
+/// form a run ending at the head and we bisect for its start. A history whose
+/// horizon was raised between runs breaks that assumption; since this runs once
+/// per database, only histories backfilled before the floor was tracked are affected.
+///
+/// The forward scan past empty blocks covers at most the halved window of each
+/// step, so the whole search reads about one pass over the range in the worst
+/// case, when nearly every block is empty.
+async fn find_tx_index_floor(store: &Store) -> Result<BlockNumber, SyncError> {
+    let mut lo = store.get_earliest_block_number().await?;
+    let mut hi = store.get_latest_block_number()?.saturating_add(1);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        // An empty block says nothing about the index; probe the next one with transactions.
+        // A missing body counts as unindexed, which keeps the floor conservative.
+        let mut probe = mid;
+        let mut unindexed = false;
+        while probe < hi {
+            let Some(body) = store.get_block_body(probe).await? else {
+                unindexed = true;
+                break;
+            };
+            if let Some(tx) = body.transactions.first() {
+                let location = store
+                    .get_transaction_location(tx.hash(&NativeCrypto))
+                    .await?;
+                unindexed = location.is_none_or(|(number, ..)| number != probe);
+                break;
+            }
+            probe += 1;
+        }
+        if unindexed {
+            lo = probe + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    Ok(lo)
+}
+
+/// With `--history.chain off` no backfill runs, but `eth_capabilities` still
+/// reports from the history bounds, so reconcile them once the node is synced.
+pub async fn reconcile_history_bounds_when_synced(
+    store: Store,
+    blockchain: Arc<Blockchain>,
+    cancel_token: CancellationToken,
+) {
+    loop {
+        if blockchain.is_synced() {
+            let result = tokio::select! {
+                result = reconcile_history_bounds(&store) => result,
+                _ = cancel_token.cancelled() => return,
+            };
+            match result {
+                Ok(()) => return,
+                Err(e) => warn!("Reconciling the history bounds failed (will retry): {e}"),
+            }
+        }
+        tokio::select! {
+            _ = sleep(BACKFILL_IDLE_INTERVAL) => {}
+            _ = cancel_token.cancelled() => return,
+        }
+    }
 }
 
 /// Blocks fetched per backfill batch.
@@ -322,20 +424,10 @@ async fn backfill_step(
         return Ok(BackfillProgress::Waiting);
     }
 
-    // One-time correction of `earliest_block_number` for nodes that synced
-    // before this feature existed (where it was left at genesis) or otherwise
-    // drifted from the true lowest-full-data block. Without this, backfill would
-    // see `frontier == 0` and conclude there is nothing to do.
+    // Without this, backfill would see `frontier == 0` on a node that snap-synced
+    // before the frontier was tracked and conclude there is nothing to do.
     if !*reconciled {
-        let recorded = store.get_earliest_block_number().await?;
-        let actual = reconcile_frontier(store).await?;
-        if recorded != actual {
-            info!(
-                recorded,
-                actual, "Reconciled backfill frontier to the lowest block with full chain data"
-            );
-            store.update_earliest_block_number(actual).await?;
-        }
+        reconcile_history_bounds(store).await?;
         *reconciled = true;
     }
 
@@ -526,7 +618,7 @@ mod tests {
 
     // --- reconcile_frontier: recompute the true frontier on a real store ---
 
-    use ethrex_common::types::BlockBody;
+    use ethrex_common::types::{Block, BlockBody, LegacyTransaction, Transaction};
     use ethrex_storage::EngineType;
 
     /// Build an in-memory store with canonical headers `0..=head` and block
@@ -605,6 +697,103 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(reconcile_frontier(&store).await.unwrap(), 100);
+    }
+
+    /// A node snap-synced before the frontier was tracked has it at genesis.
+    #[tokio::test]
+    async fn reconcile_history_bounds_corrects_a_frontier_left_at_genesis() {
+        let store = store_with_bodies_from(50, 100).await;
+        store.update_earliest_block_number(0).await.unwrap();
+        reconcile_history_bounds(&store).await.unwrap();
+        assert_eq!(store.get_earliest_block_number().await.unwrap(), 50);
+        assert_eq!(store.get_tx_index_floor().await.unwrap(), None);
+    }
+
+    /// Bodies on `[earliest, head]`, indexed from `indexed_from`, with no floor
+    /// recorded: a backfill that ran before the floor was tracked.
+    async fn store_with_unindexed_backfill(
+        earliest: u64,
+        indexed_from: u64,
+        head: u64,
+        empty: &[u64],
+    ) -> Store {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        let headers: Vec<BlockHeader> = (0..=head)
+            .map(|number| BlockHeader {
+                number,
+                ..Default::default()
+            })
+            .collect();
+        store.add_block_headers(headers.clone()).await.unwrap();
+        let canonical: Vec<_> = headers.iter().map(|h| (h.number, h.hash())).collect();
+        store
+            .forkchoice_update(canonical, head, headers[head as usize].hash(), None, None)
+            .await
+            .unwrap();
+        for number in earliest..=head {
+            let transactions = if empty.contains(&number) {
+                vec![]
+            } else {
+                vec![Transaction::LegacyTransaction(LegacyTransaction {
+                    nonce: number,
+                    ..Default::default()
+                })]
+            };
+            let body = BlockBody {
+                transactions,
+                ommers: vec![],
+                withdrawals: Some(vec![]),
+            };
+            let header = headers[number as usize].clone();
+            if number >= indexed_from {
+                store.add_block(Block::new(header, body)).await.unwrap();
+            } else {
+                store.add_block_body(header.hash(), body).await.unwrap();
+            }
+        }
+        store.update_earliest_block_number(earliest).await.unwrap();
+        store
+    }
+
+    /// Independent of the current horizon: a node restarted without
+    /// `--history.transactions` still has the unindexed blocks.
+    #[tokio::test]
+    async fn reconcile_history_bounds_records_a_missing_tx_index_floor() {
+        // 44 and 45 are empty, so the highest unindexed block with transactions is 43.
+        let store = store_with_unindexed_backfill(40, 45, 100, &[44, 45]).await;
+        reconcile_history_bounds(&store).await.unwrap();
+        assert_eq!(store.get_earliest_block_number().await.unwrap(), 40);
+        assert_eq!(store.get_tx_index_floor().await.unwrap(), Some(44));
+    }
+
+    #[tokio::test]
+    async fn reconcile_history_bounds_leaves_a_fully_indexed_history_alone() {
+        let store = store_with_unindexed_backfill(40, 40, 100, &[41]).await;
+        reconcile_history_bounds(&store).await.unwrap();
+        assert_eq!(store.get_tx_index_floor().await.unwrap(), None);
+        assert!(store.is_tx_index_floor_reconciled().await.unwrap());
+    }
+
+    /// The search runs once per database: a later start trusts the recorded result.
+    #[tokio::test]
+    async fn reconcile_history_bounds_searches_the_tx_index_once() {
+        let store = store_with_unindexed_backfill(40, 61, 100, &[41]).await;
+        store.record_reconciled_tx_index_floor(None).await.unwrap();
+        reconcile_history_bounds(&store).await.unwrap();
+        assert_eq!(store.get_tx_index_floor().await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn tx_index_floor_bisect_finds_every_boundary() {
+        for indexed_from in 40..=60 {
+            let store = store_with_unindexed_backfill(40, indexed_from, 60, &[50, 51]).await;
+            let found = find_tx_index_floor(&store).await.unwrap();
+            let expected = match indexed_from {
+                51 | 52 => 50,
+                other => other,
+            };
+            assert_eq!(found, expected, "indexed from {indexed_from}");
+        }
     }
 
     // --- resolve_floor: how each mode picks the block to stop at ---

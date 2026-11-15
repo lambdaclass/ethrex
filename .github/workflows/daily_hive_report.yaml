@@ -9,6 +9,11 @@ on:
     paths:
       - .github/workflows/daily_hive_report.yaml
       - .github/scripts/publish_hive.sh
+      # What the jobs run, and whether one of them ran anything, comes from
+      # these, so a change to one of them is a change to this workflow.
+      - .github/scripts/hive-flags.sh
+      - .github/scripts/count-hive-tests.sh
+      - .github/config/hive/pins.yaml
 
 permissions:
   contents: read
@@ -22,7 +27,7 @@ env:
 jobs:
   run-hive:
     name: Hive - ${{ matrix.test.name }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -72,9 +77,19 @@ jobs:
               name: "Consume Engine tests (Amsterdam)",
               file_name: consume-engine-amsterdam,
               simulation: ethereum/eels/consume-engine,
-              limit: ".*fork_.*Amsterdam.*",
-              amsterdam: true,
+              limit: ".*fork_Amsterdam.*",
               parallelism: 2,
+            }
+          # Osaka, BPO1 and BPO2 with their transitions, the one from BPO2 to
+          # Amsterdam included, which is why the Amsterdam limits match
+          # `fork_Amsterdam` by prefix: `fork_.*Amsterdam` would run that
+          # transition in both jobs. The Rest and Prague limits name their forks
+          # the same way, so no test runs in two jobs.
+          - {
+              name: "Consume Engine tests (Osaka and BPO)",
+              file_name: consume-engine-osaka-bpo,
+              simulation: ethereum/eels/consume-engine,
+              limit: ".*fork_Osaka.*|.*fork_BPO.*",
             }
           - {
               name: "Consume RLP tests (Rest)",
@@ -94,8 +109,28 @@ jobs:
               name: "Consume RLP tests (Amsterdam)",
               file_name: consume-rlp-amsterdam,
               simulation: ethereum/eels/consume-rlp,
-              limit: ".*fork_.*Amsterdam.*",
-              amsterdam: true,
+              limit: ".*fork_Amsterdam.*",
+              parallelism: 2,
+            }
+          - {
+              name: "Consume RLP tests (Osaka and BPO)",
+              file_name: consume-rlp-osaka-bpo,
+              simulation: ethereum/eels/consume-rlp,
+              limit: ".*fork_Osaka.*|.*fork_BPO.*",
+            }
+          # consume-wirex has the client sync each test's chain from a mock devp2p
+          # peer, so the EELS fixtures also exercise full sync over the eth wire
+          # protocol, not only the engine API. It has its own hive commit and
+          # image in .github/config/hive/pins.yaml. The run includes the
+          # Amsterdam fixtures, so it takes the same lower parallelism as the
+          # Amsterdam entries above. More workers do not make it faster on the
+          # hosted runner: four took as long as two, about 55 minutes, because
+          # the end of the run does not speed up, and six exhausted the runner.
+          - {
+              name: "Consume WireX tests",
+              file_name: consume-wirex,
+              simulation: ethereum/eels/consume-wirex,
+              limit: "",
               parallelism: 2,
             }
           - {
@@ -103,13 +138,14 @@ jobs:
               file_name: execute-blobs-osaka,
               simulation: ethereum/eels/execute-blobs,
               limit: "",
+              fork: Osaka,
             }
           - {
               name: "Execute Blobs tests (Amsterdam)",
               file_name: execute-blobs-amsterdam,
               simulation: ethereum/eels/execute-blobs,
               limit: "",
-              amsterdam: true,
+              fork: Amsterdam,
             }
 
     steps:
@@ -120,91 +156,39 @@ jobs:
           large-packages: false
 
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
-      # Set custom args defined in Dockerfile to pin execution-spec-tests versions
-      # See: https://github.com/ethereum/hive/blob/c2dab60f898b94afe8eeac505f60dcde59205e77/simulators/ethereum/eest/consume-rlp/Dockerfile#L4-L8
-      - name: Load Amsterdam config
-        id: amsterdam-config
-        shell: bash
-        run: |
-          echo "fixtures=$(yq -r '.fixtures' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
-          echo "eels_commit=$(yq -r '.eels_commit' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
-
-      - name: Load mainnet config
-        id: mainnet-config
-        shell: bash
-        run: |
-          echo "fixtures=$(yq -r '.fixtures' .github/config/hive/mainnet.yaml)" >> "$GITHUB_OUTPUT"
-          echo "eels_commit=$(yq -r '.eels_commit' .github/config/hive/mainnet.yaml)" >> "$GITHUB_OUTPUT"
-
+      # Pin the EELS simulator image tags, see
+      # https://github.com/ethereum/hive/blob/master/simulators/ethereum/eels/README.md
+      # The flags and the hive commit come from .github/config/hive/pins.yaml.
       - name: Determine hive flags
         id: hive-flags
         shell: bash
         env:
           SIMULATION: ${{ matrix.test.simulation }}
           SIM_LIMIT: ${{ matrix.test.limit || '' }}
-          AMSTERDAM: ${{ matrix.test.amsterdam || 'false' }}
-          AMSTERDAM_FIXTURES: ${{ steps.amsterdam-config.outputs.fixtures }}
-          AMSTERDAM_EELS_COMMIT: ${{ steps.amsterdam-config.outputs.eels_commit }}
-          MAINNET_FIXTURES: ${{ steps.mainnet-config.outputs.fixtures }}
-          MAINNET_EELS_COMMIT: ${{ steps.mainnet-config.outputs.eels_commit }}
+          SIM_FORK: ${{ matrix.test.fork || '' }}
+          SIM_PARALLELISM: ${{ matrix.test.parallelism || 4 }}
         run: |
-          FLAGS="--sim.parallelism ${{ matrix.test.parallelism || 4 }} --sim.loglevel 1"
-          if [[ "$SIMULATION" == "ethereum/eels/consume-engine" || "$SIMULATION" == "ethereum/eels/consume-rlp" ]]; then
-            # Use fork-specific fixtures to ensure comprehensive test coverage. Keyed off an
-            # explicit flag rather than a substring of the limit, which no longer contains a
-            # literal fork name; matching on the limit would fall through to the mainnet
-            # bundle, which carries no Amsterdam fixtures at all.
-            if [[ "$AMSTERDAM" == "true" ]]; then
-              # Amsterdam config loaded from .github/config/hive/amsterdam.yaml
-              FLAGS+=" --sim.buildarg fixtures=$AMSTERDAM_FIXTURES"
-              FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
-            else
-              # All other forks (Prague, Osaka, Cancun, Shanghai, Paris) use the
-              # mainnet bundle, which includes comprehensive coverage including
-              # ported static tests.
-              # Config loaded from .github/config/hive/mainnet.yaml
-              FLAGS+=" --sim.buildarg fixtures=$MAINNET_FIXTURES"
-              FLAGS+=" --sim.buildarg branch=$MAINNET_EELS_COMMIT"
-            fi
-            FLAGS+=" --client.checktimelimit=180s"
-          fi
+          .github/scripts/hive-flags.sh --simulation "$SIMULATION" --limit "$SIM_LIMIT" \
+            --fork "$SIM_FORK" --parallelism "$SIM_PARALLELISM" --loglevel 1 >> "$GITHUB_OUTPUT"
 
-          # The execute simulators drive a live client over RPC instead of consuming
-          # fixtures, so they take `fork` where the consume ones take `fixtures`, and
-          # fall back to Osaka when it is not given. Left unpinned the image also
-          # clones whatever execution-specs default branch happens to be; that has
-          # drifted far enough that collection aborts with "No spec type format found
-          # in the test item" and the job uploads zero suites while still reporting
-          # success. Both fork runs share the Amsterdam EELS pin because it carries
-          # every fork and collects cleanly, whereas the mainnet pin (tests@v20.0.1)
-          # aborts collection here inside its own fork-filter plugin.
-          if [[ "$SIMULATION" == "ethereum/eels/execute-blobs" ]]; then
-            FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
-            if [[ "$AMSTERDAM" == "true" ]]; then
-              FLAGS+=" --sim.buildarg fork=Amsterdam"
-            else
-              FLAGS+=" --sim.buildarg fork=Osaka"
-            fi
-            FLAGS+=" --client.checktimelimit=300s"
+      # A pull request from a fork has no secrets, and the login fails without
+      # one. `if` cannot read a secret, so this step reports whether it is set,
+      # which keeps the token out of the environment of every other step.
+      - name: Check for the Docker Hub token
+        id: dockerhub
+        shell: bash
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [[ -n "$DOCKERHUB_TOKEN" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
           fi
-
-          if [[ "$SIMULATION" == "ethereum/rpc-compat" ]]; then
-            FLAGS+=" --sim.buildarg branch=d08382ae5c808680e976fce4b73f4ba91647199b"
-          fi
-
-          if [[ -n "$SIM_LIMIT" ]]; then
-            # Single-quote the limit so regex metacharacters (e.g. the `|` in
-            # multi-fork limits) survive the action's shell re-evaluation of
-            # extra_flags. Matches pr-main_l1.yaml's escaping.
-            escaped_limit=${SIM_LIMIT//\'/\'\\\'\'}
-            FLAGS+=" --sim.limit '$escaped_limit'"
-          fi
-          echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
       - name: Log in to the Container registry
-        uses: docker/login-action@v4
+        if: ${{ steps.dockerhub.outputs.available == 'true' }}
+        uses: docker/login-action@v4.7.0
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -216,37 +200,42 @@ jobs:
         with:
           simulator: ${{ matrix.test.simulation }}
           client: ethrex
-          # Pin hive to ethereum/hive#1530's merge commit, which fixes the
-          # clients/ethrex/mapper.jq depositContractAddress bug from #1507:
-          # #1524 wrapped the `//` value in parens (the unparenthesized form was
-          # a jq syntax error that stopped the client from starting), and #1530
-          # restored the mainnet deposit contract address as the fallback (the
-          # zero-address default made every eip6110 deposit / eip7685 request
-          # test fail). Also gives the daily report a reproducible hive version
-          # instead of floating on the action's default.
-          hive_version: 7c4c99ebb79955f23e1952fb0282a0dadcb6e181
+          hive_version: ${{ steps.hive-flags.outputs.hive_version }}
           extra_flags: ${{ steps.hive-flags.outputs.flags }}
           workflow_artifact_upload: true
           workflow_artifact_prefix: ${{ matrix.test.file_name }}_daily
+
+      # These jobs keep going when tests fail, which is what the report is for.
+      # A run with no test cases reports nothing at all, though, so it goes
+      # unnoticed: the two execute-blobs jobs ran none for weeks and stayed
+      # green. Failing the job marks it without failing the workflow, because
+      # the job is `continue-on-error`, and the report job below still runs,
+      # because it is `if: always()`.
+      - name: Fail if hive ran no tests
+        shell: bash
+        run: |
+          total=$(.github/scripts/count-hive-tests.sh src/results)
+          echo "hive ran $total tests"
+          [[ $total -gt 0 ]]
 
   hive-report:
     name: Generate and Save report
     needs: run-hive
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       artifact_name: results_daily.md
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l1
 
       - name: Download all results
         continue-on-error: true
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v6.0.0
         with:
           path: hive/workspace/logs
           pattern: "*_daily-results.zip"
@@ -289,7 +278,7 @@ jobs:
         run: cargo run --manifest-path tooling/Cargo.toml -p hive_report > results.md
 
       - name: Upload daily result
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: results_daily.md
           path: |
@@ -305,13 +294,13 @@ jobs:
   post-daily-report:
     name: Post report to slack
     needs: [hive-report]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Download hive results
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v6.0.0
         with:
           name: ${{ needs.hive-report.outputs.artifact_name }}
 

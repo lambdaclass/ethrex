@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use ethrex_common::types::Fork;
 use ethrex_crypto::NativeCrypto;
-use ethrex_levm::precompiles::ecpairing;
+use ethrex_levm::precompiles::{blake2f, ecpairing};
 
 fn test_ec_pairing(calldata: &str, expected_output: &str, mut gas: u64) {
     let calldata = Bytes::from(hex::decode(calldata).unwrap());
@@ -149,4 +149,74 @@ fn test_ec_pairing_coordinate_out_of_bounds() {
         ecpairing(&calldata, &mut gas_remaining, Fork::Cancun, &NativeCrypto),
         Err(PrecompileError::CoordinateExceedsFieldModulus.into())
     );
+}
+
+// BLAKE2F test vectors from EIP-152 (h, m = "abc", t = 3), with the rounds prefix and
+// the final-block flag appended by each test.
+const BLAKE2F_BODY: &str = "48c9bdf267e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5d182e6ad7f520e511f6c3e2b8c68059b6bbd41fbabd9831f79217e1319cde05b616263000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000";
+
+fn blake2f_input(rounds: &str, final_flag: &str) -> Bytes {
+    Bytes::from(hex::decode(format!("{rounds}{BLAKE2F_BODY}{final_flag}")).unwrap())
+}
+
+#[test]
+fn test_blake2f_eip152_vectors() {
+    // Vector 5: 12 rounds, final block.
+    let mut gas = 12;
+    let output = blake2f(
+        &blake2f_input("0000000c", "01"),
+        &mut gas,
+        Fork::Cancun,
+        &NativeCrypto,
+    )
+    .unwrap();
+    assert_eq!(
+        hex::encode(output),
+        "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923"
+    );
+    assert_eq!(gas, 0);
+
+    // Vector 4: 0 rounds.
+    let mut gas = 0;
+    let output = blake2f(
+        &blake2f_input("00000000", "01"),
+        &mut gas,
+        Fork::Cancun,
+        &NativeCrypto,
+    )
+    .unwrap();
+    assert_eq!(
+        hex::encode(output),
+        "08c9bcf367e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5d282e6ad7f520e511f6c3e2b8c68059b9442be0454267ce079217e1319cde05b"
+    );
+}
+
+#[test]
+fn test_blake2f_invalid_input() {
+    use ethrex_levm::errors::PrecompileError;
+
+    // Vector 3: the final-block flag must be 0 or 1.
+    let mut gas = u64::MAX;
+    assert_eq!(
+        blake2f(
+            &blake2f_input("0000000c", "02"),
+            &mut gas,
+            Fork::Cancun,
+            &NativeCrypto
+        ),
+        Err(PrecompileError::ParsingInputError.into())
+    );
+
+    // Vectors 1 and 2: the input must be exactly 213 bytes.
+    let full = blake2f_input("0000000c", "01");
+    for input in [
+        full.slice(..212),
+        Bytes::from([full.as_ref(), &[0]].concat()),
+    ] {
+        let mut gas = u64::MAX;
+        assert_eq!(
+            blake2f(&input, &mut gas, Fork::Cancun, &NativeCrypto),
+            Err(PrecompileError::ParsingInputError.into())
+        );
+    }
 }

@@ -1,60 +1,69 @@
 use ethrex_common::types::prover::{ProofBytes, ProofFormat, ProverOutput, ProverType};
 use ethrex_guest_program::{ZKVM_SP1_PROGRAM_ELF, input::ProgramInput};
 use rkyv::rancor::Error;
-use sp1_prover::components::CpuProverComponents;
 #[cfg(not(feature = "gpu"))]
-use sp1_sdk::CpuProver;
+use sp1_sdk::blocking::{CpuProver as Sp1Prover, CpuProverBuilder};
 #[cfg(feature = "gpu")]
-use sp1_sdk::cuda::builder::CudaProverBuilder;
+use sp1_sdk::blocking::{CudaProver as Sp1Prover, CudaProverBuilder};
 use sp1_sdk::{
-    HashableKey, Prover, SP1ProofMode, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
+    Elf, HashableKey, ProvingKey, SP1ProofMode, SP1ProofWithPublicValues, SP1Stdin,
     SP1VerifyingKey,
+    blocking::{ProveRequest, Prover},
 };
 use std::{
     fmt::Debug,
     sync::OnceLock,
     time::{Duration, Instant},
 };
+use tracing::warn;
 use url::Url;
 
 use crate::backend::{BackendError, ProverBackend};
 
 /// Setup data for the SP1 prover (client, proving key, verifying key).
 pub struct ProverSetup {
-    client: Box<dyn Prover<CpuProverComponents>>,
-    pk: SP1ProvingKey,
+    client: Sp1Prover,
+    pk: <Sp1Prover as Prover>::ProvingKey,
     vk: SP1VerifyingKey,
 }
 
 /// Global prover setup - initialized once and reused.
 pub static PROVER_SETUP: OnceLock<ProverSetup> = OnceLock::new();
 
-pub fn init_prover_setup(_endpoint: Option<Url>) -> ProverSetup {
-    #[cfg(feature = "gpu")]
-    let client = {
-        if let Some(endpoint) = _endpoint {
-            CudaProverBuilder::default()
-                .server(
-                    #[expect(clippy::expect_used)]
-                    endpoint
-                        .join("/twirp/")
-                        .expect("Failed to parse moongate server url")
-                        .as_ref(),
-                )
-                .build()
-        } else {
-            CudaProverBuilder::default().local().build()
-        }
-    };
-    #[cfg(not(feature = "gpu"))]
-    let client = { CpuProver::new() };
-    let (pk, vk) = client.setup(ZKVM_SP1_PROGRAM_ELF);
+/// The guest program, in the form the SP1 SDK takes it.
+fn guest_elf() -> Elf {
+    Elf::Static(ZKVM_SP1_PROGRAM_ELF)
+}
 
-    ProverSetup {
-        client: Box::new(client),
-        pk,
-        vk,
+/// Runs `f` on a new thread, outside any tokio runtime. SP1's blocking API drives its
+/// own runtime with `block_on`, which panics on a thread that is already running one,
+/// and the prover calls this backend from async code.
+fn outside_runtime<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    std::thread::scope(|scope| match scope.spawn(f).join() {
+        Ok(value) => value,
+        Err(panic) => std::panic::resume_unwind(panic),
+    })
+}
+
+pub fn init_prover_setup(endpoint: Option<Url>) -> ProverSetup {
+    // SP1 6 has no remote prover server: CUDA proving runs on a local
+    // `sp1-gpu-server` that the SDK downloads and starts, so an endpoint can only be ignored.
+    if let Some(endpoint) = endpoint {
+        warn!(%endpoint, "Ignoring the SP1 server URL: SP1 6 has no remote prover server");
     }
+    outside_runtime(|| {
+        #[cfg(feature = "gpu")]
+        let client = CudaProverBuilder::new().build();
+        #[cfg(not(feature = "gpu"))]
+        let client = CpuProverBuilder::new().build();
+        #[expect(clippy::expect_used)]
+        let pk = client
+            .setup(guest_elf())
+            .expect("SP1 setup of the guest program failed");
+        let vk = ProvingKey::verifying_key(&pk).clone();
+
+        ProverSetup { client, pk, vk }
+    })
 }
 
 /// SP1-specific proof output containing the proof and verifying key.
@@ -109,11 +118,9 @@ impl Sp1Backend {
     }
 
     /// Execute using already-serialized input.
-    fn execute_with_stdin(&self, stdin: &SP1Stdin) -> Result<(), BackendError> {
+    fn execute_with_stdin(&self, stdin: SP1Stdin) -> Result<(), BackendError> {
         let setup = self.get_setup();
-        setup
-            .client
-            .execute(ZKVM_SP1_PROGRAM_ELF, stdin)
+        outside_runtime(|| setup.client.execute(guest_elf(), stdin).run())
             .map_err(BackendError::execution)?;
         Ok(())
     }
@@ -121,14 +128,12 @@ impl Sp1Backend {
     /// Prove using already-serialized input.
     fn prove_with_stdin(
         &self,
-        stdin: &SP1Stdin,
+        stdin: SP1Stdin,
         format: ProofFormat,
     ) -> Result<Sp1ProveOutput, BackendError> {
         let setup = self.get_setup();
         let sp1_format = Self::convert_format(format);
-        let proof = setup
-            .client
-            .prove(&setup.pk, stdin, sp1_format)
+        let proof = outside_runtime(|| setup.client.prove(&setup.pk, stdin).mode(sp1_format).run())
             .map_err(BackendError::proving)?;
         Ok(Sp1ProveOutput::new(proof, setup.vk.clone()))
     }
@@ -158,7 +163,7 @@ impl ProverBackend for Sp1Backend {
 
     fn execute(&self, input: ProgramInput) -> Result<(), BackendError> {
         let stdin = self.serialize_input(&input)?;
-        self.execute_with_stdin(&stdin)
+        self.execute_with_stdin(stdin)
     }
 
     fn prove(
@@ -167,14 +172,14 @@ impl ProverBackend for Sp1Backend {
         format: ProofFormat,
     ) -> Result<Self::ProofOutput, BackendError> {
         let stdin = self.serialize_input(&input)?;
-        self.prove_with_stdin(&stdin, format)
+        self.prove_with_stdin(stdin, format)
     }
 
     fn verify(&self, proof: &Self::ProofOutput) -> Result<(), BackendError> {
         let setup = self.get_setup();
         setup
             .client
-            .verify(&proof.proof, &proof.vk)
+            .verify(&proof.proof, &proof.vk, None)
             .map_err(BackendError::verification)?;
 
         Ok(())
@@ -203,7 +208,7 @@ impl ProverBackend for Sp1Backend {
     fn execute_timed(&self, input: ProgramInput) -> Result<Duration, BackendError> {
         let stdin = self.serialize_input(&input)?;
         let start = Instant::now();
-        self.execute_with_stdin(&stdin)?;
+        self.execute_with_stdin(stdin)?;
         Ok(start.elapsed())
     }
 
@@ -214,7 +219,7 @@ impl ProverBackend for Sp1Backend {
     ) -> Result<(Self::ProofOutput, Duration), BackendError> {
         let stdin = self.serialize_input(&input)?;
         let start = Instant::now();
-        let proof = self.prove_with_stdin(&stdin, format)?;
+        let proof = self.prove_with_stdin(stdin, format)?;
         Ok((proof, start.elapsed()))
     }
 }

@@ -409,7 +409,7 @@ async fn authrpc_too_many_params_get_the_method_arity_error() {
     assert!(
         value["error"]["message"]
             .as_str()
-            .is_some_and(|message| message.contains("Expected 2 params")),
+            .is_some_and(|message| message.contains("Expected 1 or 2 params")),
         "expected the arity error, got {value}"
     );
 }
