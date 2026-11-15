@@ -21,8 +21,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::{
     peer_handler::PeerHandler,
     sync::{
-        BackfillConfig, HistoryChain, SyncDiagnostics, SyncMode, Syncer, run_history_backfill,
-        sync_head_executed,
+        BackfillConfig, HistoryChain, SyncDiagnostics, SyncMode, Syncer,
+        reconcile_history_bounds_when_synced, run_history_backfill, sync_head_executed,
     },
 };
 
@@ -144,7 +144,7 @@ impl SyncManager {
         // Spawn the optional historical-chain backfill task. It idles until
         // initial sync finishes, then fills bodies/receipts below the pivot down
         // to the configured floor, resuming across restarts via the persisted
-        // frontier. A no-op when `--history.chain off`.
+        // frontier. With history off, only the history bounds are reconciled.
         if backfill_config.mode != HistoryChain::Off {
             // Tracked like every other long-lived task, so shutdown waits for it
             // rather than dropping it mid-batch.
@@ -155,6 +155,12 @@ impl SyncManager {
                 backfill_config,
                 backfill_cancel,
                 diagnostics.clone(),
+            ));
+        } else {
+            tracker.spawn(reconcile_history_bounds_when_synced(
+                store.clone(),
+                backfill_blockchain,
+                backfill_cancel,
             ));
         }
         let sync_manager = Self {
@@ -177,6 +183,7 @@ impl SyncManager {
     /// Sets the latest fcu head and starts the next sync cycle if the syncer is currently inactive
     pub fn sync_to_head(&self, fcu_head: H256) {
         self.set_head(fcu_head);
+        self.store.notify_sync_status_changed();
         if !self.is_active() {
             self.start_sync();
         }

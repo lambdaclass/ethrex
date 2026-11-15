@@ -1,0 +1,32 @@
+[package]
+name = "ef_tests-runners"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
+
+[dependencies]
+ef_tests-blockchain = { path = "../blockchain" }
+ef_tests-engine = { path = "../engine" }
+ethrex-vm.workspace = true
+
+clap.workspace = true
+regex = "1.11.1"
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[features]
+default = ["c-kzg"]
+c-kzg = ["ef_tests-blockchain/c-kzg", "ef_tests-engine/c-kzg"]
+
+[[bin]]
+name = "blocktest"
+path = "src/bin/blocktest.rs"
+
+[[bin]]
+name = "enginetest"
+path = "src/bin/enginetest.rs"

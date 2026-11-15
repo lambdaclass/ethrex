@@ -413,7 +413,7 @@ pub async fn init_rpc_api(
         Some(WebSocketConfig {
             addr: get_ws_socket_addr(opts),
             subscription_manager: subscription_manager
-                .unwrap_or_else(ethrex_rpc::SubscriptionManager::spawn),
+                .unwrap_or_else(|| ethrex_rpc::SubscriptionManager::spawn(store.clone())),
         })
     } else {
         None
@@ -1085,7 +1085,7 @@ pub async fn init_l1(
     let peer_handler = PeerHandler::new(peer_table.clone(), initiator);
 
     let subscription_manager = if opts.ws_enabled {
-        let manager = SubscriptionManager::spawn_on(&p2p_group)
+        let manager = SubscriptionManager::spawn_on(store.clone(), &p2p_group)
             .map_err(|err| eyre::eyre!("Failed to start the subscription manager: {err}"))?;
         actor_names.push((manager.id(), "subscription_manager"));
         Some(manager)

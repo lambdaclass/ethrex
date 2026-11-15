@@ -428,6 +428,7 @@ pub async fn sync_cycle_full(
             // past the executed state.
             let state_head = start_block_number.saturating_sub(1);
             diagnostics.write().await.executed_head = state_head;
+            store.notify_sync_status_changed();
             if start_block_number <= canonical_head {
                 warn!(
                     state_head,
