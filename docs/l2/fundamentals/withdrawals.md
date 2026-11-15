@@ -218,3 +218,30 @@ This contract then:
 - Validates that the proof leads from the leaf to the root of the message tree
 - Gives the funds to the user
 - Marks the withdrawal as claimed
+
+### Intents
+
+A contract can also send a message to L1 without moving any value, to prove on L1 that something happened on L2.
+On the L2 side, it calls `sendIntentToL1(payloadHash, consumerOnL1)` on the `CommonBridgeL2`.
+The bridge doesn't send the payload hash as-is, it sends:
+
+```solidity
+keccak256(abi.encode(INTENT_DOMAIN, chainId, sender, consumerOnL1, payloadHash))
+```
+
+- `INTENT_DOMAIN` keeps intents in their own hash space, so an intent can never be claimed as a withdrawal
+- `sender` is the L2 caller, so L1 can tell who sent the intent
+- `consumerOnL1` is the only L1 address that can consume it
+
+Once the batch containing the intent is verified, the consumer calls `verifyAndConsume(senderOnL2, payloadHash, batchNumber, messageId, proof)` on the L1 `CommonBridge`.
+
+This contract then:
+
+- Checks that the batch is verified
+- Ensures the message wasn't already consumed
+- Rebuilds the intent hash with the caller as consumer and computes the expected leaf
+- Validates that the proof leads from the leaf to the root of the message tree
+- Marks the message as consumed
+
+Withdrawals and intents are marked in the same `claimedWithdrawalIDs` mapping, keyed by message ID.
+Message IDs come from a single counter on L2, so each message can be consumed only once, either as a withdrawal or as an intent.

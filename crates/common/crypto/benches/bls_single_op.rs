@@ -170,5 +170,17 @@ fn bench(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench);
+fn bench_pairing(c: &mut Criterion) {
+    let crypto = NativeCrypto;
+    for n in [1u64, 2, 6, 12, 24] {
+        let pairs: Vec<_> = (1..=n)
+            .map(|i| (g1_pair(i).0, g2_pair(i + 100).0))
+            .collect();
+        c.bench_function(&format!("pairing_check_{n}"), |b| {
+            b.iter(|| crypto.bls12_381_pairing_check(black_box(&pairs)).unwrap())
+        });
+    }
+}
+
+criterion_group!(benches, bench, bench_pairing);
 criterion_main!(benches);

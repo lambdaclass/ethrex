@@ -621,3 +621,41 @@ fn test_exchange_coverage_valid_pairs() {
     // But some might map to the same (n, m) pair
     assert!(!pairs.is_empty(), "Should have at least some valid pairs");
 }
+
+// ==================== Stack pop1_and_top_mut Tests ====================
+
+#[test]
+fn test_pop1_and_top_mut_underflows_below_two_items() {
+    for depth in 0..2 {
+        let mut stack = setup_stack_with_values(&[7; 2][..depth]);
+        assert!(stack.pop1_and_top_mut().is_err(), "depth {depth}");
+        assert_eq!(
+            stack.len(),
+            depth,
+            "a failed pop leaves the stack as it was"
+        );
+    }
+}
+
+#[test]
+fn test_pop1_and_top_mut_writes_the_result_in_place() {
+    let mut stack = setup_stack_with_values(&[1, 2, 3]);
+    let (&top, second) = stack.pop1_and_top_mut().unwrap();
+    assert_eq!(top, U256::from(3));
+    assert_eq!(*second, U256::from(2));
+    *second = top + *second;
+
+    assert_eq!(stack.len(), 2);
+    assert_eq!(stack.pop1().unwrap(), U256::from(5));
+    assert_eq!(stack.pop1().unwrap(), U256::from(1));
+}
+
+#[test]
+fn test_pop1_and_top_mut_on_a_full_stack() {
+    let values: Vec<u64> = (0..1024).collect();
+    let mut stack = setup_stack_with_values(&values);
+    let (&top, second) = stack.pop1_and_top_mut().unwrap();
+    assert_eq!(top, U256::from(1023));
+    assert_eq!(*second, U256::from(1022));
+    assert_eq!(stack.len(), 1023);
+}

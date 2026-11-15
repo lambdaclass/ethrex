@@ -347,7 +347,7 @@ Block building options:
           Block extra data message.
           
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 29.0.1"]
+          [default: "ethrex 30.0.1"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -597,7 +597,7 @@ Block building options:
           Block extra data message.
 
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 29.0.1"]
+          [default: "ethrex 30.0.1"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -902,7 +902,7 @@ Prover client options:
           [default: INFO]
 
       --sp1-server <URL>
-          Url to the moongate server to use when using sp1 backend
+          Ignored: SP1 6 proves on the local sp1-gpu-server and has no remote prover server
 
           [env: ETHREX_SP1_SERVER=]
 ```

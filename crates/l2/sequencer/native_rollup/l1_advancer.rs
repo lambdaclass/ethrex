@@ -350,7 +350,7 @@ pub fn build_ssz_stateless_input(
 
     let new_payload_request = NewPayloadRequest {
         execution_payload,
-        versioned_hashes: ProgressiveList::new(), // Empty for L2
+        versioned_hashes: SszList::new(), // Empty for L2
         parent_beacon_block_root,
         execution_requests,
     };

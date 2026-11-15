@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use bytes::{BufMut, Bytes, BytesMut};
 use ethereum_types::{H256, U256};
@@ -18,11 +18,19 @@ use ethrex_rlp::{
 use super::GenesisAccount;
 use crate::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH};
 
-/// Shared empty jumpdest bitmap. `Code::default()` and any bytecode without a
-/// `JUMPDEST` clone this (a refcount bump) instead of allocating a fresh empty
-/// `Arc` header each time. This matters because the per-tx `Code::default()`
-/// placeholder and every EOA / empty-code load would otherwise each allocate.
-static EMPTY_JUMPDESTS: LazyLock<Arc<[u8]>> = LazyLock::new(|| Arc::from(Vec::new()));
+std::thread_local! {
+    /// Shared empty jumpdest bitmap. `Code::default()` and any bytecode without a
+    /// `JUMPDEST` clone this (a refcount bump) instead of allocating a fresh empty
+    /// `Arc` header each time. This matters because the per-tx `Code::default()`
+    /// placeholder and every EOA / empty-code load would otherwise each allocate.
+    /// One per thread: with a single process-wide `Arc`, threads executing
+    /// transactions in parallel all bump the same reference count and contend on it.
+    static EMPTY_JUMPDESTS: Arc<[u8]> = Arc::from(Vec::new());
+}
+
+fn empty_jumpdests() -> Arc<[u8]> {
+    EMPTY_JUMPDESTS.with(Arc::clone)
+}
 
 /// The allocations an initcode [`Code`] is built in: its bytecode buffer and its
 /// jump-destination bitmap. A finished initcode hands them back through
@@ -140,7 +148,7 @@ pub struct Code {
     /// the jump destinations are, and validating a jump is a bit test rather than a
     /// search.
     ///
-    /// Bytecode with no jump destination stores a zero-length bitmap ([`EMPTY_JUMPDESTS`])
+    /// Bytecode with no jump destination stores a zero-length bitmap (`EMPTY_JUMPDESTS`)
     /// rather than an all-zero one, so this is not always `ceil(len / 8)` bytes long;
     /// [`Code::is_valid_jumpdest`] reads a missing byte as "no jump destination". Initcode
     /// built by [`Code::from_initcode_buffer`] is the exception: it keeps the bitmap it was
@@ -247,14 +255,14 @@ impl Code {
     pub fn compute_jumpdests(code: &[u8]) -> Arc<[u8]> {
         // Even an empty `Arc` allocates its reference counts.
         if code.is_empty() {
-            return EMPTY_JUMPDESTS.clone();
+            return empty_jumpdests();
         }
         let mut bitmap = zeroed_bitmap(code.len().div_ceil(8));
         let any = mark_jumpdests(code, Arc::make_mut(&mut bitmap));
         // Share the single empty bitmap for jumpless bytecode (very common: EOAs,
         // tiny contracts) so we don't keep an all-zero map; `is_valid_jumpdest`
         // reads a missing byte as "no jump destination".
-        if any { bitmap } else { EMPTY_JUMPDESTS.clone() }
+        if any { bitmap } else { empty_jumpdests() }
     }
 
     /// Whether `offset` is a valid jump destination, i.e. it holds a `JUMPDEST` that is
@@ -792,7 +800,7 @@ impl Default for Code {
             bytecode: Bytes::from_static(&[0u8; BYTECODE_PADDING]),
             bytecode_len: 0,
             hash: *EMPTY_KECCAK_HASH,
-            jumpdests: EMPTY_JUMPDESTS.clone(),
+            jumpdests: empty_jumpdests(),
         }
     }
 }

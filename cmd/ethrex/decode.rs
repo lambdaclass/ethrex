@@ -15,10 +15,20 @@ pub fn jwtsecret_file(file: &mut File) -> Bytes {
         .unwrap_or(&contents)
         .trim_end_matches('\n')
         .to_string();
-    hex::decode(contents)
-        .expect("Secret should be hex encoded")
-        .into()
+    let secret = hex::decode(contents).expect("Secret should be hex encoded");
+    // The Engine API spec fixes the secret at 256 bits. A shorter one, down to an
+    // empty file, would be accepted as an HMAC key that is weak or empty.
+    assert!(
+        secret.len() == JWT_SECRET_LEN,
+        "JWT secret must be {JWT_SECRET_LEN} bytes ({} hex characters), got {} bytes",
+        JWT_SECRET_LEN * 2,
+        secret.len()
+    );
+    secret.into()
 }
+
+/// Length in bytes of the Engine API JWT secret.
+pub const JWT_SECRET_LEN: usize = 32;
 pub fn chain_file(file: File) -> Result<Vec<Block>, Error> {
     let mut chain_rlp_reader = BufReader::new(file);
     let mut buf = vec![];
