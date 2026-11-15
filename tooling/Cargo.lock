@@ -9558,10 +9558,12 @@ dependencies = [
 
 [[package]]
 name = "spawned-concurrency"
-version = "0.7.3"
-source = "git+https://github.com/lambdaclass/spawned?rev=4667d633c8a51a69db88a7896971115ed20aa5fe#4667d633c8a51a69db88a7896971115ed20aa5fe"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da02834ca272603e01ffa99e4a62b66e39498ae066d8e21062d92e4622e28616"
 dependencies = [
  "futures",
+ "parking_lot 0.12.5",
  "pin-project-lite",
  "spawned-macros",
  "spawned-rt",
@@ -9571,8 +9573,9 @@ dependencies = [
 
 [[package]]
 name = "spawned-macros"
-version = "0.7.3"
-source = "git+https://github.com/lambdaclass/spawned?rev=4667d633c8a51a69db88a7896971115ed20aa5fe#4667d633c8a51a69db88a7896971115ed20aa5fe"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e368e431187a02bb18bd41fa9b4e0dd890c74efd0caf2308d4fa33a1bb4c6216"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9581,17 +9584,28 @@ dependencies = [
 
 [[package]]
 name = "spawned-rt"
-version = "0.7.3"
-source = "git+https://github.com/lambdaclass/spawned?rev=4667d633c8a51a69db88a7896971115ed20aa5fe#4667d633c8a51a69db88a7896971115ed20aa5fe"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf5a762cf874c37bb6b357a4ea82880da982ab59a38a108ace3264637b493c97"
 dependencies = [
  "ctrlc",
  "loom",
  "nix 0.30.1",
+ "spawned-sim-libc",
  "tokio",
  "tokio-stream",
  "tokio-util",
  "tracing",
  "tracing-subscriber 0.3.23",
+]
+
+[[package]]
+name = "spawned-sim-libc"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1797c45ec3d62c6e25e25c5c8b6f82d3e0ae1c28ecde4ee3a5da2fb9469d3186"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
