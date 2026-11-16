@@ -3052,14 +3052,22 @@ impl Store {
                     }
                 };
 
-                for (storage_key, storage_value) in &update.added_storage {
-                    let hashed_key = hash_key(storage_key);
+                // Insert before removing, as the guest does when it replays these updates
+                // (`GuestProgramState::apply_account_updates`). A removal that leaves a
+                // branch with one child reads that child, so removing first can record a
+                // node the guest never reads. The map is seeded, so without a fixed order
+                // the witness would also change from one run to the next.
+                let (removals, inserts): (Vec<_>, Vec<_>) = update
+                    .added_storage
+                    .iter()
+                    .partition(|(_key, value)| value.is_zero());
 
-                    if storage_value.is_zero() {
-                        storage_trie.remove(&hashed_key)?;
-                    } else {
-                        storage_trie.insert(hashed_key, storage_value.encode_to_vec())?;
-                    }
+                for (storage_key, storage_value) in inserts {
+                    storage_trie.insert(hash_key(storage_key), storage_value.encode_to_vec())?;
+                }
+
+                for (storage_key, _value) in removals {
+                    storage_trie.remove(&hash_key(storage_key))?;
                 }
 
                 let (storage_hash, storage_updates) =
@@ -9158,5 +9166,93 @@ mod state_view_tests {
     fn state_view_is_pinned_across_a_commit_rocksdb() {
         let dir = tempfile::tempdir().unwrap();
         state_view_is_pinned_across_a_commit(Store::new(dir.path(), EngineType::RocksDB).unwrap());
+    }
+}
+
+#[cfg(test)]
+mod witness_recording_tests {
+    use super::*;
+    use ethrex_common::Bytes;
+    use ethrex_common::types::GenesisAccount;
+
+    /// The next three slots whose hashed keys start with different nibbles. In
+    /// a storage trie that only holds such slots the root is a branch, and
+    /// each slot is a leaf right under it.
+    fn next_slots_under_one_branch(next_slot: &mut u64) -> [H256; 3] {
+        let mut slots: Vec<H256> = Vec::new();
+        while slots.len() < 3 {
+            let slot = H256::from_low_u64_be(*next_slot);
+            *next_slot += 1;
+            let first_nibble = |slot: &H256| hash_key(slot)[0] >> 4;
+            if slots
+                .iter()
+                .all(|other| first_nibble(other) != first_nibble(&slot))
+            {
+                slots.push(slot);
+            }
+        }
+        [slots[0], slots[1], slots[2]]
+    }
+
+    /// Each account starts with two slots, and the update removes one and
+    /// inserts another. Removing first leaves the root branch with only the
+    /// kept slot, and collapsing it reads that leaf, which the guest never
+    /// reads since it inserts first. The updates come in a seeded map, so one
+    /// account could get the right order by luck, but not all of them.
+    #[tokio::test]
+    async fn records_storage_inserts_before_removals() {
+        const ACCOUNTS: u64 = 32;
+        let kept_value = U256::from(0xb0b);
+        let slot_key = |slot: &H256| U256::from_big_endian(slot.as_bytes());
+
+        let mut alloc = BTreeMap::new();
+        let mut updates = Vec::new();
+        let mut next_slot = 0;
+        for index in 0..ACCOUNTS {
+            let [removed, kept, inserted] = next_slots_under_one_branch(&mut next_slot);
+            let address = Address::from_low_u64_be(0x1000 + index);
+            alloc.insert(
+                address,
+                GenesisAccount {
+                    code: Bytes::new(),
+                    storage: BTreeMap::from([
+                        (slot_key(&removed), U256::one()),
+                        (slot_key(&kept), kept_value),
+                    ]),
+                    balance: U256::one(),
+                    nonce: 1,
+                },
+            );
+            let mut update = AccountUpdate::new(address);
+            update.added_storage.insert(removed, U256::zero());
+            update.added_storage.insert(inserted, U256::one());
+            updates.push(update);
+        }
+        let genesis = Genesis {
+            alloc,
+            ..Default::default()
+        };
+        let mut store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        store.add_initial_state(genesis.clone()).await.unwrap();
+        let state_trie = store
+            .state_trie(genesis.get_block().hash())
+            .unwrap()
+            .expect("genesis state");
+
+        let (storage_tries, _) = store
+            .apply_account_updates_from_trie_with_witness(state_trie, &updates, HashMap::new())
+            .unwrap();
+
+        assert_eq!(storage_tries.len(), updates.len());
+        let kept_leaf_value = kept_value.encode_to_vec();
+        for (address, (witness, _trie)) in &storage_tries {
+            let recorded = witness.lock().unwrap();
+            assert!(
+                !recorded
+                    .values()
+                    .any(|node| matches!(node, Node::Leaf(leaf) if leaf.value == kept_leaf_value)),
+                "the witness of {address:#x} has the leaf of the slot the update doesn't touch"
+            );
+        }
     }
 }
