@@ -21,7 +21,7 @@ use std::path::PathBuf;
 
 use bytes::Bytes;
 use clap::Args;
-use ethrex_blockchain::payload::T8nBuildOptions;
+use ethrex_blockchain::payload::{PayloadBuildResult, T8nBuildOptions};
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::constants::DEFAULT_OMMERS_HASH;
 use ethrex_common::types::{
@@ -36,6 +36,7 @@ use ethrex_storage::{EngineType, Store};
 
 use error::T8nError;
 use output::{Rejection, WitnessResult};
+use types::Inputs;
 use witness::WitnessOutput;
 
 #[derive(Args)]
@@ -86,6 +87,26 @@ pub struct T8nArgs {
     pub opcode_count: Option<String>,
 }
 
+impl T8nArgs {
+    /// Where `--opcode.count` writes the counts, if it has to. Geth takes an
+    /// empty file name as the flag not being set.
+    fn opcode_count_path(&self) -> Option<&str> {
+        self.opcode_count.as_deref().filter(|path| !path.is_empty())
+    }
+}
+
+/// What a t8n run computes from its inputs, before it is written out.
+pub struct Execution {
+    pub result: PayloadBuildResult,
+    /// The rejected transactions, by their index in the input list.
+    pub rejections: Vec<Rejection>,
+    pub block_exception: Option<String>,
+    /// Set when the run generates the execution witness.
+    pub witness: Option<WitnessResult>,
+    /// Set with `--opcode.count`: the opcodes that ran, with their counts.
+    pub opcode_counts: Option<Vec<(u8, u64)>>,
+}
+
 pub fn run(args: T8nArgs) -> Result<(), T8nError> {
     if args.reward > 0 {
         return Err(T8nError::Unsupported(
@@ -93,6 +114,11 @@ pub fn run(args: T8nArgs) -> Result<(), T8nError> {
         ));
     }
     let inputs = types::read_inputs(&args)?;
+    let execution = execute(&args, &inputs)?;
+    output::write_outputs(&args, &inputs.alloc, &execution)
+}
+
+fn execute(args: &T8nArgs, inputs: &Inputs) -> Result<Execution, T8nError> {
     let fork = fork::parse_fork(&args.fork)?;
     let mut config = fork::chain_config_for(fork, args.chain_id);
     // Filler-provided blob parameters override the canonical schedule for
@@ -273,8 +299,6 @@ pub fn run(args: T8nArgs) -> Result<(), T8nError> {
             ..Default::default()
         },
     );
-    // Geth takes an empty file name as the flag not being set.
-    let opcode_count_path = args.opcode_count.as_deref().filter(|path| !path.is_empty());
     let build = blockchain
         .build_payload_t8n(
             Block::new(header, body),
@@ -283,7 +307,7 @@ pub fn run(args: T8nArgs) -> Result<(), T8nError> {
                 block_hash_cache,
                 state_test: args.state_test,
                 witness: with_witness,
-                opcode_count: opcode_count_path.is_some(),
+                opcode_count: args.opcode_count_path().is_some(),
             },
         )
         .map_err(|e| T8nError::Build(e.to_string()))?;
@@ -326,15 +350,14 @@ pub fn run(args: T8nArgs) -> Result<(), T8nError> {
         })
     });
 
-    if let (Some(path), Some(counts)) = (opcode_count_path, &build.opcode_counts) {
-        output::write_opcode_counts(&args, path, counts)?;
-    }
-    output::write_outputs(
-        &args,
-        &inputs.alloc,
-        &result,
-        &rejections,
+    Ok(Execution {
+        result,
+        rejections,
         block_exception,
-        witness.as_ref(),
-    )
+        witness,
+        opcode_counts: build.opcode_counts,
+    })
 }
+
+#[cfg(test)]
+mod tests;

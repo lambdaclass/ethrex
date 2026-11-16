@@ -206,3 +206,102 @@ pub fn read_inputs(args: &T8nArgs) -> Result<Inputs, T8nError> {
         blob_params,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_rlp::encode::RLPEncode;
+
+    fn header(number: u64) -> BlockHeader {
+        BlockHeader {
+            number,
+            ..Default::default()
+        }
+    }
+
+    fn hex_rlp(header: &BlockHeader) -> String {
+        format!("0x{}", hex::encode(header.encode_to_vec()))
+    }
+
+    /// An environment with `headers` under the given `blockHeaders` keys.
+    fn env_with_headers(headers: &[(&str, &BlockHeader)]) -> EnvJson {
+        EnvJson {
+            block_headers: headers
+                .iter()
+                .map(|(key, header)| (key.to_string(), hex_rlp(header)))
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    fn parse_error(env: &EnvJson, block_hashes: &BTreeMap<u64, H256>) -> String {
+        env.parsed_block_headers(block_hashes)
+            .expect_err("the headers were accepted")
+            .to_string()
+    }
+
+    #[test]
+    fn accepts_headers_that_have_their_block_hashes() {
+        let (first, second) = (header(1), header(2));
+        let env = env_with_headers(&[("0x01", &first), ("2", &second)]);
+        let block_hashes = BTreeMap::from([(1, first.hash()), (2, second.hash())]);
+
+        let headers = env.parsed_block_headers(&block_hashes).expect("headers");
+
+        assert_eq!(headers.keys().copied().collect::<Vec<_>>(), vec![1, 2]);
+        assert_eq!(headers[&1].hash(), first.hash());
+        assert_eq!(headers[&2].hash(), second.hash());
+    }
+
+    #[test]
+    fn rejects_a_header_with_another_hash() {
+        let first = header(1);
+        let env = env_with_headers(&[("0x01", &first)]);
+        let block_hashes = BTreeMap::from([(1, H256::repeat_byte(0x11))]);
+
+        let error = parse_error(&env, &block_hashes);
+        assert!(error.contains("blockHeaders[1] hash mismatch"), "{error}");
+    }
+
+    #[test]
+    fn rejects_a_header_under_the_number_of_another_block() {
+        let second = header(2);
+        let env = env_with_headers(&[("0x01", &second)]);
+        let block_hashes = BTreeMap::from([(1, second.hash())]);
+
+        let error = parse_error(&env, &block_hashes);
+        assert!(
+            error.contains("blockHeaders[1] decodes to header number 2"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_header_without_a_block_hash() {
+        let first = header(1);
+        let env = env_with_headers(&[("0x01", &first)]);
+
+        let error = parse_error(&env, &BTreeMap::new());
+        assert!(
+            error.contains("blockHeaders[1] has no entry in blockHashes"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_header_that_is_not_the_rlp_of_one() {
+        let mut env = env_with_headers(&[]);
+        env.block_headers
+            .insert("0x01".to_string(), "0xc0".to_string());
+        let error = parse_error(&env, &BTreeMap::new());
+        assert!(
+            error.contains("failed to decode blockHeaders[1]"),
+            "{error}"
+        );
+
+        env.block_headers
+            .insert("0x01".to_string(), "0xzz".to_string());
+        let error = parse_error(&env, &BTreeMap::new());
+        assert!(error.contains("blockHeaders[1] is not hex"), "{error}");
+    }
+}

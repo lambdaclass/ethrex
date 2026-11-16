@@ -12,9 +12,9 @@ use ethrex_levm::opcodes::Opcode;
 use ethrex_rlp::encode::RLPEncode;
 use serde_json::{Map, Value, json};
 
-use super::T8nArgs;
 use super::error::T8nError;
 use super::witness::WitnessOutput;
+use super::{Execution, T8nArgs};
 
 /// A rejected transaction: its index in the input list and the reason.
 pub struct Rejection {
@@ -32,11 +32,9 @@ pub struct WitnessResult {
 pub fn write_outputs(
     args: &T8nArgs,
     pre_alloc: &BTreeMap<Address, GenesisAccount>,
-    result: &PayloadBuildResult,
-    rejections: &[Rejection],
-    block_exception: Option<String>,
-    witness: Option<&WitnessResult>,
+    execution: &Execution,
 ) -> Result<(), T8nError> {
+    let result = &execution.result;
     write_json(
         &output_path(args, &args.output_alloc),
         &serde_json::to_value(post_alloc(pre_alloc, result))
@@ -44,22 +42,17 @@ pub fn write_outputs(
     )?;
     write_json(
         &output_path(args, &args.output_result),
-        &result_json(result, rejections, block_exception, witness),
+        &result_json(execution),
     )?;
+    if let (Some(path), Some(counts)) = (args.opcode_count_path(), &execution.opcode_counts) {
+        write_json(&output_path(args, path), &opcode_counts_json(counts))?;
+    }
     write_body(&output_path(args, &args.output_body), result)
 }
 
-/// Write the opcode counts as a JSON object from opcode name to count, like
-/// geth's `--opcode.count`.
-pub fn write_opcode_counts(
-    args: &T8nArgs,
-    relative: &str,
-    counts: &[(u8, u64)],
-) -> Result<(), T8nError> {
-    write_json(&output_path(args, relative), &opcode_counts_json(counts))
-}
-
-fn opcode_counts_json(counts: &[(u8, u64)]) -> Value {
+/// The opcode counts as a JSON object from opcode name to count, like the
+/// file of geth's `--opcode.count`.
+pub fn opcode_counts_json(counts: &[(u8, u64)]) -> Value {
     let counts: Map<String, Value> = counts
         .iter()
         .map(|(opcode, count)| (opcode_name(*opcode), json!(count)))
@@ -178,12 +171,14 @@ fn receipt_json(
     })
 }
 
-fn result_json(
-    result: &PayloadBuildResult,
-    rejections: &[Rejection],
-    block_exception: Option<String>,
-    witness: Option<&WitnessResult>,
-) -> Value {
+pub fn result_json(execution: &Execution) -> Value {
+    let Execution {
+        result,
+        rejections,
+        block_exception,
+        witness,
+        ..
+    } = execution;
     let header = &result.payload.header;
     let transactions = &result.payload.body.transactions;
 
