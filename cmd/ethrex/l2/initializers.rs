@@ -23,7 +23,7 @@ use ethrex_p2p::{
         initiator::RLPxInitiator,
         l2::{block_importer::L2BlockImporter, l2_connection::P2PBasedContext},
     },
-    sync::{BackfillConfig, HistoryChain},
+    sync::{BackfillConfig, HistoryChain, reconcile_history_bounds_at_startup},
     sync_manager::SyncManager,
     types::{LocalNode, SharedLocalNode},
 };
@@ -382,6 +382,12 @@ pub async fn init_l2(
         .await;
         (Some(peer_handler), Some(Arc::new(syncer)))
     } else {
+        // No sync manager runs here to reconcile the history bounds of a database created
+        // before they were tracked, and `eth_capabilities` reports no history until then.
+        tracker.spawn(reconcile_history_bounds_at_startup(
+            store.clone(),
+            cancel_token.clone(),
+        ));
         (None, None)
     };
 
@@ -570,6 +576,12 @@ pub async fn init_native_rollup_l2(
     // Fresh token: this native-rollup devnet RPC path has no graceful-shutdown
     // wiring, so the token is never cancelled (matches prior behavior).
     let cancel_token = CancellationToken::new();
+    // No sync manager runs here to reconcile the history bounds of a database created
+    // before they were tracked, and `eth_capabilities` reports no history until then.
+    tracker.spawn(reconcile_history_bounds_at_startup(
+        store.clone(),
+        cancel_token.clone(),
+    ));
     init_rpc_api(
         &opts.node_opts,
         &opts,

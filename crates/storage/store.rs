@@ -1125,6 +1125,32 @@ impl Store {
             .transpose()
     }
 
+    /// Whether the transaction index holds `transaction_hash` for the block `block_hash`.
+    ///
+    /// Unlike [`Self::get_transaction_location`] this does not ask whether the block is
+    /// canonical, so the answer does not change while a forkchoice update is written.
+    pub async fn is_transaction_indexed_in(
+        &self,
+        transaction_hash: H256,
+        block_hash: BlockHash,
+    ) -> Result<bool, StoreError> {
+        let buffered = self.buffer()?.get_tx_locations(&transaction_hash);
+        if buffered.iter().any(|(_, hash, _)| *hash == block_hash) {
+            return Ok(true);
+        }
+        let db = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let tx = db.begin_read()?;
+            let Some(bytes) = tx.get(TRANSACTION_LOCATIONS, transaction_hash.as_bytes())? else {
+                return Ok(false);
+            };
+            let locations = <Vec<(BlockNumber, BlockHash, Index)>>::decode(&bytes)?;
+            Ok(locations.iter().any(|(_, hash, _)| *hash == block_hash))
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
     /// Store transaction location (block number and index of the transaction within the block)
     pub async fn add_transaction_location(
         &self,
@@ -1739,8 +1765,10 @@ impl Store {
     }
 
     /// Whether the history bounds (`earliest_block_number` and the transaction index
-    /// floor) can be trusted. A database created before they were tracked holds stale
-    /// ones until they are reconciled.
+    /// floor) were tracked since the database was created, or have been reconciled
+    /// since. A database created before they were tracked holds stale ones until then.
+    /// The marker is not cleared if a release from before it backfills the database
+    /// afterwards.
     pub async fn history_bounds_reconciled(&self) -> Result<bool, StoreError> {
         Ok(self
             .read_chain_data_block_number(ChainDataIndex::HistoryBoundsReconciled)
@@ -1772,7 +1800,7 @@ impl Store {
             txn.commit()
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("Floor write task panicked: {e}")))?
+        .map_err(|e| StoreError::Custom(format!("History bounds write task panicked: {e}")))?
     }
 
     /// Obtain finalized block number
@@ -3405,8 +3433,10 @@ impl Store {
         self.add_block(genesis_block).await?;
         self.update_earliest_block_number(genesis_block_number)
             .await?;
-        // A new database tracks its history bounds from the first block, so it has
-        // nothing to reconcile.
+        // A new database tracks its history bounds from the first block, so it has none
+        // from before the tracking to reconcile. Only this path marks one: the early
+        // returns above are for a database that already holds a genesis, which may
+        // predate the tracking.
         self.mark_history_bounds_reconciled(None).await?;
         self.forkchoice_update(vec![], genesis_block_number, genesis_hash, None, None)
             .await?;
@@ -8782,6 +8812,70 @@ mod backfill_write_tests {
                 "block {n} must have a body (no gap left by resume)"
             );
         }
+    }
+
+    /// The index is asked about a block by hash, whether or not the block is canonical:
+    /// a block is indexed when it is stored, before forkchoice makes it canonical.
+    #[tokio::test]
+    async fn a_stored_block_is_indexed_before_it_is_canonical() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        let header = test_header(1);
+        let hash = header.hash();
+        let tx = test_tx(7);
+        let tx_hash = tx.hash(&NativeCrypto);
+        let body = BlockBody {
+            transactions: vec![tx],
+            ommers: vec![],
+            withdrawals: Some(vec![]),
+        };
+        store.add_block(Block::new(header, body)).await.unwrap();
+
+        assert_eq!(store.get_transaction_location(tx_hash).await.unwrap(), None);
+        assert!(
+            store
+                .is_transaction_indexed_in(tx_hash, hash)
+                .await
+                .unwrap()
+        );
+        let other_block = test_header(2).hash();
+        assert!(
+            !store
+                .is_transaction_indexed_in(tx_hash, other_block)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !store
+                .is_transaction_indexed_in(test_tx(8).hash(&NativeCrypto), hash)
+                .await
+                .unwrap()
+        );
+    }
+
+    /// Opening a database marks its history bounds as reconciled only when it is new.
+    /// One that already holds a genesis may predate the bounds, and is left for the
+    /// reconciliation to correct and mark.
+    #[tokio::test]
+    async fn only_a_new_database_starts_with_reconciled_history_bounds() {
+        let mut new = Store::new("", EngineType::InMemory).expect("in-memory store");
+        new.add_initial_state(Genesis::default()).await.unwrap();
+        assert!(new.history_bounds_reconciled().await.unwrap());
+
+        // The same genesis stored without the marker, as before the bounds were tracked.
+        let mut existing = Store::new("", EngineType::InMemory).expect("in-memory store");
+        let genesis_block = Genesis::default().get_block();
+        let genesis_hash = genesis_block.hash();
+        existing.add_block(genesis_block).await.unwrap();
+        existing.update_earliest_block_number(0).await.unwrap();
+        existing
+            .forkchoice_update(vec![], 0, genesis_hash, None, None)
+            .await
+            .unwrap();
+        existing
+            .add_initial_state(Genesis::default())
+            .await
+            .unwrap();
+        assert!(!existing.history_bounds_reconciled().await.unwrap());
     }
 }
 

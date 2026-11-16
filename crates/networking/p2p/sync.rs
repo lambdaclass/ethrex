@@ -12,7 +12,10 @@ mod healing;
 pub mod snap2;
 mod snap_sync;
 
-pub use backfill::{BackfillConfig, reconcile_history_bounds_when_synced, run_history_backfill};
+pub use backfill::{
+    BackfillConfig, reconcile_history_bounds_at_startup, reconcile_history_bounds_when_synced,
+    run_history_backfill,
+};
 
 /// Test-only re-export of the full-sync resume-point predicate so integration tests can
 /// assert that canonical-but-stateless blocks are not treated as already-executed.
@@ -479,6 +482,10 @@ pub enum SyncError {
     JoinHandle(#[from] tokio::task::JoinError),
     #[error("Missing data from DB")]
     CorruptDB,
+    /// A forkchoice update was rewriting the canonical chain at this block while the
+    /// history bounds were being reconciled. Retrying resolves it.
+    #[error("The canonical chain changed at block {0} while reconciling the history bounds")]
+    CanonicalChainMoved(u64),
     #[error("Failed to fetch latest canonical block, unable to sync")]
     NoLatestCanonical,
     #[error("No block with a reachable post-state to resume full sync from, down to genesis")]
@@ -619,6 +626,7 @@ impl SyncError {
             | SyncError::Rlp(_)
             | SyncError::JoinHandle(_)
             | SyncError::CorruptDB
+            | SyncError::CanonicalChainMoved(_)
             | SyncError::InvalidRangeReceived
             | SyncError::BlockNumber(_)
             | SyncError::NoBlocks

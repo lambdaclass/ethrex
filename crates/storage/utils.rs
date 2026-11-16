@@ -9,6 +9,10 @@ pub enum ChainDataIndex {
     LatestBlockNumber = 4,
     PendingBlockNumber = 5,
     TxIndexFloor = 6,
+    // First written, by unreleased builds only, as the marker of a reconciled
+    // transaction index floor alone. The reconciliation that wrote it corrected
+    // `EarliestBlockNumber` first, so it already stood for both bounds and the value
+    // is kept.
     HistoryBoundsReconciled = 7,
 }
 

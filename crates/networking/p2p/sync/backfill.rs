@@ -169,17 +169,21 @@ async fn reconcile_history_bounds(store: &Store) -> Result<(), SyncError> {
     }
     // Marked done even when nothing is recorded, so a fully indexed history is
     // not searched again on every start. Marked last, once `earliest` is correct
-    // too: `eth_capabilities` reports no history from an unmarked database.
+    // too: `eth_capabilities` reports no history from an unmarked database, and a
+    // stop between the two writes leaves it unmarked, so the next start runs this again.
     if !store.history_bounds_reconciled().await? {
         let mut found = None;
         if store.get_tx_index_floor().await?.is_none() {
-            let floor = find_tx_index_floor(store, TX_INDEX_SAMPLE_INTERVAL).await?;
+            info!("Searching the stored history for blocks an earlier backfill left unindexed");
+            let floor = find_tx_index_floor(store, TX_INDEX_WINDOW).await?;
             if floor > actual {
                 info!(
                     floor,
                     "Recorded the transaction index floor of an earlier backfill"
                 );
                 found = Some(floor);
+            } else {
+                info!("Every stored block is in the transaction index");
             }
         }
         store.mark_history_bounds_reconciled(found).await?;
@@ -187,92 +191,147 @@ async fn reconcile_history_bounds(store: &Store) -> Result<(), SyncError> {
     Ok(())
 }
 
-/// Blocks between the samples of the coarse pass in [`find_tx_index_floor`].
-/// Backfill writes at most `BACKFILL_BATCH_SIZE` blocks per `BACKFILL_BATCH_INTERVAL`,
-/// so a run that left out fewer blocks than this was stopped within seconds of
-/// passing its horizon.
-const TX_INDEX_SAMPLE_INTERVAL: u64 = 1024;
+/// Blocks in each window of [`find_tx_index_floor`], which is also the shortest
+/// unindexed stretch it is sure to find. A window that is indexed costs two block
+/// checks when its first and last blocks have transactions, where an exact search
+/// would check every block.
+const TX_INDEX_WINDOW: u64 = 1024;
 
 /// Lowest block from which every stored block's transactions are indexed.
 ///
 /// Backfill leaves out blocks more than the horizon below the head of its run,
 /// and each run starts below the last with a later head, so under a horizon that
-/// never grew the indexed blocks form one run ending at the head, and bisecting
-/// for its start is exact.
+/// never grew the indexed blocks form one run ending at the head. A horizon raised
+/// or removed between runs indexes blocks below ones an earlier run left out: the
+/// unindexed blocks then lie in several stretches, and the floor is right above
+/// the highest.
 ///
-/// A horizon raised or removed between runs indexes blocks below ones an earlier
-/// run left out. Bisecting alone could then settle below those and report them as
-/// indexed, so a coarse pass first samples the history from the head down, one
-/// block every `sample_interval`, and the bisect only searches above the highest
-/// unindexed sample. An unindexed stretch shorter than the interval can still fall
-/// between two samples: ruling that out would take reading every block.
+/// The history is walked from the head down in windows of `window_size` blocks.
+/// A window whose lowest and highest blocks with transactions are both indexed is
+/// taken as indexed throughout. The first window that is not is read block by
+/// block, and the floor is right above its highest unindexed block.
 ///
-/// This runs once per database, on a history backfilled before the floor was
-/// tracked. The forward scan past empty blocks covers at most the sampled window,
-/// or the halved window of each bisect step, so the whole search reads about two
-/// passes over the range in the worst case, when nearly every block is empty.
-async fn find_tx_index_floor(
-    store: &Store,
-    sample_interval: u64,
-) -> Result<BlockNumber, SyncError> {
+/// An unindexed stretch of at least `window_size` blocks is always found: it
+/// holds the first block of a window, so it holds the lowest or the highest block
+/// with transactions of some window. A shorter stretch that lies between two
+/// indexed blocks of one window is missed, and the floor then comes out below it.
+/// Ruling that out would take reading every block of the history.
+///
+/// This completes at most once per database, and never runs on a new one, which
+/// is created already marked as reconciled. Empty blocks are read until one with
+/// transactions turns up, from each end of a window, so the whole search reads
+/// about one pass over the range in the worst case, when nearly every block is
+/// empty.
+async fn find_tx_index_floor(store: &Store, window_size: u64) -> Result<BlockNumber, SyncError> {
     let earliest = store.get_earliest_block_number().await?;
-    let mut hi = store.get_latest_block_number()?.saturating_add(1);
-    // A zero interval would never move the window down.
-    let sample_interval = sample_interval.max(1);
-
-    let mut lo = earliest;
-    let mut window_end = hi;
+    let head = store.get_latest_block_number()?;
+    // `earliest` never passes the head. It reads as above it when a forkchoice update
+    // lowered the head while the two were being read.
+    if earliest > head {
+        return Err(SyncError::CanonicalChainMoved(head));
+    }
+    // A zero size would never move the window down.
+    let window_size = window_size.max(1);
+    let mut window_end = head.saturating_add(1);
     while window_end > earliest {
-        let sample = window_end.saturating_sub(sample_interval).max(earliest);
-        if let Some(unindexed) = unindexed_probe(store, sample, window_end).await? {
-            lo = unindexed + 1;
-            break;
+        let window_start = window_end.saturating_sub(window_size).max(earliest);
+        let window = window_start..window_end;
+        let unindexed_end =
+            match first_with_transactions_is_unindexed(store, window.clone().rev()).await? {
+                // No transactions in the window: nothing to check, and no need to
+                // read it again from the other end.
+                None => false,
+                Some(true) => true,
+                Some(false) => {
+                    first_with_transactions_is_unindexed(store, window.clone()).await? == Some(true)
+                }
+            };
+        if unindexed_end {
+            for number in window.rev() {
+                if is_unindexed(store, number).await? == Some(true) {
+                    return Ok(number + 1);
+                }
+            }
         }
-        window_end = sample;
+        window_end = window_start;
     }
-
-    while lo < hi {
-        let mid = lo + (hi - lo) / 2;
-        match unindexed_probe(store, mid, hi).await? {
-            Some(unindexed) => lo = unindexed + 1,
-            None => hi = mid,
-        }
-    }
-    Ok(lo)
+    Ok(earliest)
 }
 
-/// The first block with transactions in `[from, until)`, if it is missing from the
-/// transaction index. An empty block says nothing about the index, so it is skipped.
-/// A missing body counts as unindexed, which keeps the floor conservative.
-async fn unindexed_probe(
+/// Whether the first of `blocks` that has transactions is missing from the
+/// transaction index. `None` when none of them has transactions.
+async fn first_with_transactions_is_unindexed(
     store: &Store,
-    from: BlockNumber,
-    until: BlockNumber,
-) -> Result<Option<BlockNumber>, SyncError> {
-    for number in from..until {
-        let Some(body) = store.get_block_body(number).await? else {
-            return Ok(Some(number));
-        };
-        if let Some(tx) = body.transactions.first() {
-            let location = store
-                .get_transaction_location(tx.hash(&NativeCrypto))
-                .await?;
-            let unindexed = location.is_none_or(|(indexed_in, ..)| indexed_in != number);
-            return Ok(unindexed.then_some(number));
+    blocks: impl Iterator<Item = BlockNumber>,
+) -> Result<Option<bool>, SyncError> {
+    for number in blocks {
+        let unindexed = is_unindexed(store, number).await?;
+        if unindexed.is_some() {
+            return Ok(unindexed);
         }
     }
     Ok(None)
 }
 
+/// Whether the transactions of the canonical block `number` are missing from the
+/// transaction index. `None` for an empty block, which says nothing about the index.
+/// A block without a body counts as unindexed, which keeps the floor conservative.
+///
+/// A recorded floor is never lowered, so a forkchoice update running alongside must
+/// not be able to produce one. The index is therefore asked about the block by its
+/// hash: a block is indexed when it is stored, and whether it is canonical yet, or
+/// still, does not change the answer. A height with no canonical block is one such
+/// an update is rewriting, and is an error to retry, not an unindexed block. If the
+/// hole stays, the database is damaged and goes on reporting no history.
+async fn is_unindexed(store: &Store, number: BlockNumber) -> Result<Option<bool>, SyncError> {
+    let Some(hash) = store.get_canonical_block_hash(number).await? else {
+        return Err(SyncError::CanonicalChainMoved(number));
+    };
+    let Some(body) = store.get_block_body_by_hash(hash).await? else {
+        return Ok(Some(true));
+    };
+    let Some(tx) = body.transactions.first() else {
+        return Ok(None);
+    };
+    let indexed = store
+        .is_transaction_indexed_in(tx.hash(&NativeCrypto), hash)
+        .await?;
+    Ok(Some(!indexed))
+}
+
 /// With `--history.chain off` no backfill runs, but `eth_capabilities` still
 /// reports from the history bounds, so reconcile them once the node is synced.
+///
+/// A node that is never synced, such as an L1 node with no consensus client, is
+/// not following the chain, and a database that needs the reconciliation keeps
+/// reporting no history from it.
 pub async fn reconcile_history_bounds_when_synced(
     store: Store,
     blockchain: Arc<Blockchain>,
     cancel_token: CancellationToken,
 ) {
+    reconcile_history_bounds_when(store, cancel_token, move || blockchain.is_synced()).await
+}
+
+/// For a node that starts no sync manager, which would otherwise never reconcile
+/// the history bounds of a database created before they were tracked. It does not
+/// wait for the node to be synced: without a sync manager nothing is syncing that
+/// could still move the bounds. Such a node never backfills, so the search finds no
+/// unindexed block on it. It runs all the same, once and in the background, which
+/// keeps one reconciliation for every kind of node.
+pub async fn reconcile_history_bounds_at_startup(store: Store, cancel_token: CancellationToken) {
+    reconcile_history_bounds_when(store, cancel_token, || true).await
+}
+
+/// Reconciles the history bounds as soon as `ready` holds, retrying until it
+/// succeeds or the token is cancelled.
+async fn reconcile_history_bounds_when(
+    store: Store,
+    cancel_token: CancellationToken,
+    ready: impl Fn() -> bool,
+) {
     loop {
-        if blockchain.is_synced() {
+        if ready() {
             let result = tokio::select! {
                 result = reconcile_history_bounds(&store) => result,
                 _ = cancel_token.cancelled() => return,
@@ -829,35 +888,123 @@ mod tests {
         assert_eq!(store.get_tx_index_floor().await.unwrap(), None);
     }
 
+    /// One run of unindexed blocks below the indexed ones, as a horizon that never
+    /// grew leaves them: the floor is exact wherever the boundary falls in a window.
     #[tokio::test]
-    async fn tx_index_floor_bisect_finds_every_boundary() {
+    async fn tx_index_floor_is_found_at_every_boundary() {
         for indexed_from in 40..=60 {
             let store = store_with_unindexed_backfill(40, indexed_from, 60, &[50, 51]).await;
-            let found = find_tx_index_floor(&store, TX_INDEX_SAMPLE_INTERVAL)
-                .await
-                .unwrap();
             let expected = match indexed_from {
                 51 | 52 => 50,
                 other => other,
             };
-            assert_eq!(found, expected, "indexed from {indexed_from}");
+            for window_size in [1, 3, 8, TX_INDEX_WINDOW] {
+                let found = find_tx_index_floor(&store, window_size).await.unwrap();
+                assert_eq!(
+                    found, expected,
+                    "indexed from {indexed_from}, window size {window_size}"
+                );
+            }
         }
     }
 
     /// A horizon raised between two runs: the later run indexed blocks below the
-    /// ones the earlier run left out. Wherever those lie, a stretch as long as
-    /// the sample interval is found, and the floor is right above it.
+    /// ones the earlier run left out. Wherever those lie, a stretch as long as a
+    /// window is found, and the floor is right above its highest block with
+    /// transactions. The empty blocks cover a whole window and reach into the
+    /// windows next to it, so the stretch is found from either side of them.
     #[tokio::test]
     async fn tx_index_floor_is_found_above_blocks_indexed_by_a_later_run() {
-        let (earliest, head, interval) = (10, 60, 8);
-        for unindexed_from in earliest..=head + 1 - interval {
-            let unindexed = unindexed_from..unindexed_from + interval;
+        let (earliest, head, window_size) = (10, 60, 8);
+        let empty_runs: [&[u64]; 2] = [&[], &[27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38]];
+        for empty in empty_runs {
+            for unindexed_from in earliest..=head + 1 - window_size {
+                let unindexed = unindexed_from..unindexed_from + window_size;
+                let store = store_with_tx_index(earliest, head, empty, |number| {
+                    !unindexed.contains(&number)
+                })
+                .await;
+                let expected = unindexed
+                    .clone()
+                    .rev()
+                    .find(|number| !empty.contains(number))
+                    .map_or(earliest, |number| number + 1);
+                let found = find_tx_index_floor(&store, window_size).await.unwrap();
+                assert_eq!(found, expected, "unindexed {unindexed:?}, empty {empty:?}");
+            }
+        }
+    }
+
+    /// The floor is above every unindexed stretch, not only the lowest.
+    #[tokio::test]
+    async fn tx_index_floor_is_above_the_highest_unindexed_stretch() {
+        let (earliest, head, window_size) = (10, 60, 8);
+        let store = store_with_tx_index(earliest, head, &[], |number| {
+            !(12..20).contains(&number) && !(40..48).contains(&number)
+        })
+        .await;
+        assert_eq!(find_tx_index_floor(&store, window_size).await.unwrap(), 48);
+    }
+
+    /// What the windows cost: a stretch shorter than a window is found only when
+    /// it holds the lowest or the highest block with transactions of a window.
+    /// With the head at 60 and windows of 8, blocks 45 to 52 are one window, and
+    /// every block here has transactions.
+    #[tokio::test]
+    async fn tx_index_floor_misses_a_short_stretch_inside_a_window() {
+        let (earliest, head, window_size) = (10, 60, 8);
+        let floor_with_unindexed = async |unindexed: std::ops::Range<u64>| {
             let store =
                 store_with_tx_index(earliest, head, &[], |number| !unindexed.contains(&number))
                     .await;
-            let found = find_tx_index_floor(&store, interval).await.unwrap();
-            assert_eq!(found, unindexed.end, "unindexed {unindexed:?}");
-        }
+            find_tx_index_floor(&store, window_size).await.unwrap()
+        };
+        assert_eq!(floor_with_unindexed(50..53).await, 53);
+        assert_eq!(floor_with_unindexed(45..48).await, 48);
+        assert_eq!(floor_with_unindexed(47..50).await, earliest);
+    }
+
+    /// A height without a canonical block is one a forkchoice update is rewriting.
+    /// It is not read as unindexed: the search fails and the database stays
+    /// unmarked, so the reconciliation runs again.
+    #[tokio::test]
+    async fn tx_index_floor_is_not_taken_from_a_canonical_chain_being_rewritten() {
+        // The blocks above 55 are empty, so the search reads down to it.
+        let store = store_with_tx_index(10, 60, &[56, 57, 58, 59, 60], |_| true).await;
+        store.remove_block(55).await.unwrap();
+        let found = find_tx_index_floor(&store, 8).await;
+        assert!(
+            matches!(found, Err(SyncError::CanonicalChainMoved(55))),
+            "{found:?}"
+        );
+
+        assert!(reconcile_history_bounds(&store).await.is_err());
+        assert_eq!(store.get_tx_index_floor().await.unwrap(), None);
+        assert!(!store.history_bounds_reconciled().await.unwrap());
+
+        // A head lowered below `earliest` between the two reads.
+        let store = store_with_tx_index(10, 60, &[], |_| true).await;
+        store.update_earliest_block_number(61).await.unwrap();
+        let found = find_tx_index_floor(&store, 8).await;
+        assert!(
+            matches!(found, Err(SyncError::CanonicalChainMoved(60))),
+            "{found:?}"
+        );
+    }
+
+    /// A node without a sync manager reconciles from startup, and a cancelled
+    /// token stops it.
+    #[tokio::test]
+    async fn reconcile_history_bounds_at_startup_marks_the_database() {
+        let store = store_with_unindexed_backfill(40, 45, 100, &[]).await;
+        let cancelled = CancellationToken::new();
+        cancelled.cancel();
+        reconcile_history_bounds_at_startup(store.clone(), cancelled).await;
+        assert!(!store.history_bounds_reconciled().await.unwrap());
+
+        reconcile_history_bounds_at_startup(store.clone(), CancellationToken::new()).await;
+        assert!(store.history_bounds_reconciled().await.unwrap());
+        assert_eq!(store.get_tx_index_floor().await.unwrap(), Some(45));
     }
 
     // --- resolve_floor: how each mode picks the block to stop at ---

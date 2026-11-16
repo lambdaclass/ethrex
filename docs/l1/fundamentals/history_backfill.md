@@ -92,10 +92,21 @@ body (~25 reads on mainnet), which is the node's original snap pivot. A node tha
 full-synced from genesis reconciles to `0` and completes immediately, since it
 already holds all history.
 
-Note that the reconciliation only runs when backfill is enabled. An upgraded node
-left at `--history.chain off` keeps the stale `earliest_block_number`, so the
-`earliest` block tag still reports genesis even though pre-pivot bodies are
-absent. Enabling backfill (or a fresh snap sync) sets it correctly.
+The reconciliation also runs with `--history.chain off`, once the node is synced.
+It corrects a second bound as well: the block from which the transaction index is
+complete, which sits above genesis on a database that was backfilled with
+`--history.transactions` before that bound was recorded. Since a database does not
+say whether that happened, every database created by an earlier version is
+searched once. The search reads the stored history from the head down in windows
+of 1024 blocks, about two blocks per window plus every block of a run of empty
+ones, so it takes longer than the bisect above, and backfill resumes after it. A
+run of unindexed blocks shorter than a window can go unnoticed when it lies
+between indexed blocks of the same window.
+
+Until the reconciliation has run, `eth_capabilities` reports `blocks`, `tx`, `logs`
+and `receipts` as disabled on a database created by an earlier version, because
+its bounds may be stale. A node that is never synced, such as one with no
+consensus client, stays in that state.
 
 ## How it works
 

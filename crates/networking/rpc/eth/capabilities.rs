@@ -29,20 +29,33 @@ impl RpcHandler for CapabilitiesRequest {
             .ok_or_else(|| RpcErr::Internal("canonical head header is missing".to_string()))?;
         let head_number = head.number;
 
-        // Bodies are stored from `earliest` to the head and never pruned.
-        let earliest = storage.get_earliest_block_number().await?;
-        let tx = earliest.max(storage.get_tx_index_floor().await?.unwrap_or_default());
-        let logs = oldest_block_with_receipts(storage, earliest).await?;
-        // A database from before these bounds were tracked may still have `earliest` at
-        // genesis and no floor. They are corrected once the node is synced, and until
-        // then no history is reported from them.
-        let reconciled = storage.history_bounds_reconciled().await?;
-        let history = |oldest_block: u64| {
-            if reconciled {
-                available_from(oldest_block, head_number)
-            } else {
-                json!({"disabled": true})
-            }
+        // A database from before the history bounds were tracked may still have `earliest`
+        // at genesis and no floor. A reconciliation corrects them and then marks the
+        // database, and until then no history is reported from them. The marker is read
+        // before the bounds: read after them, it could have been set in between and
+        // vouch for bounds read before they were corrected.
+        let (blocks, tx, logs, receipts) = if storage.history_bounds_reconciled().await? {
+            // Bodies are stored from `earliest` to the head and never pruned.
+            let earliest = storage.get_earliest_block_number().await?;
+            let tx = earliest.max(storage.get_tx_index_floor().await?.unwrap_or_default());
+            let logs = oldest_block_with_receipts(storage, earliest).await?;
+            // `eth_getTransactionReceipt` needs the tx index, so this stays at `tx` even
+            // where `eth_getBlockReceipts` serves from `logs`.
+            let receipts = logs.max(tx);
+            (
+                available_from(earliest, head_number),
+                available_from(tx, head_number),
+                available_from(logs, head_number),
+                available_from(receipts, head_number),
+            )
+        } else {
+            let disabled = json!({"disabled": true});
+            (
+                disabled.clone(),
+                disabled.clone(),
+                disabled.clone(),
+                disabled,
+            )
         };
 
         // A block count: forkchoice keeps the state of the blocks down to `head - retention`.
@@ -65,12 +78,10 @@ impl RpcHandler for CapabilitiesRequest {
         Ok(json!({
             "head": {"number": format!("{head_number:#x}"), "hash": head_hash},
             "state": state,
-            "tx": history(tx),
-            "logs": history(logs),
-            // `eth_getTransactionReceipt` needs the tx index, so this stays at `tx` even
-            // where `eth_getBlockReceipts` serves from `logs`.
-            "receipts": history(logs.max(tx)),
-            "blocks": history(earliest),
+            "tx": tx,
+            "logs": logs,
+            "receipts": receipts,
+            "blocks": blocks,
             "stateproofs": state,
         }))
     }
