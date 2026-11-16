@@ -66,5 +66,11 @@ $45 of extra compute.
 - If the GitHub API can't be reached, the watchdog keeps the machine on. As a
   backstop, set Paperspace auto-shutdown in the console well above the longest
   job (e.g. 6h).
+- If GitHub rejects `GITHUB_TOKEN` (expired or revoked, HTTP 401/403), the
+  watchdog also keeps the machine on, but the unit fails: check
+  `systemctl --failed` and renew the token before it expires.
+- Only `DRY_RUN=0` really stops the machine. Any other value is a dry run.
+- If the runner is gone from GitHub (it is removed after 14 days offline), the
+  machine starts but `test` stays queued: re-register the runner.
 - A run stuck in the queue keeps the machine on until GitHub drops it. GitHub
   drops queued jobs after 24h.

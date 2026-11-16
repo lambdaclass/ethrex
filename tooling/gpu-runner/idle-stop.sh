@@ -15,7 +15,8 @@
 #   GPU_WORKFLOWS    space-separated workflow files using the GPU runner
 #                    (default main_prover.yaml)
 #   IDLE_MINUTES     default 15
-#   DRY_RUN          1 (default) only logs "would stop"; 0 really stops
+#   DRY_RUN          exactly 0 really stops; anything else (default 1) only
+#                    logs "would stop"
 set -euo pipefail
 
 GITHUB_REPO="${GITHUB_REPO:-lambdaclass/ethrex}"
@@ -40,19 +41,28 @@ if ! [[ $last_busy =~ ^[0-9]+$ ]]; then
   echo "$now" >"$LAST_BUSY"
 fi
 
-# Number of queued and in-progress runs of the GPU workflows. Prints nothing
-# if the GitHub API cannot be reached.
+# Number of queued and in-progress runs of the GPU workflows. Prints "auth"
+# if GitHub rejects the token, and nothing if the API cannot be reached.
 github_active_runs() {
-  local total=0 wf status n
+  local total=0 wf status out code n
   for wf in $GPU_WORKFLOWS; do
     for status in queued in_progress; do
       # The token goes through a config file descriptor, not argv, so it
       # does not show up in `ps`.
-      n=$(curl --silent --show-error --fail --max-time 30 \
+      out=$(curl --silent --show-error --max-time 30 \
         --config <(printf 'header = "Authorization: Bearer %s"\n' "$GITHUB_TOKEN") \
         -H "Accept: application/vnd.github+json" \
-        "https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${wf}/runs?status=${status}&per_page=1" |
-        python3 -c 'import json,sys; print(json.load(sys.stdin)["total_count"])' 2>/dev/null) || return 0
+        -w '\n%{http_code}' \
+        "https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${wf}/runs?status=${status}&per_page=1") ||
+        return 0
+      code=${out##*$'\n'}
+      if [[ $code == 401 || $code == 403 ]]; then
+        echo auth
+        return 0
+      fi
+      [[ $code == 200 ]] || return 0
+      n=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["total_count"])' \
+        <<<"${out%$'\n'*}" 2>/dev/null) || return 0
       total=$((total + n))
     done
   done
@@ -68,6 +78,12 @@ if pgrep -x Runner.Worker >/dev/null; then
 fi
 
 runs=$(github_active_runs)
+if [[ $runs == auth ]]; then
+  # An expired or revoked token would otherwise keep the machine on forever
+  # without anyone noticing: fail the unit so `systemctl --failed` shows it.
+  echo "GitHub rejected GITHUB_TOKEN (HTTP 401/403): renew it in /etc/gpu-runner-idle.env; not stopping" >&2
+  exit 1
+fi
 if [[ -z $runs ]]; then
   # Can't tell whether a run is waiting: stay on rather than cut it off.
   # Paperspace auto-shutdown is the backstop if this keeps failing.
@@ -86,8 +102,10 @@ if ((idle_secs < IDLE_MINUTES * 60)); then
   exit 0
 fi
 
-if [[ $DRY_RUN == 1 ]]; then
-  echo "idle for $((idle_secs / 60))m: would stop (DRY_RUN=1)"
+# Fail closed: only an exact 0 stops the machine, so a typo or a trailing
+# comment in the env file keeps it in dry-run mode.
+if [[ $DRY_RUN != 0 ]]; then
+  echo "idle for $((idle_secs / 60))m: would stop (DRY_RUN=${DRY_RUN})"
   exit 0
 fi
 

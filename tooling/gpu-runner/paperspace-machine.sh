@@ -59,10 +59,12 @@ case "${1:-}" in
       fi
       echo "machine ${PAPERSPACE_MACHINE_ID}: ${s}"
       if is_ready "$s"; then
-        # Require two ready polls 30s apart: a stop the idle watchdog sent
-        # just before this run was created may not show up in the state yet.
-        ((++ready_polls >= 2)) && exit 0
-        sleep 30
+        # Require the machine to stay ready for 90s (3 polls, 45s apart): a
+        # stop the idle watchdog sent just before this run was created may
+        # not show up in the state yet, and Paperspace takes about a minute
+        # to shut a machine down.
+        ((++ready_polls >= 3)) && exit 0
+        sleep 45
         continue
       fi
       ready_polls=0
