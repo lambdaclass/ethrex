@@ -66,12 +66,13 @@ case "${1:-}" in
       fi
       echo "machine ${PAPERSPACE_MACHINE_ID}: ${s}"
       if is_ready "$s"; then
-        # Require the machine to stay ready for 90s (3 polls, 45s apart): a
-        # stop the idle watchdog sent just before this run was created may
-        # not show up in the state yet, and Paperspace takes about a minute
-        # to shut a machine down.
-        ((++ready_polls >= 3)) && exit 0
-        sleep 45
+        # Require the machine to stay ready for 30s (2 polls, 30s apart): the
+        # idle watchdog may have powered it off just before this run was
+        # created. Measured on the real machine, the API reports "stopping"
+        # within ~2s of `systemctl poweroff` and "off" ~14s later, so 30s
+        # leaves a wide margin.
+        ((++ready_polls >= 2)) && exit 0
+        sleep 30
         continue
       fi
       ready_polls=0
