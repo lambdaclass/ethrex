@@ -30,10 +30,13 @@ api() {
   [[ $method == GET ]] && retry=(--retry 3 --retry-all-errors)
   # The key goes through a config file descriptor, not argv, so it does not
   # show up in `ps`.
+  # No Content-Type header: none of these requests has a body, and the API
+  # answers PATCH .../start with 400 when it gets `Content-Type:
+  # application/json` and an empty body (even though its docs show that
+  # header). Without it, start returns 200.
   curl --silent --show-error --fail --max-time 30 ${retry[@]+"${retry[@]}"} \
     -X "$method" \
     --config <(printf 'header = "Authorization: Bearer %s"\n' "$PAPERSPACE_API_KEY") \
-    -H "Content-Type: application/json" \
     "${API}${path}"
 }
 
