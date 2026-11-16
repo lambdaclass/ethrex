@@ -3,6 +3,10 @@
 #
 # Usage: paperspace-machine.sh <state|start|stop>
 #
+# CI uses `start` (.github/actions/start-paperspace-machine). `state` and
+# `stop` are for manual use: the idle watchdog powers the machine off from
+# inside instead, so the API key is never stored on it.
+#
 # Environment:
 #   PAPERSPACE_API_KEY      API key (Paperspace console -> Team settings -> API keys)
 #   PAPERSPACE_MACHINE_ID   machine ID, e.g. pszj5x2xbgeb

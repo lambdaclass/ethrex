@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
-# Stop this Paperspace machine once the GitHub Actions runner has been idle
-# for IDLE_MINUTES. Run every minute by gpu-runner-idle.timer.
+# Power off this Paperspace machine once the GitHub Actions runner has been
+# idle for IDLE_MINUTES. Run every minute by gpu-runner-idle.timer.
+#
+# It shuts down from inside (`systemctl poweroff`), which stops compute billing
+# just like a stop through the API, so no Paperspace API key is needed here:
+# CI jobs on this machine have sudo and could read anything stored on it.
 #
 # The machine counts as busy while:
 #   - a job is running on it (a Runner.Worker process exists), or
-#   - a run of a workflow that needs the GPU runner is queued or in progress
+#   - a run of a workflow that needs the GPU runner is waiting or in progress
 #     on GitHub (so a run that just started the machine is not cut off before
 #     the runner picks up its job).
 #
 # Environment (from /etc/gpu-runner-idle.env):
-#   PAPERSPACE_API_KEY, PAPERSPACE_MACHINE_ID   see paperspace-machine.sh
 #   GITHUB_TOKEN     fine-grained token, Actions: read on GITHUB_REPO
 #   GITHUB_REPO      default lambdaclass/ethrex
 #   GPU_WORKFLOWS    space-separated workflow files using the GPU runner
@@ -41,12 +44,14 @@ if ! [[ $last_busy =~ ^[0-9]+$ ]]; then
   echo "$now" >"$LAST_BUSY"
 fi
 
-# Number of queued and in-progress runs of the GPU workflows. Prints "auth"
-# if GitHub rejects the token, and nothing if the API cannot be reached.
+# Number of runs of the GPU workflows that have not finished yet. Prints
+# "auth" if GitHub rejects the token, and nothing if the API cannot be reached
+# or rate-limits the request.
 github_active_runs() {
-  local total=0 wf status out code n
+  local total=0 wf status out code body n
   for wf in $GPU_WORKFLOWS; do
-    for status in queued in_progress; do
+    # Every status a run can have before it completes.
+    for status in requested pending waiting queued in_progress; do
       # The token goes through a config file descriptor, not argv, so it
       # does not show up in `ps`.
       out=$(curl --silent --show-error --max-time 30 \
@@ -56,13 +61,19 @@ github_active_runs() {
         "https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${wf}/runs?status=${status}&per_page=1") ||
         return 0
       code=${out##*$'\n'}
+      body=${out%$'\n'*}
+      # GitHub also answers 403 when it rate-limits a request ("API rate limit
+      # exceeded", "secondary rate limit"): that is transient, not a bad token.
+      if [[ $code == 403 && $body == *"rate limit"* ]]; then
+        return 0
+      fi
       if [[ $code == 401 || $code == 403 ]]; then
         echo auth
         return 0
       fi
       [[ $code == 200 ]] || return 0
       n=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["total_count"])' \
-        <<<"${out%$'\n'*}" 2>/dev/null) || return 0
+        <<<"$body" 2>/dev/null) || return 0
       total=$((total + n))
     done
   done
@@ -87,12 +98,12 @@ fi
 if [[ -z $runs ]]; then
   # Can't tell whether a run is waiting: stay on rather than cut it off.
   # Paperspace auto-shutdown is the backstop if this keeps failing.
-  echo "busy: GitHub API unreachable, not stopping" >&2
+  echo "busy: GitHub API unreachable or rate-limited, not stopping" >&2
   exit 0
 fi
 if ((runs > 0)); then
   echo "$now" >"$LAST_BUSY"
-  echo "busy: ${runs} GPU workflow run(s) queued or in progress"
+  echo "busy: ${runs} GPU workflow run(s) waiting or in progress"
   exit 0
 fi
 
@@ -109,5 +120,5 @@ if [[ $DRY_RUN != 0 ]]; then
   exit 0
 fi
 
-echo "idle for $((idle_secs / 60))m: stopping"
-"$(dirname "$(readlink -f "$0")")/paperspace-machine.sh" stop
+echo "idle for $((idle_secs / 60))m: powering off"
+systemctl poweroff
