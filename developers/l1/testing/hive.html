@@ -34,7 +34,7 @@
             const path_to_root = "../../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../../searchindex-d6909f46.js";
+            window.path_to_searchindex_js = "../../../searchindex-efa2335c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../../toc-a6a3d26a.js"></script>
@@ -390,7 +390,7 @@ https://github.com/ethereum/execution-specs/releases/download/tests%40v21.0.2/fi
 <p>A zkEVM bundle is filled from one <code>tests@</code> release, so a new base needs <code>--zkevm</code> with a zkEVM release filled from it, and the script refuses the bump without one, before it edits anything. To move only the zkEVM bundle, leave the base out:</p>
 <pre><code class="language-bash">.github/scripts/bump-fixtures.sh --zkevm v&lt;zkevm version&gt;
 </code></pre>
-<p>consume-wirex does not move with the bump: it keeps the image in <code>consume_wirex_tag</code>, with the fixtures that image was built from, until that pin is moved by hand.</p>
+<p>consume-wirex does not move with the bump: it keeps the image in <code>consume_wirex_tag</code>, with the fixtures that image was built from, until that pin is moved by hand. It runs in PR CI on that image, so once the client follows a release that changed what a test expects, the <code>consume-wirex</code> jobs fail on those tests until the pin is moved to an image built from the new fixtures.</p>
 <p><code>make check-fixture-pins</code> fails when these places name different releases. It runs in PR CI.</p>
 </li>
 <li>
@@ -401,7 +401,7 @@ https://github.com/ethereum/execution-specs/releases/download/tests%40v21.0.2/fi
 <ul>
 <li><code>tooling/ef_tests/blockchain/fork.rs</code> and <code>tooling/ef_tests/engine/src/fixture.rs</code> - the ef-test runners’ fork definitions</li>
 <li><code>.github/workflows/daily_hive_report.yaml</code> - the fork each daily job’s limit selects</li>
-<li><code>.github/workflows/pr-main_l1.yaml</code> - the <code>fork</code> list of the <code>consume-enginex</code> jobs, one job per fork: a fork that is not in it does not run in PR CI</li>
+<li><code>.github/workflows/pr-main_l1.yaml</code> - the <code>fork</code> list of the <code>consume-enginex</code> and <code>consume-wirex</code> jobs, one job per fork and two for Amsterdam: a fork that is not in it does not run in PR CI</li>
 <li><code>tooling/hive_report/src/main.rs</code> - <code>FORK_ORDER</code>, the order the report lists forks in</li>
 </ul>
 </li>
