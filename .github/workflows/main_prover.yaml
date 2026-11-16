@@ -75,6 +75,10 @@ jobs:
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: gpu
+    # A hung job would otherwise keep the billed machine on for GitHub's 6h
+    # default (the idle watchdog counts it as busy). Recent successful runs
+    # took 70-90 min, the slowest 141 min.
+    timeout-minutes: 180
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0

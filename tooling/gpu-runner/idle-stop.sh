@@ -45,8 +45,9 @@ if ! [[ $last_busy =~ ^[0-9]+$ ]]; then
 fi
 
 # Number of runs of the GPU workflows that have not finished yet. Prints
-# "auth" if GitHub rejects the token, and nothing if the API cannot be reached
-# or rate-limits the request.
+# "reject <HTTP code>" if GitHub refuses the request for a reason that won't
+# go away by itself (bad token, no access, wrong repo or workflow name), and
+# nothing if the API cannot be reached or the error may be transient.
 #
 # One request per workflow lists its latest runs (newest first) and counts the
 # ones whose status is not "completed". A single snapshot can't miss a run
@@ -71,8 +72,11 @@ github_active_runs() {
     if [[ $code == 403 && $body == *"rate limit"* ]]; then
       return 0
     fi
-    if [[ $code == 401 || $code == 403 ]]; then
-      echo auth
+    # 401/403: bad or expired token. 404: wrong GITHUB_REPO or GPU_WORKFLOWS,
+    # or a fine-grained token without access to the repo (GitHub answers 404,
+    # not 403, for repos the token can't see).
+    if [[ $code == 401 || $code == 403 || $code == 404 ]]; then
+      echo "reject $code"
       return 0
     fi
     [[ $code == 200 ]] || return 0
@@ -95,10 +99,11 @@ if pgrep -x Runner.Worker >/dev/null; then
 fi
 
 runs=$(github_active_runs)
-if [[ $runs == auth ]]; then
-  # An expired or revoked token would otherwise keep the machine on forever
-  # without anyone noticing: fail the unit so `systemctl --failed` shows it.
-  echo "GitHub rejected GITHUB_TOKEN (HTTP 401/403): renew it in /etc/gpu-runner-idle.env; not stopping" >&2
+if [[ $runs == reject* ]]; then
+  # A bad token or a wrong repo/workflow name would otherwise keep the machine
+  # on forever without anyone noticing: fail the unit so `systemctl --failed`
+  # shows it.
+  echo "GitHub refused the request (HTTP ${runs#reject }): check GITHUB_TOKEN, GITHUB_REPO and GPU_WORKFLOWS in /etc/gpu-runner-idle.env; not stopping" >&2
   exit 1
 fi
 if [[ -z $runs ]]; then

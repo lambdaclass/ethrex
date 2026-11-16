@@ -23,29 +23,60 @@ API="https://api.paperspace.com/v1"
 : "${PAPERSPACE_MACHINE_ID:?PAPERSPACE_MACHINE_ID is not set}"
 START_TIMEOUT_SECS="${START_TIMEOUT_SECS:-600}"
 
+# Prints the response body followed by a line with the HTTP status code.
+# Fails only if the request itself fails (DNS, connection, timeout).
 api() {
   local method=$1 path=$2 retry=()
   # Only retry reads: a retried start/stop that got a 4xx ("already
-  # starting") would just fail again.
-  [[ $method == GET ]] && retry=(--retry 3 --retry-all-errors)
+  # starting") would just fail again. Without --fail, --retry still retries
+  # connection errors and transient HTTP codes (408, 429, 5xx).
+  [[ $method == GET ]] && retry=(--retry 3 --retry-connrefused)
   # The key goes through a config file descriptor, not argv, so it does not
   # show up in `ps`.
   # No Content-Type header: none of these requests has a body, and the API
   # answers PATCH .../start with 400 when it gets `Content-Type:
   # application/json` and an empty body (even though its docs show that
   # header). Without it, start returns 200.
-  curl --silent --show-error --fail --max-time 30 ${retry[@]+"${retry[@]}"} \
+  curl --silent --show-error --max-time 30 ${retry[@]+"${retry[@]}"} \
     -X "$method" \
     --config <(printf 'header = "Authorization: Bearer %s"\n' "$PAPERSPACE_API_KEY") \
+    -w '\n%{http_code}' \
     "${API}${path}"
 }
 
+# Returns 2 for an HTTP status that retrying won't fix: bad API key (401/403)
+# or wrong machine ID (404).
+check_code() {
+  local code=$1
+  case $code in
+    2??) return 0 ;;
+    401 | 403 | 404)
+      echo "Paperspace API refused the request (HTTP ${code}): check PAPERSPACE_API_KEY and PAPERSPACE_MACHINE_ID" >&2
+      return 2
+      ;;
+    *)
+      echo "Paperspace API returned HTTP ${code}" >&2
+      return 1
+      ;;
+  esac
+}
+
 # Prints the machine state in lower case. The API does not document the
-# possible values; the console calls them "Off", "Starting up", "On/Ready",
-# "Shutting Down", ... and the API example shows "off".
+# possible values; on the real machine we saw "off", "starting", "ready" and
+# "stopping". Returns 2 for a permanent error (see check_code), 1 otherwise.
 state() {
-  api GET "/machines/${PAPERSPACE_MACHINE_ID}" |
-    python3 -c 'import json,sys; print(json.load(sys.stdin)["state"].lower())' 2>/dev/null
+  local out
+  out=$(api GET "/machines/${PAPERSPACE_MACHINE_ID}") || return 1
+  check_code "${out##*$'\n'}" || return
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["state"].lower())' \
+    <<<"${out%$'\n'*}" 2>/dev/null
+}
+
+# Sends start/stop. Returns like state().
+action() {
+  local out
+  out=$(api PATCH "/machines/${PAPERSPACE_MACHINE_ID}/$1") || return 1
+  check_code "${out##*$'\n'}"
 }
 
 is_ready() { [[ $1 == ready || $1 == on || $1 == running ]]; }
@@ -59,7 +90,12 @@ case "${1:-}" in
     off_polls=0 # polls that saw "off" since the last start request
     ready_polls=0
     while ((SECONDS < deadline)); do
-      if ! s=$(state); then
+      rc=0
+      s=$(state) || rc=$?
+      # A bad key or machine ID won't fix itself: fail now instead of after
+      # START_TIMEOUT_SECS.
+      ((rc == 2)) && exit 1
+      if ((rc != 0)); then
         echo "state query failed, retrying" >&2
         sleep 15
         continue
@@ -81,8 +117,10 @@ case "${1:-}" in
         # a minute later (4 polls).
         if ((off_polls % 4 == 0)); then
           echo "starting machine ${PAPERSPACE_MACHINE_ID}"
-          api PATCH "/machines/${PAPERSPACE_MACHINE_ID}/start" >/dev/null ||
-            echo "start request failed, retrying" >&2
+          rc=0
+          action start || rc=$?
+          ((rc == 2)) && exit 1
+          ((rc == 0)) || echo "start request failed, retrying" >&2
         fi
         off_polls=$((off_polls + 1))
       else
@@ -95,7 +133,7 @@ case "${1:-}" in
     ;;
   stop)
     echo "stopping machine ${PAPERSPACE_MACHINE_ID}"
-    api PATCH "/machines/${PAPERSPACE_MACHINE_ID}/stop" >/dev/null
+    action stop
     ;;
   *)
     echo "usage: $0 <state|start|stop>" >&2
