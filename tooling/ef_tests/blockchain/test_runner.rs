@@ -9,19 +9,22 @@ use ethrex_blockchain::{
     error::{ChainError, InvalidBlockError},
     fork_choice::apply_fork_choice,
 };
-#[cfg(not(feature = "stateless"))]
-use ethrex_common::types::block_access_list::BlockAccessList;
+use ethrex_common::types::block_access_list::{AccountChanges, BlockAccessList, SlotChange};
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 #[cfg(feature = "stateless")]
 use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
 use ethrex_common::{
+    H256,
     constants::EMPTY_KECCAK_HASH,
     types::{
         Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
         InvalidBlockHeaderError,
     },
+    utils::keccak,
 };
 use ethrex_rlp::decode::RLPDecode;
+use ethrex_rlp::encode::RLPEncode;
+use ethrex_rlp::structs::Encoder;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmError;
 use regex::Regex;
@@ -42,6 +45,91 @@ fn merkle_pool() -> Arc<rayon::ThreadPool> {
     MERKLE_POOL.with(|cell| cell.get_or_init(Blockchain::build_merkle_pool).clone())
 }
 
+/// Tests skipped by every run: they take too long, or ethrex cannot represent them.
+pub const SKIPPED_TESTS: &[&str] = &[
+    // Skip because they take too long to run, but they pass
+    "static_Call50000_sha256",
+    "CALLBlake2f_MaxRounds",
+    "loopMul",
+    // Skip because it tries to deserialize number > U256::MAX
+    "ValueOverflowParis",
+    // Skip because it's a "Create" Blob Transaction, which doesn't actually exist. It never reaches the EVM because we can't even parse it as an actual Transaction.
+    "createBlobhashTx",
+];
+
+/// How a fixture's blocks are executed.
+#[derive(Debug, Clone, Copy)]
+pub struct RunOptions {
+    /// Run blocks that carry an access list on the BAL-driven parallel executor,
+    /// as a node does unless started with `--no-bal-parallel-exec`.
+    pub bal_parallel_exec: bool,
+    /// Import every block without the access list its fixture delivers, so the client
+    /// executes it without one and checks the list it builds against the header.
+    pub withhold_access_lists: bool,
+    /// Cache precompile results within a block, as a node does unless started with
+    /// `--no-precompile-cache`.
+    pub precompile_cache: bool,
+    /// Check ethrex's errors against the fixture's expected exceptions, as the
+    /// ef_tests suite does: a block that fails to decode must expect a decoding
+    /// exception, and an import error other than the expected one is warned about.
+    /// Without it a fixture's verdict depends only on which blocks it expects to be
+    /// rejected.
+    pub check_exception_names: bool,
+}
+
+impl Default for RunOptions {
+    fn default() -> Self {
+        Self {
+            bal_parallel_exec: true,
+            withhold_access_lists: false,
+            precompile_cache: true,
+            check_exception_names: true,
+        }
+    }
+}
+
+/// The `Blockchain` a fixture's blocks are imported with, set up as `options` say.
+pub fn fixture_blockchain(store: Store, options: &RunOptions) -> Blockchain {
+    let mut blockchain = Blockchain::for_test_harness_with_pool(store, merkle_pool());
+    blockchain.options.bal_parallel_exec_enabled = options.bal_parallel_exec;
+    blockchain.options.precompile_cache_enabled = options.precompile_cache;
+    blockchain
+}
+
+/// A block the client rejected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rejection {
+    /// The block's position in the fixture's `blocks`, from 0.
+    pub index: usize,
+    /// The block's hash, unless the block did not decode.
+    pub hash: Option<H256>,
+    /// The client's error, as it reports it.
+    pub error: String,
+}
+
+/// Why a fixture is not run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkipReason {
+    /// Its name contains an entry of the skip list.
+    Named,
+    /// Its fork is before the Merge, which ethrex does not execute.
+    PreMerge,
+}
+
+pub fn skip_reason(
+    test_key: &str,
+    test: &TestUnit,
+    skipped_tests: Option<&[&str]>,
+) -> Option<SkipReason> {
+    if skipped_tests.is_some_and(|skipped| skipped.iter().any(|s| test_key.contains(s))) {
+        return Some(SkipReason::Named);
+    }
+    if test.network < Fork::Merge {
+        return Some(SkipReason::PreMerge);
+    }
+    None
+}
+
 pub fn parse_and_execute(
     path: &Path,
     skipped_tests: Option<&[&str]>,
@@ -56,19 +144,23 @@ pub fn parse_and_execute(
     let parsed = tests.len();
 
     for (test_key, test) in tests {
-        let named = skipped_tests
-            .map(|skipped| skipped.iter().any(|s| test_key.contains(s)))
-            .unwrap_or(false);
-        if named {
-            skipped_by_name += 1;
-            continue;
-        }
-        if test.network < Fork::Merge {
-            continue;
+        match skip_reason(&test_key, &test, skipped_tests) {
+            Some(SkipReason::Named) => {
+                skipped_by_name += 1;
+                continue;
+            }
+            Some(SkipReason::PreMerge) => continue,
+            None => {}
         }
         executed += 1;
 
-        let result = rt.block_on(run_ef_test(&test_key, &test, run_stateless));
+        let result = rt.block_on(run_ef_test(
+            &test_key,
+            &test,
+            run_stateless,
+            &RunOptions::default(),
+            &mut Vec::new(),
+        ));
 
         if let Err(e) = result {
             eprintln!("Test {test_key} failed: {e:?}");
@@ -99,10 +191,14 @@ pub fn parse_and_execute(
     }
 }
 
+/// Run one fixture, adding each block the client rejects to `rejections` as it
+/// happens, so they are there even when the fixture then fails or panics.
 pub async fn run_ef_test(
     test_key: &str,
     test: &TestUnit,
     run_stateless: bool,
+    options: &RunOptions,
+    rejections: &mut Vec<Rejection>,
 ) -> Result<(), String> {
     // check that the decoded genesis block header matches the deserialized one
     let genesis_rlp = test.genesis_rlp.clone();
@@ -121,16 +217,28 @@ pub async fn run_ef_test(
     check_prestate_against_db(test_key, test, &store);
 
     // Blockchain EF tests are meant for L1.
-    let blockchain = Blockchain::for_test_harness_with_pool(store.clone(), merkle_pool());
+    let blockchain = fixture_blockchain(store.clone(), options);
 
     // Early return if the exception is in the rlp decoding of the block
-    for bf in &test.blocks {
-        if bf.expect_exception.is_some() && exception_in_rlp_decoding(bf) {
-            return Ok(());
+    if options.check_exception_names {
+        for (index, bf) in test.blocks.iter().enumerate() {
+            if bf.expect_exception.is_none() {
+                continue;
+            }
+            if let Err(error) = CoreBlock::decode(bf.rlp.as_ref()) {
+                rejections.push(Rejection {
+                    index,
+                    hash: None,
+                    error: error.to_string(),
+                });
+            }
+            if exception_in_rlp_decoding(bf) {
+                return Ok(());
+            }
         }
     }
 
-    run(test_key, test, &blockchain, &store).await?;
+    run(test_key, test, &blockchain, &store, options, rejections).await?;
 
     // For Amsterdam tests, exercise the parallel BAL execution path as a correctness check.
     // Two-pass approach: pass 1 collects the BAL produced by sequential execution, pass 2
@@ -140,9 +248,13 @@ pub async fn run_ef_test(
     // and doesn't drive `add_block_pipeline`, and BAL-warmed parallel execution gives no
     // benefit in single-threaded zkVM guest builds. The non-stateless runs are the right
     // home for this check.
+    // Only needed when the fixture delivers no access lists: otherwise `run` has
+    // already executed every block in parallel on the fixture's own lists. Skipped
+    // when parallel execution is off, since pass 2 would run it anyway.
     #[cfg(not(feature = "stateless"))]
-    if test.network == Fork::Amsterdam {
-        run_two_pass_parallel(test_key, test).await?;
+    if test.network == Fork::Amsterdam && options.bal_parallel_exec && !delivers_access_lists(test)
+    {
+        run_two_pass_parallel(test_key, test, options).await?;
     }
 
     // Run stateless if backend was specified for this.
@@ -179,27 +291,66 @@ async fn run(
     test: &TestUnit,
     blockchain: &Blockchain,
     store: &Store,
+    options: &RunOptions,
+    rejections: &mut Vec<Rejection>,
 ) -> Result<(), String> {
     // Execute all blocks in test
-    for block_fixture in test.blocks.iter() {
+    for (index, block_fixture) in test.blocks.iter().enumerate() {
         let expects_exception = block_fixture.expect_exception.is_some();
+
+        // A block that does not decode is rejected before import, and has no hash.
+        if let Err(error) = CoreBlock::decode(block_fixture.rlp.as_ref()) {
+            rejections.push(Rejection {
+                index,
+                hash: None,
+                error: error.to_string(),
+            });
+            if !expects_exception {
+                return Err(format!(
+                    "Block {index} unexpectedly failed to decode on test: {test_key}, with error {error:?}",
+                ));
+            }
+            continue;
+        }
 
         // Won't panic because test has been validated
         let block: CoreBlock = block_fixture.block().unwrap().clone().into();
         let hash = block.hash();
+        let bal = if options.withhold_access_lists {
+            if block_fixture
+                .block()
+                .is_some_and(|block| block.block_access_list_data.is_some())
+            {
+                tracing::debug!(
+                    target: WITHHELD_ACCESS_LIST_TARGET,
+                    hash = %format_args!("{hash:#x}"),
+                    "Withholding the delivered access list"
+                );
+            }
+            None
+        } else {
+            delivered_access_list(block_fixture.block_access_list(), &block)
+        };
 
         // Attempt to add the block as the head of the chain
-        let chain_result = blockchain.add_block_pipeline(block.clone(), None);
+        let chain_result = blockchain.add_block_pipeline(block.clone(), bal);
 
         match chain_result {
             Err(error) => {
+                rejections.push(Rejection {
+                    index,
+                    hash: Some(hash),
+                    error: error.to_string(),
+                });
                 if !expects_exception {
                     return Err(format!(
                         "Transaction execution unexpectedly failed on test: {test_key}, with error {error:?}",
                     ));
                 }
                 let expected_exception = block_fixture.expect_exception.clone().unwrap();
-                if !exception_is_expected(expected_exception.clone(), &error) {
+                if options.check_exception_names
+                    && !exception_is_expected(expected_exception.clone(), &error)
+                {
                     eprintln!(
                         "Warning: Returned exception {error:?} does not match expected {expected_exception:?}",
                     );
@@ -231,17 +382,98 @@ async fn run(
     Ok(())
 }
 
+/// Tracing target of the event the runner emits when it drops a delivered access
+/// list, so a report can tell a dropped list from none.
+pub const DROPPED_ACCESS_LIST_TARGET: &str = "ef_tests::dropped_access_list";
+
+/// Tracing target of the event the runner emits when it withholds a block's list
+/// (`RunOptions::withhold_access_lists`), so a report can tell a withheld list from
+/// a block that has none.
+pub const WITHHELD_ACCESS_LIST_TARGET: &str = "ef_tests::withheld_access_list";
+
+/// The access list the fixture delivers with `block`, if the header commits to it.
+///
+/// Off the engine path a delivered list is a hint, not part of the block: one that
+/// does not parse, or whose hash as delivered differs from `block_access_list_hash`,
+/// is dropped and the block computes its own, as full sync does with a peer's list.
+/// A list the header does commit to is attached even if it is malformed, and the
+/// block is then judged with it.
+pub fn delivered_access_list(
+    delivered: Result<Option<BlockAccessList>, String>,
+    block: &CoreBlock,
+) -> Option<Arc<BlockAccessList>> {
+    let bal = match delivered {
+        Ok(None) => return None,
+        Ok(Some(bal)) => Some(bal),
+        Err(_) => None,
+    }
+    .filter(|bal| block.header.block_access_list_hash == Some(hash_as_delivered(bal)));
+    if bal.is_none() {
+        tracing::debug!(
+            target: DROPPED_ACCESS_LIST_TARGET,
+            hash = %format_args!("{:#x}", block.hash()),
+            "Dropping the delivered access list"
+        );
+    }
+    bal.map(Arc::new)
+}
+
+/// keccak of the list's RLP in the order given, duplicates and all.
+/// `BlockAccessList`'s own encoding sorts every list, so a misordered list would
+/// hash like the canonical one.
+pub fn hash_as_delivered(bal: &BlockAccessList) -> H256 {
+    struct Slot<'a>(&'a SlotChange);
+    impl RLPEncode for Slot<'_> {
+        fn encode(&self, buf: &mut dyn bytes::BufMut) {
+            Encoder::new(buf)
+                .encode_field(&self.0.slot)
+                .encode_field(&self.0.slot_changes)
+                .finish();
+        }
+    }
+    struct Account<'a>(&'a AccountChanges);
+    impl RLPEncode for Account<'_> {
+        fn encode(&self, buf: &mut dyn bytes::BufMut) {
+            let slots: Vec<Slot> = self.0.storage_changes.iter().map(Slot).collect();
+            Encoder::new(buf)
+                .encode_field(&self.0.address)
+                .encode_field(&slots)
+                .encode_field(&self.0.storage_reads)
+                .encode_field(&self.0.balance_changes)
+                .encode_field(&self.0.nonce_changes)
+                .encode_field(&self.0.code_changes)
+                .finish();
+        }
+    }
+    let accounts: Vec<Account> = bal.accounts().iter().map(Account).collect();
+    keccak(accounts.encode_to_vec())
+}
+
+/// Whether any block of the fixture carries its access list.
+#[cfg(not(feature = "stateless"))]
+fn delivers_access_lists(test: &TestUnit) -> bool {
+    test.blocks.iter().any(|b| {
+        b.block()
+            .is_some_and(|block| block.block_access_list_data.is_some())
+    })
+}
+
 /// Two-pass parallel execution check for Amsterdam tests.
 ///
 /// Pass 1 (sequential): runs every block with `add_block_pipeline_bal` to collect the
 /// BAL that each block produces.  Pass 2 (parallel): creates a fresh chain and re-runs every
 /// block passing the corresponding BAL so the BAL-warmed parallel path is exercised.  The final
-/// post-state of pass 2 must match the expected post-state.
+/// post-state of pass 2 must match the expected post-state. Both chains run with
+/// `options`, like the one `run` imports with.
 #[cfg(not(feature = "stateless"))]
-async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), String> {
+async fn run_two_pass_parallel(
+    test_key: &str,
+    test: &TestUnit,
+    options: &RunOptions,
+) -> Result<(), String> {
     // ---- Pass 1: sequential, collect BALs ----
     let store1 = build_store_for_test(test).await;
-    let blockchain1 = Blockchain::for_test_harness_with_pool(store1.clone(), merkle_pool());
+    let blockchain1 = fixture_blockchain(store1.clone(), options);
 
     let mut bals: Vec<Arc<BlockAccessList>> = Vec::with_capacity(test.blocks.len());
 
@@ -273,7 +505,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
 
     // ---- Pass 2: parallel (BAL-driven), verify post-state ----
     let store2 = build_store_for_test(test).await;
-    let blockchain2 = Blockchain::for_test_harness_with_pool(store2.clone(), merkle_pool());
+    let blockchain2 = fixture_blockchain(store2.clone(), options);
 
     for (block_fixture, bal) in test.blocks.iter().zip(bals.iter()) {
         let block: CoreBlock = block_fixture.block().unwrap().clone().into();
@@ -1062,5 +1294,133 @@ fn parse_expected_valid_flag(hex: &str) -> Result<bool, String> {
         n => Err(format!(
             "invalid validity byte 0x{n:02x} (expected 0x00 or 0x01)"
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
+    use ethrex_common::{
+        H160, H256,
+        types::{DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Genesis},
+    };
+
+    async fn amsterdam_store() -> Store {
+        let genesis_path = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../fixtures/genesis/l1-bal.json"
+        ));
+        let genesis = Genesis::try_from(genesis_path).expect("Failed to load genesis");
+        let mut store =
+            Store::new("store.db", EngineType::InMemory).expect("Failed to build store");
+        store
+            .add_initial_state(genesis)
+            .await
+            .expect("Failed to add genesis");
+        store
+    }
+
+    /// An empty Amsterdam block on top of genesis and the access list it commits to.
+    async fn amsterdam_block() -> (CoreBlock, BlockAccessList) {
+        let store = amsterdam_store().await;
+        let blockchain = Blockchain::for_test_harness_with_pool(store.clone(), merkle_pool());
+        let genesis_header = store.get_block_header(0).unwrap().unwrap();
+        let args = BuildPayloadArgs {
+            parent: genesis_header.hash(),
+            timestamp: genesis_header.timestamp + 12,
+            fee_recipient: H160::zero(),
+            random: H256::zero(),
+            withdrawals: Some(Vec::new()),
+            beacon_root: Some(H256::zero()),
+            slot_number: Some(1),
+            version: 1,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        };
+        let block_template = create_payload(&args, &store, Bytes::new()).unwrap();
+        let result = blockchain.build_payload(block_template).unwrap();
+        let bal = result
+            .block_access_list
+            .expect("an Amsterdam block records an access list");
+        (result.payload, bal)
+    }
+
+    async fn import(
+        block: &CoreBlock,
+        bal: Option<Arc<BlockAccessList>>,
+        bal_parallel_exec: bool,
+    ) -> Result<(), ChainError> {
+        let mut blockchain =
+            Blockchain::for_test_harness_with_pool(amsterdam_store().await, merkle_pool());
+        blockchain.options.bal_parallel_exec_enabled = bal_parallel_exec;
+        blockchain
+            .add_block_pipeline(block.clone(), bal)
+            .map(|_| ())
+    }
+
+    /// A delivered list the header does not commit to as delivered is dropped, and the
+    /// block imports without it in both modes. One the header does commit to is
+    /// attached, even out of order, and then judged with the block.
+    #[tokio::test]
+    async fn a_mismatched_delivered_list_is_dropped_and_the_block_imports() {
+        let (block, bal) = amsterdam_block().await;
+        // The block-start system calls touch several accounts, so the list can be
+        // both shortened and reordered.
+        assert!(bal.accounts().len() >= 2);
+        let mut dropped = bal.accounts().to_vec();
+        dropped.pop();
+        let dropped = BlockAccessList::from_accounts(dropped);
+        let mut reordered = bal.accounts().to_vec();
+        reordered.reverse();
+        let reordered = BlockAccessList::from_accounts(reordered);
+
+        // For a list in canonical order the hash as delivered is the commitment.
+        assert_eq!(
+            Some(hash_as_delivered(&bal)),
+            block.header.block_access_list_hash
+        );
+        assert!(delivered_access_list(Ok(Some(bal)), &block).is_some());
+        // Attached, the shortened list fails the block on the parallel executor; that
+        // is what dropping it avoids.
+        assert!(
+            import(&block, Some(Arc::new(dropped.clone())), true)
+                .await
+                .is_err()
+        );
+
+        for (name, delivered) in [
+            ("an account dropped", Ok(Some(dropped))),
+            ("accounts reordered", Ok(Some(reordered.clone()))),
+            ("a list that does not parse", Err("unparseable".to_string())),
+        ] {
+            let used = delivered_access_list(delivered, &block);
+            assert!(used.is_none(), "{name}: the list must be dropped");
+            for parallel in [true, false] {
+                let result = import(&block, used.clone(), parallel).await;
+                assert!(
+                    result.is_ok(),
+                    "{name}, parallel={parallel}: the block must import, got {result:?}"
+                );
+            }
+        }
+
+        // A header committing to the reordered bytes gets the reordered list, which
+        // makes the block invalid.
+        let mut committed = block.clone();
+        committed.header.block_access_list_hash = Some(hash_as_delivered(&reordered));
+        let used = delivered_access_list(Ok(Some(reordered)), &committed);
+        assert!(
+            used.is_some(),
+            "a list the header commits to must be attached"
+        );
+        for parallel in [true, false] {
+            let result = import(&committed, used.clone(), parallel).await;
+            assert!(
+                result.is_err(),
+                "parallel={parallel}: a block committing to a misordered list must be rejected"
+            );
+        }
     }
 }

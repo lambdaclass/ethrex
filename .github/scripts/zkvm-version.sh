@@ -19,17 +19,17 @@
 # rejected for the same reason — it cannot be matched against an image tag.
 #
 # Usage: zkvm-version.sh <zisk|sp1|openvm>   -> v6.9.0    (SDK version)
-#        zkvm-version.sh --ere-tag           -> v0.19.5   (git tag)
-#        zkvm-version.sh --ere-tag --docker  -> 0.19.5    (image tag, no `v`)
+#        zkvm-version.sh --ere-tag           -> v0.20.0   (git tag)
+#        zkvm-version.sh --ere-tag --docker  -> 0.20.0    (image tag, no `v`)
 
 set -euo pipefail
 
-ERE_TAG=v0.19.5
+ERE_TAG=v0.20.0
 
 # SDK versions resolved by ere-catalog at ERE_TAG.
 zkvm_version() {
     case "$1" in
-        zisk)   echo "v1.3.2-alpha" ;;
+        zisk)   echo "v1.4.0-alpha" ;;
         sp1)    echo "v6.9.0" ;;
         openvm) echo "v2.1.0-preview" ;;
         *)      echo "unknown zkvm: $1" >&2; return 1 ;;

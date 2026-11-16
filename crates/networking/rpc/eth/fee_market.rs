@@ -12,6 +12,7 @@ use serde_json::{Value, value::RawValue};
 use tracing::debug;
 
 use crate::{
+    eth::block::{get_block_body, pruned_history},
     rpc::{RpcApiContext, RpcHandler},
     types::block_identifier::BlockIdentifier,
     utils::{RpcErr, parse_json_hex},
@@ -98,8 +99,13 @@ impl RpcHandler for FeeHistoryRequest {
                 .map_err(|error| RpcErr::Internal(error.to_string()));
         }
 
-        let (start_block, end_block) =
-            get_range(storage, self.block_count, &self.newest_block).await?;
+        let (start_block, end_block) = get_range(
+            storage,
+            self.block_count,
+            &self.newest_block,
+            !self.reward_percentiles.is_empty(),
+        )
+        .await?;
         let oldest_block = start_block;
         let block_count = (end_block - start_block + 1) as usize;
         let mut base_fee_per_gas = vec![0_u64; block_count + 1];
@@ -152,8 +158,7 @@ impl RpcHandler for FeeHistoryRequest {
             // Only the rewards need the block's transactions, so its body is read
             // only when percentiles are requested.
             if !self.reward_percentiles.is_empty() {
-                let body = storage
-                    .get_block_body(block_number)
+                let body = get_block_body(storage, block_number)
                     .await?
                     .ok_or(RpcErr::Internal(format!(
                         "Could not get body for block {block_number}"
@@ -215,11 +220,10 @@ async fn get_range(
     storage: &Store,
     block_count: u64,
     expected_finish_block: &BlockIdentifier,
+    with_rewards: bool,
 ) -> Result<(u64, u64), RpcErr> {
     // NOTE: The amount of blocks to retrieve is capped by MAX_BLOCK_COUNT
 
-    // Get earliest block
-    let earliest_block_num = storage.get_earliest_block_number().await?;
     // Get latest block
     let latest_block_num = storage.get_latest_block_number()?;
     // Get the expected finish block number from the parameter
@@ -231,8 +235,16 @@ async fn get_range(
         ))?;
     // Calculate start and finish block numbers, considering finish block inclusion
     let finish_block_num = expected_finish_block_num.min(latest_block_num);
-    let expected_start_block_num = (finish_block_num + 1).saturating_sub(block_count);
-    let start_block_num = earliest_block_num.max(expected_start_block_num);
+    let mut start_block_num = (finish_block_num + 1).saturating_sub(block_count);
+    // Rewards need bodies, so they start at the earliest block with history. Header
+    // fields alone are served below it.
+    if with_rewards {
+        let earliest = storage.get_earliest_block_number().await?;
+        if finish_block_num < earliest {
+            return Err(pruned_history(finish_block_num, earliest));
+        }
+        start_block_num = start_block_num.max(earliest);
+    }
 
     Ok((start_block_num, finish_block_num))
 }

@@ -78,9 +78,9 @@ pub fn generate_jwt_secret() -> String {
     hex::encode(secret)
 }
 
-pub fn read_chain_file(chain_rlp_path: &str) -> Vec<Block> {
-    let chain_file = std::fs::File::open(chain_rlp_path).expect("Failed to open chain rlp file");
-    decode::chain_file(chain_file).expect("Failed to decode chain rlp file")
+pub fn read_chain_file(chain_rlp_path: &Path) -> anyhow::Result<Vec<Block>> {
+    let chain_file = File::open(chain_rlp_path)?;
+    decode::chain_file(chain_file)
 }
 
 pub fn parse_http_namespace(s: &str) -> eyre::Result<ethrex_rpc::RpcNamespace> {
