@@ -47,35 +47,41 @@ fi
 # Number of runs of the GPU workflows that have not finished yet. Prints
 # "auth" if GitHub rejects the token, and nothing if the API cannot be reached
 # or rate-limits the request.
+#
+# One request per workflow lists its latest runs (newest first) and counts the
+# ones whose status is not "completed". A single snapshot can't miss a run
+# that changes status between requests, as separate per-status queries could.
+# A run still waiting while 50 newer runs of the same workflow already
+# finished is not realistic.
 github_active_runs() {
-  local total=0 wf status out code body n
+  local total=0 wf out code body n
   for wf in $GPU_WORKFLOWS; do
-    # Every status a run can have before it completes.
-    for status in requested pending waiting queued in_progress; do
-      # The token goes through a config file descriptor, not argv, so it
-      # does not show up in `ps`.
-      out=$(curl --silent --show-error --max-time 30 \
-        --config <(printf 'header = "Authorization: Bearer %s"\n' "$GITHUB_TOKEN") \
-        -H "Accept: application/vnd.github+json" \
-        -w '\n%{http_code}' \
-        "https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${wf}/runs?status=${status}&per_page=1") ||
-        return 0
-      code=${out##*$'\n'}
-      body=${out%$'\n'*}
-      # GitHub also answers 403 when it rate-limits a request ("API rate limit
-      # exceeded", "secondary rate limit"): that is transient, not a bad token.
-      if [[ $code == 403 && $body == *"rate limit"* ]]; then
-        return 0
-      fi
-      if [[ $code == 401 || $code == 403 ]]; then
-        echo auth
-        return 0
-      fi
-      [[ $code == 200 ]] || return 0
-      n=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["total_count"])' \
-        <<<"$body" 2>/dev/null) || return 0
-      total=$((total + n))
-    done
+    # The token goes through a config file descriptor, not argv, so it does
+    # not show up in `ps`.
+    out=$(curl --silent --show-error --max-time 30 \
+      --config <(printf 'header = "Authorization: Bearer %s"\n' "$GITHUB_TOKEN") \
+      -H "Accept: application/vnd.github+json" \
+      -w '\n%{http_code}' \
+      "https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${wf}/runs?per_page=50") ||
+      return 0
+    code=${out##*$'\n'}
+    body=${out%$'\n'*}
+    # GitHub also answers 403 when it rate-limits a request ("API rate limit
+    # exceeded", "secondary rate limit"): that is transient, not a bad token.
+    if [[ $code == 403 && $body == *"rate limit"* ]]; then
+      return 0
+    fi
+    if [[ $code == 401 || $code == 403 ]]; then
+      echo auth
+      return 0
+    fi
+    [[ $code == 200 ]] || return 0
+    n=$(python3 -c '
+import json, sys
+runs = json.load(sys.stdin)["workflow_runs"]
+print(sum(r["status"] != "completed" for r in runs))' <<<"$body" 2>/dev/null) ||
+      return 0
+    total=$((total + n))
   done
   echo "$total"
 }
