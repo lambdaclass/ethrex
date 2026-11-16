@@ -2895,9 +2895,9 @@ impl<'a> VM<'a> {
     }
 
     /// Opcode dispatch loop, monomorphized over whether a struct-log tracer or an
-    /// opcode counter is active. With `TRACED = false` the compiler eliminates the tracer branches
-    /// and the cold `trace_*_step` calls entirely, so the hot loop body stays
-    /// minimal; the traced variant keeps the cold helpers out of line.
+    /// opcode counter is active. With `TRACED = false` the compiler eliminates the
+    /// tracer branches and the cold `trace_*_step` calls entirely, so the hot loop
+    /// body stays minimal; the traced variant keeps the cold helpers out of line.
     fn run_dispatch<const TRACED: bool, const VALIDATING: bool>(
         &mut self,
     ) -> Result<ContextResult, VMError> {
@@ -3170,10 +3170,11 @@ impl<'a> VM<'a> {
 
     /// Struct-log pre-step capture, split out of the interpreter loop and kept
     /// cold + non-inlined so the hot dispatch loop stays small (this code is
-    /// only reached when a struct-log tracer is active). Returns `gas_before`.
+    /// only reached when a struct-log tracer or an opcode counter is active).
+    /// Returns `gas_before`.
     ///
-    /// Also where the opcode counter counts the opcode, since it rides on the
-    /// same `TRACED` specialization of the dispatch loop.
+    /// The opcode counter counts the opcode here, since it rides on the same
+    /// `TRACED` specialization of the dispatch loop as the tracer.
     #[cold]
     #[inline(never)]
     fn trace_pre_step(&mut self, opcode: u8, pc_of_current_op: usize) -> u64 {
@@ -3231,6 +3232,8 @@ impl<'a> VM<'a> {
 
     /// Struct-log post-step: patch gas_cost, refund-after-op, and error into the
     /// buffered entry. Cold + non-inlined for the same reason as `trace_pre_step`.
+    ///
+    /// The opcode counter counts a fused JUMPDEST here.
     #[cold]
     #[inline(never)]
     fn trace_post_step(
