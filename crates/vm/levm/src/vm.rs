@@ -19,7 +19,7 @@ use crate::{
     },
     memory::{CallData, Memory},
     opcode_tracer::LevmOpcodeTracer,
-    opcodes::OpCodeFn,
+    opcodes::{OpCodeFn, Opcode},
     precompiles::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
     },
@@ -2882,10 +2882,11 @@ impl<'a> VM<'a> {
             return result;
         }
 
-        // Specialize the dispatch loop on whether a struct-log tracer is active.
-        // The `!TRACED` variant compiles out every tracer branch and capture call,
-        // leaving a minimal hot loop (the common, non-traced case).
-        match (self.opcode_tracer.active, self.validation_observer.active) {
+        // Specialize the dispatch loop on whether a struct-log tracer or an opcode
+        // counter is active. The `!TRACED` variant compiles out every tracer branch
+        // and capture call, leaving a minimal hot loop (the common, non-traced case).
+        let traced = self.opcode_tracer.active || self.db.opcode_counter.is_some();
+        match (traced, self.validation_observer.active) {
             (false, false) => self.run_dispatch::<false, false>(),
             (false, true) => self.run_dispatch::<false, true>(),
             (true, false) => self.run_dispatch::<true, false>(),
@@ -2893,8 +2894,8 @@ impl<'a> VM<'a> {
         }
     }
 
-    /// Opcode dispatch loop, monomorphized over whether a struct-log tracer is
-    /// active. With `TRACED = false` the compiler eliminates the tracer branches
+    /// Opcode dispatch loop, monomorphized over whether a struct-log tracer or an
+    /// opcode counter is active. With `TRACED = false` the compiler eliminates the tracer branches
     /// and the cold `trace_*_step` calls entirely, so the hot loop body stays
     /// minimal; the traced variant keeps the cold helpers out of line.
     fn run_dispatch<const TRACED: bool, const VALIDATING: bool>(
@@ -2943,7 +2944,7 @@ impl<'a> VM<'a> {
 
             // Struct-log post-step (compiled out entirely when !TRACED).
             if TRACED {
-                self.trace_post_step(gas_before_op, &error);
+                self.trace_post_step(opcode, pc_of_current_op, gas_before_op, &error);
             }
 
             let result = match op_result {
@@ -3170,9 +3171,19 @@ impl<'a> VM<'a> {
     /// Struct-log pre-step capture, split out of the interpreter loop and kept
     /// cold + non-inlined so the hot dispatch loop stays small (this code is
     /// only reached when a struct-log tracer is active). Returns `gas_before`.
+    ///
+    /// Also where the opcode counter counts the opcode, since it rides on the
+    /// same `TRACED` specialization of the dispatch loop.
     #[cold]
     #[inline(never)]
     fn trace_pre_step(&mut self, opcode: u8, pc_of_current_op: usize) -> u64 {
+        if let Some(counter) = self.db.opcode_counter.as_deref_mut() {
+            let in_code = pc_of_current_op < self.current_call_frame.bytecode.len();
+            counter.record(opcode, in_code);
+        }
+        if !self.opcode_tracer.active {
+            return 0;
+        }
         #[expect(
             clippy::as_conversions,
             reason = "gas_remaining is i64; clamp to 0 before converting to u64"
@@ -3222,7 +3233,25 @@ impl<'a> VM<'a> {
     /// buffered entry. Cold + non-inlined for the same reason as `trace_pre_step`.
     #[cold]
     #[inline(never)]
-    fn trace_post_step(&mut self, gas_before_op: u64, error: &OnceCell<VMError>) {
+    fn trace_post_step(
+        &mut self,
+        opcode: u8,
+        pc_of_current_op: usize,
+        gas_before_op: u64,
+        error: &OnceCell<VMError>,
+    ) {
+        // A taken JUMP or JUMPI runs its JUMPDEST inline and leaves the pc past
+        // it, so the dispatch loop never reaches that JUMPDEST. Any other
+        // outcome leaves the pc right after the jump opcode.
+        if (opcode == u8::from(Opcode::JUMP) || opcode == u8::from(Opcode::JUMPI))
+            && self.current_call_frame.pc != pc_of_current_op.wrapping_add(1)
+            && let Some(counter) = self.db.opcode_counter.as_deref_mut()
+        {
+            counter.record_fused_jumpdest();
+        }
+        if !self.opcode_tracer.active {
+            return;
+        }
         #[expect(
             clippy::as_conversions,
             reason = "gas_remaining is i64; clamp to 0 before converting to u64"

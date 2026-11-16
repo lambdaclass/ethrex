@@ -19,6 +19,7 @@ use crate::account::LevmAccount;
 use crate::call_frame::CallFrameBackup;
 use crate::errors::InternalError;
 use crate::errors::VMError;
+use crate::opcode_counter::OpcodeCounter;
 use crate::precompiles::PrecompileMoves;
 use crate::utils::account_to_levm_account;
 use crate::utils::restore_cache_state;
@@ -236,6 +237,10 @@ pub struct GeneralizedDatabase {
     /// Simulation-only precompile relocations (`movePrecompileToAddress`).
     /// `None` on every consensus path, where dispatch is unchanged.
     pub precompile_moves: Option<Arc<PrecompileMoves>>,
+    /// Counts the opcodes of every VM that runs over this database. `None`
+    /// unless a tool asks for the counts, which keeps the dispatch loop on
+    /// its fast path.
+    pub opcode_counter: Option<Box<OpcodeCounter>>,
 }
 
 impl GeneralizedDatabase {
@@ -253,6 +258,7 @@ impl GeneralizedDatabase {
             accessed_accounts: None,
             lazy_bal: None,
             precompile_moves: None,
+            opcode_counter: None,
         }
     }
 
@@ -284,6 +290,7 @@ impl GeneralizedDatabase {
             accessed_accounts: None,
             lazy_bal: None,
             precompile_moves: None,
+            opcode_counter: None,
         }
     }
 
@@ -344,6 +351,7 @@ impl GeneralizedDatabase {
             accessed_accounts: None,
             lazy_bal: None,
             precompile_moves: None,
+            opcode_counter: None,
         }
     }
 
