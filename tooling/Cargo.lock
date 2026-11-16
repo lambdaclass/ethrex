@@ -3427,6 +3427,7 @@ dependencies = [
  "ethrex-blockchain",
  "ethrex-common 31.0.0",
  "ethrex-crypto",
+ "ethrex-guest-program",
  "ethrex-levm",
  "ethrex-rlp 31.0.0",
  "ethrex-storage 31.0.0",

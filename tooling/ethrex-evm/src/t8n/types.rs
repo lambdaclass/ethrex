@@ -9,8 +9,9 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
 
-use ethrex_common::types::{GenesisAccount, Withdrawal};
+use ethrex_common::types::{BlockHeader, GenesisAccount, Withdrawal};
 use ethrex_common::{Address, H256, U256};
+use ethrex_rlp::decode::RLPDecode;
 use serde::Deserialize;
 
 use super::T8nArgs;
@@ -52,6 +53,10 @@ pub struct EnvJson {
     pub parent_beacon_block_root: Option<H256>,
     /// Ancestor hashes for BLOCKHASH, keyed by block number (hex string).
     pub block_hashes: BTreeMap<String, H256>,
+    /// RLP of the ancestor headers as hex strings, with the keys of
+    /// `block_hashes`. The execution witness needs the real headers, and the
+    /// t8n has no other source for them.
+    pub block_headers: BTreeMap<String, String>,
     pub withdrawals: Option<Vec<Withdrawal>>,
 }
 
@@ -67,6 +72,46 @@ impl EnvJson {
             hashes.insert(number, *hash);
         }
         Ok(hashes)
+    }
+
+    /// Decode the `blockHeaders` map into headers keyed by block number,
+    /// checking each one against `block_hashes` (the parsed `blockHashes`).
+    pub fn parsed_block_headers(
+        &self,
+        block_hashes: &BTreeMap<u64, H256>,
+    ) -> Result<BTreeMap<u64, BlockHeader>, T8nError> {
+        let invalid = |message: String| T8nError::Parse("env".to_string(), message);
+        let mut headers = BTreeMap::new();
+        for (key, encoded) in &self.block_headers {
+            let number = parse_u64(key)
+                .ok_or_else(|| invalid(format!("invalid blockHeaders key: {key}")))?;
+            let encoded = hex::decode(encoded.strip_prefix("0x").unwrap_or(encoded))
+                .map_err(|e| invalid(format!("blockHeaders[{number}] is not hex: {e}")))?;
+            let header = BlockHeader::decode(&encoded)
+                .map_err(|e| invalid(format!("failed to decode blockHeaders[{number}]: {e}")))?;
+            if header.number != number {
+                return Err(invalid(format!(
+                    "blockHeaders[{number}] decodes to header number {}",
+                    header.number
+                )));
+            }
+            let want = block_hashes.get(&number).ok_or_else(|| {
+                invalid(format!(
+                    "blockHeaders[{number}] has no entry in blockHashes"
+                ))
+            })?;
+            // The hash is taken over the header as ethrex encodes it, which
+            // is what goes into the witness, so this also rejects an entry
+            // that isn't canonical RLP.
+            let have = header.hash();
+            if have != *want {
+                return Err(invalid(format!(
+                    "blockHeaders[{number}] hash mismatch: have {have:#x}, want {want:#x}"
+                )));
+            }
+            headers.insert(number, header);
+        }
+        Ok(headers)
     }
 }
 
