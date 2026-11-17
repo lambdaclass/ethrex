@@ -165,7 +165,12 @@ async fn fcu_before_newpayload_race_starts_no_sync_cycle() {
 
 /// A cold node (nothing executed beyond genesis) must not be delayed by the heal
 /// wait: an unknown head starts a sync cycle immediately.
-#[tokio::test(flavor = "multi_thread")]
+// Current-thread on purpose: the sync cycle is still running when the test returns.
+// On a multi-thread runtime, teardown can drop the PeerTable actor while another
+// worker is mid-poll on the sync task, which then sees `ActorStopped`, treats it as
+// fatal and calls `process::exit(2)`, killing every test in the binary. A
+// current-thread runtime drops its tasks without polling them again.
+#[tokio::test]
 async fn cold_node_starts_sync_cycle_without_heal_delay() {
     let store = store_with_genesis().await;
     let blockchain = Arc::new(Blockchain::default_with_store(store.clone()));
@@ -194,7 +199,9 @@ async fn cold_node_starts_sync_cycle_without_heal_delay() {
 
 /// A head that never arrives through the engine must still be synced from peers:
 /// the heal wait is bounded, after which a real cycle starts.
-#[tokio::test(flavor = "multi_thread")]
+// Current-thread for the same teardown reason as
+// `cold_node_starts_sync_cycle_without_heal_delay`.
+#[tokio::test]
 async fn missing_head_still_starts_sync_cycle_after_heal_wait() {
     let (store, blockchain, _tip) = chain_at_fresh_tip().await;
     let sync_manager = sync_manager_for(&store, blockchain).await;

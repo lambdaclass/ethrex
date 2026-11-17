@@ -1,4 +1,4 @@
-use ef_tests_blockchain::test_runner::parse_and_execute;
+use ef_tests_blockchain::test_runner::{SKIPPED_TESTS, parse_and_execute};
 use std::path::Path;
 
 // test-levm reads the `../.fixtures_url` bundle, the Amsterdam overlay and the
@@ -17,23 +17,11 @@ const TEST_FOLDER: &str = "vectors/";
 #[cfg(feature = "stateless")]
 const ENGINE_TEST_FOLDER: &str = "vectors_zkevm_engine/";
 
-// Base skips shared by all runs.
-const SKIPPED_BASE: &[&str] = &[
-    // Skip because they take too long to run, but they pass
-    "static_Call50000_sha256",
-    "CALLBlake2f_MaxRounds",
-    "loopMul",
-    // Skip because it tries to deserialize number > U256::MAX
-    "ValueOverflowParis",
-    // Skip because it's a "Create" Blob Transaction, which doesn't actually exist. It never reaches the EVM because we can't even parse it as an actual Transaction.
-    "createBlobhashTx",
-];
-
 // Do not re-add a skip without recording why in docs/known_issues.md.
 const EXTRA_SKIPS: &[&str] = &[];
 
 fn blockchain_runner(path: &Path) -> datatest_stable::Result<()> {
-    let skips: Vec<&'static str> = SKIPPED_BASE
+    let skips: Vec<&'static str> = SKIPPED_TESTS
         .iter()
         .copied()
         .chain(EXTRA_SKIPS.iter().copied())

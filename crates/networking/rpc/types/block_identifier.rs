@@ -129,6 +129,19 @@ impl BlockIdentifierOrHash {
         }
     }
 
+    /// The `-32001` error for a block this node does not know, e.g. one above its
+    /// head, or a hash it has not seen.
+    pub fn not_found(&self) -> RpcErr {
+        let block = match self {
+            BlockIdentifierOrHash::Hash(hash) => format!("{hash:#x}"),
+            BlockIdentifierOrHash::Identifier(BlockIdentifier::Number(number)) => {
+                format!("{number:#x}")
+            }
+            BlockIdentifierOrHash::Identifier(id) => id.to_string(),
+        };
+        RpcErr::ResourceNotFound(format!("block not found: {block}"))
+    }
+
     /// Parses the raw JSON-RPC param at `arg_index`.
     pub fn parse_param(param: &RawValue, arg_index: u64) -> Result<Self, RpcErr> {
         Self::parse(block_identifier_param_value(param, arg_index)?, arg_index)

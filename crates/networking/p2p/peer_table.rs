@@ -1556,6 +1556,14 @@ impl PeerTableServer {
         request_hash: H256,
         record: NodeRecord,
     ) {
+        // The ENRResponse packet is signed by the sender, but the record inside
+        // carries its own signature and key. Keep it only if it is the sender's
+        // own, validly signed record: otherwise a bonded peer could make us store,
+        // and serve to others in discv5 NODES, an unsigned or forged record, or
+        // one naming a different node.
+        if !is_signed_record_of(&record, node_id) {
+            return;
+        }
         // Filtered here, before the mutable borrow, so a record that reaches us
         // over discv4 is judged by the same filter as one that arrives over
         // discv5. The verdict is recorded only if the record was actually
@@ -1699,6 +1707,21 @@ impl PeerTableServer {
 }
 
 pub type PeerTable = ActorRef<PeerTableServer>;
+
+/// Whether `record` is validly signed and its `secp256k1` key belongs to `node_id`.
+fn is_signed_record_of(record: &NodeRecord, node_id: H256) -> bool {
+    let Some(key) = record
+        .pairs()
+        .secp256k1
+        .and_then(|key| secp256k1::PublicKey::from_slice(key.as_bytes()).ok())
+    else {
+        return false;
+    };
+    let uncompressed = key.serialize_uncompressed();
+    // The id comparison is the cheap check, so it runs before the signature check.
+    crate::utils::node_id(&ethrex_common::H512::from_slice(&uncompressed[1..])) == node_id
+        && record.verify_signature()
+}
 
 #[cfg(test)]
 mod tests {
@@ -1952,6 +1975,58 @@ mod tests {
         let contact = table.get_contact(&node_id).unwrap();
         assert_eq!(contact.passes_filter, None);
         assert!(contact.record.is_none(), "the record must not be stored");
+    }
+
+    #[tokio::test]
+    async fn a_discv4_enr_response_naming_another_node_is_not_stored() {
+        // The responder signs the packet with its own key, but the record inside
+        // is someone else's: storing it would let the responder's contact hold,
+        // and our NODES responses relay, a record for a different identity.
+        let mut table = table_with(FixedAnswer(true));
+        let (node_id, record) = record_for(9, 1);
+        let (_, other_record) = record_for(10, 2);
+        let request_hash = H256::repeat_byte(0xcd);
+
+        table
+            .do_new_contacts(
+                vec![Node::from_enr(&record).unwrap()],
+                DiscoveryProtocol::Discv4,
+            )
+            .await;
+        table.do_record_enr_request_sent(node_id, request_hash);
+        table.do_record_enr_response_received(node_id, request_hash, other_record);
+
+        let contact = table.get_contact(&node_id).unwrap();
+        assert!(
+            contact.record.is_none(),
+            "another node's record must not be stored"
+        );
+        assert_eq!(contact.passes_filter, None);
+    }
+
+    #[tokio::test]
+    async fn a_discv4_enr_response_with_a_bad_signature_is_not_stored() {
+        let mut table = table_with(FixedAnswer(true));
+        let (node_id, record) = record_for(11, 1);
+        let request_hash = H256::repeat_byte(0xef);
+        // Same key and pairs, bumped seq, but the signature no longer covers them.
+        let forged = NodeRecord::new(record.signature, record.seq + 1, record.pairs().clone());
+
+        table
+            .do_new_contacts(
+                vec![Node::from_enr(&record).unwrap()],
+                DiscoveryProtocol::Discv4,
+            )
+            .await;
+        table.do_record_enr_request_sent(node_id, request_hash);
+        table.do_record_enr_response_received(node_id, request_hash, forged);
+
+        let contact = table.get_contact(&node_id).unwrap();
+        assert!(
+            contact.record.is_none(),
+            "an unsigned record must not be stored"
+        );
+        assert_eq!(contact.passes_filter, None);
     }
 
     /// Rejects the first record it is shown and accepts every later one, so a

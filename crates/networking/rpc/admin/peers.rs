@@ -97,7 +97,7 @@ pub async fn peers(context: &mut RpcApiContext) -> Result<Value, RpcErr> {
         .map(RpcPeer::from)
         .collect::<Vec<_>>();
 
-    Ok(serde_json::to_value(peers)?)
+    serde_json::to_value(peers).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
 fn parse(request: &RpcRequest) -> Result<Node, RpcErr> {
@@ -134,11 +134,12 @@ pub async fn add_peer(context: &mut RpcApiContext, request: &RpcRequest) -> Resu
     // established we need to wait.
     loop {
         if peer_is_connected(peer_handler, &node.enode_url()).await {
-            return Ok(serde_json::to_value(true)?);
+            return serde_json::to_value(true).map_err(|error| RpcErr::Internal(error.to_string()));
         }
 
         if cast_result.is_err() || start.elapsed() >= runtime {
-            return Ok(serde_json::to_value(false)?);
+            return serde_json::to_value(false)
+                .map_err(|error| RpcErr::Internal(error.to_string()));
         }
         let _ = tokio::time::sleep(Duration::from_millis(100)).await;
     }

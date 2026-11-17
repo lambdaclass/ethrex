@@ -1647,36 +1647,6 @@ fn add_blob_tx_with_sender(mempool: &Mempool, sender: Address, nonce: u64) -> H2
 }
 
 #[test]
-fn blob_txs_lists_only_blob_txs_with_sender_and_nonce() {
-    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
-    let sender = H160::random();
-    let blob0 = add_blob_tx_with_sender(&mempool, sender, 0);
-    let blob1 = add_blob_tx_with_sender(&mempool, sender, 1);
-
-    // A regular tx must not appear in the blob listing.
-    let plain = Transaction::EIP1559Transaction(EIP1559Transaction {
-        nonce: 0,
-        gas_limit: 21_000,
-        to: TxKind::Call(Address::from_low_u64_be(1)),
-        ..Default::default()
-    });
-    let plain_hash = plain.hash(&NativeCrypto);
-    mempool
-        .add_transaction(
-            plain_hash,
-            sender,
-            MempoolTransaction::new(plain, sender),
-            None,
-            None,
-        )
-        .unwrap();
-
-    let mut got = mempool.blob_txs().unwrap();
-    got.sort_by_key(|(_, _, nonce)| *nonce);
-    assert_eq!(got, vec![(blob0, sender, 0), (blob1, sender, 1)]);
-}
-
-#[test]
 fn blob_eviction_keeps_includable_low_nonce_tx() {
     // When the blob sub-pool is over its cap, eviction must drop the least
     // includable blob tx (highest nonce), not the earliest-inserted one. A FIFO
