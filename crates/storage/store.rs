@@ -3436,7 +3436,9 @@ impl Store {
         // A new database tracks its history bounds from the first block, so it has none
         // from before the tracking to reconcile. Only this path marks one: the early
         // returns above are for a database that already holds a genesis, which may
-        // predate the tracking.
+        // predate the tracking. They need the genesis to be canonical, which only the
+        // forkchoice update below makes it, so a stop before that repeats this path
+        // and cannot leave a new database unmarked.
         self.mark_history_bounds_reconciled(None).await?;
         self.forkchoice_update(vec![], genesis_block_number, genesis_hash, None, None)
             .await?;
@@ -8847,6 +8849,24 @@ mod backfill_write_tests {
         assert!(
             !store
                 .is_transaction_indexed_in(test_tx(8).hash(&NativeCrypto), hash)
+                .await
+                .unwrap()
+        );
+
+        // A block still in the buffer, which is where a new payload waits to be flushed.
+        let buffered_header = test_header(3);
+        let buffered_hash = buffered_header.hash();
+        let buffered_tx = test_tx(9);
+        let buffered_tx_hash = buffered_tx.hash(&NativeCrypto);
+        let buffered_body = BlockBody {
+            transactions: vec![buffered_tx],
+            ommers: vec![],
+            withdrawals: Some(vec![]),
+        };
+        store.buffer_block_for_test(&Block::new(buffered_header, buffered_body));
+        assert!(
+            store
+                .is_transaction_indexed_in(buffered_tx_hash, buffered_hash)
                 .await
                 .unwrap()
         );

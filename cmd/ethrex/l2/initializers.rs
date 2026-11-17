@@ -578,6 +578,7 @@ pub async fn init_native_rollup_l2(
     let cancel_token = CancellationToken::new();
     // No sync manager runs here to reconcile the history bounds of a database created
     // before they were tracked, and `eth_capabilities` reports no history until then.
+    // This path has no graceful shutdown, so nothing waits for the task either.
     tracker.spawn(reconcile_history_bounds_at_startup(
         store.clone(),
         cancel_token.clone(),

@@ -483,7 +483,8 @@ pub enum SyncError {
     #[error("Missing data from DB")]
     CorruptDB,
     /// A forkchoice update was rewriting the canonical chain at this block while the
-    /// history bounds were being reconciled. Retrying resolves it.
+    /// history bounds were being reconciled. Retrying resolves it, unless the
+    /// database is damaged and the block is missing for good.
     #[error("The canonical chain changed at block {0} while reconciling the history bounds")]
     CanonicalChainMoved(u64),
     #[error("Failed to fetch latest canonical block, unable to sync")]
@@ -599,6 +600,9 @@ impl SyncError {
             | SyncError::FileSystem(_) => false,
             // A peer switch may resolve this (the BAL was wrong).
             SyncError::StateRootMismatch(_, _) => true,
+            // Not raised by a sync cycle, which is what consults this. Recoverable all
+            // the same: the forkchoice update behind it finishes.
+            SyncError::CanonicalChainMoved(_) => true,
             // A header the catch-up span needs is not stored, which means the
             // header download that came with the new pivot was short. Retrying
             // the cycle re-downloads it; the snap/2 path discards its partial
@@ -626,7 +630,6 @@ impl SyncError {
             | SyncError::Rlp(_)
             | SyncError::JoinHandle(_)
             | SyncError::CorruptDB
-            | SyncError::CanonicalChainMoved(_)
             | SyncError::InvalidRangeReceived
             | SyncError::BlockNumber(_)
             | SyncError::NoBlocks

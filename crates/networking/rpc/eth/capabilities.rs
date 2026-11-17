@@ -49,13 +49,8 @@ impl RpcHandler for CapabilitiesRequest {
                 available_from(receipts, head_number),
             )
         } else {
-            let disabled = json!({"disabled": true});
-            (
-                disabled.clone(),
-                disabled.clone(),
-                disabled.clone(),
-                disabled,
-            )
+            let disabled = || json!({"disabled": true});
+            (disabled(), disabled(), disabled(), disabled())
         };
 
         // A block count: forkchoice keeps the state of the blocks down to `head - retention`.
