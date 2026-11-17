@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-699a721a.js";
+            window.path_to_searchindex_js = "searchindex-d5e6f06c.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-a6a3d26a.js"></script>
@@ -14836,6 +14836,7 @@ git push origin &lt;release_version&gt;
 </ul>
 <p>The commands for each target follow. The host roster changes between releases — fill in the ones you run and leave the placeholders for the rest. Replace <code>vX.Y.Z-rc.W</code> / <code>release/vX.Y.Z</code> with the version under test.</p>
 <h4 id="ethrex-ethdocker-mainnet"><a class="header" href="#ethrex-ethdocker-mainnet"><code>ethrex-ethdocker-mainnet</code></a></h4>
+<p>The consensus client is ethlambda, through eth-docker’s own <code>ethlambda-cl-only.yml</code> (<code>CORE_FILES=ethrex.yml:ethlambda-cl-only.yml</code> in <code>.env</code>, image pinned by <code>ETHLAMBDA_DOCKER_TAG</code>). <code>./ethd update</code> and <code>./ethd up</code> handle it like any other eth-docker client, so upgrading ethrex only takes the release tag below.</p>
 <pre><code class="language-bash">ssh admin@ethrex-ethdocker-mainnet
 cd eth-docker/
 # In .env, set the release tag on this line:
