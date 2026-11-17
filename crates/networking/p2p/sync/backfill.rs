@@ -210,6 +210,13 @@ const TX_INDEX_SEARCH_LOG_INTERVAL: u64 = 1_000_000;
 /// body of every stored block above the floor, once, so it takes as long as the
 /// stored history is. It completes at most once per database, and never runs on a
 /// new one, which is created already marked as reconciled.
+///
+/// The reads are awaited one at a time, so the search holds a single thread of the
+/// blocking pool at any moment. It keeps no checkpoint, and a restart starts it
+/// again from the head. A retry after [`SyncError::CanonicalChainMoved`] repeats
+/// little: a height loses its canonical block only to a forkchoice update that
+/// moves the head below it, which happens near the head, among the first blocks
+/// checked.
 async fn find_tx_index_floor(store: &Store) -> Result<BlockNumber, SyncError> {
     let earliest = store.get_earliest_block_number().await?;
     let head = store.get_latest_block_number()?;
@@ -235,6 +242,8 @@ async fn find_tx_index_floor(store: &Store) -> Result<BlockNumber, SyncError> {
 /// Whether the transactions of the canonical block `number` are missing from the
 /// transaction index. `None` for an empty block, which says nothing about the index.
 /// A block without a body counts as unindexed, which keeps the floor conservative.
+/// The first transaction stands for the block: the index entries of a block are
+/// written in one transaction, all of them or none.
 ///
 /// A recorded floor is never lowered, so a forkchoice update running alongside must
 /// not be able to produce one. The index is therefore asked about the block by its

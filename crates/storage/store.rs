@@ -1138,6 +1138,8 @@ impl Store {
         if buffered.iter().any(|(_, hash, _)| *hash == block_hash) {
             return Ok(true);
         }
+        // The buffer is read first: a flush commits to disk before it evicts, so an
+        // entry that has left the buffer since is on disk by now.
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_read()?;

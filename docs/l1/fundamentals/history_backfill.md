@@ -99,7 +99,8 @@ say whether that happened, every database created by an earlier version is
 searched once. The search reads every stored block from the head down, in the
 background, until it finds one that is missing from the index. It therefore takes
 much longer than the bisect above, in proportion to the history the node stores,
-and backfill resumes after it. Its progress is logged every million blocks.
+and backfill resumes after it. Its progress is logged every million blocks. It
+keeps no checkpoint: a restart before it completes starts it again from the head.
 
 Until the reconciliation has run, `eth_capabilities` reports `blocks`, `tx`, `logs`
 and `receipts` as disabled on a database created by an earlier version, because
