@@ -377,6 +377,16 @@ mod tests {
 
         assert!(matches!(result, Err(RpcErr::ResourceNotFound(_))));
 
+        // The first block above the head is already not found.
+        let head_plus_one = FeeHistoryRequest {
+            block_count: 3,
+            newest_block: BlockIdentifier::Number(6),
+            reward_percentiles: vec![],
+        }
+        .handle(context.clone())
+        .await;
+        assert!(matches!(head_plus_one, Err(RpcErr::ResourceNotFound(_))));
+
         // The head itself is still served.
         let at_head = FeeHistoryRequest {
             block_count: 3,
