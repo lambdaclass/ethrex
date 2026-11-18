@@ -2997,12 +2997,14 @@ impl Store {
 
         let state_root = state_trie.hash_no_commit(&NativeCrypto);
 
-        // Apply in address order. The guest replays these same updates on the nodes recorded
-        // here, and the nodes a removal reads depend on what was inserted before it: a branch
-        // left with one child loads that child. Both lists are built from seeded maps, so
-        // only a sort keeps the two sides touching the same nodes.
+        // Insert and update first and remove last, each group in address order. The guest
+        // replays these same updates on the nodes recorded here, and a removal that leaves
+        // a branch with one child reads that child, so removing before an insert into the
+        // same branch records a node nobody needs. This is the order of `mpt_set_accounts`
+        // in execution-specs. Both lists are built from seeded maps, so only a sort keeps
+        // the two sides touching the same nodes.
         let mut ordered: Vec<&AccountUpdate> = account_updates.iter().collect();
-        ordered.sort_unstable_by_key(|update| update.address);
+        ordered.sort_unstable_by_key(|update| (update.removed, update.address));
 
         for update in ordered {
             let hashed_address = hash_address(&update.address);
@@ -9252,6 +9254,85 @@ mod witness_recording_tests {
                     .values()
                     .any(|node| matches!(node, Node::Leaf(leaf) if leaf.value == kept_leaf_value)),
                 "the witness of {address:#x} has the leaf of the slot the update doesn't touch"
+            );
+        }
+    }
+
+    /// Three addresses in ascending order whose hashed keys start with
+    /// different nibbles. In a state trie that only holds such accounts the
+    /// root is a branch, and each account is a leaf right under it.
+    fn accounts_under_one_branch() -> [Address; 3] {
+        let mut accounts: Vec<Address> = Vec::new();
+        for index in 1.. {
+            let account = Address::from_low_u64_be(index);
+            let first_nibble = |account: &Address| hash_address(account)[0] >> 4;
+            if accounts
+                .iter()
+                .all(|other| first_nibble(other) != first_nibble(&account))
+            {
+                accounts.push(account);
+            }
+            if accounts.len() == 3 {
+                break;
+            }
+        }
+        [accounts[0], accounts[1], accounts[2]]
+    }
+
+    /// The state starts with two accounts, and the updates remove one and
+    /// insert another. Removing first leaves the root branch with only the
+    /// kept account, and collapsing it reads that leaf, which the guest never
+    /// reads since it inserts first. The removed account has the lower
+    /// address, so applying the updates in address order removes too early,
+    /// and so does applying them as they come when the removal comes first.
+    #[tokio::test]
+    async fn records_account_inserts_before_removals() {
+        let [removed, inserted, kept] = accounts_under_one_branch();
+        let kept_balance = U256::from(0xb0b);
+        let account_with = |balance: U256| GenesisAccount {
+            code: Bytes::new(),
+            storage: BTreeMap::new(),
+            balance,
+            nonce: 0,
+        };
+        let genesis = Genesis {
+            alloc: BTreeMap::from([
+                (removed, account_with(U256::one())),
+                (kept, account_with(kept_balance)),
+            ]),
+            ..Default::default()
+        };
+        let mut store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        store.add_initial_state(genesis.clone()).await.unwrap();
+
+        let remove = AccountUpdate::removed(removed);
+        let mut insert = AccountUpdate::new(inserted);
+        insert.info = Some(AccountInfo {
+            balance: U256::one(),
+            ..Default::default()
+        });
+
+        for updates in [[remove.clone(), insert.clone()], [insert, remove]] {
+            let state_trie = store
+                .state_trie(genesis.get_block().hash())
+                .unwrap()
+                .expect("genesis state");
+            let (witness, state_trie) = TrieLogger::open_trie(state_trie);
+
+            store
+                .apply_account_updates_from_trie_with_witness(state_trie, &updates, HashMap::new())
+                .unwrap();
+
+            let recorded = witness.lock().unwrap();
+            assert!(!recorded.is_empty());
+            let is_kept_account = |node: &Node| match node {
+                Node::Leaf(leaf) => AccountState::decode(&leaf.value)
+                    .is_ok_and(|account| account.balance == kept_balance),
+                _ => false,
+            };
+            assert!(
+                !recorded.values().any(is_kept_account),
+                "the witness has the leaf of the account the updates don't touch"
             );
         }
     }
