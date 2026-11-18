@@ -65,17 +65,18 @@ CL_CODES = {
 # Tag forms used by consensus clients (the layout is not part of the
 # execution-apis spec): EL code + CL code (4 chars), each followed by 2 or 4
 # lowercase hex chars of its commit (8 or 12 chars). Local Prysm builds report
-# their commit as "Local build", so the tag carries `Loca` (12 chars) or `Lo`
-# (8 chars), seen on mainnet as `GE13d8PMLoca`. The `(?![A-Za-z0-9])` makes the
-# tag end at a word boundary; where it starts is checked in
+# their commit as "Local build", so the tag carries `Loca` (12-char form) or `Lo`
+# (8-char form), seen on mainnet as `GE13d8PMLoca`. The lookahead makes the tag
+# end at a word boundary (no letter or digit after it, in any script); where it
+# starts is checked in
 # `el_code_from_graffiti`, since Prysm and Teku glue it on when it exactly
 # fills the 32 bytes.
 TAG_RE = re.compile(
     r"([A-Z]{2})(?:[0-9a-f]{4}([A-Z]{2})(?:[0-9a-f]{4}|Loca)|[0-9a-f]{2}([A-Z]{2})(?:[0-9a-f]{2}|Lo)|([A-Z]{2}))"
     r"(?![^\W_])")  # not followed by a letter or digit, in any script
-# With 3 bytes free (3 or 4 for Lighthouse), clients append just the EL code
+# With 3 bytes free (3 or 4 for Lighthouse), Lighthouse, Prysm and Teku append just the EL code
 # after a space, so the graffiti ends up 31 or 32 bytes long.
-EL_ONLY_RE = re.compile(r"(?:^|[\W_])([A-Z]{2})\Z")
+EL_ONLY_RE = re.compile(r"[\W_]([A-Z]{2})\Z")
 EL_ONLY_MIN_BYTES = 31
 # Glued tags only ever end a full graffiti. Requiring these lengths keeps words
 # like "ANGELS" (GE+LS glued) or "... TE" in shorter graffiti from counting.
@@ -88,7 +89,9 @@ MAX_EMPTY_RUN = 64
 CHUNK = 64
 RETRIES = 5
 NODE_DOWN_AFTER = 180  # seconds without a successful fetch before giving up
-MAX_RETRY_AFTER = 30  # cap on a 429's Retry-After, in seconds
+MAX_RETRY_AFTER = 30  # cap on Retry-After, in seconds
+REQUEST_TIMEOUT = 20  # seconds; even a full block is a few hundred KB
+MAX_CONCURRENCY = 256
 CHART_HEIGHT = 10
 CHART_WIDTH = 60
 CHART_MAX_BUCKETS = 40  # automatic bucket choice
@@ -102,8 +105,8 @@ EMPTY, ERROR = None, "!"  # per-slot markers in the results list, next to "" (un
 def el_code_from_graffiti(graffiti_hex: str) -> str | None:
     """Return the execution client code in a 0x-prefixed graffiti, if any.
 
-    When several candidates appear, the one closest to the end wins: clients
-    append the tag after the user graffiti."""
+    When several candidates appear, the one closest to the end wins: all
+    clients but Caplin append the tag after the user graffiti."""
     try:
         raw = bytes.fromhex(graffiti_hex[2:]).rstrip(b"\x00")
     except ValueError:
@@ -123,16 +126,16 @@ def el_code_from_graffiti(graffiti_hex: str) -> str | None:
     if m and m.group(1) in EL_CODES and m.end() > best_end:
         best, best_end = m.group(1), m.end()
     # With exactly 2 bytes free, Prysm (and Teku's CLIENT_CODES format) glue the
-    # EL code to the user graffiti (`...manuallyGE`). Skip it after a capital
-    # letter, as in "CHANGE".
+    # EL code to the user graffiti (`...manuallyGE`). Only accept it after a
+    # lowercase ASCII letter or digit: not in "CHANGE", nor after symbols.
     if best_end < len(text) and full and len(text) >= 3 \
-            and text[-2:] in EL_CODES and not text[-3].isupper():
+            and text[-2:] in EL_CODES and re.fullmatch(r"[a-z0-9]", text[-3]):
         best = text[-2:]
     return best
 
 
 class HTTPError(Exception):
-    """A non-success response. `path` never includes the query string (it may hold an API key)."""
+    """A non-success response. `path` never includes the --beacon-url query string (it may hold an API key)."""
 
     def __init__(self, path: str, status: int, body: bytes, retry_after: float = 0):
         super().__init__(f"GET {path}: HTTP {status}: {body[:200]!r}")
@@ -199,14 +202,21 @@ class BeaconClient:
 
     def drop_conn(self):
         c = getattr(self.local, "conn", None)
+        self.local.conn = None
         if c is not None:
-            c.close()
             with self.conns_lock:
                 if c in self.conns:
                     self.conns.remove(c)
-        self.local.conn = None
+            try:
+                c.close()
+            except OSError:
+                pass
 
-    def request(self, path: str, timeout: float = 60) -> http.client.HTTPResponse:
+    def redact(self, text: str) -> str:
+        """Hide the URL's query string (it may hold an API key) in a message."""
+        return text.replace(self.query, "<query>") if self.query else text
+
+    def request(self, path: str, timeout: float = REQUEST_TIMEOUT) -> http.client.HTTPResponse:
         """Send one GET and return the response with its body unread (no retries).
 
         The caller must read the body, or call drop_conn(), before the next request."""
@@ -221,7 +231,7 @@ class BeaconClient:
             raise
 
     def get(self, path: str) -> tuple[int, bytes]:
-        """GET path, retrying connection errors, 5xx and 429. Returns (status, body)."""
+        """GET path, retrying connection errors, 5xx (except 501) and 429. Returns (status, body)."""
         for attempt in range(RETRIES + 1):
             if self.abort.is_set():
                 raise Aborted()
@@ -258,13 +268,13 @@ def parse_duration(s: str) -> int:
     return int(m.group(1)) * UNITS[m.group(2)]
 
 
-def positive_int(s: str) -> int:
+def concurrency(s: str) -> int:
     try:
         n = int(s)
     except ValueError:
         n = 0
-    if n <= 0:
-        raise argparse.ArgumentTypeError(f"expected a positive integer, got {s!r}")
+    if not 1 <= n <= MAX_CONCURRENCY:
+        raise argparse.ArgumentTypeError(f"expected an integer from 1 to {MAX_CONCURRENCY}, got {s!r}")
     return n
 
 
@@ -321,7 +331,7 @@ def _sum_effective_balances(beacon: BeaconClient, path: str) -> tuple[int, int]:
             total += int(m.group(1))
             count += 1
             last = m.end()
-        buf = buf[max(last, len(buf) - 64):]
+        buf = buf[max(last, len(buf) - 256):]  # keep room for a match split across chunks
     # read() returns b"" instead of raising when the server closes early, so
     # check that the whole document arrived.
     if (expected is not None and size != int(expected)) or depth != 0 or not buf.rstrip().endswith(b"}"):
@@ -349,7 +359,8 @@ def nice_ceiling(x: float) -> float:
 
 
 def ascii_chart(shares: list[float | None], first_ts: int, last_ts: int, date_fmt: str) -> list[str]:
-    """Render a column chart of shares (fractions in (0, 1]), one column per bucket.
+    """Render a column chart of shares (fractions in [0, 1], or None for a bucket
+    with no blocks), one column per bucket.
 
     At least one share must be positive. first_ts and last_ts label the left
     and right ends of the x axis."""
@@ -433,8 +444,8 @@ def main():
                          "e.g. geth or GE (default: ethrex)")
     ap.add_argument("--bucket", metavar="DURATION", type=parse_duration, default=None,
                     help="time bucket for the chart, e.g. 6h, 1d (default: picked from the range)")
-    ap.add_argument("--concurrency", metavar="N", type=positive_int, default=16,
-                    help="parallel block requests (default: 16)")
+    ap.add_argument("--concurrency", metavar="N", type=concurrency, default=16,
+                    help=f"parallel block requests, 1 to {MAX_CONCURRENCY} (default: 16)")
     ap.add_argument("--no-stake", action="store_true",
                     help="skip the stake estimate, which downloads every active validator "
                          "(about 400 MB on mainnet)")
@@ -463,7 +474,7 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser, beacon: BeaconCli
 
     def fail(e: Exception):
         sys.exit(f"error: cannot query the beacon node at {shown_url} (see --beacon-url): "
-                 f"{type(e).__name__}: {e}")
+                 f"{type(e).__name__}: {beacon.redact(str(e))}")
 
     def required(path: str):
         data = beacon.get_json(path)
@@ -475,7 +486,7 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser, beacon: BeaconCli
     try:
         spec = required("/eth/v1/config/spec")
         # Newer specs give the slot length in milliseconds. Slot times below
-        # assume it stays constant over the range.
+        # assume the slot length has not changed since genesis.
         if "SECONDS_PER_SLOT" in spec:
             seconds_per_slot = int(spec["SECONDS_PER_SLOT"])
         elif int(spec["SLOT_DURATION_MS"]) % 1000 == 0:
@@ -522,9 +533,10 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser, beacon: BeaconCli
     progress = Progress(end - start + 1)
     lock = threading.Lock()
     failures = {"first": None, "run": 0, "last_ok": time.monotonic()}
-    # Failed slots are skipped, but this many in a row with no success for
-    # NODE_DOWN_AFTER seconds means the node is gone rather than restarting.
-    max_failed_run = max(MAX_EMPTY_RUN, 4 * args.concurrency)
+    # Failed slots are skipped, but when every worker has failed in a row and
+    # nothing succeeded for NODE_DOWN_AFTER seconds, the node is gone rather
+    # than restarting.
+    max_failed_run = args.concurrency
 
     def fetch_slot(slot: int) -> str | None:
         block = beacon.get_json(block_path.format(slot))
@@ -545,11 +557,17 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser, beacon: BeaconCli
             try:
                 out.append(fetch_slot(slot))
                 with lock:
-                    failures["run"], failures["last_ok"] = 0, time.monotonic()
+                    if not beacon.abort.is_set():
+                        failures["run"], failures["last_ok"] = 0, time.monotonic()
+            except Aborted:
+                return out
             except Exception as e:  # skip the slot rather than abort a long scan
                 out.append(ERROR)
                 with lock:
-                    failures["first"] = failures["first"] or f"slot {slot}: {type(e).__name__}: {e}"
+                    if beacon.abort.is_set():
+                        continue
+                    failures["first"] = failures["first"] or \
+                        beacon.redact(f"slot {slot}: {type(e).__name__}: {e}")
                     failures["run"] += 1
                     if failures["run"] >= max_failed_run \
                             and time.monotonic() - failures["last_ok"] >= NODE_DOWN_AFTER:
@@ -561,20 +579,19 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser, beacon: BeaconCli
     chunk = max(1, min(CHUNK, math.ceil((end - start + 1) / (args.concurrency * 4))))
     chunks = [range(s, min(s + chunk, end + 1)) for s in range(start, end + 1, chunk)]
     results: list[str | None] = []
-    ex = ThreadPoolExecutor(max_workers=args.concurrency)
-    try:
-        for part in ex.map(fetch_chunk, chunks):
-            results.extend(part)
-    except KeyboardInterrupt:
-        # Workers may be stuck in requests and retries; don't wait for them.
-        sys.stderr.write("\n")
-        sys.stderr.flush()
-        os._exit(130)
-    ex.shutdown()
+    with ThreadPoolExecutor(max_workers=args.concurrency) as ex:  # joined before connections close
+        try:
+            for part in ex.map(fetch_chunk, chunks):
+                results.extend(part)
+        except KeyboardInterrupt:
+            # Workers may be stuck in requests and retries; don't wait for them.
+            sys.stderr.write("\n")
+            sys.stderr.flush()
+            os._exit(130)
     progress.finish()
     if beacon.abort.is_set():
         sys.exit(f"error: the beacon node stopped answering, or doesn't serve blocks this old "
-                 f"({failures['run']:,} failed slots in a row over {NODE_DOWN_AFTER}+ s); "
+                 f"({failures['run']:,} failed slots in a row, none fetched for {NODE_DOWN_AFTER}+ s); "
                  f"e.g. {failures['first']}")
 
     errors = results.count(ERROR)
@@ -602,7 +619,8 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser, beacon: BeaconCli
         try:
             stake = total_active_stake(beacon)
         except Exception as e:
-            print(f"warning: could not fetch validator balances, skipping the stake estimate: {e}",
+            print(f"warning: could not fetch validator balances, skipping the stake estimate: "
+                  f"{beacon.redact(str(e))}",
                   file=sys.stderr)
     report(results, start, end, genesis_time, seconds_per_slot, target, args.bucket, stake,
            show_stake=not args.no_stake)

@@ -23,7 +23,7 @@ python3 tooling/client_diversity/client_diversity.py --range 30d
 | `--beacon-url` | `http://localhost:5052` | Beacon node API URL. Credentials (`https://user:pass@host`) and a query string (`?apikey=...`) are passed on to every request. |
 | `--client` | `ethrex` | Execution client to chart and estimate the stake of, by name or two-letter code (`geth`/`GE`, `nethermind`/`NM`, `besu`/`BU`, `reth`/`RH`, `erigon`/`EG`, `ethrex`/`EX`, ...). |
 | `--bucket` | picked from the range | Time bucket for the chart, e.g. `6h`, `1d`. |
-| `--concurrency` | `16` | Parallel block requests. |
+| `--concurrency` | `16` | Parallel block requests (1 to 256). |
 | `--no-stake` | off | Skip the stake estimate and its validator download. |
 
 Progress goes to stderr. Example report (stdout) from a mainnet run on
@@ -82,33 +82,34 @@ to fit the space left by the user graffiti:
 Lighthouse, Prysm and Teku use all four forms. Lodestar uses the 12- and
 4-character forms and otherwise appends only its own code (` LS`). Grandine
 appends the 12-character form only when it fits, then `Grandine/<version>` if
-there is room. Prysm v7.1.4 wrote `PR` instead of `PM` for itself, and local
-Prysm builds write `Loca` (`Lo` in the 8-character form) in place of their
-commit; both are accepted.
+there is room. Caplin (Erigon's consensus client) puts the 12-character form
+first and truncates the user graffiti after it. Prysm v7.1.4 wrote `PR`
+instead of `PM` for itself, and local Prysm builds write `Loca` (`Lo` in the
+8-character form) in place of their commit; both are accepted.
 
 The script accepts only these shapes, with known client codes and lowercase
 hex commits:
 
-- A tag separated from the rest of the graffiti counts anywhere in it.
+- A 4-, 8- or 12-character tag separated from the rest of the graffiti counts
+  anywhere in it.
 - A tag glued to the preceding text counts only if it ends a full 32-byte
   graffiti: Prysm and Teku glue it on when it exactly fills the remaining space.
 - A lone EL code counts only at the end of a graffiti of 31 bytes or more,
   after a space or punctuation. In a full 32-byte graffiti it may also be
   glued, but not after a capital letter (`...manuallyGE` counts, `...CHANGE`
   does not).
-- If several candidates appear, the one closest to the end wins, since clients
-  append the tag after the user graffiti.
+- If several candidates appear, the one closest to the end wins, since all
+  clients but Caplin append the tag after the user graffiti.
 
-Requiring a (nearly) full graffiti for the short and glued forms keeps words
-like `ANGELS` (`GE` + `LS`) from counting.
+Requiring a (nearly) full graffiti for the lone EL code and glued tags keeps
+words like `ANGELS` (`GE` + `LS`) from counting.
 
 Blocks are fetched with `/eth/v1/beacon/blinded_blocks/{slot}`, or with
 `/eth/v2/beacon/blocks/{slot}` when the node doesn't serve blinded blocks; a
-404 is an empty slot. A slot that still fails after retries is skipped with a
-warning. If 64 slots in a row fail (4 × `--concurrency` when that is larger)
-and nothing has succeeded for 3 minutes, the node is considered down and the
-script exits with an error; a shorter outage, like a node restart, only skips
-slots.
+404, or a block from an earlier slot, is an empty slot. A slot that still fails after retries is skipped with a
+warning. If nothing has succeeded for 3 minutes and every worker has failed
+since, the node is considered down and the script exits with an error; a
+shorter outage, like a node restart, only skips slots.
 
 The total stake is the sum of the effective balances of active validators at
 the finalized state (`/eth/v1/beacon/states/finalized/validators?status=active`,
@@ -131,7 +132,8 @@ the client if untagged blocks had the same client mix as tagged ones.
   when the execution client doesn't answer `engine_getClientVersionV1` (it
   then uses the validator's graffiti, or `Lighthouse/<version>` if there is
   none). Prysm only tags since v7.1.4, and every client that tags can turn it
-  off. Long user graffiti leaves no room for even the shortest form.
+  off. Long user graffiti leaves no room for even the shortest form (except
+  with Caplin, which truncates the user graffiti instead).
 - **Shares are underestimates.** Untagged blocks count toward no client, so
   every client's share of total blocks, and the stake estimate, is a lower
   bound (up to sampling noise and the rare false positive, e.g. a nearly full
@@ -160,9 +162,10 @@ the client if untagged blocks had the same client mix as tagged ones.
   missing blocks or a major network outage would show.
 - **Speed depends on the node.** Against a local Lighthouse it fetched about
   6,000 slots/s (30 days in under a minute, including the validator
-  download, on a 12-core host). Against a remote node it is limited by network latency, so raise `--concurrency` or run it next to the
-  node. Full blocks, used when the node doesn't serve blinded ones, are about
-  150 KB each instead of about 12 KB, which is much slower over a network.
+  download, on a 12-core host). Against a remote node it is limited by
+  network latency, so raise `--concurrency` or run it next to the node. Full
+  blocks, used when the node doesn't serve blinded ones, are about 150 KB each
+  instead of about 12 KB, which is much slower over a network.
 
 ## Tests
 

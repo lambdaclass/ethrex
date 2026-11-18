@@ -80,13 +80,14 @@ class GraffitiTest(unittest.TestCase):
             ("NM706aLH176c TE", "NM"),
             ("I LOVE ANGELS", None),  # glued GE+LS in a short graffiti
             ("HOTELS", None),
-            ("x" * 28 + "GELH", "GE"),  # glued: the tag exactly fills the 32 bytes (Teku)
+            ("x" * 28 + "GETK", "GE"),  # glued: the tag exactly fills the 32 bytes (Teku)
             ("x" * 26 + "GELH", None),  # glued to a 30-byte graffiti: no client does that
             ("you are now breathing manuallyGE", "GE"),  # 30 bytes + glued EL code (Prysm)
             ("x" * 26 + "CHANGE", None),  # 32 bytes, but GE ends a capitalized word
             ("x" * 29 + "GE", None),  # 31 bytes: Prysm would have added a space
             ("x" * 28 + " GE\n", None),  # the code must be the last thing
-            ("x" * 28 + "éGE", "GE"),  # 32 bytes, glued after a lowercase letter
+            ("x" * 28 + "éGE", None),  # 32 bytes, but glued only counts after [a-z0-9]
+            ("x" * 29 + "7GE", "GE"),  # 32 bytes, glued after a digit
             ("x" * 28 + "ÜNE", None),  # 32 bytes, but NE ends a capitalized word
             ("x" * 27 + "ñGE", None),  # 31 bytes: a non-ASCII letter is no separator
         ])
@@ -199,11 +200,12 @@ class HelpersTest(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(Exception):
                 cd.parse_duration(bad)
 
-    def test_positive_int(self):
-        self.assertEqual(cd.positive_int("8"), 8)
-        for bad in ("0", "-3", "x"):
+    def test_concurrency(self):
+        self.assertEqual(cd.concurrency("8"), 8)
+        self.assertEqual(cd.concurrency("256"), 256)
+        for bad in ("0", "-3", "x", "257"):
             with self.subTest(bad=bad), self.assertRaises(Exception):
-                cd.positive_int(bad)
+                cd.concurrency(bad)
 
     def test_nice_ceiling(self):
         self.assertAlmostEqual(cd.nice_ceiling(0.0053), 0.006)
