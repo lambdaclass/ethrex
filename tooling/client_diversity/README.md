@@ -107,9 +107,11 @@ words like `ANGELS` (`GE` + `LS`) from counting.
 Blocks are fetched with `/eth/v1/beacon/blinded_blocks/{slot}`, or with
 `/eth/v2/beacon/blocks/{slot}` when the node doesn't serve blinded blocks; a
 404, or a block from an earlier slot, is an empty slot. A slot that still fails after retries is skipped with a
-warning. If nothing has succeeded for 3 minutes and every worker has failed
-since, the node is considered down and the script exits with an error; a
-shorter outage, like a node restart, only skips slots.
+warning, and a shorter outage, like a node restart, only skips slots. The
+script exits with an error instead of printing a report when the node looks
+down (every worker failing with nothing fetched for 3 minutes, or 1,000+
+failed slots in a row, e.g. from an expired API key), or when more than 5% of
+the slots in the range were skipped.
 
 The total stake is the sum of the effective balances of active validators at
 the finalized state (`/eth/v1/beacon/states/finalized/validators?status=active`,

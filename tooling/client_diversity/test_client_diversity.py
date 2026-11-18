@@ -89,6 +89,8 @@ class GraffitiTest(unittest.TestCase):
             ("x" * 28 + "éGE", None),  # 32 bytes, but glued only counts after [a-z0-9]
             ("x" * 29 + "7GE", "GE"),  # 32 bytes, glued after a digit
             ("x" * 28 + "ÜNE", None),  # 32 bytes, but NE ends a capitalized word
+            ("GE1df3LH57c2é", None),  # followed by a non-ASCII letter: not a word boundary
+            ("x éGELH", None),  # glued after a non-ASCII letter, in a short graffiti
             ("x" * 27 + "ñGE", None),  # 31 bytes: a non-ASCII letter is no separator
         ])
 
@@ -286,6 +288,13 @@ class ReportTest(unittest.TestCase):
         out = self.run_report(["EX", "GE"] * 10, stake=None)
         self.assertIn("Estimated stake running on ethrex: n/a (could not fetch validator balances)", out)
 
+    def test_tiny_partial_bucket_does_not_set_the_scale(self):
+        # 2-minute buckets (10 slots): a 1-slot partial bucket at 100%, then three at 10%.
+        results = ["EX"] + (["EX"] + ["GE"] * 9) * 3
+        out = self.run_report(results, bucket=120)
+        chart = [line for line in out.splitlines() if "|" in line or "+" in line]
+        self.assertTrue(chart[0].startswith("10.00% |"), chart[0])
+
     def test_single_bucket_is_not_charted(self):
         out = self.run_report(["EX", "GE"] * 10, bucket=3600)
         self.assertIn("Range too short to chart per 1h", out)
@@ -298,6 +307,8 @@ class FakeBeaconNode(BaseHTTPRequestHandler):
     finalized = 0
     blocks = {}  # slot -> graffiti text; other slots are empty (404)
     failing = set()  # slots that answer HTTP 500
+    forbidden = set()  # slots that answer HTTP 403 (not retried)
+    retry_after = "2"  # Retry-After sent with 429s
     flaky = {}  # slot -> statuses to answer before serving the block normally
     wrong_slot = set()  # slots that answer with the previous block
     ahead_slot = set()  # slots that answer with the next block
@@ -325,9 +336,12 @@ class FakeBeaconNode(BaseHTTPRequestHandler):
             slot = int(m.group(2))
             if slot in self.failing:
                 self.reply(500, {"message": "boom"})
+            elif slot in self.forbidden:
+                self.reply(403, {"message": "forbidden"})
             elif self.flaky.get(slot):
                 status = self.flaky[slot].pop(0)
-                self.reply(status, {"message": "try again"}, {"Retry-After": "2"} if status == 429 else {})
+                self.reply(status, {"message": "try again"},
+                           {"Retry-After": self.retry_after} if status == 429 else {})
             elif slot in self.blocks:
                 served = slot - 1 if slot in self.wrong_slot else slot + 1 if slot in self.ahead_slot else slot
                 self.reply(200, {"data": {"message": {"slot": str(served),
@@ -365,6 +379,7 @@ class MainTest(unittest.TestCase):
         FakeBeaconNode.finalized, FakeBeaconNode.blinded_status = 1000, 200
         FakeBeaconNode.failing, FakeBeaconNode.wrong_slot, FakeBeaconNode.flaky = set(), set(), {}
         FakeBeaconNode.ahead_slot, FakeBeaconNode.spec = set(), {"SECONDS_PER_SLOT": "12"}
+        FakeBeaconNode.forbidden, FakeBeaconNode.retry_after = set(), "2"
         FakeBeaconNode.seen_query, FakeBeaconNode.seen_auth, FakeBeaconNode.hits = set(), set(), Counter()
         FakeBeaconNode.blocks = chain(900)
 
@@ -376,10 +391,22 @@ class MainTest(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         argv = ["client_diversity.py", "--beacon-url", self.url, "--concurrency", "4", *args]
         with mock.patch.object(sys, "argv", argv), mock.patch.object(cd, "RETRIES", 1), \
-                mock.patch.object(cd.time, "sleep") as self.sleep, \
+                mock.patch.object(cd.time, "sleep"), mock.patch.object(cd, "backoff") as self.backoff, \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             cd.main()
         return out.getvalue(), err.getvalue()
+
+    def backoff_delays(self):
+        return [c.args[1] for c in self.backoff.call_args_list]
+
+    def test_spec_prefers_seconds_per_slot_and_rejects_zero(self):
+        FakeBeaconNode.spec = {"SECONDS_PER_SLOT": "12", "SLOT_DURATION_MS": "6000"}
+        out, _ = self.run_main("--range", "1h", "--no-stake")
+        self.assertIn("Total blocks: 91\n", out)  # 300 slots of 12 s, not 600 of 6 s
+        FakeBeaconNode.spec = {"SECONDS_PER_SLOT": "0"}
+        with self.assertRaises(SystemExit) as ctx:
+            self.run_main("--range", "1h")
+        self.assertIn("unsupported slot length", str(ctx.exception.code))
 
     def test_default_range_is_30_days(self):
         out, err = self.run_main("--no-stake")  # 30d is more than the 1,001 slots this chain has
@@ -415,7 +442,7 @@ class MainTest(unittest.TestCase):
 
     def test_failed_slots_are_skipped(self):
         FakeBeaconNode.blocks = chain(701)
-        FakeBeaconNode.failing = set(range(701, 761)) | set(range(900, 1000, 7))
+        FakeBeaconNode.failing = set(range(900, 1000, 10))
         out, err = self.run_main("--range", "1h")
         expected = len(set(FakeBeaconNode.blocks) - FakeBeaconNode.failing)
         skipped = len(FakeBeaconNode.failing)
@@ -423,11 +450,27 @@ class MainTest(unittest.TestCase):
         self.assertIn(f"{skipped} skipped", out)
         self.assertIn(f"Total blocks: {expected}\n", out)
 
+    def test_too_many_skipped_slots_is_an_error(self):
+        # 403s aren't retried, so they fail fast and never trip the time-based abort.
+        FakeBeaconNode.blocks = chain(701)
+        FakeBeaconNode.forbidden = set(range(760, 1000))
+        with self.assertRaises(SystemExit) as ctx:
+            self.run_main("--range", "1h", "--no-stake")
+        self.assertIn("240 of 300 slots could not be fetched", str(ctx.exception.code))
+
+    def test_long_failure_run_aborts_however_fast(self):
+        FakeBeaconNode.blocks = chain(701)
+        FakeBeaconNode.forbidden = set(range(760, 1000))
+        with self.assertRaises(SystemExit) as ctx, mock.patch.object(cd, "LONG_FAILURE_RUN", 50):
+            self.run_main("--range", "1h", "--no-stake")
+        self.assertIn("stopped answering", str(ctx.exception.code))
+
     def test_leading_failures_are_not_missing_history(self):
         # Slots 701..800 alternate between failing and empty; blocks start at 801.
         FakeBeaconNode.blocks = chain(801)
         FakeBeaconNode.failing = set(range(701, 801, 2))
-        out, err = self.run_main("--range", "1h", "--no-stake")
+        with mock.patch.object(cd, "MAX_SKIPPED_SHARE", 1.0):
+            out, err = self.run_main("--range", "1h", "--no-stake")
         self.assertNotIn("no blocks before", err)
         self.assertIn("(slots 701..1,000, 70 empty, 50 skipped)", out)
 
@@ -438,7 +481,13 @@ class MainTest(unittest.TestCase):
         self.assertIn("slot 970: HTTPError", err)
         self.assertEqual(FakeBeaconNode.hits["/eth/v1/beacon/blinded_blocks/950"], 2)
         self.assertEqual(FakeBeaconNode.hits["/eth/v1/beacon/blinded_blocks/970"], 1)
-        self.sleep.assert_any_call(2.0)  # the 429's Retry-After
+        self.assertIn(2, self.backoff_delays())  # the 429's Retry-After
+
+    def test_retry_after_is_capped(self):
+        FakeBeaconNode.flaky, FakeBeaconNode.retry_after = {960: [429]}, "100"
+        self.run_main("--range", "1h", "--no-stake")
+        self.assertIn(cd.MAX_RETRY_AFTER, self.backoff_delays())
+        self.assertNotIn(100, self.backoff_delays())
 
     def test_aborts_when_the_node_stops_answering(self):
         FakeBeaconNode.blocks = chain(701)
@@ -450,7 +499,8 @@ class MainTest(unittest.TestCase):
     def test_short_outage_does_not_abort(self):
         FakeBeaconNode.blocks = chain(701)
         FakeBeaconNode.failing = set(range(800, 1000))
-        out, err = self.run_main("--range", "1h", "--no-stake")  # NODE_DOWN_AFTER not reached
+        with mock.patch.object(cd, "MAX_SKIPPED_SHARE", 1.0):
+            out, err = self.run_main("--range", "1h", "--no-stake")  # NODE_DOWN_AFTER not reached
         self.assertIn("skipped 200 slots", err)
 
     def test_mismatched_slots(self):

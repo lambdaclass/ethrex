@@ -89,6 +89,8 @@ MAX_EMPTY_RUN = 64
 CHUNK = 64
 RETRIES = 5
 NODE_DOWN_AFTER = 180  # seconds without a successful fetch before giving up
+LONG_FAILURE_RUN = 1000  # failed slots in a row that end the scan however fast they came
+MAX_SKIPPED_SHARE = 0.05  # more skipped slots than this and the report isn't printed
 MAX_RETRY_AFTER = 30  # cap on Retry-After, in seconds
 REQUEST_TIMEOUT = 20  # seconds; even a full block is a few hundred KB
 MAX_CONCURRENCY = 256
@@ -144,6 +146,11 @@ class HTTPError(Exception):
 
 class Aborted(Exception):
     pass
+
+
+def backoff(abort: threading.Event, seconds: float):
+    """Sleep before a retry; an abort ends the wait at once."""
+    abort.wait(seconds)
 
 
 def retryable(e: Exception) -> bool:
@@ -241,13 +248,14 @@ class BeaconClient:
                 if r.status == 429 or r.status >= 500:
                     retry_after = r.getheader("Retry-After", "")
                     raise HTTPError(path, r.status, body,
-                                    min(float(retry_after), MAX_RETRY_AFTER) if retry_after.isdigit() else 0)
+                                    min(int(retry_after), MAX_RETRY_AFTER)
+                                    if retry_after.isascii() and retry_after.isdigit() else 0)
                 return r.status, body
             except Exception as e:
                 self.drop_conn()
                 if attempt == RETRIES or not retryable(e):
                     raise
-                time.sleep(max(0.5 * (attempt + 1), getattr(e, "retry_after", 0)))
+                backoff(self.abort, max(0.5 * (attempt + 1), getattr(e, "retry_after", 0)))
 
     def get_json(self, path: str):
         """GET path as JSON. Returns None on 404, raises on other errors."""
@@ -358,13 +366,15 @@ def nice_ceiling(x: float) -> float:
     return 10 ** (exp + 1)
 
 
-def ascii_chart(shares: list[float | None], first_ts: int, last_ts: int, date_fmt: str) -> list[str]:
+def ascii_chart(shares: list[float | None], first_ts: int, last_ts: int, date_fmt: str,
+                scale_max: float | None = None) -> list[str]:
     """Render a column chart of shares (fractions in [0, 1], or None for a bucket
     with no blocks), one column per bucket.
 
-    At least one share must be positive. first_ts and last_ts label the left
-    and right ends of the x axis."""
-    top = nice_ceiling(max(s for s in shares if s is not None))
+    The y axis goes up to scale_max (default: the largest share), rounded up;
+    taller columns are drawn full. At least one share must be positive.
+    first_ts and last_ts label the left and right ends of the x axis."""
+    top = nice_ceiling(scale_max or max(s for s in shares if s is not None))
     # Enough decimals to print the middle label (e.g. 0.125%) exactly.
     decimals = next(d for d in range(2, 12) if abs(round(top * 50, d) - top * 50) < 1e-9 * top * 50)
     width = max(1, min(6, CHART_WIDTH // len(shares)))
@@ -493,6 +503,8 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser, beacon: BeaconCli
             seconds_per_slot = int(spec["SLOT_DURATION_MS"]) // 1000
         else:
             raise RuntimeError(f"unsupported SLOT_DURATION_MS {spec['SLOT_DURATION_MS']}")
+        if seconds_per_slot <= 0:
+            raise RuntimeError(f"unsupported slot length of {seconds_per_slot} s")
     except Exception as e:
         fail(e)
     if args.range_s < seconds_per_slot:
@@ -533,10 +545,12 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser, beacon: BeaconCli
     progress = Progress(end - start + 1)
     lock = threading.Lock()
     failures = {"first": None, "run": 0, "last_ok": time.monotonic()}
-    # Failed slots are skipped, but when every worker has failed in a row and
-    # nothing succeeded for NODE_DOWN_AFTER seconds, the node is gone rather
-    # than restarting.
+    # Failed slots are skipped, but the node is gone rather than restarting when
+    # every worker has failed in a row and nothing succeeded for NODE_DOWN_AFTER
+    # seconds, or when failures that aren't retried (e.g. 403 from an expired
+    # API key) pile up faster than that.
     max_failed_run = args.concurrency
+    long_failed_run = max(LONG_FAILURE_RUN, 16 * args.concurrency)
 
     def fetch_slot(slot: int) -> str | None:
         block = beacon.get_json(block_path.format(slot))
@@ -569,8 +583,9 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser, beacon: BeaconCli
                     failures["first"] = failures["first"] or \
                         beacon.redact(f"slot {slot}: {type(e).__name__}: {e}")
                     failures["run"] += 1
-                    if failures["run"] >= max_failed_run \
-                            and time.monotonic() - failures["last_ok"] >= NODE_DOWN_AFTER:
+                    if failures["run"] >= long_failed_run or (
+                            failures["run"] >= max_failed_run
+                            and time.monotonic() - failures["last_ok"] >= NODE_DOWN_AFTER):
                         beacon.abort.set()
         progress.add(len(slots))
         return out
@@ -591,13 +606,8 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser, beacon: BeaconCli
     progress.finish()
     if beacon.abort.is_set():
         sys.exit(f"error: the beacon node stopped answering, or doesn't serve blocks this old "
-                 f"({failures['run']:,} failed slots in a row, none fetched for {NODE_DOWN_AFTER}+ s); "
-                 f"e.g. {failures['first']}")
+                 f"({failures['run']:,} failed slots in a row); e.g. {failures['first']}")
 
-    errors = results.count(ERROR)
-    if errors:
-        print(f"warning: skipped {errors:,} slots that could not be fetched ({errors / len(results):.2%}); "
-              f"e.g. {failures['first']}", file=sys.stderr)
     if all(r is EMPTY or r == ERROR for r in results):
         sys.exit(f"error: the beacon node returned no blocks for slots {start:,}..{end:,}")
     # Only a leading run of 404s means missing history; failed fetches are counted as skipped.
@@ -607,6 +617,13 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser, beacon: BeaconCli
               f"(it was probably checkpoint-synced); using slots {start + first:,}..{end:,} only",
               file=sys.stderr)
         start, results = start + first, results[first:]
+    errors = results.count(ERROR)
+    if errors / len(results) > MAX_SKIPPED_SHARE:
+        sys.exit(f"error: {errors:,} of {len(results):,} slots could not be fetched, too many for a "
+                 f"meaningful report; e.g. {failures['first']}")
+    if errors:
+        print(f"warning: skipped {errors:,} slots that could not be fetched ({errors / len(results):.2%}); "
+              f"e.g. {failures['first']}", file=sys.stderr)
     gaps = empty_runs(results, MAX_EMPTY_RUN)
     if gaps:
         print(f"warning: {sum(n for _, n in gaps):,} slots are in runs of {MAX_EMPTY_RUN}+ empty slots "
@@ -677,8 +694,12 @@ def report(results: list[str | None], start: int, end: int, genesis_time: int, s
         print(f"{name} share of total blocks per {fmt_duration(bucket_s)} "
               f"(first bucket {fmt_share(shares[0])}{partial}; last bucket {fmt_share(shares[-1])}):")
         date_fmt = "%Y-%m-%d" if bucket_s % 86400 == 0 else "%m-%d %H:%M"
+        # Scale to buckets with at least half the usual blocks, so that a tiny
+        # partial bucket (e.g. 1 of 3 blocks) can't flatten all the others.
+        scale = [s for s, t in zip(shares, tot_b) if s and t >= max(tot_b) / 2]
         for line in ascii_chart(shares, genesis_time + start * seconds_per_slot,
-                                genesis_time + (end + 1) * seconds_per_slot, date_fmt):
+                                genesis_time + (end + 1) * seconds_per_slot, date_fmt,
+                                max(scale) if scale else None):
             print(line)
 
     if not show_stake:
