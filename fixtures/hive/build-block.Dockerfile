@@ -7,7 +7,13 @@
 # at simulators/ethereum/eels/build-block/Dockerfile. Once an
 # `ethereum/eels/build-block` simulator lands in hive upstream, this can be
 # dropped.
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+#
+# The base image names a uv release, not a floating tag. execution-specs sets a
+# minimum uv version (0.13.4 since ethereum/execution-specs#3880) and refuses to
+# sync below it, and the floating `python3.12-bookworm-slim` tag stopped moving
+# at uv 0.9.30, so every release after tests@v21.0.1 failed to build on it.
+# Raise the pin when execution-specs raises its minimum.
+FROM ghcr.io/astral-sh/uv:0.13.8-python3.12-trixie-slim
 
 ## Default fixtures/git-ref
 ARG fixtures=stable@latest
