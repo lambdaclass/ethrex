@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Estimate execution client share of proposed blocks from block graffiti.
 
-Consensus clients append a short client-version tag to the graffiti of the
-blocks they propose, built from the `engine_getClientVersionV1` response of
+Most consensus clients append a short client-version tag to the graffiti of
+the blocks they propose, built from the `engine_getClientVersionV1` response of
 their execution client (e.g. `GE1df3LH57c2` = Geth commit 1df3 + Lighthouse
 commit 57c2). This script fetches every block in a time range from a beacon
 node, tallies the execution client code found in each graffiti, plots how the
@@ -48,6 +48,7 @@ EL_CODES = {
     "NE": "Nimbus EL",
     "TE": "Trin Execution",
 }
+CLIENT_ALIASES = {"go-ethereum": "GE", "nimbus-el": "NE", "nimbus-eth1": "NE", "trin": "TE"}
 # Consensus client codes. Only used to validate that a token is a client tag.
 CL_CODES = {
     "LH",  # Lighthouse
@@ -58,24 +59,26 @@ CL_CODES = {
     "GR",  # Grandine
     "CN",  # Caplin
     "LA",  # ethlambda
-    "PR",  # Prysm v7.1.4 put PR instead of PM in the graffiti (fixed in a later release)
+    "PR",  # Prysm v7.1.4 put PR instead of PM in the graffiti (fixed in v7.1.5)
 }
 
 # Tag forms used by consensus clients (the layout is not part of the
 # execution-apis spec): EL code + CL code (4 chars), each followed by 2 or 4
-# lowercase hex chars of its commit (8 or 12 chars). Local Prysm builds put
-# "Local" in place of their commit, seen on mainnet as `GE13d8PMLoca`. The
-# `(?![A-Za-z0-9])` makes the tag end at a word boundary; where it starts is
-# checked in `el_code_from_graffiti`, since Prysm glues it to a full graffiti.
+# lowercase hex chars of its commit (8 or 12 chars). Local Prysm builds report
+# their commit as "Local build", so the tag carries `Loca` (12 chars) or `Lo`
+# (8 chars), seen on mainnet as `GE13d8PMLoca`. The `(?![A-Za-z0-9])` makes the
+# tag end at a word boundary; where it starts is checked in
+# `el_code_from_graffiti`, since Prysm and Teku glue it on when it exactly
+# fills the 32 bytes.
 TAG_RE = re.compile(
     r"([A-Z]{2})(?:[0-9a-f]{4}([A-Z]{2})(?:[0-9a-f]{4}|Loca)|[0-9a-f]{2}([A-Z]{2})(?:[0-9a-f]{2}|Lo)|([A-Z]{2}))"
-    r"(?![A-Za-z0-9])")
-# With 3 bytes free, Lighthouse, Teku and Prysm append just the EL code after a space.
-EL_ONLY_RE = re.compile(r"(?:^|[^A-Za-z0-9])([A-Z]{2})\Z")
-# Clients only glue the tag to the user graffiti, or shrink it to the EL code,
-# when the graffiti is nearly full. Requiring that keeps words like "ANGELS"
-# (glued GE+LS) or "... TE" in short graffiti from counting as tags.
-NEARLY_FULL = 30
+    r"(?![^\W_])")  # not followed by a letter or digit, in any script
+# With 3 bytes free (3 or 4 for Lighthouse), clients append just the EL code
+# after a space, so the graffiti ends up 31 or 32 bytes long.
+EL_ONLY_RE = re.compile(r"(?:^|[\W_])([A-Z]{2})\Z")
+EL_ONLY_MIN_BYTES = 31
+# Glued tags only ever end a full graffiti. Requiring these lengths keeps words
+# like "ANGELS" (GE+LS glued) or "... TE" in shorter graffiti from counting.
 GRAFFITI_BYTES = 32
 EFFECTIVE_BALANCE_RE = re.compile(rb'"effective_balance"\s*:\s*"(\d+)"')
 
@@ -84,12 +87,15 @@ EFFECTIVE_BALANCE_RE = re.compile(rb'"effective_balance"\s*:\s*"(\d+)"')
 MAX_EMPTY_RUN = 64
 CHUNK = 64
 RETRIES = 5
+NODE_DOWN_AFTER = 180  # seconds without a successful fetch before giving up
+MAX_RETRY_AFTER = 30  # cap on a 429's Retry-After, in seconds
 CHART_HEIGHT = 10
 CHART_WIDTH = 60
 CHART_MAX_BUCKETS = 40  # automatic bucket choice
 CHART_MAX_BUCKETS_EXPLICIT = 200  # --bucket
-UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
-BUCKET_SIZES = [3600 * h for h in (1, 2, 3, 6, 12)] + [86400 * d for d in (1, 2, 3, 7, 14, 30)]
+UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}  # m is minutes
+BUCKET_SIZES = ([60 * m for m in (5, 10, 15, 30)] + [3600 * h for h in (1, 2, 3, 6, 12)]
+                + [86400 * d for d in (1, 2, 3, 7, 14, 30)])
 EMPTY, ERROR = None, "!"  # per-slot markers in the results list, next to "" (untagged) and EL codes
 
 
@@ -103,31 +109,34 @@ def el_code_from_graffiti(graffiti_hex: str) -> str | None:
     except ValueError:
         return None
     text = raw.decode("utf-8", "replace")
-    full = len(raw) >= NEARLY_FULL
+    full = len(raw) == GRAFFITI_BYTES
     best, best_end = None, -1
     for m in TAG_RE.finditer(text):
-        # Standalone word, or glued to the end of a nearly full graffiti.
-        glued = m.start() > 0 and text[m.start() - 1].isascii() and text[m.start() - 1].isalnum()
+        # Standalone word, or glued to the end of a full graffiti.
+        glued = m.start() > 0 and text[m.start() - 1].isalnum()
         if glued and not (full and m.end() == len(text)):
             continue
         el, cl = m.group(1), m.group(2) or m.group(3) or m.group(4)
         if el in EL_CODES and cl in CL_CODES and m.end() > best_end:
             best, best_end = el, m.end()
-    m = EL_ONLY_RE.search(text) if full else None
+    m = EL_ONLY_RE.search(text) if len(raw) >= EL_ONLY_MIN_BYTES else None
     if m and m.group(1) in EL_CODES and m.end() > best_end:
         best, best_end = m.group(1), m.end()
-    # With exactly 2 bytes free, Prysm glues the EL code to the user graffiti
-    # (`...manuallyGE`). Skip it after a capital letter, as in "CHANGE".
-    if best_end < len(text) and len(raw) == GRAFFITI_BYTES and len(text) >= 3 \
-            and text[-2:] in EL_CODES and not ("A" <= text[-3] <= "Z"):
+    # With exactly 2 bytes free, Prysm (and Teku's CLIENT_CODES format) glue the
+    # EL code to the user graffiti (`...manuallyGE`). Skip it after a capital
+    # letter, as in "CHANGE".
+    if best_end < len(text) and full and len(text) >= 3 \
+            and text[-2:] in EL_CODES and not text[-3].isupper():
         best = text[-2:]
     return best
 
 
 class HTTPError(Exception):
-    def __init__(self, path: str, status: int, body: bytes):
+    """A non-success response. `path` never includes the query string (it may hold an API key)."""
+
+    def __init__(self, path: str, status: int, body: bytes, retry_after: float = 0):
         super().__init__(f"GET {path}: HTTP {status}: {body[:200]!r}")
-        self.status = status
+        self.status, self.retry_after = status, retry_after
 
 
 class Aborted(Exception):
@@ -150,7 +159,8 @@ class BeaconClient:
     def __init__(self, url: str):
         u = urlsplit(url)
         if u.scheme not in ("http", "https") or not u.hostname:
-            raise ValueError(f"unsupported beacon URL: {url}")
+            # Don't echo the URL: it may hold credentials or an API key.
+            raise ValueError("unsupported beacon URL: expected http(s)://host[:port][/path]")
         self.scheme, self.host = u.scheme, u.hostname
         # Explicit port: http.client would re-parse an IPv6 host like "::1" without one.
         self.port = u.port or (443 if u.scheme == "https" else 80)
@@ -181,7 +191,10 @@ class BeaconClient:
         """Close the connections of every thread."""
         with self.conns_lock:
             for c in self.conns:
-                c.close()
+                try:
+                    c.close()
+                except OSError:
+                    pass
             self.conns.clear()
 
     def drop_conn(self):
@@ -216,14 +229,15 @@ class BeaconClient:
                 r = self.request(path)
                 body = r.read()
                 if r.status == 429 or r.status >= 500:
-                    self.drop_conn()
-                    raise HTTPError(path, r.status, body)
+                    retry_after = r.getheader("Retry-After", "")
+                    raise HTTPError(path, r.status, body,
+                                    min(float(retry_after), MAX_RETRY_AFTER) if retry_after.isdigit() else 0)
                 return r.status, body
             except Exception as e:
                 self.drop_conn()
                 if attempt == RETRIES or not retryable(e):
                     raise
-                time.sleep(0.5 * (attempt + 1))
+                time.sleep(max(0.5 * (attempt + 1), getattr(e, "retry_after", 0)))
 
     def get_json(self, path: str):
         """GET path as JSON. Returns None on 404, raises on other errors."""
@@ -239,7 +253,8 @@ def parse_duration(s: str) -> int:
     """Parse a duration like 30d, 12h, 2w, 90m into seconds."""
     m = re.fullmatch(r"(\d+)\s*([smhdw])", s.strip())
     if not m or int(m.group(1)) == 0:
-        raise argparse.ArgumentTypeError(f"invalid duration {s!r}, expected e.g. 30d, 12h, 2w")
+        raise argparse.ArgumentTypeError(
+            f"invalid duration {s!r}; use a number and s, m (minutes), h, d or w, e.g. 30d")
     return int(m.group(1)) * UNITS[m.group(2)]
 
 
@@ -267,7 +282,7 @@ def fmt_time(ts: int, fmt: str = "%Y-%m-%d %H:%M UTC") -> str:
 def total_active_stake(beacon: BeaconClient) -> tuple[int, int]:
     """Sum the effective balance (gwei) of active validators at the finalized state.
 
-    The response is several hundred MB on mainnet, so it is scanned in chunks
+    The response is about 400 MB on mainnet, so it is scanned in chunks
     instead of being parsed as one JSON document."""
     path = "/eth/v1/beacon/states/finalized/validators?status=active"
     beacon.drop_conn()  # the connection sat idle during the scan; a proxy may have closed it
@@ -408,8 +423,9 @@ def main():
     ap = argparse.ArgumentParser(
         description="Estimate execution client share of proposed blocks from block graffiti.")
     ap.add_argument("--range", dest="range_s", metavar="DURATION", type=parse_duration, default="30d",
-                    help="time period ending at the latest finalized slot, e.g. 30d, 12h, 2w (default: 30d)")
-    ap.add_argument("--beacon-url", default="http://localhost:5052",
+                    help="time period ending at the latest finalized slot: a number and s, m (minutes), "
+                         "h, d or w, e.g. 30d, 12h, 2w (default: 30d)")
+    ap.add_argument("--beacon-url", metavar="URL", default="http://localhost:5052",
                     help="beacon node API URL; may include credentials or a query string "
                          "(default: http://localhost:5052)")
     ap.add_argument("--client", default="ethrex",
@@ -417,14 +433,16 @@ def main():
                          "e.g. geth or GE (default: ethrex)")
     ap.add_argument("--bucket", metavar="DURATION", type=parse_duration, default=None,
                     help="time bucket for the chart, e.g. 6h, 1d (default: picked from the range)")
-    ap.add_argument("--concurrency", type=positive_int, default=16,
+    ap.add_argument("--concurrency", metavar="N", type=positive_int, default=16,
                     help="parallel block requests (default: 16)")
     ap.add_argument("--no-stake", action="store_true",
                     help="skip the stake estimate, which downloads every active validator "
-                         "(a few hundred MB on mainnet)")
+                         "(about 400 MB on mainnet)")
     args = ap.parse_args()
 
-    target = next((c for c, n in EL_CODES.items() if args.client.lower() in (c.lower(), n.lower())), None)
+    name = args.client.lower()
+    target = CLIENT_ALIASES.get(name) or next(
+        (c for c, n in EL_CODES.items() if name in (c.lower(), n.lower())), None)
     if target is None:
         ap.error(f"unknown client {args.client!r}; use a name or code: "
                  + ", ".join(f"{n} ({c})" for c, n in EL_CODES.items()))
@@ -441,7 +459,7 @@ def main():
 def run(args: argparse.Namespace, ap: argparse.ArgumentParser, beacon: BeaconClient, target: str):
     """Scan the range and print the report; `target` is the EL code to chart."""
     u = urlsplit(args.beacon_url)
-    shown_url = f"{u.scheme}://{u.hostname}{':' + str(u.port) if u.port else ''}{u.path}"  # no credentials
+    shown_url = f"{u.scheme}://{u.netloc.rpartition('@')[2]}{u.path}"  # no credentials or query
 
     def fail(e: Exception):
         sys.exit(f"error: cannot query the beacon node at {shown_url} (see --beacon-url): "
@@ -453,8 +471,17 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser, beacon: BeaconCli
             raise RuntimeError(f"HTTP 404 for {path}; is this a beacon node API URL?")
         return data["data"]
 
+    print(f"Querying the beacon node at {shown_url}", file=sys.stderr)
     try:
-        seconds_per_slot = int(required("/eth/v1/config/spec")["SECONDS_PER_SLOT"])
+        spec = required("/eth/v1/config/spec")
+        # Newer specs give the slot length in milliseconds. Slot times below
+        # assume it stays constant over the range.
+        if "SECONDS_PER_SLOT" in spec:
+            seconds_per_slot = int(spec["SECONDS_PER_SLOT"])
+        elif int(spec["SLOT_DURATION_MS"]) % 1000 == 0:
+            seconds_per_slot = int(spec["SLOT_DURATION_MS"]) // 1000
+        else:
+            raise RuntimeError(f"unsupported SLOT_DURATION_MS {spec['SLOT_DURATION_MS']}")
     except Exception as e:
         fail(e)
     if args.range_s < seconds_per_slot:
@@ -472,19 +499,20 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser, beacon: BeaconCli
         end = int(required("/eth/v1/beacon/headers/finalized")["header"]["message"]["slot"])
         # Blinded blocks skip the transaction list, but some nodes don't serve
         # them. Probe with the finalized slot, which has a block.
-        block_path = None
+        block_path, probes = None, []
         for path in ("/eth/v1/beacon/blinded_blocks/{}", "/eth/v2/beacon/blocks/{}"):
             try:
                 status, _ = beacon.get(path.format(end))
-            except HTTPError:
-                continue
+            except HTTPError as e:
+                status = e.status
+            probes.append(f"{path.format(end)}: HTTP {status}")
             if status == 200:
                 block_path = path
                 break
     except Exception as e:
         fail(e)
     if block_path is None:
-        sys.exit(f"error: the beacon node did not return the finalized block at slot {end}")
+        sys.exit(f"error: the beacon node did not return the finalized block ({'; '.join(probes)})")
     start = max(0, end - range_slots + 1)
 
     print(f"Fetching slots {start:,}..{end:,} from {block_path.format('{slot}')}", file=sys.stderr)
@@ -493,8 +521,9 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser, beacon: BeaconCli
               "so this is slower", file=sys.stderr)
     progress = Progress(end - start + 1)
     lock = threading.Lock()
-    failures = {"first": None, "run": 0}
-    # Single failed slots are skipped, but this many in a row means the node is gone.
+    failures = {"first": None, "run": 0, "last_ok": time.monotonic()}
+    # Failed slots are skipped, but this many in a row with no success for
+    # NODE_DOWN_AFTER seconds means the node is gone rather than restarting.
     max_failed_run = max(MAX_EMPTY_RUN, 4 * args.concurrency)
 
     def fetch_slot(slot: int) -> str | None:
@@ -502,6 +531,8 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser, beacon: BeaconCli
         if block is None:
             return EMPTY
         message = block["data"]["message"]
+        if int(message["slot"]) < slot:
+            return EMPTY  # a node that answers an empty slot with the previous block
         if int(message["slot"]) != slot:
             raise ValueError(f"asked for slot {slot}, got slot {message['slot']}")
         return el_code_from_graffiti(message["body"]["graffiti"]) or ""
@@ -509,16 +540,19 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser, beacon: BeaconCli
     def fetch_chunk(slots):
         out = []
         for slot in slots:
+            if beacon.abort.is_set():
+                return out  # the scan is over; leave the progress line where it is
             try:
                 out.append(fetch_slot(slot))
                 with lock:
-                    failures["run"] = 0
+                    failures["run"], failures["last_ok"] = 0, time.monotonic()
             except Exception as e:  # skip the slot rather than abort a long scan
                 out.append(ERROR)
                 with lock:
                     failures["first"] = failures["first"] or f"slot {slot}: {type(e).__name__}: {e}"
                     failures["run"] += 1
-                    if failures["run"] >= max_failed_run:
+                    if failures["run"] >= max_failed_run \
+                            and time.monotonic() - failures["last_ok"] >= NODE_DOWN_AFTER:
                         beacon.abort.set()
         progress.add(len(slots))
         return out
@@ -539,7 +573,8 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser, beacon: BeaconCli
     ex.shutdown()
     progress.finish()
     if beacon.abort.is_set():
-        sys.exit(f"error: the beacon node stopped answering ({max_failed_run} failed slots in a row); "
+        sys.exit(f"error: the beacon node stopped answering, or doesn't serve blocks this old "
+                 f"({failures['run']:,} failed slots in a row over {NODE_DOWN_AFTER}+ s); "
                  f"e.g. {failures['first']}")
 
     errors = results.count(ERROR)
@@ -547,7 +582,7 @@ def run(args: argparse.Namespace, ap: argparse.ArgumentParser, beacon: BeaconCli
         print(f"warning: skipped {errors:,} slots that could not be fetched ({errors / len(results):.2%}); "
               f"e.g. {failures['first']}", file=sys.stderr)
     if all(r is EMPTY or r == ERROR for r in results):
-        sys.exit(f"error: the beacon node returned no blocks for slots {start}..{end}")
+        sys.exit(f"error: the beacon node returned no blocks for slots {start:,}..{end:,}")
     # Only a leading run of 404s means missing history; failed fetches are counted as skipped.
     first = next(i for i, r in enumerate(results) if r is not EMPTY)
     if first >= MAX_EMPTY_RUN:
@@ -616,11 +651,13 @@ def report(results: list[str | None], start: int, end: int, genesis_time: int, s
     shares = [h / t if t else None for h, t in zip(hit_b, tot_b)]
     print()
     if counts[target] == 0:
-        print(f"No {name} blocks in this range.")
+        print(f"No {name}-tagged blocks in this range.")
+    elif n_buckets < 2:
+        print(f"Range too short to chart per {fmt_duration(bucket_s)}; use --bucket for smaller buckets.")
     else:
-        partial = " (partial)" if len(results) % bucket_slots else ""
+        partial = ", partial" if len(results) % bucket_slots else ""
         print(f"{name} share of total blocks per {fmt_duration(bucket_s)} "
-              f"(first bucket{partial} {fmt_share(shares[0])}, last bucket {fmt_share(shares[-1])}):")
+              f"(first bucket {fmt_share(shares[0])}{partial}; last bucket {fmt_share(shares[-1])}):")
         date_fmt = "%Y-%m-%d" if bucket_s % 86400 == 0 else "%m-%d %H:%M"
         for line in ascii_chart(shares, genesis_time + start * seconds_per_slot,
                                 genesis_time + (end + 1) * seconds_per_slot, date_fmt):
@@ -628,15 +665,16 @@ def report(results: list[str | None], start: int, end: int, genesis_time: int, s
 
     if not show_stake:
         return
+    print()
     if counts[target] == 0:
-        print()
-        print(f"Estimated stake running on {name}: 0 ETH (no {name} blocks)")
-    elif stake is not None:
+        print(f"Estimated stake running on {name}: 0 ETH (no {name}-tagged blocks)")
+    elif stake is None:
+        print(f"Estimated stake running on {name}: n/a (could not fetch validator balances)")
+    else:
         stake_eth = stake[0] / 1e9
-        print()
         print(f"Total active stake: {stake_eth:,.0f} ETH ({stake[1]:,} validators)")
         print(f"Estimated stake running on {name}: {stake_eth * counts[target] / total:,.0f} ETH "
-              f"(lower bound; {counts[target]:,} of {total:,} blocks)")
+              f"(tagged blocks only, so likely an underestimate; {counts[target]:,} of {total:,} blocks)")
         print(f"  ({stake_eth * counts[target] / tagged:,.0f} ETH if untagged blocks have the same "
               f"client mix as tagged ones)")
 

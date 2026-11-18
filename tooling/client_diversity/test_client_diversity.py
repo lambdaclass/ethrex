@@ -8,6 +8,7 @@ import re
 import sys
 import threading
 import unittest
+from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import mock
 
@@ -36,7 +37,7 @@ class GraffitiTest(unittest.TestCase):
             ("EX2f0bGR70a5 Grandine/2.0.5", "EX"),
             ("EGcf6fCNcf6f", "EG"),
             ("prylabs-lido GE36a7PMd011", "GE"),
-            ("validating_from_DAppNodeGE96PM96", "GE"),  # glued to a full user graffiti
+            ("validating_from_DAppNodeGE96PM96", "GE"),  # glued: the tag exactly fills the 32 bytes
             ("RP-GP v1.21.0 (RP-GP V1.20.7) GE", "GE"),  # only the EL code fit
             ("GE13d8PMLoca", "GE"),  # local Prysm build
             ("We are all Satoshi GE117ePRLoca", "GE"),
@@ -66,24 +67,28 @@ class GraffitiTest(unittest.TestCase):
         self.check([
             ("GELH says hi EX12PMd0", "EX"),
             ("NMLH NM12LH34 RH1234LH5678", "RH"),
-            ("a long graffiti, then: EXLS GE", "GE"),
+            ("a longer graffiti, then: EXLS GE", "GE"),  # 32 bytes
         ])
 
     def test_short_forms_need_a_nearly_full_graffiti(self):
         self.check([
             ("ELITE", None),  # ends in TE, but it is part of a word
-            ("x" * 27 + " TE", "TE"),  # 30 bytes
-            ("x" * 26 + " TE", None),  # a client would have used a longer tag
+            ("x" * 28 + " TE", "TE"),  # 31 bytes: Lighthouse after a 28-byte graffiti
+            ("x" * 27 + " TE", None),  # 30 bytes: a client would have used a longer tag
             ("GE", None),
             ("EXLS fan GE", "EX"),
             ("NM706aLH176c TE", "NM"),
             ("I LOVE ANGELS", None),  # glued GE+LS in a short graffiti
             ("HOTELS", None),
-            ("x" * 26 + "GELH", "GE"),  # glued to a 30-byte graffiti
+            ("x" * 28 + "GELH", "GE"),  # glued: the tag exactly fills the 32 bytes (Teku)
+            ("x" * 26 + "GELH", None),  # glued to a 30-byte graffiti: no client does that
             ("you are now breathing manuallyGE", "GE"),  # 30 bytes + glued EL code (Prysm)
             ("x" * 26 + "CHANGE", None),  # 32 bytes, but GE ends a capitalized word
             ("x" * 29 + "GE", None),  # 31 bytes: Prysm would have added a space
-            ("x" * 27 + " GE\n", None),  # the code must be the last thing
+            ("x" * 28 + " GE\n", None),  # the code must be the last thing
+            ("x" * 28 + "éGE", "GE"),  # 32 bytes, glued after a lowercase letter
+            ("x" * 28 + "ÜNE", None),  # 32 bytes, but NE ends a capitalized word
+            ("x" * 27 + "ñGE", None),  # 31 bytes: a non-ASCII letter is no separator
         ])
 
     def test_bad_input(self):
@@ -144,11 +149,26 @@ class StakeTest(unittest.TestCase):
 
     def test_truncated_response_is_retried_then_fails(self):
         body = validators_json([32_000_000_000] * 10)
-        truncated = [FakeResponse(body[:len(body) // 2], content_length=len(body)) for _ in range(3)]
+
+        def truncated():
+            return FakeResponse(body[:len(body) // 2], content_length=len(body))
         with self.assertRaises(cd.IncompleteResponse):
-            cd.total_active_stake(FakeBeacon(truncated))
-        ok = FakeResponse(body)
-        self.assertEqual(cd.total_active_stake(FakeBeacon([truncated[0], ok])), (320_000_000_000, 10))
+            cd.total_active_stake(FakeBeacon([truncated() for _ in range(3)]))
+        beacon = FakeBeacon([truncated(), FakeResponse(body)])
+        self.assertEqual(cd.total_active_stake(beacon), (320_000_000_000, 10))
+        self.assertEqual(beacon.responses, [])  # the retry happened
+
+    def test_each_completeness_check(self):
+        body = validators_json([32_000_000_000] * 10)
+        cases = {
+            "content-length": FakeResponse(body, content_length=len(body) + 10),  # complete JSON, short read
+            "trailing bytes": FakeResponse(body + b"x"),  # balanced brackets, wrong ending
+            # No Content-Length and cut right after a validator's "}": only the depth check catches it.
+            "depth": FakeResponse(body[:body.index(b'"index":"5"') - 2], content_length=None),
+        }
+        for name, response in cases.items():
+            with self.subTest(name), self.assertRaises(cd.IncompleteResponse):
+                cd.total_active_stake(FakeBeacon([response] + [FakeResponse(b"") for _ in range(2)]))
 
     def test_no_validators_is_an_error(self):
         with self.assertRaises(cd.IncompleteResponse) as ctx:
@@ -217,8 +237,9 @@ class HelpersTest(unittest.TestCase):
         self.assertEqual((b.host, b.port, b.prefix, b.query), ("node.example", 443, "/api", "apikey=k"))
         self.assertEqual(b.headers["Authorization"], "Basic dXNlcjpwQHNz")  # user:p@ss
         self.assertEqual(cd.BeaconClient("http://[::1]/").port, 80)
-        with self.assertRaises(ValueError):
-            cd.BeaconClient("ftp://node")
+        with self.assertRaises(ValueError) as ctx:
+            cd.BeaconClient("ftp://user:secret@node")
+        self.assertNotIn("secret", str(ctx.exception))
 
 
 class ReportTest(unittest.TestCase):
@@ -237,26 +258,36 @@ class ReportTest(unittest.TestCase):
         self.assertIn("- Geth: 50.00%", out)
         self.assertIn("- ethrex: 20.00%", out)
         self.assertIn("- Untagged: 30.00%", out)
-        self.assertIn("Estimated stake running on ethrex: 200,000 ETH (lower bound; 2 of 10 blocks)", out)
+        self.assertIn("Estimated stake running on ethrex: 200,000 ETH "
+                      "(tagged blocks only, so likely an underestimate; 2 of 10 blocks)", out)
         self.assertIn("(285,714 ETH if untagged blocks", out)
 
     def test_buckets_align_to_the_end(self):
         # 5 slots, 2-slot buckets: [EX] [GE GE] [EX EX]; the oldest bucket is partial.
         out = self.run_report(["EX", "GE", "GE", "EX", "EX"], bucket=24)
-        self.assertIn("(first bucket (partial) 100.00%, last bucket 100.00%)", out)
+        self.assertIn("(first bucket 100.00%, partial; last bucket 100.00%)", out)
         chart = [line for line in out.splitlines() if "|" in line]
         self.assertEqual(chart[-1].split("|")[1], "#####       #####")  # 6-char columns
 
     def test_absent_client(self):
         out = self.run_report(["GE", ""] * 10, stake=None)
-        self.assertIn("No ethrex blocks in this range.", out)
+        self.assertIn("No ethrex-tagged blocks in this range.", out)
         self.assertIn("- ethrex: 0.00%", out)
-        self.assertIn("Estimated stake running on ethrex: 0 ETH (no ethrex blocks)", out)
+        self.assertIn("Estimated stake running on ethrex: 0 ETH (no ethrex-tagged blocks)", out)
         self.assertNotIn("Total active stake", out)
 
     def test_no_stake(self):
         out = self.run_report(["EX", "GE"] * 10, stake=None, show_stake=False)
         self.assertNotIn("stake", out)
+
+    def test_stake_download_failed(self):
+        out = self.run_report(["EX", "GE"] * 10, stake=None)
+        self.assertIn("Estimated stake running on ethrex: n/a (could not fetch validator balances)", out)
+
+    def test_single_bucket_is_not_charted(self):
+        out = self.run_report(["EX", "GE"] * 10, bucket=3600)
+        self.assertIn("Range too short to chart per 1h", out)
+        self.assertNotIn("|", out)
 
 
 class FakeBeaconNode(BaseHTTPRequestHandler):
@@ -265,16 +296,21 @@ class FakeBeaconNode(BaseHTTPRequestHandler):
     finalized = 0
     blocks = {}  # slot -> graffiti text; other slots are empty (404)
     failing = set()  # slots that answer HTTP 500
+    flaky = {}  # slot -> statuses to answer before serving the block normally
     wrong_slot = set()  # slots that answer with the previous block
+    ahead_slot = set()  # slots that answer with the next block
+    spec = {"SECONDS_PER_SLOT": "12"}
     blinded_status = 200  # status of every blinded block request, when not 200
-    seen_query = set()
+    seen_query, seen_auth, hits = set(), set(), Counter()
 
     def do_GET(self):
         path, _, query = self.path.partition("?")
         FakeBeaconNode.seen_query.add(query)
+        FakeBeaconNode.seen_auth.add(self.headers.get("Authorization"))
+        FakeBeaconNode.hits[path] += 1
         m = re.fullmatch(r"/eth/(v1/beacon/blinded_blocks|v2/beacon/blocks)/(\d+)", path)
         if path == "/eth/v1/config/spec":
-            self.reply(200, {"data": {"SECONDS_PER_SLOT": "12"}})
+            self.reply(200, {"data": self.spec})
         elif path == "/eth/v1/beacon/genesis":
             self.reply(200, {"data": {"genesis_time": "0"}})
         elif path == "/eth/v1/beacon/headers/finalized":
@@ -287,8 +323,11 @@ class FakeBeaconNode(BaseHTTPRequestHandler):
             slot = int(m.group(2))
             if slot in self.failing:
                 self.reply(500, {"message": "boom"})
+            elif self.flaky.get(slot):
+                status = self.flaky[slot].pop(0)
+                self.reply(status, {"message": "try again"}, {"Retry-After": "2"} if status == 429 else {})
             elif slot in self.blocks:
-                served = slot - 1 if slot in self.wrong_slot else slot
+                served = slot - 1 if slot in self.wrong_slot else slot + 1 if slot in self.ahead_slot else slot
                 self.reply(200, {"data": {"message": {"slot": str(served),
                                                       "body": {"graffiti": graffiti(self.blocks[slot])}}}})
             else:
@@ -296,9 +335,11 @@ class FakeBeaconNode(BaseHTTPRequestHandler):
         else:
             self.reply(404, {"message": "not found"})
 
-    def reply(self, status, payload):
+    def reply(self, status, payload, headers=None):
         body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
         self.send_response(status)
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -320,7 +361,9 @@ class MainTest(unittest.TestCase):
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
         FakeBeaconNode.finalized, FakeBeaconNode.blinded_status = 1000, 200
-        FakeBeaconNode.failing, FakeBeaconNode.wrong_slot, FakeBeaconNode.seen_query = set(), set(), set()
+        FakeBeaconNode.failing, FakeBeaconNode.wrong_slot, FakeBeaconNode.flaky = set(), set(), {}
+        FakeBeaconNode.ahead_slot, FakeBeaconNode.spec = set(), {"SECONDS_PER_SLOT": "12"}
+        FakeBeaconNode.seen_query, FakeBeaconNode.seen_auth, FakeBeaconNode.hits = set(), set(), Counter()
         FakeBeaconNode.blocks = chain(900)
 
     def tearDown(self):
@@ -331,9 +374,20 @@ class MainTest(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         argv = ["client_diversity.py", "--beacon-url", self.url, "--concurrency", "4", *args]
         with mock.patch.object(sys, "argv", argv), mock.patch.object(cd, "RETRIES", 1), \
-                mock.patch.object(cd.time, "sleep"), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                mock.patch.object(cd.time, "sleep") as self.sleep, \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             cd.main()
         return out.getvalue(), err.getvalue()
+
+    def test_default_range_is_30_days(self):
+        out, err = self.run_main("--no-stake")  # 30d is more than the 1,001 slots this chain has
+        self.assertIn("Fetching slots 0..1,000", err)
+        self.assertIn("(slots 900..1,000, 10 empty)", out)
+
+    def test_slot_duration_in_milliseconds(self):
+        FakeBeaconNode.spec = {"SLOT_DURATION_MS": "12000"}
+        out, _ = self.run_main("--range", "1h", "--no-stake")
+        self.assertIn("Total blocks: 91\n", out)
 
     def test_truncates_missing_history_and_counts_blocks(self):
         out, err = self.run_main("--range", "1h", "--bucket", "1h")
@@ -343,7 +397,8 @@ class MainTest(unittest.TestCase):
         self.assertIn("Total blocks: 91\n", out)
         self.assertIn("Tagged blocks: 46 (50.5%)", out)
         self.assertIn("- ethrex: 28.57%", out)  # 26 of 91
-        self.assertIn("Estimated stake running on ethrex: 37 ETH (lower bound; 26 of 91 blocks)", out)  # 128 * 26/91
+        self.assertIn("Estimated stake running on ethrex: 37 ETH "  # 128 ETH * 26/91
+                      "(tagged blocks only, so likely an underestimate; 26 of 91 blocks)", out)
         self.assertIn("(72 ETH if untagged", out)  # 128 ETH * 26/46
         self.assertIn("blinded_blocks", err)
 
@@ -363,22 +418,45 @@ class MainTest(unittest.TestCase):
         expected = len(set(FakeBeaconNode.blocks) - FakeBeaconNode.failing)
         skipped = len(FakeBeaconNode.failing)
         self.assertIn(f"skipped {skipped} slots", err)
-        self.assertNotIn("no blocks before", err)  # leading failures are not missing history
         self.assertIn(f"{skipped} skipped", out)
         self.assertIn(f"Total blocks: {expected}\n", out)
+
+    def test_leading_failures_are_not_missing_history(self):
+        # Slots 701..800 alternate between failing and empty; blocks start at 801.
+        FakeBeaconNode.blocks = chain(801)
+        FakeBeaconNode.failing = set(range(701, 801, 2))
+        out, err = self.run_main("--range", "1h", "--no-stake")
+        self.assertNotIn("no blocks before", err)
+        self.assertIn("(slots 701..1,000, 70 empty, 50 skipped)", out)
+
+    def test_transient_errors_are_retried(self):
+        FakeBeaconNode.flaky = {950: [500], 960: [429], 970: [501]}
+        out, err = self.run_main("--range", "1h", "--no-stake")
+        self.assertIn("1 skipped", out)  # only the 501, which is not retried
+        self.assertIn("slot 970: HTTPError", err)
+        self.assertEqual(FakeBeaconNode.hits["/eth/v1/beacon/blinded_blocks/950"], 2)
+        self.assertEqual(FakeBeaconNode.hits["/eth/v1/beacon/blinded_blocks/970"], 1)
+        self.sleep.assert_any_call(2.0)  # the 429's Retry-After
 
     def test_aborts_when_the_node_stops_answering(self):
         FakeBeaconNode.blocks = chain(701)
         FakeBeaconNode.failing = set(range(800, 1000))  # the finalized block still answers
-        with self.assertRaises(SystemExit) as ctx:
+        with self.assertRaises(SystemExit) as ctx, mock.patch.object(cd, "NODE_DOWN_AFTER", 0):
             self.run_main("--range", "1h")
         self.assertIn("stopped answering", str(ctx.exception.code))
 
-    def test_mismatched_slot_is_an_error(self):
-        FakeBeaconNode.wrong_slot = {950, 960}
+    def test_short_outage_does_not_abort(self):
+        FakeBeaconNode.blocks = chain(701)
+        FakeBeaconNode.failing = set(range(800, 1000))
+        out, err = self.run_main("--range", "1h", "--no-stake")  # NODE_DOWN_AFTER not reached
+        self.assertIn("skipped 200 slots", err)
+
+    def test_mismatched_slots(self):
+        FakeBeaconNode.wrong_slot = {950, 960}  # answered with the previous block: empty slots
+        FakeBeaconNode.ahead_slot = {970}  # answered with a later block: an error
         out, err = self.run_main("--range", "1h", "--no-stake")
-        self.assertIn("asked for slot 950, got slot 949", err)
-        self.assertIn("2 skipped", out)
+        self.assertIn("asked for slot 970, got slot 971", err)
+        self.assertIn("12 empty, 1 skipped", out)
 
     def test_wrong_url_prefix(self):
         self.url += "/not/the/api"
@@ -386,10 +464,21 @@ class MainTest(unittest.TestCase):
             self.run_main("--range", "1h")
         self.assertIn("is this a beacon node API URL?", str(ctx.exception.code))
 
-    def test_query_string_is_forwarded(self):
-        self.url += "/?apikey=secret"
-        self.run_main("--range", "5m")
+    def test_client_by_alias_or_code(self):
+        for client in ("go-ethereum", "GE", "geth"):
+            with self.subTest(client=client):
+                out, _ = self.run_main("--range", "1h", "--no-stake", "--client", client)
+                self.assertIn("Geth share of total blocks", out)
+
+    def test_credentials_and_query_string_are_forwarded_but_not_printed(self):
+        self.url = self.url.replace("http://", "http://user:pass@") + "/?apikey=secret"
+        FakeBeaconNode.failing = {990}  # so an HTTP error gets printed
+        _, err = self.run_main("--range", "5m")
         self.assertEqual(FakeBeaconNode.seen_query, {"apikey=secret", "status=active&apikey=secret"})
+        self.assertEqual(FakeBeaconNode.seen_auth, {"Basic dXNlcjpwYXNz"})  # user:pass
+        self.assertIn("slot 990: HTTPError: GET /eth/v1/beacon/blinded_blocks/990: HTTP 500", err)
+        self.assertNotIn("pass", err)
+        self.assertNotIn("secret", err)
 
 
 if __name__ == "__main__":
