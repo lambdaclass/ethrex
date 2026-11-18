@@ -2,7 +2,7 @@
 #
 # Triggers:
 # - Automatically on PR open (non-draft) or when marked as ready for review
-# - On-demand via PR comments: /kimi, /codex, /claude (requires write access)
+# - On-demand via PR comments: /review for all, or /kimi, /codex, /claude, /deepseek, /gemini, /grok (requires write access)
 #
 # Custom prompt: .github/prompts/ai-review.md
 #
@@ -10,6 +10,9 @@
 # - KIMI_API_KEY: For Kimi reviews (https://platform.moonshot.ai/)
 # - OPENAI_API_KEY: For Codex reviews (https://platform.openai.com/)
 # - ANTHROPIC_API_KEY: For Claude reviews (https://console.anthropic.com/)
+# - DEEPSEEK_API_KEY: For DeepSeek reviews (https://platform.deepseek.com/)
+# - GEMINI_API_KEY: For Gemini reviews (https://aistudio.google.com/apikey)
+# - XAI_API_KEY: For Grok reviews (https://console.x.ai/)
 
 name: AI Code Review
 
@@ -43,3 +46,21 @@ jobs:
     uses: lambdaclass/actions/.github/workflows/ai-review-claude.yml@v1
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+  deepseek-review:
+    if: github.event.pull_request.draft == false
+    uses: lambdaclass/actions/.github/workflows/ai-review-deepseek.yml@v1
+    secrets:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+
+  gemini-review:
+    if: github.event.pull_request.draft == false
+    uses: lambdaclass/actions/.github/workflows/ai-review-gemini.yml@v1
+    secrets:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+  grok-review:
+    if: github.event.pull_request.draft == false
+    uses: lambdaclass/actions/.github/workflows/ai-review-grok.yml@v1
+    secrets:
+      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}

@@ -24,6 +24,7 @@ struct Cli {
 enum Command {
     /// Run a single EF state-test fixture and emit EIP-3155 trace + stateRoot to
     /// stderr. Designed for goevmlab differential fuzzing.
+    #[command(version, display_name = "ethrex-statetest")]
     Statetest(StatetestOptions),
 }
 

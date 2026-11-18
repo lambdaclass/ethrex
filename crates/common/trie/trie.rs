@@ -67,7 +67,10 @@ pub use self::{
 };
 
 pub use self::error::{ExtensionNodeErrorData, InconsistentTreeError, TrieError};
-use self::{node::LeafNode, trie_iter::TrieIterator};
+use self::{
+    node::{BranchNode, ExtensionNode, LeafNode},
+    trie_iter::TrieIterator,
+};
 
 use ethrex_rlp::decode::RLPDecode;
 
@@ -500,13 +503,26 @@ impl Trie {
     ///
     /// Every key in the trie must be `key_nibbles` long, as in the state and
     /// storage tries, whose keys are 64-nibble keccak256 hashes. A decoded node
-    /// whose path cannot end at that length is rejected, as EELS
-    /// `_validate_secured_trie_paths` does (execution-specs #3193): a leaf path
-    /// must end exactly there, an extension must stop short of it and a branch
-    /// must sit above it. A child referenced only by hash is not in `all_nodes`,
-    /// so it has no decoded path to check. The check runs while embedding
-    /// because a separate walk over every child slot cost the zkVM guest about
-    /// eight times as much.
+    /// that cannot be part of such a trie is rejected, as EELS
+    /// `_check_secured_path` and `_decode_witness_node` do (execution-specs
+    /// #3193, #3934): a leaf path must end exactly at the key length, an
+    /// extension must stop short of it and a branch must sit above it. A branch
+    /// must also have at least two children and no value, since no key ends at
+    /// a branch, and an extension needs a non-empty path and a branch as its
+    /// child. A child referenced only by hash is not in `all_nodes`, so it has
+    /// nothing decoded to check. The checks run while embedding because a
+    /// separate walk over every child slot cost the zkVM guest about eight
+    /// times as much.
+    ///
+    /// The spec checks a node only when a trie operation reaches it, so it
+    /// accepts a malformed node off the block's path that this rejects. Upstream
+    /// allows a guest to check every node up front: a real state has no
+    /// malformed nodes, so the two only disagree on a parent state built by hand.
+    ///
+    /// `all_nodes` must not hold nodes whose encoding is shorter than 32 bytes:
+    /// such a node is embedded in its parent, so a hash reference to it is
+    /// malformed, and leaving it out makes that reference fail like any other
+    /// missing node once the block reaches it.
     ///
     /// Note that this method caches the hash of each node, so it assumes the provided `all_nodes` are well-formed.
     pub fn get_embedded_root_committed(
@@ -540,42 +556,76 @@ impl Trie {
             leaf.partial.len() - usize::from(leaf.partial.is_leaf())
         }
 
-        /// Checks the paths of a child stored inline. A node under 32 bytes is
-        /// part of its parent's encoding rather than referenced by hash, so it
-        /// is never in `all_nodes` and embedding leaves it encoded. Its own
-        /// children are inline too, since a hash reference alone takes 33 bytes.
+        /// Checks a branch on its own, before any of its children: it must sit
+        /// above the key length, hold no value and have at least two children.
+        fn check_branch(branch: &BranchNode, remaining: usize) -> Result<(), TrieError> {
+            if remaining == 0 {
+                return Err(TrieError::KeyLengthMismatch);
+            }
+            if !branch.value.is_empty() {
+                return Err(TrieError::MalformedNode("branch holds a value"));
+            }
+            if branch.choices.iter().filter(|c| c.is_valid()).count() < 2 {
+                return Err(TrieError::MalformedNode(
+                    "branch has fewer than two children",
+                ));
+            }
+            Ok(())
+        }
+
+        /// Checks an extension on its own and returns the nibbles left after
+        /// its path. Its child is checked to be a branch where it is decoded.
+        fn check_extension(ext: &ExtensionNode, remaining: usize) -> Result<usize, TrieError> {
+            if ext.prefix.is_empty() {
+                return Err(TrieError::MalformedNode("extension has an empty path"));
+            }
+            if ext.prefix.len() >= remaining {
+                return Err(TrieError::KeyLengthMismatch);
+            }
+            if !ext.child.is_valid() {
+                return Err(TrieError::MalformedNode("extension has no child"));
+            }
+            Ok(remaining - ext.prefix.len())
+        }
+
+        const EXTENSION_CHILD_NOT_BRANCH: TrieError =
+            TrieError::MalformedNode("extension child is not a branch");
+
+        /// Checks a child stored inline and returns whether it is a branch. A
+        /// node under 32 bytes is part of its parent's encoding rather than
+        /// referenced by hash, so it is never in `all_nodes` and embedding
+        /// leaves it encoded. Its own children are inline too, since a hash
+        /// reference alone takes 33 bytes.
         #[cold]
-        fn check_inline_paths(encoded: &NodeHash, remaining: usize) -> Result<(), TrieError> {
+        fn check_inline(encoded: &NodeHash, remaining: usize) -> Result<bool, TrieError> {
             match Node::decode(encoded.as_ref())? {
                 Node::Leaf(leaf) => {
                     if leaf_path_len(&leaf) != remaining {
                         return Err(TrieError::KeyLengthMismatch);
                     }
+                    Ok(false)
                 }
                 Node::Extension(ext) => {
-                    if ext.prefix.len() >= remaining {
-                        return Err(TrieError::KeyLengthMismatch);
-                    }
+                    let remaining = check_extension(&ext, remaining)?;
                     if let NodeRef::Hash(child @ NodeHash::Inline(_)) = ext.child
-                        && child.is_valid()
+                        && !check_inline(&child, remaining)?
                     {
-                        check_inline_paths(&child, remaining - ext.prefix.len())?;
+                        return Err(EXTENSION_CHILD_NOT_BRANCH);
                     }
+                    Ok(false)
                 }
                 Node::Branch(branch) => {
-                    if remaining == 0 {
-                        return Err(TrieError::KeyLengthMismatch);
-                    }
+                    check_branch(&branch, remaining)?;
                     for choice in &branch.choices {
                         if let NodeRef::Hash(child @ NodeHash::Inline(_)) = *choice
                             && child.is_valid()
                         {
-                            check_inline_paths(&child, remaining - 1)?;
+                            check_inline(&child, remaining - 1)?;
                         }
                     }
+                    Ok(true)
                 }
             }
-            Ok(())
         }
 
         fn get_embedded_node_committed(
@@ -586,9 +636,7 @@ impl Trie {
         ) -> Result<Node, TrieError> {
             Ok(match cur_node.clone() {
                 Node::Branch(mut node) => {
-                    if remaining == 0 {
-                        return Err(TrieError::KeyLengthMismatch);
-                    }
+                    check_branch(&node, remaining)?;
                     for choice in &mut node.choices {
                         let NodeRef::Hash(hash) = *choice else {
                             continue;
@@ -609,7 +657,7 @@ impl Trie {
                                     // Testing the variant first keeps the common
                                     // case, a sibling outside the witness, to a compare.
                                     if let NodeHash::Inline(_) = hash {
-                                        check_inline_paths(&hash, remaining - 1)?;
+                                        check_inline(&hash, remaining - 1)?;
                                     }
                                     hash.into()
                                 }
@@ -620,24 +668,26 @@ impl Trie {
                     (*node).into()
                 }
                 Node::Extension(mut node) => {
-                    if node.prefix.len() >= remaining {
-                        return Err(TrieError::KeyLengthMismatch);
-                    }
-                    let remaining = remaining - node.prefix.len();
+                    let remaining = check_extension(&node, remaining)?;
                     let NodeRef::Hash(hash) = node.child else {
                         return Ok(node.into());
                     };
 
                     node.child = match all_nodes.get(&hash.finalize(crypto)) {
-                        Some(node) => node_with_hash(
-                            get_embedded_node_committed(all_nodes, node, remaining, crypto)?,
-                            hash,
-                        ),
+                        Some(child) => {
+                            if !matches!(child, Node::Branch(_)) {
+                                return Err(EXTENSION_CHILD_NOT_BRANCH);
+                            }
+                            node_with_hash(
+                                get_embedded_node_committed(all_nodes, child, remaining, crypto)?,
+                                hash,
+                            )
+                        }
                         None => {
                             if let NodeHash::Inline(_) = hash
-                                && hash.is_valid()
+                                && !check_inline(&hash, remaining)?
                             {
-                                check_inline_paths(&hash, remaining)?;
+                                return Err(EXTENSION_CHILD_NOT_BRANCH);
                             }
                             hash.into()
                         }
@@ -1206,9 +1256,12 @@ mod tests {
             .into()
         }
 
+        /// A branch holding `child` in its first two slots, since a branch
+        /// needs at least two children.
         fn branch_over(child: &Node) -> Node {
             let mut choices: [NodeRef; 16] = Default::default();
             choices[0] = child.compute_hash(&NativeCrypto).into();
+            choices[1] = child.compute_hash(&NativeCrypto).into();
             BranchNode {
                 choices,
                 value: vec![],
@@ -1253,10 +1306,12 @@ mod tests {
             let too_long = leaf(64, 32);
             assert!(embed(&branch_over(&too_long), &[&too_long], 64).is_err());
 
-            let fits = leaf(61, 32);
-            assert!(embed(&extension_over(3, &fits), &[&fits], 64).is_ok());
-            let too_long = leaf(62, 32);
-            assert!(embed(&extension_over(3, &too_long), &[&too_long], 64).is_err());
+            let fits = leaf(60, 32);
+            let below = branch_over(&fits);
+            assert!(embed(&extension_over(3, &below), &[&below, &fits], 64).is_ok());
+            let too_long = leaf(61, 32);
+            let below = branch_over(&too_long);
+            assert!(embed(&extension_over(3, &below), &[&below, &too_long], 64).is_err());
             let empty = leaf(0, 32);
             assert!(embed(&extension_over(64, &empty), &[&empty], 64).is_err());
 

@@ -496,6 +496,10 @@ pub struct Store {
     /// ends (the pruned range starts at the lowest entry still present).
     journal_pruning_paused: Arc<std::sync::atomic::AtomicBool>,
 
+    /// Signalled when an input of the node's sync status may have changed: the
+    /// canonical head, the sync target, the executed head or the synced flag.
+    sync_status_changed: Arc<tokio::sync::watch::Sender<()>>,
+
     background_threads: Arc<ThreadList>,
 }
 
@@ -856,6 +860,28 @@ impl Store {
         blocks: Vec<BackfilledBlock>,
         new_earliest: BlockNumber,
     ) -> Result<(), StoreError> {
+        // The frontier block is already stored, and indexed if it is a snap pivot.
+        // `earliest` and the floor are read outside the write transaction: backfill is
+        // their only writer once the node is synced, and it writes one batch at a time.
+        let earliest = self
+            .read_chain_data_block_number(ChainDataIndex::EarliestBlockNumber)
+            .await?
+            .unwrap_or(BlockNumber::MAX);
+        let unindexed_top = blocks
+            .iter()
+            .filter(|block| {
+                !block.index_transactions
+                    && !block.body.transactions.is_empty()
+                    && block.header.number < earliest
+            })
+            .map(|block| block.header.number)
+            .max();
+        let mut tx_index_floor = None;
+        if let Some(top) = unindexed_top {
+            let floor = top.saturating_add(1);
+            let current = self.get_tx_index_floor().await?;
+            tx_index_floor = Some(current.map_or(floor, |current| current.max(floor)));
+        }
         let backend = self.backend.clone();
         tokio::task::spawn_blocking(move || {
             let mut txn = backend.begin_write()?;
@@ -889,6 +915,13 @@ impl Store {
                 &chain_data_key(ChainDataIndex::EarliestBlockNumber),
                 &new_earliest.to_le_bytes(),
             )?;
+            if let Some(floor) = tx_index_floor {
+                txn.put(
+                    CHAIN_DATA,
+                    &chain_data_key(ChainDataIndex::TxIndexFloor),
+                    &floor.to_le_bytes(),
+                )?;
+            }
             txn.commit()
         })
         .await
@@ -1699,6 +1732,48 @@ impl Store {
             .ok_or(StoreError::MissingEarliestBlockNumber)
     }
 
+    /// Lowest block from which every stored block is in the transaction index, if backfill skipped any.
+    pub async fn get_tx_index_floor(&self) -> Result<Option<BlockNumber>, StoreError> {
+        self.read_chain_data_block_number(ChainDataIndex::TxIndexFloor)
+            .await
+    }
+
+    /// Whether the transaction index floor of a history backfilled before it was tracked
+    /// has been located.
+    pub async fn is_tx_index_floor_reconciled(&self) -> Result<bool, StoreError> {
+        Ok(self
+            .read_chain_data_block_number(ChainDataIndex::TxIndexFloorReconciled)
+            .await?
+            .is_some())
+    }
+
+    /// Records that the transaction index floor has been located, together with the
+    /// floor if one was found.
+    pub async fn record_reconciled_tx_index_floor(
+        &self,
+        floor: Option<BlockNumber>,
+    ) -> Result<(), StoreError> {
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut txn = backend.begin_write()?;
+            if let Some(floor) = floor {
+                txn.put(
+                    CHAIN_DATA,
+                    &chain_data_key(ChainDataIndex::TxIndexFloor),
+                    &floor.to_le_bytes(),
+                )?;
+            }
+            txn.put(
+                CHAIN_DATA,
+                &chain_data_key(ChainDataIndex::TxIndexFloorReconciled),
+                &1u64.to_le_bytes(),
+            )?;
+            txn.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Floor write task panicked: {e}")))?
+    }
+
     /// Obtain finalized block number
     pub async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         self.read_chain_data_block_number(ChainDataIndex::FinalizedBlockNumber)
@@ -1714,6 +1789,17 @@ impl Store {
     /// Obtain latest block number
     pub fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
         Ok(self.latest_block_header.get().number)
+    }
+
+    /// Wakes the receivers of [`Self::sync_status_changes`].
+    pub fn notify_sync_status_changed(&self) {
+        self.sync_status_changed.send_replace(());
+    }
+
+    /// Resolves `changed()` after each [`Self::notify_sync_status_changed`];
+    /// signals sent before it is awaited collapse into one.
+    pub fn sync_status_changes(&self) -> tokio::sync::watch::Receiver<()> {
+        self.sync_status_changed.subscribe()
     }
 
     /// Update pending block number
@@ -2523,6 +2609,7 @@ impl Store {
             fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
             safe_commit_root,
             journal_pruning_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            sync_status_changed: Arc::new(tokio::sync::watch::Sender::new(())),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -3512,6 +3599,7 @@ impl Store {
             self.latest_block_header.update((*previous_head).clone());
             return Err(err);
         }
+        self.notify_sync_status_changed();
 
         // Refresh the canonical safe-commit root now that the canonical tables reflect the new
         // head. `None` (chain shorter than the threshold, e.g. genesis init at head 0) leaves the
@@ -8493,6 +8581,75 @@ mod backfill_write_tests {
             None,
             "transaction index must be skipped when index_transactions is false"
         );
+        assert_eq!(
+            store.get_tx_index_floor().await.unwrap(),
+            Some(100),
+            "the tx index floor must rise above the unindexed block"
+        );
+    }
+
+    #[tokio::test]
+    async fn tx_index_floor_tracks_highest_unindexed_block() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        store.update_earliest_block_number(100).await.unwrap();
+        let backfilled = |number: u64, index_transactions: bool| BackfilledBlock {
+            header: test_header(number),
+            body: BlockBody {
+                transactions: vec![test_tx(number)],
+                ommers: vec![],
+                withdrawals: Some(vec![]),
+            },
+            receipts: vec![test_receipt()],
+            index_transactions,
+        };
+
+        store
+            .add_backfilled_blocks(
+                vec![
+                    backfilled(100, false),
+                    backfilled(99, true),
+                    backfilled(98, true),
+                ],
+                98,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get_tx_index_floor().await.unwrap(),
+            None,
+            "the re-fetched frontier block must not raise the floor"
+        );
+
+        store
+            .add_backfilled_blocks(vec![backfilled(97, true), backfilled(96, false)], 96)
+            .await
+            .unwrap();
+        assert_eq!(store.get_tx_index_floor().await.unwrap(), Some(97));
+
+        store
+            .add_backfilled_blocks(vec![backfilled(95, false)], 95)
+            .await
+            .unwrap();
+        assert_eq!(store.get_tx_index_floor().await.unwrap(), Some(97));
+
+        // An empty block has nothing to index, so it does not raise the floor.
+        let empty = BackfilledBlock {
+            header: test_header(98),
+            body: BlockBody {
+                transactions: vec![],
+                ommers: vec![],
+                withdrawals: Some(vec![]),
+            },
+            receipts: vec![],
+            index_transactions: false,
+        };
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        store.update_earliest_block_number(99).await.unwrap();
+        store
+            .add_backfilled_blocks(vec![empty, backfilled(97, false)], 97)
+            .await
+            .unwrap();
+        assert_eq!(store.get_tx_index_floor().await.unwrap(), Some(98));
     }
 
     /// End-to-end at the storage/RPC boundary: the getters the RPC handlers use

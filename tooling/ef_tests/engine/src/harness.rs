@@ -16,6 +16,7 @@ use ethrex_rpc::{
     utils::{RpcNamespace, RpcRequest},
 };
 
+use crate::RunOptions;
 use crate::engine_ctx::engine_only_context;
 use ethrex_storage::{EngineType, Store};
 use serde_json::Value;
@@ -65,8 +66,9 @@ fn prefer_tmpfs_dir() -> PathBuf {
 impl EngineApiHarness {
     /// Build a harness from a typed `Genesis`. Hot path: callers should use this
     /// when they already hold a parsed `Genesis` to skip a round-trip through JSON.
-    pub async fn from_genesis(genesis: Genesis, backend: Backend) -> anyhow::Result<Self> {
-        let (store, tempdir) = match backend {
+    /// `opts` picks the storage backend and how blocks are executed.
+    pub async fn from_genesis(genesis: Genesis, opts: &RunOptions) -> anyhow::Result<Self> {
+        let (store, tempdir) = match opts.backend {
             Backend::InMemory => {
                 let store = Store::new("", EngineType::InMemory)?;
                 (store, None)
@@ -81,7 +83,7 @@ impl EngineApiHarness {
 
         let mut store = store;
         store.add_initial_state(genesis).await?;
-        let ctx = engine_only_context(store).await;
+        let ctx = engine_only_context(store, opts).await;
         Ok(Self {
             ctx,
             _tempdir: tempdir,
@@ -91,7 +93,11 @@ impl EngineApiHarness {
     /// Convenience for callers that hold a JSON-encoded genesis (mostly tests).
     pub async fn from_genesis_json(genesis_json: &str, backend: Backend) -> anyhow::Result<Self> {
         let genesis: Genesis = serde_json::from_str(genesis_json)?;
-        Self::from_genesis(genesis, backend).await
+        let opts = RunOptions {
+            backend,
+            ..RunOptions::default()
+        };
+        Self::from_genesis(genesis, &opts).await
     }
 
     /// Dispatch a pre-built `RpcRequest` directly. Skips the JSON envelope
@@ -156,6 +162,15 @@ impl EngineApiHarness {
         self.call(
             "eth_getBlockByNumber",
             vec![Value::String("0x0".to_string()), Value::Bool(false)],
+        )
+        .await
+    }
+
+    /// Call `eth_getBlockByNumber("latest", false)` and return the raw JSON response.
+    pub async fn get_latest_block(&self) -> anyhow::Result<Value> {
+        self.call(
+            "eth_getBlockByNumber",
+            vec![Value::String("latest".to_string()), Value::Bool(false)],
         )
         .await
     }
