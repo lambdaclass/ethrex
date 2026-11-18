@@ -1008,7 +1008,10 @@ mod tests {
                     ),
                     "{method} {params} gave {result:?}"
                 ),
-                "eth_feeHistory" => assert!(result.is_ok(), "{method} {params} gave {result:?}"),
+                "eth_feeHistory" => assert!(
+                    matches!(result, Err(RpcErr::ResourceNotFound(_))),
+                    "{method} {params} gave {result:?}"
+                ),
                 _ => assert_eq!(result.unwrap(), Value::Null, "{method} {params}"),
             }
         }
