@@ -104,6 +104,8 @@ The commands for each target follow. The host roster changes between releases â€
 
 #### `ethrex-ethdocker-mainnet`
 
+The consensus client is ethlambda, through eth-docker's own `ethlambda-cl-only.yml` (`CORE_FILES=ethrex.yml:ethlambda-cl-only.yml` in `.env`, image pinned by `ETHLAMBDA_DOCKER_TAG`). `./ethd update` and `./ethd up` handle it like any other eth-docker client, so upgrading ethrex only takes the release tag below.
+
 ```bash
 ssh admin@ethrex-ethdocker-mainnet
 cd eth-docker/
