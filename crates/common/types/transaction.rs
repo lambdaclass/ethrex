@@ -2857,10 +2857,14 @@ mod canonic_encoding {
             buf
         }
 
-        /// Canonical encoded length without allocating (mirrors
-        /// [`P2PTransaction::encode_canonical`]); equals
-        /// `encode_canonical_to_vec().len()`. For the blob variant this includes
-        /// the full sidecar, since `EIP4844TransactionWithBlobs` encodes it.
+        /// Canonical encoded length (mirrors [`P2PTransaction::encode_canonical`]);
+        /// equals `encode_canonical_to_vec().len()`. For the blob variant this
+        /// includes the full sidecar, since `EIP4844TransactionWithBlobs` encodes it.
+        ///
+        /// Not allocation-free, for the same reason as
+        /// `Transaction::encode_canonical_len`: none of the transaction types
+        /// override `RLPEncode::length`, so this encodes into a scratch buffer and
+        /// takes its length. For the blob variant that buffer holds the sidecar.
         pub fn encode_canonical_len(&self) -> usize {
             let prefix_len = match self {
                 P2PTransaction::LegacyTransaction(_) => 0,

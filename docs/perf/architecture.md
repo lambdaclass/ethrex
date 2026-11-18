@@ -673,13 +673,13 @@ pub enum NodeRef {
 
 ```rust
 impl RLPEncode for BranchNode {
-    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+    fn encode(&self, buf: &mut Vec<u8>) {
         // First pass: compute payload length
         let payload_len = self.choices.iter().fold(value_len, |acc, child| {
             acc + RLPEncode::length(child.compute_hash_ref())  // Computes & memoizes
         });
 
-        encode_length(payload_len, buf);
+        encode_list_prefix(payload_len, buf);
 
         // Second pass: encode children
         for child in self.choices.iter() {

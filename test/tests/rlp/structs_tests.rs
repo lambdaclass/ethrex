@@ -159,20 +159,44 @@ fn dropped_encoder_closes_its_list() {
 /// outer one.
 #[test]
 fn dropped_encoder_nests_and_preserves_existing_bytes() {
-    let mut buf = vec![0xff];
+    /// A two-field list whose encoder is closed by drop, not by `finish`.
+    struct DroppedInner(u8, u8);
+
+    impl RLPEncode for DroppedInner {
+        fn encode(&self, buf: &mut Vec<u8>) {
+            let inner = Encoder::new(buf)
+                .encode_field(&self.0)
+                .encode_field(&self.1);
+            drop(inner);
+        }
+    }
+
+    // The dropped inner list sits inside an outer list, which is followed by one more
+    // field, after a byte the buffer already held.
+    let mut finished_outer = vec![0xff];
+    Encoder::new(&mut finished_outer)
+        .encode_field(&DroppedInner(61, 75))
+        .encode_field(&1u8)
+        .finish();
+    // 0xff untouched, then 0xc4 = list of 4 payload bytes: the inner list
+    // (0xc2 = list of 2 payload bytes, 61, 75) and the trailing 0x01.
+    assert_eq!(finished_outer, vec![0xff, 0xc4, 0xc2, 61, 75, 0x01]);
+
+    // Closing the outer list by drop as well gives the same bytes.
+    let mut dropped_outer = vec![0xff];
     {
-        let outer = Encoder::new(&mut buf);
-        let outer = outer.encode_field(&61u8);
-        // Inner list closed by drop, not by an explicit `finish`.
+        let outer = Encoder::new(&mut dropped_outer)
+            .encode_field(&DroppedInner(61, 75))
+            .encode_field(&1u8);
         drop(outer);
     }
-    assert_eq!(buf, vec![0xff, 0xc1, 61]);
+    assert_eq!(dropped_outer, finished_outer);
 
-    let mut nested = Vec::new();
+    let mut empty = Vec::new();
     {
-        let outer = Encoder::new(&mut nested);
+        let outer = Encoder::new(&mut empty);
         drop(outer);
     }
     // An encoder that wrote nothing still closes as the empty list.
-    assert_eq!(nested, vec![0xc0]);
+    assert_eq!(empty, vec![0xc0]);
 }
