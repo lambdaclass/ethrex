@@ -94,17 +94,19 @@ fn write_body(path: &Path, result: &PayloadBuildResult) -> Result<(), T8nError> 
 /// The post-state alloc: the pre-state with the block's account updates
 /// applied. The full pre-state was this run's input, so no trie iteration
 /// is needed.
-fn post_alloc(
+pub fn post_alloc(
     pre_alloc: &BTreeMap<Address, GenesisAccount>,
     result: &PayloadBuildResult,
 ) -> BTreeMap<Address, GenesisAccount> {
     let mut alloc = pre_alloc.clone();
     for update in &result.account_updates {
+        // A removed account is one the block left empty, and it is not in
+        // the post-state. Its update still has the empty `info`, which the
+        // store doesn't apply either
+        // (`Store::apply_account_updates_from_trie_batch`).
         if update.removed {
             alloc.remove(&update.address);
-            if update.info.is_none() && update.code.is_none() && update.added_storage.is_empty() {
-                continue;
-            }
+            continue;
         }
         let entry = alloc
             .entry(update.address)

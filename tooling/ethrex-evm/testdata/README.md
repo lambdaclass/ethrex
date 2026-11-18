@@ -20,3 +20,16 @@ The fill doesn't count opcodes for this test, so the counts come from running th
     uv run ethereum-spec-evm t8n --state.fork Amsterdam --state.chainid 1 --state.reward 0 \
         --input.alloc alloc.json --input.env env.json --input.txs txs.json \
         --output.basedir <out> --opcode.count opcodes.json
+
+## `account_deleted_then_another_inserted`
+
+This is the only t8n call of `test_witness_state_account_delete_uses_insert_before_delete_order[fork_Amsterdam-blockchain_test-delete_then_insert]`, in `tests/amsterdam/eip8025_optional_proofs/test_witness_state_replay_order.py` of execution-specs (branch `projects/zkevm`, commit `fd98fc88bf`). The first transaction deploys a contract that self-destructs right away to an address that has balance in the pre-state, so the block deletes that account. The second one funds a new account that shares a branch of the state trie with the deleted one.
+
+- `alloc.json`, `env.json` and `txs.json` are the input, as the filler dumps it with `--evm-dump-dir`.
+- `eels_alloc.json` is the output alloc of EELS, which doesn't have the deleted account.
+- `eels_witness.json` is the `executionWitness` in the result of EELS. It doesn't have the leaf of the account under that branch that the block doesn't touch, since EELS inserts before it deletes.
+
+To get them again, fill the test with EELS and take the input and the output of the call:
+
+    uv run fill --fork=Amsterdam -m blockchain_test -k "account_delete_uses_insert_before_delete_order and delete_then_insert" \
+        tests/amsterdam/eip8025_optional_proofs/test_witness_state_replay_order.py --evm-dump-dir=<dump>

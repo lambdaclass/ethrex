@@ -1,21 +1,18 @@
-//! Tests of the t8n over an input that the execution-specs filler sent, with
-//! what the EELS t8n answers to it as the expected output. `testdata/README.md`
-//! says where the files come from.
-//!
-//! The input is block 3 of a chain. Its only transaction calls a contract
-//! that stores `BLOCKHASH(1)`, so the witness needs the headers of blocks 1
-//! and 2.
+//! Tests of the t8n over inputs that the execution-specs filler sent, with
+//! what the EELS t8n answers to them as the expected output.
+//! `testdata/README.md` says where the files come from.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use bytes::Bytes;
 use clap::Parser;
-use ethrex_common::types::{BlockHeader, ChainConfig};
-use ethrex_common::{H256, U256};
+use ethrex_common::types::{BlockHeader, ChainConfig, GenesisAccount};
+use ethrex_common::{Address, H256, U256};
 use ethrex_rlp::decode::RLPDecode;
 use serde_json::Value;
 
-use super::output::{opcode_counts_json, result_json};
+use super::output::{opcode_counts_json, post_alloc, result_json};
 use super::types::{Inputs, read_inputs};
 use super::witness::WitnessOutput;
 use super::{Execution, T8nArgs, execute, fork, run};
@@ -26,24 +23,44 @@ struct Cli {
     args: T8nArgs,
 }
 
-fn testdata(file: &str) -> PathBuf {
+/// Block 3 of a chain. Its only transaction calls a contract that stores
+/// `BLOCKHASH(1)`, so the witness needs the headers of blocks 1 and 2. The
+/// tests that don't name a case run over this one.
+const BLOCKHASH_CASE: &str = "blockhash_two_blocks_back";
+
+/// Block 1 of a chain. Its first transaction deploys a contract that
+/// self-destructs right away, to an address that has balance in the
+/// pre-state, so the block deletes that account. The second one funds a new
+/// account that goes next to the deleted one in the state trie.
+const DELETED_ACCOUNT_CASE: &str = "account_deleted_then_another_inserted";
+
+/// The account `DELETED_ACCOUNT_CASE` deletes.
+const DELETED_ACCOUNT: &str = "0x081f85bbb63f960f83724898686620b3e01a5542";
+
+fn testdata(case: &str, file: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("testdata/blockhash_two_blocks_back")
+        .join("testdata")
+        .join(case)
         .join(file)
 }
 
-fn read_json(file: &str) -> Value {
-    let raw = std::fs::read_to_string(testdata(file)).expect("testdata file");
+fn read_case_json(case: &str, file: &str) -> Value {
+    let raw = std::fs::read_to_string(testdata(case, file)).expect("testdata file");
     serde_json::from_str(&raw).expect("testdata JSON")
 }
 
-/// The arguments of a run over the test input that writes under `basedir`.
-fn args_writing_to(basedir: &str, fork: &str, extra: &[&str]) -> T8nArgs {
+fn read_json(file: &str) -> Value {
+    read_case_json(BLOCKHASH_CASE, file)
+}
+
+/// The arguments of a run over the input of `case` that writes under
+/// `basedir`.
+fn args_writing_to(case: &str, basedir: &str, fork: &str, extra: &[&str]) -> T8nArgs {
     let mut argv = vec![
         "t8n".to_string(),
-        format!("--input.alloc={}", testdata("alloc.json").display()),
-        format!("--input.env={}", testdata("env.json").display()),
-        format!("--input.txs={}", testdata("txs.json").display()),
+        format!("--input.alloc={}", testdata(case, "alloc.json").display()),
+        format!("--input.env={}", testdata(case, "env.json").display()),
+        format!("--input.txs={}", testdata(case, "txs.json").display()),
         format!("--output.basedir={basedir}"),
         format!("--state.fork={fork}"),
     ];
@@ -53,7 +70,15 @@ fn args_writing_to(basedir: &str, fork: &str, extra: &[&str]) -> T8nArgs {
 
 /// The arguments of a run that is only executed, so it writes nothing.
 fn args(fork: &str, extra: &[&str]) -> T8nArgs {
-    args_writing_to("unused", fork, extra)
+    args_writing_to(BLOCKHASH_CASE, "unused", fork, extra)
+}
+
+/// The inputs of `DELETED_ACCOUNT_CASE` and what the t8n computes from them.
+fn deleted_account_execution() -> (Inputs, Execution) {
+    let args = args_writing_to(DELETED_ACCOUNT_CASE, "unused", "Amsterdam", &[]);
+    let inputs = read_inputs(&args).expect("inputs");
+    let execution = execute(&args, &inputs).expect("execution");
+    (inputs, execution)
 }
 
 fn amsterdam_inputs() -> (T8nArgs, Inputs) {
@@ -76,7 +101,12 @@ fn execute_error(args: &T8nArgs, inputs: &Inputs) -> String {
 
 /// The witness EELS generates for the input.
 fn eels_witness() -> WitnessOutput {
-    let witness = read_json("eels_witness.json");
+    eels_witness_of(BLOCKHASH_CASE)
+}
+
+/// The witness EELS generates for the input of `case`.
+fn eels_witness_of(case: &str) -> WitnessOutput {
+    let witness = read_case_json(case, "eels_witness.json");
     let list = |name: &str| -> Vec<Bytes> {
         witness[name]
             .as_array()
@@ -185,6 +215,35 @@ fn validation_fails_for_another_block() {
     let mut block = execution.result.payload.clone();
     block.header.gas_used += 1;
     assert!(witness.validate(&block, amsterdam_config()).is_err());
+}
+
+/// EELS doesn't write an account that a block deletes, while the update of
+/// that account still has the empty `info` it ended with.
+#[test]
+fn output_alloc_does_not_have_a_deleted_account() {
+    let (inputs, execution) = deleted_account_execution();
+    let alloc = post_alloc(&inputs.alloc, &execution.result);
+
+    let deleted: Address = DELETED_ACCOUNT.parse().expect("address");
+    assert!(inputs.alloc.contains_key(&deleted));
+    assert!(!alloc.contains_key(&deleted));
+
+    let eels_alloc: BTreeMap<Address, GenesisAccount> =
+        serde_json::from_value(read_case_json(DELETED_ACCOUNT_CASE, "eels_alloc.json"))
+            .expect("alloc");
+    assert_eq!(alloc, eels_alloc);
+}
+
+/// The witness only matches if the account is inserted before the other one
+/// is deleted, since deleting first reads the leaf of the account they both
+/// share a branch with.
+#[test]
+fn witness_of_a_deleted_account_is_the_one_eels_generates() {
+    let (_inputs, execution) = deleted_account_execution();
+
+    let witness = execution.witness.expect("witness");
+    assert_eq!(witness.witness, eels_witness_of(DELETED_ACCOUNT_CASE));
+    assert!(witness.successful_validation);
 }
 
 fn assert_no_witness(execution: &Execution) {
@@ -318,6 +377,7 @@ fn does_not_count_opcodes_without_the_flag() {
 fn writes_the_result_and_the_opcode_counts() {
     let basedir = tempfile::tempdir().expect("temp dir");
     let args = args_writing_to(
+        BLOCKHASH_CASE,
         &basedir.path().display().to_string(),
         "Amsterdam",
         &[
