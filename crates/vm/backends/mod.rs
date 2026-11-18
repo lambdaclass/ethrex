@@ -3,7 +3,7 @@ use ethrex_levm::precompiles::PrecompileMoves;
 use levm::LEVM;
 
 use crate::db::{DynVmDatabase, VmDatabase};
-use crate::errors::EvmError;
+use crate::errors::{EvmError, SimulationTxError};
 use crate::execution_result::ExecutionResult;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::requests::Requests;
@@ -11,7 +11,7 @@ use ethrex_common::types::{
     AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction,
     Withdrawal,
 };
-use ethrex_common::{Address, types::fee_config::FeeConfig};
+use ethrex_common::{Address, U256, types::fee_config::FeeConfig};
 use ethrex_crypto::Crypto;
 pub use ethrex_levm::StatelessValidator;
 pub use ethrex_levm::call_frame::CallFrameBackup;
@@ -31,6 +31,32 @@ pub struct Evm {
     pub vm_type: VMType,
     pub crypto: Arc<dyn Crypto>,
     pub stateless_validator: Option<Arc<dyn StatelessValidator>>,
+}
+
+/// Per-transaction knobs for `eth_simulateV1` execution
+/// (see [`Evm::execute_tx_simulate`]).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SimTxConfig {
+    /// `validation` payload flag: when false the tx runs with `eth_call`-like
+    /// relaxed checks (no nonce enforcement, zeroed unpriced blob fees).
+    pub validate: bool,
+    /// `traceTransfers` payload flag: emit informational ETH-transfer logs.
+    pub trace_transfers: bool,
+}
+
+/// What a simulation does with the EIP-8037 cap on execution gas (Amsterdam+).
+///
+/// A transaction may spend at most the per-transaction execution limit on execution and
+/// routes the rest of its gas limit to the state-gas reservoir. A simulation that is never
+/// submitted need not: geth lets `eth_call` and `debug_traceCall` spend their whole gas
+/// limit on execution, while `eth_estimateGas` keeps the cap so that its answer holds for a
+/// transaction that can be included.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExecutionGasCap {
+    /// The transaction rule applies.
+    Enforced,
+    /// The whole gas limit is execution gas.
+    Lifted,
 }
 
 impl core::fmt::Debug for Evm {
@@ -200,6 +226,49 @@ impl Evm {
         Ok((receipt, execution_report))
     }
 
+    /// Like [`Evm::execute_tx`] but for `eth_simulateV1`: validation failures
+    /// are returned structured (see [`SimulationTxError`]) and the simulation
+    /// relaxations from `config` are applied.
+    ///
+    /// No receipt is built here, unlike [`Evm::execute_tx`]: the simulation engine
+    /// keeps trace-transfer logs out of receipts, so it builds its own from the
+    /// filtered logs.
+    pub fn execute_tx_simulate(
+        &mut self,
+        tx: &Transaction,
+        block_header: &BlockHeader,
+        cumulative_gas_spent: &mut u64,
+        sender: Address,
+        config: &SimTxConfig,
+    ) -> Result<ExecutionReport, SimulationTxError> {
+        let execution_report = LEVM::execute_tx_for_simulation(
+            tx,
+            sender,
+            block_header,
+            &mut self.db,
+            self.vm_type,
+            self.crypto.as_ref(),
+            config.validate,
+            config.trace_transfers,
+        )?;
+
+        *cumulative_gas_spent += execution_report.gas_spent;
+
+        Ok(execution_report)
+    }
+
+    /// Current nonce for `address`, read through the live EVM cache so writes
+    /// from previously executed transactions (same simulated block) are
+    /// visible. Used by `eth_simulateV1` nonce auto-fill.
+    pub fn get_account_nonce(&mut self, address: Address) -> Result<u64, EvmError> {
+        Ok(self.db.get_account(address)?.info.nonce)
+    }
+
+    /// Current balance of `address`, through the EVM cache.
+    pub fn get_account_balance(&mut self, address: Address) -> Result<U256, EvmError> {
+        Ok(self.db.get_account(address)?.info.balance)
+    }
+
     pub fn undo_last_tx(&mut self) -> Result<(), EvmError> {
         LEVM::undo_last_tx(&mut self.db)
     }
@@ -284,6 +353,7 @@ impl Evm {
         &mut self,
         tx: &GenericTransaction,
         header: &BlockHeader,
+        execution_gas_cap: ExecutionGasCap,
     ) -> Result<ExecutionResult, EvmError> {
         LEVM::simulate_tx_from_generic(
             tx,
@@ -292,6 +362,7 @@ impl Evm {
             self.vm_type,
             self.crypto.as_ref(),
             self.stateless_validator.as_deref(),
+            execution_gas_cap,
         )
     }
 

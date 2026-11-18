@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use ethrex_common::H256;
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use tracing::info;
 
 use crate::{
@@ -19,7 +19,7 @@ pub struct GetL1MessageProof {
 }
 
 impl RpcHandler for GetL1MessageProof {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetL1MessageProof, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<GetL1MessageProof, RpcErr> {
         let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
             "No params provided".to_owned(),
         ))?;
@@ -31,7 +31,7 @@ impl RpcHandler for GetL1MessageProof {
             .into());
         };
         Ok(GetL1MessageProof {
-            transaction_hash: serde_json::from_value(params[0].clone())?,
+            transaction_hash: serde_json::from_str(params[0].get())?,
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {

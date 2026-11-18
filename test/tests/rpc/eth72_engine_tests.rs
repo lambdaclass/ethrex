@@ -5,6 +5,7 @@ use ethrex_common::{
         kzg_commitment_to_versioned_hash,
     },
 };
+use ethrex_rpc::test_utils::raw_params;
 use ethrex_rpc::{
     engine::{blobs::BlobsV4Request, fork_choice::ForkChoiceUpdatedV4},
     rpc::RpcHandler,
@@ -60,8 +61,11 @@ async fn blobs_v4_pre_amsterdam_returns_null() {
     // amsterdam.md getBlobsV4 §6: while unable to serve (here pre-Amsterdam /
     // syncing) the method MUST return `null` per hash, not a bespoke -38005.
     let ctx = fresh_context().await; // no fork times configured
-    let req =
-        BlobsV4Request::parse(&Some(vec![json!([H256::zero()]), json!(hex_mask(1u128))])).unwrap();
+    let req = BlobsV4Request::parse(&raw_params(&Some(vec![
+        json!([H256::zero()]),
+        json!(hex_mask(1u128)),
+    ])))
+    .unwrap();
     let result = req.handle(ctx.clone()).await.unwrap();
     let arr = result.as_array().unwrap();
     assert_eq!(arr.len(), 1);
@@ -72,10 +76,10 @@ async fn blobs_v4_pre_amsterdam_returns_null() {
 async fn blobs_v4_rejects_over_cap() {
     let ctx = amsterdam_context().await;
     let hashes: Vec<H256> = (0..=128).map(H256::from_low_u64_be).collect();
-    let req = BlobsV4Request::parse(&Some(vec![
+    let req = BlobsV4Request::parse(&raw_params(&Some(vec![
         serde_json::to_value(&hashes).unwrap(),
         json!(hex_mask(1u128)),
-    ]))
+    ])))
     .unwrap();
     let err = req.handle(ctx.clone()).await.unwrap_err();
     assert!(
@@ -87,10 +91,10 @@ async fn blobs_v4_rejects_over_cap() {
 #[tokio::test]
 async fn blobs_v4_unknown_hash_returns_null_entry() {
     let ctx = amsterdam_context().await;
-    let req = BlobsV4Request::parse(&Some(vec![
+    let req = BlobsV4Request::parse(&raw_params(&Some(vec![
         json!([H256::from_low_u64_be(999)]),
         json!(hex_mask(u128::MAX)),
-    ]))
+    ])))
     .unwrap();
     let result = req.handle(ctx.clone()).await.unwrap();
     let arr = result.as_array().unwrap();
@@ -127,10 +131,10 @@ async fn blobs_v4_single_column_mask_returns_one_entry() {
 
     // Request only column 2 (bit 2 → mask = 0b100 = 4).
     let mask: u128 = 1 << 2;
-    let req = BlobsV4Request::parse(&Some(vec![
+    let req = BlobsV4Request::parse(&raw_params(&Some(vec![
         serde_json::to_value(vec![vh]).unwrap(),
         json!(hex_mask(mask)),
-    ]))
+    ])))
     .unwrap();
     let result = req.handle(ctx.clone()).await.unwrap();
     let arr = result.as_array().unwrap();
@@ -177,10 +181,10 @@ async fn blobs_v4_version_zero_bundle_returns_null_entry() {
         .add_blobs_bundle(tx_hash, bundle)
         .unwrap();
 
-    let req = BlobsV4Request::parse(&Some(vec![
+    let req = BlobsV4Request::parse(&raw_params(&Some(vec![
         serde_json::to_value(vec![vh]).unwrap(),
         json!(hex_mask(u128::MAX)),
-    ]))
+    ])))
     .unwrap();
     let result = req.handle(ctx.clone()).await.unwrap();
     let arr = result.as_array().unwrap();
@@ -196,14 +200,18 @@ async fn blobs_v4_version_zero_bundle_returns_null_entry() {
 #[test]
 fn fcu_v4_parse_custody_absent_is_none() {
     // Only 1 param → no custodyColumns.
-    let parsed = ForkChoiceUpdatedV4::parse(&Some(vec![zero_fcs()])).unwrap();
+    let parsed = ForkChoiceUpdatedV4::parse(&raw_params(&Some(vec![zero_fcs()]))).unwrap();
     assert_eq!(parsed.custody_columns, None);
 }
 
 #[test]
 fn fcu_v4_parse_custody_null_is_none() {
-    let parsed =
-        ForkChoiceUpdatedV4::parse(&Some(vec![zero_fcs(), json!(null), json!(null)])).unwrap();
+    let parsed = ForkChoiceUpdatedV4::parse(&raw_params(&Some(vec![
+        zero_fcs(),
+        json!(null),
+        json!(null),
+    ])))
+    .unwrap();
     assert_eq!(parsed.custody_columns, None);
 }
 
@@ -211,7 +219,7 @@ fn fcu_v4_parse_custody_null_is_none() {
 fn fcu_v4_parse_custody_valid_16_bytes() {
     let mask: u128 = 0x0000_0000_0000_0000_0000_0000_0000_0001;
     let params = Some(vec![zero_fcs(), json!(null), json!(hex_mask(mask))]);
-    let parsed = ForkChoiceUpdatedV4::parse(&params).unwrap();
+    let parsed = ForkChoiceUpdatedV4::parse(&raw_params(&params)).unwrap();
     assert_eq!(parsed.custody_columns, Some(mask));
 }
 
@@ -219,7 +227,7 @@ fn fcu_v4_parse_custody_valid_16_bytes() {
 fn fcu_v4_parse_custody_wrong_byte_length_is_invalid_params() {
     // 8 bytes instead of 16.
     let params = Some(vec![zero_fcs(), json!(null), json!("0x0000000000000001")]);
-    let err = ForkChoiceUpdatedV4::parse(&params).unwrap_err();
+    let err = ForkChoiceUpdatedV4::parse(&raw_params(&params)).unwrap_err();
     // The Amsterdam Engine API spec mandates the JSON-RPC code, so assert on that
     // rather than the internal variant.
     assert_eq!(
@@ -240,11 +248,11 @@ async fn fcu_v4_null_custody_does_not_change_mempool() {
     let ctx = fresh_context().await;
     ctx.blockchain.mempool.set_custody_columns(0xFF).unwrap();
 
-    let req = ForkChoiceUpdatedV4::parse(&Some(vec![
+    let req = ForkChoiceUpdatedV4::parse(&raw_params(&Some(vec![
         zero_fcs(),
         json!(null),
         json!(null), // null custody
-    ]))
+    ])))
     .unwrap();
     req.handle(ctx.clone()).await.unwrap();
 
@@ -261,11 +269,11 @@ async fn fcu_v4_identical_custody_is_noop() {
     ctx.blockchain.mempool.set_custody_columns(0b1010).unwrap();
     let gen_before = ctx.blockchain.mempool.custody_generation();
 
-    let req = ForkChoiceUpdatedV4::parse(&Some(vec![
+    let req = ForkChoiceUpdatedV4::parse(&raw_params(&Some(vec![
         zero_fcs(),
         json!(null),
         json!(hex_mask(0b1010u128)),
-    ]))
+    ])))
     .unwrap();
     req.handle(ctx.clone()).await.unwrap();
 
@@ -286,11 +294,11 @@ async fn fcu_v4_expansion_sets_custody_and_bumps_generation() {
     ctx.blockchain.mempool.set_custody_columns(0b0001).unwrap();
     let gen_before = ctx.blockchain.mempool.custody_generation();
 
-    let req = ForkChoiceUpdatedV4::parse(&Some(vec![
+    let req = ForkChoiceUpdatedV4::parse(&raw_params(&Some(vec![
         zero_fcs(),
         json!(null),
         json!(hex_mask(0b0011u128)), // add column 1
-    ]))
+    ])))
     .unwrap();
     req.handle(ctx.clone()).await.unwrap();
 
@@ -310,11 +318,11 @@ async fn fcu_v4_contraction_sets_reduced_custody() {
     let ctx = fresh_context().await;
     ctx.blockchain.mempool.set_custody_columns(0b1111).unwrap();
 
-    let req = ForkChoiceUpdatedV4::parse(&Some(vec![
+    let req = ForkChoiceUpdatedV4::parse(&raw_params(&Some(vec![
         zero_fcs(),
         json!(null),
         json!(hex_mask(0b0011u128)), // remove columns 2 and 3
-    ]))
+    ])))
     .unwrap();
     req.handle(ctx.clone()).await.unwrap();
 

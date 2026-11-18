@@ -10,6 +10,7 @@ pub mod evm;
 pub mod fd_limit;
 pub mod genesis_utils;
 pub mod rkyv_utils;
+pub mod seeded_hash;
 pub mod tracing;
 pub mod utils;
 

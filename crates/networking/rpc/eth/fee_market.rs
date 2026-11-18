@@ -8,10 +8,11 @@ use ethrex_common::{
     },
 };
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use tracing::debug;
 
 use crate::{
+    eth::block::{get_block_body, pruned_history},
     rpc::{RpcApiContext, RpcHandler},
     types::block_identifier::BlockIdentifier,
     utils::{RpcErr, parse_json_hex},
@@ -45,7 +46,7 @@ pub struct FeeHistoryResponse {
 // - https://ethereum.github.io/execution-apis/api-documentation/
 // - https://github.com/ethereum/go-ethereum/blob/master/eth/gasprice/feehistory.go
 impl RpcHandler for FeeHistoryRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<FeeHistoryRequest, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<FeeHistoryRequest, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -62,7 +63,7 @@ impl RpcHandler for FeeHistoryRequest {
                 "Too large block_count parameter".to_owned(),
             ));
         }
-        let rp: Vec<f32> = serde_json::from_value(params[2].clone())?;
+        let rp: Vec<f32> = serde_json::from_str(params[2].get())?;
         // NOTE: This check is offspec
         if rp.len() > MAX_PERCENTILE_ARRAY_LEN {
             return Err(RpcErr::BadParams(format!(
@@ -80,7 +81,7 @@ impl RpcHandler for FeeHistoryRequest {
 
         Ok(FeeHistoryRequest {
             block_count,
-            newest_block: BlockIdentifier::parse(params[1].clone(), 0)?,
+            newest_block: BlockIdentifier::parse_param(&params[1], 0)?,
             reward_percentiles: rp,
         })
     }
@@ -98,8 +99,13 @@ impl RpcHandler for FeeHistoryRequest {
                 .map_err(|error| RpcErr::Internal(error.to_string()));
         }
 
-        let (start_block, end_block) =
-            get_range(storage, self.block_count, &self.newest_block).await?;
+        let (start_block, end_block) = get_range(
+            storage,
+            self.block_count,
+            &self.newest_block,
+            !self.reward_percentiles.is_empty(),
+        )
+        .await?;
         let oldest_block = start_block;
         let block_count = (end_block - start_block + 1) as usize;
         let mut base_fee_per_gas = vec![0_u64; block_count + 1];
@@ -114,12 +120,6 @@ impl RpcHandler for FeeHistoryRequest {
                 .get_block_header(block_number)?
                 .ok_or(RpcErr::Internal(format!(
                     "Could not get header for block {block_number}"
-                )))?;
-            let body = storage
-                .get_block_body(block_number)
-                .await?
-                .ok_or(RpcErr::Internal(format!(
-                    "Could not get body for block {block_number}"
                 )))?;
 
             let blob_schedule_opt = config.get_fork_blob_schedule(header.timestamp);
@@ -155,7 +155,14 @@ impl RpcHandler for FeeHistoryRequest {
                         context.gas_ceil,
                     )?;
             }
+            // Only the rewards need the block's transactions, so its body is read
+            // only when percentiles are requested.
             if !self.reward_percentiles.is_empty() {
+                let body = get_block_body(storage, block_number)
+                    .await?
+                    .ok_or(RpcErr::Internal(format!(
+                        "Could not get body for block {block_number}"
+                    )))?;
                 reward.push(calculate_percentiles_for_block(
                     Block::new(header, body),
                     &self.reward_percentiles,
@@ -213,11 +220,10 @@ async fn get_range(
     storage: &Store,
     block_count: u64,
     expected_finish_block: &BlockIdentifier,
+    with_rewards: bool,
 ) -> Result<(u64, u64), RpcErr> {
     // NOTE: The amount of blocks to retrieve is capped by MAX_BLOCK_COUNT
 
-    // Get earliest block
-    let earliest_block_num = storage.get_earliest_block_number().await?;
     // Get latest block
     let latest_block_num = storage.get_latest_block_number()?;
     // Get the expected finish block number from the parameter
@@ -229,8 +235,16 @@ async fn get_range(
         ))?;
     // Calculate start and finish block numbers, considering finish block inclusion
     let finish_block_num = expected_finish_block_num.min(latest_block_num);
-    let expected_start_block_num = (finish_block_num + 1).saturating_sub(block_count);
-    let start_block_num = earliest_block_num.max(expected_start_block_num);
+    let mut start_block_num = (finish_block_num + 1).saturating_sub(block_count);
+    // Rewards need bodies, so they start at the earliest block with history. Header
+    // fields alone are served below it.
+    if with_rewards {
+        let earliest = storage.get_earliest_block_number().await?;
+        if finish_block_num < earliest {
+            return Err(pruned_history(finish_block_num, earliest));
+        }
+        start_block_num = start_block_num.max(earliest);
+    }
 
     Ok((start_block_num, finish_block_num))
 }
@@ -274,4 +288,59 @@ fn calculate_percentiles_for_block(block: Block, percentiles: &[f32]) -> Vec<u64
             effective_priority_fees.get(i).cloned().unwrap_or_default()
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    use crate::test_utils::{add_eip1559_tx_blocks, default_context_with_storage, setup_store};
+
+    async fn fee_history(context: &RpcApiContext, reward_percentiles: Vec<f32>) -> Value {
+        FeeHistoryRequest {
+            block_count: 5,
+            newest_block: BlockIdentifier::Number(5),
+            reward_percentiles,
+        }
+        .handle(context.clone())
+        .await
+        .unwrap()
+    }
+
+    /// Requesting rewards adds the `reward` field and leaves every other field as
+    /// it is without them, which are computed from the headers alone.
+    #[tokio::test]
+    async fn rewards_only_add_the_reward_field() {
+        let storage = setup_store().await;
+        add_eip1559_tx_blocks(&storage, 5, 10).await;
+        let context = default_context_with_storage(storage).await;
+
+        let without_rewards = fee_history(&context, vec![]).await;
+        let mut with_rewards = fee_history(&context, vec![25.0, 75.0]).await;
+
+        let rewards = with_rewards
+            .as_object_mut()
+            .unwrap()
+            .remove("reward")
+            .unwrap();
+        assert_eq!(rewards.as_array().unwrap().len(), 5);
+        assert!(
+            rewards
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|block| block.as_array().unwrap().len() == 2)
+        );
+        let mut without_rewards = without_rewards;
+        assert_eq!(
+            without_rewards
+                .as_object_mut()
+                .unwrap()
+                .remove("reward")
+                .unwrap(),
+            serde_json::json!([])
+        );
+        assert_eq!(without_rewards, with_rewards);
+        assert_eq!(without_rewards["gasUsedRatio"].as_array().unwrap().len(), 5);
+    }
 }

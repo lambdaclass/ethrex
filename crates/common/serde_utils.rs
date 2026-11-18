@@ -2,6 +2,20 @@ use std::time::Duration;
 
 use serde::{Deserialize, Deserializer, Serializer, de::Error, ser::SerializeSeq};
 
+/// Splits a quantity string the way geth's `math.ParseUint64` does: a `0x` or `0X`
+/// prefix means hex, anything else is decimal. Returns `None` unless at least one digit
+/// of that radix follows and nothing else does, so a sign or a second prefix is rejected.
+fn hex_or_dec_digits(value: &str) -> Option<(&str, u32)> {
+    let (digits, radix) = match value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        Some(hex) => (hex, 16),
+        None => (value, 10),
+    };
+    (!digits.is_empty() && digits.chars().all(|c| c.is_digit(radix))).then_some((digits, radix))
+}
+
 pub mod u256 {
     use super::*;
     use ethereum_types::U256;
@@ -64,6 +78,37 @@ pub mod u256 {
         S: Serializer,
     {
         serializer.serialize_str(&value.to_string())
+    }
+
+    /// Reads a `U256` the way geth reads genesis balances: a JSON number, a `0x`-prefixed
+    /// hex string or a decimal string, with an empty string read as 0.
+    pub mod hex_or_dec {
+        use super::*;
+
+        pub fn deserialize<'de, D>(d: D) -> Result<U256, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let text = match serde_json::Value::deserialize(d)? {
+                // serde_json holds an integer above `u64::MAX` as a float, whose text is
+                // not all digits, so it is rejected rather than rounded.
+                serde_json::Value::Number(number) => number.to_string(),
+                serde_json::Value::String(text) => text,
+                other => {
+                    return Err(D::Error::custom(format!(
+                        "expected a number or a string for a u256 value, got {other}"
+                    )));
+                }
+            };
+            if text.is_empty() {
+                return Ok(U256::zero());
+            }
+            hex_or_dec_digits(&text)
+                .and_then(|(digits, radix)| U256::from_str_radix(digits, radix).ok())
+                .ok_or_else(|| {
+                    D::Error::custom(format!("Failed to deserialize u256 value {text:?}"))
+                })
+        }
     }
 
     pub mod vec {
@@ -223,6 +268,71 @@ pub mod u64 {
             serializer.serialize_str(&format!("{value:#x}"))
         }
     }
+    /// Reads a `u64` the way geth reads genesis quantities: a JSON number, a
+    /// `0x`-prefixed hex string or a decimal string, with an empty string read as 0.
+    /// Writes a `0x` hex string.
+    pub mod hex_or_dec {
+        use super::*;
+
+        pub fn deserialize<'de, D>(d: D) -> Result<u64, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            from_value(serde_json::Value::deserialize(d)?).map_err(D::Error::custom)
+        }
+
+        pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            super::hex_str::serialize(value, serializer)
+        }
+
+        pub(super) fn from_value(value: serde_json::Value) -> Result<u64, String> {
+            let text = match value {
+                serde_json::Value::Number(number) => number.to_string(),
+                serde_json::Value::String(text) => text,
+                other => {
+                    return Err(format!(
+                        "expected a number or a string for a u64 value, got {other}"
+                    ));
+                }
+            };
+            if text.is_empty() {
+                return Ok(0);
+            }
+            hex_or_dec_digits(&text)
+                .and_then(|(digits, radix)| u64::from_str_radix(digits, radix).ok())
+                .ok_or_else(|| format!("Failed to deserialize u64 value {text:?}"))
+        }
+    }
+
+    /// [`hex_or_dec`] for an optional quantity: a missing field, `null` or an empty
+    /// string is `None`. Writes a `0x` hex string.
+    pub mod hex_or_dec_opt {
+        use super::*;
+
+        pub fn deserialize<'de, D>(d: D) -> Result<Option<u64>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            match Option::<serde_json::Value>::deserialize(d)? {
+                None => Ok(None),
+                Some(serde_json::Value::String(text)) if text.is_empty() => Ok(None),
+                Some(value) => super::hex_or_dec::from_value(value)
+                    .map(Some)
+                    .map_err(D::Error::custom),
+            }
+        }
+
+        pub fn serialize<S>(value: &Option<u64>, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            super::hex_str_opt::serialize(value, serializer)
+        }
+    }
+
     pub mod hex_str_padding {
         use super::*;
 

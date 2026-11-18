@@ -35,25 +35,25 @@ pub struct Genesis {
     pub difficulty: U256,
     #[serde(default, with = "crate::serde_utils::bytes")]
     pub extra_data: Bytes,
-    #[serde(with = "crate::serde_utils::u64::hex_str")]
+    #[serde(with = "crate::serde_utils::u64::hex_or_dec")]
     pub gas_limit: u64,
-    #[serde(with = "crate::serde_utils::u64::hex_str")]
+    #[serde(with = "crate::serde_utils::u64::hex_or_dec")]
     pub nonce: u64,
     #[serde(alias = "mixHash", alias = "mixhash")]
     pub mix_hash: H256,
-    #[serde(deserialize_with = "crate::serde_utils::u64::deser_hex_or_dec_str")]
+    #[serde(deserialize_with = "crate::serde_utils::u64::hex_or_dec::deserialize")]
     #[serde(serialize_with = "crate::serde_utils::u256::serialize_number")]
     pub timestamp: u64,
-    #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
+    #[serde(default, with = "crate::serde_utils::u64::hex_or_dec_opt")]
     pub base_fee_per_gas: Option<u64>,
-    #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
+    #[serde(default, with = "crate::serde_utils::u64::hex_or_dec_opt")]
     pub blob_gas_used: Option<u64>,
-    #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
+    #[serde(default, with = "crate::serde_utils::u64::hex_or_dec_opt")]
     pub excess_blob_gas: Option<u64>,
     pub requests_hash: Option<H256>,
     // Amsterdam fork fields (EIP-7928)
     pub block_access_list_hash: Option<H256>,
-    #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
+    #[serde(default, with = "crate::serde_utils::u64::hex_or_dec_opt")]
     pub slot_number: Option<u64>,
 }
 
@@ -507,43 +507,37 @@ impl ChainConfig {
     pub fn get_fork_blob_schedule(&self, block_timestamp: u64) -> Option<ForkBlobSchedule> {
         // EIP-7892: from Prague onward the blob schedule only changes at BPO forks.
         // Named forks (Osaka, Amsterdam, Hegotá, LStar) carry no blob params of their own
-        // and inherit the highest activated BPO entry, so resolution falls through the BPO
-        // chain. A genesis that pins an entry for the named fork anyway takes precedence.
-        if (self.is_lstar_activated(block_timestamp)
-            || self.is_hegota_activated(block_timestamp)
-            || self.is_amsterdam_activated(block_timestamp))
-            && let Some(schedule) = self.blob_schedule.amsterdam
-        {
-            return Some(schedule);
-        }
-        if self.is_bpo5_activated(block_timestamp)
-            && let Some(schedule) = self.blob_schedule.bpo5
-        {
-            return Some(schedule);
-        }
-        if self.is_bpo4_activated(block_timestamp)
-            && let Some(schedule) = self.blob_schedule.bpo4
-        {
-            return Some(schedule);
-        }
-        if self.is_bpo3_activated(block_timestamp)
-            && let Some(schedule) = self.blob_schedule.bpo3
-        {
-            return Some(schedule);
-        }
-        if self.is_bpo2_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo2)
-        } else if self.is_bpo1_activated(block_timestamp) {
-            Some(self.blob_schedule.bpo1)
-        } else if self.is_osaka_activated(block_timestamp) {
-            Some(self.blob_schedule.osaka)
-        } else if self.is_prague_activated(block_timestamp) {
-            Some(self.blob_schedule.prague)
-        } else if self.is_cancun_activated(block_timestamp) {
-            Some(self.blob_schedule.cancun)
-        } else {
-            None
-        }
+        // and inherit the latest activated BPO entry. A genesis that pins an entry for
+        // Amsterdam anyway applies from the first of Amsterdam, Hegotá and LStar to
+        // activate.
+        //
+        // The entry in force is the one activated last. BPO3 and later may come after
+        // Amsterdam, as they do on the test forks since tests@v21.0.2, so a fixed
+        // precedence between the two cannot work. Entries that activate at the same
+        // timestamp resolve in the order below, where BPO3 and later follow Amsterdam.
+        let amsterdam_time = [self.amsterdam_time, self.hegota_time, self.lstar_time]
+            .into_iter()
+            .flatten()
+            .min();
+        [
+            (self.cancun_time, Some(self.blob_schedule.cancun)),
+            (self.prague_time, Some(self.blob_schedule.prague)),
+            (self.osaka_time, Some(self.blob_schedule.osaka)),
+            (self.bpo1_time, Some(self.blob_schedule.bpo1)),
+            (self.bpo2_time, Some(self.blob_schedule.bpo2)),
+            (amsterdam_time, self.blob_schedule.amsterdam),
+            (self.bpo3_time, self.blob_schedule.bpo3),
+            (self.bpo4_time, self.blob_schedule.bpo4),
+            (self.bpo5_time, self.blob_schedule.bpo5),
+        ]
+        .into_iter()
+        .enumerate()
+        .filter_map(|(pos, (time, schedule))| {
+            let time = time.filter(|&time| time <= block_timestamp)?;
+            Some((time, pos, schedule?))
+        })
+        .max_by_key(|&(time, pos, _)| (time, pos))
+        .map(|(_, _, schedule)| schedule)
     }
 
     pub fn fork(&self, block_timestamp: u64) -> Fork {
@@ -722,9 +716,9 @@ pub struct GenesisAccount {
     pub code: Bytes,
     #[serde(default)]
     pub storage: BTreeMap<U256, U256>,
-    #[serde(deserialize_with = "crate::serde_utils::u256::deser_hex_or_dec_str")]
+    #[serde(deserialize_with = "crate::serde_utils::u256::hex_or_dec::deserialize")]
     pub balance: U256,
-    #[serde(default, with = "crate::serde_utils::u64::hex_str")]
+    #[serde(default, with = "crate::serde_utils::u64::hex_or_dec")]
     pub nonce: u64,
 }
 
@@ -875,6 +869,97 @@ mod tests {
         assert!(
             err.to_string().contains("finite, non-negative"),
             "error should name the sign/finiteness cause, got: {err}"
+        );
+    }
+
+    #[test]
+    fn genesis_quantities_accept_numbers_and_hex_or_decimal_strings() {
+        // geth reads these fields as a JSON number, a 0x-hex string or a decimal
+        // string, and genesis files written by other tooling use all three. An
+        // unprefixed string is decimal, so "10" must not be read as 0x10.
+        let fixture: serde_json::Value = serde_json::from_reader(BufReader::new(
+            File::open("../../fixtures/genesis/l1.json").expect("Failed to open genesis file"),
+        ))
+        .expect("Failed to deserialize genesis file");
+        for encoded in [
+            serde_json::json!(10),
+            serde_json::json!("0xa"),
+            serde_json::json!("0XA"),
+            serde_json::json!("10"),
+        ] {
+            let account: GenesisAccount =
+                serde_json::from_value(serde_json::json!({"balance": encoded, "nonce": encoded}))
+                    .expect("account quantities should parse");
+            assert_eq!(
+                (account.balance, account.nonce),
+                (U256::from(10), 10),
+                "account quantities {encoded}"
+            );
+
+            let mut genesis = fixture.clone();
+            for field in [
+                "gasLimit",
+                "nonce",
+                "timestamp",
+                "baseFeePerGas",
+                "blobGasUsed",
+                "excessBlobGas",
+                "slotNumber",
+            ] {
+                genesis[field] = encoded.clone();
+            }
+            let genesis: Genesis =
+                serde_json::from_value(genesis).expect("genesis header fields should parse");
+            assert_eq!(
+                (genesis.gas_limit, genesis.nonce, genesis.timestamp),
+                (10, 10, 10),
+                "genesis header fields {encoded}"
+            );
+            assert_eq!(
+                (
+                    genesis.base_fee_per_gas,
+                    genesis.blob_gas_used,
+                    genesis.excess_blob_gas,
+                    genesis.slot_number
+                ),
+                (Some(10), Some(10), Some(10), Some(10)),
+                "optional genesis header fields {encoded}"
+            );
+        }
+
+        // As in geth, an empty string is 0.
+        let account: GenesisAccount =
+            serde_json::from_value(serde_json::json!({"balance": "", "nonce": ""}))
+                .expect("empty account quantities should parse");
+        assert_eq!((account.balance, account.nonce), (U256::zero(), 0));
+
+        for invalid in [
+            serde_json::json!(-1),
+            serde_json::json!("0xzz"),
+            serde_json::json!("0x"),
+            serde_json::json!("0x0x10"),
+            serde_json::json!("+10"),
+            serde_json::json!(true),
+        ] {
+            assert!(
+                serde_json::from_value::<GenesisAccount>(
+                    serde_json::json!({"balance": "0", "nonce": invalid})
+                )
+                .is_err(),
+                "account nonce {invalid} must be rejected"
+            );
+            assert!(
+                serde_json::from_value::<GenesisAccount>(serde_json::json!({"balance": invalid}))
+                    .is_err(),
+                "account balance {invalid} must be rejected"
+            );
+        }
+        // serde_json holds an integer this large as a float, so it must be rejected
+        // rather than rounded.
+        assert!(
+            serde_json::from_str::<GenesisAccount>(r#"{"balance": 1000000000000000000000000}"#)
+                .is_err(),
+            "a balance above u64::MAX given as a JSON number must be rejected"
         );
     }
 
@@ -1544,5 +1629,36 @@ mod tests {
         };
         config.blob_schedule.amsterdam = Some(pinned);
         assert_eq!(config.get_fork_blob_schedule(100), Some(pinned));
+    }
+
+    #[test]
+    fn bpo3_after_amsterdam_replaces_its_schedule() {
+        // tests@v21.0.2 schedules BPO3 after Amsterdam (`AmsterdamBPOIncrease`), with
+        // the Amsterdam entry pinned to the BPO2 values. BPO3 must take over from its
+        // activation on, including when both activate at the same timestamp.
+        let bpo3 = ForkBlobSchedule {
+            target: 21,
+            max: 32,
+            base_fee_update_fraction: 17527006,
+        };
+        let mut config = ChainConfig {
+            osaka_time: Some(0),
+            bpo1_time: Some(0),
+            bpo2_time: Some(0),
+            amsterdam_time: Some(0),
+            bpo3_time: Some(15_000),
+            ..Default::default()
+        };
+        config.blob_schedule.amsterdam = Some(default_bpo2_schedule());
+        config.blob_schedule.bpo3 = Some(bpo3);
+
+        assert_eq!(
+            config.get_fork_blob_schedule(14_999),
+            Some(default_bpo2_schedule())
+        );
+        assert_eq!(config.get_fork_blob_schedule(15_000), Some(bpo3));
+
+        config.bpo3_time = Some(0);
+        assert_eq!(config.get_fork_blob_schedule(0), Some(bpo3));
     }
 }

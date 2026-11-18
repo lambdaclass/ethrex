@@ -2,14 +2,14 @@ use crate::{
     account::LevmAccount,
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
-    memory::Memory,
+    memory::{CallData, Memory},
     utils::restore_cache_state,
     vm::VM,
 };
 use bytes::Bytes;
+use ethrex_common::seeded_hash::SeededHashMap;
 use ethrex_common::types::block_access_list::BlockAccessListCheckpoint;
 use ethrex_common::{Address, H256, U256, types::Code};
-use rustc_hash::FxHashMap;
 use std::{
     fmt,
     hash::{Hash, Hasher},
@@ -102,13 +102,26 @@ impl Stack {
     }
 
     /// Pop the top value and return it together with a mutable reference to the new top.
-    /// For binary ops: `let (a, b) = pop1_and_top_mut()?; *b = f(a, *b)` writes the result
+    /// For binary ops: `let (&a, b) = pop1_and_top_mut()?; *b = f(a, *b)` writes the result
     /// in place (one `offset` write instead of `pop::<2>` + `push`'s two), where `a` is the
     /// original top and `*b` the original second operand.
+    ///
+    /// The popped value is returned by reference. Returned by value inside the `Result`, it
+    /// would share its first byte with the error, and LLVM would copy it into a temporary in
+    /// pieces that a 32-byte load can't forward from, stalling every EQ.
     #[inline]
-    pub fn pop1_and_top_mut(&mut self) -> Result<(U256, &mut U256), ExceptionalHalt> {
-        let a = self.pop1()?;
-        Ok((a, self.top_mut()?))
+    pub fn pop1_and_top_mut(&mut self) -> Result<(&U256, &mut U256), ExceptionalHalt> {
+        let new_top = self.offset.wrapping_add(1);
+        if new_top >= self.values.len() {
+            return Err(ExceptionalHalt::StackUnderflow);
+        }
+        self.offset = new_top;
+        let (popped, rest) = self.values.split_at_mut(new_top);
+        match (popped.last(), rest.first_mut()) {
+            (Some(a), Some(b)) => Ok((a, b)),
+            // Unreachable: `new_top` is at least 1 and below the length, so neither half is empty.
+            _ => Err(ExceptionalHalt::StackUnderflow),
+        }
     }
 
     /// Push a single U256 value to the stack, faster than the generic push.
@@ -303,7 +316,7 @@ pub struct CallFrame {
     pub stack: Stack,
     pub memory: Memory,
     /// Data sent along the transaction. Empty in CREATE transactions.
-    pub calldata: Bytes,
+    pub calldata: CallData,
     /// Return data of the CURRENT CONTEXT (see docs for more details)
     pub output: Bytes,
     /// Return data of the SUB-CONTEXT (see docs for more details)
@@ -341,8 +354,10 @@ pub struct CallFrame {
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct CallFrameBackup {
-    pub original_accounts_info: FxHashMap<Address, LevmAccount>,
-    pub original_account_storage_slots: FxHashMap<Address, FxHashMap<H256, U256>>,
+    /// Both maps are seeded: the
+    /// accounts and slots a frame touches are chosen by contract code.
+    pub original_accounts_info: SeededHashMap<Address, LevmAccount>,
+    pub original_account_storage_slots: SeededHashMap<Address, SeededHashMap<H256, U256>>,
     /// BAL checkpoint for EIP-7928 - used to restore state changes on revert
     /// while preserving touched_addresses.
     pub bal_checkpoint: Option<BlockAccessListCheckpoint>,
@@ -439,7 +454,7 @@ impl CallFrame {
         code_address: Address,
         bytecode: Code,
         msg_value: U256,
-        calldata: Bytes,
+        calldata: CallData,
         is_static: bool,
         gas_limit: u64,
         depth: usize,

@@ -211,15 +211,16 @@ impl RpcExecutionWitness {
         crypto: &dyn Crypto,
     ) -> Result<ExecutionWitness, GuestProgramStateError> {
         let initial_state_root = find_parent_state_root(decoded_headers, first_block_number)?;
-        // Drop the `0x80` Null-node sentinel some `debug_executionWitness` producers emit.
-        // Undecodable/unused nodes are dropped per EELS
+        // Drop nodes shorter than a hash, as `rebuild_state_and_storage_tries` explains,
+        // which also drops the `0x80` Null-node sentinel some `debug_executionWitness`
+        // producers emit. Undecodable/unused nodes are dropped per EELS
         // `test_validation_state_extra_unused_trie_node`; missing needed nodes surface
         // later as `RootNotFound` from `get_embedded_root_committed`.
         let nodes: FxHashMap<H256, Node> = self
             .state
             .into_iter()
             .filter_map(|b| {
-                if b == Bytes::from_static(&[0x80]) {
+                if b.len() < 32 {
                     return None;
                 }
                 let node = Node::decode(&b).ok()?;
@@ -229,8 +230,12 @@ impl RpcExecutionWitness {
 
         // get state trie root and embed the rest of the trie into it
         let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
-            Trie::get_embedded_root_committed(&nodes, initial_state_root, crypto)?
-        {
+            Trie::get_embedded_root_committed(
+                &nodes,
+                initial_state_root,
+                crypto,
+                SECURED_TRIE_KEY_NIBBLES,
+            )? {
             Some((*state_trie_root).clone())
         } else {
             None
@@ -256,7 +261,12 @@ impl RpcExecutionWitness {
                 if !nodes.contains_key(&storage_root_hash) {
                     continue;
                 }
-                let node = Trie::get_embedded_root_committed(&nodes, storage_root_hash, crypto)?;
+                let node = Trie::get_embedded_root_committed(
+                    &nodes,
+                    storage_root_hash,
+                    crypto,
+                    SECURED_TRIE_KEY_NIBBLES,
+                )?;
                 let NodeRef::Node(node, _) = node else {
                     return Err(GuestProgramStateError::Custom(
                         "execution witness does not contain non-empty storage trie".to_string(),
@@ -355,6 +365,17 @@ where
             // correct place to reject — and the post-execution state-root check
             // still binds the result either way. Hard-failing here rejected
             // witnesses the spec accepts.
+            //
+            // A node shorter than 32 bytes is skipped the same way. Such a node is
+            // embedded in its parent, so the only way to reach it by hash is a
+            // malformed reference, which the spec rejects once the block reaches it
+            // (execution-specs #3934). Without the node that reference is just
+            // missing and fails there too. A root is the one node referenced by
+            // hash whatever its length, but no root of a secured trie is that
+            // short: the encoding has to carry a whole 64-nibble key.
+            if bytes.len() < 32 {
+                return None;
+            }
             Some((H256(crypto.keccak256(bytes)), Node::decode(bytes).ok()?))
         })
         .collect();
@@ -363,8 +384,12 @@ where
     // reuses the known value instead of re-encoding and re-hashing the whole trie.
     // Sound here because `nodes` is keyed by the hash of the very bytes it decodes.
     let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
-        Trie::get_embedded_root_committed(&nodes, initial_state_root, crypto)?
-    {
+        Trie::get_embedded_root_committed(
+            &nodes,
+            initial_state_root,
+            crypto,
+            SECURED_TRIE_KEY_NIBBLES,
+        )? {
         Some((*state_trie_root).clone())
     } else {
         None
@@ -380,7 +405,12 @@ where
             if storage_root_hash == EMPTY_TRIE_HASH || !nodes.contains_key(&storage_root_hash) {
                 continue;
             }
-            let node = Trie::get_embedded_root_committed(&nodes, storage_root_hash, crypto)?;
+            let node = Trie::get_embedded_root_committed(
+                &nodes,
+                storage_root_hash,
+                crypto,
+                SECURED_TRIE_KEY_NIBBLES,
+            )?;
             let NodeRef::Node(node, _) = node else {
                 return Err(GuestProgramStateError::Custom(
                     "execution witness does not contain non-empty storage trie".to_string(),
@@ -516,6 +546,11 @@ fn collect_accounts_from_trie(
     }
 }
 
+/// Nibbles in a secured trie key: the keccak of an address or of a storage slot.
+/// Embedding rejects a witness trie whose paths do not end there
+/// (`test_witness_state_rejects_overlength_secured_trie_path`).
+const SECURED_TRIE_KEY_NIBBLES: usize = 64;
+
 #[derive(thiserror::Error, Debug)]
 pub enum GuestProgramStateError {
     #[error("Failed to rebuild tries: {0}")]
@@ -621,7 +656,12 @@ impl GuestProgramState {
         account_updates: &[AccountUpdate],
         crypto: &dyn Crypto,
     ) -> Result<(), GuestProgramStateError> {
-        for update in account_updates.iter() {
+        // Apply in address order, as the host does while recording the witness. A removal
+        // that leaves a branch with one child reads that child, so the order decides which
+        // nodes the witness must hold; the list comes from a seeded map, so it is not sorted.
+        let mut ordered: Vec<&AccountUpdate> = account_updates.iter().collect();
+        ordered.sort_unstable_by_key(|update| update.address);
+        for update in ordered {
             let hashed_address = *self
                 .account_hashes_by_address
                 .entry(update.address)
@@ -778,9 +818,15 @@ impl GuestProgramState {
         block_number: u64,
         crypto: &dyn Crypto,
     ) -> Result<H256, GuestProgramStateError> {
+        // BLOCKHASH can ask for one header a million times in a block, and a guest's heap often
+        // never frees, so keep the hash in the header's cache rather than re-encoding it each time.
         self.block_headers
             .get(&block_number)
-            .map(|header| header.compute_block_hash(crypto))
+            .map(|header| {
+                *header
+                    .hash
+                    .get_or_init(|| header.compute_block_hash(crypto))
+            })
             .ok_or_else(|| {
                 GuestProgramStateError::Database(format!(
                     "Block hash not found for block number {block_number}"
@@ -1264,5 +1310,268 @@ mod storage_leaf_decoding_tests {
                 hex::encode(leaf)
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod secured_trie_path_tests {
+    use super::*;
+    use ethrex_crypto::NativeCrypto;
+    use ethrex_trie::NodeHash;
+    use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
+
+    /// Builds a trie mapping every key to an empty account and returns its root plus
+    /// the nodes on the keys' paths, which is what a witness carries for them.
+    fn trie_over(keys: &[Vec<u8>]) -> (H256, BTreeSet<Vec<u8>>) {
+        let mut trie = Trie::new_temp();
+        for key in keys {
+            trie.insert(key.clone(), AccountState::default().encode_to_vec())
+                .expect("insert");
+        }
+        let mut nodes = BTreeSet::new();
+        for key in keys {
+            nodes.extend(trie.get_proof(key).expect("proof"));
+        }
+        (trie.hash_no_commit(&NativeCrypto), nodes)
+    }
+
+    fn rebuild(root: H256, nodes: BTreeSet<Vec<u8>>) -> Result<(), GuestProgramStateError> {
+        rebuild_state_and_storage_tries(nodes, root, &NativeCrypto).map(|_| ())
+    }
+
+    fn assert_rejected(result: Result<(), GuestProgramStateError>) {
+        assert!(
+            matches!(
+                result,
+                Err(GuestProgramStateError::Trie(TrieError::KeyLengthMismatch))
+            ),
+            "expected the secured-path check to reject the trie, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_a_trie_keyed_by_hashes() {
+        let (root, nodes) = trie_over(&[vec![0x11; 32], vec![0x22; 32]]);
+        rebuild(root, nodes).expect("64-nibble keys are the secured key length");
+    }
+
+    #[test]
+    fn rejects_a_leaf_past_the_key_length() {
+        // One key, so the root itself is a 66-nibble leaf.
+        let (root, nodes) = trie_over(&[vec![0x11; 33]]);
+        assert_rejected(rebuild(root, nodes));
+    }
+
+    #[test]
+    fn rejects_leaves_that_run_past_the_key_length_below_a_branch() {
+        // The keys split at the first nibble, so a branch holds two 65-nibble leaves
+        // that each end one nibble past the key.
+        let (root, nodes) = trie_over(&[vec![0x11; 33], vec![0x22; 33]]);
+        assert_rejected(rebuild(root, nodes));
+    }
+
+    #[test]
+    fn rejects_a_leaf_short_of_the_key_length() {
+        let (root, nodes) = trie_over(&[vec![0x11; 31]]);
+        assert_rejected(rebuild(root, nodes));
+    }
+
+    #[test]
+    fn rejects_an_overlength_storage_trie() {
+        let crypto = &NativeCrypto;
+        let (storage_root, storage_nodes) = trie_over(&[vec![0x33; 33]]);
+        let mut state_trie = Trie::new_temp();
+        let hashed_address = vec![0x44; 32];
+        let account = AccountState {
+            storage_root,
+            ..Default::default()
+        };
+        state_trie
+            .insert(hashed_address.clone(), account.encode_to_vec())
+            .expect("insert account");
+        let mut nodes = storage_nodes;
+        nodes.extend(state_trie.get_proof(&hashed_address).expect("proof"));
+        assert_rejected(rebuild(state_trie.hash_no_commit(crypto), nodes));
+    }
+
+    // The shapes below are built by hand, since a trie built by inserting keys never
+    // has them. Each one sits on the path to every key, as in execution-specs #3934's
+    // `test_witness_state_malformed_nodes.py`.
+
+    /// A leaf whose path is `nibbles` zero nibbles long.
+    fn leaf(nibbles: usize, value: Vec<u8>) -> Node {
+        let mut path = vec![0; nibbles];
+        path.push(16);
+        LeafNode::new(Nibbles::from_hex(path), value).into()
+    }
+
+    fn account_leaf(nibbles: usize) -> Node {
+        leaf(nibbles, AccountState::default().encode_to_vec())
+    }
+
+    fn branch(children: Vec<(usize, NodeRef)>, value: Vec<u8>) -> Node {
+        let mut choices = BranchNode::EMPTY_CHOICES;
+        for (index, child) in children {
+            choices[index] = child;
+        }
+        BranchNode { choices, value }.into()
+    }
+
+    fn extension(nibbles: usize, child: NodeRef) -> Node {
+        ExtensionNode::new(Nibbles::from_hex(vec![0; nibbles]), child).into()
+    }
+
+    /// Adds `node` to the witness and returns how its parent refers to it.
+    fn add(nodes: &mut BTreeSet<Vec<u8>>, node: Node) -> NodeRef {
+        let encoded = node.encode_to_vec();
+        let reference = NodeHash::from_encoded(&encoded, &NativeCrypto);
+        nodes.insert(encoded);
+        reference.into()
+    }
+
+    /// Adds `root` to the witness and returns its hash.
+    fn add_root(nodes: &mut BTreeSet<Vec<u8>>, root: Node) -> H256 {
+        let encoded = root.encode_to_vec();
+        let hash = H256(NativeCrypto.keccak256(&encoded));
+        nodes.insert(encoded);
+        hash
+    }
+
+    fn assert_malformed(result: Result<(), GuestProgramStateError>, reason: &str) {
+        assert!(
+            matches!(
+                &result,
+                Err(GuestProgramStateError::Trie(TrieError::MalformedNode(r))) if *r == reason
+            ),
+            "expected the trie to be rejected with {reason:?}, got {result:?}"
+        );
+    }
+
+    /// A witness with a branch at the root over two 63-nibble leaves.
+    fn branch_root(value: Vec<u8>, children: &[usize]) -> (H256, BTreeSet<Vec<u8>>) {
+        let mut nodes = BTreeSet::new();
+        let children = children
+            .iter()
+            .map(|&i| (i, add(&mut nodes, account_leaf(63))))
+            .collect();
+        let root = add_root(&mut nodes, branch(children, value));
+        (root, nodes)
+    }
+
+    #[test]
+    fn rejects_a_branch_holding_a_value() {
+        let (root, nodes) = branch_root(vec![], &[1, 2]);
+        rebuild(root, nodes).expect("a branch over two leaves is well-formed");
+
+        let (root, nodes) = branch_root(vec![0x01], &[1, 2]);
+        assert_malformed(rebuild(root, nodes), "branch holds a value");
+    }
+
+    #[test]
+    fn rejects_a_branch_with_one_child() {
+        let (root, nodes) = branch_root(vec![], &[1]);
+        assert_malformed(rebuild(root, nodes), "branch has fewer than two children");
+    }
+
+    #[test]
+    fn rejects_an_extension_to_a_leaf() {
+        let mut nodes = BTreeSet::new();
+        let below = branch(
+            vec![
+                (1, add(&mut nodes, account_leaf(62))),
+                (2, add(&mut nodes, account_leaf(62))),
+            ],
+            vec![],
+        );
+        let below = add(&mut nodes, below);
+        let root = add_root(&mut nodes, extension(1, below));
+        rebuild(root, nodes).expect("an extension to a branch is well-formed");
+
+        let mut nodes = BTreeSet::new();
+        let below = add(&mut nodes, account_leaf(63));
+        let root = add_root(&mut nodes, extension(1, below));
+        assert_malformed(rebuild(root, nodes), "extension child is not a branch");
+    }
+
+    #[test]
+    fn does_not_resolve_a_hash_reference_to_a_short_node() {
+        // A branch 60 nibbles down holds two 3-nibble leaves, each shorter than a
+        // hash: one embedded as it should be, the other referenced by its hash.
+        let short_leaf = leaf(3, vec![0x01]);
+        let encoded = short_leaf.encode_to_vec();
+        assert!(encoded.len() < 32);
+        let mut nodes = BTreeSet::from([encoded.clone()]);
+        let by_hash = NodeRef::from(NodeHash::Hashed(H256(NativeCrypto.keccak256(&encoded))));
+        let below = branch(
+            vec![
+                (1, NodeHash::from_encoded(&encoded, &NativeCrypto).into()),
+                (2, by_hash),
+            ],
+            vec![],
+        );
+        let below = add(&mut nodes, below);
+        let root = add_root(&mut nodes, extension(60, below));
+
+        let (Some(Node::Extension(root)), _) =
+            rebuild_state_and_storage_tries(nodes, root, &NativeCrypto).expect("rebuild")
+        else {
+            panic!("the root must be the extension");
+        };
+        let NodeRef::Node(below, _) = &root.child else {
+            panic!("the branch is in the witness and must be embedded");
+        };
+        let Node::Branch(below) = &**below else {
+            panic!("the extension's child must be the branch");
+        };
+        // Left as a reference, it fails like a missing node once the block reaches it.
+        assert!(matches!(
+            below.choices[2],
+            NodeRef::Hash(NodeHash::Hashed(_))
+        ));
+    }
+}
+
+#[cfg(test)]
+mod block_hash_tests {
+    use super::*;
+    use ethrex_crypto::NativeCrypto;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Hashes as `NativeCrypto` does and counts the Keccak calls.
+    #[derive(Debug, Default)]
+    struct CountingCrypto(AtomicUsize);
+
+    impl Crypto for CountingCrypto {
+        fn keccak256(&self, input: &[u8]) -> [u8; 32] {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            NativeCrypto.keccak256(input)
+        }
+    }
+
+    #[test]
+    fn get_block_hash_hashes_each_header_once() {
+        let header = BlockHeader {
+            number: 7,
+            ..Default::default()
+        };
+        let expected = header.compute_block_hash(&NativeCrypto);
+        let state = GuestProgramState {
+            codes_hashed: BTreeMap::new(),
+            block_headers: BTreeMap::from([(7, header)]),
+            state_trie: Trie::new_temp(),
+            parent_block_header: BlockHeader::default(),
+            first_block_number: 0,
+            chain_config: ChainConfig::default(),
+            storage_tries: BTreeMap::new(),
+            account_hashes_by_address: BTreeMap::new(),
+            verified_storage_roots: BTreeMap::new(),
+        };
+        let crypto = CountingCrypto::default();
+
+        // BLOCKHASH can ask for the same header many times within one block.
+        for _ in 0..3 {
+            assert_eq!(state.get_block_hash(7, &crypto).unwrap(), expected);
+        }
+        assert_eq!(crypto.0.load(Ordering::Relaxed), 1);
     }
 }

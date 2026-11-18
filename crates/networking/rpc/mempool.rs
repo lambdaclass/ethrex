@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use ethrex_common::{Address, types::TxKind};
 use ethrex_crypto::NativeCrypto;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 
 use crate::{rpc::RpcApiContext, types::transaction::RpcTransaction, utils::RpcErr};
 
@@ -56,7 +56,7 @@ pub fn content(context: RpcApiContext) -> Result<Value, RpcErr> {
         // We have no concept of "queued" transactions yet so we will leave this empty
         queued: MempoolContentEntry::new(),
     };
-    Ok(serde_json::to_value(response)?)
+    serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
 pub fn status(context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -69,11 +69,14 @@ pub fn status(context: RpcApiContext) -> Result<Value, RpcErr> {
         queued: format!("{queued:#x}"),
     };
 
-    Ok(serde_json::to_value(response)?)
+    serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
 /// Handling of rpc endpoint `txpool_contentFrom`
-pub fn content_from(params: &Option<Vec<Value>>, context: RpcApiContext) -> Result<Value, RpcErr> {
+pub fn content_from(
+    params: &Option<Vec<Box<RawValue>>>,
+    context: RpcApiContext,
+) -> Result<Value, RpcErr> {
     let params = params
         .as_ref()
         .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
@@ -83,7 +86,7 @@ pub fn content_from(params: &Option<Vec<Value>>, context: RpcApiContext) -> Resu
             params.len()
         )));
     }
-    let address: Address = serde_json::from_value(params[0].clone())?;
+    let address: Address = serde_json::from_str(params[0].get())?;
     let transactions = context.blockchain.mempool.content()?;
     let mut by_nonce: MempoolContentByNonce = HashMap::new();
     for tx in transactions {
@@ -96,7 +99,7 @@ pub fn content_from(params: &Option<Vec<Value>>, context: RpcApiContext) -> Resu
         // We have no concept of "queued" transactions yet so we will leave this empty
         queued: HashMap::new(),
     };
-    Ok(serde_json::to_value(response)?)
+    serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
 /// Handling of rpc endpoint `txpool_inspect`
@@ -130,5 +133,5 @@ pub fn inspect(context: RpcApiContext) -> Result<Value, RpcErr> {
         // We have no concept of "queued" transactions yet so we will leave this empty
         queued: HashMap::new(),
     };
-    Ok(serde_json::to_value(response)?)
+    serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
 }

@@ -1,5 +1,5 @@
 use ethrex_rpc::types::block_identifier::BlockIdentifier;
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use tracing::debug;
 
 use crate::{
@@ -12,14 +12,14 @@ pub struct GetBaseFeeVaultAddress {
 }
 
 impl RpcHandler for GetBaseFeeVaultAddress {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetBaseFeeVaultAddress, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<GetBaseFeeVaultAddress, RpcErr> {
         let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
             "No params provided".to_owned(),
         ))?;
         if params.len() != 1 {
             return Err(ethrex_rpc::RpcErr::BadParams("Expected 1 param".to_owned()))?;
         };
-        let block = BlockIdentifier::parse(params[0].clone(), 0)?;
+        let block = BlockIdentifier::parse_param(&params[0], 0)?;
 
         Ok(GetBaseFeeVaultAddress { block })
     }
@@ -57,7 +57,7 @@ pub struct GetOperatorFeeVaultAddress {
 }
 
 impl RpcHandler for GetOperatorFeeVaultAddress {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetOperatorFeeVaultAddress, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<GetOperatorFeeVaultAddress, RpcErr> {
         let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
             "No params provided".to_owned(),
         ))?;
@@ -65,7 +65,7 @@ impl RpcHandler for GetOperatorFeeVaultAddress {
             return Err(ethrex_rpc::RpcErr::BadParams("Expected 1 param".to_owned()))?;
         };
         // Parse BlockNumber
-        let block = BlockIdentifier::parse(params[0].clone(), 0)?;
+        let block = BlockIdentifier::parse_param(&params[0], 0)?;
 
         Ok(GetOperatorFeeVaultAddress { block })
     }
@@ -106,14 +106,14 @@ pub struct GetOperatorFee {
 }
 
 impl RpcHandler for GetOperatorFee {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetOperatorFee, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<GetOperatorFee, RpcErr> {
         let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
             "No params provided".to_owned(),
         ))?;
         if params.len() != 1 {
             return Err(ethrex_rpc::RpcErr::BadParams("Expected 1 param".to_owned()))?;
         };
-        let block = BlockIdentifier::parse(params[0].clone(), 0)?;
+        let block = BlockIdentifier::parse_param(&params[0], 0)?;
 
         Ok(GetOperatorFee { block })
     }
@@ -146,14 +146,14 @@ pub struct GetL1FeeVaultAddress {
 }
 
 impl RpcHandler for GetL1FeeVaultAddress {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetL1FeeVaultAddress, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<GetL1FeeVaultAddress, RpcErr> {
         let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
             "No params provided".to_owned(),
         ))?;
         if params.len() != 1 {
             return Err(ethrex_rpc::RpcErr::BadParams("Expected 1 param".to_owned()))?;
         };
-        let block = BlockIdentifier::parse(params[0].clone(), 0)?;
+        let block = BlockIdentifier::parse_param(&params[0], 0)?;
 
         Ok(GetL1FeeVaultAddress { block })
     }
@@ -191,14 +191,14 @@ pub struct GetL1BlobBaseFeeRequest {
 }
 
 impl RpcHandler for GetL1BlobBaseFeeRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetL1BlobBaseFeeRequest, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<GetL1BlobBaseFeeRequest, RpcErr> {
         let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
             "No params provided".to_owned(),
         ))?;
         if params.len() != 1 {
             return Err(ethrex_rpc::RpcErr::BadParams("Expected 1 param".to_owned()))?;
         };
-        let block = BlockIdentifier::parse(params[0].clone(), 0)?;
+        let block = BlockIdentifier::parse_param(&params[0], 0)?;
 
         Ok(GetL1BlobBaseFeeRequest { block })
     }

@@ -275,14 +275,6 @@ where
             let _ = actor_ref.send(prover_protocol::Poll);
             actor_ref.join().await;
         }
-        #[cfg(feature = "openvm")]
-        BackendType::OpenVM => {
-            use crate::backend::OpenVmBackend;
-            let prover: Prover<OpenVmBackend, I> = Prover::new(OpenVmBackend::new(), config);
-            let actor_ref = prover.start_with_backend(Backend::Blocking);
-            let _ = actor_ref.send(prover_protocol::Poll);
-            actor_ref.join().await;
-        }
     }
 }
 

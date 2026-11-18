@@ -2,7 +2,7 @@ use ethrex_common::types::{BlockHash, batch::Batch};
 use ethrex_rpc::types::block_identifier::BlockIdentifier;
 use ethrex_storage::Store;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use tracing::debug;
 
 use crate::{
@@ -61,7 +61,7 @@ pub struct GetBatchByBatchNumberRequest {
 }
 
 impl RpcHandler for GetBatchByBatchNumberRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetBatchByBatchNumberRequest, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<GetBatchByBatchNumberRequest, RpcErr> {
         let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
             "No params provided".to_owned(),
         ))?;
@@ -71,7 +71,7 @@ impl RpcHandler for GetBatchByBatchNumberRequest {
             ))?;
         };
         // Parse BatchNumber
-        let hex_str = serde_json::from_value::<String>(params[0].clone())
+        let hex_str = serde_json::from_str::<String>(params[0].get())
             .map_err(|e| ethrex_rpc::RpcErr::BadParams(e.to_string()))?;
 
         // Check that the BatchNumber is 0x prefixed
@@ -83,7 +83,7 @@ impl RpcHandler for GetBatchByBatchNumberRequest {
         let batch_number =
             u64::from_str_radix(hex_str, 16).map_err(|_| ethrex_rpc::RpcErr::BadHexFormat(0))?;
 
-        let block_hashes = serde_json::from_value(params[1].clone())?;
+        let block_hashes = serde_json::from_str(params[1].get())?;
 
         Ok(GetBatchByBatchNumberRequest {
             batch_number,
@@ -112,7 +112,9 @@ pub struct GetBatchByBatchBlockNumberRequest {
 }
 
 impl RpcHandler for GetBatchByBatchBlockNumberRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<GetBatchByBatchBlockNumberRequest, RpcErr> {
+    fn parse(
+        params: &Option<Vec<Box<RawValue>>>,
+    ) -> Result<GetBatchByBatchBlockNumberRequest, RpcErr> {
         let params = params.as_ref().ok_or(ethrex_rpc::RpcErr::BadParams(
             "No params provided".to_owned(),
         ))?;
@@ -120,7 +122,7 @@ impl RpcHandler for GetBatchByBatchBlockNumberRequest {
             return Err(ethrex_rpc::RpcErr::BadParams("Expected 1 param".to_owned()))?;
         };
         Ok(GetBatchByBatchBlockNumberRequest {
-            block: BlockIdentifier::parse(params[0].clone(), 0)?,
+            block: BlockIdentifier::parse_param(&params[0], 0)?,
         })
     }
 
@@ -167,7 +169,7 @@ impl RpcHandler for GetBatchByBatchBlockNumberRequest {
 pub struct BatchNumberRequest {}
 
 impl RpcHandler for BatchNumberRequest {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         if params.as_ref().is_some_and(|params| !params.is_empty()) {
             return Err(ethrex_rpc::RpcErr::BadParams(
                 "Expected 0 params".to_owned(),

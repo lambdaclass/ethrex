@@ -208,6 +208,8 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     /// G1 point addition. Used by ECADD precompile (0x06).
     /// Input: two uncompressed G1 points (64 bytes each as big-endian x||y).
     /// Output: uncompressed G1 point (64 bytes).
+    /// Callers must reject coordinates `>= p` first, as the precompile does: implementations
+    /// differ there (`NativeCrypto` rejects them, this default reduces them mod p).
     fn bn254_g1_add(&self, p1: &[u8], p2: &[u8]) -> Result<[u8; 64], CryptoError> {
         use ark_bn254::Fq;
         use ark_ec::CurveGroup;
@@ -246,6 +248,8 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     /// G1 scalar multiplication. Used by ECMUL precompile (0x07).
     /// Input: uncompressed G1 point (64 bytes) + scalar (32 bytes big-endian).
     /// Output: uncompressed G1 point (64 bytes).
+    /// Callers must reject coordinates `>= p` first, as the precompile does: implementations
+    /// differ there (`NativeCrypto` rejects them, this default reduces them mod p).
     fn bn254_g1_mul(&self, point: &[u8], scalar: &[u8]) -> Result<[u8; 64], CryptoError> {
         use ark_bn254::{Fq, Fr as FrArk};
         use ark_ec::CurveGroup;
@@ -284,6 +288,8 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     /// Pairing check. Used by ECPAIRING precompile (0x08).
     /// Input: pairs of (G1 64 bytes, G2 128 bytes) as raw byte slices.
     /// Returns true if the pairing equation holds.
+    /// Callers must reject coordinates `>= p` first, as the precompile does: implementations
+    /// differ there (`NativeCrypto` rejects them, this default reduces them mod p).
     fn bn254_pairing_check(&self, pairs: &[(&[u8], &[u8])]) -> Result<bool, CryptoError> {
         use ark_bn254::{Bn254, Fq, G1Affine, G2Affine};
         use ark_ec::pairing::Pairing;
@@ -345,28 +351,7 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     /// Used by MODEXP precompile (0x05).
     #[cfg(feature = "std")]
     fn modexp(&self, base: &[u8], exp: &[u8], modulus: &[u8]) -> Result<Vec<u8>, CryptoError> {
-        use malachite::base::num::arithmetic::traits::ModPow as _;
-        use malachite::base::num::basic::traits::Zero as _;
-        use malachite::{Natural, base::num::conversion::traits::*};
-
-        let base_nat = Natural::from_power_of_2_digits_desc(8u64, base.iter().cloned())
-            .ok_or(CryptoError::InvalidInput("base"))?;
-        let exp_nat = Natural::from_power_of_2_digits_desc(8u64, exp.iter().cloned())
-            .ok_or(CryptoError::InvalidInput("exponent"))?;
-        let mod_nat = Natural::from_power_of_2_digits_desc(8u64, modulus.iter().cloned())
-            .ok_or(CryptoError::InvalidInput("modulus"))?;
-
-        let result = if mod_nat == Natural::ZERO {
-            Natural::ZERO
-        } else if exp_nat == Natural::ZERO {
-            Natural::from(1_u8) % &mod_nat
-        } else {
-            let base_mod = base_nat % &mod_nat;
-            base_mod.mod_pow(&exp_nat, &mod_nat)
-        };
-
-        let res_bytes: Vec<u8> = result.to_power_of_2_digits_desc(8);
-        pad_modexp_output(res_bytes, modulus.len())
+        modexp_arbitrary_precision(base, exp, modulus)
     }
 
     #[cfg(not(feature = "std"))]
@@ -390,28 +375,15 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
     }
 
     /// 256-bit modular multiplication.
-    /// Used by the MULMOD opcode. Default impl uses standard bigint arithmetic.
+    /// Used by the MULMOD opcode. Default impl reduces the 512-bit product with
+    /// [`crate::u256_div::mul_mod`].
     /// ZisK overrides with a native circuit instruction.
     fn mulmod256(&self, a: &[u8; 32], b: &[u8; 32], m: &[u8; 32]) -> [u8; 32] {
         let a = ethereum_types::U256::from_big_endian(a);
         let b = ethereum_types::U256::from_big_endian(b);
         let m = ethereum_types::U256::from_big_endian(m);
 
-        let result = if m.is_zero() {
-            ethereum_types::U256::zero()
-        } else {
-            let product = a.full_mul(b);
-            let m512 = ethereum_types::U512::from(m);
-            if product < m512 {
-                // Product fits below modulus — no division needed.
-                product.try_into().unwrap_or(ethereum_types::U256::zero())
-            } else {
-                let (_, rem) = product.div_mod(m512);
-                rem.try_into().unwrap_or(ethereum_types::U256::zero())
-            }
-        };
-
-        result.to_big_endian()
+        crate::u256_div::mul_mod(a, b, m).to_big_endian()
     }
 
     // ── Blake2 ─────────────────────────────────────────────────────────
@@ -695,3 +667,34 @@ fn pad_modexp_output(res_bytes: Vec<u8>, modulus_len: usize) -> Result<Vec<u8>, 
 // The BLS12-381 point parse/serialize helpers that backed the portable trait
 // defaults now live in `ethrex-guest-program` alongside the guest `Crypto`
 // providers, so this crate no longer depends on the `bls12_381` git fork.
+
+/// MODEXP over arbitrary-precision integers (the generic path, any operand size).
+#[cfg(feature = "std")]
+pub(crate) fn modexp_arbitrary_precision(
+    base: &[u8],
+    exp: &[u8],
+    modulus: &[u8],
+) -> Result<Vec<u8>, CryptoError> {
+    use malachite::base::num::arithmetic::traits::ModPow as _;
+    use malachite::base::num::basic::traits::Zero as _;
+    use malachite::{Natural, base::num::conversion::traits::*};
+
+    let base_nat = Natural::from_power_of_2_digits_desc(8u64, base.iter().cloned())
+        .ok_or(CryptoError::InvalidInput("base"))?;
+    let exp_nat = Natural::from_power_of_2_digits_desc(8u64, exp.iter().cloned())
+        .ok_or(CryptoError::InvalidInput("exponent"))?;
+    let mod_nat = Natural::from_power_of_2_digits_desc(8u64, modulus.iter().cloned())
+        .ok_or(CryptoError::InvalidInput("modulus"))?;
+
+    let result = if mod_nat == Natural::ZERO {
+        Natural::ZERO
+    } else if exp_nat == Natural::ZERO {
+        Natural::from(1_u8) % &mod_nat
+    } else {
+        let base_mod = base_nat % &mod_nat;
+        base_mod.mod_pow(&exp_nat, &mod_nat)
+    };
+
+    let res_bytes: Vec<u8> = result.to_power_of_2_digits_desc(8);
+    pad_modexp_output(res_bytes, modulus.len())
+}

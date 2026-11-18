@@ -2,7 +2,7 @@
 //! https://datatracker.ietf.org/doc/html/rfc4648#section-4
 //! https://datatracker.ietf.org/doc/html/rfc4648#section-5
 //!
-//! Encoding is implementing with padding at the end (add 1 or 2 '=' if necessary to make the data a multiple of 4)
+//! Encoding omits padding, as required for ENR text form by EIP-778
 //! Decoding does not require the data to be padded, that is it makes no difference if padding is present or not
 
 pub(crate) fn byte_to_alphabet(byte: u8) -> char {
@@ -44,8 +44,6 @@ pub fn encode(bytes: &[u8]) -> Vec<u8> {
             }
         }
 
-        let missing_bytes = 3 - block.len();
-
         // divide each block in a group of 4 concatenated 6 bits
         // and push its alphabet representation
         let mut carry = 0;
@@ -64,14 +62,6 @@ pub fn encode(bytes: &[u8]) -> Vec<u8> {
         }
         let chunk = carry << (6 - carry_bits);
         result.push(byte_to_alphabet(chunk) as u8);
-
-        if missing_bytes == 1 {
-            result.push(b'=');
-        }
-        if missing_bytes == 2 {
-            result.push(b'=');
-            result.push(b'=');
-        }
     }
 
     result

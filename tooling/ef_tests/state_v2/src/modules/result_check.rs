@@ -13,7 +13,7 @@ use ethrex_levm::{
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 use ethrex_vm::backends;
-use rustc_hash::FxHashMap;
+use std::collections::BTreeMap;
 
 use crate::modules::{
     error::RunnerError,
@@ -51,7 +51,8 @@ pub struct AccountMismatch {
     pub balance_diff: Option<(U256, U256)>,
     pub nonce_diff: Option<(u64, u64)>,
     pub code_diff: Option<(H256, H256)>,
-    pub storage_diff: Option<(FxHashMap<H256, U256>, FxHashMap<H256, U256>)>,
+    /// Expected and actual storage, sorted by slot so reports read the same every run.
+    pub storage_diff: Option<(BTreeMap<H256, U256>, BTreeMap<H256, U256>)>,
 }
 
 /// Verify if the test has reached the expected results: if an exception was expected, check it was the corresponding
@@ -306,7 +307,7 @@ fn verify_matching_accounts(
     actual_account: &LevmAccount,
     expected_account: &AccountState,
 ) -> Option<AccountMismatch> {
-    let mut formatted_expected_storage = FxHashMap::default();
+    let mut formatted_expected_storage = BTreeMap::new();
     for (key, value) in &expected_account.storage {
         let formatted_key = H256::from(key.to_big_endian());
         formatted_expected_storage.insert(formatted_key, *value);
@@ -315,7 +316,12 @@ fn verify_matching_accounts(
     let code_matches = actual_account.info.code_hash == keccak(&expected_account.code);
     let balance_matches = actual_account.info.balance == expected_account.balance;
     let nonce_matches = actual_account.info.nonce == expected_account.nonce;
-    let storage_matches = formatted_expected_storage == actual_account.storage;
+    let actual_storage: BTreeMap<H256, U256> = actual_account
+        .storage
+        .iter()
+        .map(|(slot, value)| (*slot, *value))
+        .collect();
+    let storage_matches = formatted_expected_storage == actual_storage;
 
     if !code_matches {
         account_mismatch.code_diff = Some((
@@ -331,8 +337,7 @@ fn verify_matching_accounts(
         account_mismatch.nonce_diff = Some((expected_account.nonce, actual_account.info.nonce));
     }
     if !storage_matches {
-        account_mismatch.storage_diff =
-            Some((formatted_expected_storage, actual_account.storage.clone()));
+        account_mismatch.storage_diff = Some((formatted_expected_storage, actual_storage));
     }
 
     if account_mismatch != AccountMismatch::default() {

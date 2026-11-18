@@ -18,6 +18,7 @@ ethrex-dev = { path = "../../crates/blockchain/dev", optional = true }
 ethrex-l2 = { workspace = true, optional = true }
 ethrex-l2-common = { workspace = true, optional = true }
 ethrex-l2-rpc = { workspace = true, optional = true }
+ethrex-partial = { workspace = true, optional = true }
 ethrex-metrics = { path = "../../crates/blockchain/metrics" }
 ethrex-p2p.workspace = true
 ethrex-repl.workspace = true
@@ -112,6 +113,9 @@ jemalloc_profiling = [
   "ethrex-rpc/jemalloc_profiling",
 ]
 sync-test = ["ethrex-p2p/sync-test"]
+# Optional partial stateful node mode (`ethrex partial-stateful-node`, alias `psn`): proven
+# partial state kept current with block access lists, with EIP-8440 execution chain proofs.
+partial = ["dep:ethrex-partial"]
 
 l2 = [
   "ethrex-l2",

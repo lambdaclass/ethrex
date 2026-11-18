@@ -7,9 +7,9 @@ End-to-End tests with Hive. Hive is a system which sends RPC commands to Ethereu
 This project uses three key repositories for Hive testing:
 
 1. **[ethereum/hive](https://github.com/ethereum/hive)** - The main Hive testing framework
-   - Current commit: `0921fb7833e3de180eacdc9f26de6e51dcab0dba`
+   - Commit: the `hive_version` pinned in `.github/config/hive/pins.yaml`
 2. **[ethereum/execution-specs](https://github.com/ethereum/execution-specs)** - Test fixtures and vectors (the former `ethereum/execution-spec-tests` repo is archived)
-   - Mainnet: `tests@v20.0.1` (Osaka + BPO1 + BPO2); Amsterdam: `tests-glamsterdam-devnet@v8.0.0`
+   - Fixtures: the release pinned in `tooling/ef_tests/.fixtures_url`, which carries every fork through Amsterdam
 3. **[ethereum/execution-specs](https://github.com/ethereum/execution-specs)** - Fork specifications
    - Current branch: `forks/amsterdam`
 
@@ -275,29 +275,19 @@ rm -rf ./hive
 
 The project pins specific versions of the three repositories for Amsterdam fork support:
 
-### Makefile Configuration
+### Pin file (.github/config/hive/pins.yaml)
 
-```makefile
-# ethereum/hive branch
-HIVE_BRANCH ?= master
+One file holds what the hive runs are pinned to: `tag`, the EELS simulator image tag of the fixture release; `hive_version`, the hive commit; and the pins of the two simulators that need their own, rpc-compat and consume-wirex. Each key carries a comment that says why it has the value it has.
+
+PR CI (`pr-main_l1.yaml`) and the daily report (`daily_hive_report.yaml`) both get their hive flags and hive commit from `.github/scripts/hive-flags.sh`, which reads that file:
+
+```bash
+$ .github/scripts/hive-flags.sh --simulation ethereum/eels/consume-enginex
+flags=--sim.parallelism 4 --sim.loglevel 3 --docker.buildoutput --sim.buildarg tag=<tag>
+hive_version=<hive_version>
 ```
 
-### Workflow Configuration (.github/workflows/daily_hive_report.yaml)
-
-Fixtures come from [ethereum/execution-specs](https://github.com/ethereum/execution-specs) (the archived `ethereum/execution-spec-tests` repo is no longer used). The workflow uses fork-specific fixtures to ensure comprehensive test coverage, pinned via config files under `.github/config/hive/`:
-
-```yaml
-# Amsterdam tests read their pin from .github/config/hive/amsterdam.yaml
-if [[ "$SIM_LIMIT" == *"fork_Amsterdam"* ]]; then
-  FLAGS+=" --sim.buildarg fixtures=$AMSTERDAM_FIXTURES"
-  FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
-else
-  # Other forks use the mainnet bundle (.github/config/hive/mainnet.yaml),
-  # which includes comprehensive coverage including ported static tests.
-  FLAGS+=" --sim.buildarg fixtures=$MAINNET_FIXTURES"
-  FLAGS+=" --sim.buildarg branch=$MAINNET_EELS_COMMIT"
-fi
-```
+The root `Makefile` reads `tag` and `hive_version` from the same file, so `make setup-hive` checks out the hive commit CI runs and the local `run-hive-eels*` targets run the image CI runs. With `SIMULATION=ethereum/rpc-compat` or `SIMULATION=ethereum/eels/consume-wirex`, `make run-hive` takes that simulator's own pins instead, as CI does. Set `HIVE_BRANCH` to a branch or to another commit, by its full hash, to try a different hive.
 
 ### Fixtures URL Files
 
@@ -312,44 +302,36 @@ Contents:
 
 ```
 # .fixtures_url
-https://github.com/ethereum/execution-specs/releases/download/tests%40v21.0.0/fixtures.tar.gz
+https://github.com/ethereum/execution-specs/releases/download/tests%40v21.0.2/fixtures.tar.gz
 ```
 
-The CI hive config lives in `.github/config/hive/{mainnet,amsterdam}.yaml`, each pinning a `fixtures` URL and an `eels_commit` (the execution-specs commit used to build the hive consumer).
+`tag` in `.github/config/hive/pins.yaml` is the EELS simulator image tag of that same fixture release. The images, `ghcr.io/ethereum/execution-specs/hive/<simulator>:<tag>`, are published by execution-specs and carry that release's fixtures and framework, so hive pulls them instead of building the simulator from source; release tags such as `v21.0.1` are immutable.
 
 ## Updating Repository Versions
 
-To update to a different fork or newer versions:
-
-1. **Update Hive commit** in `Makefile`:
-
-   ```makefile
-   HIVE_BRANCH ?= <new-commit-hash>
-   ```
-
-2. **Update the hive fixture versions** in `.github/config/hive/`:
-
-   For mainnet forks, edit `.github/config/hive/mainnet.yaml`:
-
-   ```yaml
-   fixtures: https://github.com/ethereum/execution-specs/releases/download/tests%40<version>/fixtures.tar.gz
-   eels_commit: <execution-specs-commit>
-   ```
-
-   Edit `.github/config/hive/amsterdam.yaml` the same way. It takes the same `tests@` bundle as mainnet, kept on its own file because the Amsterdam sims may need to run against a different release while a fork is in flight. The local `run-hive-eels-amsterdam` and `run-hive-build-block` targets read this file too, so a bump here reaches both CI and local runs.
-
-3. **Update fixtures URL files** shared by the local runners (blockchain / state / engine):
+1. **Fixture release.** Run the bump script, which moves `tooling/ef_tests/.fixtures_url`, `tag` in the pin file and the documents that name the release, after checking that the release has a fixture bundle and that execution-specs has published the image of every simulator we run for it:
 
    ```bash
-   # Mainnet fixtures (Amsterdam included)
-   echo "https://github.com/ethereum/execution-specs/releases/download/tests%40<version>/fixtures.tar.gz" > tooling/ef_tests/.fixtures_url
-   # zkEVM (EIP-8025 stateless) fixtures, which share the mainnet release numbering
-   echo "https://github.com/ethereum/execution-specs/releases/download/tests-zkevm%40<version>/fixtures_zkevm.tar.gz" > tooling/ef_tests/.fixtures_url_zkevm
+   .github/scripts/bump-fixtures.sh v<version> --zkevm v<zkevm version>
    ```
 
-4. **Update fork references** in code if switching to a different fork:
-   - `.github/workflows/daily_hive_report.yaml` - Test names and patterns
-   - `tooling/hive_report/src/main.rs` - Fork ranking and result processing
+   A zkEVM bundle is filled from one `tests@` release, so a new base needs `--zkevm` with a zkEVM release filled from it, and the script refuses the bump without one, before it edits anything. To move only the zkEVM bundle, leave the base out:
+
+   ```bash
+   .github/scripts/bump-fixtures.sh --zkevm v<zkevm version>
+   ```
+
+   consume-wirex does not move with the bump: it keeps the image in `consume_wirex_tag`, with the fixtures that image was built from, until that pin is moved by hand. It runs in PR CI on that image, so once the client follows a release that changed what a test expects, the `consume-wirex` jobs fail on those tests until the pin is moved to an image built from the new fixtures.
+
+   `make check-fixture-pins` fails when these places name different releases. It runs in PR CI.
+
+2. **Hive commit.** Edit `hive_version` in `.github/config/hive/pins.yaml`. CI and `make setup-hive` both follow it.
+
+3. **New forks.** If the release adds forks or networks:
+   - `tooling/ef_tests/blockchain/fork.rs` and `tooling/ef_tests/engine/src/fixture.rs` - the ef-test runners' fork definitions
+   - `.github/workflows/daily_hive_report.yaml` - the fork each daily job's limit selects
+   - `.github/workflows/pr-main_l1.yaml` - the `fork` list of the `consume-enginex` and `consume-wirex` jobs, one job per fork and two for Amsterdam: a fork that is not in it does not run in PR CI
+   - `tooling/hive_report/src/main.rs` - `FORK_ORDER`, the order the report lists forks in
 
 ## Troubleshooting
 

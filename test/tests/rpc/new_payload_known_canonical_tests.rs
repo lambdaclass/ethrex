@@ -11,6 +11,7 @@
 //! state root execution cannot produce) and is installed as the canonical head without
 //! being executed, which is the state a node is in when it re-executes an old block.
 
+use ethrex_rpc::test_utils::raw_params;
 use std::{fs::File, io::BufReader, path::PathBuf};
 
 use bytes::Bytes;
@@ -79,7 +80,7 @@ fn new_payload_v5(block: Block, built: &PayloadBuildResult) -> NewPayloadV5Reque
         json!(H256::zero()),
         Value::Array(requests),
     ]);
-    NewPayloadV5Request::parse(&params).expect("well-formed newPayloadV5 params")
+    NewPayloadV5Request::parse(&raw_params(&params)).expect("well-formed newPayloadV5 params")
 }
 
 /// Block 1 executed and canonical, then a block 2 whose header cannot be reproduced by

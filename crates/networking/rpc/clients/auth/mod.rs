@@ -43,7 +43,8 @@ impl EngineClient {
     }
 
     async fn send_request(&self, request: RpcRequest) -> Result<RpcResponse, EngineClientError> {
-        self.client
+        let response = self
+            .client
             .post(&self.execution_client_url)
             .bearer_auth(self.auth_token()?)
             .header("content-type", "application/json")
@@ -51,7 +52,24 @@ impl EngineClient {
                 EngineClientError::FailedToSerializeRequestBody(format!("{error}: {request:?}"))
             })?)
             .send()
-            .await?
+            .await?;
+        // A request the server turns away before handling it (bad token, body too large,
+        // no room in the budget, body too slow) gets an error status. A 401 carries a
+        // plain-text reason, the others usually a JSON-RPC error with a null id, which
+        // `RpcResponse` cannot decode.
+        let status = response.status();
+        if !status.is_success() {
+            let text = response.text().await?;
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                return Err(EngineClientError::Unauthorized(text));
+            }
+            let reason = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|body| body["error"]["message"].as_str().map(str::to_owned))
+                .unwrap_or(text);
+            return Err(EngineClientError::Rejected(status, reason));
+        }
+        response
             .json::<RpcResponse>()
             .await
             .map_err(EngineClientError::from)

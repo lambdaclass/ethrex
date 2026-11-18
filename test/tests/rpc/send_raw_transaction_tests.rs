@@ -7,6 +7,7 @@
 //! (gated on `BlockchainType::L1`); see the `blockchain` test domain.
 use ethrex_common::types::{EIP1559Transaction, FeeTokenTransaction, Transaction};
 use ethrex_rpc::rpc::RpcHandler;
+use ethrex_rpc::test_utils::raw_params;
 use ethrex_rpc::types::transaction::SendRawTransactionRequest;
 use serde_json::{Value, json};
 
@@ -21,7 +22,7 @@ fn raw_tx_params(tx: &Transaction) -> Option<Vec<Value>> {
 #[test]
 fn send_raw_transaction_parse_accepts_fee_token() {
     let tx = Transaction::FeeTokenTransaction(FeeTokenTransaction::default());
-    let res = SendRawTransactionRequest::parse(&raw_tx_params(&tx));
+    let res = SendRawTransactionRequest::parse(&raw_params(&raw_tx_params(&tx)));
     assert!(
         res.is_ok(),
         "the shared parser must accept FeeToken (0x7d) so L2 ingress works; \
@@ -33,7 +34,7 @@ fn send_raw_transaction_parse_accepts_fee_token() {
 #[test]
 fn send_raw_transaction_accepts_eip1559() {
     let tx = Transaction::EIP1559Transaction(EIP1559Transaction::default());
-    let res = SendRawTransactionRequest::parse(&raw_tx_params(&tx));
+    let res = SendRawTransactionRequest::parse(&raw_params(&raw_tx_params(&tx)));
     assert!(
         res.is_ok(),
         "a normal EIP-1559 tx must parse at RPC admission (got {res:?})"

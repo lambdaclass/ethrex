@@ -1,0 +1,16 @@
+{
+  "data": [
+    {
+      "message": {
+        "head_block_root": "0xbbab30bca6176ea641ff1c82b4dfb6d76726e144510509c08a9e5a6b89ab88d2",
+        "origin_block_root": "0xbbab30bca6176ea641ff1c82b4dfb6d76726e144510509c08a9e5a6b89ab88d2",
+        "proof_data": "0x0800000052000000bbab30bca6176ea641ff1c82b4dfb6d76726e144510509c08a9e5a6b89ab88d2bbab30bca6176ea641ff1c82b4dfb6d76726e144510509c08a9e5a6b89ab88d2010000000000000001156d6f636b",
+        "proof_type": "1"
+      },
+      "signature": "0x8a5c7b566d33df4a588c7a71c8d92d10d197d7605e222583e3623cb6063e4ac29618f3682f88dce98c439279e1ce702c072591e2357460bf058069aacb38fcc4ab734e4ff262a354f7baa3eeeba6188a712c033b4cce8878812d7804958999dd",
+      "validator_index": "4"
+    }
+  ],
+  "execution_optimistic": false,
+  "finalized": true
+}

@@ -24,6 +24,10 @@ exclude = [
   "discord\\.com/channels",
   "ethereum\\.stackexchange\\.com",
   "hive\\.ethpandaops\\.io",
+  # X answers automated requests to profile pages with 403 (13 of the 16 failed
+  # runs between 2026-09-07 and 2026-10-14). Anchored so hosts that merely end
+  # in "x.com" are still checked.
+  "^https?://(www\\.)?(x|twitter)\\.com/",
 ]
 
 # SUMMARY.md uses intentional mdBook draft chapters (empty links), which

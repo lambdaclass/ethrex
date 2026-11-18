@@ -65,7 +65,10 @@ fn build_risc0_program() {
 #[cfg(all(not(clippy), feature = "sp1-build-elf"))]
 fn build_sp1_program() {
     use hex;
-    use sp1_sdk::{HashableKey, ProverClient};
+    use sp1_sdk::{
+        Elf, HashableKey, ProvingKey,
+        blocking::{Prover, ProverClient},
+    };
 
     let features = if cfg!(feature = "l2") {
         vec!["l2".to_string()]
@@ -80,7 +83,7 @@ fn build_sp1_program() {
             elf_name: Some("riscv32im-succinct-zkvm-elf".to_string()),
             features,
             docker: option_env!("PROVER_REPRODUCIBLE_BUILD").is_some(),
-            tag: "v5.0.8".to_string(),
+            tag: "v6.9.0".to_string(),
             workspace_directory: Some(format!("{}/../../../", env!("CARGO_MANIFEST_DIR"))),
             ..Default::default()
         },
@@ -91,16 +94,19 @@ fn build_sp1_program() {
     let elf = std::fs::read("./bin/sp1/out/riscv32im-succinct-zkvm-elf")
         .expect("could not read SP1 elf file");
     let prover = ProverClient::from_env();
-    let (_, vk) = prover.setup(&elf);
+    let pk = prover
+        .setup(Elf::Dynamic(elf.into()))
+        .expect("could not set up the SP1 program");
+    let vk = pk.verifying_key();
 
     std::fs::write(
         "./bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
-        format!("{}\n", vk.vk.bytes32()),
+        format!("{}\n", vk.bytes32()),
     )
     .expect("could not write SP1 vk-bn254 to file");
     std::fs::write(
         "./bin/sp1/out/riscv32im-succinct-zkvm-vk-u32",
-        format!("0x{}\n", hex::encode(vk.vk.hash_bytes())),
+        format!("0x{}\n", hex::encode(vk.hash_bytes())),
     )
     .expect("could not write SP1 vk-u32 to file");
 }

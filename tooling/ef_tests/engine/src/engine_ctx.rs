@@ -13,11 +13,14 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::DEFAULT_BUILDER_GAS_CEIL;
 use ethrex_p2p::sync_manager::SyncManager;
 use ethrex_rpc::{
-    ClientVersion, GasTipEstimator, NodeData, RpcApiContext, start_block_executor,
+    ClientVersion, DEFAULT_RPC_GAS_CAP, GasTipEstimator, NodeData, RpcApiContext,
+    start_block_executor,
     test_utils::{all_namespaces_for_tests, dummy_sync_manager, example_shared_local_node},
 };
 use ethrex_storage::Store;
 use tokio::sync::{Mutex as TokioMutex, OnceCell};
+
+use crate::RunOptions;
 
 /// Shared SyncManager for `engine_only_context`. Allocated once per process so the
 /// RLPxInitiator OS thread (spawned by `dummy_actor::spawn_on_thread`) is created
@@ -52,15 +55,19 @@ fn thread_local_merkle_pool() -> Arc<rayon::ThreadPool> {
 /// touch it (confirmed by the `rg` invariants above).
 /// `syncer` is `Some(shared)` with `SyncMode::Full`, satisfying the engine handler
 /// requirements in `engine_forkchoiceUpdated*` and `engine_newPayload*`.
-pub async fn engine_only_context(storage: Store) -> RpcApiContext {
+/// The `Blockchain` takes `bal_parallel_exec` and `precompile_cache` from `opts`
+/// (false is the node's `--no-bal-parallel-exec` or `--no-precompile-cache`);
+/// nothing else about it changes.
+pub async fn engine_only_context(storage: Store, opts: &RunOptions) -> RpcApiContext {
     let shared_syncer = SHARED_SYNCER
         .get_or_init(|| async { Arc::new(dummy_sync_manager().await) })
         .await
         .clone();
-    let blockchain = Arc::new(Blockchain::for_test_harness_with_pool(
-        storage.clone(),
-        thread_local_merkle_pool(),
-    ));
+    let mut blockchain =
+        Blockchain::for_test_harness_with_pool(storage.clone(), thread_local_merkle_pool());
+    blockchain.options.bal_parallel_exec_enabled = opts.bal_parallel_exec;
+    blockchain.options.precompile_cache_enabled = opts.precompile_cache;
+    let blockchain = Arc::new(blockchain);
     // The runner owns this context for its whole lifetime, so the executor thread
     // is left detached.
     let (block_worker_channel, _executor) = start_block_executor(blockchain.clone());
@@ -86,8 +93,10 @@ pub async fn engine_only_context(storage: Store) -> RpcApiContext {
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         log_filter_handler: None,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        rpc_gas_cap: DEFAULT_RPC_GAS_CAP,
         block_worker_channel,
         ws: None,
+        log_query_limits: Default::default(),
         allowed_namespaces: Arc::new(all_namespaces_for_tests()),
     }
 }

@@ -5,7 +5,7 @@ use ethrex_blockchain::{
 };
 use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
 use ethrex_p2p::sync::SyncMode;
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 use tracing::{debug, info, warn};
 
 use crate::{
@@ -29,16 +29,14 @@ use crate::{
 /// Returns `Ok(None)` for JSON null or absent param.
 ///
 /// A present but malformed value is `-32602: Invalid params`, which the Amsterdam
-/// Engine API specification requires for `engine_forkchoiceUpdatedV4`; hence
-/// `WrongParam` rather than `BadParams`, which ethrex maps to `-32000`.
-pub(crate) fn parse_custody_columns(value: &Value) -> Result<Option<u128>, RpcErr> {
-    if value.is_null() {
+/// Engine API specification requires for `engine_forkchoiceUpdatedV4`.
+pub(crate) fn parse_custody_columns(value: &RawValue) -> Result<Option<u128>, RpcErr> {
+    let Some(hex_str) = serde_json::from_str::<Option<String>>(value.get())
+        .map_err(|_| RpcErr::WrongParam("custodyColumns".into()))?
+    else {
         return Ok(None);
-    }
-    let hex_str = value
-        .as_str()
-        .ok_or_else(|| RpcErr::WrongParam("custodyColumns".into()))?;
-    let stripped = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+    };
+    let stripped = hex_str.strip_prefix("0x").unwrap_or(&hex_str);
     let bytes = hex::decode(stripped).map_err(|_| RpcErr::WrongParam("custodyColumns".into()))?;
     if bytes.len() != 16 {
         return Err(RpcErr::WrongParam("custodyColumns".into()));
@@ -118,7 +116,7 @@ pub struct ForkChoiceUpdatedV1 {
 }
 
 impl RpcHandler for ForkChoiceUpdatedV1 {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let (fork_choice_state, payload_attributes) = parse(params, false)?;
         Ok(ForkChoiceUpdatedV1 {
             fork_choice_state,
@@ -151,7 +149,7 @@ pub struct ForkChoiceUpdatedV2 {
 }
 
 impl RpcHandler for ForkChoiceUpdatedV2 {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let (fork_choice_state, payload_attributes) = parse(params, false)?;
         Ok(ForkChoiceUpdatedV2 {
             fork_choice_state,
@@ -188,19 +186,18 @@ pub struct ForkChoiceUpdatedV3 {
 
 impl From<ForkChoiceUpdatedV3> for RpcRequest {
     fn from(val: ForkChoiceUpdatedV3) -> Self {
-        RpcRequest {
-            method: "engine_forkchoiceUpdatedV3".to_string(),
-            params: Some(vec![
+        RpcRequest::new(
+            "engine_forkchoiceUpdatedV3",
+            Some(vec![
                 serde_json::json!(val.fork_choice_state),
                 serde_json::json!(val.payload_attributes),
             ]),
-            ..Default::default()
-        }
+        )
     }
 }
 
 impl RpcHandler for ForkChoiceUpdatedV3 {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let (fork_choice_state, payload_attributes) = parse(params, true)?;
         Ok(ForkChoiceUpdatedV3 {
             fork_choice_state,
@@ -237,20 +234,19 @@ impl From<ForkChoiceUpdatedV4> for RpcRequest {
             .map(|m| format!("0x{}", hex::encode(m.to_le_bytes())))
             .map(Value::String)
             .unwrap_or(Value::Null);
-        RpcRequest {
-            method: "engine_forkchoiceUpdatedV4".to_string(),
-            params: Some(vec![
+        RpcRequest::new(
+            "engine_forkchoiceUpdatedV4",
+            Some(vec![
                 serde_json::json!(val.fork_choice_state),
                 serde_json::json!(val.payload_attributes),
                 custody_hex,
             ]),
-            ..Default::default()
-        }
+        )
     }
 }
 
 impl RpcHandler for ForkChoiceUpdatedV4 {
-    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let (fork_choice_state, payload_attributes, custody_columns) = parse_v4(params)?;
         Ok(ForkChoiceUpdatedV4 {
             fork_choice_state,
@@ -276,7 +272,7 @@ impl RpcHandler for ForkChoiceUpdatedV4 {
 }
 
 fn parse(
-    params: &Option<Vec<Value>>,
+    params: &Option<Vec<Box<RawValue>>>,
     is_v3: bool,
 ) -> Result<(ForkChoiceState, Option<PayloadAttributesV3>), RpcErr> {
     let params = params
@@ -287,12 +283,12 @@ fn parse(
         return Err(RpcErr::BadParams("Expected 2 or 1 params".to_owned()));
     }
 
-    let forkchoice_state: ForkChoiceState = serde_json::from_value(params[0].clone())?;
+    let forkchoice_state: ForkChoiceState = serde_json::from_str(params[0].get())?;
     let mut payload_attributes: Option<PayloadAttributesV3> = None;
     if params.len() == 2 {
         // if there is an error when parsing (or the parameter is missing), set to None
         payload_attributes =
-            match serde_json::from_value::<Option<PayloadAttributesV3>>(params[1].clone()) {
+            match serde_json::from_str::<Option<PayloadAttributesV3>>(params[1].get()) {
                 Ok(attributes) => attributes,
                 Err(error) => {
                     warn!("Could not parse payload attributes {}", error);
@@ -395,15 +391,27 @@ async fn handle_forkchoice(
                     context
                         .blockchain
                         .remove_block_transactions_from_pool(&block)?;
-                    // Reset blob sub-pool against on-chain nonces (head-block
-                    // pruning above misses stale blobs from non-head blocks).
+                    // Reset the pool against on-chain nonces (head-block pruning
+                    // above misses txs mined in non-head blocks and txs that lost
+                    // to a same-nonce replacement). This batch-reads every pooled
+                    // sender's account, so it is offloaded to the blocking pool.
                     // Best-effort housekeeping: a state-read failure here must
                     // not fail an otherwise-successful FCU, so log and continue
                     // rather than propagating. The next FCU re-runs the sweep.
-                    if let Err(err) = context.blockchain.remove_stale_blob_txs(block.hash()).await {
-                        warn!(
-                            "Failed to prune stale blob txs from mempool after fork choice: {err}"
-                        );
+                    let blockchain = context.blockchain.clone();
+                    let head_header = block.header.clone();
+                    match tokio::task::spawn_blocking(move || {
+                        blockchain.remove_stale_txs(&head_header)
+                    })
+                    .await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(err)) => {
+                            warn!("Failed to prune stale txs from mempool after fork choice: {err}")
+                        }
+                        Err(err) => {
+                            warn!("Stale-tx pruning task failed to join after fork choice: {err}")
+                        }
                     }
                     // Re-simulate pending frame txs (EIP-8141) whose validity may
                     // have changed because of this block, evicting any that no
@@ -643,7 +651,7 @@ async fn build_payload(
 }
 
 pub(crate) fn parse_v4(
-    params: &Option<Vec<Value>>,
+    params: &Option<Vec<Box<RawValue>>>,
 ) -> Result<(ForkChoiceState, Option<PayloadAttributesV4>, Option<u128>), RpcErr> {
     let params = params
         .as_ref()
@@ -653,17 +661,15 @@ pub(crate) fn parse_v4(
         return Err(RpcErr::BadParams("Expected 1, 2, or 3 params".to_owned()));
     }
 
-    let forkchoice_state: ForkChoiceState = serde_json::from_value(params[0].clone())?;
+    let forkchoice_state: ForkChoiceState = serde_json::from_str(params[0].get())?;
 
     // execution-apis#796: V4 attributes are validated strictly. A present but
     // malformed object (e.g. missing the required targetGasLimit) is rejected
     // rather than silently ignored; an absent/null object yields no attributes.
     let payload_attributes = if params.len() >= 2 {
-        serde_json::from_value::<Option<PayloadAttributesV4>>(params[1].clone()).map_err(
-            |error| {
-                RpcErr::InvalidPayloadAttributes(format!("invalid V4 payload attributes: {error}"))
-            },
-        )?
+        serde_json::from_str::<Option<PayloadAttributesV4>>(params[1].get()).map_err(|error| {
+            RpcErr::InvalidPayloadAttributes(format!("invalid V4 payload attributes: {error}"))
+        })?
     } else {
         None
     };

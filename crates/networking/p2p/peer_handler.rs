@@ -951,18 +951,25 @@ impl PeerHandler {
     /// Request block access lists via snap/2 (`GetBlockAccessLists`/`BlockAccessLists`).
     ///
     /// Tries up to `REQUEST_RETRY_ATTEMPTS` distinct snap/2 peers, skipping any that
-    /// already failed this call. EIP-8189 ("Security Considerations") asks implementations
-    /// to deprioritize unreliable peers rather than let one determine the outcome, so a
-    /// timeout or a malformed reply moves on to another peer instead of ending the replay.
+    /// already failed this call and any in `exclude`. EIP-8189 ("Security
+    /// Considerations") asks implementations to deprioritize unreliable peers rather
+    /// than let one determine the outcome, so a timeout or a malformed reply moves on
+    /// to another peer instead of ending the replay. `exclude` lets the caller carry
+    /// that across calls: a peer that answered a previous request for the same block
+    /// without the list is not the one to ask for it again.
     ///
     /// Returns `None` only once no untried snap/2 peer remains. On success returns
-    /// `(bals, peer_id)` identifying the responding peer, so the caller can attribute a
-    /// later validation failure to whoever served the data.
+    /// `(bals, peer_id)` identifying the responding peer. The reply is not scored
+    /// here: every entry may be the unavailable marker, so only the caller, once it
+    /// has verified and applied an entry, knows whether the peer served anything.
+    /// The caller credits the peer once per list it applies and charges it for a
+    /// list it could not use.
     pub async fn request_snap2_bals(
-        &mut self,
+        &self,
         block_hashes: &[H256],
+        exclude: &[H256],
     ) -> Result<Option<(Vec<Option<BlockAccessList>>, H256)>, PeerHandlerError> {
-        let mut failed_peers: Vec<H256> = Vec::new();
+        let mut failed_peers: Vec<H256> = exclude.to_vec();
 
         for _ in 0..REQUEST_RETRY_ATTEMPTS {
             let Some((peer_id, mut connection, permit)) = self
@@ -991,7 +998,6 @@ impl PeerHandler {
                 Ok(RLPxMessage::Snap2BlockAccessLists(Snap2BlockAccessLists { id, bals }))
                     if id == request_id =>
                 {
-                    self.peer_table.record_success(peer_id)?;
                     return Ok(Some((bals, peer_id)));
                 }
                 _ => {
@@ -1002,7 +1008,7 @@ impl PeerHandler {
             }
         }
 
-        warn!("[SYNCING] no snap/2 peer served block access lists");
+        debug!("[SYNCING] no snap/2 peer served block access lists");
         Ok(None)
     }
 
@@ -1154,10 +1160,10 @@ fn truncate_to_single_chain(block_headers: &mut Vec<BlockHeader>) -> usize {
     dropped
 }
 
-/// Replaces with `None` every block access list that does not hash to the
-/// `block_access_list_hash` of the header at the same position, and returns whether it
-/// replaced any. A wrong list must never reach execution: full sync runs a block with the
-/// list it is given, and a wrong one can get a valid block rejected as invalid.
+/// Replaces with `None` every block access list that is not canonically ordered or does not
+/// hash to the `block_access_list_hash` of the header at the same position, and returns
+/// whether it replaced any. A wrong list must never reach execution: full sync runs a block
+/// with the list it is given, and a wrong one can get a valid block rejected as invalid.
 fn drop_mismatched_block_access_lists(
     block_access_lists: &mut [Option<BlockAccessList>],
     block_headers: &[BlockHeader],
@@ -1165,7 +1171,8 @@ fn drop_mismatched_block_access_lists(
     let mut dropped = false;
     for (bal, header) in block_access_lists.iter_mut().zip(block_headers) {
         if bal.as_ref().is_some_and(|bal| {
-            !bal.matches_commitment(header.block_access_list_hash, &NativeCrypto)
+            bal.validate_ordering().is_err()
+                || !bal.matches_commitment(header.block_access_list_hash, &NativeCrypto)
         }) {
             *bal = None;
             dropped = true;
@@ -1346,5 +1353,26 @@ mod tests {
         ];
         assert!(drop_mismatched_block_access_lists(&mut response, &headers));
         assert_eq!(response, vec![Some(bal(1)), None, None, None, None]);
+    }
+
+    #[test]
+    fn non_canonical_block_access_lists_are_dropped() {
+        use ethrex_common::types::block_access_list::AccountChanges;
+
+        let unsorted_accounts = BlockAccessList::from_accounts(vec![
+            AccountChanges::new(ethrex_common::Address::repeat_byte(2)),
+            AccountChanges::new(ethrex_common::Address::repeat_byte(1)),
+        ]);
+        let mut account = AccountChanges::new(ethrex_common::Address::repeat_byte(1));
+        account.add_storage_read(ethrex_common::U256::one());
+        account.add_storage_read(ethrex_common::U256::zero());
+        let unsorted_reads = BlockAccessList::from_accounts(vec![account]);
+
+        for bal in [unsorted_accounts, unsorted_reads] {
+            let headers = [header_committing_to(&bal)];
+            let mut response = vec![Some(bal)];
+            assert!(drop_mismatched_block_access_lists(&mut response, &headers));
+            assert_eq!(response, vec![None]);
+        }
     }
 }

@@ -67,7 +67,10 @@ pub use self::{
 };
 
 pub use self::error::{ExtensionNodeErrorData, InconsistentTreeError, TrieError};
-use self::{node::LeafNode, trie_iter::TrieIterator};
+use self::{
+    node::{BranchNode, ExtensionNode, LeafNode},
+    trie_iter::TrieIterator,
+};
 
 use ethrex_rlp::decode::RLPDecode;
 
@@ -498,11 +501,35 @@ impl Trie {
 
     /// Gets node with embedded references to child nodes, all in just one `Node`.
     ///
+    /// Every key in the trie must be `key_nibbles` long, as in the state and
+    /// storage tries, whose keys are 64-nibble keccak256 hashes. A decoded node
+    /// that cannot be part of such a trie is rejected, as EELS
+    /// `_check_secured_path` and `_decode_witness_node` do (execution-specs
+    /// #3193, #3934): a leaf path must end exactly at the key length, an
+    /// extension must stop short of it and a branch must sit above it. A branch
+    /// must also have at least two children and no value, since no key ends at
+    /// a branch, and an extension needs a non-empty path and a branch as its
+    /// child. A child referenced only by hash is not in `all_nodes`, so it has
+    /// nothing decoded to check. The checks run while embedding because a
+    /// separate walk over every child slot cost the zkVM guest about eight
+    /// times as much.
+    ///
+    /// The spec checks a node only when a trie operation reaches it, so it
+    /// accepts a malformed node off the block's path that this rejects. Upstream
+    /// allows a guest to check every node up front: a real state has no
+    /// malformed nodes, so the two only disagree on a parent state built by hand.
+    ///
+    /// `all_nodes` must not hold nodes whose encoding is shorter than 32 bytes:
+    /// such a node is embedded in its parent, so a hash reference to it is
+    /// malformed, and leaving it out makes that reference fail like any other
+    /// missing node once the block reaches it.
+    ///
     /// Note that this method caches the hash of each node, so it assumes the provided `all_nodes` are well-formed.
     pub fn get_embedded_root_committed(
         all_nodes: &FxHashMap<H256, Node>,
         root_hash: H256,
         crypto: &dyn Crypto,
+        key_nibbles: usize,
     ) -> Result<NodeRef, TrieError> {
         // If the root hash is of the empty trie then we can get away by setting the NodeRef to default
         if root_hash == EMPTY_TRIE_HASH {
@@ -523,13 +550,93 @@ impl Trie {
             NodeRef::Node(Arc::new(node), OnceLock::from(hash))
         }
 
+        /// Key nibbles a leaf spells. A decoded leaf path ends with the 16
+        /// terminator, which is not a key nibble.
+        fn leaf_path_len(leaf: &LeafNode) -> usize {
+            leaf.partial.len() - usize::from(leaf.partial.is_leaf())
+        }
+
+        /// Checks a branch on its own, before any of its children: it must sit
+        /// above the key length, hold no value and have at least two children.
+        fn check_branch(branch: &BranchNode, remaining: usize) -> Result<(), TrieError> {
+            if remaining == 0 {
+                return Err(TrieError::KeyLengthMismatch);
+            }
+            if !branch.value.is_empty() {
+                return Err(TrieError::MalformedNode("branch holds a value"));
+            }
+            if branch.choices.iter().filter(|c| c.is_valid()).count() < 2 {
+                return Err(TrieError::MalformedNode(
+                    "branch has fewer than two children",
+                ));
+            }
+            Ok(())
+        }
+
+        /// Checks an extension on its own and returns the nibbles left after
+        /// its path. Its child is checked to be a branch where it is decoded.
+        fn check_extension(ext: &ExtensionNode, remaining: usize) -> Result<usize, TrieError> {
+            if ext.prefix.is_empty() {
+                return Err(TrieError::MalformedNode("extension has an empty path"));
+            }
+            if ext.prefix.len() >= remaining {
+                return Err(TrieError::KeyLengthMismatch);
+            }
+            if !ext.child.is_valid() {
+                return Err(TrieError::MalformedNode("extension has no child"));
+            }
+            Ok(remaining - ext.prefix.len())
+        }
+
+        const EXTENSION_CHILD_NOT_BRANCH: TrieError =
+            TrieError::MalformedNode("extension child is not a branch");
+
+        /// Checks a child stored inline and returns whether it is a branch. A
+        /// node under 32 bytes is part of its parent's encoding rather than
+        /// referenced by hash, so it is never in `all_nodes` and embedding
+        /// leaves it encoded. Its own children are inline too, since a hash
+        /// reference alone takes 33 bytes.
+        #[cold]
+        fn check_inline(encoded: &NodeHash, remaining: usize) -> Result<bool, TrieError> {
+            match Node::decode(encoded.as_ref())? {
+                Node::Leaf(leaf) => {
+                    if leaf_path_len(&leaf) != remaining {
+                        return Err(TrieError::KeyLengthMismatch);
+                    }
+                    Ok(false)
+                }
+                Node::Extension(ext) => {
+                    let remaining = check_extension(&ext, remaining)?;
+                    if let NodeRef::Hash(child @ NodeHash::Inline(_)) = ext.child
+                        && !check_inline(&child, remaining)?
+                    {
+                        return Err(EXTENSION_CHILD_NOT_BRANCH);
+                    }
+                    Ok(false)
+                }
+                Node::Branch(branch) => {
+                    check_branch(&branch, remaining)?;
+                    for choice in &branch.choices {
+                        if let NodeRef::Hash(child @ NodeHash::Inline(_)) = *choice
+                            && child.is_valid()
+                        {
+                            check_inline(&child, remaining - 1)?;
+                        }
+                    }
+                    Ok(true)
+                }
+            }
+        }
+
         fn get_embedded_node_committed(
             all_nodes: &FxHashMap<H256, Node>,
             cur_node: &Node,
+            remaining: usize,
             crypto: &dyn Crypto,
         ) -> Result<Node, TrieError> {
             Ok(match cur_node.clone() {
                 Node::Branch(mut node) => {
+                    check_branch(&node, remaining)?;
                     for choice in &mut node.choices {
                         let NodeRef::Hash(hash) = *choice else {
                             continue;
@@ -538,10 +645,22 @@ impl Trie {
                         if hash.is_valid() {
                             *choice = match all_nodes.get(&hash.finalize(crypto)) {
                                 Some(node) => node_with_hash(
-                                    get_embedded_node_committed(all_nodes, node, crypto)?,
+                                    get_embedded_node_committed(
+                                        all_nodes,
+                                        node,
+                                        remaining - 1,
+                                        crypto,
+                                    )?,
                                     hash,
                                 ),
-                                None => hash.into(),
+                                None => {
+                                    // Testing the variant first keeps the common
+                                    // case, a sibling outside the witness, to a compare.
+                                    if let NodeHash::Inline(_) = hash {
+                                        check_inline(&hash, remaining - 1)?;
+                                    }
+                                    hash.into()
+                                }
                             };
                         }
                     }
@@ -549,25 +668,43 @@ impl Trie {
                     (*node).into()
                 }
                 Node::Extension(mut node) => {
+                    let remaining = check_extension(&node, remaining)?;
                     let NodeRef::Hash(hash) = node.child else {
                         return Ok(node.into());
                     };
 
                     node.child = match all_nodes.get(&hash.finalize(crypto)) {
-                        Some(node) => node_with_hash(
-                            get_embedded_node_committed(all_nodes, node, crypto)?,
-                            hash,
-                        ),
-                        None => hash.into(),
+                        Some(child) => {
+                            if !matches!(child, Node::Branch(_)) {
+                                return Err(EXTENSION_CHILD_NOT_BRANCH);
+                            }
+                            node_with_hash(
+                                get_embedded_node_committed(all_nodes, child, remaining, crypto)?,
+                                hash,
+                            )
+                        }
+                        None => {
+                            if let NodeHash::Inline(_) = hash
+                                && !check_inline(&hash, remaining)?
+                            {
+                                return Err(EXTENSION_CHILD_NOT_BRANCH);
+                            }
+                            hash.into()
+                        }
                     };
 
                     node.into()
                 }
-                Node::Leaf(node) => node.into(),
+                Node::Leaf(node) => {
+                    if leaf_path_len(&node) != remaining {
+                        return Err(TrieError::KeyLengthMismatch);
+                    }
+                    node.into()
+                }
             })
         }
 
-        let root = get_embedded_node_committed(all_nodes, root_rlp, crypto)?;
+        let root = get_embedded_node_committed(all_nodes, root_rlp, key_nibbles, crypto)?;
         Ok(node_with_hash(root, NodeHash::Hashed(root_hash)))
     }
 
@@ -1099,5 +1236,112 @@ mod tests {
     #[test]
     fn empty_trie_hash_matches_keccak() {
         assert_eq!(EMPTY_TRIE_HASH, H256(keccak_hash([RLP_NULL])));
+    }
+
+    mod embedded_key_length {
+        use super::*;
+        use crate::node::{BranchNode, ExtensionNode};
+
+        /// A leaf spelling `path_nibbles` key nibbles. A 32-byte value keeps
+        /// the encoding at 32 bytes or more, so a parent references it by hash;
+        /// a 1-byte value keeps a short leaf under 32 bytes, so a parent stores
+        /// it inline.
+        fn leaf(path_nibbles: usize, value_len: usize) -> Node {
+            let mut partial = vec![0; path_nibbles];
+            partial.push(16);
+            LeafNode {
+                partial: Nibbles::from_hex(partial),
+                value: vec![1; value_len],
+            }
+            .into()
+        }
+
+        /// A branch holding `child` in its first two slots, since a branch
+        /// needs at least two children.
+        fn branch_over(child: &Node) -> Node {
+            let mut choices: [NodeRef; 16] = Default::default();
+            choices[0] = child.compute_hash(&NativeCrypto).into();
+            choices[1] = child.compute_hash(&NativeCrypto).into();
+            BranchNode {
+                choices,
+                value: vec![],
+            }
+            .into()
+        }
+
+        fn extension_over(prefix_nibbles: usize, child: &Node) -> Node {
+            ExtensionNode {
+                prefix: Nibbles::from_hex(vec![0; prefix_nibbles]),
+                child: child.compute_hash(&NativeCrypto).into(),
+            }
+            .into()
+        }
+
+        /// Embeds `root` out of a witness-style map holding it and `rest`, each
+        /// decoded from its encoding and keyed by the hash of that encoding.
+        fn embed(root: &Node, rest: &[&Node], key_nibbles: usize) -> Result<NodeRef, TrieError> {
+            let mut nodes = FxHashMap::default();
+            for node in core::iter::once(root).chain(rest.iter().copied()) {
+                let encoded = node.encode_to_vec();
+                nodes.insert(
+                    H256(keccak_hash(&encoded)),
+                    Node::decode(&encoded).expect("node decodes"),
+                );
+            }
+            let root_hash = H256(keccak_hash(root.encode_to_vec()));
+            Trie::get_embedded_root_committed(&nodes, root_hash, &NativeCrypto, key_nibbles)
+        }
+
+        #[test]
+        fn leaf_paths_must_end_at_the_key_length() {
+            assert!(embed(&leaf(64, 32), &[], 64).is_ok());
+            assert!(embed(&leaf(63, 32), &[], 64).is_err());
+            assert!(embed(&leaf(67, 32), &[], 64).is_err());
+        }
+
+        #[test]
+        fn branches_and_extensions_consume_key_nibbles() {
+            let fits = leaf(63, 32);
+            assert!(embed(&branch_over(&fits), &[&fits], 64).is_ok());
+            let too_long = leaf(64, 32);
+            assert!(embed(&branch_over(&too_long), &[&too_long], 64).is_err());
+
+            let fits = leaf(60, 32);
+            let below = branch_over(&fits);
+            assert!(embed(&extension_over(3, &below), &[&below, &fits], 64).is_ok());
+            let too_long = leaf(61, 32);
+            let below = branch_over(&too_long);
+            assert!(embed(&extension_over(3, &below), &[&below, &too_long], 64).is_err());
+            let empty = leaf(0, 32);
+            assert!(embed(&extension_over(64, &empty), &[&empty], 64).is_err());
+
+            // With 1-nibble keys the inner branch has no nibble left to branch on.
+            let bottom = leaf(0, 32);
+            let inner = branch_over(&bottom);
+            assert!(embed(&branch_over(&inner), &[&inner, &bottom], 1).is_err());
+        }
+
+        /// Inline children never appear in the witness on their own, so they
+        /// take a separate path through the check.
+        #[test]
+        fn inline_children_are_checked() {
+            let root = branch_over(&leaf(3, 1));
+            let embedded = embed(&root, &[], 4).expect("a 4-nibble path fits");
+            let NodeRef::Node(node, _) = embedded else {
+                panic!("root was not embedded");
+            };
+            let Node::Branch(branch) = &*node else {
+                panic!("root is not a branch");
+            };
+            assert!(
+                matches!(branch.choices[0], NodeRef::Hash(NodeHash::Inline(_))),
+                "the test needs the leaf stored inline"
+            );
+            assert!(embed(&branch_over(&leaf(4, 1)), &[], 4).is_err());
+
+            // An inline branch holding an inline leaf.
+            assert!(embed(&branch_over(&branch_over(&leaf(2, 1))), &[], 4).is_ok());
+            assert!(embed(&branch_over(&branch_over(&leaf(3, 1))), &[], 4).is_err());
+        }
     }
 }

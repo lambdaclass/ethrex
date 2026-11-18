@@ -92,6 +92,11 @@ lazy_static! {
         ..*OSAKA_CONFIG
     };
 
+    pub static ref BPO1_CONFIG: ChainConfig = ChainConfig {
+        bpo1_time: Some(0),
+        ..*OSAKA_CONFIG
+    };
+
     pub static ref BPO2_CONFIG: ChainConfig = ChainConfig {
         bpo1_time: Some(0),
         bpo2_time: Some(0),
@@ -106,6 +111,19 @@ lazy_static! {
     pub static ref AMSTERDAM_CONFIG: ChainConfig = ChainConfig {
         amsterdam_time: Some(0),
         ..*BPO2_TO_AMSTERDAM_AT_15K_CONFIG
+    };
+
+    // The test-only BPO forks after Amsterdam (`AmsterdamBPOIncrease` and
+    // `AmsterdamBPODecrease`, tests@v21.0.2) take the next free BPO slot, BPO3.
+    // Their blob parameters come from the fixture's `blobSchedule`.
+    pub static ref AMSTERDAM_TO_BPO_AT_15K_CONFIG: ChainConfig = ChainConfig {
+        bpo3_time: Some(0x3a98),
+        ..*AMSTERDAM_CONFIG
+    };
+
+    pub static ref AMSTERDAM_BPO_CONFIG: ChainConfig = ChainConfig {
+        bpo3_time: Some(0),
+        ..*AMSTERDAM_CONFIG
     };
 
 }
@@ -145,12 +163,18 @@ pub enum Fork {
     PragueToOsakaAtTime15k,
     Osaka,
     OsakaToBPO1AtTime15k,
+    BPO1,
     BPO1ToBPO2AtTime15k,
+    BPO2,
     BPO2ToBPO3AtTime15k,
     BPO3ToBPO4AtTime15k,
     BPO4ToBPO5AtTime15k,
     BPO2ToAmsterdamAtTime15k,
     Amsterdam,
+    AmsterdamToBPOIncreaseAtTime15k,
+    AmsterdamToBPODecreaseAtTime15k,
+    AmsterdamBPOIncrease,
+    AmsterdamBPODecrease,
 }
 
 impl Fork {
@@ -166,12 +190,18 @@ impl Fork {
             Fork::PragueToOsakaAtTime15k => &PRAGUE_TO_OSAKA_AT_15K_CONFIG,
             Fork::Osaka => &OSAKA_CONFIG,
             Fork::OsakaToBPO1AtTime15k => &OSAKA_TO_BPO1_AT_15K_CONFIG,
+            Fork::BPO1 => &BPO1_CONFIG,
             Fork::BPO1ToBPO2AtTime15k => &BPO1_TO_BPO2_AT_15K_CONFIG,
+            Fork::BPO2 => &BPO2_CONFIG,
             Fork::BPO2ToBPO3AtTime15k => &BPO2_TO_BPO3_AT_15K_CONFIG,
             Fork::BPO3ToBPO4AtTime15k => &BPO3_TO_BPO4_AT_15K_CONFIG,
             Fork::BPO4ToBPO5AtTime15k => &BPO4_TO_BPO5_AT_15K_CONFIG,
             Fork::BPO2ToAmsterdamAtTime15k => &BPO2_TO_AMSTERDAM_AT_15K_CONFIG,
             Fork::Amsterdam => &AMSTERDAM_CONFIG,
+            Fork::AmsterdamToBPOIncreaseAtTime15k | Fork::AmsterdamToBPODecreaseAtTime15k => {
+                &AMSTERDAM_TO_BPO_AT_15K_CONFIG
+            }
+            Fork::AmsterdamBPOIncrease | Fork::AmsterdamBPODecrease => &AMSTERDAM_BPO_CONFIG,
             _ => {
                 panic!("Ethrex doesn't support pre-Merge forks: {self:?}")
             }
