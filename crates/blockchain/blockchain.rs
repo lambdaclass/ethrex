@@ -1662,7 +1662,7 @@ impl Blockchain {
                 (i, weight)
             })
             .collect();
-        work_indices.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+        work_indices.sort_unstable_by_key(|work| std::cmp::Reverse(work.1));
 
         // Greedy bin packing into NUM_WORKERS bins
         let mut bins: Vec<Vec<usize>> = (0..NUM_WORKERS).map(|_| Vec::new()).collect();
@@ -1726,7 +1726,7 @@ impl Blockchain {
                                             .iter()
                                             .map(|(k, v)| (keccak(k), *v))
                                             .collect();
-                                        hashed_storage.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+                                        hashed_storage.sort_unstable_by_key(|a| a.0);
 
                                         // Warm the touched subtrie breadth-first before the
                                         // serial insert/remove loop below, using the same
@@ -4628,9 +4628,9 @@ fn flush_storage_buffer(
     // (written by successive txs in the block) and the last write must win, as it
     // does in the per-slot insert path. A stable sort keeps equal keys in arrival
     // (tx) order so the final insert below applies the latest value last. Use
-    // `sort_by` (stable), NOT `sort_unstable_by`, or duplicate slots regress.
+    // `sort_by_key` (stable), NOT `sort_unstable_by_key`, or duplicate slots regress.
     if slots.len() >= STREAM_STORAGE_PREFETCH_THRESHOLD {
-        slots.sort_by(|a, b| a.0.cmp(&b.0));
+        slots.sort_by_key(|a| a.0);
         let paths: Vec<Nibbles> = slots
             .iter()
             .map(|(k, _)| Nibbles::from_bytes(k.as_bytes()))
@@ -5260,7 +5260,7 @@ pub fn compute_sharded_storage_root(
     // Stable sort: production inputs (a map) have unique keys, but a stable order
     // preserves last-write-wins for any duplicate keys, matching sequential apply.
     let mut sorted = hashed_storage.to_vec();
-    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    sorted.sort_by_key(|a| a.0);
     let hashed_storage = sorted.as_slice();
 
     // Split slots into 16 buckets by the first nibble of the hashed key.

@@ -1628,7 +1628,7 @@ impl TransactionQueue {
         base_fee: Option<u64>,
     ) -> Result<Self, ChainError> {
         let mut heads = Vec::with_capacity(100);
-        for (_, txs) in txs.iter_mut() {
+        for txs in txs.values_mut() {
             // Pull the first tx from each list and add it to the heads list
             // This should be a newly filtered tx list so we are guaranteed to have a first element
             let head_tx = txs.remove(0);

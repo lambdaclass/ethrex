@@ -66,7 +66,7 @@ impl RpcHandler for GetBatchByBatchNumberRequest {
             "No params provided".to_owned(),
         ))?;
         if params.len() != 2 {
-            return Err(ethrex_rpc::RpcErr::BadParams(
+            Err(ethrex_rpc::RpcErr::BadParams(
                 "Expected 2 params".to_owned(),
             ))?;
         };
@@ -117,7 +117,7 @@ impl RpcHandler for GetBatchByBatchBlockNumberRequest {
             "No params provided".to_owned(),
         ))?;
         if params.len() != 1 {
-            return Err(ethrex_rpc::RpcErr::BadParams("Expected 1 param".to_owned()))?;
+            Err(ethrex_rpc::RpcErr::BadParams("Expected 1 param".to_owned()))?;
         };
         Ok(GetBatchByBatchBlockNumberRequest {
             block: BlockIdentifier::parse(params[0].clone(), 0)?,
@@ -169,7 +169,7 @@ pub struct BatchNumberRequest {}
 impl RpcHandler for BatchNumberRequest {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
         if params.as_ref().is_some_and(|params| !params.is_empty()) {
-            return Err(ethrex_rpc::RpcErr::BadParams(
+            Err(ethrex_rpc::RpcErr::BadParams(
                 "Expected 0 params".to_owned(),
             ))?;
         };

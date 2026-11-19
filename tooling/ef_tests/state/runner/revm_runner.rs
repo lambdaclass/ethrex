@@ -512,7 +512,7 @@ pub async fn _run_ef_test_revm(test: &EFTest) -> Result<EFTestReport, EFTestRunn
     for fork in test.post.forks.keys() {
         let mut ef_test_report_fork = EFTestReportForkResult::new();
 
-        for (vector, _tx) in test.transactions.iter() {
+        for vector in test.transactions.keys() {
             if !test.post.has_vector_for_fork(vector, *fork) {
                 continue;
             }
@@ -664,7 +664,7 @@ pub async fn _ensure_post_state_revm(
                     println!(
                         "Unexpected exception on REVM runner, line: {} . Name: {}, vector: {:?}, error: {:?}",
                         line!(),
-                        &test.name,
+                        test.name,
                         vector,
                         err
                     );

@@ -414,7 +414,7 @@ impl Display for EFTestsReport {
                             .account_updates_report
                             .get(&(*failed_vector, *fork))
                         {
-                            writeln!(f, "\t\t\t{}", &account_update.to_string())?;
+                            writeln!(f, "\t\t\t{}", account_update)?;
                         } else {
                             writeln!(
                                 f,

@@ -434,7 +434,7 @@ impl Database for CachingDatabase {
         let codes = self.inner.get_account_codes_batch(&missing)?;
         let mut warmed = 0u64;
         let mut cache = self.write_code()?;
-        for (hash, code) in missing.into_iter().zip(codes.into_iter()) {
+        for (hash, code) in missing.into_iter().zip(codes) {
             // An absent hash has nothing to warm; the executor reports it if reached.
             if let Some(code) = code {
                 warmed = warmed.saturating_add(u64::try_from(code.size()).unwrap_or(u64::MAX));
@@ -471,7 +471,7 @@ impl Database for CachingDatabase {
             self.point_get_accounts_many(&missing)?
         };
         let mut cache = self.write_accounts()?;
-        for (addr, state) in missing.into_iter().zip(states.into_iter()) {
+        for (addr, state) in missing.into_iter().zip(states) {
             cache.entry(addr).or_insert(state);
         }
         Ok(())
@@ -515,7 +515,7 @@ impl Database for CachingDatabase {
             self.point_get_storage_many(&missing)?
         };
         let mut cache = self.write_storage()?;
-        for (key, value) in missing.into_iter().zip(values.into_iter()) {
+        for (key, value) in missing.into_iter().zip(values) {
             cache.entry(key).or_insert(value);
         }
         Ok(())
