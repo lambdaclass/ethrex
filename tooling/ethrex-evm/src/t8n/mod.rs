@@ -4,6 +4,10 @@
 //! the block through the same payload-building pipeline the node uses
 //! (`Blockchain::build_payload_t8n`) on an in-memory store; and writes the
 //! post-state alloc and execution result in geth's `evm t8n` output formats.
+//!
+//! From Amsterdam on, when the environment has the ancestor headers
+//! (`blockHeaders`), the result also has the execution witness of the block
+//! and whether the block validates statelessly against it.
 
 pub mod fork;
 
@@ -11,11 +15,13 @@ mod error;
 mod output;
 mod tx;
 mod types;
+mod witness;
 
 use std::path::PathBuf;
 
 use bytes::Bytes;
 use clap::Args;
+use ethrex_blockchain::payload::{PayloadBuildResult, T8nBuildOptions};
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::constants::DEFAULT_OMMERS_HASH;
 use ethrex_common::types::{
@@ -29,7 +35,9 @@ use ethrex_crypto::NativeCrypto;
 use ethrex_storage::{EngineType, Store};
 
 use error::T8nError;
-use output::Rejection;
+use output::{Rejection, WitnessResult};
+use types::Inputs;
+use witness::WitnessOutput;
 
 #[derive(Args)]
 pub struct T8nArgs {
@@ -73,6 +81,30 @@ pub struct T8nArgs {
     /// operations (no beacon-root/history calls, requests, or withdrawals).
     #[arg(long = "state-test", default_value_t = false)]
     pub state_test: bool,
+    /// Write how many times each opcode ran in the block to this file, as a
+    /// JSON object from opcode name to count. Relative to `--output.basedir`.
+    #[arg(long = "opcode.count")]
+    pub opcode_count: Option<String>,
+}
+
+impl T8nArgs {
+    /// Where `--opcode.count` writes the counts, if it has to. Geth takes an
+    /// empty file name as the flag not being set.
+    fn opcode_count_path(&self) -> Option<&str> {
+        self.opcode_count.as_deref().filter(|path| !path.is_empty())
+    }
+}
+
+/// What a t8n run computes from its inputs, before it is written out.
+pub struct Execution {
+    pub result: PayloadBuildResult,
+    /// The rejected transactions, by their index in the input list.
+    pub rejections: Vec<Rejection>,
+    pub block_exception: Option<String>,
+    /// Set when the run generates the execution witness.
+    pub witness: Option<WitnessResult>,
+    /// Set with `--opcode.count`: the opcodes that ran, with their counts.
+    pub opcode_counts: Option<Vec<(u8, u64)>>,
 }
 
 pub fn run(args: T8nArgs) -> Result<(), T8nError> {
@@ -82,6 +114,11 @@ pub fn run(args: T8nArgs) -> Result<(), T8nError> {
         ));
     }
     let inputs = types::read_inputs(&args)?;
+    let execution = execute(&args, &inputs)?;
+    output::write_outputs(&args, &inputs.alloc, &execution)
+}
+
+fn execute(args: &T8nArgs, inputs: &Inputs) -> Result<Execution, T8nError> {
     let fork = fork::parse_fork(&args.fork)?;
     let mut config = fork::chain_config_for(fork, args.chain_id);
     // Filler-provided blob parameters override the canonical schedule for
@@ -164,21 +201,41 @@ pub fn run(args: T8nArgs) -> Result<(), T8nError> {
         .block_on(store.add_initial_state(genesis.clone()))
         .map_err(|e| T8nError::Store(e.to_string()))?;
     let parent_header = genesis.get_block().header;
-    // Prefer the environment's real parent hash (`blockHashes[number-1]`)
-    // over the fabricated genesis hash: the EIP-2935 system call writes the
-    // payload's parent hash into the history contract, so it must match the
-    // test's chain. The genesis-state header is aliased under that hash so
-    // parent lookups still resolve.
+    // The witness has the headers of the block's ancestors, and the t8n can
+    // only get the real ones from the environment. State tests skip the
+    // system operations of a block, so what they build can't be validated
+    // statelessly and gets no witness.
+    let with_witness = !args.state_test
+        && config.is_amsterdam_activated(timestamp)
+        && !env.block_headers.is_empty();
     let genesis_hash = parent_header.hash();
-    let parent_hash = block_hash_cache
-        .get(&env.current_number.wrapping_sub(1))
-        .copied()
-        .unwrap_or(genesis_hash);
-    if parent_hash != genesis_hash {
-        runtime
-            .block_on(store.add_block_header(parent_hash, parent_header.clone()))
-            .map_err(|e| T8nError::Store(e.to_string()))?;
-    }
+    let parent_hash = if with_witness {
+        // The real ancestors go in the store, the parent among them, and
+        // the block is built on top of that parent.
+        let ancestors = env.parsed_block_headers(&block_hash_cache)?;
+        runtime.block_on(witness::store_ancestor_headers(
+            &store,
+            ancestors,
+            env.current_number,
+            parent_header.state_root,
+        ))?
+    } else {
+        // Prefer the environment's real parent hash (`blockHashes[number-1]`)
+        // over the fabricated genesis hash: the EIP-2935 system call writes
+        // the payload's parent hash into the history contract, so it must
+        // match the test's chain. The genesis-state header is aliased under
+        // that hash so parent lookups still resolve.
+        let parent_hash = block_hash_cache
+            .get(&env.current_number.wrapping_sub(1))
+            .copied()
+            .unwrap_or(genesis_hash);
+        if parent_hash != genesis_hash {
+            runtime
+                .block_on(store.add_block_header(parent_hash, parent_header.clone()))
+                .map_err(|e| T8nError::Store(e.to_string()))?;
+        }
+        parent_hash
+    };
 
     let base_fee_per_gas = env.current_base_fee.or_else(|| {
         calculate_base_fee_per_gas(
@@ -242,18 +299,40 @@ pub fn run(args: T8nArgs) -> Result<(), T8nError> {
             ..Default::default()
         },
     );
-    let (result, build_rejections, build_block_exception) = blockchain
+    let build = blockchain
         .build_payload_t8n(
             Block::new(header, body),
             transactions,
-            block_hash_cache,
-            args.state_test,
+            T8nBuildOptions {
+                block_hash_cache,
+                state_test: args.state_test,
+                witness: with_witness,
+                opcode_count: args.opcode_count_path().is_some(),
+            },
         )
         .map_err(|e| T8nError::Build(e.to_string()))?;
+    let result = build.result;
+
+    // The t8n doesn't have the final block of the caller, so it validates
+    // the one it built.
+    let witness = build
+        .witness
+        .map(|witness| {
+            let witness = WitnessOutput::new(witness)?;
+            let validation = witness.validate(&result.payload, config);
+            if let Err(error) = &validation {
+                eprintln!("stateless validation of the built block failed: {error}");
+            }
+            Ok::<_, T8nError>(WitnessResult {
+                witness,
+                successful_validation: validation.is_ok(),
+            })
+        })
+        .transpose()?;
 
     // Map build-time rejection indices (into the converted list) back to
     // input positions and merge with the conversion-time rejections.
-    for rejection in build_rejections {
+    for rejection in build.rejected {
         rejections.push(Rejection {
             index: input_indices[rejection.index],
             error: rejection.error,
@@ -263,7 +342,7 @@ pub fn run(args: T8nArgs) -> Result<(), T8nError> {
 
     // Block-level validity that only shows post-build: reported as
     // `blockException` so fillers can match expected-invalid blocks.
-    let block_exception = build_block_exception.or_else(|| {
+    let block_exception = build.block_exception.or_else(|| {
         result.block_access_list.as_ref().and_then(|bal| {
             validate_block_access_list_size(&result.payload.header, &config, bal)
                 .err()
@@ -271,5 +350,14 @@ pub fn run(args: T8nArgs) -> Result<(), T8nError> {
         })
     });
 
-    output::write_outputs(&args, &inputs.alloc, &result, &rejections, block_exception)
+    Ok(Execution {
+        result,
+        rejections,
+        block_exception,
+        witness,
+        opcode_counts: build.opcode_counts,
+    })
 }
+
+#[cfg(test)]
+mod tests;

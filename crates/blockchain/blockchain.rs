@@ -2790,26 +2790,8 @@ impl Blockchain {
             // If witness pre-generation is enabled, we wrap the db with a logger
             // to track state access (block hashes, storage keys, codes) during execution
             // avoiding the need to re-execute the block later.
-            let vm_db: DynVmDatabase = Box::new(StoreVmDatabase::new(
-                self.storage.clone(),
-                parent_header.clone(),
-            )?);
-
-            let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
-
-            let mut vm = match self.options.r#type.clone() {
-                BlockchainType::L1 => {
-                    Evm::new_from_db_for_l1(logger.clone(), Arc::new(NativeCrypto))
-                }
-                BlockchainType::L2(l2_config) => Evm::new_from_db_for_l2(
-                    logger.clone(),
-                    *l2_config.fee_config.read().map_err(|_| {
-                        EvmError::Custom("Fee config lock was poisoned".to_string())
-                    })?,
-                    Arc::new(NativeCrypto),
-                ),
-            };
-            attach_stateless_validator(&mut vm);
+            let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
+            let (vm, logger) = new_evm_with_logger(&self.options.r#type, vm_db)?;
             (vm, Some(logger))
         } else {
             let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
@@ -5008,6 +4990,28 @@ pub fn new_evm<D: VmDatabase + 'static>(
     };
     attach_stateless_validator(&mut evm);
     Ok(evm)
+}
+
+/// [`new_evm`] over a [`DatabaseLogger`], which records the accounts, storage slots, codes
+/// and block hashes the vm reads, so a witness can be generated from them afterwards.
+pub fn new_evm_with_logger<D: VmDatabase + 'static>(
+    blockchain_type: &BlockchainType,
+    vm_db: D,
+) -> Result<(Evm, Arc<DatabaseLogger>), EvmError> {
+    let vm_db: DynVmDatabase = Box::new(vm_db);
+    let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
+    let mut evm = match blockchain_type {
+        BlockchainType::L1 => Evm::new_from_db_for_l1(logger.clone(), Arc::new(NativeCrypto)),
+        BlockchainType::L2(l2_config) => {
+            let fee_config = *l2_config
+                .fee_config
+                .read()
+                .map_err(|_| EvmError::Custom("Fee config lock was poisoned".to_string()))?;
+            Evm::new_from_db_for_l2(logger.clone(), fee_config, Arc::new(NativeCrypto))
+        }
+    };
+    attach_stateless_validator(&mut evm);
+    Ok((evm, logger))
 }
 
 /// The code hashes in `accessed`, each once, in the order they were first read. The logger

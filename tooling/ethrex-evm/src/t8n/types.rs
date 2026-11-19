@@ -9,8 +9,9 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
 
-use ethrex_common::types::{GenesisAccount, Withdrawal};
+use ethrex_common::types::{BlockHeader, GenesisAccount, Withdrawal};
 use ethrex_common::{Address, H256, U256};
+use ethrex_rlp::decode::RLPDecode;
 use serde::Deserialize;
 
 use super::T8nArgs;
@@ -52,6 +53,10 @@ pub struct EnvJson {
     pub parent_beacon_block_root: Option<H256>,
     /// Ancestor hashes for BLOCKHASH, keyed by block number (hex string).
     pub block_hashes: BTreeMap<String, H256>,
+    /// RLP of the ancestor headers as hex strings, with the keys of
+    /// `block_hashes`. The execution witness needs the real headers, and the
+    /// t8n has no other source for them.
+    pub block_headers: BTreeMap<String, String>,
     pub withdrawals: Option<Vec<Withdrawal>>,
 }
 
@@ -67,6 +72,46 @@ impl EnvJson {
             hashes.insert(number, *hash);
         }
         Ok(hashes)
+    }
+
+    /// Decode the `blockHeaders` map into headers keyed by block number,
+    /// checking each one against `block_hashes` (the parsed `blockHashes`).
+    pub fn parsed_block_headers(
+        &self,
+        block_hashes: &BTreeMap<u64, H256>,
+    ) -> Result<BTreeMap<u64, BlockHeader>, T8nError> {
+        let invalid = |message: String| T8nError::Parse("env".to_string(), message);
+        let mut headers = BTreeMap::new();
+        for (key, encoded) in &self.block_headers {
+            let number = parse_u64(key)
+                .ok_or_else(|| invalid(format!("invalid blockHeaders key: {key}")))?;
+            let encoded = hex::decode(encoded.strip_prefix("0x").unwrap_or(encoded))
+                .map_err(|e| invalid(format!("blockHeaders[{number}] is not hex: {e}")))?;
+            let header = BlockHeader::decode(&encoded)
+                .map_err(|e| invalid(format!("failed to decode blockHeaders[{number}]: {e}")))?;
+            if header.number != number {
+                return Err(invalid(format!(
+                    "blockHeaders[{number}] decodes to header number {}",
+                    header.number
+                )));
+            }
+            let want = block_hashes.get(&number).ok_or_else(|| {
+                invalid(format!(
+                    "blockHeaders[{number}] has no entry in blockHashes"
+                ))
+            })?;
+            // The hash is taken over the header as ethrex encodes it, which
+            // is what goes into the witness, so this also rejects an entry
+            // that isn't canonical RLP.
+            let have = header.hash();
+            if have != *want {
+                return Err(invalid(format!(
+                    "blockHeaders[{number}] hash mismatch: have {have:#x}, want {want:#x}"
+                )));
+            }
+            headers.insert(number, header);
+        }
+        Ok(headers)
     }
 }
 
@@ -160,4 +205,103 @@ pub fn read_inputs(args: &T8nArgs) -> Result<Inputs, T8nError> {
         txs,
         blob_params,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_rlp::encode::RLPEncode;
+
+    fn header(number: u64) -> BlockHeader {
+        BlockHeader {
+            number,
+            ..Default::default()
+        }
+    }
+
+    fn hex_rlp(header: &BlockHeader) -> String {
+        format!("0x{}", hex::encode(header.encode_to_vec()))
+    }
+
+    /// An environment with `headers` under the given `blockHeaders` keys.
+    fn env_with_headers(headers: &[(&str, &BlockHeader)]) -> EnvJson {
+        EnvJson {
+            block_headers: headers
+                .iter()
+                .map(|(key, header)| (key.to_string(), hex_rlp(header)))
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    fn parse_error(env: &EnvJson, block_hashes: &BTreeMap<u64, H256>) -> String {
+        env.parsed_block_headers(block_hashes)
+            .expect_err("the headers were accepted")
+            .to_string()
+    }
+
+    #[test]
+    fn accepts_headers_that_have_their_block_hashes() {
+        let (first, second) = (header(1), header(2));
+        let env = env_with_headers(&[("0x01", &first), ("2", &second)]);
+        let block_hashes = BTreeMap::from([(1, first.hash()), (2, second.hash())]);
+
+        let headers = env.parsed_block_headers(&block_hashes).expect("headers");
+
+        assert_eq!(headers.keys().copied().collect::<Vec<_>>(), vec![1, 2]);
+        assert_eq!(headers[&1].hash(), first.hash());
+        assert_eq!(headers[&2].hash(), second.hash());
+    }
+
+    #[test]
+    fn rejects_a_header_with_another_hash() {
+        let first = header(1);
+        let env = env_with_headers(&[("0x01", &first)]);
+        let block_hashes = BTreeMap::from([(1, H256::repeat_byte(0x11))]);
+
+        let error = parse_error(&env, &block_hashes);
+        assert!(error.contains("blockHeaders[1] hash mismatch"), "{error}");
+    }
+
+    #[test]
+    fn rejects_a_header_under_the_number_of_another_block() {
+        let second = header(2);
+        let env = env_with_headers(&[("0x01", &second)]);
+        let block_hashes = BTreeMap::from([(1, second.hash())]);
+
+        let error = parse_error(&env, &block_hashes);
+        assert!(
+            error.contains("blockHeaders[1] decodes to header number 2"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_header_without_a_block_hash() {
+        let first = header(1);
+        let env = env_with_headers(&[("0x01", &first)]);
+
+        let error = parse_error(&env, &BTreeMap::new());
+        assert!(
+            error.contains("blockHeaders[1] has no entry in blockHashes"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_header_that_is_not_the_rlp_of_one() {
+        let mut env = env_with_headers(&[]);
+        env.block_headers
+            .insert("0x01".to_string(), "0xc0".to_string());
+        let error = parse_error(&env, &BTreeMap::new());
+        assert!(
+            error.contains("failed to decode blockHeaders[1]"),
+            "{error}"
+        );
+
+        env.block_headers
+            .insert("0x01".to_string(), "0xzz".to_string());
+        let error = parse_error(&env, &BTreeMap::new());
+        assert!(error.contains("blockHeaders[1] is not hex"), "{error}");
+    }
 }

@@ -8,11 +8,13 @@ use ethrex_blockchain::payload::PayloadBuildResult;
 use ethrex_common::types::{GenesisAccount, Log, Receipt, Transaction, bloom_from_logs};
 use ethrex_common::{Address, H256, U256};
 use ethrex_crypto::{Crypto, NativeCrypto};
+use ethrex_levm::opcodes::Opcode;
 use ethrex_rlp::encode::RLPEncode;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
-use super::T8nArgs;
 use super::error::T8nError;
+use super::witness::WitnessOutput;
+use super::{Execution, T8nArgs};
 
 /// A rejected transaction: its index in the input list and the reason.
 pub struct Rejection {
@@ -20,13 +22,19 @@ pub struct Rejection {
     pub error: String,
 }
 
+/// The execution witness of the built block, and whether the block
+/// validates statelessly against it.
+pub struct WitnessResult {
+    pub witness: WitnessOutput,
+    pub successful_validation: bool,
+}
+
 pub fn write_outputs(
     args: &T8nArgs,
     pre_alloc: &BTreeMap<Address, GenesisAccount>,
-    result: &PayloadBuildResult,
-    rejections: &[Rejection],
-    block_exception: Option<String>,
+    execution: &Execution,
 ) -> Result<(), T8nError> {
+    let result = &execution.result;
     write_json(
         &output_path(args, &args.output_alloc),
         &serde_json::to_value(post_alloc(pre_alloc, result))
@@ -34,9 +42,31 @@ pub fn write_outputs(
     )?;
     write_json(
         &output_path(args, &args.output_result),
-        &result_json(result, rejections, block_exception),
+        &result_json(execution),
     )?;
+    if let (Some(path), Some(counts)) = (args.opcode_count_path(), &execution.opcode_counts) {
+        write_json(&output_path(args, path), &opcode_counts_json(counts))?;
+    }
     write_body(&output_path(args, &args.output_body), result)
+}
+
+/// The opcode counts as a JSON object from opcode name to count, like the
+/// file of geth's `--opcode.count`.
+pub fn opcode_counts_json(counts: &[(u8, u64)]) -> Value {
+    let counts: Map<String, Value> = counts
+        .iter()
+        .map(|(opcode, count)| (opcode_name(*opcode), json!(count)))
+        .collect();
+    Value::Object(counts)
+}
+
+/// The name of an opcode, or its byte in hex if LEVM has no name for it.
+/// Only defined opcodes are counted, so the hex form isn't expected.
+fn opcode_name(opcode: u8) -> String {
+    match Opcode::from(opcode) {
+        Opcode::INVALID => format!("{opcode:#04x}"),
+        name => format!("{name:?}"),
+    }
 }
 
 fn output_path(args: &T8nArgs, relative: &str) -> PathBuf {
@@ -64,17 +94,19 @@ fn write_body(path: &Path, result: &PayloadBuildResult) -> Result<(), T8nError> 
 /// The post-state alloc: the pre-state with the block's account updates
 /// applied. The full pre-state was this run's input, so no trie iteration
 /// is needed.
-fn post_alloc(
+pub fn post_alloc(
     pre_alloc: &BTreeMap<Address, GenesisAccount>,
     result: &PayloadBuildResult,
 ) -> BTreeMap<Address, GenesisAccount> {
     let mut alloc = pre_alloc.clone();
     for update in &result.account_updates {
+        // A removed account is one the block left empty, and it is not in
+        // the post-state. Its update still has the empty `info`, which the
+        // store doesn't apply either
+        // (`Store::apply_account_updates_from_trie_batch`).
         if update.removed {
             alloc.remove(&update.address);
-            if update.info.is_none() && update.code.is_none() && update.added_storage.is_empty() {
-                continue;
-            }
+            continue;
         }
         let entry = alloc
             .entry(update.address)
@@ -141,11 +173,14 @@ fn receipt_json(
     })
 }
 
-fn result_json(
-    result: &PayloadBuildResult,
-    rejections: &[Rejection],
-    block_exception: Option<String>,
-) -> Value {
+pub fn result_json(execution: &Execution) -> Value {
+    let Execution {
+        result,
+        rejections,
+        block_exception,
+        witness,
+        ..
+    } = execution;
     let header = &result.payload.header;
     let transactions = &result.payload.body.transactions;
 
@@ -216,6 +251,13 @@ fn result_json(
     }
     if let Some(block_exception) = block_exception {
         object.insert("blockException".to_string(), json!(block_exception));
+    }
+    if let Some(witness) = witness {
+        object.insert("executionWitness".to_string(), witness.witness.to_json());
+        object.insert(
+            "successfulValidation".to_string(),
+            json!(witness.successful_validation),
+        );
     }
     output
 }

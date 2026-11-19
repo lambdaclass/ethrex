@@ -18,6 +18,7 @@ use ethrex_common::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
         ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal,
         block_access_list::BlockAccessList,
+        block_execution_witness::ExecutionWitness,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
         calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
         compute_withdrawals_root,
@@ -27,6 +28,7 @@ use ethrex_common::{
 
 use ethrex_crypto::NativeCrypto;
 use ethrex_crypto::keccak::Keccak256;
+use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{Evm, EvmError, check_2d_gas_allowance, compute_burned_fees};
 
 use ethrex_rlp::encode::RLPEncode;
@@ -45,7 +47,7 @@ use crate::{
     constants::{GAS_LIMIT_BOUND_DIVISOR, MIN_GAS_LIMIT, TX_GAS_COST},
     error::{ChainError, InvalidBlockError},
     mempool::PendingTxFilter,
-    new_evm,
+    new_evm, new_evm_with_logger,
     vm::StoreVmDatabase,
 };
 
@@ -282,6 +284,39 @@ impl PayloadBuildContext {
         blockchain_type: &BlockchainType,
         block_hash_cache: BTreeMap<BlockNumber, BlockHash>,
     ) -> Result<Self, EvmError> {
+        let vm_db = Self::parent_vm_db(&payload, storage, block_hash_cache)?;
+        let vm = new_evm(blockchain_type, vm_db)?;
+        Ok(Self::new_with_vm(payload, storage, vm))
+    }
+
+    /// Same as `new_with_block_hash_cache`, but the vm reads the parent state
+    /// through the returned [`DatabaseLogger`]. What the logger records is
+    /// the input of `Blockchain::generate_witness_from_account_updates`.
+    pub fn new_with_witness_logger(
+        payload: Block,
+        storage: &Store,
+        blockchain_type: &BlockchainType,
+        block_hash_cache: BTreeMap<BlockNumber, BlockHash>,
+    ) -> Result<(Self, Arc<DatabaseLogger>), EvmError> {
+        let vm_db = Self::parent_vm_db(&payload, storage, block_hash_cache)?;
+        let (vm, logger) = new_evm_with_logger(blockchain_type, vm_db)?;
+        Ok((Self::new_with_vm(payload, storage, vm), logger))
+    }
+
+    /// The database of the state the payload executes on top of.
+    fn parent_vm_db(
+        payload: &Block,
+        storage: &Store,
+        block_hash_cache: BTreeMap<BlockNumber, BlockHash>,
+    ) -> Result<StoreVmDatabase, EvmError> {
+        let parent_header = storage
+            .get_block_header_by_hash(payload.header.parent_hash)
+            .map_err(|e| EvmError::DB(e.to_string()))?
+            .ok_or_else(|| EvmError::DB("parent header not found".to_string()))?;
+        StoreVmDatabase::new_with_block_hash_cache(storage.clone(), parent_header, block_hash_cache)
+    }
+
+    fn new_with_vm(payload: Block, storage: &Store, mut vm: Evm) -> Self {
         let config = storage.get_chain_config();
         let base_fee_per_blob_gas = calculate_base_fee_per_blob_gas(
             payload.header.excess_blob_gas.unwrap_or_default(),
@@ -290,17 +325,6 @@ impl PayloadBuildContext {
                 .map(|schedule| schedule.base_fee_update_fraction)
                 .unwrap_or_default(),
         );
-
-        let parent_header = storage
-            .get_block_header_by_hash(payload.header.parent_hash)
-            .map_err(|e| EvmError::DB(e.to_string()))?
-            .ok_or_else(|| EvmError::DB("parent header not found".to_string()))?;
-        let vm_db = StoreVmDatabase::new_with_block_hash_cache(
-            storage.clone(),
-            parent_header,
-            block_hash_cache,
-        )?;
-        let mut vm = new_evm(blockchain_type, vm_db)?;
 
         // Enable BAL recording for Amsterdam and later forks (EIP-7928)
         if config.is_amsterdam_activated(payload.header.timestamp) {
@@ -316,7 +340,7 @@ impl PayloadBuildContext {
             0
         };
         let payload_size = payload.length() as u64;
-        Ok(PayloadBuildContext {
+        PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             cumulative_gas_spent: 0,
             block_regular_gas_used: 0,
@@ -339,7 +363,7 @@ impl PayloadBuildContext {
             payload_size,
             block_access_list: None,
             explicit_build: false,
-        })
+        }
     }
 
     pub fn gas_used(&self) -> u64 {
@@ -377,6 +401,38 @@ pub struct T8nRejectedTransaction {
     pub index: usize,
     pub hash: H256,
     pub error: String,
+}
+
+/// What `build_payload_t8n` does besides building the block.
+#[derive(Debug, Default)]
+pub struct T8nBuildOptions {
+    /// Ancestor hashes from the t8n environment (`blockHashes`), which
+    /// pre-seed BLOCKHASH resolution.
+    pub block_hash_cache: BTreeMap<BlockNumber, BlockHash>,
+    /// State-test semantics, matching EELS: no system operations of any
+    /// kind (no beacon-root or history calls, no requests extraction, no
+    /// withdrawals), only the transactions themselves.
+    pub state_test: bool,
+    /// Generate the execution witness of the built block. The store must
+    /// then hold the real headers of the ancestors the block can read,
+    /// since they go into the witness.
+    pub witness: bool,
+    /// Count how many times each opcode runs in the block.
+    pub opcode_count: bool,
+}
+
+/// What `build_payload_t8n` returns.
+pub struct T8nBuildOutput {
+    pub result: PayloadBuildResult,
+    /// The transactions that were skipped, in input order.
+    pub rejected: Vec<T8nRejectedTransaction>,
+    /// Why the block is invalid, if it is.
+    pub block_exception: Option<String>,
+    /// Set when [`T8nBuildOptions::witness`] is.
+    pub witness: Option<ExecutionWitness>,
+    /// Set when [`T8nBuildOptions::opcode_count`] is: the opcodes that ran
+    /// at least once, in opcode order, with how many times each ran.
+    pub opcode_counts: Option<Vec<(u8, u64)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -607,33 +663,41 @@ impl Blockchain {
     /// transaction does not abort the build: it is skipped and reported, and
     /// the remaining transactions are still applied (t8n semantics).
     ///
-    /// `block_hash_cache` pre-seeds BLOCKHASH resolution with the ancestor
-    /// hashes supplied by the t8n environment (`blockHashes`), which have no
-    /// backing headers in the store.
-    ///
-    /// `state_test` selects state-test semantics, matching EELS: no system
-    /// operations of any kind — no beacon-root or history calls, no requests
-    /// extraction, no withdrawals — only the transactions themselves.
+    /// See [`T8nBuildOptions`] for what else it can do on top of the build.
     pub fn build_payload_t8n(
         &self,
         payload: Block,
         transactions: Vec<Transaction>,
-        block_hash_cache: BTreeMap<BlockNumber, BlockHash>,
-        state_test: bool,
-    ) -> Result<
-        (
-            PayloadBuildResult,
-            Vec<T8nRejectedTransaction>,
-            Option<String>,
-        ),
-        ChainError,
-    > {
-        let mut context = PayloadBuildContext::new_with_block_hash_cache(
-            payload,
-            &self.storage,
-            &self.options.r#type,
+        options: T8nBuildOptions,
+    ) -> Result<T8nBuildOutput, ChainError> {
+        let T8nBuildOptions {
             block_hash_cache,
-        )?;
+            state_test,
+            witness,
+            opcode_count,
+        } = options;
+        // The witness comes from what the build reads, so the block doesn't
+        // have to be executed a second time to get it.
+        let (mut context, witness_logger) = if witness {
+            let (context, logger) = PayloadBuildContext::new_with_witness_logger(
+                payload,
+                &self.storage,
+                &self.options.r#type,
+                block_hash_cache,
+            )?;
+            (context, Some(logger))
+        } else {
+            let context = PayloadBuildContext::new_with_block_hash_cache(
+                payload,
+                &self.storage,
+                &self.options.r#type,
+                block_hash_cache,
+            )?;
+            (context, None)
+        };
+        if opcode_count {
+            context.vm.db.opcode_counter = Some(Box::default());
+        }
 
         if !state_test && matches!(self.options.r#type, BlockchainType::L1) {
             self.apply_system_operations(&mut context)?;
@@ -755,7 +819,34 @@ impl Blockchain {
         }
         self.finalize_payload(&mut context)?;
 
-        Ok((context.into(), rejected, block_exception))
+        let witness = witness_logger
+            .map(|logger| {
+                let parent_header = self
+                    .storage
+                    .get_block_header_by_hash(context.parent_hash())?
+                    .ok_or(ChainError::ParentNotFound)?;
+                self.generate_witness_from_account_updates(
+                    context.account_updates.clone(),
+                    &context.payload,
+                    parent_header,
+                    &logger,
+                )
+            })
+            .transpose()?;
+        let opcode_counts = context
+            .vm
+            .db
+            .opcode_counter
+            .take()
+            .map(|counter| counter.counts().collect());
+
+        Ok(T8nBuildOutput {
+            result: context.into(),
+            rejected,
+            block_exception,
+            witness,
+            opcode_counts,
+        })
     }
 
     /// Shared block-building pipeline. When `explicit_transactions` is `None` the

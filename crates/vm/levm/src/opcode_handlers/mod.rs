@@ -29,7 +29,12 @@ impl OpcodeHandler for OpStopHandler {
 
 pub struct OpInvalidHandler;
 impl OpcodeHandler for OpInvalidHandler {
-    fn eval(_vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        // The dispatch loop has already counted this byte, and only here is it
+        // known that the fork doesn't define it. See `OpcodeCounter`.
+        if let Some(counter) = vm.db.opcode_counter.as_deref_mut() {
+            counter.discard_last();
+        }
         Err(ExceptionalHalt::InvalidOpcode.into())
     }
 }

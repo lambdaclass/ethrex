@@ -3,8 +3,9 @@
 //! built by iterating a seeded map, so the two come in unrelated orders. Removing an account
 //! from a branch with two children reads the remaining child, while inserting into that branch
 //! first avoids the read: a host that inserts first records a witness that a guest removing
-//! first cannot replay. Both sides apply the updates in address order, so every input order on
-//! the host must produce a witness that every input order on the guest can replay.
+//! first cannot replay. Both sides insert and update first and remove last, each group in
+//! address order, so every input order on the host must produce a witness that every input
+//! order on the guest can replay.
 //!
 //! An account's storage changes come from a seeded map too, and the host applies them in that
 //! map's order. The guest applies its inserts before its deletes, which reads a subset of the
@@ -160,10 +161,11 @@ async fn replay_under_every_order(removed: Address, untouched: Address, inserted
     }
 }
 
-/// Both sides sort by address, so the sorted order is remove-first in one scenario and
-/// insert-first in the other. Remove-first on the host records the sibling and hides a guest
-/// that does not sort; insert-first on the host records the minimal witness and hides a host
-/// that does not sort. Together the two scenarios fail if either side stops sorting.
+/// The host inserts first, so its witness never has the sibling, and a guest that removes
+/// first cannot replay it. Address order is remove-first in one scenario and insert-first in
+/// the other, so a guest that only sorts by address fails the first one. A host that removes
+/// first records the sibling, which every guest can replay, so this test does not catch it:
+/// `records_account_inserts_before_removals` in the store does.
 #[tokio::test]
 async fn guest_replays_the_witness_under_every_update_order() {
     let [first, second, third] =

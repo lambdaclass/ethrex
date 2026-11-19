@@ -16,4 +16,6 @@ pub enum T8nError {
     Store(String),
     #[error("block build error: {0}")]
     Build(String),
+    #[error("execution witness error: {0}")]
+    Witness(String),
 }
