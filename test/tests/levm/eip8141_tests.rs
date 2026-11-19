@@ -131,6 +131,7 @@ fn frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
     FrameTransaction {
         chain_id: HARNESS_CHAIN_ID,
         nonce_keys: vec![],
+        has_nonce_keys: true,
         nonce_seq: 0,
         sender: FUNDED_SENDER,
         frames,

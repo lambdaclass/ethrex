@@ -141,7 +141,7 @@ pub enum MempoolError {
         "Attempted to replace a pooled transaction with one of a different category (blob vs. non-blob)"
     )]
     ReplacementTypeMismatch,
-    #[error("Frame transactions (EIP-8141) are not supported before the Hegota fork")]
+    #[error("Frame transactions (EIP-8141) are not supported before they activate")]
     FrameTxPreFork,
     #[error("Frame transaction expiry deadline has passed")]
     FrameTxExpired,

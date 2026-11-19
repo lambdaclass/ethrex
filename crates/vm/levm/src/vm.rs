@@ -2010,7 +2010,9 @@ impl<'a> VM<'a> {
         // The reason is carried through: a client that rejects the transaction for the
         // right reason but reports the wrong one is indistinguishable from a client that
         // rejected it by accident (see the mapper note above `TxValidationError`).
-        if let Err(e) = frame_tx.validate_static_constraints() {
+        if let Err(e) = frame_tx.validate_static_constraints().and_then(|()| {
+            frame_tx.validate_fork_rules(self.env.config.features, self.env.config.fork)
+        }) {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InvalidFrameTransactionFormat(e),
             ));
@@ -3241,7 +3243,9 @@ impl<'a> VM<'a> {
 
         let sender = frame_tx.sender;
 
-        if let Err(e) = frame_tx.validate_static_constraints() {
+        if let Err(e) = frame_tx.validate_static_constraints().and_then(|()| {
+            frame_tx.validate_fork_rules(self.env.config.features, self.env.config.fork)
+        }) {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InvalidFrameTransactionFormat(e),
             ));

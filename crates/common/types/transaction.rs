@@ -2180,6 +2180,11 @@ pub struct FrameTransaction {
     /// in the `NONCE_MANAGER` system contract, key `0` included.
     #[rkyv(with=rkyv::with::Map<crate::rkyv_utils::U256Wrapper>)]
     pub nonce_keys: Vec<U256>,
+    /// Whether the envelope carries EIP-8250's `nonce_keys` list. Before EIP-8250
+    /// activates a frame transaction carries EIP-8141's single `nonce` in its place,
+    /// encoded as a scalar right after `chain_id`; it then selects the account nonce,
+    /// like the empty key set, and [`Self::nonce_seq`] holds that nonce.
+    pub has_nonce_keys: bool,
     /// EIP-8250: the sequence every selected nonce key must currently hold.
     pub nonce_seq: u64,
     #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
@@ -2211,6 +2216,7 @@ impl Default for FrameTransaction {
         Self {
             chain_id: 0,
             nonce_keys: Vec::new(),
+            has_nonce_keys: true,
             nonce_seq: 0,
             sender: Address::zero(),
             frames: Vec::new(),
@@ -2402,9 +2408,13 @@ impl FrameTransaction {
             })
             .collect();
         // RLP-encode the tx with elided signature bytes, frames verbatim.
-        Encoder::new(&mut buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce_keys)
+        let encoder = Encoder::new(&mut buf).encode_field(&self.chain_id);
+        let encoder = if self.has_nonce_keys {
+            encoder.encode_field(&self.nonce_keys)
+        } else {
+            encoder
+        };
+        encoder
             .encode_field(&self.nonce_seq)
             .encode_field(&self.sender)
             .encode_field(&self.frames)
@@ -2498,6 +2508,10 @@ impl FrameTransaction {
     /// more than first use at sequence zero; the field is still encoded and signed.
     pub fn nonce_calldata(&self) -> Vec<u8> {
         let mut buf = Vec::new();
+        // EIP-8141's own envelope carries a plain `nonce`, which is not calldata.
+        if !self.has_nonce_keys {
+            return buf;
+        }
         self.nonce_keys.encode(&mut buf);
         if !self.is_single_use() {
             self.nonce_seq.encode(&mut buf);
@@ -2689,6 +2703,51 @@ impl FrameTransaction {
 
     /// Validate static constraints per EIP-8141 spec.
     /// Returns an error string if the transaction is invalid.
+    /// The rules that depend on the including block's frame features and fork, on
+    /// top of the fork-free shape rules in [`Self::validate_static_constraints`]:
+    /// - EIP-8250 replaces EIP-8141's single `nonce` with `nonce_keys` and
+    ///   `nonce_seq`, so a transaction carries exactly the envelope its block expects;
+    /// - an ASSERT frame needs EIP-7906;
+    /// - a P256 signature needs EIP-7951's `P256VERIFY` precompile, which Osaka brings:
+    ///   before it no P256 entry can verify, so the transaction is invalid.
+    pub fn validate_fork_rules(
+        &self,
+        features: crate::types::ChainFeatures,
+        fork: crate::types::Fork,
+    ) -> Result<(), String> {
+        if features.keyed_nonces && !self.has_nonce_keys {
+            return Err(
+                "frame transaction must carry nonce_keys once EIP-8250 is active".to_string(),
+            );
+        }
+        if !features.keyed_nonces && self.has_nonce_keys {
+            return Err(
+                "frame transaction may not carry nonce_keys before EIP-8250 activates".to_string(),
+            );
+        }
+        if !features.assert_frames
+            && let Some(index) = self
+                .frames
+                .iter()
+                .position(|frame| frame.mode == FrameMode::Assert as u8)
+        {
+            return Err(format!(
+                "frame {index}: ASSERT frames are not valid before EIP-7906 activates"
+            ));
+        }
+        if fork < crate::types::Fork::Osaka
+            && let Some(index) = self
+                .signatures
+                .iter()
+                .position(|signature| signature.scheme == FRAME_SIG_SCHEME_P256)
+        {
+            return Err(format!(
+                "signature {index}: P256 signatures require the EIP-7951 precompile"
+            ));
+        }
+        Ok(())
+    }
+
     pub fn validate_static_constraints(&self) -> Result<(), String> {
         // EIP-8250: the account nonce cannot be used at `MAX_NONCE_SEQ`, which only
         // a keyed set may select, as its single-use form.
@@ -3246,9 +3305,13 @@ pub enum FrameValidationError {
 
 impl RLPEncode for FrameTransaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
-            .encode_field(&self.chain_id)
-            .encode_field(&self.nonce_keys)
+        let encoder = Encoder::new(buf).encode_field(&self.chain_id);
+        let encoder = if self.has_nonce_keys {
+            encoder.encode_field(&self.nonce_keys)
+        } else {
+            encoder
+        };
+        encoder
             .encode_field(&self.nonce_seq)
             .encode_field(&self.sender)
             .encode_field(&self.frames)
@@ -3263,12 +3326,28 @@ impl RLPDecode for FrameTransaction {
     fn decode_unfinished(rlp: &[u8]) -> Result<(FrameTransaction, &[u8]), RLPDecodeError> {
         let decoder = Decoder::new(rlp)?;
         let (chain_id, decoder) = decoder.decode_field("chain_id")?;
-        // EIP-8250: `nonce_keys` must be an RLP list of canonical integers below
-        // 2**256; the U256 decoder rejects non-canonical and over-wide items.
-        let (nonce_keys, decoder) = decoder.decode_field("nonce_keys")?;
-        // `nonce_seq < 2**64`: a wider value is a malformed payload, rejected while
-        // decoding like any other frame-transaction field too wide for its type.
-        let (nonce_seq, decoder) = decoder.decode_field("nonce_seq")?;
+        // EIP-8250: a list after `chain_id` is `nonce_keys`, followed by the shared
+        // `nonce_seq`; a scalar there is EIP-8141's single `nonce`, the envelope
+        // before EIP-8250 activates. `nonce_keys` must be an RLP list of canonical
+        // integers below 2**256; the U256 decoder rejects non-canonical and over-wide
+        // items.
+        let (nonce_item, decoder) = decoder.get_encoded_item_ref()?;
+        let (has_nonce_keys, _, _) = decode_rlp_item(nonce_item)?;
+        // `nonce_seq < 2**64` (and EIP-8141's `nonce` likewise): a wider value is a
+        // malformed payload, rejected while decoding like any other frame-transaction
+        // field too wide for its type.
+        let (nonce_keys, nonce_seq, decoder) = if has_nonce_keys {
+            let nonce_keys = Vec::<U256>::decode(nonce_item).map_err(|err| {
+                RLPDecodeError::Custom(format!("Error decoding field 'nonce_keys': {err}"))
+            })?;
+            let (nonce_seq, decoder) = decoder.decode_field("nonce_seq")?;
+            (nonce_keys, nonce_seq, decoder)
+        } else {
+            let nonce = u64::decode(nonce_item).map_err(|err| {
+                RLPDecodeError::Custom(format!("Error decoding field 'nonce': {err}"))
+            })?;
+            (Vec::new(), nonce, decoder)
+        };
         let (sender, decoder) = decoder.decode_field("sender")?;
         let (frames, decoder) = decoder.decode_field("frames")?;
         let (signatures, decoder) = decoder.decode_field("signatures")?;
@@ -3287,6 +3366,7 @@ impl RLPDecode for FrameTransaction {
         let tx = FrameTransaction {
             chain_id,
             nonce_keys,
+            has_nonce_keys,
             nonce_seq,
             sender,
             frames,
@@ -5764,6 +5844,7 @@ mod tests {
         FrameTransaction {
             chain_id: 1,
             nonce_keys: vec![],
+            has_nonce_keys: true,
             nonce_seq: 42,
             sender: Address::from_low_u64_be(0xABCD),
             frames: vec![
@@ -6069,6 +6150,7 @@ mod tests {
         FrameTransaction {
             chain_id: 1,
             nonce_keys: vec![],
+            has_nonce_keys: true,
             nonce_seq: 0,
             sender: Address::from_low_u64_be(0xABCD),
             frames,
@@ -6153,6 +6235,7 @@ mod tests {
         FrameTransaction {
             chain_id: 1,
             nonce_keys: vec![],
+            has_nonce_keys: true,
             nonce_seq: 0,
             sender: Address::from_low_u64_be(0xABCD),
             frames,
@@ -6255,6 +6338,7 @@ mod tests {
         let verify_tx = FrameTransaction {
             chain_id: 1,
             nonce_keys: vec![],
+            has_nonce_keys: true,
             nonce_seq: 0,
             sender: Address::from_low_u64_be(0xABCD),
             frames: vec![Frame {
@@ -6620,6 +6704,7 @@ mod tests {
         let tx = FrameTransaction {
             chain_id: 1,
             nonce_keys: vec![U256::zero()],
+            has_nonce_keys: true,
             nonce_seq: 7,
             sender: Address::from_low_u64_be(0xABCD),
             frames: vec![

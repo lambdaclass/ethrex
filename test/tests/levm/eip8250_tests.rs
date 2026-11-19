@@ -88,6 +88,7 @@ fn frame_tx_with_keys(frames: Vec<Frame>, nonce_keys: Vec<U256>) -> FrameTransac
     FrameTransaction {
         chain_id: HARNESS_CHAIN_ID,
         nonce_keys,
+        has_nonce_keys: true,
         nonce_seq: 0,
         sender: FUNDED_SENDER,
         frames,

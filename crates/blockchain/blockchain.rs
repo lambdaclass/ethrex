@@ -3874,6 +3874,9 @@ impl Blockchain {
             // so malformed frame txs never occupy pool slots.
             frame_tx
                 .validate_static_constraints()
+                .and_then(|()| {
+                    frame_tx.validate_fork_rules(config.features(header.timestamp), fork)
+                })
                 .map_err(MempoolError::InvalidFrameTransaction)?;
 
             // Frame `data` size is bounded by the wire-size cap below
