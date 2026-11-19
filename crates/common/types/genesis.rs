@@ -63,6 +63,8 @@ pub enum GenesisError {
     Decode(#[from] serde_json::Error),
     #[error("Fork not supported. Only post-merge networks are supported.")]
     InvalidFork(),
+    #[error("Invalid EIP-8141/EIP-8288 prototype schedule: {0}")]
+    InvalidPrototypeSchedule(String),
     #[error("Failed to open genesis file: {0}")]
     File(#[from] Error),
 }
@@ -73,7 +75,11 @@ impl TryFrom<&Path> for Genesis {
     fn try_from(genesis_file_path: &Path) -> Result<Self, Self::Error> {
         let genesis_file = std::fs::File::open(genesis_file_path)?;
         let genesis_reader = BufReader::new(genesis_file);
-        let genesis: Genesis = serde_json::from_reader(genesis_reader)?;
+        let mut genesis: Genesis = serde_json::from_reader(genesis_reader)?;
+        genesis
+            .config
+            .check_prototype_schedule()
+            .map_err(GenesisError::InvalidPrototypeSchedule)?;
 
         // ethrex only supports post-merge (PoS) networks. PoW execution is not planned.
         if is_unsupported_pow_genesis(&genesis) {
@@ -211,6 +217,41 @@ fn default_bpo2_schedule() -> ForkBlobSchedule {
         base_fee_update_fraction: 11684671,
     }
 }
+
+/// Transaction features a chain can switch on apart from the named fork schedule.
+///
+/// On that schedule they follow the fork, so [`ChainFeatures::for_fork`] is all a
+/// caller without a chain config needs. A chain that runs frame transactions on an
+/// earlier fork (genesis keys `eip8141PrototypeTime` and `eip8288PrototypeTime`)
+/// takes them from [`ChainConfig::features`] instead, and every other rule stays
+/// that of the fork it actually runs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ChainFeatures {
+    /// EIP-8141 frame transactions and their opcodes.
+    pub frame_transactions: bool,
+    /// EIP-8250 keyed nonces. Before they activate a frame transaction carries
+    /// EIP-8141's single `nonce`; after, it carries `nonce_keys` and `nonce_seq`.
+    pub keyed_nonces: bool,
+    /// EIP-7906 ASSERT frames.
+    pub assert_frames: bool,
+    /// EIP-8288 dependency frames and the block proof that covers them.
+    pub dependency_proofs: bool,
+}
+
+impl ChainFeatures {
+    /// The features the named fork schedule activates at `fork`: every frame
+    /// feature but EIP-8288 from Hegota, which no named fork schedules.
+    pub fn for_fork(fork: Fork) -> Self {
+        let hegota = fork >= Fork::Hegota;
+        ChainFeatures {
+            frame_transactions: hegota,
+            keyed_nonces: hegota,
+            assert_frames: hegota,
+            dependency_proofs: false,
+        }
+    }
+}
+
 /// Blockchain settings defined per block
 #[allow(unused)]
 #[derive(
@@ -282,6 +323,27 @@ pub struct ChainConfig {
     )]
     pub hegota_time: Option<u64>,
     pub lstar_time: Option<u64>,
+
+    /// Activates EIP-8141 frame transactions on their own, on top of whatever named
+    /// fork is active, without the Osaka, Amsterdam or Hegota rules a named fork
+    /// would bring. Genesis key `eip8141PrototypeTime`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eip8141_prototype_time: Option<u64>,
+    /// Activates EIP-8288 together with EIP-8250 keyed nonces and EIP-7906 ASSERT
+    /// frames, again on top of the active named fork. Genesis key
+    /// `eip8288PrototypeTime`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eip8288_prototype_time: Option<u64>,
+    /// Replaces EIP-8288's aggregated verification key from
+    /// [`Self::eip8288_aggregated_vk_timestamp`] on. A devnet-only override; the
+    /// two keys are set together or not at all. Genesis key `eip8288AggregatedVk`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[rkyv(with = rkyv::with::Map<rkyv_utils::H256Wrapper>)]
+    pub eip8288_aggregated_vk: Option<H256>,
+    /// When [`Self::eip8288_aggregated_vk`] takes effect. Genesis key
+    /// `eip8288AggregatedVkTimestamp`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eip8288_aggregated_vk_timestamp: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
@@ -384,6 +446,62 @@ impl From<Fork> for &str {
 impl ChainConfig {
     pub fn is_hegota_activated(&self, block_timestamp: u64) -> bool {
         self.hegota_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    /// Whether EIP-8141 frame transactions are valid: from Hegota on the named
+    /// fork schedule, or from `eip8141PrototypeTime` on a chain that runs them on
+    /// an earlier fork.
+    pub fn is_eip8141_active(&self, block_timestamp: u64) -> bool {
+        self.is_hegota_activated(block_timestamp)
+            || self
+                .eip8141_prototype_time
+                .is_some_and(|time| time <= block_timestamp)
+    }
+
+    /// Whether `eip8288PrototypeTime` has passed, which activates EIP-8288,
+    /// EIP-8250 and EIP-7906 together. EIP-8288 extends EIP-8141, so frame
+    /// transactions must be active too (see [`Self::check_prototype_schedule`]).
+    pub fn is_eip8288_active(&self, block_timestamp: u64) -> bool {
+        self.is_eip8141_active(block_timestamp)
+            && self
+                .eip8288_prototype_time
+                .is_some_and(|time| time <= block_timestamp)
+    }
+
+    /// The transaction features active at `block_timestamp`.
+    pub fn features(&self, block_timestamp: u64) -> ChainFeatures {
+        let named = ChainFeatures::for_fork(self.get_fork(block_timestamp));
+        let eip8288 = self.is_eip8288_active(block_timestamp);
+        ChainFeatures {
+            frame_transactions: self.is_eip8141_active(block_timestamp),
+            keyed_nonces: named.keyed_nonces || eip8288,
+            assert_frames: named.assert_frames || eip8288,
+            dependency_proofs: eip8288,
+        }
+    }
+
+    /// Checks the prototype keys against each other the way the reference client
+    /// does when it loads a genesis file, filling in what they imply:
+    /// - `eip8288PrototypeTime` alone also schedules frame transactions at that time,
+    ///   since EIP-8288 extends EIP-8141;
+    /// - EIP-8288 may not activate before the frame transactions it extends;
+    /// - `eip8288AggregatedVk` and its timestamp come together or not at all.
+    pub fn check_prototype_schedule(&mut self) -> Result<(), String> {
+        if let Some(eip8288) = self.eip8288_prototype_time {
+            let eip8141 = *self.eip8141_prototype_time.get_or_insert(eip8288);
+            if eip8141 > eip8288 {
+                return Err(format!(
+                    "EIP-8288 at {eip8288} cannot activate before the EIP-8141 it extends at {eip8141}"
+                ));
+            }
+        }
+        if self.eip8288_aggregated_vk.is_some() != self.eip8288_aggregated_vk_timestamp.is_some() {
+            return Err(
+                "eip8288AggregatedVk and eip8288AggregatedVkTimestamp must be set together"
+                    .to_string(),
+            );
+        }
+        Ok(())
     }
 
     pub fn is_lstar_activated(&self, block_timestamp: u64) -> bool {
@@ -754,6 +872,11 @@ impl ChainConfig {
             self.amsterdam_time,
             self.hegota_time,
             self.verkle_time,
+            // Each changes the rules on its own, so peers count it as a fork in their
+            // EIP-2124 fork ID; leaving one out gets the handshake rejected.
+            self.eip8141_prototype_time,
+            self.eip8288_prototype_time,
+            self.eip8288_aggregated_vk_timestamp,
         ]
         .into_iter()
         .flatten()

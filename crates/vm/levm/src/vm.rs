@@ -1149,6 +1149,7 @@ impl<'a> VM<'a> {
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
 
         let fork = env.config.fork;
+        let frame_opcodes = env.config.features.frame_transactions;
 
         #[expect(
             clippy::arithmetic_side_effects,
@@ -1228,7 +1229,7 @@ impl<'a> VM<'a> {
             ),
             env,
             frame_tx_context: None,
-            opcode_table: VM::build_opcode_table(fork),
+            opcode_table: VM::build_opcode_table(fork, frame_opcodes),
             crypto,
             stateless_validator,
             assertion_diff: None,
@@ -1967,8 +1968,8 @@ impl<'a> VM<'a> {
         use crate::errors::TxResult;
 
         // EIP-8141 fork gating: reject frame transactions observed in a block or
-        // submitted to any non-mempool entry point before Hegota activates.
-        if self.env.config.fork < Fork::Hegota {
+        // submitted to any non-mempool entry point before they activate.
+        if !self.env.config.features.frame_transactions {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::FrameTxPreFork,
             ));
@@ -3223,7 +3224,7 @@ impl<'a> VM<'a> {
     ) -> Result<PrefixSimResult, VMError> {
         use crate::validation_observer::ValidationObserver;
 
-        if self.env.config.fork < Fork::Hegota {
+        if !self.env.config.features.frame_transactions {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::FrameTxPreFork,
             ));
@@ -4412,7 +4413,7 @@ impl<'a> VM<'a> {
             prep_baseline_state_gas_spill: 0,
             prep_region_backup_marker: PrepareRegionBackupMarker::default(),
             pending_prep_oog: false,
-            opcode_table: VM::build_opcode_table(fork),
+            opcode_table: VM::build_opcode_table(fork, false),
             crypto,
             stateless_validator: None,
             validation_observer: ValidationObserver::disabled(),

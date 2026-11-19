@@ -3844,10 +3844,11 @@ impl Blockchain {
         // rejects.
         let fork = config.fork(header.timestamp);
 
-        // EIP-8141 fork gating: reject frame transactions before Hegota activates.
-        // Prevents FrameTransaction (type 0x06) from entering the mempool or being
-        // forwarded over P2P on chains where EIP-8141 has not yet activated.
-        if is_frame_tx && fork < Fork::Hegota {
+        // EIP-8141 fork gating: reject frame transactions before they activate, at
+        // Hegota or at the chain's `eip8141PrototypeTime`. Prevents FrameTransaction
+        // (type 0x06) from entering the mempool or being forwarded over P2P on chains
+        // where EIP-8141 has not yet activated.
+        if is_frame_tx && !config.is_eip8141_active(header.timestamp) {
             return Err(MempoolError::FrameTxPreFork);
         }
 

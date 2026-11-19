@@ -1016,12 +1016,15 @@ impl Blockchain {
             }
 
             // EIP-8141 fork gating: drop frame transactions that reached the payload
-            // builder before Hegota has activated. These must never be included in a
-            // block until the fork is live.
+            // builder before they activate. These must never be included in a block
+            // until EIP-8141 is live.
             if head_tx.tx_type() == TxType::Frame
-                && !chain_config.is_hegota_activated(context.payload.header.timestamp)
+                && !chain_config.is_eip8141_active(context.payload.header.timestamp)
             {
-                debug!("Skipping frame transaction before Hegota fork: {}", tx_hash);
+                debug!(
+                    "Skipping frame transaction before EIP-8141 activates: {}",
+                    tx_hash
+                );
                 txs.pop();
                 self.remove_transaction_from_pool(&tx_hash)?;
                 continue;

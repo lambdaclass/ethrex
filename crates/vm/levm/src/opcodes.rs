@@ -428,24 +428,51 @@ impl<'a> VM<'a> {
     /// per-tx rebuild or 2 KB copy into the VM. `fork` is constant within a block, so every tx
     /// in a block resolves to the same table. This is faster than a conventional match.
     #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    pub(crate) fn build_opcode_table(fork: Fork) -> &'static [OpCodeFn; 256] {
+    ///
+    /// `frame_transactions` adds the EIP-8141 opcodes to a pre-Hegota table, for a chain
+    /// that activates frame transactions on their own (`eip8141PrototypeTime`). Only
+    /// those opcodes come along: EIP-7906's need EIP-7928's state tracking, which such a
+    /// chain does not have, so they stay invalid. Frame transactions need at least
+    /// Cancun; before it the flag adds nothing.
+    pub(crate) fn build_opcode_table(
+        fork: Fork,
+        frame_transactions: bool,
+    ) -> &'static [OpCodeFn; 256] {
         // Built once at compile time; immutable, so sharing across all VMs is trivially safe.
         // Instantiated with `'static` so the initializers don't reference the impl's `'a`.
         static HEGOTA: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_hegota();
         static AMSTERDAM: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_amsterdam();
+        static AMSTERDAM_FRAMES: [OpCodeFn; 256] =
+            VM::<'static>::with_frame_opcodes(VM::<'static>::build_opcode_table_amsterdam());
         static OSAKA: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_osaka();
+        static OSAKA_FRAMES: [OpCodeFn; 256] =
+            VM::<'static>::with_frame_opcodes(VM::<'static>::build_opcode_table_osaka());
         static PRE_OSAKA: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_pre_osaka();
+        static PRE_OSAKA_FRAMES: [OpCodeFn; 256] =
+            VM::<'static>::with_frame_opcodes(VM::<'static>::build_opcode_table_pre_osaka());
         static PRE_CANCUN: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_pre_cancun();
         static PRE_SHANGHAI: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_pre_shanghai();
 
         if fork >= Fork::Hegota {
             &HEGOTA
         } else if fork >= Fork::Amsterdam {
-            &AMSTERDAM
+            if frame_transactions {
+                &AMSTERDAM_FRAMES
+            } else {
+                &AMSTERDAM
+            }
         } else if fork >= Fork::Osaka {
-            &OSAKA
+            if frame_transactions {
+                &OSAKA_FRAMES
+            } else {
+                &OSAKA
+            }
         } else if fork >= Fork::Cancun {
-            &PRE_OSAKA
+            if frame_transactions {
+                &PRE_OSAKA_FRAMES
+            } else {
+                &PRE_OSAKA
+            }
         } else if fork >= Fork::Shanghai {
             &PRE_CANCUN
         } else {
@@ -662,9 +689,19 @@ impl<'a> VM<'a> {
 
     #[expect(clippy::as_conversions, clippy::indexing_slicing)]
     const fn build_opcode_table_hegota() -> [OpCodeFn; 256] {
-        let mut opcode_table: [OpCodeFn; 256] = Self::build_opcode_table_amsterdam();
+        let mut opcode_table: [OpCodeFn; 256] =
+            Self::with_frame_opcodes(Self::build_opcode_table_amsterdam());
 
-        // EIP-8141 Frame Transaction opcodes (Hegota)
+        // EIP-7906 transaction assertion opcodes, valid only inside an ASSERT frame
+        opcode_table[Opcode::TXTRACE as usize] = OpCodeFn::new::<OpTxTraceHandler>();
+        opcode_table[Opcode::EVENTDATACOPY as usize] = OpCodeFn::new::<OpEventDataCopyHandler>();
+
+        opcode_table
+    }
+
+    /// `opcode_table` with the EIP-8141 frame transaction opcodes added.
+    #[allow(clippy::as_conversions, clippy::indexing_slicing)]
+    const fn with_frame_opcodes(mut opcode_table: [OpCodeFn; 256]) -> [OpCodeFn; 256] {
         opcode_table[Opcode::APPROVE as usize] = OpCodeFn::new::<OpApproveHandler>();
         opcode_table[Opcode::TXPARAM as usize] = OpCodeFn::new::<OpTxParamHandler>();
         opcode_table[Opcode::FRAMEDATALOAD as usize] = OpCodeFn::new::<OpFrameDataLoadHandler>();
@@ -672,9 +709,6 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::FRAMEPARAM as usize] = OpCodeFn::new::<OpFrameParamHandler>();
         opcode_table[Opcode::SIGPARAM as usize] = OpCodeFn::new::<OpSigParamHandler>();
         opcode_table[Opcode::SIGDATACOPY as usize] = OpCodeFn::new::<OpSigDataCopyHandler>();
-        // EIP-7906 transaction assertion opcodes, valid only inside an ASSERT frame
-        opcode_table[Opcode::TXTRACE as usize] = OpCodeFn::new::<OpTxTraceHandler>();
-        opcode_table[Opcode::EVENTDATACOPY as usize] = OpCodeFn::new::<OpEventDataCopyHandler>();
 
         opcode_table
     }
@@ -697,7 +731,7 @@ mod tests {
         }
         // 0xEF is never assigned in any table -> it holds the invalid handler.
         for fork in [Fork::Osaka, Fork::Amsterdam] {
-            let table = VM::build_opcode_table(fork);
+            let table = VM::build_opcode_table(fork, false);
             for byte in [0xAAusize, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4] {
                 assert!(
                     same_handler(table[byte], table[0xEF]),
@@ -705,7 +739,33 @@ mod tests {
                 );
             }
         }
-        let hegota = VM::build_opcode_table(Fork::Hegota);
+        let hegota = VM::build_opcode_table(Fork::Hegota, false);
         assert!(!same_handler(hegota[0xAA], hegota[0xEF]));
+    }
+
+    #[test]
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "fixed 256-entry table indexed by u8"
+    )]
+    fn prague_with_frame_transactions_gets_the_frame_opcodes_only() {
+        fn same_handler(a: OpCodeFn, b: OpCodeFn) -> bool {
+            std::ptr::fn_addr_eq(a.0, b.0)
+        }
+        let table = VM::build_opcode_table(Fork::Prague, true);
+        let hegota = VM::build_opcode_table(Fork::Hegota, false);
+        for byte in [0xAAusize, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5] {
+            assert!(
+                same_handler(table[byte], hegota[byte]),
+                "frame opcode {byte:#x} must be installed on Prague with frame transactions"
+            );
+        }
+        // EIP-7906's opcodes and Osaka's CLZ stay invalid.
+        for byte in [0xB6usize, 0xB7, 0x1E] {
+            assert!(
+                same_handler(table[byte], table[0xEF]),
+                "opcode {byte:#x} must stay invalid on Prague with frame transactions"
+            );
+        }
     }
 }
