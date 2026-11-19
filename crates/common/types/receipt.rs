@@ -785,16 +785,25 @@ mod test {
 
     #[test]
     fn test_frame_receipt_skipped_status_rlp_roundtrip() {
-        // Spec line 137: status code 0x3 marks frames skipped by a failed atomic batch.
+        // EIP-8141 §Receipt: status code 0x2 marks frames skipped by a failed atomic batch.
         let fr = FrameReceipt {
             status: FRAME_RECEIPT_STATUS_SKIPPED,
             gas_used: 0,
             logs: vec![],
         };
         let encoded = fr.encode_to_vec();
+        // Consensus bytes: list(3) = [status 0x02, gas_used 0 (0x80), logs [] (0xc0)].
+        // Asserted literally so a status-code regression (e.g. back to 0x3) fails
+        // here, not only at a higher layer.
+        assert_eq!(
+            encoded,
+            vec![0xc3, 0x02, 0x80, 0xc0],
+            "skipped frame receipt must encode status as the byte 0x02"
+        );
         let decoded = FrameReceipt::decode(&encoded).unwrap();
         assert_eq!(fr, decoded);
         assert_eq!(decoded.status, FRAME_RECEIPT_STATUS_SKIPPED);
+        assert_eq!(decoded.status, 2, "skipped status must decode back to 2");
     }
 
     #[test]
