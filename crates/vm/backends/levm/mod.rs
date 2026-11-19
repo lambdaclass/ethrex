@@ -5,7 +5,7 @@ use super::{BlockExecutionResult, FrameValidationOutcome, TxGasBreakdown, comput
 use crate::system_contracts::{
     AMSTERDAM_REQUEST_PREDEPLOYS, BEACON_ROOTS_ADDRESS, BUILDER_DEPOSIT_CONTRACT_ADDRESS,
     BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
-    HISTORY_STORAGE_ADDRESS, PRAGUE_SYSTEM_CONTRACTS, RECENT_ROOT_RUNTIME_BYTECODE, SYSTEM_ADDRESS,
+    HISTORY_STORAGE_ADDRESS, PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS,
     WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
@@ -3618,37 +3618,7 @@ impl LEVM {
         };
         let sender = frame_tx.sender;
 
-        // EIP-8272: a recent root verifier frame is admitted only while the code at
-        // `RECENT_ROOT_ADDRESS` is exactly `RECENT_ROOT_CODE`; only then does the
-        // frame get its two simulation permissions.
-        let recent_root_frame = match prefix.recent_root_index {
-            Some(index) => {
-                if db
-                    .get_account_code(ethrex_common::types::frame_tx_recent_root())?
-                    .code()
-                    != RECENT_ROOT_RUNTIME_BYTECODE.as_slice()
-                {
-                    return Ok(FrameValidationOutcome {
-                        passed: false,
-                        violation: Some(
-                            "the code at RECENT_ROOT_ADDRESS is not RECENT_ROOT_CODE".to_string(),
-                        ),
-                        reservation_ceiling: Self::frame_tx_reservation_ceiling(frame_tx),
-                        accessed_paymaster: None,
-                        touched_sender_slots: Vec::new(),
-                    });
-                }
-                Some(index)
-            }
-            None => None,
-        };
-
-        let mut env = Self::setup_env(tx, sender, block_header, db, vm_type)?;
-        // EIP-8272 §Current slot: during public mempool validation `current_slot` is
-        // one greater than the `slotNumber` of the latest canonical header, and the
-        // simulated `SLOTNUM` must equal it. Every other prefix frame is barred from
-        // `SLOTNUM`, so only the recent root verifier frame observes the change.
-        env.slot_number = env.slot_number.saturating_add(U256::one());
+        let env = Self::setup_env(tx, sender, block_header, db, vm_type)?;
         let mut vm = VM::new(
             env,
             db,
@@ -3667,7 +3637,6 @@ impl LEVM {
             &prefix.frame_indices,
             prefix.deploy_index,
             canonical_pay_frame,
-            recent_root_frame,
         ) {
             Ok(sim) => sim,
             Err(err) => {

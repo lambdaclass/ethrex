@@ -1,7 +1,7 @@
 //! The keyless deployment transactions of the frame-transaction contracts.
 //!
-//! EIP-8141 (expiry verifier), EIP-8250 (nonce manager) and EIP-8272 (recent root
-//! contract) each deploy an ordinary contract with a pre-EIP-155 transaction whose
+//! EIP-8141 (expiry verifier) and EIP-8250 (nonce manager) each deploy an ordinary
+//! contract with a pre-EIP-155 transaction whose
 //! signature was chosen first, so its sender has no known key and the transaction
 //! is the only one that sender can ever send. Each EIP publishes that transaction,
 //! its sender and the resulting address. These tests check the published data
@@ -15,7 +15,7 @@ use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::evm::calculate_create_address;
 use ethrex_common::types::{
     Account, BlockHeader, Code, Fork, Frame, FrameMode, FrameTransaction, LegacyTransaction,
-    Transaction, TxKind, frame_tx_expiry_verifier, frame_tx_nonce_manager, frame_tx_recent_root,
+    Transaction, TxKind, frame_tx_expiry_verifier, frame_tx_nonce_manager,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
@@ -26,7 +26,7 @@ use ethrex_levm::vm::{VM, VMType};
 use ethrex_storage::Store;
 use ethrex_vm::DynVmDatabase;
 use ethrex_vm::system_contracts::{
-    EXPIRY_VERIFIER_RUNTIME_BYTECODE, NONCE_MANAGER_RUNTIME_BYTECODE, RECENT_ROOT_RUNTIME_BYTECODE,
+    EXPIRY_VERIFIER_RUNTIME_BYTECODE, NONCE_MANAGER_RUNTIME_BYTECODE,
 };
 use rustc_hash::FxHashMap;
 use std::str::FromStr;
@@ -67,30 +67,6 @@ fn nonce_manager() -> Deployment {
         sender: "7A57307E9985b0e26B66A7BB920BcaF0396b8198",
         address: frame_tx_nonce_manager(),
         runtime: &NONCE_MANAGER_RUNTIME_BYTECODE,
-    }
-}
-
-/// The EIP-8272 deployment input: a 10-byte copier and the 320-byte runtime.
-const RECENT_ROOT_INPUT: &str = concat!(
-    "61014080600a5f395ff3346100ba57366040146100c05736604836066100ba5780156100ba57610480811161",
-    "00ba574b60005b602081013560c01c828110156100ba5780830361200011156100ba577f8f42481679c8e6fe",
-    "fa040974b3c905e0ce3f2e464ba93acdb074a41181617efc60005260488260203760686000207fbdc897da21",
-    "77d260ff5f4be5d4b2aad43f89c3347a305b584fa5a2546d053daa60005290611fff1660c01b604052604860",
-    "00205414156100ba5760480182811061002857005b60006000fd5b33600052602060006020376034600c2080",
-    "7f8f42481679c8e6fefa040974b3c905e0ce3f2e464ba93acdb074a41181617efc6040524b60685260605260",
-    "2060206088376068604020817fbdc897da2177d260ff5f4be5d4b2aad43f89c3347a305b584fa5a2546d053d",
-    "aa60a852611fff4b1660d05260c852604860a8205500",
-);
-
-fn recent_root() -> Deployment {
-    Deployment {
-        gas: 0x13d620,
-        input: RECENT_ROOT_INPUT,
-        s: "fadf66b1e192785c",
-        hash: "56c2adbbfa3ba5dfe47adf48828f6c581134e39e14c3b80e06214de5e5875272",
-        sender: "14bf16d4c9842bf1EbF396e553477C66EB0a8A82",
-        address: frame_tx_recent_root(),
-        runtime: &RECENT_ROOT_RUNTIME_BYTECODE,
     }
 }
 
@@ -188,11 +164,6 @@ fn the_expiry_verifier_deployment_matches_eip_8141() {
 #[test]
 fn the_nonce_manager_deployment_matches_eip_8250() {
     check(nonce_manager());
-}
-
-#[test]
-fn the_recent_root_deployment_matches_eip_8272() {
-    check(recent_root());
 }
 
 // ==================== Before the deployment ====================
@@ -325,14 +296,4 @@ fn an_expiry_frame_fails_until_the_verifier_is_deployed() {
         after.is_ok(),
         "a far deadline passes once deployed, got {after:?}"
     );
-}
-
-#[test]
-fn a_recent_root_verifier_frame_fails_until_the_contract_is_deployed() {
-    // One well-formed 72-byte tuple; without the contract its content is irrelevant.
-    let result = frame_tx_result(
-        None,
-        verify_frame_to(frame_tx_recent_root(), vec![0x11; 72]),
-    );
-    assert!(is_failed_verify_frame(&result), "got {result:?}");
 }

@@ -2435,7 +2435,7 @@ mod validation_observer_tests {
         )
         .unwrap();
         let result = vm
-            .run_frame_validation_prefix(frame_indices, deploy_index, None, None)
+            .run_frame_validation_prefix(frame_indices, deploy_index, None)
             .unwrap();
         (result, vm.validation_observer.violation.clone())
     }
@@ -2505,9 +2505,7 @@ mod validation_observer_tests {
             None,
         )
         .unwrap();
-        let _ = vm
-            .run_frame_validation_prefix(&[0], None, None, None)
-            .unwrap();
+        let _ = vm.run_frame_validation_prefix(&[0], None, None).unwrap();
         assert!(
             vm.validation_observer.violation.is_none(),
             "TIMESTAMP inside the expiry verifier must be allowed, got {:?}",
@@ -2705,9 +2703,7 @@ mod validation_observer_tests {
             None,
         )
         .unwrap();
-        let result = vm
-            .run_frame_validation_prefix(&[0], Some(0), None, None)
-            .unwrap();
+        let result = vm.run_frame_validation_prefix(&[0], Some(0), None).unwrap();
         assert!(
             vm.validation_observer.violation.is_none(),
             "SSTORE to the sender inside the deploy frame must be allowed, got {:?}",
@@ -2960,7 +2956,6 @@ mod frame_validation_prefix_tests {
             frame_indices: vec![0, 1],
             deploy_index: Some(0),
             pay_index: Some(1),
-            recent_root_index: None,
         };
         let outcome = LEVM::simulate_frame_validation_prefix(
             &tx,
@@ -2998,7 +2993,6 @@ mod frame_validation_prefix_tests {
             frame_indices: vec![0],
             deploy_index: None,
             pay_index: Some(0),
-            recent_root_index: None,
         };
         let outcome = LEVM::simulate_frame_validation_prefix(
             &tx,
@@ -3048,7 +3042,6 @@ mod frame_validation_prefix_tests {
             frame_indices: vec![0],
             deploy_index: None,
             pay_index: Some(0),
-            recent_root_index: None,
         };
         let outcome = LEVM::simulate_frame_validation_prefix(
             &tx,
