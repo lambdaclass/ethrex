@@ -72,9 +72,6 @@ pub struct Info {
 #[serde(rename_all = "camelCase")]
 pub struct FixtureConfig {
     pub blob_schedule: Option<BlobSchedule>,
-    /// EIP-8253: the accounts the fork block bumps, which each fixture names itself.
-    #[serde(default)]
-    pub zero_nonce_storage_accounts: Option<Vec<Address>>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -163,17 +160,12 @@ impl TestUnit {
     }
 
     pub fn get_genesis(&self) -> Genesis {
-        let mut config = self.network.chain_config().clone();
+        let mut config = *self.network.chain_config();
         // Overwrite default blob schedule with test's blob schedule
         if let Some(test_config) = &self.config
             && let Some(ref schedule) = test_config.blob_schedule
         {
             config.blob_schedule = schedule.clone().into();
-        }
-        if let Some(test_config) = &self.config
-            && let Some(accounts) = &test_config.zero_nonce_storage_accounts
-        {
-            config.zero_nonce_storage_accounts = accounts.clone();
         }
         Genesis {
             config,

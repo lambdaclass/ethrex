@@ -238,7 +238,7 @@ mod tests {
     ) {
         for test_case in test_cases {
             let fork_id = ForkId::new(
-                chain_config.clone(),
+                chain_config,
                 genesis_header.clone(),
                 test_case.time,
                 test_case.head,
@@ -248,7 +248,7 @@ mod tests {
                     test_case.fork_id,
                     test_case.head,
                     test_case.time,
-                    chain_config.clone(),
+                    chain_config,
                     genesis_header.clone()
                 ),
                 test_case.is_valid

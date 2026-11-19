@@ -728,9 +728,7 @@ async fn re_run_stateless(
 /// independently with its own witness.
 #[cfg(feature = "stateless")]
 async fn run_stateless_from_fixture(test: &TestUnit, test_key: &str) -> Result<(), String> {
-    // The fixture's own config, as `get_genesis` applies it: blob schedule and the
-    // EIP-8253 account list.
-    let chain_config = test.get_genesis().config;
+    let chain_config = test.network.chain_config();
 
     for block_fixture in test.blocks.iter() {
         // Skip blocks that expect exceptions — those are already validated by the normal path.
@@ -786,7 +784,7 @@ async fn run_stateless_from_fixture(test: &TestUnit, test_key: &str) -> Result<(
             })?;
         let execution_witness = rpc_witness
             .into_execution_witness(
-                chain_config.clone(),
+                *chain_config,
                 block_number,
                 &decoded_headers,
                 &ethrex_crypto::NativeCrypto,

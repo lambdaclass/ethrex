@@ -134,8 +134,7 @@ where
 
         // Execute block
         let (result, bal) = report_cycles("execute_block", || {
-            vm.execute_block(block, parent_block_header.timestamp)
-                .map_err(ExecutionError::Evm)
+            vm.execute_block(block).map_err(ExecutionError::Evm)
         })?;
 
         let receipts = result.receipts;

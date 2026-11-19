@@ -28,84 +28,84 @@ lazy_static! {
     };
     pub static ref MERGE_TO_SHANGHAI_AT_15K_CONFIG: ChainConfig = ChainConfig {
         shanghai_time: Some(0x3a98),
-        ..MERGE_CONFIG.clone()
+        ..*MERGE_CONFIG
     };
     pub static ref SHANGHAI_CONFIG: ChainConfig = ChainConfig {
         shanghai_time: Some(0),
-        ..MERGE_CONFIG.clone()
+        ..*MERGE_CONFIG
     };
     pub static ref SHANGHAI_TO_CANCUN_AT_15K_CONFIG: ChainConfig = ChainConfig {
         cancun_time: Some(0x3a98),
-        ..SHANGHAI_CONFIG.clone()
+        ..*SHANGHAI_CONFIG
     };
     pub static ref CANCUN_CONFIG: ChainConfig = ChainConfig {
         cancun_time: Some(0),
-        ..SHANGHAI_CONFIG.clone()
+        ..*SHANGHAI_CONFIG
     };
     pub static ref CANCUN_TO_PRAGUE_AT_15K_CONFIG: ChainConfig = ChainConfig {
         prague_time: Some(0x3a98),
         // Mainnet address
         deposit_contract_address: H160::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")
             .unwrap(),
-        ..CANCUN_CONFIG.clone()
+        ..*CANCUN_CONFIG
     };
     pub static ref PRAGUE_CONFIG: ChainConfig = ChainConfig {
         prague_time: Some(0),
-        ..CANCUN_TO_PRAGUE_AT_15K_CONFIG.clone()
+        ..*CANCUN_TO_PRAGUE_AT_15K_CONFIG
     };
 
     pub static ref PRAGUE_TO_OSAKA_AT_15K_CONFIG: ChainConfig = ChainConfig {
         osaka_time: Some(0x3a98),
-        ..PRAGUE_CONFIG.clone()
+        ..*PRAGUE_CONFIG
 
     };
 
     pub static ref OSAKA_CONFIG: ChainConfig = ChainConfig {
         osaka_time: Some(0),
-        ..PRAGUE_CONFIG.clone()
+        ..*PRAGUE_CONFIG
     };
 
     pub static ref OSAKA_TO_BPO1_AT_15K_CONFIG: ChainConfig = ChainConfig {
         bpo1_time: Some(0x3a98),
-        ..OSAKA_CONFIG.clone()
+        ..*OSAKA_CONFIG
     };
 
     pub static ref BPO1_TO_BPO2_AT_15K_CONFIG: ChainConfig = ChainConfig {
         bpo1_time: Some(0),
         bpo2_time: Some(0x3a98),
-        ..OSAKA_CONFIG.clone()
+        ..*OSAKA_CONFIG
     };
 
     pub static ref BPO2_TO_BPO3_AT_15K_CONFIG: ChainConfig = ChainConfig {
         bpo2_time: Some(0),
         bpo3_time: Some(0x3a98),
-        ..OSAKA_CONFIG.clone()
+        ..*OSAKA_CONFIG
     };
     pub static ref BPO3_TO_BPO4_AT_15K_CONFIG: ChainConfig = ChainConfig {
         bpo3_time: Some(0),
         bpo4_time: Some(0x3a98),
-        ..OSAKA_CONFIG.clone()
+        ..*OSAKA_CONFIG
     };
     pub static ref BPO4_TO_BPO5_AT_15K_CONFIG: ChainConfig = ChainConfig {
         bpo4_time: Some(0),
         bpo5_time: Some(0x3a98),
-        ..OSAKA_CONFIG.clone()
+        ..*OSAKA_CONFIG
     };
 
     pub static ref BPO2_CONFIG: ChainConfig = ChainConfig {
         bpo1_time: Some(0),
         bpo2_time: Some(0),
-        ..OSAKA_CONFIG.clone()
+        ..*OSAKA_CONFIG
     };
 
     pub static ref BPO2_TO_AMSTERDAM_AT_15K_CONFIG: ChainConfig = ChainConfig {
         amsterdam_time: Some(0x3a98),
-        ..BPO2_CONFIG.clone()
+        ..*BPO2_CONFIG
     };
 
     pub static ref AMSTERDAM_CONFIG: ChainConfig = ChainConfig {
         amsterdam_time: Some(0),
-        ..BPO2_TO_AMSTERDAM_AT_15K_CONFIG.clone()
+        ..*BPO2_TO_AMSTERDAM_AT_15K_CONFIG
     };
 
     /// `Bogota` is the pseudo-fork the EIP-8141 fixtures are labelled with:
@@ -114,13 +114,13 @@ lazy_static! {
     /// transactions on Hegota, which is the same fork under its ethrex name.
     pub static ref BOGOTA_CONFIG: ChainConfig = ChainConfig {
         hegota_time: Some(0),
-        ..AMSTERDAM_CONFIG.clone()
+        ..*AMSTERDAM_CONFIG
     };
 
     /// Amsterdam at genesis, Bogota (ethrex's Hegota) at timestamp 15000.
     pub static ref AMSTERDAM_TO_BOGOTA_AT_15K_CONFIG: ChainConfig = ChainConfig {
         hegota_time: Some(0x3a98),
-        ..AMSTERDAM_CONFIG.clone()
+        ..*AMSTERDAM_CONFIG
     };
 
 }
