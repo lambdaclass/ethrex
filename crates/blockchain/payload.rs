@@ -343,12 +343,9 @@ impl PayloadBuildContext {
     }
 
     pub fn gas_used(&self) -> u64 {
-        if self.is_amsterdam {
-            // EIP-8037: block gas = max(sum_regular, sum_state)
-            self.block_regular_gas_used.max(self.block_state_gas_used)
-        } else {
-            self.payload.header.gas_limit - self.remaining_gas
-        }
+        // EIP-8037: block gas = max(sum_regular, sum_state). Before Amsterdam only a
+        // frame transaction reports state gas, so without one this is the plain sum.
+        self.block_regular_gas_used.max(self.block_state_gas_used)
     }
 }
 
@@ -1528,7 +1525,11 @@ pub fn apply_plain_transaction(
 
     // EIP-8037 (Amsterdam+): post-execution block gas overflow check
     // Reject the transaction if adding it would cause max(regular, state) to exceed the gas limit
-    if context.is_amsterdam && new_regular.max(new_state) > context.payload.header.gas_limit {
+    // A frame transaction activated before Amsterdam has no single limit the pre-tx
+    // check can reserve, so its overflow is caught here too.
+    let checks_after_execution =
+        context.is_amsterdam || matches!(*head.tx, Transaction::FrameTransaction(_));
+    if checks_after_execution && new_regular.max(new_state) > context.payload.header.gas_limit {
         // Rollback transaction state before returning error:
         // 1. Undo DB mutations (nonce, balance, storage, etc.)
         // 2. Revert cumulative gas counter inflation
@@ -1574,17 +1575,15 @@ pub fn apply_plain_transaction(
     }
 
     // Update remaining_gas for block gas limit checks.
-    // EIP-8037 (Amsterdam+): remaining_gas reflects both regular and state gas dimensions.
-    // For pre-tx heuristic checks, this ensures we reject txs when either dimension is full.
-    if context.is_amsterdam {
-        context.remaining_gas = context
-            .payload
-            .header
-            .gas_limit
-            .saturating_sub(new_regular.max(new_state));
-    } else {
-        context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used);
-    }
+    // remaining_gas reflects both regular and state gas dimensions (EIP-8037, and
+    // frame transactions on any fork). For pre-tx heuristic checks, this ensures we
+    // reject txs when either dimension is full. Without state gas it is the plain
+    // limit minus the gas used so far.
+    context.remaining_gas = context
+        .payload
+        .header
+        .gas_limit
+        .saturating_sub(new_regular.max(new_state));
 
     // Block value uses gas_spent (what the user actually pays) for tip calculation
     context.block_value += U256::from(report.gas_spent) * head.tip;

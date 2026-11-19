@@ -1275,8 +1275,8 @@ impl<'a> VM<'a> {
     )]
     pub fn increase_state_gas(&mut self, gas: u64) -> Result<(), VMError> {
         debug_assert!(
-            self.env.config.fork >= Fork::Amsterdam,
-            "increase_state_gas called pre-Amsterdam"
+            self.env.config.fork >= Fork::Amsterdam || self.env.config.features.frame_transactions,
+            "increase_state_gas called pre-Amsterdam outside a frame transaction"
         );
         // Inside a frame the state budget is its own dimension: exhausting it is an
         // out-of-gas, not a spill into the execution budget.
@@ -1428,8 +1428,8 @@ impl<'a> VM<'a> {
     )]
     pub fn credit_state_gas_refund(&mut self, amount: u64) -> Result<(), VMError> {
         debug_assert!(
-            self.env.config.fork >= Fork::Amsterdam,
-            "credit_state_gas_refund called pre-Amsterdam"
+            self.env.config.fork >= Fork::Amsterdam || self.env.config.features.frame_transactions,
+            "credit_state_gas_refund called pre-Amsterdam outside a frame transaction"
         );
         // LIFO: drain the frame's spill (gas borrowed from gas_remaining) first.
         let from_gas_left = self.current_call_frame.frame_state_gas_spilled.min(amount);
@@ -1500,8 +1500,8 @@ impl<'a> VM<'a> {
     )]
     pub fn repay_state_gas_spill(&mut self) -> Result<(), VMError> {
         debug_assert!(
-            self.env.config.fork >= Fork::Amsterdam,
-            "repay_state_gas_spill called pre-Amsterdam"
+            self.env.config.fork >= Fork::Amsterdam || self.env.config.features.frame_transactions,
+            "repay_state_gas_spill called pre-Amsterdam outside a frame transaction"
         );
         let repayment = self
             .state_gas_reservoir
@@ -1553,8 +1553,8 @@ impl<'a> VM<'a> {
     /// Must only be called for Amsterdam+ forks.
     pub fn refill_frame_state_gas(&mut self, entry: i64) -> Result<(), VMError> {
         debug_assert!(
-            self.env.config.fork >= Fork::Amsterdam,
-            "refill_frame_state_gas called pre-Amsterdam"
+            self.env.config.fork >= Fork::Amsterdam || self.env.config.features.frame_transactions,
+            "refill_frame_state_gas called pre-Amsterdam outside a frame transaction"
         );
         // The frame's net state-gas charge since it began executing. May be
         // negative when the frame's inline refunds (e.g. an SSTORE clearing a
@@ -1907,9 +1907,10 @@ impl<'a> VM<'a> {
         &mut self,
         frame_tx: &ethrex_common::types::FrameTransaction,
     ) -> Result<u64, VMError> {
+        let (new_account, storage_set) = self.frame_nonce_state_costs();
         if !frame_tx.is_keyed() {
             return Ok(if self.db.get_account(frame_tx.sender)?.is_empty() {
-                self.state_gas_new_account
+                new_account
             } else {
                 0
             });
@@ -1920,7 +1921,23 @@ impl<'a> VM<'a> {
                 first_uses = first_uses.saturating_add(1);
             }
         }
-        Ok(first_uses.saturating_mul(self.state_gas_storage_set))
+        Ok(first_uses.saturating_mul(storage_set))
+    }
+
+    /// The state gas of creating `tx.sender` and of a nonce key's first use, the two
+    /// charges a payment-scoped `APPROVE` makes. From Amsterdam they are EIP-8037's
+    /// account-creation and storage-set costs. A chain that runs frame transactions on
+    /// an earlier fork charges the same amounts at the pinned cost per state byte, as
+    /// the reference client does, while the rest of EIP-8037 stays off.
+    fn frame_nonce_state_costs(&self) -> (u64, u64) {
+        if self.env.config.fork >= Fork::Amsterdam {
+            return (self.state_gas_new_account, self.state_gas_storage_set);
+        }
+        let cpsb = compute_cost_per_state_byte(self.env.block_gas_limit);
+        (
+            STATE_BYTES_PER_NEW_ACCOUNT.saturating_mul(cpsb),
+            STATE_BYTES_PER_STORAGE_SET.saturating_mul(cpsb),
+        )
     }
 
     /// EIP-8250 `consume_nonce_set`, run once on the payment approval: the empty set
@@ -3004,9 +3021,16 @@ impl<'a> VM<'a> {
         let payer_execution_gas = gas_used_after_refund
             .saturating_sub(tx_state_gas)
             .max(frame_tx.calldata_floor_total(self.env.config.fork));
-        let block_execution_gas = gas_used_before_refund
-            .saturating_sub(tx_state_gas)
-            .max(frame_tx.calldata_floor_total(self.env.config.fork));
+        // EIP-7778 has the block count the execution dimension before the refund. It
+        // arrives with Amsterdam; a chain that runs frame transactions earlier counts
+        // what the payer pays, after the refund, as the reference client does.
+        let block_execution_gas = if self.env.config.fork >= Fork::Amsterdam {
+            gas_used_before_refund
+                .saturating_sub(tx_state_gas)
+                .max(frame_tx.calldata_floor_total(self.env.config.fork))
+        } else {
+            payer_execution_gas
+        };
         let total_gas_used = payer_execution_gas;
 
         // EIP-8141 settlement of the `max_cost` escrow collected at APPROVE: the gas

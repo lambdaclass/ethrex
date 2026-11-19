@@ -6,9 +6,9 @@
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::{
-    Account, BlockHeader, Code, FRAME_RECEIPT_STATUS_SUCCESS, FRAME_TX_KEYED_NONCE_ACCESS_COST,
-    Fork, Frame, FrameMode, FrameTransaction, Transaction, frame_tx_nonce_manager,
-    keyed_nonce_slot,
+    Account, BlockHeader, ChainFeatures, Code, FRAME_RECEIPT_STATUS_SUCCESS,
+    FRAME_TX_KEYED_NONCE_ACCESS_COST, Fork, Frame, FrameMode, FrameTransaction, Transaction,
+    frame_tx_nonce_manager, keyed_nonce_slot,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH, utils::keccak};
 use ethrex_crypto::NativeCrypto;
@@ -69,15 +69,22 @@ fn seeded_db(accounts: &[SeededAccount]) -> GeneralizedDatabase {
 }
 
 fn frame_tx_env(tx: &FrameTransaction) -> Environment {
+    frame_tx_env_with(
+        tx,
+        EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
+    )
+}
+
+fn frame_tx_env_with(tx: &FrameTransaction, config: EVMConfig) -> Environment {
     Environment {
         origin: tx.sender,
-        gas_limit: tx.max_gas(Fork::Hegota),
+        gas_limit: tx.max_gas(config.fork),
         block_gas_limit: (i64::MAX - 1) as u64,
-        config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
+        config,
         chain_id: U256::from(HARNESS_CHAIN_ID),
         base_fee_per_gas: U256::from(HARNESS_BASE_FEE),
         gas_price: tx
-            .fee_budget(Fork::Hegota, U256::from(HARNESS_BASE_FEE), U256::zero())
+            .fee_budget(config.fork, U256::from(HARNESS_BASE_FEE), U256::zero())
             .map_or(U256::from(HARNESS_BASE_FEE), |budget| budget.gas_price),
         tx_nonce: tx.nonce_seq,
         ..Default::default()
@@ -117,8 +124,20 @@ fn run_frame_tx(
     accounts: &[SeededAccount],
     tx: FrameTransaction,
 ) -> (Result<ExecutionReport, VMError>, GeneralizedDatabase) {
+    run_frame_tx_with(
+        accounts,
+        tx,
+        EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
+    )
+}
+
+fn run_frame_tx_with(
+    accounts: &[SeededAccount],
+    tx: FrameTransaction,
+    config: EVMConfig,
+) -> (Result<ExecutionReport, VMError>, GeneralizedDatabase) {
     let mut db = seeded_db(accounts);
-    let env = frame_tx_env(&tx);
+    let env = frame_tx_env_with(&tx, config);
     let transaction = Transaction::FrameTransaction(tx);
     let result = {
         let mut vm = VM::new(
@@ -1017,4 +1036,101 @@ fn consumed_keys_are_storage_changes_of_the_nonce_manager() {
         1,
         "key 0's slot is written: {manager:?}"
     );
+}
+
+// ==================== Frame transactions on Prague ====================
+
+/// daisugi-devnet-0's EVM after its Daisugi fork: Prague, with frame transactions,
+/// keyed nonces, ASSERT frames and EIP-8288 switched on by genesis timestamp, and no
+/// EIP-8037.
+fn daisugi_config() -> EVMConfig {
+    EVMConfig {
+        fork: Fork::Prague,
+        blob_schedule: EVMConfig::canonical_values(Fork::Prague),
+        features: ChainFeatures {
+            frame_transactions: true,
+            keyed_nonces: true,
+            assert_frames: true,
+            dependency_proofs: true,
+        },
+    }
+}
+
+#[test]
+fn a_first_use_key_on_prague_still_pays_its_state_gas() {
+    // Without EIP-8037 the payment approval still charges a fresh key's first use
+    // as state gas, at the same 64 bytes times the pinned cost per byte, drawn from
+    // the approving frame's state budget (the devnet's block 675 shows 97,920).
+    let tx = frame_tx_with_keys(
+        vec![Frame {
+            state_gas_limit: KEYED_NONCE_FIRST_USE_STATE_GAS,
+            ..frame(FrameMode::Verify, 0x03, FUNDED_SENDER, 100_000, &[])
+        }],
+        vec![U256::from(0xccbd53ecu64)],
+    );
+    let (result, db) = run_frame_tx_with(
+        &[
+            (
+                FUNDED_SENDER,
+                sender_balance(),
+                0,
+                Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+            ),
+            nonce_manager_account(),
+        ],
+        tx,
+        daisugi_config(),
+    );
+    let report = result.expect("the keyed frame tx must execute on Prague");
+    assert!(report.is_success());
+    assert_eq!(report.state_gas_used, KEYED_NONCE_FIRST_USE_STATE_GAS);
+    assert_eq!(
+        storage_slot(
+            &db,
+            frame_tx_nonce_manager(),
+            keyed_slot(FUNDED_SENDER, U256::from(0xccbd53ecu64))
+        ),
+        U256::one()
+    );
+}
+
+#[test]
+fn a_second_use_key_on_prague_pays_no_state_gas() {
+    let key = U256::from(0xccbd53ecu64);
+    let mut tx = frame_tx_with_keys(
+        vec![frame(FrameMode::Verify, 0x03, FUNDED_SENDER, 100_000, &[])],
+        vec![key],
+    );
+    tx.nonce_seq = 1;
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            sender_balance(),
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        nonce_manager_account(),
+    ];
+    let mut db = seeded_db(&accounts);
+    db.current_accounts_state
+        .get_mut(&frame_tx_nonce_manager())
+        .expect("seeded")
+        .storage
+        .insert(keyed_slot(FUNDED_SENDER, key), U256::one());
+    let env = frame_tx_env_with(&tx, daisugi_config());
+    let transaction = Transaction::FrameTransaction(tx);
+    let report = VM::new(
+        env,
+        &mut db,
+        &transaction,
+        LevmCallTracer::disabled(),
+        VMType::L1,
+        &NativeCrypto,
+        None,
+    )
+    .expect("VM::new should succeed for a frame tx")
+    .execute()
+    .expect("the second use must execute on Prague");
+    assert!(report.is_success());
+    assert_eq!(report.state_gas_used, 0);
 }
