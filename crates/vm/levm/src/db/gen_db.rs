@@ -6,11 +6,11 @@ use ethrex_common::U256;
 use ethrex_common::types::Account;
 use ethrex_common::types::Code;
 use ethrex_common::types::CodeMetadata;
+#[cfg(feature = "rayon")]
+use ethrex_common::types::block_access_list::SlotChange;
 use ethrex_common::types::block_access_list::{
     BalAddressIndex, BlockAccessList, BlockAccessListRecorder,
 };
-#[cfg(feature = "rayon")]
-use ethrex_common::types::block_access_list::{CodeChange, SlotChange};
 use ethrex_common::utils::ZERO_U256;
 
 use super::Database;
@@ -80,7 +80,7 @@ pub fn seed_one_address_info_from_bal(
             .code_changes
             .get(code_pos.saturating_sub(1))
             .ok_or(InternalError::AccountNotFound)?;
-        Some(code_from_bal(entry))
+        Some(code_from_bal(&entry.new_code))
     } else {
         None
     };
@@ -190,20 +190,14 @@ pub fn seed_one_storage_slot_from_bal(
     post_value_at_or_before(sc, max_idx)
 }
 
-/// Compute code hash and optional `Code` object from a BAL code change.
-///
-/// An EIP-8298 adoption carries no bytecode, so it yields only the hash: the code is
-/// in the pre-block state, or in [`BlockAccessList::adopted_codes`] when an earlier
-/// change of the block deposited it.
+/// Compute code hash and optional `Code` object from raw bytecode in a BAL entry.
 #[cfg(feature = "rayon")]
-pub fn code_from_bal(change: &CodeChange) -> (H256, Option<Code>) {
+pub fn code_from_bal(new_code: &bytes::Bytes) -> (H256, Option<Code>) {
     use ethrex_common::constants::EMPTY_KECCAK_HASH;
-    if let Some(code_hash) = change.new_code_hash {
-        (code_hash, None)
-    } else if change.new_code.is_empty() {
+    if new_code.is_empty() {
         (*EMPTY_KECCAK_HASH, None)
     } else {
-        let code_obj = Code::from_bytecode(change.new_code.clone(), &ethrex_crypto::NativeCrypto);
+        let code_obj = Code::from_bytecode(new_code.clone(), &ethrex_crypto::NativeCrypto);
         let hash = code_obj.hash;
         (hash, Some(code_obj))
     }
@@ -1038,29 +1032,6 @@ impl<'a> VM<'a> {
                 .inserted_code_hashes
                 .push(code_hash);
         }
-        Ok(())
-    }
-
-    /// EIP-8298: points `address` at existing code by its hash, as `SETCODEFROM`
-    /// does. The bytecode is already stored, so only the code hash changes, and the
-    /// BAL records the hash rather than the bytecode.
-    pub fn adopt_account_code(
-        &mut self,
-        address: Address,
-        code_hash: H256,
-    ) -> Result<(), InternalError> {
-        if self.db.bal_recorder.is_some() {
-            // Captured before the change, for net-zero detection as in
-            // `update_account_bytecode`.
-            let current_code_bytes = self.db.get_account_code(address)?.code_bytes();
-            if let Some(recorder) = self.db.bal_recorder.as_mut() {
-                recorder.capture_initial_code_presence(address, !current_code_bytes.is_empty());
-                recorder.set_initial_code(address, current_code_bytes);
-                recorder.record_code_adoption(address, code_hash);
-            }
-        }
-
-        self.get_account_mut(address)?.info.code_hash = code_hash;
         Ok(())
     }
 
