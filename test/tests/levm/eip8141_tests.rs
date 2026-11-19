@@ -5259,3 +5259,173 @@ fn unfunded_value_reverts_before_the_delegate_is_charged() {
         "the unfunded transfer reverts paying the target's access, not its whole limit"
     );
 }
+
+// ==================== The max_fee budget, against the reference scenarios ====================
+
+/// The network's reference client pins its fee model with these scenarios, at a
+/// base fee of 7 and a self-paying sender holding 1 ether. Each runs here through
+/// the same VM path a block takes, so the arithmetic is checked where it settles,
+/// not only in the helper that prices it.
+mod max_fee_reference_tests {
+    use super::*;
+
+    const BASE_FEE: u64 = 7;
+    const ONE_ETHER: u64 = 1_000_000_000_000_000_000;
+
+    fn self_paying(frames: Vec<Frame>, max_fee: U256, tip: u64) -> FrameTransaction {
+        let mut tx = frame_tx_with_frames(frames);
+        tx.max_fee = max_fee;
+        tx.max_priority_fee_per_gas = U256::from(tip);
+        tx
+    }
+
+    fn max_gas(tx: &FrameTransaction) -> U256 {
+        U256::from(tx.max_gas(Fork::Hegota))
+    }
+
+    fn run(
+        tx: FrameTransaction,
+        extra: &[SeededAccount],
+    ) -> (Result<ExecutionReport, VMError>, GeneralizedDatabase) {
+        let mut accounts = vec![(
+            FUNDED_SENDER,
+            U256::from(ONE_ETHER),
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        )];
+        accounts.extend_from_slice(extra);
+        run_frame_tx_with_fees(&accounts, tx, BASE_FEE)
+    }
+
+    /// The base fee of the gas used is burned and the tip is paid out of what
+    /// `max_cost` holds after it, which can include the base fee of unused gas.
+    #[test]
+    fn the_base_fee_is_burned_and_the_tip_paid_within_the_budget() {
+        // (tip per gas, budget per unit of max_gas, extra wei)
+        for (tip, per_max_gas, extra) in [
+            (5u64, 8u64, 0u64),
+            (5, BASE_FEE, 0),
+            (1_000_000, BASE_FEE, 3),
+        ] {
+            let probe = self_paying(vec![verify_frame(FUNDED_SENDER)], U256::zero(), tip);
+            let max_gas = max_gas(&probe);
+            let max_fee = max_gas * U256::from(per_max_gas) + U256::from(extra);
+            let tx = self_paying(vec![verify_frame(FUNDED_SENDER)], max_fee, tip);
+
+            let (result, db) = run(tx, &[]);
+            let report = result.expect("a covered budget executes");
+            let gas_used = U256::from(report.gas_spent);
+            let required = max_gas * U256::from(BASE_FEE);
+            let max_cost = required + (U256::from(tip) * max_gas).min(max_fee - required);
+            let base_fee_paid = gas_used * U256::from(BASE_FEE);
+            let tip_paid = (U256::from(tip) * gas_used).min(max_cost - base_fee_paid);
+
+            assert!(gas_used < max_gas, "the case relies on unused gas");
+            assert_eq!(
+                balance_of(&db, COINBASE_ADDR),
+                tip_paid,
+                "case {tip}/{per_max_gas}/{extra}"
+            );
+            assert_eq!(
+                balance_of(&db, FUNDED_SENDER),
+                U256::from(ONE_ETHER) - base_fee_paid - tip_paid,
+                "case {tip}/{per_max_gas}/{extra}"
+            );
+        }
+    }
+
+    /// A per-gas cap of 8 at a base fee of 7 would hold the tip to 1 per gas; the
+    /// same money as a budget pays the full tip of 5.
+    #[test]
+    fn the_tip_uses_the_unused_headroom() {
+        let probe = self_paying(vec![verify_frame(FUNDED_SENDER)], U256::zero(), 5);
+        let tx = self_paying(vec![verify_frame(FUNDED_SENDER)], max_gas(&probe) * 8, 5);
+
+        let (result, db) = run(tx, &[]);
+        let report = result.expect("a covered budget executes");
+        assert_eq!(
+            balance_of(&db, COINBASE_ADDR),
+            U256::from(report.gas_spent) * 5
+        );
+    }
+
+    /// `max_gas` at the base fee exactly is enough; one wei less is invalid and
+    /// touches nothing.
+    #[test]
+    fn a_budget_below_the_requirement_is_invalid() {
+        for covered in [true, false] {
+            let probe = self_paying(vec![verify_frame(FUNDED_SENDER)], U256::zero(), 1);
+            let required = max_gas(&probe) * U256::from(BASE_FEE);
+            let max_fee = if covered { required } else { required - 1 };
+            let tx = self_paying(vec![verify_frame(FUNDED_SENDER)], max_fee, 1);
+
+            let (result, db) = run(tx, &[]);
+            if covered {
+                result.expect("exactly the requirement executes");
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(VMError::TxValidation(
+                        ethrex_levm::errors::TxValidationError::InsufficientMaxFeePerGas
+                    ))
+                ));
+                assert_eq!(balance_of(&db, FUNDED_SENDER), U256::from(ONE_ETHER));
+                assert_eq!(nonce_of(&db, FUNDED_SENDER), 0);
+            }
+        }
+    }
+
+    /// GASPRICE is the base fee plus the tip `max_cost` escrows, spread over
+    /// `max_gas` and rounded down, and every frame reads the same value.
+    #[test]
+    fn gas_price_is_the_base_fee_plus_the_escrowed_tip_per_gas() {
+        let observer = Address::from_low_u64_be(0x0B5E);
+        let recipient = Address::from_low_u64_be(0x0B5F);
+        // GASPRICE; PUSH1 0; SSTORE; STOP
+        let read_gas_price = Bytes::from_static(&[0x3a, 0x60, 0x00, 0x55, 0x00]);
+        let reader = |target: Address| Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0,
+            target: Some(target),
+            gas_limit: 100_000,
+            state_gas_limit: 1_000_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        };
+        let frames = || {
+            vec![
+                verify_frame(FUNDED_SENDER),
+                reader(observer),
+                reader(recipient),
+            ]
+        };
+        for (tip_capped, expected) in [(false, BASE_FEE + 100), (true, BASE_FEE + 3)] {
+            let probe = self_paying(frames(), U256::zero(), 100);
+            let max_gas = max_gas(&probe);
+            let required = max_gas * U256::from(BASE_FEE);
+            // Capped: 3.5 wei of headroom per gas where the tip asks for 100.
+            let headroom = if tip_capped {
+                max_gas * 3 + max_gas / 2
+            } else {
+                max_gas * 100
+            };
+            let tx = self_paying(frames(), required + headroom, 100);
+
+            let (result, db) = run(
+                tx,
+                &[
+                    (observer, U256::zero(), 0, read_gas_price.clone()),
+                    (recipient, U256::zero(), 0, read_gas_price.clone()),
+                ],
+            );
+            result.expect("a covered budget executes");
+            for reader in [observer, recipient] {
+                assert_eq!(
+                    storage_slot(&db, reader, H256::zero()),
+                    U256::from(expected),
+                    "tip capped: {tip_capped}"
+                );
+            }
+        }
+    }
+}

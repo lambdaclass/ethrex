@@ -283,6 +283,11 @@ impl OpcodeHandler for OpTxParamHandler {
             vm.current_call_frame.stack.push(remaining)?;
             return Ok(OpcodeResult::Continue);
         }
+        // 0x0D to 0x10 are EIP-8250's parameters: before keyed nonces activate they
+        // are undefined, as for the reference client.
+        if (0x0D..=0x10).contains(&param_id) && !vm.env.config.features.keyed_nonces {
+            return Err(ExceptionalHalt::InvalidOpcode.into());
+        }
         let result = load_tx_param(ctx, param_id)?;
         vm.current_call_frame.stack.push(result)?;
 

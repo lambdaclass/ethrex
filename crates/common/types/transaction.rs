@@ -6842,4 +6842,26 @@ mod tests {
             "blob-gas term missing from cost_without_base_fee() for EIP-4844"
         );
     }
+
+    /// The `NONCE_MANAGER` slot preimage, `leftpad32(sender) || be32(key)`, pinned
+    /// by the values the network's reference client tests against: a full-width
+    /// key, and key 1, whose 31 high-order zero bytes must be written.
+    #[test]
+    fn keyed_nonce_slots_match_the_reference_vectors() {
+        let sender =
+            Address::from_slice(&hex::decode("0f1e2d3c4b5a69788796a5b4c3d2e1f001122334").unwrap());
+        let h256 = |s: &str| H256::from_slice(&hex::decode(s).unwrap());
+        let wide_key = U256::from_big_endian(
+            &hex::decode("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20")
+                .unwrap(),
+        );
+        assert_eq!(
+            keyed_nonce_slot(sender, wide_key),
+            h256("f1c0fc4a1f82063830799cc3a618c97eddb89121fa2c5f0d8cc821a2ff34f8be")
+        );
+        assert_eq!(
+            keyed_nonce_slot(sender, U256::one()),
+            h256("fb963365229fce11eaaa8a1ed86facacae3c16c64c5266e477c93281818df6a4")
+        );
+    }
 }

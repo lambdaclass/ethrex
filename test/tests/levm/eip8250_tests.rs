@@ -1134,3 +1134,57 @@ fn a_second_use_key_on_prague_pays_no_state_gas() {
     assert!(report.is_success());
     assert_eq!(report.state_gas_used, 0);
 }
+
+#[test]
+fn eip8250_txparams_are_undefined_before_keyed_nonces_activate() {
+    // PUSH1 0x0E; TXPARAM (key count); POP; then APPROVE(3).
+    const READ_KEY_COUNT_THEN_APPROVE: &[u8] = &[
+        0x60, 0x0E, 0xB0, 0x50, 0x60, 0x03, 0x60, 0x00, 0x60, 0x00, 0xAA,
+    ];
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            sender_balance(),
+            0,
+            Bytes::from(READ_KEY_COUNT_THEN_APPROVE.to_vec()),
+        ),
+        nonce_manager_account(),
+    ];
+    let verify = vec![frame(FrameMode::Verify, 0x03, FUNDED_SENDER, 100_000, &[])];
+
+    // Before the Daisugi fork: EIP-8141's single-nonce envelope, and TXPARAM 0x0E
+    // halts the VERIFY frame, which invalidates the transaction.
+    let mut before_fork = daisugi_config();
+    before_fork.features.keyed_nonces = false;
+    before_fork.features.assert_frames = false;
+    before_fork.features.dependency_proofs = false;
+    let scalar = FrameTransaction {
+        has_nonce_keys: false,
+        ..frame_tx_with_keys(verify.clone(), vec![])
+    };
+    let (result, _) = run_frame_tx_with(&accounts, scalar.clone(), before_fork);
+    assert!(
+        result.is_err(),
+        "TXPARAM 0x0E must halt before EIP-8250, got {result:?}"
+    );
+    // Control: the same transaction is valid when its sender only approves.
+    let approve_only = [
+        (
+            FUNDED_SENDER,
+            sender_balance(),
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        nonce_manager_account(),
+    ];
+    let (control, _) = run_frame_tx_with(&approve_only, scalar, before_fork);
+    assert!(control.expect("valid before the fork").is_success());
+
+    // After it, the same read succeeds and the approval goes through.
+    let (result, _) = run_frame_tx_with(
+        &accounts,
+        frame_tx_with_keys(verify, vec![]),
+        daisugi_config(),
+    );
+    assert!(result.expect("executes after the fork").is_success());
+}
