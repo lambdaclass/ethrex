@@ -28,7 +28,7 @@ use ethrex_blockchain::error::MempoolError;
 /// - `-32000`: Generic server error
 /// - `-32005`: Limit exceeded
 /// - `-38001` to `-38006`: Engine API specific errors
-/// - `3`: Execution reverted/halted
+/// - `3`: Execution reverted
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum RpcErr {
     #[error("Method not found: {0}")]
@@ -204,9 +204,9 @@ impl From<RpcErr> for RpcErrorMetadata {
                 ),
             },
             RpcErr::Halt { reason, gas_used } => RpcErrorMetadata {
-                // Just copy the `Revert` error code.
-                // Haven't found an example of this one yet.
-                code: 3,
+                // Code 3 is execution reverted, whose revert data is required. Geth
+                // reports a halt as a plain -32000 error.
+                code: -32000,
                 data: None,
                 message: format!("execution halted: reason={reason}, gas_used={gas_used}"),
             },
@@ -279,8 +279,8 @@ impl From<RpcErr> for RpcErrorMetadata {
             },
             RpcErr::ResourceNotFound(context) => RpcErrorMetadata {
                 code: -32001,
-                data: Some(context),
-                message: "Resource not found".to_string(),
+                data: None,
+                message: context,
             },
             RpcErr::PrunedHistoryUnavailable(context) => RpcErrorMetadata {
                 code: 4444,
@@ -779,5 +779,15 @@ mod tests {
             serde_json::from_str(&serde_json::to_string(&RpcRequest::new("m", None)).unwrap())
                 .unwrap();
         assert!(round_trip.params.is_none());
+    }
+
+    /// The spec declares no `data` for -32001, so the detail goes in the message.
+    #[test]
+    fn resource_not_found_has_its_detail_in_the_message() {
+        let error: RpcErrorMetadata =
+            RpcErr::ResourceNotFound("block not found: 0x1a".to_string()).into();
+        assert_eq!(error.code, -32001);
+        assert_eq!(error.message, "block not found: 0x1a");
+        assert_eq!(error.data, None);
     }
 }
