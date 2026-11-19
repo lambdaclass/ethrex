@@ -1,0 +1,84 @@
+# On-demand GPU CI runner
+
+The `gpu` self-hosted runner (`ethrex-gpu-ci`) is a Paperspace machine billed by
+the hour. It only needs to be on while `main_prover.yaml` runs, so:
+
+- **Start:** the `start-gpu-runner` job in `.github/workflows/main_prover.yaml`
+  starts the machine through the Paperspace API, using
+  `.github/actions/start-paperspace-machine`. The `test` job needs it, then
+  waits in the queue until the runner comes online.
+- **Stop:** `idle-stop.sh` runs every minute on the machine, triggered by a
+  systemd timer. It powers the machine off (`systemctl poweroff`) once no job
+  has run, and no GPU workflow run has been waiting or in progress, for
+  `IDLE_MINUTES` (default 15). Powering off from inside stops compute billing
+  like a stop through the API does, so the Paperspace API key never has to be
+  on the machine.
+
+15 minutes was picked from October 2026 job data. Most gaps between jobs are
+under 5 minutes, because runs are queued back to back. Going from 15 to
+60 minutes would have avoided only 5 more cold starts in the month, at about
+$45 of extra compute.
+
+## Files
+
+| File | What it does |
+|---|---|
+| `paperspace-machine.sh` | `state` / `start` / `stop` through the Paperspace API, used by CI to start the machine. `start` is idempotent and waits until the machine is ready. `stop` is only for manual use. |
+| `idle-stop.sh` | Idle watchdog, installed on the machine. It powers the machine off with `systemctl poweroff`. |
+| `gpu-runner-idle.service`, `gpu-runner-idle.timer` | systemd units that run the watchdog every minute. |
+
+## Setup
+
+### GitHub
+- Secret `PAPERSPACE_API_KEY`: a Paperspace API key, created under Team settings -> API keys.
+- Variable `GPU_RUNNER_MACHINE_ID`: the Paperspace machine ID, e.g. `pszj5x2xbgeb`.
+
+### On the machine
+1. Make sure the Actions runner is a service, so it comes back online after every boot:
+   ```bash
+   cd /home/admin/actions-runner && sudo ./svc.sh install && sudo ./svc.sh start
+   ```
+2. Install the watchdog:
+   ```bash
+   sudo install -d /opt/gpu-runner
+   sudo install -m 755 tooling/gpu-runner/idle-stop.sh /opt/gpu-runner/
+   sudo install -m 644 tooling/gpu-runner/gpu-runner-idle.service tooling/gpu-runner/gpu-runner-idle.timer /etc/systemd/system/
+   ```
+3. Create `/etc/gpu-runner-idle.env` (`chmod 600`):
+   ```
+   # Fine-grained token, Actions: read on lambdaclass/ethrex
+   GITHUB_TOKEN=...
+   IDLE_MINUTES=15
+   # Set to 0 once the logs look right
+   DRY_RUN=1
+   ```
+   Keep comments on their own lines: systemd's `EnvironmentFile` treats a
+   trailing `# ...` as part of the value.
+
+   Do not put a Paperspace API key on the machine. CI jobs run code from PRs
+   here and have sudo, so `chmod 600` does not keep them out of this file.
+   That is acceptable for a read-only token scoped to one repo, not for a key
+   that controls the Paperspace team's machines.
+4. Enable the timer and watch it:
+   ```bash
+   sudo systemctl daemon-reload && sudo systemctl enable --now gpu-runner-idle.timer
+   journalctl -u gpu-runner-idle -f
+   ```
+
+## Notes
+- When the machine is off, only compute stops billing. Disk, public IP and the
+  custom template are still charged.
+- Each cold start delays a run by the boot time plus the time the runner takes to come online.
+- If the GitHub API can't be reached, the watchdog keeps the machine on. As a
+  backstop, set Paperspace auto-shutdown in the console well above the longest
+  job (e.g. 6h).
+- If GitHub refuses the request for good (HTTP 401/403: token expired or
+  revoked; 404: token without access to the repo, or a wrong `GITHUB_REPO` /
+  `GPU_WORKFLOWS`), the watchdog also keeps the machine on, but the unit
+  fails: check `systemctl --failed`, and renew the token before it expires. A
+  rate-limited request (also a 403) only skips that minute's check.
+- Only `DRY_RUN=0` really stops the machine. Any other value is a dry run.
+- If the runner is gone from GitHub (it is removed after 14 days offline), the
+  machine starts but `test` stays queued: re-register the runner.
+- A run stuck in the queue keeps the machine on until GitHub drops it. GitHub
+  drops queued jobs after 24h.
