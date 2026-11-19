@@ -45,6 +45,8 @@ cita_trie = "4.0.0"
 hasher = "0.1.4"
 p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "arithmetic"] }
 tokio = { workspace = true, features = ["full", "test-util"] }
+# The WebSocket client of the RPC tests. Same crate and version as the server side.
+tokio-tungstenite = "0.29.0"
 aes-gcm = "0.10.3"
 lazy_static.workspace = true
 bytes.workspace = true
@@ -60,6 +62,11 @@ tempfile.workspace = true
 ethrex-l2.workspace = true
 ethrex-l2-rpc.workspace = true
 reqwest.workspace = true
+# Chain tests: support for a chain is written against these, as an out-of-tree
+# crate would be.
+ethrex-config.workspace = true
+clap.workspace = true
+eyre.workspace = true
 tokio-util.workspace = true
 futures.workspace = true
 ethrex-guest-program = { workspace = true, default-features = false }

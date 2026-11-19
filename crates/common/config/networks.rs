@@ -41,6 +41,71 @@ pub enum Network {
     L2Chain(u64),
     #[serde(skip)]
     GenesisPath(PathBuf),
+    /// A named network defined outside this crate (see [`NetworkPreset`]). Like a
+    /// genesis path, it cannot be serialized.
+    #[serde(skip)]
+    Preset(NetworkPreset),
+}
+
+/// A named network of a chain this crate does not know about: what
+/// `--network <name>` loads for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NetworkPreset {
+    /// Name accepted by `--network`. Also the datadir subdirectory.
+    pub name: &'static str,
+    /// Contents of the genesis file, in JSON.
+    pub genesis: &'static str,
+    /// JSON array of enode URLs, in the format of this crate's `bootnodes.json`
+    /// files. Use `"[]"` for a network without bootnodes.
+    pub bootnodes: &'static str,
+}
+
+impl NetworkPreset {
+    /// Checks that the name can be told apart from every other network and is safe
+    /// to use as the datadir subdirectory: lowercase letters, digits and inner
+    /// hyphens, and not a name `--network` or the datadir already gives a meaning to.
+    pub fn validate_name(&self) -> Result<(), String> {
+        // A leading hyphen would make `--network <name>` read as a flag.
+        let well_formed = !self.name.is_empty()
+            && !self.name.starts_with('-')
+            && !self.name.ends_with('-')
+            && self
+                .name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        if !well_formed {
+            return Err(format!(
+                "network preset {:?}: the name must be non-empty, contain only lowercase letters, digits and hyphens, and not start or end with a hyphen",
+                self.name
+            ));
+        }
+        // A built-in network name is parsed before any preset is looked up, and its
+        // datadir subdirectory already belongs to that network. Subdirectories
+        // named `chain-<id>` belong to networks given by a genesis file, and a
+        // datadir that ends in `memory` is not written to disk.
+        let reserved = !matches!(Network::from(self.name), Network::GenesisPath(_))
+            || Network::all_datadir_suffixes().contains(&self.name)
+            || self.name.starts_with("chain-")
+            || self.name == "memory";
+        if reserved {
+            return Err(format!(
+                "network preset {:?}: the name is reserved by a built-in network or datadir",
+                self.name
+            ));
+        }
+        Ok(())
+    }
+
+    /// Checks the name, and that the genesis and the bootnodes parse, so a malformed
+    /// preset is reported once at startup instead of wherever it is first used.
+    pub fn validate(&self) -> Result<(), String> {
+        self.validate_name()?;
+        serde_json::from_str::<Genesis>(self.genesis)
+            .map_err(|err| format!("network preset {:?}: invalid genesis: {err}", self.name))?;
+        serde_json::from_str::<Vec<Node>>(self.bootnodes)
+            .map_err(|err| format!("network preset {:?}: invalid bootnodes: {err}", self.name))?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,6 +170,7 @@ impl fmt::Display for Network {
             Network::LocalDevnetL2 => write!(f, "local-devnet-l2"),
             Network::L2Chain(chain_id) => write!(f, "l2-chain-{}", chain_id),
             Network::GenesisPath(path_buf) => write!(f, "{path_buf:?}"),
+            Network::Preset(preset) => write!(f, "{}", preset.name),
         }
     }
 }
@@ -130,6 +196,7 @@ impl Network {
                 ..Default::default()
             }),
             Network::GenesisPath(s) => Genesis::try_from(s.as_path()),
+            Network::Preset(preset) => Ok(serde_json::from_str(preset.genesis)?),
         }
     }
 
@@ -149,6 +216,7 @@ impl Network {
                 let chain_id = self.get_genesis().ok()?.config.chain_id;
                 Some(format!("chain-{chain_id}"))
             }
+            Network::Preset(preset) => Some(preset.name.to_owned()),
         }
     }
 
@@ -166,15 +234,18 @@ impl Network {
         ]
     }
 
-    pub fn get_bootnodes(&self) -> Vec<Node> {
+    /// The bootnodes of the network. An error is only possible for a
+    /// [`Network::Preset`], whose bootnode list comes from outside this crate.
+    pub fn get_bootnodes(&self) -> Result<Vec<Node>, serde_json::Error> {
         let bootnodes = match self {
             Network::PublicNetwork(PublicNetwork::Hoodi) => HOODI_BOOTNODES,
             Network::PublicNetwork(PublicNetwork::Mainnet) => MAINNET_BOOTNODES,
             Network::PublicNetwork(PublicNetwork::Sepolia) => SEPOLIA_BOOTNODES,
             Network::PublicNetwork(PublicNetwork::Plataberget) => PLATABERGET_BOOTNODES,
-            _ => return vec![],
+            Network::Preset(preset) => preset.bootnodes,
+            _ => return Ok(vec![]),
         };
-        serde_json::from_str(bootnodes).expect("bootnodes file should be valid JSON")
+        serde_json::from_str(bootnodes)
     }
 }
 
@@ -306,10 +377,116 @@ mod tests {
         );
     }
 
+    const EXAMPLE_PRESET: NetworkPreset = NetworkPreset {
+        name: "example",
+        genesis: LOCAL_DEVNET_GENESIS_CONTENTS,
+        bootnodes: r#"["enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303"]"#,
+    };
+
+    #[test]
+    fn custom_preset_supplies_genesis_bootnodes_and_datadir() {
+        EXAMPLE_PRESET.validate().unwrap();
+        let network = Network::Preset(EXAMPLE_PRESET);
+        assert_eq!(network.to_string(), "example");
+        assert_eq!(network.datadir_suffix(), Some("example".into()));
+        assert_eq!(
+            network.get_genesis().unwrap().config.chain_id,
+            Network::LocalDevnet.get_genesis().unwrap().config.chain_id
+        );
+        assert_eq!(network.get_bootnodes().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn malformed_custom_preset_is_reported_by_validate() {
+        let bad_genesis = NetworkPreset {
+            genesis: "{",
+            ..EXAMPLE_PRESET
+        };
+        assert!(
+            bad_genesis
+                .validate()
+                .unwrap_err()
+                .contains("invalid genesis")
+        );
+        let bad_bootnodes = NetworkPreset {
+            bootnodes: r#"["not-an-enode"]"#,
+            ..EXAMPLE_PRESET
+        };
+        assert!(
+            bad_bootnodes
+                .validate()
+                .unwrap_err()
+                .contains("invalid bootnodes")
+        );
+        // Used without validation, it is an error and not a panic.
+        assert!(Network::Preset(bad_bootnodes).get_bootnodes().is_err());
+    }
+
+    #[test]
+    fn preset_names_are_safe_and_unambiguous() {
+        let named = |name| NetworkPreset {
+            name,
+            ..EXAMPLE_PRESET
+        };
+        for ok in ["example", "example-testnet", "net2"] {
+            assert!(named(ok).validate_name().is_ok(), "{ok}");
+        }
+        // Not a single plain directory name.
+        for malformed in [
+            "",
+            "..",
+            "a/b",
+            "/abs",
+            "Upper",
+            "with space",
+            "dot.ted",
+            "-leading",
+            "trailing-",
+        ] {
+            let err = named(malformed).validate_name().unwrap_err();
+            assert!(err.contains("lowercase letters"), "{malformed}: {err}");
+        }
+        // Already a network or a datadir subdirectory of this crate.
+        for reserved in [
+            "mainnet",
+            "sepolia",
+            "hoodi",
+            "plataberget",
+            "dev",
+            "chain-1",
+            "memory",
+        ] {
+            let err = named(reserved).validate_name().unwrap_err();
+            assert!(err.contains("reserved"), "{reserved}: {err}");
+            assert!(named(reserved).validate().is_err(), "{reserved}");
+        }
+        // Every datadir subdirectory another network can have is reserved.
+        for network in [
+            Network::PublicNetwork(PublicNetwork::Mainnet),
+            Network::PublicNetwork(PublicNetwork::Hoodi),
+            Network::PublicNetwork(PublicNetwork::Sepolia),
+            Network::PublicNetwork(PublicNetwork::Plataberget),
+            Network::L2Chain(65536999),
+        ] {
+            let suffix: &'static str = network.datadir_suffix().unwrap().leak();
+            assert!(named(suffix).validate_name().is_err(), "{suffix}");
+        }
+    }
+
     #[test]
     fn test_get_bootnodes_works_for_public_networks() {
-        Network::PublicNetwork(PublicNetwork::Hoodi).get_bootnodes();
-        Network::PublicNetwork(PublicNetwork::Mainnet).get_bootnodes();
-        Network::PublicNetwork(PublicNetwork::Sepolia).get_bootnodes();
+        for network in [
+            PublicNetwork::Hoodi,
+            PublicNetwork::Mainnet,
+            PublicNetwork::Sepolia,
+            PublicNetwork::Plataberget,
+        ] {
+            assert!(
+                !Network::PublicNetwork(network)
+                    .get_bootnodes()
+                    .unwrap()
+                    .is_empty()
+            );
+        }
     }
 }

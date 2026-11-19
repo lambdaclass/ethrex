@@ -343,6 +343,28 @@ impl Drop for ReorgGuard<'_> {
 /// Effectively just rejects zero-tip transactions at admission.
 pub const DEFAULT_MIN_TIP_WEI: u64 = 1;
 
+/// Extra admission rules for the mempool, applied on top of the standard checks.
+///
+/// A policy can only make the pool stricter. It sees a transaction that is new to
+/// the pool and within the size limit (a blob transaction, once its blobs are
+/// verified), before the rest of the standard checks, and may reject it. It cannot
+/// admit a transaction those checks reject. It applies to every transaction offered to the pool, whether it
+/// arrives over RPC or from a peer. It has no effect on block validation.
+///
+/// The policy runs when a transaction is offered and not again: a transaction
+/// admitted under one head stays in the pool when the head changes, and block
+/// building does not consult the policy. A rejection only keeps the transaction out
+/// of this node's pool; the peer that sent it is not penalized.
+///
+/// `admit` is called on the transaction admission path, for every transaction a
+/// peer or a client offers: keep it cheap and never block in it.
+pub trait MempoolPolicy: Send + Sync + std::fmt::Debug {
+    /// Returns `Err` with the reason shown to the submitter to keep `tx` out of the
+    /// pool. `head` is the header of the latest block, for rules that depend on the
+    /// state of the chain, such as a price floor published in the header.
+    fn admit(&self, tx: &Transaction, sender: Address, head: &BlockHeader) -> Result<(), String>;
+}
+
 /// Configuration options for the blockchain.
 #[derive(Debug, Clone)]
 pub struct BlockchainOptions {
@@ -434,6 +456,9 @@ pub struct BlockchainOptions {
     /// spawning it is both cheaper and simpler than plumbing a `JoinHandle`
     /// through `PrewarmHandle` to join it. See `for_test_harness`.
     pub mempool_prewarm_enabled: bool,
+    /// Extra admission rules for the mempool. `None` applies the standard checks
+    /// only.
+    pub mempool_policy: Option<Arc<dyn MempoolPolicy>>,
 }
 
 impl Default for BlockchainOptions {
@@ -458,6 +483,7 @@ impl Default for BlockchainOptions {
             max_reorg_depth: None,
             gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
             mempool_prewarm_enabled: true,
+            mempool_policy: None,
         }
     }
 }
@@ -3778,6 +3804,17 @@ impl Blockchain {
             .get_block_header(header_no)?
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config();
+
+        // Before the checks below: a policy reads only the transaction and the head,
+        // so what it rejects never costs their state lookups and frame simulation.
+        // The pool's entry points have already applied the size limit and the
+        // duplicate check and, for a blob transaction, verified the blobs. They are
+        // the only callers of this function, so the policy runs once per offer.
+        if let Some(policy) = &self.options.mempool_policy {
+            policy
+                .admit(tx, sender, &header)
+                .map_err(MempoolError::RejectedByPolicy)?;
+        }
 
         // Every fork gate below must resolve the fork exactly like execution does,
         // i.e. through the fork ordinal. A per-field activation check

@@ -277,6 +277,7 @@ pub async fn init_l2(
         max_reorg_depth: opts.node_opts.max_reorg_depth,
         gap_admit_occupancy_threshold: opts.node_opts.mempool_gap_admit_occupancy_threshold,
         mempool_prewarm_enabled: true,
+        mempool_policy: None,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
@@ -379,7 +380,7 @@ pub async fn init_l2(
             p2p_context,
             shared_local_node.clone(),
         )
-        .await;
+        .await?;
         (Some(peer_handler), Some(Arc::new(syncer)))
     } else {
         (None, None)
@@ -535,6 +536,7 @@ pub async fn init_native_rollup_l2(
         blob_price_bump_percent: opts.node_opts.mempool_blob_price_bump,
         min_tip_wei: opts.node_opts.mempool_min_tip,
         mempool_prewarm_enabled: true,
+        mempool_policy: None,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts);

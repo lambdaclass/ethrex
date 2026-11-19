@@ -1,4 +1,5 @@
 use crate::{
+    chain::NodeComponents,
     cli::{LogColor, Options},
     utils::{
         display_chain_initialization, get_channel, get_client_version, get_client_version_string,
@@ -10,7 +11,7 @@ use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::{BlockNumber, Genesis};
 use ethrex_config::networks::Network;
-use ethrex_rpc::WebSocketConfig;
+use ethrex_rpc::{RpcExtensions, WebSocketConfig};
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_metrics::rpc::initialize_rpc_metrics;
@@ -362,6 +363,7 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    rpc_extensions: RpcExtensions,
 ) -> eyre::Result<()> {
     if !is_memory_datadir(datadir) {
         init_datadir(datadir);
@@ -443,6 +445,7 @@ pub async fn init_rpc_api(
         get_log_query_limits(opts),
         // Saturating: the budget is clamped to what the semaphore can count anyway.
         usize::try_from(opts.authrpc_max_inflight_body_size).unwrap_or(usize::MAX),
+        rpc_extensions,
     )
     .await?;
 
@@ -464,7 +467,7 @@ pub async fn init_network(
     blockchain: Arc<Blockchain>,
     context: P2PContext,
     shared_local_node: SharedLocalNode,
-) {
+) -> eyre::Result<()> {
     #[cfg(not(feature = "l2"))]
     if opts.dev {
         error!("Binary wasn't built with The feature flag `dev` enabled.");
@@ -473,7 +476,7 @@ pub async fn init_network(
         );
     }
 
-    let bootnodes = get_bootnodes(opts, network, datadir);
+    let bootnodes = get_bootnodes(opts, network, datadir)?;
 
     let discovery_config = DiscoveryConfig {
         discv4_enabled: opts.discv4_enabled,
@@ -489,6 +492,7 @@ pub async fn init_network(
         blockchain,
         peer_handler.peer_table,
     ));
+    Ok(())
 }
 
 #[cfg(feature = "dev")]
@@ -554,10 +558,14 @@ pub fn get_network(opts: &Options) -> Network {
     opts.network.clone().unwrap_or(default)
 }
 
-pub fn get_bootnodes(opts: &Options, network: &Network, datadir: &Path) -> Vec<Node> {
+pub fn get_bootnodes(opts: &Options, network: &Network, datadir: &Path) -> eyre::Result<Vec<Node>> {
     let mut bootnodes: Vec<Node> = opts.bootnodes.clone();
 
-    bootnodes.extend(network.get_bootnodes());
+    bootnodes.extend(
+        network
+            .get_bootnodes()
+            .map_err(|err| eyre::eyre!("the bootnodes of {network} do not parse: {err}"))?,
+    );
 
     debug!("Loading known peers from config");
 
@@ -571,7 +579,7 @@ pub fn get_bootnodes(opts: &Options, network: &Network, datadir: &Path) -> Vec<N
         warn!("No bootnodes specified. This node will not be able to connect to the network.");
     }
 
-    bootnodes
+    Ok(bootnodes)
 }
 
 pub fn get_signer(datadir: &Path) -> SecretKey {
@@ -856,7 +864,34 @@ pub async fn init_l1(
     SharedLocalNode,
     Store,
 )> {
+    init_node(opts, |_| Ok(NodeComponents::default()), log_filter_handler).await
+}
+
+/// Starts a node that runs with `components` in addition to its Ethereum behavior.
+/// `components` is called once, with the genesis of the selected network, before the
+/// database is opened.
+pub async fn init_node(
+    opts: Options,
+    components: impl FnOnce(&Genesis) -> eyre::Result<NodeComponents>,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+) -> eyre::Result<(
+    PathBuf,
+    CancellationToken,
+    PeerTable,
+    SharedLocalNode,
+    Store,
+)> {
     let network = get_network(&opts);
+    // A preset was checked if the options come from `chain::parse_args`, but not if
+    // the caller built them. Its name becomes a directory under the datadir, and
+    // its bootnodes are otherwise only read when p2p starts, so both are checked
+    // before anything is created. Loading the genesis below checks the genesis.
+    if let Network::Preset(preset) = &network {
+        preset.validate_name().map_err(|err| eyre::eyre!(err))?;
+        network.get_bootnodes().map_err(|err| {
+            eyre::eyre!("network preset {:?}: invalid bootnodes: {err}", preset.name)
+        })?;
+    }
     let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
 
     raise_fd_limit()?;
@@ -868,6 +903,20 @@ pub async fn init_l1(
     }
 
     let genesis = network.get_genesis()?;
+    // Destructured in full, so a field added to `NodeComponents` cannot be left
+    // unused here.
+    let NodeComponents {
+        rpc: rpc_extensions,
+        mempool_policy,
+    } = components(&genesis)?;
+    let rpc_extensions = RpcExtensions::new(rpc_extensions).map_err(|err| eyre::eyre!(err))?;
+    let extension_namespaces: Vec<_> = rpc_extensions.namespaces().collect();
+    if !extension_namespaces.is_empty() {
+        info!(
+            "Serving the chain's RPC namespaces, which --http.api does not turn off: {}",
+            extension_namespaces.join(", ")
+        );
+    }
     display_chain_initialization(&genesis);
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
@@ -943,6 +992,7 @@ pub async fn init_l1(
             max_reorg_depth: opts.max_reorg_depth,
             gap_admit_occupancy_threshold: opts.mempool_gap_admit_occupancy_threshold,
             mempool_prewarm_enabled: true,
+            mempool_policy,
         },
     );
 
@@ -997,6 +1047,7 @@ pub async fn init_l1(
         cancel_token.clone(),
         tracker.clone(),
         log_filter_handler,
+        rpc_extensions,
     )
     .await?;
 
@@ -1019,7 +1070,7 @@ pub async fn init_l1(
             p2p_context,
             shared_local_node.clone(),
         )
-        .await;
+        .await?;
     } else {
         info!("P2P is disabled");
     }

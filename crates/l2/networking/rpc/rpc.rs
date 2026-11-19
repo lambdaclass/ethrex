@@ -137,6 +137,7 @@ pub async fn bind_api(
             ws: ws.clone(),
             allowed_namespaces: Arc::new(allowed_namespaces),
             log_query_limits,
+            extensions: Default::default(),
         },
         valid_delegation_addresses,
         sponsor_pk,

@@ -464,6 +464,7 @@ fn context_with(
         ws: None,
         log_query_limits: Default::default(),
         allowed_namespaces: Arc::new(all_namespaces_for_tests()),
+        extensions: Default::default(),
     };
     TestContext {
         context: Some(context),
