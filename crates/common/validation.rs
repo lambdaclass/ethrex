@@ -421,6 +421,7 @@ mod tests {
                 ..Default::default()
             },
             body: BlockBody {
+                stark_proof: None,
                 transactions,
                 ommers: vec![],
                 withdrawals: Some(vec![]),

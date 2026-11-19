@@ -442,3 +442,144 @@ mod execution {
         );
     }
 }
+
+// ==================== Headers ====================
+
+/// Headers from the devnet's public RPC, rebuilt as RLP and checked against their
+/// published hashes: block 100 before the Daisugi fork (21 Prague fields), and blocks
+/// 319, 673 and 6987 after it (the 21 Prague fields, the empty-string block-access-list
+/// placeholder, slot 0, then `stark_proof_hash` and `block_deps_hash`). 319 has no
+/// dependencies; 673 and 6987 carry a proof.
+const HEADERS: [(u64, &str, &str); 4] = [
+    (
+        100,
+        "0xff018ae973ee55a1ff733b19f07153ee04b59014adfea2b1a9dbf374893ab3dc",
+        "0xf9026fa09e986e27c4146f83cd3cb4dc2c0ee050b847494e8603e9b181bd41591f855046a01dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d4934794f97e180c050e5ab072211ad2c213eb5aee4df134a0eeffa6faf9fb2aebc4ffda057488a7b1bcdb4dfe32d2ac90bcca30484681b72ca056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421b90100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008064840393870080846afdc22c924e65746865726d696e642076322e332e3061a0aee3fd46b02cd973895a0dcbaf636a6de8c1865aade9d2599c16c396ef7c5899880000000000000000820638a0ebd31067922c85be9d26ee553518588f17da632d41b55da51c69f273e0ff4de18080a04cd9c75960d878e6eb99c22e76611107d3cc34bc53e003f9f77c8e0e053d826fa0e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ),
+    (
+        319,
+        "0x7c1d2dc159fbc16c1f0ae83152873a972dbc799b6beaaec12f68da0175f394a2",
+        "0xf902b3a0ebc035c0f4c3fcaa4a2a41063f2ab1a4973584426c846b8bfb2d953e57892511a01dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d4934794f97e180c050e5ab072211ad2c213eb5aee4df134a02a6a3dfd0f08dcf8c2c56a42d6d778d00c48f929bacc0121d24c82615971132da056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421a056e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421b90100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008082013f840393870080846afdcc70924e65746865726d696e642076322e332e3061a092778fffcf52955c9964d4baa3bb0920937ee7375eda26164d67ffb96d5a51df88000000000000000007a0f13528cf7aa4d1b31b169d4863022d8dcdbcd1e7ebe99ef4d1904e0dedcd90068080a020f93203134ee5b75daa92ca68861f771f6771e2c78520e82e49f91de12dfa7aa0e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b8558080a0c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470a0c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470",
+    ),
+    (
+        673,
+        "0x1cf16619bff31e96a6078cc00bbbe92e66a74f4152c01cb51f38515f8e7f10a1",
+        "0xf902b6a016805fa2022be6e0304119f12ed4e98893181c92f9356205e006473e293c2a16a01dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d4934794f97e180c050e5ab072211ad2c213eb5aee4df134a019e31c3ac08cd6e1536f317dfa82e16795ee5753d3c42794c6058cb4cfa4f46ba0c3badddcf3b959f1efcbac7f2675f6cf4daafd7b93c15ad067e56f3a20695787a0f310b8fa279f7529d8f8bf012a9dcc30bb0338fca48d6145b04fe5afa962c0beb9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000808202a1840393870083013cc9846afddd08924e65746865726d696e642076322e332e3061a08c38a5a3bb8c312e39b8571215c61184b353dc4361a1f007fe7f64df3071ccc888000000000000000007a069f63eb1882e657cc4f90619a48a4c7b5e143b76aacffed9a7b68879511d9f758080a0bc0f348b220d38f11dbf6c30a7e727ef3dbd5e4241c2a5cd770d7ac15869234ba0e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b8558080a0455907bb1fc322d21d0e5a5ed9b09be3f78be381fb134a2af30fe5a7512d817ea0e79b80cdcc7c68c07bfa15f80eef9fe10a92b5adc0246b5074692d88e4543f72",
+    ),
+    (
+        6987,
+        "0x095e8177a253be1532b49503b403c6d833d2a4de88bcd0604020c84da9e385c7",
+        "0xf902b5a007e3ced2949850296903e6e2acbfc136c439e21e512cd19a92f1f959ecc1d3dca01dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d4934794f97e180c050e5ab072211ad2c213eb5aee4df134a0bb6ea188cb4441b31fa143f71125932746bca077e1e6526477a095f3af518f78a0e6fd7c2528a1e87625c96050509ac98eccf115808ab33c5472913dfe1928f3c5a00e8c9d8810594a4187b1c4a864e3e81e1e45bd9095435c90235bf589e5c98b71b901000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000080821b4b840393870082cc14846aff0500924e65746865726d696e642076322e332e3061a00bcc9bf6353bb00522e0b10f78b19842cde892d7c368e7c64c93d8a44feefaf988000000000000000007a0975f6dad50af45ffca42140b840916edfba8eb1380515e598dfc50453a911a0b8080a02e40c5eff7b13f814a4c795ca8c28c55c89dc0a34516566938873cd85e9f0c07a0e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b8558080a08f4fc1fb9bee59a05e19cc232da3fdda7120e2c7483473e13355e55845c90a5aa0d89d9a1ccc0f36927f4e2597a2ae6b7d4fb0d4a10ed52dc9177cda5d9a21c5b1",
+    ),
+];
+
+#[test]
+fn devnet_headers_decode_hash_and_reencode_as_published() {
+    use ethrex_common::types::BlockHeader;
+    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+    let empty =
+        H256::from_str("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")
+            .unwrap();
+    for (number, hash, rlp) in HEADERS {
+        let bytes = hex::decode(rlp.trim_start_matches("0x")).unwrap();
+        let header = BlockHeader::decode(&bytes).unwrap();
+        assert_eq!(header.number, number);
+        assert_eq!(
+            header.hash(),
+            H256::from_str(hash).unwrap(),
+            "block {number}"
+        );
+        assert_eq!(header.encode_to_vec(), bytes, "block {number}");
+        assert_eq!(header.block_access_list_hash, None);
+        if number < 319 {
+            assert!(header.recursive_stark.is_none());
+            assert_eq!(header.slot_number, None);
+        } else {
+            let commitment = header
+                .recursive_stark
+                .expect("a Daisugi header commits to its proof");
+            assert_eq!(header.slot_number, Some(0));
+            if number == 319 {
+                assert_eq!(commitment.stark_proof_hash, empty);
+                assert_eq!(commitment.block_deps_hash, empty);
+            } else {
+                assert_ne!(commitment.stark_proof_hash, empty);
+            }
+        }
+    }
+}
+
+// ==================== Block bodies ====================
+
+mod bodies {
+    use super::*;
+    use ethrex_common::types::{
+        BlockBody, BlockHeader, InvalidBlockBodyError, MAX_RECURSIVE_STARK_PROOF_BYTES,
+        RecursiveStark, compute_transactions_root, compute_withdrawals_root, validate_block_body,
+    };
+    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+
+    fn body(stark_proof: Option<Bytes>) -> BlockBody {
+        BlockBody {
+            transactions: vec![],
+            ommers: vec![],
+            withdrawals: Some(vec![]),
+            stark_proof,
+        }
+    }
+
+    fn header_for(body: &BlockBody, recursive_stark: Option<RecursiveStark>) -> BlockHeader {
+        BlockHeader {
+            transactions_root: compute_transactions_root(&body.transactions, &NativeCrypto),
+            withdrawals_root: Some(compute_withdrawals_root(&[], &NativeCrypto)),
+            recursive_stark,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_body_carries_its_proof_as_a_fourth_item_only_after_the_fork() {
+        let before = body(None);
+        let decoded = BlockBody::decode(&before.encode_to_vec()).unwrap();
+        assert_eq!(decoded.stark_proof, None);
+
+        let after = body(Some(Bytes::from(vec![7u8; 1_000])));
+        let decoded = BlockBody::decode(&after.encode_to_vec()).unwrap();
+        assert_eq!(decoded.stark_proof, after.stark_proof);
+        // The empty proof of a block without dependencies is a present, empty item.
+        let empty = body(Some(Bytes::new()));
+        let decoded = BlockBody::decode(&empty.encode_to_vec()).unwrap();
+        assert_eq!(decoded.stark_proof, Some(Bytes::new()));
+    }
+
+    #[test]
+    fn an_oversized_proof_is_refused_while_decoding() {
+        let oversized = body(Some(Bytes::from(vec![
+            1u8;
+            MAX_RECURSIVE_STARK_PROOF_BYTES + 1
+        ])));
+        assert!(BlockBody::decode(&oversized.encode_to_vec()).is_err());
+    }
+
+    #[test]
+    fn a_body_must_carry_the_proof_its_header_commits_to() {
+        let proof = Bytes::from(vec![3u8; 64]);
+        let with_proof = body(Some(proof.clone()));
+        let commitment = RecursiveStark::commit(&proof, H256::repeat_byte(9));
+        let header = header_for(&with_proof, Some(commitment.clone()));
+        assert!(validate_block_body(&header, &with_proof, &NativeCrypto).is_ok());
+
+        let other = body(Some(Bytes::from(vec![4u8; 64])));
+        assert!(matches!(
+            validate_block_body(&header, &other, &NativeCrypto),
+            Err(InvalidBlockBodyError::StarkProofNotMatch)
+        ));
+
+        // No header commitment: a proof in the body is a body from another block.
+        let pre_fork = header_for(&with_proof, None);
+        assert!(matches!(
+            validate_block_body(&pre_fork, &with_proof, &NativeCrypto),
+            Err(InvalidBlockBodyError::StarkProofPresent)
+        ));
+    }
+}

@@ -118,6 +118,7 @@ pub fn new_payload_request_to_block(
 
     let withdrawals_root = compute_withdrawals_root(&withdrawals, crypto);
     let body = BlockBody {
+        stark_proof: None,
         transactions,
         ommers: vec![],
         withdrawals: Some(withdrawals),

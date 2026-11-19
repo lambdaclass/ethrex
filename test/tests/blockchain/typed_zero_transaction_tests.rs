@@ -124,6 +124,7 @@ fn block_decode_still_accepts_a_body_with_a_legacy_transaction() {
     let block = Block::new(
         BlockHeader::default(),
         BlockBody {
+            stark_proof: None,
             transactions: vec![sample_legacy()],
             ommers: Vec::new(),
             withdrawals: None,

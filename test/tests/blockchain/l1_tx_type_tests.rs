@@ -87,6 +87,7 @@ async fn l1_rejects_privileged_l2_transaction_block() {
     ));
 
     let body = BlockBody {
+        stark_proof: None,
         transactions: vec![decoded_tx],
         ommers: Vec::new(),
         withdrawals: None,

@@ -124,6 +124,7 @@ impl ExecutionPayload {
         block_access_list_hash: Option<H256>,
     ) -> Result<Block, RLPDecodeError> {
         let body = BlockBody {
+            stark_proof: None,
             transactions: self
                 .transactions
                 .iter()

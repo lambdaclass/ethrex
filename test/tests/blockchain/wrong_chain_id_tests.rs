@@ -124,6 +124,7 @@ async fn rejects_block_with_wrong_chain_id_transaction() {
         .expect("initialize genesis");
 
     let body = BlockBody {
+        stark_proof: None,
         transactions: vec![tx],
         ommers: Vec::new(),
         withdrawals: None,

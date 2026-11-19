@@ -60,6 +60,7 @@ impl RLPEncode for Block {
             .encode_field(&self.body.transactions)
             .encode_field(&self.body.ommers)
             .encode_optional_field(&self.body.withdrawals)
+            .encode_optional_field(&self.body.stark_proof)
             .finish();
     }
 }
@@ -71,11 +72,13 @@ impl RLPDecode for Block {
         let (transactions, decoder) = decoder.decode_field("transactions")?;
         let (ommers, decoder) = decoder.decode_field("ommers")?;
         let (withdrawals, decoder) = decoder.decode_optional_field();
+        let (stark_proof, decoder) = decode_stark_proof(decoder)?;
         let remaining = decoder.finish()?;
         let body = BlockBody {
             transactions,
             ommers,
             withdrawals,
+            stark_proof,
         };
         let block = Block::new(header, body);
         Ok((block, remaining))
@@ -155,6 +158,21 @@ pub struct BlockHeader {
         default = "Option::default"
     )]
     pub slot_number: Option<u64>,
+    // EIP-8288 fields, encoded as two flat 32-byte fields: `stark_proof_hash`, then
+    // `block_deps_hash`, after the block-access-list hash and slot number (written as
+    // placeholders on a chain without Amsterdam).
+    //
+    // Before `burned_fees`, as the reference client orders them. The two are adjacent
+    // trailing optionals, which `payload.rs` documents as a decode hazard -- a present
+    // field after an absent one shifts everything. It does not bite across this pair,
+    // because they have different RLP shapes: a `u64` is at most eight bytes and does
+    // not decode as a 32-byte hash, and a hash does not decode as a `u64`, so whichever
+    // is absent yields `None` without consuming.
+    //
+    // In JSON the two fields sit flat in the header object, as `starkProofHash`
+    // and `blockDepsHash`, the way every client of the network serves them.
+    #[serde(flatten, default)]
+    pub recursive_stark: Option<RecursiveStark>,
     // LStar fork fields (EIP-8079)
     #[serde(
         skip_serializing_if = "Option::is_none",
@@ -192,6 +210,7 @@ impl PartialEq for BlockHeader {
             requests_hash,
             block_access_list_hash,
             slot_number,
+            recursive_stark,
             burned_fees,
         } = self;
 
@@ -217,6 +236,7 @@ impl PartialEq for BlockHeader {
             && block_access_list_hash == &other.block_access_list_hash
             && slot_number == &other.slot_number
             && burned_fees == &other.burned_fees
+            && recursive_stark == &other.recursive_stark
             && logs_bloom == &other.logs_bloom
             && extra_data == &other.extra_data
     }
@@ -224,7 +244,18 @@ impl PartialEq for BlockHeader {
 
 impl RLPEncode for BlockHeader {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
+        // A header field is positional, so a field present after an absent one needs
+        // the absent one written as a placeholder: an empty string for the
+        // block-access-list hash and zero for the slot number. That is the layout a
+        // pre-Amsterdam chain running EIP-8288 uses, where `recursive_stark` follows
+        // two fields Amsterdam would have filled.
+        let later_fields = self.recursive_stark.is_some() || self.burned_fees.is_some();
+        let slot_number = if later_fields {
+            Some(self.slot_number.unwrap_or_default())
+        } else {
+            self.slot_number
+        };
+        let encoder = Encoder::new(buf)
             .encode_field(&self.parent_hash)
             .encode_field(&self.ommers_hash)
             .encode_field(&self.coinbase)
@@ -245,11 +276,19 @@ impl RLPEncode for BlockHeader {
             .encode_optional_field(&self.blob_gas_used)
             .encode_optional_field(&self.excess_blob_gas)
             .encode_optional_field(&self.parent_beacon_block_root)
-            .encode_optional_field(&self.requests_hash)
-            .encode_optional_field(&self.block_access_list_hash)
-            .encode_optional_field(&self.slot_number)
-            .encode_optional_field(&self.burned_fees)
-            .finish();
+            .encode_optional_field(&self.requests_hash);
+        let encoder = match self.block_access_list_hash {
+            None if later_fields || slot_number.is_some() => encoder.encode_bytes(&[]),
+            hash => encoder.encode_optional_field(&hash),
+        };
+        let encoder = encoder.encode_optional_field(&slot_number);
+        let encoder = match &self.recursive_stark {
+            Some(commitment) => encoder
+                .encode_field(&commitment.stark_proof_hash)
+                .encode_field(&commitment.block_deps_hash),
+            None => encoder,
+        };
+        encoder.encode_optional_field(&self.burned_fees).finish();
     }
 }
 
@@ -279,7 +318,32 @@ impl RLPDecode for BlockHeader {
         let (parent_beacon_block_root, decoder) = decoder.decode_optional_field();
         let (requests_hash, decoder) = decoder.decode_optional_field();
         let (block_access_list_hash, decoder) = decoder.decode_optional_field();
+        // An empty string in the block-access-list slot is the placeholder a
+        // pre-Amsterdam header writes when later fields follow (see the encoder).
+        // Anything else that is not a 32-byte hash is malformed.
+        let decoder = if block_access_list_hash.is_none() {
+            match decoder.decode_optional_field::<bytes::Bytes>() {
+                (Some(placeholder), rest) if placeholder.is_empty() => rest,
+                (Some(_), _) => return Err(RLPDecodeError::MalformedData),
+                (None, rest) => rest,
+            }
+        } else {
+            decoder
+        };
         let (slot_number, decoder) = decoder.decode_optional_field();
+        // Before `burned_fees`. Two 32-byte strings, which a u64
+        // never decodes as and which never decode as a u64; see the field's
+        // comment. Both or neither: one alone is a truncated commitment.
+        let (stark_proof_hash, decoder) = decoder.decode_optional_field::<H256>();
+        let (block_deps_hash, decoder) = decoder.decode_optional_field::<H256>();
+        let recursive_stark = match (stark_proof_hash, block_deps_hash) {
+            (Some(stark_proof_hash), Some(block_deps_hash)) => Some(RecursiveStark {
+                stark_proof_hash,
+                block_deps_hash,
+            }),
+            (None, None) => None,
+            _ => return Err(RLPDecodeError::MalformedData),
+        };
         let (burned_fees, decoder) = decoder.decode_optional_field();
 
         Ok((
@@ -308,6 +372,7 @@ impl RLPDecode for BlockHeader {
                 requests_hash,
                 block_access_list_hash,
                 slot_number,
+                recursive_stark,
                 burned_fees,
             },
             decoder.finish()?,
@@ -325,14 +390,62 @@ pub struct BlockBody {
     #[serde(rename = "uncles")]
     pub ommers: Vec<BlockHeader>,
     pub withdrawals: Option<Vec<Withdrawal>>,
+    /// EIP-8288's block proof, from the fork on: the recursive proof discharging
+    /// every dependency the block's transactions declare, and empty when they
+    /// declare none. `None` before the fork. The header commits to its hash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[rkyv(with = crate::rkyv_utils::OptionBytesWrapper)]
+    pub stark_proof: Option<Bytes>,
+}
+
+/// Decode the optional trailing proof of a block or body, bounded before it is
+/// kept: every node that downloads the block holds it, long before any
+/// aggregation backend looks at it.
+fn decode_stark_proof(decoder: Decoder) -> Result<(Option<Bytes>, Decoder), RLPDecodeError> {
+    let (stark_proof, decoder) = decoder.decode_optional_field::<Bytes>();
+    if let Some(proof) = &stark_proof
+        && proof.len() > MAX_RECURSIVE_STARK_PROOF_BYTES
+    {
+        return Err(RLPDecodeError::Custom(format!(
+            "block proof is {} bytes, over the {MAX_RECURSIVE_STARK_PROOF_BYTES}-byte limit",
+            proof.len()
+        )));
+    }
+    Ok((stark_proof, decoder))
 }
 
 impl BlockBody {
+    /// EIP-8288 `dependencies(block)`: every dependency triple declared by every
+    /// transaction in the block, deduplicated and sorted.
+    ///
+    /// Non-frame transactions declare none, so a block with no frame transactions
+    /// yields an empty list and `dependencies_hash` of the empty concatenation.
+    pub fn dependencies(&self) -> Vec<crate::types::DependencyTriple> {
+        let mut out = Vec::new();
+        for tx in &self.transactions {
+            if let Transaction::FrameTransaction(frame_tx) = tx {
+                out.extend(frame_tx.dependencies());
+            }
+        }
+        crate::types::deduplicate_and_sort_dependencies(out)
+    }
+
+    /// EIP-8288 `block_deps_hash`: the digest the block header's `recursive_stark`
+    /// entry must carry, and the first of the EIP's three block-validity rules.
+    ///
+    /// The second rule -- that the proof discharges the dependencies this digest
+    /// names -- lives in `ethrex_blockchain::eip8288`, because it needs an
+    /// aggregation backend and this crate has none.
+    pub fn block_deps_hash(&self) -> H256 {
+        crate::types::dependencies_hash(&self.dependencies())
+    }
+
     pub const fn empty() -> Self {
         Self {
             transactions: Vec::new(),
             ommers: Vec::new(),
             withdrawals: Some(Vec::new()),
+            stark_proof: None,
         }
     }
 
@@ -412,6 +525,7 @@ impl RLPEncode for BlockBody {
             .encode_field(&self.transactions)
             .encode_field(&self.ommers)
             .encode_optional_field(&self.withdrawals)
+            .encode_optional_field(&self.stark_proof)
             .finish();
     }
 }
@@ -422,11 +536,13 @@ impl RLPDecode for BlockBody {
         let (transactions, decoder) = decoder.decode_field("transactions")?;
         let (ommers, decoder) = decoder.decode_field("ommers")?;
         let (withdrawals, decoder) = decoder.decode_optional_field();
+        let (stark_proof, decoder) = decode_stark_proof(decoder)?;
         Ok((
             BlockBody {
                 transactions,
                 ommers,
                 withdrawals,
+                stark_proof,
             },
             decoder.finish()?,
         ))
@@ -473,6 +589,58 @@ pub struct Withdrawal {
     pub address: Address,
     #[serde(with = "crate::serde_utils::u64::hex_str")]
     pub amount: u64,
+}
+
+/// The largest block proof a block body may carry.
+///
+/// Mirrors `ethrex_dep_aggregation::MAX_RECURSIVE_STARK_PROOF_BYTES`, which cannot
+/// be imported here: that crate depends on this one. Asserted equal in
+/// `crates/common/dep-aggregation/src/lib.rs` so the two cannot drift.
+pub const MAX_RECURSIVE_STARK_PROOF_BYTES: usize = 1_310_720;
+
+/// EIP-8288's header commitment: the hash of the block's proof and the digest of
+/// the block's dependency set, as the header's last two fields.
+///
+/// The proof itself rides in the block body (`BlockBody::stark_proof`), so a header
+/// download stays small and the header hash covers the proof only through its
+/// hash. A body whose proof does not hash to `stark_proof_hash` is not this block's
+/// body.
+///
+/// `block_deps_hash` duplicates what `BlockBody::block_deps_hash` computes from the
+/// transactions. That redundancy is the EIP's design and it is load-bearing: it
+/// gives a light client the dependency-set digest without the block body, and it is
+/// what block-validity rule 1 checks the body against.
+#[derive(
+    Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize, RSerialize, RDeserialize, Archive,
+)]
+#[serde(rename_all = "camelCase")]
+pub struct RecursiveStark {
+    /// keccak256 of the body's proof, which is empty when the block declares no
+    /// dependencies.
+    #[rkyv(with = crate::rkyv_utils::H256Wrapper)]
+    pub stark_proof_hash: H256,
+    /// The digest of the block's deduplicated, sorted dependency set. Must equal
+    /// `BlockBody::block_deps_hash`.
+    #[rkyv(with = crate::rkyv_utils::H256Wrapper)]
+    pub block_deps_hash: H256,
+}
+
+impl RecursiveStark {
+    /// The commitment of a block carrying `proof` whose dependency set has digest
+    /// `block_deps_hash`.
+    pub fn commit(proof: &[u8], block_deps_hash: H256) -> Self {
+        RecursiveStark {
+            stark_proof_hash: crate::utils::keccak(proof),
+            block_deps_hash,
+        }
+    }
+
+    /// A commitment to the empty dependency set must commit to the empty proof,
+    /// whatever body is later served for it.
+    pub fn has_valid_shape(&self) -> bool {
+        let empty = *crate::constants::EMPTY_KECCAK_HASH;
+        self.block_deps_hash != empty || self.stark_proof_hash == empty
+    }
 }
 
 impl RLPEncode for Withdrawal {
@@ -694,6 +862,12 @@ pub enum InvalidBlockHeaderError {
     SlotNumberNotPresent,
     #[error("Slot number is present")]
     SlotNumberPresent,
+    #[error("EIP-8288 recursive stark entry is not present")]
+    RecursiveStarkNotPresent,
+    #[error("EIP-8288 recursive stark entry is present")]
+    RecursiveStarkPresent,
+    #[error("EIP-8288 commitment to the empty dependency set does not commit to the empty proof")]
+    RecursiveStarkShape,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -704,6 +878,10 @@ pub enum InvalidBlockBodyError {
     TransactionsRootNotMatch,
     #[error("Ommers is not empty")]
     OmmersIsNotEmpty,
+    #[error("Block proof does not match the header's commitment")]
+    StarkProofNotMatch,
+    #[error("Block proof is present without a header commitment")]
+    StarkProofPresent,
 }
 
 /// Validates that the header fields are correct in reference to the parent_header
@@ -797,6 +975,19 @@ pub fn validate_block_body(
         _ => return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch),
     }
 
+    // EIP-8288: the header commits to the proof's hash, so a body whose proof does
+    // not hash to it is not this block's body. A missing proof is the empty one.
+    match (&block_header.recursive_stark, &block_body.stark_proof) {
+        (Some(commitment), proof) => {
+            let proof = proof.as_deref().unwrap_or_default();
+            if crate::utils::keccak(proof) != commitment.stark_proof_hash {
+                return Err(InvalidBlockBodyError::StarkProofNotMatch);
+            }
+        }
+        (None, None) => {}
+        (None, Some(_)) => return Err(InvalidBlockBodyError::StarkProofPresent),
+    }
+
     Ok(())
 }
 
@@ -856,9 +1047,32 @@ pub fn validate_prague_header_fields(
         if header.block_access_list_hash.is_some() {
             return Err(InvalidBlockHeaderError::BlockAccessListHashPresent);
         }
-        if header.slot_number.is_some() {
+        // Before Amsterdam the only slot number a header may carry is the zero
+        // placeholder that positions a following `recursive_stark` entry (see the
+        // header encoder), and only where EIP-8288 is active.
+        let stark_placeholder = header.slot_number == Some(0)
+            && header.recursive_stark.is_some()
+            && chain_config.is_eip8288_active(header.timestamp);
+        if header.slot_number.is_some() && !stark_placeholder {
             return Err(InvalidBlockHeaderError::SlotNumberPresent);
         }
+    }
+    // EIP-8288: the recursive_stark entry is a mandatory trailing header field once
+    // EIP-8288 is active. Mandatory even for a block whose transactions declare no
+    // dependencies: its block_deps_hash is then the digest of the empty set, and a
+    // field that appeared only sometimes would make the header schema depend on the
+    // body. Gated separately from the Amsterdam pair above because EIP-8288 activates
+    // on its own timestamp, so a block can be Amsterdam without it and EIP-8288
+    // without Amsterdam.
+    if chain_config.is_eip8288_active(header.timestamp) {
+        let Some(commitment) = &header.recursive_stark else {
+            return Err(InvalidBlockHeaderError::RecursiveStarkNotPresent);
+        };
+        if !commitment.has_valid_shape() {
+            return Err(InvalidBlockHeaderError::RecursiveStarkShape);
+        }
+    } else if header.recursive_stark.is_some() {
+        return Err(InvalidBlockHeaderError::RecursiveStarkPresent);
     }
     Ok(())
 }
@@ -889,6 +1103,9 @@ pub fn validate_cancun_header_fields(
     if header.slot_number.is_some() {
         return Err(InvalidBlockHeaderError::SlotNumberPresent);
     }
+    if header.recursive_stark.is_some() {
+        return Err(InvalidBlockHeaderError::RecursiveStarkPresent);
+    }
     Ok(())
 }
 
@@ -914,6 +1131,9 @@ pub fn validate_pre_cancun_header_fields(
     }
     if header.slot_number.is_some() {
         return Err(InvalidBlockHeaderError::SlotNumberPresent);
+    }
+    if header.recursive_stark.is_some() {
+        return Err(InvalidBlockHeaderError::RecursiveStarkPresent);
     }
     Ok(())
 }

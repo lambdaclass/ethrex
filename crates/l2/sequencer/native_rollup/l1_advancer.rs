@@ -594,6 +594,7 @@ mod tests {
             ..Default::default()
         };
         let body = BlockBody {
+            stark_proof: None,
             transactions: vec![],
             ommers: vec![],
             withdrawals: Some(vec![]),
@@ -776,6 +777,7 @@ mod tests {
             ..Default::default()
         };
         let body = BlockBody {
+            stark_proof: None,
             transactions: vec![],
             ommers: vec![],
             withdrawals: Some(vec![]),

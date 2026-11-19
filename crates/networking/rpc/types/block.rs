@@ -58,6 +58,7 @@ impl TryInto<Block> for RpcBlock {
         Ok(Block {
             header: self.header,
             body: BlockBody {
+                stark_proof: None,
                 transactions,
                 ommers: Vec::new(),
                 withdrawals: Some(block_body.withdrawals),
@@ -211,6 +212,7 @@ mod test {
         };
 
         let block_body = BlockBody {
+            stark_proof: None,
             transactions: vec![Transaction::EIP1559Transaction(tx)],
             ommers: vec![],
             withdrawals: Some(vec![]),

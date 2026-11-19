@@ -551,6 +551,7 @@ mod tests {
                 .add_block_body(
                     headers[number as usize].hash(),
                     BlockBody {
+                        stark_proof: None,
                         transactions: vec![],
                         ommers: vec![],
                         withdrawals: Some(vec![]),

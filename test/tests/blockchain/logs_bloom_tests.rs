@@ -53,6 +53,7 @@ async fn rejects_block_with_mismatched_logs_bloom() {
 
     // Empty block: no transactions, no receipts -> the correct logs_bloom is zero.
     let body = BlockBody {
+        stark_proof: None,
         transactions: Vec::new(),
         ommers: Vec::new(),
         withdrawals: None,

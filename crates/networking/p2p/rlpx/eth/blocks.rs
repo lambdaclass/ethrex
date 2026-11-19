@@ -275,17 +275,28 @@ pub struct GetBlockBodies {
 // https://github.com/ethereum/go-ethereum/blob/a1093d98eb3260f2abf340903c2d968b2b891c11/eth/protocols/eth/handler.go#L45
 pub const BLOCK_BODY_LIMIT: usize = 1024;
 
+/// The encoded size past which a `BlockBodies` response stops adding bodies, as
+/// geth's `softResponseLimit` does. An EIP-8288 body carries the block's proof,
+/// about 250 KB each, so a count cap alone would let one response grow to hundreds
+/// of megabytes. The body that crosses the budget is still served, so a response
+/// always holds at least one.
+pub const BLOCK_BODIES_SOFT_RESPONSE_LIMIT: usize = 2 * 1024 * 1024;
+
 impl GetBlockBodies {
     pub fn new(id: u64, block_hashes: Vec<BlockHash>) -> Self {
         Self { block_hashes, id }
     }
     pub async fn fetch_blocks(&self, storage: &Store) -> Vec<BlockBody> {
         let mut block_bodies = vec![];
+        let mut response_bytes = 0usize;
         for block_hash in &self.block_hashes {
             match storage.get_block_body_by_hash(*block_hash).await {
                 Ok(Some(block)) => {
+                    response_bytes = response_bytes.saturating_add(block.length());
                     block_bodies.push(block);
-                    if block_bodies.len() >= BLOCK_BODY_LIMIT {
+                    if block_bodies.len() >= BLOCK_BODY_LIMIT
+                        || response_bytes >= BLOCK_BODIES_SOFT_RESPONSE_LIMIT
+                    {
                         break;
                     }
                 }

@@ -986,6 +986,7 @@ impl Genesis {
 
     fn get_block_body(&self) -> BlockBody {
         BlockBody {
+            stark_proof: None,
             transactions: vec![],
             ommers: vec![],
             withdrawals: Some(vec![]),

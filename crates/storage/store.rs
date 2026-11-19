@@ -7653,6 +7653,7 @@ mod backfill_write_tests {
         let hash = header.hash();
         let tx = test_tx(7);
         let body = BlockBody {
+            stark_proof: None,
             transactions: vec![tx.clone()],
             ommers: vec![],
             withdrawals: Some(vec![]),
@@ -7715,6 +7716,7 @@ mod backfill_write_tests {
         let hash = header.hash();
         let tx = test_tx(7);
         let body = BlockBody {
+            stark_proof: None,
             transactions: vec![tx.clone()],
             ommers: vec![],
             withdrawals: Some(vec![]),
@@ -7770,6 +7772,7 @@ mod backfill_write_tests {
         let tx = test_tx(7);
         let tx_hash = tx.hash(&NativeCrypto);
         let body = BlockBody {
+            stark_proof: None,
             transactions: vec![tx],
             ommers: vec![],
             withdrawals: Some(vec![]),
@@ -7844,6 +7847,7 @@ mod backfill_write_tests {
                 .map(|n| BackfilledBlock {
                     header: test_header(n),
                     body: BlockBody {
+                        stark_proof: None,
                         transactions: vec![],
                         ommers: vec![],
                         withdrawals: Some(vec![]),

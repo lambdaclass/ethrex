@@ -591,6 +591,7 @@ mod tests {
                 ..Default::default()
             };
             let body = BlockBody {
+                stark_proof: None,
                 transactions: vec![ethrex_common::types::Transaction::LegacyTransaction(
                     LegacyTransaction::default(),
                 )],

@@ -5114,6 +5114,7 @@ mod burned_fees_tests {
             ..Default::default()
         };
         let body = BlockBody {
+            stark_proof: None,
             transactions: vec![tx],
             ommers: vec![],
             withdrawals: Some(vec![]),

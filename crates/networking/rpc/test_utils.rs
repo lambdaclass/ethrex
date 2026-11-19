@@ -103,6 +103,7 @@ async fn add_blocks_with_transactions(
     let mut new_canonical_blocks = vec![];
     for block_num in 1..=block_count {
         let block_body = BlockBody {
+            stark_proof: None,
             transactions: txs_per_block.clone(),
             ommers: Default::default(),
             withdrawals: Default::default(),

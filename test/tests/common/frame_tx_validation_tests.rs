@@ -71,6 +71,7 @@ fn make_block(transactions: Vec<Transaction>, blob_gas_used: u64) -> Block {
             ..Default::default()
         },
         body: BlockBody {
+            stark_proof: None,
             transactions,
             ommers: vec![],
             withdrawals: Some(vec![]),

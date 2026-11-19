@@ -197,6 +197,7 @@ pub fn create_payload(
     };
 
     let body = BlockBody {
+        stark_proof: None,
         transactions: Vec::new(),
         ommers: Vec::new(),
         // Post-Shanghai the withdrawals field is part of the body schema: emit

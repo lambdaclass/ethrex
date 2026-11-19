@@ -136,6 +136,23 @@ impl From<OptionH256Wrapper> for Option<H256> {
 }
 
 #[derive(Archive, Serialize, Deserialize)]
+#[rkyv(remote = Option<Bytes>)]
+pub enum OptionBytesWrapper {
+    Some(#[rkyv(with = BytesWrapper)] Bytes),
+    None,
+}
+
+impl From<OptionBytesWrapper> for Option<Bytes> {
+    fn from(value: OptionBytesWrapper) -> Self {
+        if let OptionBytesWrapper::Some(x) = value {
+            Some(x)
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Archive, Serialize, Deserialize)]
 #[rkyv(remote = Option<HashMap<H160, Vec<Vec<u8>>>>)]
 pub enum OptionStorageWrapper {
     Some(
