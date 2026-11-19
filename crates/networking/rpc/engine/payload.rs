@@ -1885,6 +1885,7 @@ mod tests {
 
     fn v5_payload() -> ExecutionPayload {
         ExecutionPayload {
+            stark_proof: None,
             parent_hash: H256::zero(),
             fee_recipient: Default::default(),
             state_root: H256::zero(),

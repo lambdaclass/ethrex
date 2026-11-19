@@ -4433,14 +4433,17 @@ mod serde_impl {
             // EIP-8250, named as in the execution-apis frame transaction schema:
             // `nonce` carries the shared sequence and `nonceKeys` the selected keys.
             s.serialize_field("nonce", &format!("{:#x}", self.nonce_seq))?;
-            s.serialize_field(
-                "nonceKeys",
-                &self
-                    .nonce_keys
-                    .iter()
-                    .map(|key| format!("{key:#x}"))
-                    .collect::<Vec<_>>(),
-            )?;
+            // EIP-8141's own envelope, before EIP-8250, carries no key list.
+            if self.has_nonce_keys {
+                s.serialize_field(
+                    "nonceKeys",
+                    &self
+                        .nonce_keys
+                        .iter()
+                        .map(|key| format!("{key:#x}"))
+                        .collect::<Vec<_>>(),
+                )?;
+            }
             // The sender is not serialized here: the RPC transaction object
             // carries it as `from`, as for every other transaction type.
             s.serialize_field(

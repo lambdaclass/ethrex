@@ -7,9 +7,9 @@ use ethrex_common::{
     constants::DEFAULT_OMMERS_HASH,
     serde_utils,
     types::{
-        BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, Transaction, Withdrawal,
-        block_access_list::BlockAccessList, compute_transactions_root, compute_withdrawals_root,
-        requests::EncodedRequests,
+        BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, RecursiveStark, Transaction,
+        Withdrawal, block_access_list::BlockAccessList, compute_transactions_root,
+        compute_withdrawals_root, requests::EncodedRequests,
     },
 };
 
@@ -75,6 +75,17 @@ pub struct ExecutionPayload {
         default
     )]
     pub burned_fees: Option<u64>,
+    // EIP-8288's block proof, the `starkProof` field consensus clients send from the
+    // Daisugi fork on: empty (`0x`) when the block declares no dependencies. The
+    // header's commitment to it and the block's dependency digest are derived from
+    // the payload rather than sent, and the proof travels in the block body. `None`
+    // before EIP-8288 (skipped in serialization).
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "optional_hex_bytes",
+        default
+    )]
+    pub stark_proof: Option<Bytes>,
 }
 
 #[derive(Clone, Debug)]
@@ -124,7 +135,7 @@ impl ExecutionPayload {
         block_access_list_hash: Option<H256>,
     ) -> Result<Block, RLPDecodeError> {
         let body = BlockBody {
-            stark_proof: None,
+            stark_proof: self.stark_proof,
             transactions: self
                 .transactions
                 .iter()
@@ -133,6 +144,14 @@ impl ExecutionPayload {
             ommers: vec![],
             withdrawals: self.withdrawals,
         };
+        // EIP-8288: the header commits to the proof's hash and to the digest of the
+        // dependencies the payload's transactions declare. A payload without a proof
+        // builds a header without the commitment, which fails the block-hash check
+        // on a chain where EIP-8288 is active.
+        let recursive_stark = body
+            .stark_proof
+            .as_ref()
+            .map(|proof| RecursiveStark::commit(proof, body.block_deps_hash()));
         let header = BlockHeader {
             parent_hash: self.parent_hash,
             ommers_hash: *DEFAULT_OMMERS_HASH,
@@ -164,6 +183,7 @@ impl ExecutionPayload {
             requests_hash,
             slot_number: self.slot_number,
             block_access_list_hash,
+            recursive_stark,
             burned_fees: self.burned_fees,
             ..Default::default()
         };
@@ -195,9 +215,15 @@ impl ExecutionPayload {
             withdrawals: block.body.withdrawals,
             blob_gas_used: block.header.blob_gas_used,
             excess_blob_gas: block.header.excess_blob_gas,
-            slot_number: block.header.slot_number,
+            // The slot number a pre-Amsterdam EIP-8288 header carries is only a
+            // placeholder for the commitment after it; no payload field carries it.
+            slot_number: block.header.slot_number.filter(|_| {
+                block.header.recursive_stark.is_none()
+                    || block.header.block_access_list_hash.is_some()
+            }),
             block_access_list,
             burned_fees: block.header.burned_fees,
+            stark_proof: block.body.stark_proof,
         }
     }
 
@@ -226,6 +252,7 @@ impl ExecutionPayload {
             slot_number: self.slot_number,
             block_access_list: None,
             burned_fees: self.burned_fees,
+            stark_proof: self.stark_proof.clone(),
         }
     }
 }
@@ -328,7 +355,7 @@ impl PayloadStatus {
     }
 }
 
-mod optional_hex_bytes {
+pub(crate) mod optional_hex_bytes {
     use bytes::Bytes;
     use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
 
@@ -362,6 +389,14 @@ mod optional_hex_bytes {
 pub struct ExecutionPayloadBody {
     pub transactions: Vec<EncodedTransaction>,
     pub withdrawals: Option<Vec<Withdrawal>>,
+    /// EIP-8288's block proof, which a consensus client needs to rebuild a
+    /// proof-carrying payload from its body. `None` before the fork.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "optional_hex_bytes",
+        default
+    )]
+    pub stark_proof: Option<Bytes>,
 }
 
 impl From<BlockBody> for ExecutionPayloadBody {
@@ -373,6 +408,7 @@ impl From<BlockBody> for ExecutionPayloadBody {
                 .map(EncodedTransaction::encode)
                 .collect(),
             withdrawals: body.withdrawals,
+            stark_proof: body.stark_proof,
         }
     }
 }
@@ -389,6 +425,13 @@ pub struct ExecutionPayloadBodyV2 {
         default
     )]
     pub block_access_list: Option<BlockAccessList>,
+    /// EIP-8288's block proof; see `ExecutionPayloadBody::stark_proof`.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        with = "optional_hex_bytes",
+        default
+    )]
+    pub stark_proof: Option<Bytes>,
 }
 
 impl ExecutionPayloadBodyV2 {
@@ -401,6 +444,7 @@ impl ExecutionPayloadBodyV2 {
                 .collect(),
             withdrawals: body.withdrawals,
             block_access_list: bal,
+            stark_proof: body.stark_proof,
         }
     }
 }
@@ -427,6 +471,94 @@ pub struct ExecutionPayloadResponseV2 {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    /// A post-Daisugi block: the header commits to its proof and dependency digest,
+    /// the body carries the proof.
+    fn daisugi_block(proof: Bytes) -> Block {
+        let body = BlockBody {
+            transactions: vec![],
+            ommers: vec![],
+            withdrawals: Some(vec![]),
+            stark_proof: Some(proof.clone()),
+        };
+        let header = BlockHeader {
+            ommers_hash: *DEFAULT_OMMERS_HASH,
+            transactions_root: compute_transactions_root(&[], &ethrex_crypto::NativeCrypto),
+            withdrawals_root: Some(compute_withdrawals_root(&[], &ethrex_crypto::NativeCrypto)),
+            base_fee_per_gas: Some(7),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Some(H256::repeat_byte(1)),
+            requests_hash: Some(H256::repeat_byte(2)),
+            recursive_stark: Some(RecursiveStark::commit(&proof, body.block_deps_hash())),
+            ..Default::default()
+        };
+        Block::new(header, body)
+    }
+
+    #[test]
+    fn a_proof_block_survives_the_engine_api_round_trip() {
+        for proof in [Bytes::new(), Bytes::from(vec![5u8; 300])] {
+            let block = daisugi_block(proof.clone());
+            let payload = ExecutionPayload::from_block(block.clone(), None);
+            let json = serde_json::to_value(&payload).unwrap();
+            assert_eq!(
+                json["starkProof"],
+                serde_json::Value::String(format!("0x{}", hex::encode(&proof)))
+            );
+            assert!(
+                json.get("slotNumber").is_none(),
+                "no slot field on a Prague payload"
+            );
+
+            let decoded: ExecutionPayload = serde_json::from_value(json).unwrap();
+            let rebuilt = decoded
+                .into_block(
+                    block.header.parent_beacon_block_root,
+                    block.header.requests_hash,
+                    None,
+                )
+                .unwrap();
+            assert_eq!(rebuilt.hash(), block.hash());
+            assert_eq!(rebuilt.body.stark_proof, Some(proof));
+        }
+    }
+
+    #[test]
+    fn a_payload_without_its_proof_does_not_rebuild_the_block() {
+        let block = daisugi_block(Bytes::new());
+        let mut payload = ExecutionPayload::from_block(block.clone(), None);
+        payload.stark_proof = None;
+        let rebuilt = payload
+            .into_block(
+                block.header.parent_beacon_block_root,
+                block.header.requests_hash,
+                None,
+            )
+            .unwrap();
+        assert_ne!(rebuilt.hash(), block.hash());
+    }
+
+    #[test]
+    fn payload_bodies_carry_the_proof_only_after_the_fork() {
+        let after = ExecutionPayloadBody::from(daisugi_block(Bytes::from(vec![9u8; 4])).body);
+        assert_eq!(
+            serde_json::to_value(&after).unwrap()["starkProof"],
+            serde_json::Value::String("0x09090909".to_string())
+        );
+        let before = ExecutionPayloadBody::from(BlockBody {
+            transactions: vec![],
+            ommers: vec![],
+            withdrawals: Some(vec![]),
+            stark_proof: None,
+        });
+        assert!(
+            serde_json::to_value(&before)
+                .unwrap()
+                .get("starkProof")
+                .is_none()
+        );
+    }
 
     #[test]
     fn deserialize_payload_into_block() {
