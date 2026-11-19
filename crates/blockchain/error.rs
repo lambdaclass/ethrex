@@ -14,6 +14,13 @@ pub use ethrex_common::InvalidBlockError;
 pub enum ChainError {
     #[error("Invalid Block: {0}")]
     InvalidBlock(#[from] InvalidBlockError),
+    #[error("EIP-8288 recursive stark is invalid: {0}")]
+    RecursiveStarkInvalid(String),
+    /// This node cannot check the proof, which says nothing about the block.
+    /// Distinct from `RecursiveStarkInvalid` because conflating "the proof is bad"
+    /// with "I have no verifier" would have a node declare valid chains invalid.
+    #[error("EIP-8288 recursive stark could not be verified by this node: {0}")]
+    RecursiveStarkUnverifiable(String),
     #[error("Parent block not found")]
     ParentNotFound,
     //TODO: If a block with block_number greater than latest plus one is received
@@ -57,6 +64,10 @@ impl ChainError {
     pub fn to_metric(&self) -> &str {
         match self {
             ChainError::InvalidBlock(_) => "invalid_block",
+            // Separate labels on purpose: one counts bad proofs, the other this node's
+            // inability to check them.
+            ChainError::RecursiveStarkInvalid(_) => "recursive_stark_invalid",
+            ChainError::RecursiveStarkUnverifiable(_) => "recursive_stark_unverifiable",
             ChainError::ParentNotFound => "parent_not_found",
             ChainError::ParentStateNotFound => "parent_state_not_found",
             ChainError::StoreError(_) => "store_error",
@@ -145,6 +156,13 @@ pub enum MempoolError {
     FrameTxPreFork,
     #[error("Frame transaction expiry deadline has passed")]
     FrameTxExpired,
+    /// EIP-8288: a transaction that declares dependencies travels with the witnesses
+    /// or proof that discharge them, in a proof wrapper, never on its own. The
+    /// reference client refuses one submitted alone with the same advice.
+    #[error(
+        "Frame transaction declares EIP-8288 dependencies; submit dependency transactions through eth_sendProofWrapper"
+    )]
+    FrameTxDependencyNeedsWrapper,
     #[error("Invalid frame transaction: {0}")]
     InvalidFrameTransaction(String),
     #[error("Invalid frame transaction signature")]

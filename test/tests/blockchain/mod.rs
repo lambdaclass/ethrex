@@ -6,6 +6,7 @@ mod bal_system_phase_under_declaration;
 mod bal_validate_tx_execution_tests;
 mod batch_tests;
 mod canonical_commit_gate_tests;
+mod daisugi_devnet_replay_tests;
 mod deep_reorg_state_tests;
 mod eip7702_revert_authority_tests;
 mod eip7702_zero_transfer_tests;

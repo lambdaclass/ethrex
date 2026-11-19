@@ -5,6 +5,15 @@ use crate::types::{InvalidBlockBodyError, InvalidBlockHeaderError};
 /// These are validation errors that don't require storage access to detect.
 #[derive(Debug, thiserror::Error)]
 pub enum InvalidBlockError {
+    #[error("EIP-8288 recursive stark commitment is missing from a header that must carry it")]
+    RecursiveStarkMissing,
+    #[error(
+        "EIP-8288 block dependency digest mismatch: header declares {declared:#x}, block's transactions give {computed:#x}"
+    )]
+    RecursiveStarkDepsHashMismatch {
+        declared: ethereum_types::H256,
+        computed: ethereum_types::H256,
+    },
     #[error("Requests hash does not match the one in the header after executing")]
     RequestsHashMismatch,
     #[error("Block access list hash does not match the one in the header after executing")]

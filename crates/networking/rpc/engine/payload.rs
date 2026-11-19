@@ -1662,6 +1662,28 @@ async fn classify_execution(
                 error.to_string(),
             ))
         }
+        // EIP-8288 rule 2. A proof that does not discharge the block's declared
+        // dependencies is a failed commitment check like any other, so it gets the
+        // same treatment as `InvalidBlock`.
+        Err(ChainError::RecursiveStarkInvalid(error)) => {
+            warn!(%block_hash, %block_number, "Recursive stark proof is invalid: {error}");
+            storage
+                .set_latest_valid_ancestor(block_hash, latest_valid_hash)
+                .await?;
+            storage.add_bad_block(rebuild_bad_block()?).await?;
+            Ok(PayloadStatus::invalid_with(latest_valid_hash, error))
+        }
+        // Its counterpart must not be INVALID: this node has no backend for the
+        // block's dependencies and has learned nothing about it. SYNCING ("not
+        // validated yet") is the least-wrong status the engine API offers.
+        Err(ChainError::RecursiveStarkUnverifiable(error)) => {
+            warn!(
+                %block_hash, %block_number,
+                "Cannot verify this block's EIP-8288 dependencies, so it is neither \
+                 accepted nor declared invalid: {error}"
+            );
+            Ok(PayloadStatus::syncing())
+        }
         Err(ChainError::EvmError(error)) => {
             warn!(%block_hash, %block_number, "Error executing block: {error}");
             storage

@@ -290,6 +290,13 @@ pub fn open_store_with_config(datadir: &Path, config: StoreConfig) -> Result<Sto
 
 pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<Blockchain> {
     info!("Initiating blockchain with levm");
+    // On a chain that schedules EIP-8288, build the proof backend now (its guest
+    // compiles on first use) and report which one this node runs and its key, so a
+    // build that cannot verify the network's proofs is visible at startup rather
+    // than at the first block that carries one.
+    if store.get_chain_config().eip8288_prototype_time.is_some() {
+        ethrex_blockchain::eip8288::log_backend();
+    }
     let blockchain = Blockchain::new(store, blockchain_opts);
     // The pool is built on first merkleization, which for a node is the first block
     // it imports. Force it here so a node that cannot spawn the 17 workers fails at

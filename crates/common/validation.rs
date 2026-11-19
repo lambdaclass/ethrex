@@ -58,6 +58,26 @@ pub fn validate_block_pre_execution(
         validate_pre_cancun_header_fields(&block.header)?;
     }
 
+    // EIP-8288 block-validity rule 1: the header's declared dependency digest must be
+    // the digest of the dependencies the block's own transactions declare. Checked
+    // here rather than beside the other body-derived commitments checked after
+    // execution because it needs no execution result: a dependency verification frame
+    // never runs, so its triples are known from the body alone. Rule 2, that the
+    // block's proof discharges that set, needs a backend and lives in the blockchain
+    // crate.
+    if chain_config.is_eip8288_active(block.header.timestamp) {
+        let declared = block
+            .header
+            .recursive_stark
+            .as_ref()
+            .map(|commitment| commitment.block_deps_hash)
+            .ok_or(InvalidBlockError::RecursiveStarkMissing)?;
+        let computed = block.body.block_deps_hash();
+        if declared != computed {
+            return Err(InvalidBlockError::RecursiveStarkDepsHashMismatch { declared, computed });
+        }
+    }
+
     // A transaction's chain id is bound into its signature (EIP-155 / the typed-tx
     // `chain_id` field), so the recovered sender is only valid for that chain. Reject any
     // transaction whose chain id does not match this chain: other clients (geth's signer)

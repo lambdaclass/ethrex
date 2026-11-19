@@ -16,7 +16,8 @@ use ethrex_common::{
     },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal,
+        ChainConfig, Fork, MempoolTransaction, Receipt, RecursiveStark, Transaction, TxType,
+        Withdrawal,
         block_access_list::BlockAccessList,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
         calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
@@ -1028,6 +1029,21 @@ impl Blockchain {
                 continue;
             }
 
+            // EIP-8288: this node cannot prove a dependency yet, so a block carrying
+            // one could not be sealed. Leave such a transaction in the pool for a
+            // builder that can prove it. Mempool admission refuses them as well, so
+            // this only guards against one reaching the pool some other way.
+            if let Transaction::FrameTransaction(frame_tx) = &*head_tx.tx
+                && frame_tx.declared_dependency_count() > 0
+            {
+                debug!(
+                    "Skipping frame transaction with dependencies this node cannot prove: {}",
+                    tx_hash
+                );
+                txs.pop();
+                continue;
+            }
+
             // EIP-8141 expiry: drop frame txs whose
             // expiry deadline is behind the block being built. Deterministic
             // for this payload timestamp, so remove from the pool as well.
@@ -1371,6 +1387,31 @@ impl Blockchain {
             .as_ref()
             .map(|bal| bal.compute_hash(&NativeCrypto));
         context.block_access_list = block_access_list;
+
+        // EIP-8288: set the header's commitment and the body's proof. Must run after
+        // the transaction set is final, for the same reason `transactions_root` does;
+        // it does not depend on execution results, since a dependency verification
+        // frame never runs. The proof cannot be added afterwards: the header commits to
+        // its hash. A block whose transactions declare nothing carries the empty proof,
+        // which the builder can always seal.
+        if context
+            .chain_config()
+            .is_eip8288_active(context.payload.header.timestamp)
+        {
+            let dependencies = context.payload.body.dependencies();
+            if !dependencies.is_empty() {
+                return Err(ChainError::RecursiveStarkInvalid(
+                    "cannot seal a block with dependencies this node holds no proof for"
+                        .to_string(),
+                ));
+            }
+            let proof = Bytes::new();
+            context.payload.header.recursive_stark = Some(RecursiveStark::commit(
+                &proof,
+                context.payload.body.block_deps_hash(),
+            ));
+            context.payload.body.stark_proof = Some(proof);
+        }
 
         // EIP-8079 (LStar+): compute and set burned_fees in block header.
         // Uses the same helper and identical inputs as the verification path

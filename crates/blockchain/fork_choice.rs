@@ -758,7 +758,12 @@ impl Drop for AbortReorgGuard<'_> {
 /// new chain that replayed successfully.
 fn map_chain_error_for_fcu(err: ChainError, last_valid_hash: H256) -> InvalidForkChoice {
     match err {
-        ChainError::InvalidBlock(_) | ChainError::InvalidTransaction(_) => {
+        // EIP-8288 rule 2: a block whose recursive proof does not discharge the
+        // dependencies it declares is invalid, like any other failed commitment
+        // check.
+        ChainError::InvalidBlock(_)
+        | ChainError::InvalidTransaction(_)
+        | ChainError::RecursiveStarkInvalid(_) => {
             InvalidForkChoice::InvalidAncestor(last_valid_hash)
         }
         ChainError::ParentNotFound
@@ -769,7 +774,11 @@ fn map_chain_error_for_fcu(err: ChainError, last_valid_hash: H256) -> InvalidFor
         | ChainError::EvmError(_)
         | ChainError::WitnessGeneration(_)
         | ChainError::Custom(_)
-        | ChainError::UnknownPayload => InvalidForkChoice::StateNotReachable,
+        | ChainError::UnknownPayload
+        // Not an invalid block: this node has no verifier for it, which is a fact
+        // about the node. Reporting INVALID would have it tell its consensus client
+        // that a chain everyone else follows is bad.
+        | ChainError::RecursiveStarkUnverifiable(_) => InvalidForkChoice::StateNotReachable,
     }
 }
 

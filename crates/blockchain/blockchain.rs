@@ -43,6 +43,7 @@
 //! ```
 
 pub mod constants;
+pub mod eip8288;
 pub mod error;
 pub mod fork_choice;
 mod glamsterdam;
@@ -779,6 +780,9 @@ impl Blockchain {
 
         // Validate the block pre-execution
         validate_block_pre_execution(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        // EIP-8288 block-validity rule 2. Rule 1, the digest-vs-body check, already ran
+        // in `validate_block_pre_execution`; this one needs the aggregation backend.
+        crate::eip8288::validate_recursive_stark(block, &chain_config)?;
         self.validate_l1_transaction_types(block)?;
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
@@ -867,6 +871,10 @@ impl Blockchain {
 
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        // EIP-8288 block-validity rule 2, as in `execute_block`: both import paths must
+        // enforce it, or a node importing through the pipeline would accept a block
+        // whose recursive proof discharges nothing while every other client rejects it.
+        crate::eip8288::validate_recursive_stark(block, &chain_config)?;
         self.validate_l1_transaction_types(block)?;
         match body_check {
             BodyCheck::Verify => validate_block_body(&block.header, &block.body, &NativeCrypto)
@@ -3878,6 +3886,14 @@ impl Blockchain {
                     frame_tx.validate_fork_rules(config.features(header.timestamp), fork)
                 })
                 .map_err(MempoolError::InvalidFrameTransaction)?;
+
+            // EIP-8288: a transaction declaring dependencies never enters the pool on
+            // its own. Without the witnesses or proof that discharge its dependencies a
+            // builder could never seal a block holding it, and the reference client
+            // neither accepts nor relays one outside a proof wrapper.
+            if frame_tx.declared_dependency_count() > 0 {
+                return Err(MempoolError::FrameTxDependencyNeedsWrapper);
+            }
 
             // Frame `data` size is bounded by the wire-size cap below
             // (MAX_TX_SIZE over encode_canonical_len), which covers the
