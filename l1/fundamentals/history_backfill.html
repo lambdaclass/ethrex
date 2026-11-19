@@ -34,7 +34,7 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-d5e6f06c.js";
+            window.path_to_searchindex_js = "../../searchindex-04e84b77.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../toc-a6a3d26a.js"></script>
@@ -259,12 +259,21 @@ DEBUG History backfill advanced
 </code></pre>
 <p>The reconciliation bisects the database for the lowest block with a contiguous
 body (~25 reads on mainnet), which is the node’s original snap pivot. A node that
-full-synced from genesis reconciles to <code>0</code> and completes immediately, since it
-already holds all history.</p>
-<p>Note that the reconciliation only runs when backfill is enabled. An upgraded node
-left at <code>--history.chain off</code> keeps the stale <code>earliest_block_number</code>, so the
-<code>earliest</code> block tag still reports genesis even though pre-pivot bodies are
-absent. Enabling backfill (or a fresh snap sync) sets it correctly.</p>
+full-synced from genesis reconciles to <code>0</code>, since it already holds all history.</p>
+<p>The reconciliation also runs with <code>--history.chain off</code>, once the node is synced.
+It corrects a second bound as well: the block from which the transaction index is
+complete, which sits above genesis on a database that was backfilled with
+<code>--history.transactions</code> before that bound was recorded. Since a database does not
+say whether that happened, every database created by an earlier version is
+searched once. The search reads every stored block from the head down, in the
+background, until it finds one that is missing from the index. It therefore takes
+much longer than the bisect above, in proportion to the history the node stores,
+and backfill resumes after it. Its progress is logged every million blocks. It
+keeps no checkpoint: a restart before it completes starts it again from the head.</p>
+<p>Until the reconciliation has run, <code>eth_capabilities</code> reports <code>blocks</code>, <code>tx</code>, <code>logs</code>
+and <code>receipts</code> as disabled on a database created by an earlier version, because
+its bounds may be stale. A node that is never synced, such as one with no
+consensus client, stays in that state.</p>
 <h2 id="how-it-works"><a class="header" href="#how-it-works">How it works</a></h2>
 <p>Backfill fills in reverse — from the pivot downward toward a floor — one bounded
 batch (64 blocks) at a time. It runs at lower priority than following the chain
@@ -274,7 +283,7 @@ catching up first, so backfill never competes with a catch-up for peers.</p>
 <pre class="mermaid">flowchart TD
     spawned([Backfill task spawned]) --&gt; gate{"Initial sync finished?"}
     gate -- no --&gt; wait["Idle 10s"] --&gt; gate
-    gate -- yes --&gt; reconcile["One-time: reconcile frontier to lowest full-data block"]
+    gate -- yes --&gt; reconcile["One-time: reconcile frontier to lowest full-data block, search the stored history for unindexed blocks"]
     reconcile --&gt; floor{"Resolve floor for mode"}
     floor --&gt; done0{"frontier ≤ floor?"}
     done0 -- yes --&gt; complete([Complete])
@@ -353,6 +362,10 @@ healthy backfill is quiet between the start and completion messages:</p>
 <tbody>
 <tr><td><code>Historical chain backfill enabled</code></td><td>info</td><td>task starts</td></tr>
 <tr><td><code>Reconciled backfill frontier ...</code></td><td>info</td><td>startup, only if the frontier drifted</td></tr>
+<tr><td><code>Searching the stored history for blocks an earlier backfill left unindexed</code></td><td>info</td><td>the search starts, on a database created by an earlier version</td></tr>
+<tr><td><code>Searching the stored history for unindexed blocks</code></td><td>info</td><td>every million blocks of that search</td></tr>
+<tr><td><code>Recorded the transaction index floor of an earlier backfill</code></td><td>info</td><td>the search found unindexed blocks</td></tr>
+<tr><td><code>Every stored block is in the transaction index</code></td><td>info</td><td>the search found none</td></tr>
 <tr><td><code>History backfill advanced</code></td><td>debug</td><td>each batch</td></tr>
 <tr><td><code>Historical chain backfill complete</code></td><td>info</td><td>frontier reaches the floor</td></tr>
 <tr><td><code>History backfill step failed (will retry)</code></td><td>warn</td><td>a batch failed; it retries</td></tr>
