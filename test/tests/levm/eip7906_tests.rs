@@ -172,13 +172,13 @@ fn frame_tx(frames: Vec<Frame>, nonce_seq: u64) -> FrameTransaction {
 fn execute(db: &mut GeneralizedDatabase, tx: FrameTransaction) -> Result<ExecutionReport, VMError> {
     let env = Environment {
         origin: tx.sender,
-        gas_limit: tx.max_gas(),
+        gas_limit: tx.max_gas(Fork::Hegota),
         block_gas_limit: (i64::MAX - 1) as u64,
         config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
         chain_id: U256::from(CHAIN_ID),
         base_fee_per_gas: U256::from(BASE_FEE),
         gas_price: tx
-            .fee_budget(U256::from(BASE_FEE), U256::zero())
+            .fee_budget(Fork::Hegota, U256::from(BASE_FEE), U256::zero())
             .map_or(U256::from(BASE_FEE), |budget| budget.gas_price),
         tx_nonce: tx.nonce_seq,
         ..Default::default()
@@ -238,7 +238,7 @@ fn assert_holds(checks: &[(Vec<u8>, U256)]) {
 fn txtrace_enumerates_the_transaction_diff() {
     let max_cost = {
         let tx = frame_tx(vec![verify(), bump_counter(), assert_frame()], 0);
-        tx.fee_budget(U256::from(BASE_FEE), U256::zero())
+        tx.fee_budget(Fork::Hegota, U256::from(BASE_FEE), U256::zero())
             .expect("the budget covers the base fee")
             .max_cost
     };

@@ -1,3 +1,4 @@
+use ethrex_common::types::Fork;
 use std::collections::BTreeMap;
 use std::{fs::File, io::BufReader, path::PathBuf};
 
@@ -694,7 +695,7 @@ fn minimal_valid_frame_tx() -> FrameTransaction {
 /// calldata floor. The minimal fixture carries no data, so tests that add frame
 /// data or signatures need the extra headroom to stay otherwise-valid.
 fn reserve_calldata_floor(tx: &mut FrameTransaction) {
-    let floor = tx.calldata_floor_gas();
+    let floor = tx.calldata_floor_gas(Fork::Hegota);
     if let Some(frame) = tx.frames.first_mut() {
         frame.gas_limit = frame.gas_limit.max(floor);
     }
@@ -857,7 +858,7 @@ async fn mempool_rejects_oversized_frame_data() {
         value: U256::zero(),
         data: payload,
     });
-    let floor = frame_tx.calldata_floor_gas();
+    let floor = frame_tx.calldata_floor_gas(Fork::Hegota);
     frame_tx.frames[1].gas_limit = floor;
 
     let tx = Transaction::FrameTransaction(frame_tx);
@@ -941,7 +942,7 @@ async fn configured_max_verify_gas_overrides_the_spec_default() {
     // so the assertion below would fail for an unrelated reason. The fee budget
     // has to clear the tip as well.
     frame_tx.max_priority_fee_per_gas = U256::one();
-    frame_tx.max_fee = U256::from(1_000_000_000u64) * U256::from(frame_tx.max_gas());
+    frame_tx.max_fee = U256::from(1_000_000_000u64) * U256::from(frame_tx.max_gas(Fork::Hegota));
     let tx = Transaction::FrameTransaction(frame_tx);
     let sender = tx.sender(&NativeCrypto).unwrap();
 
@@ -1864,7 +1865,7 @@ fn funded_frame_tx(max_fee_per_gas: u64, max_priority_fee_per_gas: u64) -> Frame
         blob_versioned_hashes: vec![],
         ..Default::default()
     };
-    tx.max_fee = U256::from(max_fee_per_gas) * U256::from(tx.max_gas());
+    tx.max_fee = U256::from(max_fee_per_gas) * U256::from(tx.max_gas(Fork::Hegota));
     tx
 }
 
@@ -2290,7 +2291,7 @@ async fn mempool_fee_bump_not_blocked_by_own_stale_reservation() {
     // old reservation before re-validating availability.
     let low_fee = 100_000_000u64;
     let high_fee = 200_000_000u64;
-    let gas = funded_frame_tx(high_fee, high_fee).max_gas();
+    let gas = funded_frame_tx(high_fee, high_fee).max_gas(Fork::Hegota);
     // Exactly covers the bumped tx (high_fee * gas), but not old + new together.
     let balance = U256::from(high_fee) * U256::from(gas);
     let store = setup_hegota_store_with_balance(balance).await;
@@ -2326,7 +2327,7 @@ async fn mempool_fee_bump_rejected_leaves_original_intact() {
     // non-canonical slot, isolating the AVAILABILITY rejection from the limit.
     let low_fee = 100_000_000u64;
     let high_fee = 200_000_000u64;
-    let gas = funded_frame_tx(high_fee, high_fee).max_gas();
+    let gas = funded_frame_tx(high_fee, high_fee).max_gas(Fork::Hegota);
     // Exactly covers one high-fee tx (high_fee * gas).
     let balance = U256::from(high_fee) * U256::from(gas);
     let store = setup_hegota_store_with_balance(balance).await;
@@ -2545,7 +2546,7 @@ async fn mempool_revalidation_evicts_invalid_frame_tx() {
     let deadline: u64 = 2000;
     let sender = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
     let mut expiry_tx = frame_tx_with_expiry(deadline);
-    expiry_tx.max_fee = U256::from(1_000_000_000u64) * U256::from(expiry_tx.max_gas());
+    expiry_tx.max_fee = U256::from(1_000_000_000u64) * U256::from(expiry_tx.max_gas(Fork::Hegota));
     expiry_tx.max_priority_fee_per_gas = U256::from(1_000_000_000u64);
     let tx = Transaction::FrameTransaction(expiry_tx);
     let tx_hash = blockchain

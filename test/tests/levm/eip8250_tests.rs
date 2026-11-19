@@ -71,13 +71,13 @@ fn seeded_db(accounts: &[SeededAccount]) -> GeneralizedDatabase {
 fn frame_tx_env(tx: &FrameTransaction) -> Environment {
     Environment {
         origin: tx.sender,
-        gas_limit: tx.max_gas(),
+        gas_limit: tx.max_gas(Fork::Hegota),
         block_gas_limit: (i64::MAX - 1) as u64,
         config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
         chain_id: U256::from(HARNESS_CHAIN_ID),
         base_fee_per_gas: U256::from(HARNESS_BASE_FEE),
         gas_price: tx
-            .fee_budget(U256::from(HARNESS_BASE_FEE), U256::zero())
+            .fee_budget(Fork::Hegota, U256::from(HARNESS_BASE_FEE), U256::zero())
             .map_or(U256::from(HARNESS_BASE_FEE), |budget| budget.gas_price),
         tx_nonce: tx.nonce_seq,
         ..Default::default()

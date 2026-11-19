@@ -232,13 +232,13 @@ fn frame_tx_result(
     };
     let env = Environment {
         origin: SENDER,
-        gas_limit: tx.max_gas(),
+        gas_limit: tx.max_gas(Fork::Hegota),
         block_gas_limit: (i64::MAX - 1) as u64,
         config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
         chain_id: U256::from(1),
         base_fee_per_gas: U256::from(1),
         gas_price: tx
-            .fee_budget(U256::one(), U256::zero())
+            .fee_budget(Fork::Hegota, U256::one(), U256::zero())
             .map_or(U256::one(), |budget| budget.gas_price),
         slot_number: U256::from(10),
         ..Default::default()

@@ -7,6 +7,7 @@
 
 use bytes::Bytes;
 use ethrex_common::constants::GAS_PER_BLOB;
+use ethrex_common::types::Fork;
 use ethrex_common::types::{
     APPROVE_EXECUTION, APPROVE_EXECUTION_AND_PAYMENT, APPROVE_PAYMENT, Block, BlockBody,
     BlockHeader, ChainConfig, EIP4844Transaction, FRAME_SIG_SCHEME_ARBITRARY,
@@ -678,13 +679,13 @@ fn keyed_nonce_access_is_charged_in_intrinsic_gas_and_in_the_floor() {
     );
     assert_eq!(one_key.data_cost(), key_zero.data_cost());
     assert_eq!(
-        one_key.standard_gas_limit() - legacy.standard_gas_limit(),
+        one_key.standard_gas_limit(Fork::Hegota) - legacy.standard_gas_limit(Fork::Hegota),
         FRAME_TX_KEYED_NONCE_ACCESS_COST + (one_key.data_cost() - legacy.data_cost())
     );
     assert_eq!(
-        one_key.calldata_floor_total() - legacy.calldata_floor_total(),
+        one_key.calldata_floor_total(Fork::Hegota) - legacy.calldata_floor_total(Fork::Hegota),
         FRAME_TX_KEYED_NONCE_ACCESS_COST
-            + (one_key.calldata_floor_gas() - legacy.calldata_floor_gas())
+            + (one_key.calldata_floor_gas(Fork::Hegota) - legacy.calldata_floor_gas(Fork::Hegota))
     );
 
     // The single-use sequence is not priced as data: a keyed transaction at
@@ -794,8 +795,8 @@ fn data_cost_covers_frame_signature_and_nonce_data() {
     }];
     assert_eq!(tx.data_cost(), 12 + 32 + 16 + 16 + 32);
     // Floor tokens are unweighted: 9 bytes * 4 tokens * 16 gas = 576.
-    assert_eq!(tx.calldata_tokens(), 9 * 4);
-    assert_eq!(tx.calldata_floor_gas(), 9 * 64);
+    assert_eq!(tx.calldata_tokens(Fork::Hegota), 9 * 4);
+    assert_eq!(tx.calldata_floor_gas(Fork::Hegota), 9 * 64);
 }
 
 #[test]
@@ -813,14 +814,20 @@ fn max_gas_takes_the_calldata_floor_when_it_exceeds_the_standard_limit() {
     // small too for the data floor to be the binding quantity.
     tx.frames[0].state_gas_limit = 0;
     tx.frames[1].state_gas_limit = 0;
-    assert!(tx.calldata_floor_total() > tx.standard_gas_limit());
-    assert_eq!(tx.max_gas(), tx.calldata_floor_total());
+    assert!(tx.calldata_floor_total(Fork::Hegota) > tx.standard_gas_limit(Fork::Hegota));
+    assert_eq!(
+        tx.max_gas(Fork::Hegota),
+        tx.calldata_floor_total(Fork::Hegota)
+    );
     assert!(tx.validate_static_constraints().is_ok());
 
     // With enough frame gas to outweigh the floor, `max_gas` is the standard limit.
     tx.frames[1].gas_limit = 100_000;
-    assert!(tx.standard_gas_limit() > tx.calldata_floor_total());
-    assert_eq!(tx.max_gas(), tx.standard_gas_limit());
+    assert!(tx.standard_gas_limit(Fork::Hegota) > tx.calldata_floor_total(Fork::Hegota));
+    assert_eq!(
+        tx.max_gas(Fork::Hegota),
+        tx.standard_gas_limit(Fork::Hegota)
+    );
     assert!(tx.validate_static_constraints().is_ok());
 }
 

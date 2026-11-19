@@ -283,12 +283,14 @@ pub fn check_2d_gas_allowance(
     // and the state side is the frames' total state budget. Reserving the combined
     // figure in both dimensions would double-count every frame transaction.
     let (regular_gas, state_gas) = match tx {
+        // EIP-8037's two-dimensional check only exists from Amsterdam on, so the
+        // reservation is priced on Amsterdam's schedule.
         Transaction::FrameTransaction(frame_tx) => (
             frame_tx
-                .mandatory_gas()
+                .mandatory_gas(Fork::Amsterdam)
                 .saturating_add(frame_tx.data_cost())
                 .saturating_add(frame_tx.total_frame_execution_gas())
-                .max(frame_tx.calldata_floor_total()),
+                .max(frame_tx.calldata_floor_total(Fork::Amsterdam)),
             frame_tx
                 .total_frame_gas()
                 .saturating_sub(frame_tx.total_frame_execution_gas()),
@@ -3428,7 +3430,11 @@ impl LEVM {
             // leaves the transaction invalid, which the VM reports in its place in
             // the validation order, before any frame can read this.
             Transaction::FrameTransaction(frame_tx) => frame_tx
-                .fee_budget(U256::from(base_fee_per_gas), base_blob_fee_per_gas)
+                .fee_budget(
+                    config.fork,
+                    U256::from(base_fee_per_gas),
+                    base_blob_fee_per_gas,
+                )
                 .map_or(U256::from(base_fee_per_gas), |budget| budget.gas_price),
             _ => calculate_gas_price_for_tx(tx, base_fee_per_gas, &vm_type)?,
         };

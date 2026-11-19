@@ -420,6 +420,7 @@ pub async fn get_all_block_rpc_receipts(
             gas_used,
             blob_base_fee_u64,
             base_fee_per_gas,
+            config.fork(block_timestamp),
         )?;
         let receipt = RpcReceipt::new(
             receipt.clone(),

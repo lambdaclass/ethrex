@@ -50,7 +50,7 @@ use ethrex_rlp::{
 #[cfg(all(feature = "zisk", target_arch = "riscv64"))]
 use super::unsync_cell::OnceCell;
 use crate::types::{
-    AccessList, AuthorizationList, BlobsBundle, constants::VERSIONED_HASH_VERSION_KZG,
+    AccessList, AuthorizationList, BlobsBundle, Fork, constants::VERSIONED_HASH_VERSION_KZG,
 };
 #[cfg(not(all(feature = "zisk", target_arch = "riscv64")))]
 use once_cell::sync::OnceCell;
@@ -1568,7 +1568,10 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => tx.gas,
             Transaction::PrivilegedL2Transaction(tx) => tx.gas_limit,
             Transaction::FeeTokenTransaction(tx) => tx.gas_limit,
-            Transaction::FrameTransaction(tx) => tx.max_gas(),
+            // No fork is known here. Amsterdam's pricing is never below an earlier
+            // fork's for the same transaction (a higher calldata floor, plus the
+            // EIP-2780 value charge), so this is an upper bound on every schedule.
+            Transaction::FrameTransaction(tx) => tx.max_gas(Fork::Amsterdam),
         }
     }
 
@@ -1582,7 +1585,9 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => U256::from(tx.max_fee_per_gas),
             Transaction::PrivilegedL2Transaction(tx) => U256::from(tx.max_fee_per_gas),
             Transaction::FeeTokenTransaction(tx) => U256::from(tx.max_fee_per_gas),
-            Transaction::FrameTransaction(tx) => tx.max_fee_per_gas_share(),
+            // Priced over Amsterdam's `max_gas`, an upper bound on every fork (see
+            // `gas_limit`), so the share never overstates what the budget pays.
+            Transaction::FrameTransaction(tx) => tx.max_fee_per_gas_share(Fork::Amsterdam),
         }
     }
 
@@ -1819,7 +1824,8 @@ impl Transaction {
     pub fn effective_gas_tip(&self, base_fee: Option<u64>) -> Option<U256> {
         if let Transaction::FrameTransaction(tx) = self {
             let base_fee = U256::from(base_fee.unwrap_or_default());
-            let budget = tx.fee_budget(base_fee, U256::zero())?;
+            // Amsterdam's `max_gas` bounds every fork's, so the tip is never overstated.
+            let budget = tx.fee_budget(Fork::Amsterdam, base_fee, U256::zero())?;
             return Some(budget.gas_price - base_fee);
         }
         let tip_cap = self.gas_tip_cap();
@@ -2253,6 +2259,11 @@ pub const FRAME_TX_KEYED_NONCE_ACCESS_COST: u64 = 2_100 + 10_000;
 /// transactions exist only from Hegota onward, which is after Amsterdam, so the
 /// raised EIP-7976 floor always applies and neither needs a fork parameter.
 const FRAME_TX_STANDARD_TOKEN_COST: u64 = 4;
+/// EIP-7623 `TOTAL_COST_FLOOR_PER_TOKEN`, which EIP-7976 raises to
+/// [`FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN`] at Amsterdam. Frame transactions are
+/// specified on top of Amsterdam, but a chain can activate them on an earlier fork,
+/// where calldata keeps that fork's pricing.
+const FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN_PRAGUE: u64 = 10;
 const FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN: u64 = 16;
 /// EIP-8141 signature schemes: ARBITRARY=0, SECP256K1=1, P256=2.
 pub const FRAME_SIG_SCHEME_ARBITRARY: u8 = 0;
@@ -2489,15 +2500,21 @@ impl FrameTransaction {
     }
 
     /// EIP-7623 token count over the frame and signature data and EIP-8250's nonce
-    /// calldata, used for the calldata floor. Frame transactions exist only from
-    /// Hegota onward, which is after Amsterdam, so EIP-7976's unweighted count
-    /// (every byte costs `STANDARD_TOKEN_COST`) always applies.
-    pub fn calldata_tokens(&self) -> u64 {
-        self.data_fields()
-            .fold(0u64, |acc, field| acc.saturating_add(field.len() as u64))
-            .saturating_add(self.elided_signature_len())
-            .saturating_add(self.nonce_calldata().len() as u64)
-            .saturating_mul(FRAME_TX_STANDARD_TOKEN_COST)
+    /// calldata, used for the calldata floor. From Amsterdam, EIP-7976's unweighted
+    /// count applies (every byte costs `STANDARD_TOKEN_COST`); before it, a zero byte
+    /// is one token and any other byte four. Either way an empty-`msg` signature's
+    /// bytes count as non-zero, as in [`Self::data_cost`].
+    pub fn calldata_tokens(&self, fork: Fork) -> u64 {
+        if fork >= Fork::Amsterdam {
+            return self
+                .data_fields()
+                .fold(0u64, |acc, field| acc.saturating_add(field.len() as u64))
+                .saturating_add(self.elided_signature_len())
+                .saturating_add(self.nonce_calldata().len() as u64)
+                .saturating_mul(FRAME_TX_STANDARD_TOKEN_COST);
+        }
+        // `data_cost` is four gas per token on every fork.
+        self.data_cost() / FRAME_TX_STANDARD_TOKEN_COST
     }
 
     /// EIP-8250 `nonce_calldata`: `rlp(nonce_keys) || rlp(nonce_seq)`, the bytes the
@@ -2545,20 +2562,24 @@ impl FrameTransaction {
 
     /// The EIP-7623 calldata floor: the least the frame and signature data may
     /// cost, whatever execution actually consumes.
-    pub fn calldata_floor_gas(&self) -> u64 {
-        self.calldata_tokens()
-            .saturating_mul(FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN)
+    pub fn calldata_floor_gas(&self, fork: Fork) -> u64 {
+        let floor_per_token = if fork >= Fork::Amsterdam {
+            FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN
+        } else {
+            FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN_PRAGUE
+        };
+        self.calldata_tokens(fork).saturating_mul(floor_per_token)
     }
 
     /// The mandatory costs, always charged in full: the intrinsic cost, the
     /// per-frame cost, signature verification, value transfers, and EIP-8250's
     /// keyed-nonce access. They are the terms EIP-8141's `frame_tx_intrinsic_gas` and
     /// `calldata_floor_gas` share, so each is charged once on either side.
-    pub fn mandatory_gas(&self) -> u64 {
+    pub fn mandatory_gas(&self, fork: Fork) -> u64 {
         FRAME_TX_INTRINSIC_COST
             .saturating_add((self.frames.len() as u64).saturating_mul(FRAME_TX_PER_FRAME_COST))
             .saturating_add(self.signature_verification_cost())
-            .saturating_add(self.value_transfer_gas())
+            .saturating_add(self.value_transfer_gas(fork))
             .saturating_add(self.keyed_nonce_access_cost())
     }
 
@@ -2571,11 +2592,14 @@ impl FrameTransaction {
     }
 
     /// EIP-2780's `TX_VALUE_COST` per frame that moves value to an explicit target
-    /// other than `tx.sender`.
+    /// other than `tx.sender`. Nothing before Amsterdam, which EIP-2780 belongs to.
     ///
     /// A frame with no explicit target resolves to the sender, and a frame paying the
     /// sender moves nothing between accounts, so neither is a transfer to charge for.
-    pub fn value_transfer_gas(&self) -> u64 {
+    pub fn value_transfer_gas(&self, fork: Fork) -> u64 {
+        if fork < Fork::Amsterdam {
+            return 0;
+        }
         self.frames.iter().fold(0u64, |acc, frame| {
             let moves_value =
                 !frame.value.is_zero() && frame.target.is_some_and(|target| target != self.sender);
@@ -2594,8 +2618,8 @@ impl FrameTransaction {
     /// dimensions are separate budgets during execution, but the transaction
     /// reserves and is charged over their sum -- so a frame's state budget counts
     /// here even though its execution budget can never be spent on it.
-    pub fn standard_gas_limit(&self) -> u64 {
-        self.mandatory_gas()
+    pub fn standard_gas_limit(&self, fork: Fork) -> u64 {
+        self.mandatory_gas(fork)
             .saturating_add(self.data_cost())
             .saturating_add(self.total_frame_gas())
     }
@@ -2619,25 +2643,25 @@ impl FrameTransaction {
     /// EIP-8141 `calldata_floor_gas`: the mandatory costs plus the EIP-7623
     /// floor over every byte this transaction carries. The mandatory costs are
     /// always charged, so they sit on both sides of the `max_gas` comparison.
-    pub fn calldata_floor_total(&self) -> u64 {
-        self.mandatory_gas()
-            .saturating_add(self.calldata_floor_gas())
+    pub fn calldata_floor_total(&self, fork: Fork) -> u64 {
+        self.mandatory_gas(fork)
+            .saturating_add(self.calldata_floor_gas(fork))
     }
 
     /// EIP-8141 `max_gas = max(standard_gas_limit, calldata_floor_gas)`: the gas
     /// reserved from the block pool before execution and the quantity `max_cost`
     /// is charged over. A transaction whose data floor exceeds what it declared
     /// for execution reserves the floor rather than being rejected.
-    pub fn max_gas(&self) -> u64 {
+    pub fn max_gas(&self, fork: Fork) -> u64 {
         // Both sides of the comparison span both dimensions: the floor prices
         // calldata in the execution dimension only, so the frames' state budget is
         // added to it. Comparing a floor without the state budget against a standard
         // limit that includes it would escrow less than a floor-bound transaction
         // goes on to spend.
         let floor_side = self
-            .calldata_floor_total()
+            .calldata_floor_total(fork)
             .saturating_add(self.total_frame_state_gas());
-        self.standard_gas_limit().max(floor_side)
+        self.standard_gas_limit(fork).max(floor_side)
     }
 
     /// EIP-8141 `blob_gas`: `GAS_PER_BLOB` per blob versioned hash.
@@ -2649,9 +2673,9 @@ impl FrameTransaction {
     /// `max_fee / max_gas`: the most the budget can pay per unit of gas, at a zero
     /// blob base fee. It stands in where a per-gas fee cap is expected, such as the
     /// gas price shapes RPC reports; consensus never uses it.
-    pub fn max_fee_per_gas_share(&self) -> U256 {
+    pub fn max_fee_per_gas_share(&self, fork: Fork) -> U256 {
         // `max_gas` is never zero: it includes the fixed intrinsic cost.
-        self.max_fee / U256::from(self.max_gas())
+        self.max_fee / U256::from(self.max_gas(fork))
     }
 
     /// EIP-8141 fee budget at an including block's base fees. `None` when
@@ -2661,10 +2685,11 @@ impl FrameTransaction {
     /// requirement past 2**256 is one no `max_fee` can meet.
     pub fn fee_budget(
         &self,
+        fork: Fork,
         base_fee_per_gas: U256,
         blob_base_fee: U256,
     ) -> Option<FrameFeeBudget> {
-        let max_gas = U256::from(self.max_gas());
+        let max_gas = U256::from(self.max_gas(fork));
         let required_max_fee = max_gas
             .checked_mul(base_fee_per_gas)?
             .checked_add(U256::from(self.blob_gas()).checked_mul(blob_base_fee)?)?;
@@ -4975,11 +5000,12 @@ mod serde_impl {
                 nonce: Some(value.nonce_seq),
                 to: TxKind::Call(value.sender),
                 from: value.sender,
-                gas: Some(value.max_gas()),
+                // No fork is known here; Amsterdam's pricing bounds every fork's.
+                gas: Some(value.max_gas(Fork::Amsterdam)),
                 value: U256::zero(),
                 // The frame transaction caps its total fee, not a price per gas;
                 // its per-gas share of the budget stands in for the cap here.
-                gas_price: value.max_fee_per_gas_share(),
+                gas_price: value.max_fee_per_gas_share(Fork::Amsterdam),
                 // `GenericTransaction` keeps these as `u64`, and `U256::as_u64`
                 // panics rather than truncating, so saturate: this conversion feeds
                 // RPC and simulation shapes, and a fee this large is unaffordable at
@@ -4988,7 +5014,7 @@ mod serde_impl {
                     u64::try_from(value.max_priority_fee_per_gas).unwrap_or(u64::MAX),
                 ),
                 max_fee_per_gas: Some(
-                    u64::try_from(value.max_fee_per_gas_share()).unwrap_or(u64::MAX),
+                    u64::try_from(value.max_fee_per_gas_share(Fork::Amsterdam)).unwrap_or(u64::MAX),
                 ),
                 // Blob gas is paid from the same budget: there is no blob fee cap.
                 max_fee_per_blob_gas: None,
@@ -6680,7 +6706,7 @@ mod tests {
     #[test]
     fn max_gas_includes_signature_costs() {
         let mut tx = make_test_frame_tx();
-        let base = tx.max_gas();
+        let base = tx.max_gas(Fork::Amsterdam);
         // Add a P256 signature; cost must rise by at least 6700 + its calldata.
         tx.signatures.push(FrameSignature {
             scheme: FRAME_SIG_SCHEME_P256,
@@ -6688,7 +6714,7 @@ mod tests {
             msg: Bytes::new(),
             signature: Bytes::from(vec![0u8; 128]),
         });
-        assert!(tx.max_gas() >= base + 6700);
+        assert!(tx.max_gas(Fork::Amsterdam) >= base + 6700);
         assert_eq!(tx.signature_verification_cost(), 2800 + 6700);
     }
 

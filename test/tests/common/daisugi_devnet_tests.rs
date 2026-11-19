@@ -242,3 +242,34 @@ fn p256_signatures_need_the_osaka_precompile() {
     assert!(tx.validate_fork_rules(features, Fork::Prague).is_err());
     assert!(tx.validate_fork_rules(features, Fork::Osaka).is_ok());
 }
+
+// ==================== Prague pricing ====================
+
+/// Nethermind's receipts for the three devnet frame transactions imply their intrinsic
+/// gas and calldata floor on Prague: EIP-7623's weighted token count (a zero byte is one
+/// token, any other byte four, an empty-`msg` signature's bytes all four), four gas per
+/// token for the intrinsic cost and ten for the floor, no EIP-2780 value charge, and
+/// 12,100 gas per nonce key. Each transaction declares one EIP-8288 dependency, whose
+/// 30,000 gas the receipts include and which is subtracted here until EIP-8288's
+/// intrinsic charge is in place.
+#[test]
+fn frame_transactions_on_prague_price_calldata_as_the_network_does() {
+    const ONE_DEPENDENCY: u64 = 30_000;
+    for (raw, intrinsic, floor) in [
+        (TX_673, 48_397, 51_655),
+        (TX_675, 60_577, 63_955),
+        (TX_676, 60_577, 63_955),
+    ] {
+        let (_, tx) = decode_frame_tx(raw);
+        assert_eq!(
+            tx.mandatory_gas(Fork::Prague) + tx.data_cost(),
+            intrinsic - ONE_DEPENDENCY
+        );
+        assert_eq!(
+            tx.calldata_floor_total(Fork::Prague),
+            floor - ONE_DEPENDENCY
+        );
+        // Amsterdam's flat count and higher floor never price below Prague's.
+        assert!(tx.calldata_floor_total(Fork::Amsterdam) >= tx.calldata_floor_total(Fork::Prague));
+    }
+}

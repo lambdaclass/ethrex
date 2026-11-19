@@ -1852,7 +1852,11 @@ impl<'a> VM<'a> {
         frame_tx: &ethrex_common::types::FrameTransaction,
     ) -> Result<FrameFeeBudget, VMError> {
         frame_tx
-            .fee_budget(self.env.base_fee_per_gas, self.env.base_blob_fee_per_gas)
+            .fee_budget(
+                self.env.config.fork,
+                self.env.base_fee_per_gas,
+                self.env.base_blob_fee_per_gas,
+            )
             .ok_or(VMError::TxValidation(
                 crate::errors::TxValidationError::InsufficientMaxFeePerGas,
             ))
@@ -2027,10 +2031,10 @@ impl<'a> VM<'a> {
         // reject a transaction whose execution half is exactly at the cap simply
         // because it also declared state gas.
         let capped_gas = frame_tx
-            .mandatory_gas()
+            .mandatory_gas(self.env.config.fork)
             .saturating_add(frame_tx.data_cost())
             .saturating_add(frame_tx.total_frame_execution_gas())
-            .max(frame_tx.calldata_floor_total());
+            .max(frame_tx.calldata_floor_total(self.env.config.fork));
         if capped_gas > crate::constants::TX_MAX_GAS_LIMIT_AMSTERDAM {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::TxMaxGasLimitExceeded {
@@ -2052,7 +2056,7 @@ impl<'a> VM<'a> {
 
         // Initialize FrameTxContext
         let sig_hash = frame_tx.compute_sig_hash();
-        let max_gas = frame_tx.max_gas();
+        let max_gas = frame_tx.max_gas(self.env.config.fork);
         self.frame_tx_context = Some(FrameTxContext {
             sender_approved: false,
             payer_address: None,
@@ -2108,7 +2112,7 @@ impl<'a> VM<'a> {
         // calldata floor dominates, the extra reservation is not intrinsic gas and
         // is applied once at settlement instead.
         let intrinsic_gas = frame_tx
-            .mandatory_gas()
+            .mandatory_gas(self.env.config.fork)
             .saturating_add(frame_tx.data_cost());
         let mut total_gas_used: u64 = intrinsic_gas;
         let mut tx_invalid = false;
@@ -2999,10 +3003,10 @@ impl<'a> VM<'a> {
         let gas_used_after_refund = gas_used_before_refund.saturating_sub(applied_refund);
         let payer_execution_gas = gas_used_after_refund
             .saturating_sub(tx_state_gas)
-            .max(frame_tx.calldata_floor_total());
+            .max(frame_tx.calldata_floor_total(self.env.config.fork));
         let block_execution_gas = gas_used_before_refund
             .saturating_sub(tx_state_gas)
-            .max(frame_tx.calldata_floor_total());
+            .max(frame_tx.calldata_floor_total(self.env.config.fork));
         let total_gas_used = payer_execution_gas;
 
         // EIP-8141 settlement of the `max_cost` escrow collected at APPROVE: the gas
@@ -3257,7 +3261,7 @@ impl<'a> VM<'a> {
         self.check_nonce_set(&frame_tx)?;
 
         let sig_hash = frame_tx.compute_sig_hash();
-        let max_gas = frame_tx.max_gas();
+        let max_gas = frame_tx.max_gas(self.env.config.fork);
         self.frame_tx_context = Some(FrameTxContext {
             sender_approved: false,
             payer_address: None,

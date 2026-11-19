@@ -1334,8 +1334,11 @@ impl Mempool {
                 let covers_blob_fee = match tx {
                     // EIP-8141: one `max_fee` budget pays for the blob gas too, so it
                     // must cover the worst case at both base fees.
+                    // The filter knows no fork; Amsterdam's `max_gas` bounds every
+                    // fork's, so a budget that covers it covers the real one.
                     Transaction::FrameTransaction(frame_tx) => frame_tx
                         .fee_budget(
+                            Fork::Amsterdam,
                             U256::from(filter.base_fee.unwrap_or_default()),
                             U256::from(blob_fee),
                         )
@@ -2205,7 +2208,7 @@ pub fn transaction_intrinsic_gas(
     // exactly the non-frame-gas overhead the VM charges as intrinsic.
     if let Transaction::FrameTransaction(frame_tx) = tx {
         return Ok(frame_tx
-            .mandatory_gas()
+            .mandatory_gas(config.fork(header.timestamp))
             .saturating_add(frame_tx.data_cost()));
     }
 

@@ -4,7 +4,7 @@ use ethrex_common::{
     evm::calculate_create_address,
     serde_utils,
     types::{
-        BlockHash, BlockHeader, BlockNumber, FrameReceipt, Log, Receipt, Transaction, TxKind,
+        BlockHash, BlockHeader, BlockNumber, Fork, FrameReceipt, Log, Receipt, Transaction, TxKind,
         TxType, bloom_from_logs,
     },
 };
@@ -276,6 +276,7 @@ impl RpcReceiptTxInfo {
         gas_used: u64,
         block_blob_gas_price: u64,
         base_fee_per_gas: Option<u64>,
+        fork: Fork,
     ) -> Result<Self, RpcErr> {
         let nonce = transaction.nonce();
         let from = transaction.sender(&NativeCrypto)?;
@@ -286,6 +287,7 @@ impl RpcReceiptTxInfo {
             // to its frames, the lower bound of what the payer paid per gas used.
             Transaction::FrameTransaction(tx) => tx
                 .fee_budget(
+                    fork,
                     U256::from(base_fee_per_gas.unwrap_or_default()),
                     U256::from(block_blob_gas_price),
                 )
@@ -446,7 +448,8 @@ mod tests {
             ..Default::default()
         });
 
-        let info = RpcReceiptTxInfo::from_transaction(tx, 0, 21_000, 0, Some(0)).unwrap();
+        let info =
+            RpcReceiptTxInfo::from_transaction(tx, 0, 21_000, 0, Some(0), Fork::Prague).unwrap();
 
         assert_eq!(info.from, sender);
         assert_eq!(info.to, None);
@@ -565,13 +568,21 @@ mod tests {
             21_000,
             3,
             Some(0),
+            Fork::Hegota,
         )
         .unwrap();
         assert_eq!(with_blobs.blob_gas_used, Some(2 * GAS_PER_BLOB as u64));
         assert_eq!(with_blobs.blob_gas_price, Some(3));
 
-        let without_blobs =
-            RpcReceiptTxInfo::from_transaction(frame_tx(vec![]), 0, 21_000, 3, Some(0)).unwrap();
+        let without_blobs = RpcReceiptTxInfo::from_transaction(
+            frame_tx(vec![]),
+            0,
+            21_000,
+            3,
+            Some(0),
+            Fork::Hegota,
+        )
+        .unwrap();
         assert_eq!(without_blobs.blob_gas_used, None);
         assert_eq!(without_blobs.blob_gas_price, None);
     }

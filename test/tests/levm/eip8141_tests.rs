@@ -110,14 +110,14 @@ fn seeded_db(accounts: &[SeededAccount]) -> GeneralizedDatabase {
 fn frame_tx_env(tx: &FrameTransaction) -> Environment {
     Environment {
         origin: tx.sender,
-        gas_limit: tx.max_gas(),
+        gas_limit: tx.max_gas(Fork::Hegota),
         block_gas_limit: (i64::MAX - 1) as u64,
         config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
         chain_id: U256::from(HARNESS_CHAIN_ID),
         base_fee_per_gas: U256::from(HARNESS_BASE_FEE),
         // What `GASPRICE` reports, derived from the fee budget like production.
         gas_price: tx
-            .fee_budget(U256::from(HARNESS_BASE_FEE), U256::zero())
+            .fee_budget(Fork::Hegota, U256::from(HARNESS_BASE_FEE), U256::zero())
             .map_or(U256::from(HARNESS_BASE_FEE), |budget| budget.gas_price),
         tx_nonce: tx.nonce_seq,
         ..Default::default()
@@ -209,7 +209,11 @@ fn run_frame_tx_with_fees(
     let mut env = frame_tx_env(&tx);
     env.base_fee_per_gas = U256::from(base_fee);
     env.gas_price = tx
-        .fee_budget(env.base_fee_per_gas, env.base_blob_fee_per_gas)
+        .fee_budget(
+            Fork::Hegota,
+            env.base_fee_per_gas,
+            env.base_blob_fee_per_gas,
+        )
         .map_or(env.base_fee_per_gas, |budget| budget.gas_price);
     let transaction = Transaction::FrameTransaction(tx);
 
@@ -467,7 +471,7 @@ fn payer_pays_effective_price_no_burn() {
         },
     ]);
     // 100 gwei for every unit of `max_gas`: the budget covers the whole tip.
-    tx.max_fee = U256::from(100_000_000_000u64) * U256::from(tx.max_gas());
+    tx.max_fee = U256::from(100_000_000_000u64) * U256::from(tx.max_gas(Fork::Hegota));
     tx.max_priority_fee_per_gas = U256::from(2_000_000_000u64); // 2 gwei
     let (result, db) = run_frame_tx_with_fees(
         &[
@@ -1445,7 +1449,7 @@ fn frame_tx_budget_must_cover_the_blob_fee() {
         }]);
         tx.blob_versioned_hashes = vec![H256::repeat_byte(0x01)];
         // `max_gas` at the base fee, plus `extra_fee` towards the blob gas.
-        tx.max_fee = U256::from(tx.max_gas() * HARNESS_BASE_FEE + extra_fee);
+        tx.max_fee = U256::from(tx.max_gas(Fork::Hegota) * HARNESS_BASE_FEE + extra_fee);
 
         let mut db = seeded_db(&[(FUNDED_SENDER, AUTO_SEED_SENDER_BALANCE, 0, Bytes::new())]);
         let mut env = frame_tx_env(&tx);
@@ -4132,7 +4136,7 @@ fn storage_refund_from_a_later_frame_reduces_reported_gas() {
     // Per-frame `gas_used` is reported before refunds, so the pre-refund total is
     // the mandatory costs plus the data cost plus each frame's gas.
     let frames_gas: u64 = frame_results.iter().map(|(_, gas, ..)| *gas).sum();
-    let pre_refund = tx.mandatory_gas() + tx.data_cost() + frames_gas;
+    let pre_refund = tx.mandatory_gas(Fork::Hegota) + tx.data_cost() + frames_gas;
     // EIP-7778: the refund lowers what the payer pays (`gas_spent`) without freeing
     // the block capacity the transaction occupied (`gas_used`). Both carry the state
     // dimension on top of execution.
@@ -4177,12 +4181,12 @@ fn max_gas_reserves_the_calldata_floor_instead_of_rejecting() {
     tx.sender = FUNDED_SENDER;
 
     assert!(
-        tx.calldata_floor_total() > tx.standard_gas_limit(),
+        tx.calldata_floor_total(Fork::Hegota) > tx.standard_gas_limit(Fork::Hegota),
         "the floor must bind for this to test the reservation"
     );
     assert_eq!(
-        tx.max_gas(),
-        tx.calldata_floor_total(),
+        tx.max_gas(Fork::Hegota),
+        tx.calldata_floor_total(Fork::Hegota),
         "max_gas must be the floor when the floor binds"
     );
     assert!(
@@ -4207,9 +4211,9 @@ fn a_floor_bound_frame_transaction_is_charged_the_floor() {
         value: U256::zero(),
         data: Bytes::from(vec![0x11u8; 4_096]),
     }]);
-    let floor_total = tx.calldata_floor_total();
+    let floor_total = tx.calldata_floor_total(Fork::Hegota);
     assert!(
-        floor_total > tx.standard_gas_limit(),
+        floor_total > tx.standard_gas_limit(Fork::Hegota),
         "the floor must bind for this to test the settlement"
     );
 
@@ -4962,7 +4966,7 @@ fn frame_gas_above_the_transaction_cap_reports_the_gas_cap() {
         data: Bytes::new(),
     }]);
     assert!(
-        tx.max_gas() > ethrex_common::constants::TX_MAX_GAS_LIMIT_AMSTERDAM,
+        tx.max_gas(Fork::Hegota) > ethrex_common::constants::TX_MAX_GAS_LIMIT_AMSTERDAM,
         "the frame gas plus the intrinsic cost must exceed the cap for this to test anything"
     );
 
@@ -4995,7 +4999,7 @@ fn frame_gas_exactly_at_the_transaction_cap_is_not_rejected_for_gas() {
     // `standard_gas_limit()` with a zero-gas frame is the intrinsic anchor; give the
     // frame exactly the remainder so the total lands on the cap. (`max_gas()` would
     // anchor on the calldata floor, which the probe's tiny payload can exceed.)
-    let headroom = cap - probe.standard_gas_limit();
+    let headroom = cap - probe.standard_gas_limit(Fork::Hegota);
     let tx = frame_tx_with_frames(vec![Frame {
         mode: u8::from(FrameMode::Default),
         flags: 0,
@@ -5005,7 +5009,11 @@ fn frame_gas_exactly_at_the_transaction_cap_is_not_rejected_for_gas() {
         value: U256::zero(),
         data: Bytes::new(),
     }]);
-    assert_eq!(tx.max_gas(), cap, "this case must sit exactly on the cap");
+    assert_eq!(
+        tx.max_gas(Fork::Hegota),
+        cap,
+        "this case must sit exactly on the cap"
+    );
 
     let (result, _db) = run_frame_tx(&[], tx);
     assert!(
@@ -5090,7 +5098,7 @@ fn max_fee_below_the_base_fee_requirement_is_rejected() {
         value: U256::zero(),
         data: Bytes::new(),
     }]);
-    tx.max_fee = U256::from(tx.max_gas() * HARNESS_BASE_FEE - 1);
+    tx.max_fee = U256::from(tx.max_gas(Fork::Hegota) * HARNESS_BASE_FEE - 1);
     tx.max_priority_fee_per_gas = U256::MAX;
 
     let (result, _db) = run_frame_tx(&[], tx);
