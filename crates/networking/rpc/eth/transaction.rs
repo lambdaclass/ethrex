@@ -421,8 +421,10 @@ impl RpcHandler for CreateAccessListRequest {
             .clone()
             .unwrap_or(BlockIdentifierOrHash::Identifier(BlockIdentifier::default()));
         debug!("Requested access list creation for tx on block: {}", block);
-        let Some(header) = block.resolve_block_header(&context.storage).await? else {
-            return Err(block.not_found());
+        let header = match block.resolve_block_header(&context.storage).await? {
+            Some(header) => header,
+            // Block not found
+            _ => return Ok(Value::Null),
         };
         // Build the Evm with optional override wrapper. createAccessList does not
         // accept a Block Override Set, so the header is always the real one.
