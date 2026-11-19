@@ -29,10 +29,29 @@ impl RpcHandler for CapabilitiesRequest {
             .ok_or_else(|| RpcErr::Internal("canonical head header is missing".to_string()))?;
         let head_number = head.number;
 
-        // Bodies are stored from `earliest` to the head and never pruned.
-        let earliest = storage.get_earliest_block_number().await?;
-        let tx = earliest.max(storage.get_tx_index_floor().await?.unwrap_or_default());
-        let logs = oldest_block_with_receipts(storage, earliest).await?;
+        // A database from before the history bounds were tracked may still have `earliest`
+        // at genesis and no floor. A reconciliation corrects them and then marks the
+        // database, and until then no history is reported from them. The marker is read
+        // before the bounds: read after them, it could have been set in between and
+        // vouch for bounds read before they were corrected.
+        let (blocks, tx, logs, receipts) = if storage.history_bounds_reconciled().await? {
+            // Bodies are stored from `earliest` to the head and never pruned.
+            let earliest = storage.get_earliest_block_number().await?;
+            let tx = earliest.max(storage.get_tx_index_floor().await?.unwrap_or_default());
+            let logs = oldest_block_with_receipts(storage, earliest).await?;
+            // `eth_getTransactionReceipt` needs the tx index, so this stays at `tx` even
+            // where `eth_getBlockReceipts` serves from `logs`.
+            let receipts = logs.max(tx);
+            (
+                available_from(earliest, head_number),
+                available_from(tx, head_number),
+                available_from(logs, head_number),
+                available_from(receipts, head_number),
+            )
+        } else {
+            let disabled = || json!({"disabled": true});
+            (disabled(), disabled(), disabled(), disabled())
+        };
 
         // A block count: forkchoice keeps the state of the blocks down to `head - retention`.
         let retention = storage.reorg_retention()?;
@@ -54,12 +73,10 @@ impl RpcHandler for CapabilitiesRequest {
         Ok(json!({
             "head": {"number": format!("{head_number:#x}"), "hash": head_hash},
             "state": state,
-            "tx": available_from(tx, head_number),
-            "logs": available_from(logs, head_number),
-            // `eth_getTransactionReceipt` needs the tx index, so this stays at `tx` even
-            // where `eth_getBlockReceipts` serves from `logs`.
-            "receipts": available_from(logs.max(tx), head_number),
-            "blocks": available_from(earliest, head_number),
+            "tx": tx,
+            "logs": logs,
+            "receipts": receipts,
+            "blocks": blocks,
             "stateproofs": state,
         }))
     }
@@ -124,7 +141,7 @@ mod tests {
     use super::*;
     use crate::test_utils::{add_legacy_tx_blocks, context_without_p2p, setup_store};
     use ethrex_common::types::{Block, BlockBody, Receipt, TxType};
-    use ethrex_storage::BackfilledBlock;
+    use ethrex_storage::{BackfilledBlock, EngineType};
 
     async fn capabilities(context: &RpcApiContext) -> Value {
         let request: crate::utils::RpcRequest = serde_json::from_value(json!({
@@ -197,6 +214,48 @@ mod tests {
                 "stateproofs": state,
             })
         );
+    }
+
+    /// A database created before the history bounds were tracked carries no marker.
+    #[tokio::test]
+    async fn history_is_disabled_until_the_history_bounds_are_reconciled() {
+        let storage = Store::new("", EngineType::InMemory).unwrap();
+        let genesis = BlockHeader {
+            transactions_root: *EMPTY_TRIE_HASH,
+            ..Default::default()
+        };
+        let genesis_hash = genesis.hash();
+        storage
+            .add_block(Block::new(genesis, BlockBody::default()))
+            .await
+            .unwrap();
+        storage.update_earliest_block_number(0).await.unwrap();
+        storage
+            .forkchoice_update(vec![], 0, genesis_hash, None, None)
+            .await
+            .unwrap();
+        let context = context_without_p2p(storage);
+        let history = ["blocks", "tx", "logs", "receipts"];
+
+        let result = capabilities(&context).await;
+        assert_eq!(result["head"]["number"], "0x0");
+        for resource in history {
+            assert_eq!(result[resource], json!({"disabled": true}), "{resource}");
+        }
+
+        context
+            .storage
+            .mark_history_bounds_reconciled(None)
+            .await
+            .unwrap();
+        let result = capabilities(&context).await;
+        for resource in history {
+            assert_eq!(
+                result[resource],
+                json!({"disabled": false, "oldestBlock": "0x0"}),
+                "{resource}"
+            );
+        }
     }
 
     #[tokio::test]
