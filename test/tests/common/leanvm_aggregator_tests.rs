@@ -435,7 +435,7 @@ fn the_devnet_block_673_proof_verifies_and_a_flipped_byte_does_not() {
     agg.verify(&proof, &dependencies)
         .expect("the network's proof verifies under its AGGREGATED_VK");
 
-    let mut flipped = proof.clone();
+    let mut flipped = proof;
     let middle = flipped.len() / 2;
     flipped[middle] ^= 0x01;
     assert!(agg.verify(&flipped, &dependencies).is_err());

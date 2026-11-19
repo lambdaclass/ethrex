@@ -566,7 +566,7 @@ mod bodies {
         let proof = Bytes::from(vec![3u8; 64]);
         let with_proof = body(Some(proof.clone()));
         let commitment = RecursiveStark::commit(&proof, H256::repeat_byte(9));
-        let header = header_for(&with_proof, Some(commitment.clone()));
+        let header = header_for(&with_proof, Some(commitment));
         assert!(validate_block_body(&header, &with_proof, &NativeCrypto).is_ok());
 
         let other = body(Some(Bytes::from(vec![4u8; 64])));
