@@ -705,6 +705,11 @@ pub fn execute_default_code(
         // the caller's deferred transfer).
         // EIP-7906: an ASSERT frame is handled like SENDER or DEFAULT.
         FrameMode::Sender | FrameMode::Default | FrameMode::Assert => Ok((true, 0, Vec::new())),
+        // EIP-8288: a dependency verification frame is completed before dispatch and
+        // never runs code, default or otherwise.
+        FrameMode::DepVerify => Err(VMError::Internal(crate::errors::InternalError::Custom(
+            "dependency verification frame reached default code".to_string(),
+        ))),
     }
 }
 

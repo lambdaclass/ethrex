@@ -1990,17 +1990,22 @@ pub enum FrameMode {
     /// `TXTRACE` and `EVENTDATACOPY` are valid. One that fails reverts
     /// the execution body without invalidating the transaction.
     Assert = 3,
+    /// EIP-8288: declares dependencies for the block's recursive STARK. Never
+    /// executed as EVM code.
+    DepVerify = 4,
 }
 
 impl FrameMode {
     /// Convert from the lower 8 bits of the mode field.
-    /// Returns None for reserved values (4-255).
+    /// Returns None for reserved values (5-255).
     pub fn from_u8(val: u8) -> Option<Self> {
         match val {
             0 => Some(FrameMode::Default),
             1 => Some(FrameMode::Verify),
             2 => Some(FrameMode::Sender),
             3 => Some(FrameMode::Assert),
+            // EIP-8288 DEP_VERIFY_FRAME_MODE.
+            4 => Some(FrameMode::DepVerify),
             _ => None,
         }
     }
@@ -2013,13 +2018,15 @@ impl From<FrameMode> for u8 {
             FrameMode::Verify => 1,
             FrameMode::Sender => 2,
             FrameMode::Assert => 3,
+            FrameMode::DepVerify => 4,
         }
     }
 }
 
 /// EIP-8141 Frame: a single execution step within a frame transaction.
 ///
-/// `mode` is the execution mode (0=DEFAULT, 1=VERIFY, 2=SENDER; 3-255 reserved).
+/// `mode` is the execution mode (0=DEFAULT, 1=VERIFY, 2=SENDER, 3=ASSERT per
+/// EIP-7906, 4=DEP_VERIFY per EIP-8288; 5-255 reserved).
 /// `flags` bits: 0-1 = APPROVE scope restriction, 2 = atomic batch flag (valid
 /// on DEFAULT and SENDER frames only), 3-7 reserved (must be zero).
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
@@ -2057,6 +2064,79 @@ impl Frame {
     /// Check if the atomic batch flag (bit 2 of `flags`) is set.
     pub fn is_atomic_batch(&self) -> bool {
         (self.flags >> 2) & 1 == 1
+    }
+
+    /// EIP-8288: a dependency verification frame, by mode alone.
+    ///
+    /// Shape is checked in `validate_static_constraints`, not here. Mode 4 has no
+    /// other meaning, so a malformed one is invalid rather than ordinary.
+    pub fn is_dependency_verification(&self) -> bool {
+        self.mode == FrameMode::DepVerify as u8
+    }
+
+    /// EIP-8288 `frame.data_triples`. `None` when this is not a dependency
+    /// verification frame, or when its data is not a whole number of well-formed
+    /// 96-byte triples.
+    ///
+    /// Use [`Frame::parse_dependency_triples`] where the *reason* matters:
+    /// validation reports it, and four separate rules land here.
+    pub fn dependency_triples(&self) -> Option<Vec<DependencyTriple>> {
+        self.parse_dependency_triples().ok()
+    }
+
+    /// [`Frame::dependency_triples`], with the rule that rejected it.
+    ///
+    /// EIP-8288 states four distinct constraints over this field -- a length that
+    /// is a whole number of triples, at least one triple, 31 zero bytes of scheme
+    /// padding, and an assigned scheme byte. Collapsing them into one message sends
+    /// whoever is debugging a rejected transaction to the wrong rule.
+    pub fn parse_dependency_triples(&self) -> Result<Vec<DependencyTriple>, String> {
+        if !self.is_dependency_verification() {
+            return Err("frame is not a dependency verification frame".to_string());
+        }
+        let len = self.data.len();
+        if !len.is_multiple_of(FRAME_TX_DEPENDENCY_TRIPLE_BYTES) {
+            return Err(format!(
+                "data must be a whole number of {FRAME_TX_DEPENDENCY_TRIPLE_BYTES}-byte \
+                 triples, got {len} bytes"
+            ));
+        }
+        if len == 0 {
+            return Err("must declare at least one dependency".to_string());
+        }
+        self.data
+            .chunks_exact(FRAME_TX_DEPENDENCY_TRIPLE_BYTES)
+            .enumerate()
+            .map(|(n, chunk)| {
+                // Split the two remaining rules apart the same way, so a bad scheme
+                // byte and stray padding are never reported as each other.
+                let Some(padding) = chunk.get(..31) else {
+                    return Err(format!("triple {n} is truncated"));
+                };
+                if padding.iter().any(|b| *b != 0) {
+                    return Err(format!(
+                        "triple {n} has non-zero scheme padding; the first 31 bytes of \
+                         each triple must be zero"
+                    ));
+                }
+                DependencyTriple::from_bytes(chunk).ok_or_else(|| {
+                    format!(
+                        "triple {n} names scheme {:#04x}, which EIP-8288 does not assign",
+                        chunk.get(31).copied().unwrap_or_default()
+                    )
+                })
+            })
+            .collect()
+    }
+
+    /// EIP-8288 `verification_gas(dep_verify_frame)`: the execution budget a
+    /// dependency verification frame must declare.
+    pub fn dependency_verification_gas(&self) -> Option<u64> {
+        Some(
+            self.dependency_triples()?
+                .iter()
+                .fold(0u64, |acc, t| acc.saturating_add(t.verification_gas())),
+        )
     }
 
     /// An expiry verifier frame is a VERIFY frame targeting EXPIRY_VERIFIER
@@ -2255,6 +2335,144 @@ pub const FRAME_TX_MAX_NONCE_SEQ: u64 = u64::MAX;
 /// `STORAGE_WRITE` (10,000), the cold read and the write of one keyed-nonce slot. It
 /// tracks the Amsterdam storage schedule in `ethrex_levm::gas_cost`, which a test pins.
 pub const FRAME_TX_KEYED_NONCE_ACCESS_COST: u64 = 2_100 + 10_000;
+
+/// EIP-8288 `MAX_DEPENDENCIES_PER_FRAME`.
+pub const FRAME_TX_MAX_DEPENDENCIES_PER_FRAME: usize = 256;
+/// EIP-8288 `DEPENDENCY_TRIPLE_BYTES`: `scheme(32) || data_hash(32) || verification_key_hash(32)`.
+pub const FRAME_TX_DEPENDENCY_TRIPLE_BYTES: usize = 96;
+/// EIP-8288 `LEANSPHINCS_SCHEME`.
+pub const DEPENDENCY_SCHEME_LEANSPHINCS: u8 = 0x10;
+/// EIP-8288 `LEANSTARK_SCHEME`.
+pub const DEPENDENCY_SCHEME_LEANSTARK: u8 = 0x11;
+/// EIP-8288 `LEANSPHINCS_VERIFICATION_GAS`.
+pub const LEANSPHINCS_VERIFICATION_GAS: u64 = 3_000;
+/// EIP-8288 `LEANSTARK_VERIFICATION_GAS`.
+pub const LEANSTARK_VERIFICATION_GAS: u64 = 30_000;
+/// EIP-8288 `MAX_SIGS_PER_TX`. Mempool policy, not a block-validity rule: the EIP
+/// files it under Mempool-Level Limits, so a block carrying more is still valid.
+pub const FRAME_TX_MAX_SIGS_PER_TX: usize = 16;
+/// EIP-8288 `MAX_STARKS_PER_TX`. Mempool policy, as above.
+pub const FRAME_TX_MAX_STARKS_PER_TX: usize = 1;
+
+const _: () = assert!(FRAME_TX_MAX_DEPENDENCIES_PER_FRAME == 256);
+const _: () = assert!(FRAME_TX_DEPENDENCY_TRIPLE_BYTES == 96);
+const _: () = assert!(DEPENDENCY_SCHEME_LEANSPHINCS == 0x10);
+const _: () = assert!(DEPENDENCY_SCHEME_LEANSTARK == 0x11);
+const _: () = assert!(LEANSPHINCS_VERIFICATION_GAS == 3_000);
+const _: () = assert!(LEANSTARK_VERIFICATION_GAS == 30_000);
+const _: () = assert!(FRAME_TX_MAX_SIGS_PER_TX == 16);
+const _: () = assert!(FRAME_TX_MAX_STARKS_PER_TX == 1);
+
+/// One EIP-8288 dependency: `(scheme, data_hash, verification_key_hash)`.
+///
+/// Ordering is lexicographic over the 96-byte encoding rather than over the
+/// `(scheme, data_hash, vk_hash)` tuple. The EIP's pseudocode sorts tuples, which
+/// compares `scheme` as a small integer, while the consensus hash is taken over
+/// the encoding, where `scheme` is a big-endian 32-byte word. The two agree for
+/// every scheme below 0x100 and diverge above it; sorting what is hashed is the
+/// order that stays correct.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct DependencyTriple {
+    pub scheme: u8,
+    pub data_hash: H256,
+    pub verification_key_hash: H256,
+}
+
+impl DependencyTriple {
+    /// The 96-byte wire encoding: 31 zero bytes, the scheme byte, then the two hashes.
+    pub fn encode(&self) -> [u8; FRAME_TX_DEPENDENCY_TRIPLE_BYTES] {
+        let mut out = [0u8; FRAME_TX_DEPENDENCY_TRIPLE_BYTES];
+        out[31] = self.scheme;
+        out[32..64].copy_from_slice(self.data_hash.as_bytes());
+        out[64..96].copy_from_slice(self.verification_key_hash.as_bytes());
+        out
+    }
+
+    /// Parse one 96-byte triple. `None` when the length is wrong, when the 31-byte
+    /// scheme padding is non-zero, or when the scheme byte is not one this EIP
+    /// assigns -- all three are validity constraints, so an unparseable triple and
+    /// an invalid one are the same rejection.
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != FRAME_TX_DEPENDENCY_TRIPLE_BYTES {
+            return None;
+        }
+        if bytes[..31].iter().any(|b| *b != 0) {
+            return None;
+        }
+        let scheme = bytes[31];
+        if scheme != DEPENDENCY_SCHEME_LEANSPHINCS && scheme != DEPENDENCY_SCHEME_LEANSTARK {
+            return None;
+        }
+        Some(Self {
+            scheme,
+            data_hash: H256::from_slice(&bytes[32..64]),
+            verification_key_hash: H256::from_slice(&bytes[64..96]),
+        })
+    }
+
+    /// The per-triple verification gas this dependency contributes to its frame.
+    pub fn verification_gas(&self) -> u64 {
+        if self.scheme == DEPENDENCY_SCHEME_LEANSPHINCS {
+            LEANSPHINCS_VERIFICATION_GAS
+        } else {
+            LEANSTARK_VERIFICATION_GAS
+        }
+    }
+
+    pub fn is_leansphincs(&self) -> bool {
+        self.scheme == DEPENDENCY_SCHEME_LEANSPHINCS
+    }
+
+    pub fn is_leanstark(&self) -> bool {
+        self.scheme == DEPENDENCY_SCHEME_LEANSTARK
+    }
+}
+
+/// EIP-8288 `deduplicate_and_sort`, over the 96-byte encoding (see `DependencyTriple`).
+pub fn deduplicate_and_sort_dependencies(mut deps: Vec<DependencyTriple>) -> Vec<DependencyTriple> {
+    deps.sort_unstable_by_key(|d| d.encode());
+    deps.dedup();
+    deps
+}
+
+/// The domain string joining the digest of the leanSPHINCS dependencies to the
+/// digest of the others: ASCII `eip8288/leanstark-deps`, zero-padded to 32 bytes.
+pub const LEANSTARK_DEPS_DOMAIN: [u8; 32] = *b"eip8288/leanstark-deps\0\0\0\0\0\0\0\0\0\0";
+
+/// EIP-8288 `block_deps_hash` / `get_deps_hash` over an already deduplicated and
+/// sorted list, as the restarted Daisugi network computes it.
+///
+/// Each list hashes the 64-byte `data_hash || key` entries of its dependencies, in
+/// order, with Keccak-256; the scheme byte is not hashed. With only leanSPHINCS
+/// (`0x10`) dependencies, or none, the digest is that list's hash alone, so the
+/// empty set hashes to `keccak256("")`. Otherwise it is
+/// `keccak256(leansphincs || others || LEANSTARK_DEPS_DOMAIN)`, where `others` is
+/// the hash of every non-`0x10` entry.
+///
+/// Keccak-256 and the split domain follow the network's client and its proof
+/// statement; EIP-8288 leaves `DEPS_HASH` open.
+pub fn dependencies_hash(deps: &[DependencyTriple]) -> H256 {
+    let list_hash = |leansphincs: bool| {
+        let mut preimage = Vec::new();
+        for dep in deps
+            .iter()
+            .filter(|dep| dep.is_leansphincs() == leansphincs)
+        {
+            preimage.extend_from_slice(dep.data_hash.as_bytes());
+            preimage.extend_from_slice(dep.verification_key_hash.as_bytes());
+        }
+        keccak(preimage)
+    };
+    let leansphincs = list_hash(true);
+    if deps.iter().all(DependencyTriple::is_leansphincs) {
+        return leansphincs;
+    }
+    let mut preimage = Vec::with_capacity(96);
+    preimage.extend_from_slice(leansphincs.as_bytes());
+    preimage.extend_from_slice(list_hash(false).as_bytes());
+    preimage.extend_from_slice(&LEANSTARK_DEPS_DOMAIN);
+    keccak(preimage)
+}
 /// EIP-7623 `STANDARD_TOKEN_COST`, and the EIP-7976 floor per token. Frame
 /// transactions exist only from Hegota onward, which is after Amsterdam, so the
 /// raised EIP-7976 floor always applies and neither needs a fork parameter.
@@ -2581,6 +2799,17 @@ impl FrameTransaction {
             .saturating_add(self.signature_verification_cost())
             .saturating_add(self.value_transfer_gas(fork))
             .saturating_add(self.keyed_nonce_access_cost())
+            .saturating_add(self.recursive_stark_gas())
+    }
+
+    /// EIP-8288's charge for the block proof: `LEANSTARK_VERIFICATION_GAS` (30,000)
+    /// per declared dependency, duplicates included, whatever its scheme, as the
+    /// reference client charges it. It is intrinsic, so it is in the receipt and paid
+    /// by the payer, and the block's gas has no other EIP-8288 term. A dependency
+    /// frame makes the transaction invalid before EIP-8288 activates, so this needs
+    /// no fork check.
+    pub fn recursive_stark_gas(&self) -> u64 {
+        (self.declared_dependency_count() as u64).saturating_mul(LEANSTARK_VERIFICATION_GAS)
     }
 
     /// EIP-8250 `keyed_nonce_access_cost`: `KEYED_NONCE_ACCESS_COST` for every key,
@@ -2728,11 +2957,50 @@ impl FrameTransaction {
 
     /// Validate static constraints per EIP-8141 spec.
     /// Returns an error string if the transaction is invalid.
+    /// EIP-8288 `dependencies(tx)`: every triple from every dependency
+    /// verification frame, deduplicated and sorted.
+    ///
+    /// A zero `data_hash` stands for this transaction's own signature hash and is
+    /// resolved to it before sorting, so the set names what the dependency
+    /// actually proves.
+    ///
+    /// Frames whose data does not parse contribute nothing here;
+    /// `validate_static_constraints` rejects those, so a transaction that reaches
+    /// execution has none.
+    pub fn dependencies(&self) -> Vec<DependencyTriple> {
+        let mut out = Vec::new();
+        let mut signature_hash = None;
+        for frame in &self.frames {
+            if let Some(triples) = frame.dependency_triples() {
+                for mut triple in triples {
+                    if triple.data_hash.is_zero() {
+                        triple.data_hash =
+                            *signature_hash.get_or_insert_with(|| self.compute_sig_hash());
+                    }
+                    out.push(triple);
+                }
+            }
+        }
+        deduplicate_and_sort_dependencies(out)
+    }
+
+    /// The number of declared dependencies before deduplication. This is what gas
+    /// is charged on: EIP-8288 §Gas Accounting makes duplicate declarations legal
+    /// but wasteful, so the charge counts declarations and the block's dependency
+    /// set counts distinct triples.
+    pub fn declared_dependency_count(&self) -> usize {
+        self.frames
+            .iter()
+            .filter_map(|f| f.dependency_triples())
+            .map(|t| t.len())
+            .sum()
+    }
+
     /// The rules that depend on the including block's frame features and fork, on
     /// top of the fork-free shape rules in [`Self::validate_static_constraints`]:
     /// - EIP-8250 replaces EIP-8141's single `nonce` with `nonce_keys` and
     ///   `nonce_seq`, so a transaction carries exactly the envelope its block expects;
-    /// - an ASSERT frame needs EIP-7906;
+    /// - an ASSERT frame needs EIP-7906, and a DEP_VERIFY frame EIP-8288;
     /// - a P256 signature needs EIP-7951's `P256VERIFY` precompile, which Osaka brings:
     ///   before it no P256 entry can verify, so the transaction is invalid.
     pub fn validate_fork_rules(
@@ -2758,6 +3026,16 @@ impl FrameTransaction {
         {
             return Err(format!(
                 "frame {index}: ASSERT frames are not valid before EIP-7906 activates"
+            ));
+        }
+        if !features.dependency_proofs
+            && let Some(index) = self
+                .frames
+                .iter()
+                .position(Frame::is_dependency_verification)
+        {
+            return Err(format!(
+                "frame {index}: dependency verification frames are not valid before EIP-8288 activates"
             ));
         }
         if fork < crate::types::Fork::Osaka
@@ -2861,6 +3139,70 @@ impl FrameTransaction {
                     "Frame {i}: reserved flag bits must be zero (flags={:#04x})",
                     frame.flags
                 ));
+            }
+            // EIP-8288 dependency verification frames. The EIP writes these
+            // constraints against fields EIP-8141 does not have -- a scalar
+            // `gas_limit`, and a `target` glossed as both `None` and the zero
+            // address -- so the reading here follows the reference client.
+            // In short: the sum binds `limits.execution`, `limits.state` must be
+            // zero, and `target` must be absent.
+            if frame.is_dependency_verification() {
+                let triples = frame
+                    .parse_dependency_triples()
+                    .map_err(|reason| format!("Frame {i}: {reason}"))?;
+                if triples.len() > FRAME_TX_MAX_DEPENDENCIES_PER_FRAME {
+                    return Err(format!(
+                        "Frame {i}: dependency count must be at most \
+                         {FRAME_TX_MAX_DEPENDENCIES_PER_FRAME}, got {}",
+                        triples.len()
+                    ));
+                }
+                if frame.target.is_some() {
+                    return Err(format!(
+                        "Frame {i}: dependency verification frame must have no target"
+                    ));
+                }
+                if frame.flags != 0 {
+                    return Err(format!(
+                        "Frame {i}: dependency verification frame must have flags == 0"
+                    ));
+                }
+                if frame.state_gas_limit != 0 {
+                    return Err(format!(
+                        "Frame {i}: dependency verification frame must have state_gas_limit == 0 \
+                         (got {})",
+                        frame.state_gas_limit
+                    ));
+                }
+                // A dependency verification frame carries no flags, so it cannot be
+                // a batch member -- but that also makes it a valid *terminator* for a
+                // batch an earlier frame opened, and a terminator is the frame at
+                // which the batch commits. A frame that never executes has nothing to
+                // commit or roll back, and letting one close a batch would put the
+                // commit on a frame with no outcome. EIP-8288 says nothing about
+                // atomic batches at all; EIP-8141 already restricts the flag by mode
+                // (a VERIFY frame may not carry it), so a mode-specific restriction
+                // is in keeping.
+                let inside_batch = i
+                    .checked_sub(1)
+                    .and_then(|prev| self.frames.get(prev))
+                    .is_some_and(Frame::is_atomic_batch);
+                if inside_batch {
+                    return Err(format!(
+                        "Frame {i}: dependency verification frame must not sit inside an \
+                         atomic batch"
+                    ));
+                }
+                let expected = triples
+                    .iter()
+                    .fold(0u64, |acc, t| acc.saturating_add(t.verification_gas()));
+                if frame.gas_limit != expected {
+                    return Err(format!(
+                        "Frame {i}: dependency verification frame must declare gas_limit == \
+                         {expected}, got {}",
+                        frame.gas_limit
+                    ));
+                }
             }
             // Expiry verifier frames (EIP-8141): VERIFY
             // frames targeting EXPIRY_VERIFIER must have flags == 0, value == 0
@@ -3015,7 +3357,7 @@ impl FrameTransaction {
             .frames
             .iter()
             .enumerate()
-            .filter(|(_, f)| !f.is_expiry_verifier())
+            .filter(|(_, f)| !f.is_expiry_verifier() && !f.is_dependency_verification())
             .map(|(i, _)| i)
             .collect();
 

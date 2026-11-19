@@ -9,8 +9,8 @@ use std::path::PathBuf;
 
 use bytes::Bytes;
 use ethrex_common::types::{
-    ChainConfig, ChainFeatures, FRAME_SIG_SCHEME_P256, Fork, ForkId, Frame, FrameMode,
-    FrameSignature, FrameTransaction, Genesis, Transaction,
+    ChainConfig, ChainFeatures, DEPENDENCY_SCHEME_LEANSTARK, FRAME_SIG_SCHEME_P256, Fork, ForkId,
+    Frame, FrameMode, FrameSignature, FrameTransaction, Genesis, Transaction, dependencies_hash,
 };
 use ethrex_common::{Address, H256, U256};
 use ethrex_crypto::NativeCrypto;
@@ -248,28 +248,197 @@ fn p256_signatures_need_the_osaka_precompile() {
 /// Nethermind's receipts for the three devnet frame transactions imply their intrinsic
 /// gas and calldata floor on Prague: EIP-7623's weighted token count (a zero byte is one
 /// token, any other byte four, an empty-`msg` signature's bytes all four), four gas per
-/// token for the intrinsic cost and ten for the floor, no EIP-2780 value charge, and
-/// 12,100 gas per nonce key. Each transaction declares one EIP-8288 dependency, whose
-/// 30,000 gas the receipts include and which is subtracted here until EIP-8288's
-/// intrinsic charge is in place.
+/// token for the intrinsic cost and ten for the floor, no EIP-2780 value charge, 12,100
+/// gas per nonce key, and EIP-8288's 30,000 per declared dependency.
 #[test]
 fn frame_transactions_on_prague_price_calldata_as_the_network_does() {
-    const ONE_DEPENDENCY: u64 = 30_000;
     for (raw, intrinsic, floor) in [
         (TX_673, 48_397, 51_655),
         (TX_675, 60_577, 63_955),
         (TX_676, 60_577, 63_955),
     ] {
         let (_, tx) = decode_frame_tx(raw);
-        assert_eq!(
-            tx.mandatory_gas(Fork::Prague) + tx.data_cost(),
-            intrinsic - ONE_DEPENDENCY
-        );
-        assert_eq!(
-            tx.calldata_floor_total(Fork::Prague),
-            floor - ONE_DEPENDENCY
-        );
+        assert_eq!(tx.recursive_stark_gas(), 30_000);
+        assert_eq!(tx.mandatory_gas(Fork::Prague) + tx.data_cost(), intrinsic);
+        assert_eq!(tx.calldata_floor_total(Fork::Prague), floor);
         // Amsterdam's flat count and higher floor never price below Prague's.
         assert!(tx.calldata_floor_total(Fork::Amsterdam) >= tx.calldata_floor_total(Fork::Prague));
+    }
+}
+
+/// Each block's `blockDepsHash` as the network's header carries it. Every transaction
+/// declares one leanSTARK (`0x11`) dependency with a zero `data_hash`, which stands
+/// for the transaction's own signature hash.
+#[test]
+fn the_dependency_set_hashes_to_each_blocks_header_commitment() {
+    for (raw, block_deps_hash) in [
+        (
+            TX_673,
+            "0xe79b80cdcc7c68c07bfa15f80eef9fe10a92b5adc0246b5074692d88e4543f72",
+        ),
+        (
+            TX_675,
+            "0x803ea13cfe84fb8a2e3d777f67d71f5c2205f06e001c5e1ac0cc83b6842d2d08",
+        ),
+        (
+            TX_676,
+            "0xdbb284cfad5170caa8a2f7fb8e755e7d085aa32e88581d0037ea62c656ce4191",
+        ),
+    ] {
+        let (_, tx) = decode_frame_tx(raw);
+        let deps = tx.dependencies();
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].scheme, DEPENDENCY_SCHEME_LEANSTARK);
+        assert_eq!(deps[0].data_hash, tx.compute_sig_hash());
+        assert_eq!(
+            dependencies_hash(&deps),
+            H256::from_str(block_deps_hash).unwrap()
+        );
+    }
+}
+
+#[test]
+fn the_empty_dependency_set_hashes_to_the_empty_keccak() {
+    assert_eq!(
+        dependencies_hash(&[]),
+        H256::from_str("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")
+            .unwrap()
+    );
+}
+
+#[test]
+fn dependency_frames_need_the_daisugi_fork() {
+    let config = genesis().config;
+    let (_, tx) = decode_frame_tx(TX_673);
+    assert!(tx.validate_static_constraints().is_ok());
+    let mut scalar = tx.clone();
+    scalar.has_nonce_keys = false;
+    assert!(
+        scalar
+            .validate_fork_rules(config.features(DAISUGI_FORK_TIMESTAMP - 1), Fork::Prague)
+            .is_err()
+    );
+    assert!(
+        tx.validate_fork_rules(config.features(DAISUGI_FORK_TIMESTAMP), Fork::Prague)
+            .is_ok()
+    );
+}
+
+// ==================== Executing the devnet's transactions ====================
+
+mod execution {
+    use super::*;
+    use ethrex_blockchain::vm::StoreVmDatabase;
+    use ethrex_common::constants::EMPTY_TRIE_HASH;
+    use ethrex_common::types::{Account, BlockHeader, Code, FRAME_RECEIPT_STATUS_SUCCESS};
+    use ethrex_levm::db::gen_db::GeneralizedDatabase;
+    use ethrex_levm::environment::{EVMConfig, Environment};
+    use ethrex_levm::tracing::LevmCallTracer;
+    use ethrex_levm::vm::{VM, VMType};
+    use ethrex_storage::Store;
+    use ethrex_vm::DynVmDatabase;
+    use rustc_hash::FxHashMap;
+    use std::sync::Arc;
+
+    const BASE_FEE: u64 = 7;
+    const GAS_LIMIT: u64 = 60_000_000;
+    const CHAIN_ID: u64 = 701_563_864;
+    const COINBASE: Address = Address::repeat_byte(0xc0);
+
+    fn daisugi_config() -> EVMConfig {
+        EVMConfig {
+            fork: Fork::Prague,
+            blob_schedule: EVMConfig::canonical_values(Fork::Prague),
+            features: ChainFeatures {
+                frame_transactions: true,
+                keyed_nonces: true,
+                assert_frames: true,
+                dependency_proofs: true,
+            },
+        }
+    }
+
+    fn funded(address: Address) -> GeneralizedDatabase {
+        let store = Store::new("", ethrex_storage::EngineType::InMemory).unwrap();
+        let header = BlockHeader {
+            state_root: *EMPTY_TRIE_HASH,
+            ..Default::default()
+        };
+        let store: DynVmDatabase = Box::new(StoreVmDatabase::new(store, header).unwrap());
+        let mut accounts: FxHashMap<Address, Account> = FxHashMap::default();
+        accounts.insert(
+            address,
+            Account::new(
+                U256::from(10u64).pow(U256::from(18u64)),
+                Code::from_bytecode(Bytes::new(), &NativeCrypto),
+                0,
+                FxHashMap::default(),
+            ),
+        );
+        GeneralizedDatabase::new_with_account_state(Arc::new(store), accounts)
+    }
+
+    /// The devnet's block 673 holds one frame transaction: a VERIFY frame its sender's
+    /// default code approves with a SECP256K1 signature, a DEP_VERIFY frame declaring
+    /// one leanSTARK dependency, and a SENDER frame paying 123 wei to `0x…dead`. Its
+    /// Nethermind receipt: 81,097 gas, frames at 100, 30,000 and 2,600 execution gas
+    /// and no state gas, at an effective gas price of 2,000,000,007.
+    #[test]
+    fn block_673s_transaction_executes_as_the_network_recorded_it() {
+        let (_, tx) = decode_frame_tx(TX_673);
+        let sender = tx.sender;
+        let config = daisugi_config();
+        let gas_price = tx
+            .fee_budget(Fork::Prague, U256::from(BASE_FEE), U256::zero())
+            .expect("the budget covers the base fee")
+            .gas_price;
+        assert_eq!(gas_price, U256::from(2_000_000_007u64));
+        let env = Environment {
+            origin: sender,
+            gas_limit: tx.max_gas(Fork::Prague),
+            config,
+            block_number: 673,
+            coinbase: COINBASE,
+            timestamp: 1_795_022_088,
+            chain_id: U256::from(CHAIN_ID),
+            base_fee_per_gas: U256::from(BASE_FEE),
+            gas_price,
+            tx_nonce: tx.nonce_seq,
+            block_gas_limit: GAS_LIMIT,
+            ..Default::default()
+        };
+        let mut db = funded(sender);
+        let transaction = Transaction::FrameTransaction(tx);
+        let report = VM::new(
+            env,
+            &mut db,
+            &transaction,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &NativeCrypto,
+            None,
+        )
+        .expect("VM::new")
+        .execute()
+        .expect("the transaction executes");
+
+        assert!(report.is_success());
+        assert_eq!(report.gas_spent, 81_097);
+        assert_eq!(report.gas_used, 81_097);
+        assert_eq!(report.state_gas_used, 0);
+        let frames: Vec<(u8, u64, u64)> = report
+            .frame_results
+            .expect("a frame transaction reports its frames")
+            .into_iter()
+            .map(|(status, gas, state, _)| (status, gas, state))
+            .collect();
+        assert_eq!(
+            frames,
+            vec![
+                (FRAME_RECEIPT_STATUS_SUCCESS, 100, 0),
+                (FRAME_RECEIPT_STATUS_SUCCESS, 30_000, 0),
+                (FRAME_RECEIPT_STATUS_SUCCESS, 2_600, 0),
+            ]
+        );
     }
 }

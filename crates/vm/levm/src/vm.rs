@@ -2272,6 +2272,28 @@ impl<'a> VM<'a> {
             ctx.current_frame_index = frame_idx;
             ctx.approve_called_in_current_frame = false;
 
+            // EIP-8288: a dependency verification frame declares triples for the
+            // block's recursive STARK and is never executed as EVM code. It still
+            // completes with a receipt entry, as the reference client records it:
+            // FRAMEPARAM reads `frame_results` by frame index, and EIP-8141 builds a
+            // transaction's logs by concatenating frame receipts in frame order.
+            // Its whole declared execution budget is consumed and none of it is
+            // refundable, and no frame-entry access is charged, since `target` is
+            // absent and nothing is entered. Static rules keep it out of atomic
+            // batches and after ASSERT frames, so no skip above can reach it.
+            if frame.execution_mode() == FrameMode::DepVerify {
+                total_gas_used = total_gas_used
+                    .checked_add(frame.gas_limit)
+                    .ok_or(VMError::Internal(InternalError::Overflow))?;
+                ctx.frame_results.push((
+                    ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
+                    frame.gas_limit,
+                    0,
+                    Vec::new(),
+                ));
+                continue;
+            }
+
             let target = frame.target.unwrap_or(sender);
 
             // Determine caller and static mode per frame mode
@@ -2291,6 +2313,12 @@ impl<'a> VM<'a> {
                         break;
                     }
                     (sender, false)
+                }
+                // Completed above: the frame is never executed.
+                FrameMode::DepVerify => {
+                    return Err(VMError::Internal(InternalError::Custom(
+                        "dependency verification frame reached frame execution".to_string(),
+                    )));
                 }
             };
 
@@ -3387,6 +3415,24 @@ impl<'a> VM<'a> {
             ctx.current_frame_index = frame_idx;
             ctx.approve_called_in_current_frame = false;
 
+            // EIP-8288: a dependency verification frame is left out of the prefix
+            // shape, but the loop walks every index up to the last prefix frame, so
+            // one sitting ahead of the prefix is iterated here. It completes exactly
+            // as block execution completes it, consuming its whole declared budget and
+            // recording a successful result, so the mempool and the chain agree: a
+            // prefix frame reading an earlier frame through FRAMEPARAM would halt on a
+            // missing entry.
+            if frame.execution_mode() == FrameMode::DepVerify {
+                total_gas_used = total_gas_used.saturating_add(frame.gas_limit);
+                ctx.frame_results.push((
+                    ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
+                    frame.gas_limit,
+                    0,
+                    Vec::new(),
+                ));
+                continue;
+            }
+
             let target = frame.target.unwrap_or(sender);
 
             // Sync observer per-frame fields before the frame runs.
@@ -3403,6 +3449,12 @@ impl<'a> VM<'a> {
                     // prefix.
                     return Err(VMError::Internal(InternalError::Custom(
                         "SENDER or ASSERT frame in validation prefix".to_string(),
+                    )));
+                }
+                // Completed above, before the target is resolved.
+                FrameMode::DepVerify => {
+                    return Err(VMError::Internal(InternalError::Custom(
+                        "dependency verification frame reached prefix execution".to_string(),
                     )));
                 }
             };
