@@ -80,7 +80,11 @@ path = "./lib.rs"
 
 [features]
 debug = ["ethrex-vm/debug"]
-default = ["rocksdb", "c-kzg", "secp256k1", "metrics", "jemalloc", "dev", "rayon"]
+default = ["rocksdb", "c-kzg", "secp256k1", "metrics", "jemalloc", "dev", "rayon", "leanvm"]
+# Verify EIP-8288 dependency proofs with the leanVM backend. On by default: a node
+# without it rejects every block whose proof covers dependencies, so it would split
+# from a network that has them at the first such block.
+leanvm = ["ethrex-blockchain/leanvm"]
 dev = ["dep:ethrex-dev"]
 secp256k1 = [
   "ethrex-vm/secp256k1",

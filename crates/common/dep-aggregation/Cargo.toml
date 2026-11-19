@@ -1,0 +1,39 @@
+[package]
+name = "ethrex-dep-aggregation"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
+description = "EIP-8288 dependency aggregation: the seam between block validity and a recursive-proof backend"
+repository.workspace = true
+
+[dependencies]
+ethrex-common.workspace = true
+ethrex-rlp.workspace = true
+bytes = "1.6"
+ethereum-types = { version = "0.15.1", default-features = false }
+thiserror = { version = "2.0.9", default-features = false }
+tracing.workspace = true
+
+# The leanVM backend. Optional, off by default, and confined to this crate.
+#
+# leanVM is pre-1.0 and restructures its crate layout between revisions, so the
+# blast radius of a rename has to stay at one file, which is why nothing outside
+# this crate may name a leanVM type. Pinned to a revision for the same reason the
+# rest of the workspace pins versions.
+#
+# The two crates are the EIP-8288 aggregation guest and the leanSPHINCS scheme
+# vendored in lean-bindings, on leanVM `f7ba4999` (F128). That is the stack the
+# restarted Daisugi network verifies block proofs with; its compiled guest has the
+# network's `AGGREGATED_VK`, which `leanvm.rs` checks. Needs Rust 1.97 or newer.
+rec_aggregation = { git = "https://github.com/NethermindEth/lean-bindings", rev = "8d54d3165d453f340420cf39d8da174e497c50bc", optional = true }
+lean_sphincs = { git = "https://github.com/NethermindEth/lean-bindings", rev = "8d54d3165d453f340420cf39d8da174e497c50bc", optional = true }
+
+[features]
+default = []
+# Compiles the real recursive-proof backend. Off by default: it pulls a large
+# proving stack, and producing an aggregate peaks around 9-11 GiB of resident
+# memory. A node built without it can still enforce EIP-8288 block-validity rule 1
+# and will reject any block carrying a proof rather than accept one it cannot check.
+leanvm = ["dep:rec_aggregation", "dep:lean_sphincs"]

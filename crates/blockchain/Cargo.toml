@@ -11,6 +11,7 @@ repository.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ethrex-dep-aggregation.workspace = true
 ethrex-rlp.workspace = true
 ethrex-common = { workspace = true, default-features = false }
 ethrex-crypto.workspace = true
@@ -41,6 +42,8 @@ path = "./blockchain.rs"
 
 [features]
 default = ["secp256k1", "rayon"]
+# The leanVM EIP-8288 backend, needed to verify blocks that carry dependency proofs.
+leanvm = ["ethrex-dep-aggregation/leanvm"]
 rayon = ["ethrex-vm/rayon"]
 secp256k1 = ["ethrex-common/secp256k1", "ethrex-vm/secp256k1"]
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]

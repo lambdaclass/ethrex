@@ -15,6 +15,9 @@ rocksdb = ["ethrex-storage/rocksdb"]
 l2 = ["ethrex/l2", "ethrex/l2-sql"]
 c-kzg = ["ethrex-common/c-kzg"]
 rayon = ["ethrex-levm/rayon"]
+# Compiles the real EIP-8288 aggregation backend so its tests can run. Off by
+# default: it pulls a large proving stack, and its proving tests need several GiB.
+leanvm = ["ethrex-dep-aggregation/leanvm"]
 
 [dependencies]
 ethrex-common.workspace = true
@@ -29,6 +32,7 @@ ethrex-vm.workspace = true
 ethrex-rpc.workspace = true
 
 [dev-dependencies]
+ethrex-dep-aggregation.workspace = true
 ethrex-rpc = { workspace = true, features = ["test-utils"] }
 ethrex-vm.workspace = true
 once_cell = "1.21"

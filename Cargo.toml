@@ -5,6 +5,7 @@ members = [
   "crates/blockchain",
   "crates/blockchain/dev",
   "crates/common",
+  "crates/common/dep-aggregation",
   "crates/common/rlp",
   "crates/common/trie",
   "crates/common/crypto",
@@ -80,6 +81,7 @@ overflow-checks = true
 [workspace.dependencies]
 ethrex-blockchain = { path = "./crates/blockchain", version = "29.0.1", default-features = false }
 ethrex-common = { path = "./crates/common", version = "29.0.1", default-features = false }
+ethrex-dep-aggregation = { path = "./crates/common/dep-aggregation", version = "29.0.1", default-features = false }
 ethrex-config = { path = "./crates/common/config" }
 ethrex-p2p = { path = "./crates/networking/p2p", version = "29.0.1" }
 ethrex-rpc = { path = "./crates/networking/rpc", version = "29.0.1" }

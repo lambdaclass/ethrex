@@ -10,6 +10,8 @@ mod eip7702_authorization_tests;
 mod fork_schedule_tests;
 mod frame_tx_validation_tests;
 mod jumpdest_bitmap_tests;
+#[cfg(feature = "leanvm")]
+mod leanvm_aggregator_tests;
 mod legacy_signature_tests;
 mod logs_bloom_validation_tests;
 mod progressive_ssz_tests;

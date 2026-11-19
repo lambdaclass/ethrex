@@ -3825,6 +3825,7 @@ dependencies = [
  "crossbeam",
  "ethrex-common",
  "ethrex-crypto",
+ "ethrex-dep-aggregation",
  "ethrex-guest-program",
  "ethrex-levm",
  "ethrex-metrics",
@@ -3912,6 +3913,20 @@ dependencies = [
  "sha2",
  "thiserror 2.0.18",
  "tiny-keccak",
+]
+
+[[package]]
+name = "ethrex-dep-aggregation"
+version = "29.0.1"
+dependencies = [
+ "bytes",
+ "ethereum-types 0.15.1",
+ "ethrex-common",
+ "ethrex-rlp",
+ "lean_sphincs",
+ "rec_aggregation",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]
@@ -4394,6 +4409,7 @@ dependencies = [
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-crypto",
+ "ethrex-dep-aggregation",
  "ethrex-guest-program",
  "ethrex-l2",
  "ethrex-l2-common",
@@ -4598,6 +4614,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "fiat_shamir"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM?rev=f7ba4999ae523b94c8d0969b32762c3effea4cbd#f7ba4999ae523b94c8d0969b32762c3effea4cbd"
+dependencies = [
+ "parallel",
+ "primitives",
 ]
 
 [[package]]
@@ -6238,6 +6263,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "keccak_gkr"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM?rev=f7ba4999ae523b94c8d0969b32762c3effea4cbd#f7ba4999ae523b94c8d0969b32762c3effea4cbd"
+dependencies = [
+ "fiat_shamir",
+ "parallel",
+ "pcs",
+ "primitives",
+ "tracing",
+]
+
+[[package]]
 name = "kzg-rs"
 version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6340,6 +6377,58 @@ name = "lazycell"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
+
+[[package]]
+name = "lean_compiler"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM?rev=f7ba4999ae523b94c8d0969b32762c3effea4cbd#f7ba4999ae523b94c8d0969b32762c3effea4cbd"
+dependencies = [
+ "leanvm_core",
+ "primitives",
+]
+
+[[package]]
+name = "lean_da"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM?rev=f7ba4999ae523b94c8d0969b32762c3effea4cbd#f7ba4999ae523b94c8d0969b32762c3effea4cbd"
+dependencies = [
+ "fiat_shamir",
+ "pcs",
+ "primitives",
+ "tracing",
+]
+
+[[package]]
+name = "lean_sphincs"
+version = "0.1.0"
+source = "git+https://github.com/NethermindEth/lean-bindings?rev=8d54d3165d453f340420cf39d8da174e497c50bc#8d54d3165d453f340420cf39d8da174e497c50bc"
+dependencies = [
+ "parallel",
+ "primitives",
+ "rand 0.9.4",
+]
+
+[[package]]
+name = "lean_xmss"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM?rev=f7ba4999ae523b94c8d0969b32762c3effea4cbd#f7ba4999ae523b94c8d0969b32762c3effea4cbd"
+dependencies = [
+ "primitives",
+]
+
+[[package]]
+name = "leanvm_core"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM?rev=f7ba4999ae523b94c8d0969b32762c3effea4cbd#f7ba4999ae523b94c8d0969b32762c3effea4cbd"
+dependencies = [
+ "fiat_shamir",
+ "keccak_gkr",
+ "parallel",
+ "pcs",
+ "primitives",
+ "tracing",
+ "verifier",
+]
 
 [[package]]
 name = "leb128fmt"
@@ -9571,6 +9660,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "parallel"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM?rev=f7ba4999ae523b94c8d0969b32762c3effea4cbd#f7ba4999ae523b94c8d0969b32762c3effea4cbd"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "parity-scale-codec"
 version = "3.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9676,6 +9773,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83a0692ec44e4cf1ef28ca317f14f8f07da2d95ec3fa01f86e4467b725e60917"
 dependencies = [
  "digest 0.10.7",
+]
+
+[[package]]
+name = "pcs"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM?rev=f7ba4999ae523b94c8d0969b32762c3effea4cbd#f7ba4999ae523b94c8d0969b32762c3effea4cbd"
+dependencies = [
+ "fiat_shamir",
+ "parallel",
+ "primitives",
+ "tracing",
 ]
 
 [[package]]
@@ -10031,6 +10139,14 @@ dependencies = [
  "impl-rlp",
  "impl-serde",
  "uint 0.10.0",
+]
+
+[[package]]
+name = "primitives"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM?rev=f7ba4999ae523b94c8d0969b32762c3effea4cbd#f7ba4999ae523b94c8d0969b32762c3effea4cbd"
+dependencies = [
+ "parallel",
 ]
 
 [[package]]
@@ -10671,6 +10787,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f87cc11a0140b4b0da0ffc889885760c61b13672d80a908920b2c0df078fa14"
 dependencies = [
  "rayon",
+]
+
+[[package]]
+name = "rec_aggregation"
+version = "0.1.0"
+source = "git+https://github.com/NethermindEth/lean-bindings?rev=8d54d3165d453f340420cf39d8da174e497c50bc#8d54d3165d453f340420cf39d8da174e497c50bc"
+dependencies = [
+ "fiat_shamir",
+ "keccak_gkr",
+ "lean_compiler",
+ "lean_da",
+ "lean_sphincs",
+ "lean_xmss",
+ "leanvm_core",
+ "parallel",
+ "pcs",
+ "primitives",
+ "tracing",
+ "verifier",
 ]
 
 [[package]]
@@ -14325,6 +14460,11 @@ dependencies = [
  "derive_builder",
  "rustversion",
 ]
+
+[[package]]
+name = "verifier"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM?rev=f7ba4999ae523b94c8d0969b32762c3effea4cbd#f7ba4999ae523b94c8d0969b32762c3effea4cbd"
 
 [[package]]
 name = "version_check"
