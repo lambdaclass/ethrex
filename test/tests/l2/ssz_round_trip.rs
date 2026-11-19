@@ -51,6 +51,7 @@ fn make_test_block() -> (BlockHeader, BlockBody) {
     };
 
     let body = BlockBody {
+        stark_proof: None,
         transactions: vec![],
         ommers: vec![],
         withdrawals: Some(vec![]),

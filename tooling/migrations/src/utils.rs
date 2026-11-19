@@ -10,6 +10,7 @@ use ethrex_common_libmdbx::types::{
 
 pub fn migrate_block_header(header: LibmdbxBlockHeader) -> BlockHeader {
     BlockHeader {
+        recursive_stark: None,
         hash: header.hash,
         parent_hash: header.parent_hash,
         ommers_hash: header.ommers_hash,
@@ -40,6 +41,7 @@ pub fn migrate_block_header(header: LibmdbxBlockHeader) -> BlockHeader {
 
 pub fn migrate_block_body(body: LibmdbxBlockBody) -> BlockBody {
     BlockBody {
+        stark_proof: None,
         transactions: body
             .transactions
             .into_iter()

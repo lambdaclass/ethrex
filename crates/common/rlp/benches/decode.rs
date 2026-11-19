@@ -31,6 +31,7 @@ fn random_log(rng: &mut impl Rng) -> Log {
 fn random_block_header(rng: &mut impl Rng) -> BlockHeader {
     BlockHeader {
         hash: OnceCell::new(),
+        recursive_stark: None,
         parent_hash: H256(rng.random()),
         ommers_hash: H256(rng.random()),
         coinbase: Address::from(rng.random::<[u8; 20]>()),

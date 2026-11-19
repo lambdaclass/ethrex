@@ -230,6 +230,7 @@ pub fn run(args: T8nArgs) -> Result<(), T8nError> {
         ..Default::default()
     };
     let body = BlockBody {
+        stark_proof: None,
         transactions: Vec::new(),
         ommers: Vec::new(),
         withdrawals,

@@ -154,6 +154,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
     };
 
     let header = BlockHeader {
+        recursive_stark: None,
         hash: Default::default(), // It is initialized later with block.hash().
         parent_hash: initial_block_hash,
         ommers_hash: H256::from_str(
