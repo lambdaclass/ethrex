@@ -6,7 +6,6 @@ use crate::rlpx::{
     utils::{snappy_compress, snappy_decompress, snappy_decompress_bounded},
 };
 use crate::types::Node;
-use bytes::BufMut;
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::MempoolError;
@@ -60,7 +59,7 @@ impl Transactions {
 
 impl RLPxMessage for Transactions {
     const CODE: u8 = 0x02;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         let mut encoder = Encoder::new(&mut encoded_data);
         let txs_iter = self.transactions.iter();
@@ -69,7 +68,7 @@ impl RLPxMessage for Transactions {
         }
         encoder.finish();
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -278,7 +277,7 @@ fn rlp_list_len(rlp: &[u8]) -> Result<usize, RLPDecodeError> {
 
 impl RLPxMessage for NewPooledTransactionHashes {
     const CODE: u8 = 0x08;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.transaction_types)
@@ -287,7 +286,7 @@ impl RLPxMessage for NewPooledTransactionHashes {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -376,7 +375,7 @@ impl GetPooledTransactions {
 
 impl RLPxMessage for GetPooledTransactions {
     const CODE: u8 = 0x09;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
@@ -384,7 +383,7 @@ impl RLPxMessage for GetPooledTransactions {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -515,14 +514,14 @@ impl PooledTransactions {
 
 impl RLPxMessage for PooledTransactions {
     const CODE: u8 = 0x0A;
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
             .encode_field(&self.pooled_transactions)
             .finish();
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 

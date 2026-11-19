@@ -200,7 +200,7 @@ pub trait RpcHandler: Send + Sync {
 **Traits:**
 ```rust
 pub trait RLPEncode {
-    fn encode(&self, buf: &mut dyn BufMut);
+    fn encode(&self, buf: &mut Vec<u8>);
     fn encode_to_vec(&self) -> Vec<u8>;
 }
 

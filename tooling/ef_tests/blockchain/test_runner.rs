@@ -424,7 +424,7 @@ pub fn delivered_access_list(
 pub fn hash_as_delivered(bal: &BlockAccessList) -> H256 {
     struct Slot<'a>(&'a SlotChange);
     impl RLPEncode for Slot<'_> {
-        fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        fn encode(&self, buf: &mut Vec<u8>) {
             Encoder::new(buf)
                 .encode_field(&self.0.slot)
                 .encode_field(&self.0.slot_changes)
@@ -433,7 +433,7 @@ pub fn hash_as_delivered(bal: &BlockAccessList) -> H256 {
     }
     struct Account<'a>(&'a AccountChanges);
     impl RLPEncode for Account<'_> {
-        fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        fn encode(&self, buf: &mut Vec<u8>) {
             let slots: Vec<Slot> = self.0.storage_changes.iter().map(Slot).collect();
             Encoder::new(buf)
                 .encode_field(&self.0.address)

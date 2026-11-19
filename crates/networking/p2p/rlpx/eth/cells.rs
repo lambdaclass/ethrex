@@ -2,7 +2,6 @@ use crate::rlpx::{
     message::RLPxMessage,
     utils::{snappy_compress, snappy_decompress_bounded},
 };
-use bytes::BufMut;
 use ethrex_blockchain::mempool::Mempool;
 use ethrex_common::{
     H256,
@@ -96,7 +95,7 @@ impl GetCells {
 impl RLPxMessage for GetCells {
     const CODE: u8 = 0x14;
 
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         use bytes::Bytes;
         let mut encoded_data = vec![];
         let mask_bytes = Bytes::from(u128_to_b16(self.cell_mask).to_vec());
@@ -107,7 +106,7 @@ impl RLPxMessage for GetCells {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 
@@ -211,7 +210,7 @@ pub enum CellsResponseError {
 impl RLPxMessage for Cells {
     const CODE: u8 = 0x15;
 
-    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+    fn encode(&self, buf: &mut Vec<u8>) -> Result<(), RLPEncodeError> {
         use bytes::Bytes;
         let mut encoded_data = vec![];
         let mask_bytes = Bytes::from(u128_to_b16(self.cell_mask).to_vec());
@@ -223,7 +222,7 @@ impl RLPxMessage for Cells {
             .finish();
 
         let msg_data = snappy_compress(encoded_data)?;
-        buf.put_slice(&msg_data);
+        buf.extend_from_slice(&msg_data);
         Ok(())
     }
 

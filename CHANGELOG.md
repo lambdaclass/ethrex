@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-11-18
+
+- Replace `RLPEncode::encode`'s `&mut dyn BufMut` sink with a concrete `&mut Vec<u8>`, removing a virtual call per write, and write list payloads first so the length prefix is backpatched in place instead of pre-computed by a full `length()` re-encode. Together these drop the per-list scratch allocation `Encoder` used to make and the double traversal of every nested structure: under `zkevm_bench`, total AIR cost −0.17%, steps −0.33% and peak guest RAM −1.5% across the 20 medium workloads, and up to −4.3% AIR cost and −18.7% steps on RLP-heavy block access list workloads [#7180](https://github.com/lambdaclass/ethrex/pull/7180)
+
 ### 2026-10-22
 
 - Answer MODEXP inversions modulo well-known 256-bit primes (base^(p − 2) mod p for the BN254 base and scalar fields, the secp256k1 and P-256 base fields and group orders, and the BLS12-381 scalar field) with a safegcd inversion, and build the Montgomery constants with 8 squarings instead of 512 doublings: the dominant mainnet MODEXP call 4.09 → 0.73 µs [#7456](https://github.com/lambdaclass/ethrex/pull/7456)
