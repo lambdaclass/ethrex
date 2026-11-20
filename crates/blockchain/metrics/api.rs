@@ -71,5 +71,32 @@ pub(crate) async fn get_metrics() -> String {
         };
     }
 
+    #[cfg(feature = "spawned")]
+    {
+        ret_string.push('\n');
+        ret_string.push_str(&crate::actors::gather_metrics());
+    }
+
     ret_string
+}
+
+#[cfg(all(test, feature = "spawned"))]
+mod tests {
+    use super::get_metrics;
+
+    #[tokio::test]
+    async fn exposes_spawned_actor_metrics() {
+        let metrics = get_metrics().await;
+        for series in [
+            "spawned_actors_active",
+            "spawned_mailbox_depth",
+            "spawned_requests_timed_out_total",
+            "spawned_request_latency_seconds_count",
+        ] {
+            assert!(
+                metrics.lines().any(|line| line.starts_with(series)),
+                "missing {series} in /metrics output"
+            );
+        }
+    }
 }

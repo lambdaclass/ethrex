@@ -856,6 +856,10 @@ pub async fn init_l1(
     SharedLocalNode,
     Store,
 )> {
+    // Before any actor starts: spawned fixes its timing policy on first use.
+    #[cfg(feature = "metrics")]
+    ethrex_metrics::actors::configure(opts.metrics_enabled);
+
     let network = get_network(&opts);
     let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
 

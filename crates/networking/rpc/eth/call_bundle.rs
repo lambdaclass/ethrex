@@ -657,7 +657,9 @@ mod tests {
             "jsonrpc": "2.0", "id": 1, "method": "eth_callBundle", "params": [bundle],
         }))
         .unwrap();
-        map_http_requests(&request, context.clone()).await
+        // Boxed so the large dispatch future lives on the heap; inlined into every
+        // test's future it overflows the 2 MiB test-thread stack in debug builds.
+        Box::pin(map_http_requests(&request, context.clone())).await
     }
 
     async fn call_bundle(bundle: Value) -> Result<Value, RpcErr> {

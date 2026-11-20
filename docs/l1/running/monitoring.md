@@ -121,6 +121,39 @@ with `-38006 TooDeepReorg`. WARNING: `--max-reorg-depth 0` rejects EVERY reorg â
 including routine 1-2 block reorgs on a healthy network â€” it does not restore the
 old 128-block cap.
 
+## Actor runtime metrics
+
+ethrex runs several long-lived services as
+[spawned](https://github.com/lambdaclass/spawned) actors: discovery, the peer
+table, RLPx connections, transaction broadcasting, RPC subscriptions and, on L2,
+the sequencer components.
+Builds with the `metrics` feature (on by default) also expose spawned's
+framework metrics under the `spawned_*` namespace. These are process-wide
+totals, not broken down per actor.
+
+| Metric | Type | What to watch for |
+|--------|------|-------------------|
+| `spawned_actors_active` | Gauge | Actors currently alive. A steady climb means actors are leaking. |
+| `spawned_mailbox_depth` | Gauge | Messages waiting across all mailboxes. Sustained growth means handlers can't keep up. |
+| `spawned_actors_exited_panic_total` | Counter | Actors that died from a panic. Should stay at zero. |
+| `spawned_handlers_panicked_total` | Counter | Message handlers that panicked. Should stay at zero. |
+| `spawned_requests_timed_out_total` | Counter | Requests whose caller gave up waiting for a reply. |
+| `spawned_requests_actor_stopped_total` | Counter | Requests sent to an actor that had already stopped. |
+| `spawned_queue_wait_seconds` | Histogram | Time from enqueue to handler start. |
+| `spawned_handler_duration_seconds` | Histogram | Time spent in a handler, including awaited I/O. |
+| `spawned_request_latency_seconds` | Histogram | Time from request to reply, as seen by the caller. |
+
+The full set also includes message, reply and lifecycle counters such as
+`spawned_messages_handled_total` and `spawned_requests_replied_total`.
+
+Counters and gauges count every operation. With `--metrics`, only one in every
+16 messages and requests is timed, so each histogram's `_count` and `_sum`
+cover that sample only. For example, `spawned_request_latency_seconds_count`
+grows about 16 times slower than `spawned_requests_started_total`. Use the
+histograms for latency distributions and the counters for rates. Each histogram
+also exports a `_max` series with the largest sampled value since startup.
+Without `--metrics` the counters are still kept, but nothing is timed.
+
 ---
 
 For manual setup or more details, see the [Prometheus documentation](https://prometheus.io/docs/introduction/overview/) and [Grafana documentation](https://grafana.com/docs/).
