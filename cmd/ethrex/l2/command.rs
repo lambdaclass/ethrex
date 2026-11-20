@@ -24,6 +24,7 @@ use ethrex_common::{types::BlobsBundle, utils::keccak};
 use ethrex_config::networks::Network;
 use ethrex_l2::utils::state_reconstruct::get_batch;
 use ethrex_l2_common::calldata::Value;
+use ethrex_l2_rpc::signer::RemoteSignerTlsConfig;
 use ethrex_l2_sdk::call_contract;
 use ethrex_rlp::decode::RLPDecode as _;
 use ethrex_rpc::{
@@ -219,6 +220,36 @@ pub enum Command {
         )]
         owner_remote_signer_public_key: Option<PublicKey>,
         #[arg(
+            long = "owner-remote-signer-tls-keystore-file",
+            value_name = "PATH",
+            env = "OWNER_REMOTE_SIGNER_TLS_KEYSTORE_FILE",
+            help = "PKCS#12 keystore with the client certificate presented to the remote signer over TLS, for a Web3Signer that only accepts known clients.",
+            help_heading = "Contract owner account options",
+            requires_all = &["owner_remote_signer_url", "owner_remote_signer_tls_keystore_password_file"],
+            conflicts_with = "owner_private_key",
+        )]
+        owner_remote_signer_tls_keystore_file: Option<PathBuf>,
+        #[arg(
+            long = "owner-remote-signer-tls-keystore-password-file",
+            value_name = "PATH",
+            env = "OWNER_REMOTE_SIGNER_TLS_KEYSTORE_PASSWORD_FILE",
+            help = "File containing the password of the remote signer TLS keystore.",
+            help_heading = "Contract owner account options",
+            requires = "owner_remote_signer_tls_keystore_file",
+            conflicts_with = "owner_private_key"
+        )]
+        owner_remote_signer_tls_keystore_password_file: Option<PathBuf>,
+        #[arg(
+            long = "owner-remote-signer-tls-ca-cert-file",
+            value_name = "PATH",
+            env = "OWNER_REMOTE_SIGNER_TLS_CA_CERT_FILE",
+            help = "PEM certificate to trust when verifying the remote signer, such as Web3Signer's self-signed certificate.",
+            help_heading = "Contract owner account options",
+            requires = "owner_remote_signer_url",
+            conflicts_with = "owner_private_key"
+        )]
+        owner_remote_signer_tls_ca_cert_file: Option<PathBuf>,
+        #[arg(
             long,
             value_parser = parse_private_key,
             env = "SEQUENCER_PRIVATE_KEY",
@@ -248,6 +279,36 @@ pub enum Command {
             help_heading  = "Sequencer account options"
         )]
         sequencer_remote_signer_public_key: Option<PublicKey>,
+        #[arg(
+            long = "sequencer-remote-signer-tls-keystore-file",
+            value_name = "PATH",
+            env = "SEQUENCER_REMOTE_SIGNER_TLS_KEYSTORE_FILE",
+            help = "PKCS#12 keystore with the client certificate presented to the remote signer over TLS, for a Web3Signer that only accepts known clients.",
+            help_heading = "Sequencer account options",
+            requires_all = &["sequencer_remote_signer_url", "sequencer_remote_signer_tls_keystore_password_file"],
+            conflicts_with = "sequencer_private_key",
+        )]
+        sequencer_remote_signer_tls_keystore_file: Option<PathBuf>,
+        #[arg(
+            long = "sequencer-remote-signer-tls-keystore-password-file",
+            value_name = "PATH",
+            env = "SEQUENCER_REMOTE_SIGNER_TLS_KEYSTORE_PASSWORD_FILE",
+            help = "File containing the password of the remote signer TLS keystore.",
+            help_heading = "Sequencer account options",
+            requires = "sequencer_remote_signer_tls_keystore_file",
+            conflicts_with = "sequencer_private_key"
+        )]
+        sequencer_remote_signer_tls_keystore_password_file: Option<PathBuf>,
+        #[arg(
+            long = "sequencer-remote-signer-tls-ca-cert-file",
+            value_name = "PATH",
+            env = "SEQUENCER_REMOTE_SIGNER_TLS_CA_CERT_FILE",
+            help = "PEM certificate to trust when verifying the remote signer, such as Web3Signer's self-signed certificate.",
+            help_heading = "Sequencer account options",
+            requires = "sequencer_remote_signer_url",
+            conflicts_with = "sequencer_private_key"
+        )]
+        sequencer_remote_signer_tls_ca_cert_file: Option<PathBuf>,
         #[arg(
             default_value_t = false,
             help = "If enabled the command will also delete the blocks from the Blockchain database",
@@ -554,9 +615,15 @@ impl Command {
                 owner_private_key,
                 owner_remote_signer_public_key,
                 owner_remote_signer_url,
+                owner_remote_signer_tls_keystore_file,
+                owner_remote_signer_tls_keystore_password_file,
+                owner_remote_signer_tls_ca_cert_file,
                 sequencer_private_key,
                 sequencer_remote_signer_public_key,
                 sequencer_remote_signer_url,
+                sequencer_remote_signer_tls_keystore_file,
+                sequencer_remote_signer_tls_keystore_password_file,
+                sequencer_remote_signer_tls_ca_cert_file,
                 rpc_url,
                 delete_blocks,
                 pause_contracts,
@@ -568,6 +635,10 @@ impl Command {
                     private_key: owner_private_key,
                     remote_signer_public_key: owner_remote_signer_public_key,
                     remote_signer_url: owner_remote_signer_url,
+                    remote_signer_tls_keystore_file: owner_remote_signer_tls_keystore_file,
+                    remote_signer_tls_keystore_password_file:
+                        owner_remote_signer_tls_keystore_password_file,
+                    remote_signer_tls_ca_cert_file: owner_remote_signer_tls_ca_cert_file,
                     rpc_url: rpc_url.clone(),
                 };
                 let sequencer_contract_options = if sequencer_private_key.is_some()
@@ -578,6 +649,10 @@ impl Command {
                         private_key: sequencer_private_key,
                         remote_signer_public_key: sequencer_remote_signer_public_key,
                         remote_signer_url: sequencer_remote_signer_url,
+                        remote_signer_tls_keystore_file: sequencer_remote_signer_tls_keystore_file,
+                        remote_signer_tls_keystore_password_file:
+                            sequencer_remote_signer_tls_keystore_password_file,
+                        remote_signer_tls_ca_cert_file: sequencer_remote_signer_tls_ca_cert_file,
                         rpc_url,
                     })
                 } else {
@@ -675,6 +750,33 @@ pub struct ContractCallOptions {
             conflicts_with = "private_key"
         )]
     remote_signer_public_key: Option<PublicKey>,
+    #[arg(
+        long = "remote-signer-tls-keystore-file",
+        value_name = "PATH",
+        env = "ETHREX_REMOTE_SIGNER_TLS_KEYSTORE_FILE",
+        help = "PKCS#12 keystore with the client certificate presented to the remote signer over TLS, for a Web3Signer that only accepts known clients.",
+        requires_all = &["remote_signer_url", "remote_signer_tls_keystore_password_file"],
+        conflicts_with = "private_key",
+    )]
+    remote_signer_tls_keystore_file: Option<PathBuf>,
+    #[arg(
+        long = "remote-signer-tls-keystore-password-file",
+        value_name = "PATH",
+        env = "ETHREX_REMOTE_SIGNER_TLS_KEYSTORE_PASSWORD_FILE",
+        help = "File containing the password of the remote signer TLS keystore.",
+        requires = "remote_signer_tls_keystore_file",
+        conflicts_with = "private_key"
+    )]
+    remote_signer_tls_keystore_password_file: Option<PathBuf>,
+    #[arg(
+        long = "remote-signer-tls-ca-cert-file",
+        value_name = "PATH",
+        env = "ETHREX_REMOTE_SIGNER_TLS_CA_CERT_FILE",
+        help = "PEM certificate to trust when verifying the remote signer, such as Web3Signer's self-signed certificate.",
+        requires = "remote_signer_url",
+        conflicts_with = "private_key"
+    )]
+    remote_signer_tls_ca_cert_file: Option<PathBuf>,
 }
 
 impl ContractCallOptions {
@@ -684,6 +786,11 @@ impl ContractCallOptions {
             self.private_key,
             self.remote_signer_url.clone(),
             self.remote_signer_public_key,
+            &RemoteSignerTlsConfig {
+                keystore_file: self.remote_signer_tls_keystore_file.clone(),
+                keystore_password_file: self.remote_signer_tls_keystore_password_file.clone(),
+                ca_cert_file: self.remote_signer_tls_ca_cert_file.clone(),
+            },
         )?;
 
         call_contract(&client, &signer, self.contract_address, selector, params).await?;

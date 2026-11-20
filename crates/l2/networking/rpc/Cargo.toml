@@ -32,7 +32,8 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 thiserror.workspace = true
 secp256k1.workspace = true
-reqwest.workspace = true
+# `native-tls` enables PKCS#12 client identities for remote signer mutual TLS.
+reqwest = { workspace = true, features = ["native-tls"] }
 ethereum-types.workspace = true
 hex.workspace = true
 rustc-hex.workspace = true

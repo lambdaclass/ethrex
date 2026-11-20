@@ -11,7 +11,9 @@ use ethrex_l2::{
     sequencer::configs::{AdminConfig, AlignedConfig, MonitorConfig},
 };
 use ethrex_l2_prover::{backend::BackendType, config::ProverConfig};
-use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
+use ethrex_l2_rpc::signer::{
+    LocalSigner, RemoteSigner, RemoteSignerTlsConfig, Signer, SignerError,
+};
 use ethrex_rpc::clients::eth::{
     BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
 };
@@ -19,6 +21,7 @@ use reqwest::Url;
 use secp256k1::{PublicKey, SecretKey};
 use std::{
     net::{IpAddr, Ipv4Addr},
+    path::PathBuf,
     str::FromStr,
 };
 use tracing::Level;
@@ -211,12 +214,14 @@ pub fn parse_signer(
     private_key: Option<SecretKey>,
     url: Option<Url>,
     public_key: Option<PublicKey>,
+    tls: &RemoteSignerTlsConfig,
 ) -> Result<Signer, SequencerOptionsError> {
     Ok(match url {
         Some(url) => RemoteSigner::new(
             url,
             public_key.ok_or(SequencerOptionsError::RemoteUrlWithoutPubkey)?,
-        )
+            tls,
+        )?
         .into(),
         None => LocalSigner::new(private_key.ok_or(SequencerOptionsError::NoSigner(
             "ProofCoordinator".to_string(),
@@ -229,6 +234,8 @@ pub fn parse_signer(
 pub enum SequencerOptionsError {
     #[error("Remote signer URL was provided without a public key")]
     RemoteUrlWithoutPubkey,
+    #[error("Failed to set up the remote signer: {0}")]
+    RemoteSigner(#[from] SignerError),
     #[error("No signer was set up for {0}")]
     NoSigner(String),
     #[error("No coinbase address was provided")]
@@ -247,12 +254,28 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
             opts.committer_opts.committer_l1_private_key,
             opts.committer_opts.committer_remote_signer_url,
             opts.committer_opts.committer_remote_signer_public_key,
+            &RemoteSignerTlsConfig {
+                keystore_file: opts
+                    .committer_opts
+                    .committer_remote_signer_tls_keystore_file,
+                keystore_password_file: opts
+                    .committer_opts
+                    .committer_remote_signer_tls_keystore_password_file,
+                ca_cert_file: opts.committer_opts.committer_remote_signer_tls_ca_cert_file,
+            },
         )?;
 
         let proof_coordinator_signer = parse_signer(
             opts.proof_coordinator_opts.proof_coordinator_l1_private_key,
             opts.proof_coordinator_opts.remote_signer_url,
             opts.proof_coordinator_opts.remote_signer_public_key,
+            &RemoteSignerTlsConfig {
+                keystore_file: opts.proof_coordinator_opts.remote_signer_tls_keystore_file,
+                keystore_password_file: opts
+                    .proof_coordinator_opts
+                    .remote_signer_tls_keystore_password_file,
+                ca_cert_file: opts.proof_coordinator_opts.remote_signer_tls_ca_cert_file,
+            },
         )?;
 
         Ok(Self {
@@ -701,6 +724,36 @@ pub struct CommitterOptions {
     )]
     pub committer_remote_signer_public_key: Option<PublicKey>,
     #[arg(
+        long = "committer.remote-signer-tls-keystore-file",
+        value_name = "PATH",
+        env = "ETHREX_COMMITTER_REMOTE_SIGNER_TLS_KEYSTORE_FILE",
+        help_heading = "L1 Committer options",
+        help = "PKCS#12 keystore with the client certificate presented to the remote signer over TLS, for a Web3Signer that only accepts known clients.",
+        requires_all = &["committer_remote_signer_url", "committer_remote_signer_tls_keystore_password_file"],
+        conflicts_with = "committer_l1_private_key",
+    )]
+    pub committer_remote_signer_tls_keystore_file: Option<PathBuf>,
+    #[arg(
+        long = "committer.remote-signer-tls-keystore-password-file",
+        value_name = "PATH",
+        env = "ETHREX_COMMITTER_REMOTE_SIGNER_TLS_KEYSTORE_PASSWORD_FILE",
+        help_heading = "L1 Committer options",
+        help = "File containing the password of the remote signer TLS keystore.",
+        requires = "committer_remote_signer_tls_keystore_file",
+        conflicts_with = "committer_l1_private_key"
+    )]
+    pub committer_remote_signer_tls_keystore_password_file: Option<PathBuf>,
+    #[arg(
+        long = "committer.remote-signer-tls-ca-cert-file",
+        value_name = "PATH",
+        env = "ETHREX_COMMITTER_REMOTE_SIGNER_TLS_CA_CERT_FILE",
+        help_heading = "L1 Committer options",
+        help = "PEM certificate to trust when verifying the remote signer, such as Web3Signer's self-signed certificate.",
+        requires = "committer_remote_signer_url",
+        conflicts_with = "committer_l1_private_key"
+    )]
+    pub committer_remote_signer_tls_ca_cert_file: Option<PathBuf>,
+    #[arg(
         long = "l1.on-chain-proposer-address",
         value_name = "ADDRESS",
         env = "ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS",
@@ -767,6 +820,9 @@ impl Default for CommitterOptions {
             arbitrary_base_blob_gas_price: 1_000_000_000,
             committer_remote_signer_url: None,
             committer_remote_signer_public_key: None,
+            committer_remote_signer_tls_keystore_file: None,
+            committer_remote_signer_tls_keystore_password_file: None,
+            committer_remote_signer_tls_ca_cert_file: None,
         }
     }
 }
@@ -785,6 +841,20 @@ impl CommitterOptions {
         self.committer_remote_signer_public_key = self
             .committer_remote_signer_public_key
             .or(defaults.committer_remote_signer_public_key);
+        self.committer_remote_signer_tls_keystore_file = self
+            .committer_remote_signer_tls_keystore_file
+            .clone()
+            .or(defaults.committer_remote_signer_tls_keystore_file.clone());
+        self.committer_remote_signer_tls_keystore_password_file = self
+            .committer_remote_signer_tls_keystore_password_file
+            .clone()
+            .or(defaults
+                .committer_remote_signer_tls_keystore_password_file
+                .clone());
+        self.committer_remote_signer_tls_ca_cert_file = self
+            .committer_remote_signer_tls_ca_cert_file
+            .clone()
+            .or(defaults.committer_remote_signer_tls_ca_cert_file.clone());
         self.on_chain_proposer_address = self
             .on_chain_proposer_address
             .or(defaults.on_chain_proposer_address);
@@ -855,6 +925,36 @@ pub struct ProofCoordinatorOptions {
     )]
     pub remote_signer_public_key: Option<PublicKey>,
     #[arg(
+        long = "proof-coordinator.remote-signer-tls-keystore-file",
+        value_name = "PATH",
+        env = "ETHREX_PROOF_COORDINATOR_REMOTE_SIGNER_TLS_KEYSTORE_FILE",
+        help_heading = "Proof coordinator options",
+        help = "PKCS#12 keystore with the client certificate presented to the remote signer over TLS, for a Web3Signer that only accepts known clients.",
+        requires_all = &["remote_signer_url", "remote_signer_tls_keystore_password_file"],
+        conflicts_with = "proof_coordinator_l1_private_key",
+    )]
+    pub remote_signer_tls_keystore_file: Option<PathBuf>,
+    #[arg(
+        long = "proof-coordinator.remote-signer-tls-keystore-password-file",
+        value_name = "PATH",
+        env = "ETHREX_PROOF_COORDINATOR_REMOTE_SIGNER_TLS_KEYSTORE_PASSWORD_FILE",
+        help_heading = "Proof coordinator options",
+        help = "File containing the password of the remote signer TLS keystore.",
+        requires = "remote_signer_tls_keystore_file",
+        conflicts_with = "proof_coordinator_l1_private_key"
+    )]
+    pub remote_signer_tls_keystore_password_file: Option<PathBuf>,
+    #[arg(
+        long = "proof-coordinator.remote-signer-tls-ca-cert-file",
+        value_name = "PATH",
+        env = "ETHREX_PROOF_COORDINATOR_REMOTE_SIGNER_TLS_CA_CERT_FILE",
+        help_heading = "Proof coordinator options",
+        help = "PEM certificate to trust when verifying the remote signer, such as Web3Signer's self-signed certificate.",
+        requires = "remote_signer_url",
+        conflicts_with = "proof_coordinator_l1_private_key"
+    )]
+    pub remote_signer_tls_ca_cert_file: Option<PathBuf>,
+    #[arg(
         long = "proof-coordinator.addr",
         default_value = "127.0.0.1",
         value_name = "IP_ADDRESS",
@@ -900,6 +1000,9 @@ impl Default for ProofCoordinatorOptions {
         Self {
             remote_signer_url: None,
             remote_signer_public_key: None,
+            remote_signer_tls_keystore_file: None,
+            remote_signer_tls_keystore_password_file: None,
+            remote_signer_tls_ca_cert_file: None,
             proof_coordinator_l1_private_key,
             listen_ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             listen_port: 3900,
@@ -934,6 +1037,18 @@ impl ProofCoordinatorOptions {
         self.remote_signer_public_key = self
             .remote_signer_public_key
             .or(defaults.remote_signer_public_key);
+        self.remote_signer_tls_keystore_file = self
+            .remote_signer_tls_keystore_file
+            .clone()
+            .or(defaults.remote_signer_tls_keystore_file.clone());
+        self.remote_signer_tls_keystore_password_file = self
+            .remote_signer_tls_keystore_password_file
+            .clone()
+            .or(defaults.remote_signer_tls_keystore_password_file.clone());
+        self.remote_signer_tls_ca_cert_file = self
+            .remote_signer_tls_ca_cert_file
+            .clone()
+            .or(defaults.remote_signer_tls_ca_cert_file.clone());
     }
 }
 #[derive(Parser, Debug, Clone)]
