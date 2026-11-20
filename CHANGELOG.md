@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-11-02
+
+- Swap EVM stack slots through AVX registers instead of a round trip through a stack temporary (SWAP1-16, SWAPN, EXCHANGE): SWAP loops −32..−35% on AMD Zen 5 and −15..−18% on Intel (Emerald Rapids), and the 176 `test_swap` tests of the benchmarkoor compute-repricing suite 10.6 → 8.4 s [#7399](https://github.com/lambdaclass/ethrex/pull/7399)
+
 ### 2026-10-22
 
 - Answer MODEXP inversions modulo well-known 256-bit primes (base^(p − 2) mod p for the BN254 base and scalar fields, the secp256k1 and P-256 base fields and group orders, and the BLS12-381 scalar field) with a safegcd inversion, and build the Montgomery constants with 8 squarings instead of 512 doublings: the dominant mainnet MODEXP call 4.09 → 0.73 µs [#7456](https://github.com/lambdaclass/ethrex/pull/7456)
