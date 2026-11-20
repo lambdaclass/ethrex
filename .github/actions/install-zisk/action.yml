@@ -16,20 +16,20 @@ runs:
       # and crates/guest-program/bin/zisk/Cargo.toml.
       #
       # ZISK_RUST_TOOLCHAIN pins the Rust toolchain release (0xPolygonHermez/rust tag)
-      # used to build guests, because ziskup installs whatever release is *latest* and
-      # that drifts independently of ZISK_VERSION. The two must agree on who supplies
-      # the guest linker script: since v1.1.0-alpha the SDK passes its own
-      # (`zisk-build` injects `-C link-arg=-T<zisk_linker_script.ld>`), so the pin has
-      # to name a toolchain whose riscv64ima-zisk-zkvm-elf target spec carries *no*
-      # embedded script — otherwise the link gets two with conflicting memory maps and
-      # rust-lld fails with "region 'rom' already defined".
-      # zisk-1.0.0 onwards dropped the embedded script; zisk-3.0.0 is the newest and is
-      # what ziskup itself installs today. (Before v1.1.0-alpha the dependency ran the
-      # other way: the SDK passed nothing, so the pin had to be zisk-0.5.1, the last
-      # release whose rustc still embedded a script.)
+      # used to build guests, because ziskup installs the latest release of the major
+      # its cargo-zisk requires (v1.3.x requires zisk-4.x) and that drifts
+      # independently of ZISK_VERSION. The two must agree on who supplies the guest
+      # linker script: since v1.1.0-alpha the SDK passes its own (`zisk-build` injects
+      # `-C link-arg=-T<zisk_linker_script.ld>`), so the pin has to name a toolchain
+      # whose riscv64ima-zisk-zkvm-elf target spec carries *no* embedded script —
+      # otherwise the link gets two with conflicting memory maps and rust-lld fails
+      # with "region 'rom' already defined". zisk-1.0.0 onwards dropped the embedded
+      # script. (Before v1.1.0-alpha the dependency ran the other way: the SDK passed
+      # nothing, so the pin had to be zisk-0.5.1, the last release whose rustc still
+      # embedded a script.)
       env:
-        ZISK_VERSION: "1.1.0-alpha"
-        ZISK_RUST_TOOLCHAIN: "zisk-3.0.0"
+        ZISK_VERSION: "1.3.2-alpha"
+        ZISK_RUST_TOOLCHAIN: "zisk-4.0.0"
       run: |
         source "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
 
@@ -39,7 +39,8 @@ runs:
         # ziskup >= v1.0.0-alpha resolves its install dir from XDG_CONFIG_HOME when set
         # (GitHub runners set it to ~/.config), which would place cargo-zisk outside the
         # PATH entry below. Pin the install dir so binaries land in $HOME/.zisk/bin.
-        retry env ZISK_DIR="$HOME/.zisk" "$HOME/.zisk/bin/ziskup" -v "${ZISK_VERSION}" -y
+        # --nokey skips the multi-GB proving key: CI only builds and lints, never proves.
+        retry env ZISK_DIR="$HOME/.zisk" "$HOME/.zisk/bin/ziskup" -v "${ZISK_VERSION}" --nokey -y
         # ziskup just installed the latest toolchain; replace it with the pinned one.
         # ZISK_HOME roots cargo-zisk's path resolution (also XDG-based by default) at
         # the same install dir.

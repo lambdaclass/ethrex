@@ -30,6 +30,7 @@ use tracing::{info, warn};
 pub const INVALID_RISC0_PROOF_SELECTOR: &str = "0x14add973";
 pub const INVALID_SP1_PROOF_SELECTOR: &str = "0x7ff849b5";
 pub const INVALID_TDX_PROOF_SELECTOR: &str = "0x62013a95";
+pub const INVALID_ZISK_PROOF_SELECTOR: &str = "0x5f22b00e";
 pub const ALIGNED_PROOF_VERIFICATION_FAILED_SELECTOR: &str = "0x44602025";
 
 pub async fn sleep_random(sleep_amount: u64) {

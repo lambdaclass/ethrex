@@ -17,10 +17,23 @@
 //! implementation into the link. The symbols are resolved only when `cargo-zisk`
 //! links the guest ELF.
 
+use bls12_381::Scalar;
 use ethrex_crypto::{Crypto, CryptoError};
+use ff::{Field, PrimeField};
 
 /// `zkvm_status` success value. Any other value is a failure.
 const ZKVM_EOK: i32 = 0;
+
+/// Field elements in a blob (EIP-4844).
+const FIELD_ELEMENTS_PER_BLOB: usize = 4096;
+/// Bytes in a blob: 4096 big-endian 32-byte field elements.
+const BYTES_PER_BLOB: usize = FIELD_ELEMENTS_PER_BLOB * 32;
+/// `log2(FIELD_ELEMENTS_PER_BLOB)`, the width of the bit-reversal permutation.
+const BLOB_DOMAIN_BITS: u32 = 12;
+/// Domain separator of the blob verification Fiat-Shamir challenge (EIP-4844).
+const FIAT_SHAMIR_PROTOCOL_DOMAIN: &[u8; 16] = b"FSBLOBVERIFY_V1_";
+/// The blob degree as the 16-byte big-endian integer the challenge hashes.
+const DEGREE_POLY: [u8; 16] = 4096u128.to_be_bytes();
 
 // 8-byte-aligned byte-array structs matching the `zkvm_bytes_*` types in
 // `zkvm_accelerators.h`.
@@ -173,6 +186,195 @@ fn cat192(a: [u8; 48], b: [u8; 48], c: [u8; 48], d: [u8; 48]) -> [u8; 192] {
 #[derive(Debug)]
 pub struct ZiskCrypto;
 
+/// Reads a canonical big-endian BLS12-381 scalar; `None` when it is not below the
+/// field modulus.
+fn scalar_from_be(bytes: &[u8]) -> Option<Scalar> {
+    let mut le = [0u8; 32];
+    le.copy_from_slice(bytes);
+    le.reverse();
+    Option::from(Scalar::from_bytes(&le))
+}
+
+fn scalar_to_be(scalar: &Scalar) -> [u8; 32] {
+    let mut be = scalar.to_bytes();
+    be.reverse();
+    be
+}
+
+/// The blob domain's roots of unity in bit-reversed order, the order in which a
+/// blob stores its evaluations (EIP-4844 `bit_reversal_permutation`).
+fn roots_of_unity_brp() -> Vec<Scalar> {
+    // `ROOT_OF_UNITY` generates the 2^S-th roots; raising it to 2^(S - 12) gives
+    // the primitive 4096th root, 7^((r - 1) / 4096) as in the specification.
+    let primitive =
+        Scalar::ROOT_OF_UNITY.pow_vartime(&[1u64 << (Scalar::S - BLOB_DOMAIN_BITS), 0, 0, 0]);
+    let mut roots = Vec::with_capacity(FIELD_ELEMENTS_PER_BLOB);
+    let mut root = Scalar::ONE;
+    for _ in 0..FIELD_ELEMENTS_PER_BLOB {
+        roots.push(root);
+        root *= primitive;
+    }
+    (0..FIELD_ELEMENTS_PER_BLOB)
+        .map(|i| roots[i.reverse_bits() >> (usize::BITS - BLOB_DOMAIN_BITS)])
+        .collect()
+}
+
+/// EIP-4844 `evaluate_polynomial_in_evaluation_form` for a 4096-element blob.
+fn evaluate_polynomial_in_evaluation_form(polynomial: &[Scalar], z: &Scalar) -> Scalar {
+    let roots = roots_of_unity_brp();
+    // Inside the domain the evaluation is the stored value itself.
+    if let Some(i) = roots.iter().position(|root| root == z) {
+        return polynomial[i];
+    }
+    // Barycentric formula: y = (z^width - 1) / width * sum_i p_i * w_i / (z - w_i).
+    let denominators: Vec<Scalar> = roots.iter().map(|root| z - root).collect();
+    let inverses = batch_invert(&denominators);
+    let sum = polynomial
+        .iter()
+        .zip(&roots)
+        .zip(&inverses)
+        .fold(Scalar::ZERO, |acc, ((p, w), inv)| acc + p * w * inv);
+    let width = Scalar::from(FIELD_ELEMENTS_PER_BLOB as u64);
+    let inverse_width = Option::from(width.invert()).unwrap_or(Scalar::ZERO);
+    let z_pow_width = z.pow_vartime(&[FIELD_ELEMENTS_PER_BLOB as u64, 0, 0, 0]);
+    sum * (z_pow_width - Scalar::ONE) * inverse_width
+}
+
+/// The blob as 4096 field elements (`blob_to_polynomial`); `None` when one of its
+/// big-endian 32-byte chunks is not below the field modulus.
+fn blob_to_polynomial(blob: &[u8]) -> Option<Vec<Scalar>> {
+    blob.chunks_exact(32).map(scalar_from_be).collect()
+}
+
+/// EIP-4844 `compute_challenge`: `sha256(domain ‖ degree ‖ blob ‖ commitment)`
+/// read as a big-endian integer modulo the field order. `sha256` is passed in so
+/// the guest can use its accelerator and tests the host implementation.
+fn compute_challenge(
+    blob: &[u8],
+    commitment: &[u8; 48],
+    sha256: impl Fn(&[u8]) -> [u8; 32],
+) -> Scalar {
+    let mut data = Vec::with_capacity(
+        FIAT_SHAMIR_PROTOCOL_DOMAIN.len() + DEGREE_POLY.len() + blob.len() + commitment.len(),
+    );
+    data.extend_from_slice(FIAT_SHAMIR_PROTOCOL_DOMAIN);
+    data.extend_from_slice(&DEGREE_POLY);
+    data.extend_from_slice(blob);
+    data.extend_from_slice(commitment);
+    let digest = sha256(&data);
+    // The digest is a big-endian integer; `from_bytes_wide` reads little-endian.
+    let mut wide = [0u8; 64];
+    wide[..32].copy_from_slice(&digest);
+    wide[..32].reverse();
+    Scalar::from_bytes_wide(&wide)
+}
+
+/// Montgomery batch inversion. Every input must be nonzero, which holds for the
+/// `z - w_i` denominators once `z` is known not to be a root.
+fn batch_invert(values: &[Scalar]) -> Vec<Scalar> {
+    let mut prefix = Vec::with_capacity(values.len());
+    let mut acc = Scalar::ONE;
+    for value in values {
+        prefix.push(acc);
+        acc *= value;
+    }
+    let mut inverse = Option::from(acc.invert()).unwrap_or(Scalar::ZERO);
+    let mut out = vec![Scalar::ZERO; values.len()];
+    for i in (0..values.len()).rev() {
+        out[i] = inverse * prefix[i];
+        inverse *= values[i];
+    }
+    out
+}
+
+#[cfg(all(test, feature = "c-kzg"))]
+mod tests {
+    use super::*;
+    use ethrex_crypto::NativeCrypto;
+    use ethrex_crypto::kzg::{blob_to_kzg_commitment_and_proof, verify_kzg_proof};
+
+    fn sample_blob() -> [u8; BYTES_PER_BLOB] {
+        let mut blob = [0u8; BYTES_PER_BLOB];
+        for (i, chunk) in blob.chunks_exact_mut(32).enumerate() {
+            // A zero first byte keeps every element canonical, as blob_from_bytes does.
+            for (j, byte) in chunk.iter_mut().enumerate().skip(1) {
+                *byte = (i.wrapping_mul(31).wrapping_add(j.wrapping_mul(7)) % 251) as u8;
+            }
+        }
+        blob
+    }
+
+    /// c-kzg's `compute_kzg_proof` returns the evaluation next to the proof, which
+    /// checks the barycentric formula on its own.
+    #[test]
+    fn evaluation_outside_the_domain_matches_the_reference() {
+        let blob = sample_blob();
+        let polynomial = blob_to_polynomial(&blob).expect("canonical blob");
+        let z = Scalar::from(0xdead_beef_u64).pow_vartime(&[7, 0, 0, 0]);
+
+        let (_, y_ref) = c_kzg::ethereum_kzg_settings(0)
+            .compute_kzg_proof(&blob.into(), &scalar_to_be(&z).into())
+            .expect("c-kzg compute_kzg_proof");
+        let y = evaluate_polynomial_in_evaluation_form(&polynomial, &z);
+
+        assert_eq!(scalar_to_be(&y), *y_ref.as_ref());
+    }
+
+    /// The blob proof c-kzg produces opens the commitment at its own challenge, so
+    /// it verifies at the challenge computed here only if both agree.
+    #[test]
+    fn challenge_matches_the_reference() {
+        let blob = sample_blob();
+        let (commitment, blob_proof) =
+            blob_to_kzg_commitment_and_proof(&blob).expect("c-kzg commitment");
+        let z = compute_challenge(&blob, &commitment, |data| NativeCrypto.sha256(data));
+
+        let (_, y_ref) = c_kzg::ethereum_kzg_settings(0)
+            .compute_kzg_proof(&blob.into(), &scalar_to_be(&z).into())
+            .expect("c-kzg compute_kzg_proof");
+
+        assert!(
+            verify_kzg_proof(commitment, scalar_to_be(&z), *y_ref.as_ref(), blob_proof)
+                .expect("c-kzg verification"),
+            "the blob proof must open the commitment at the challenge computed here"
+        );
+    }
+
+    /// End to end: the blob proof verifies at the `(z, y)` this provider hands to
+    /// the ZisK point-evaluation accelerator.
+    #[test]
+    fn blob_challenge_and_evaluation_match_the_reference() {
+        let blob = sample_blob();
+        let (commitment, proof) =
+            blob_to_kzg_commitment_and_proof(&blob).expect("c-kzg commitment");
+
+        let polynomial = blob_to_polynomial(&blob).expect("canonical blob");
+        let z = compute_challenge(&blob, &commitment, |data| NativeCrypto.sha256(data));
+        let y = evaluate_polynomial_in_evaluation_form(&polynomial, &z);
+
+        assert!(
+            verify_kzg_proof(commitment, scalar_to_be(&z), scalar_to_be(&y), proof)
+                .expect("c-kzg verification"),
+            "the point proof must verify at the challenge and evaluation computed here"
+        );
+    }
+
+    /// Evaluating at a domain point returns the stored evaluation.
+    #[test]
+    fn evaluation_inside_the_domain_is_the_stored_value() {
+        let roots = roots_of_unity_brp();
+        let polynomial: Vec<Scalar> = (0..FIELD_ELEMENTS_PER_BLOB as u64)
+            .map(Scalar::from)
+            .collect();
+        assert_eq!(
+            evaluate_polynomial_in_evaluation_form(&polynomial, &roots[7]),
+            Scalar::from(7)
+        );
+        assert_eq!(roots.len(), FIELD_ELEMENTS_PER_BLOB);
+        assert_eq!(roots[0], Scalar::ONE);
+    }
+}
+
 impl Crypto for ZiskCrypto {
     fn secp256k1_ecrecover(
         &self,
@@ -322,6 +524,33 @@ impl Crypto for ZiskCrypto {
             return Err(CryptoError::VerificationFailed);
         }
         Ok(())
+    }
+
+    /// EIP-4844 `verify_blob_kzg_proof`: derives the Fiat-Shamir challenge `z`,
+    /// evaluates the blob polynomial at `z` with the barycentric formula and
+    /// checks the point-evaluation proof with the ZisK accelerator. The crate's
+    /// `kzg-rs` default cannot run here, since it links SP1's syscalls on any
+    /// `target_os = "zkvm"`.
+    fn verify_blob_kzg_proof(
+        &self,
+        blob: &[u8],
+        commitment: &[u8; 48],
+        proof: &[u8; 48],
+    ) -> Result<bool, CryptoError> {
+        if blob.len() != BYTES_PER_BLOB {
+            return Err(CryptoError::InvalidInput("blob must be 131072 bytes"));
+        }
+        let polynomial = blob_to_polynomial(blob).ok_or(CryptoError::InvalidInput(
+            "blob field element is not canonical",
+        ))?;
+        let z = compute_challenge(blob, commitment, |data| self.sha256(data));
+        let y = evaluate_polynomial_in_evaluation_form(&polynomial, &z);
+
+        match self.verify_kzg_proof(&scalar_to_be(&z), &scalar_to_be(&y), commitment, proof) {
+            Ok(()) => Ok(true),
+            Err(CryptoError::VerificationFailed) => Ok(false),
+            Err(e) => Err(e),
+        }
     }
 
     fn bls12_381_g1_add(

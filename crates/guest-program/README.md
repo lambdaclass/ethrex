@@ -144,10 +144,12 @@ Each subdirectory in `bin/` contains a guest implementation for a specific zkVM.
 - **ELF output**: `bin/risc0/out/riscv32im-risc0-elf`
 - **VK output**: `bin/risc0/out/riscv32im-risc0-vk`
 
-### ZisK v1.1.0-alpha (Polygon)
+### ZisK v1.3.2-alpha (Polygon)
 - **Architecture**: RISC-V 64-bit
 - **ELF output**: `bin/zisk/out/riscv64ima-zisk-elf`
+- **VK output**: `bin/zisk/out/riscv64ima-zisk-vk` (program key as the `bytes32` the on-chain verifier hashes; needs the proving key installed, skipped under the `ci` feature)
 - **Requires**: `cargo-zisk` toolchain installed
+- **L2 output**: the guest commits `sha256(ProgramOutput.encode())`, since ZisK exposes 256 bytes of public outputs
 
 ### OpenVM v1.4.1 (Axiom)
 - **Architecture**: RISC-V 32-bit
