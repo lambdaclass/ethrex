@@ -337,7 +337,7 @@ async fn fcu_v4_rejects_pre_amsterdam_timestamp() {
         .expect_err("FCU V4 must reject pre-Amsterdam attributes");
 
     assert!(
-        matches!(err, RpcErr::InvalidPayloadAttributes(_)),
+        matches!(err, RpcErr::UnsupportedFork(_)),
         "got: {err:?}"
     );
 }
