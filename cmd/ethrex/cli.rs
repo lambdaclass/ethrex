@@ -1081,7 +1081,8 @@ pub async fn import_blocks(
     // layers are populated before this import appends. They are dropped whenever an
     // earlier import or node run exits, and the next block's parent state would
     // otherwise be unreachable.
-    crate::initializers::regenerate_head_state(&store, &blockchain)
+    // Offline import: no syncer will run, so an unreachable state is fatal here.
+    crate::initializers::regenerate_head_state(&store, &blockchain, false)
         .await
         .map_err(|e| ChainError::Custom(format!("regenerate_head_state failed: {e}")))?;
 
@@ -1379,7 +1380,9 @@ pub async fn import_blocks_bench(
     init_datadir(datadir);
     let store = init_store(datadir, genesis).await?;
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
-    regenerate_head_state(&store, &blockchain).await.unwrap();
+    regenerate_head_state(&store, &blockchain, false)
+        .await
+        .unwrap();
     let path_metadata =
         metadata(path).unwrap_or_else(|e| panic!("failed to stat path {path:?}: {e}"));
 
