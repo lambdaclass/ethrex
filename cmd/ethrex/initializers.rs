@@ -303,9 +303,13 @@ pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<
 /// shutdown (signal-triggered shutdowns leave it unset and exit zero).
 static FATAL_SHUTDOWN_CAUSE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
-/// Returns the fatal-subsystem failure that initiated shutdown, if any.
+/// Returns the fatal-subsystem failure that initiated shutdown, if any. This includes an
+/// irrecoverable sync error, which cancels the node from inside the p2p crate.
 pub fn fatal_shutdown_cause() -> Option<&'static str> {
-    FATAL_SHUTDOWN_CAUSE.get().map(String::as_str)
+    FATAL_SHUTDOWN_CAUSE
+        .get()
+        .map(String::as_str)
+        .or_else(ethrex_p2p::sync::fatal_sync_error)
 }
 
 /// Spawns a subsystem whose failure is fatal to the node. On an error raised *before*
