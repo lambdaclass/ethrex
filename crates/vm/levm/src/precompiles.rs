@@ -496,6 +496,46 @@ impl PrecompileCache {
     }
 }
 
+/// Length of the calldata prefix that determines a precompile's result and gas cost.
+///
+/// [`PrecompileCache`] keys entries on this prefix instead of the full calldata, so calls
+/// that differ only in bytes the precompile never reads share one entry, and that entry
+/// is no larger than what was read.
+///
+/// Each rule mirrors how the precompile consumes its input and must change with it:
+/// - `ECRECOVER` and `ECADD` read the first 128 bytes, `ECMUL` the first 96.
+/// - `MODEXP` reads a 96-byte header of three lengths, then that many bytes of base,
+///   exponent and modulus.
+///
+/// Every other precompile either reads its whole input or rejects any length but the
+/// one it expects, so the whole calldata stays significant. Shorter inputs are left
+/// as they are: zero-padding is not folded into the key.
+fn cache_key_len(address: Address, calldata: &[u8]) -> usize {
+    const MODEXP_HEADER_LEN: usize = 96;
+
+    let len = calldata.len();
+    if address == ECRECOVER.address || address == ECADD.address {
+        len.min(128)
+    } else if address == ECMUL.address {
+        len.min(96)
+    } else if address == MODEXP.address {
+        let Some(header) = calldata.get(..MODEXP_HEADER_LEN) else {
+            return len;
+        };
+        // Lengths that do not fit are rejected by the precompile or exceed the calldata
+        // anyway: keep the whole input rather than reason about them here.
+        header
+            .chunks_exact(32)
+            .try_fold(MODEXP_HEADER_LEN, |limit, size| {
+                let size = usize::try_from(u256_from_big_endian(size)).ok()?;
+                limit.checked_add(size)
+            })
+            .map_or(len, |limit| len.min(limit))
+    } else {
+        len
+    }
+}
+
 #[expect(clippy::as_conversions, clippy::indexing_slicing)]
 pub fn execute_precompile(
     address: Address,
@@ -564,7 +604,9 @@ pub fn execute_precompile(
     let cache = cache.filter(|_| {
         address != IDENTITY.address && calldata.len() <= PRECOMPILE_CACHE_MAX_INPUT_BYTES
     });
-    if let Some((output, gas_cost)) = cache.and_then(|c| c.get(&address, calldata)) {
+    // The cache is keyed on the bytes the precompile reads, see `cache_key_len`.
+    let cache_key = &calldata[..cache_key_len(address, calldata)];
+    if let Some((output, gas_cost)) = cache.and_then(|c| c.get(&address, cache_key)) {
         increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
         return Ok(output);
     }
@@ -587,7 +629,7 @@ pub fn execute_precompile(
         && let Ok(output) = &result
     {
         let gas_cost = gas_before.saturating_sub(*gas_remaining);
-        cache.insert(address, calldata, output, gas_cost);
+        cache.insert(address, cache_key, output, gas_cost);
     }
 
     result
@@ -1844,6 +1886,98 @@ mod tests {
         ));
         // LStar on L1: is a precompile.
         assert!(is_precompile(&execute_addr, Fork::LStar, VMType::L1));
+    }
+
+    /// MODEXP calldata: the three lengths of the header, then `body` bytes.
+    fn modexp_header_then_body(sizes: [U256; 3], body: usize) -> Vec<u8> {
+        let mut calldata = Vec::new();
+        for size in sizes {
+            calldata.extend_from_slice(&size.to_big_endian());
+        }
+        calldata.extend(std::iter::repeat_n(0xaa, body));
+        calldata
+    }
+
+    #[test]
+    fn cache_key_len_stops_at_the_last_byte_a_fixed_size_precompile_reads() {
+        for (precompile, read, lengths) in [
+            (ECRECOVER, 128, [0, 1, 127, 128, 129, 512]),
+            (ECADD, 128, [0, 1, 127, 128, 129, 512]),
+            (ECMUL, 96, [0, 1, 95, 96, 97, 384]),
+        ] {
+            for len in lengths {
+                let calldata = vec![0xaa; len];
+                assert_eq!(
+                    cache_key_len(precompile.address, &calldata),
+                    len.min(read),
+                    "{} with {len} bytes",
+                    precompile.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cache_key_len_follows_the_modexp_header() {
+        let address = MODEXP.address;
+        let sizes = [1, 2, 3].map(U256::from);
+        // Trailing bytes after base, exponent and modulus are dropped.
+        assert_eq!(
+            cache_key_len(address, &modexp_header_then_body(sizes, 6)),
+            102
+        );
+        assert_eq!(
+            cache_key_len(address, &modexp_header_then_body(sizes, 50)),
+            102
+        );
+        assert_eq!(
+            cache_key_len(address, &modexp_header_then_body([U256::zero(); 3], 50)),
+            96
+        );
+        // A body shorter than the header announces is zero-padded by the precompile.
+        assert_eq!(
+            cache_key_len(address, &modexp_header_then_body(sizes, 4)),
+            100
+        );
+        // So is a header shorter than 96 bytes.
+        assert_eq!(cache_key_len(address, &[0xaa; 95]), 95);
+        assert_eq!(cache_key_len(address, &[]), 0);
+    }
+
+    #[test]
+    fn cache_key_len_keeps_modexp_calldata_whose_lengths_do_not_fit() {
+        let address = MODEXP.address;
+
+        let huge_length = modexp_header_then_body([U256::one(), U256::MAX, U256::one()], 50);
+        assert_eq!(cache_key_len(address, &huge_length), huge_length.len());
+
+        let overflowing_sum = modexp_header_then_body([U256::from(u64::MAX); 3], 50);
+        assert_eq!(
+            cache_key_len(address, &overflowing_sum),
+            overflowing_sum.len()
+        );
+    }
+
+    #[test]
+    fn cache_key_len_keeps_the_whole_input_of_other_precompiles() {
+        let calldata = vec![0xaa; 1000];
+        for precompile in [
+            SHA2_256,
+            RIPEMD_160,
+            ECPAIRING,
+            BLAKE2F,
+            POINT_EVALUATION,
+            BLS12_G1ADD,
+            BLS12_G1MSM,
+            BLS12_G2ADD,
+            BLS12_G2MSM,
+            BLS12_PAIRING_CHECK,
+            BLS12_MAP_FP_TO_G1,
+            BLS12_MAP_FP2_TO_G2,
+            P256VERIFY,
+        ] {
+            assert_eq!(cache_key_len(precompile.address, &calldata), calldata.len());
+        }
     }
 }
 
