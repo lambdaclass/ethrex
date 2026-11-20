@@ -37,6 +37,7 @@ use spawned_concurrency::{
     actor,
     error::ActorError,
     protocol,
+    system::{ExecutionGroup, SystemError},
     tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response},
 };
 use std::{
@@ -169,6 +170,10 @@ pub trait SubscriptionManagerProtocol: Send + Sync {
 impl SubscriptionManager {
     /// Spawn the actor and return a handle.
     pub fn spawn(store: Store) -> ActorRef<SubscriptionManager> {
+        Self::new(store).start()
+    }
+
+    fn new(store: Store) -> Self {
         SubscriptionManager {
             store,
             subscribers: HashMap::new(),
@@ -177,7 +182,15 @@ impl SubscriptionManager {
             log_subscribers: HashMap::new(),
             last_head: None,
         }
-        .start()
+    }
+
+    /// [`Self::spawn`], admitted to `group`, whose actor system stops it on
+    /// shutdown.
+    pub fn spawn_on(
+        store: Store,
+        group: &ExecutionGroup,
+    ) -> Result<ActorRef<SubscriptionManager>, SystemError> {
+        Self::new(store).start_on(group)
     }
 
     #[send_handler]

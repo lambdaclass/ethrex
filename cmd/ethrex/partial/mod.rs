@@ -191,6 +191,7 @@ impl PartialCommand {
             None,
             opts.tx_broadcasting_time_interval,
             opts.lookup_interval,
+            None,
         )?;
         let initiator = RLPxInitiator::spawn(p2p_context.clone());
         let peer_handler = PeerHandler::new(peer_table.clone(), initiator);
@@ -203,6 +204,7 @@ impl PartialCommand {
             blockchain,
             p2p_context,
             shared_local_node,
+            None,
         )
         .await;
         let peers: Arc<dyn Peers> = Arc::new(P2pPeers::new(peer_table, peer_handler, store));

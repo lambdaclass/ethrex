@@ -10,3 +10,4 @@ The ethrex project runs several suites of tests to ensure proper protocol implem
 - [Rust Unit Tests](./rust.md)
 - [Load Tests](./load-tests.md)
 - [RPC Load Tests](./rpc-load-tests.md)
+- [Testing Roadmap](./roadmap.md)

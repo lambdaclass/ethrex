@@ -25,9 +25,7 @@ use spawned_concurrency::{
     tasks::{Actor, ActorStart as _, Context, Handler, send_after, spawn_listener},
 };
 use std::io;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
 use tui_logger::{TuiLoggerLevelOutput, TuiLoggerSmartWidget, TuiWidgetEvent, TuiWidgetState};
 
 use crate::MonitorConfig;
@@ -81,7 +79,8 @@ pub trait MonitorProtocol: Send + Sync {
 
 pub struct EthrexMonitor {
     widget: EthrexMonitorWidget,
-    terminal: Arc<Mutex<Terminal<CrosstermBackend<io::Stdout>>>>,
+    /// Only this actor draws, so it owns the terminal outright.
+    terminal: Terminal<CrosstermBackend<io::Stdout>>,
     cancellation_token: CancellationToken,
 }
 
@@ -97,7 +96,7 @@ impl EthrexMonitor {
         let widget = EthrexMonitorWidget::new(sequencer_state, store, rollup_store, cfg).await?;
         let monitor = EthrexMonitor {
             widget,
-            terminal: Arc::new(Mutex::new(setup_terminal()?)),
+            terminal: setup_terminal()?,
             cancellation_token,
         };
         monitor.start();
@@ -124,8 +123,7 @@ impl EthrexMonitor {
 
     #[stopped]
     async fn stopped(&mut self, _ctx: &Context<Self>) {
-        let mut terminal = self.terminal.lock().await;
-        let _ = restore_terminal(&mut terminal)
+        let _ = restore_terminal(&mut self.terminal)
             .inspect_err(|err| error!("Error restoring terminal: {err}"));
         info!("Monitor has been cancelled");
         self.cancellation_token.cancel();
@@ -145,7 +143,7 @@ impl EthrexMonitor {
         }
         let _ = self
             .widget
-            .draw(&mut *self.terminal.lock().await)
+            .draw(&mut self.terminal)
             .inspect_err(|err| error!("Render error: {err}"));
         // Schedule next tick only after this one finishes
         send_after(
@@ -170,7 +168,7 @@ impl EthrexMonitor {
         }
         let _ = self
             .widget
-            .draw(&mut *self.terminal.lock().await)
+            .draw(&mut self.terminal)
             .inspect_err(|err| error!("Render error: {err}"));
     }
 }

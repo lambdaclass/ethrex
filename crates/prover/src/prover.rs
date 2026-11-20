@@ -7,7 +7,7 @@ use ethrex_guest_program::input::ProgramInput;
 use serde::{Serialize, de::DeserializeOwned};
 use spawned_concurrency::{
     error::ActorError,
-    protocol,
+    protocol, send_handler,
     tasks::{Actor, ActorStart as _, Backend, Context, Handler, send_after},
 };
 use std::time::Duration;
@@ -206,6 +206,7 @@ where
 {
 }
 
+#[send_handler]
 impl<B, I> Handler<prover_protocol::Poll> for Prover<B, I>
 where
     B: ProverBackend + Send + Sync + 'static,
@@ -221,6 +222,7 @@ where
     }
 }
 
+#[send_handler]
 impl<B, I> Handler<prover_protocol::Abort> for Prover<B, I>
 where
     B: ProverBackend + Send + Sync + 'static,

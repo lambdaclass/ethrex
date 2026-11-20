@@ -454,6 +454,29 @@ async fn logs_subscription_gets_the_matching_logs_of_each_new_head() {
 }
 
 #[tokio::test]
+async fn managed_logs_subscription_reads_the_supplied_store() {
+    let store = test_store();
+    let system = spawned_concurrency::system::ActorSystem::new().unwrap();
+    let group = system.async_group("subscriptions", 1).unwrap();
+    let manager = SubscriptionManager::spawn_on(store.clone(), &group).unwrap();
+    let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    manager
+        .subscribe_logs(tx, address_filter(&[1]))
+        .await
+        .unwrap()
+        .unwrap();
+
+    let one = add_block(&store, &BlockHeader::default(), 0, &[(1, 10)]).await;
+    manager.new_head(one).unwrap();
+    assert_eq!(received_logs(&manager, &mut rx).await, vec![(1, 1, false)]);
+    let report = system.shutdown(std::time::Duration::from_secs(5)).await;
+    assert!(
+        report.complete,
+        "managed subscription actor shutdown timed out"
+    );
+}
+
+#[tokio::test]
 async fn logs_subscription_matches_topics() {
     let store = test_store();
     let manager = SubscriptionManager::spawn(store.clone());

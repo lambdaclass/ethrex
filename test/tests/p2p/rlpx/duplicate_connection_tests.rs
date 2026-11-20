@@ -76,6 +76,7 @@ async fn spawn_node(key_byte: u8, target_peers: usize) -> TestNode<impl RlpxInit
         None,
         1000,
         100.0,
+        None,
     )
     .expect("p2p context");
     tokio::spawn(serve_p2p_requests(context.clone()));

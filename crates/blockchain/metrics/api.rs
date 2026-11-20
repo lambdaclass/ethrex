@@ -71,5 +71,14 @@ pub(crate) async fn get_metrics() -> String {
         };
     }
 
+    // The actor runtime's own series, all prefixed `spawned_`: mailbox depth,
+    // queue wait, handler duration, request outcomes and actor lifecycle,
+    // summed over every actor in the process (no per-actor labels).
+    #[cfg(feature = "actors")]
+    {
+        ret_string.push('\n');
+        ret_string.push_str(&spawned_concurrency::metrics::render_prometheus());
+    }
+
     ret_string
 }

@@ -78,16 +78,21 @@ impl L2Command {
         let (log_filter_handler, _guard) = l2::init_tracing(&init_options);
         let mut l2_options = init_options;
 
+        // The dev L1 node keeps running beside the L2 one. It owns its actors
+        // through this value, so it lives until this command returns.
+        let mut _dev_l1_node = None;
         if l2_options.node_opts.dev {
             println!("Removing L1 and L2 databases...");
             remove_db(DB_ETHREX_DEV_L1.as_ref(), true);
             remove_db(DB_ETHREX_DEV_L2.as_ref(), true);
             println!("Initializing L1");
-            init_l1(
-                crate::cli::Options::default_l1(),
-                log_filter_handler.clone(),
-            )
-            .await?;
+            _dev_l1_node = Some(
+                init_l1(
+                    crate::cli::Options::default_l1(),
+                    log_filter_handler.clone(),
+                )
+                .await?,
+            );
             println!("Deploying contracts...");
             let contract_addresses =
                 l2::deployer::deploy_l1_contracts(l2::deployer::DeployerOptions::default()).await?;

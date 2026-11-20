@@ -168,7 +168,9 @@ pub(crate) async fn perform(
                 .based_context
                 .map_or_else(|| L2ConnState::Unsupported, L2ConnState::Disconnected),
             tx_broadcaster: context.tx_broadcaster,
-            current_requests: HashMap::new(),
+            current_requests: spawned_concurrency::tasks::PendingReplies::with_capacity(
+                super::server::MAX_PENDING_REQUESTS,
+            ),
             disconnect_reason: None,
             is_validated: false,
             serve_requests: WindowCounter::new(),

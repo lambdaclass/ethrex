@@ -16,9 +16,10 @@ mod discv5_handlers;
 pub mod ip_predictor;
 pub mod lookup;
 pub mod server;
+pub mod supervised;
 
 pub use ip_predictor::IpPredictor;
-pub use server::{DiscoveryServer, DiscoveryServerError, is_discv4_packet};
+pub use server::{DiscoveryServer, DiscoveryServerError, InjectCrash, is_discv4_packet};
 
 use std::time::Duration;
 

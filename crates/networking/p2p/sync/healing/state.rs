@@ -12,7 +12,7 @@ use std::{
     cmp::Ordering as CmpOrdering,
     collections::{BTreeMap, BinaryHeap, HashMap},
     sync::atomic::Ordering,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use ethrex_common::{H256, constants::EMPTY_KECCAK_HASH, types::AccountState};
@@ -25,7 +25,7 @@ use tracing::{debug, trace};
 use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_handler::{PeerHandler, RequestMetadata},
-    peer_table::PeerTableServerProtocol as _,
+    peer_table::{PeerTableServerProtocol as _, wait_for_best_peer},
     rlpx::p2p::SNAP1_ONLY_CAPABILITIES,
     snap::{
         SnapError,
@@ -149,8 +149,6 @@ async fn heal_state_trie(
         );
     // Contains both nodes and their corresponding paths to heal
     let mut nodes_to_heal = Vec::new();
-
-    let mut logged_no_free_peers_count = 0;
 
     loop {
         // Unconditional yield: ensures we cooperate with the tokio runtime even
@@ -276,27 +274,23 @@ async fn heal_state_trie(
                             .unwrap_or_default(),
                         longest_path_seen,
                     );
-                    let Some((peer_id, connection, permit)) = peers
-                        .peer_table
-                        .get_best_peer(SNAP1_ONLY_CAPABILITIES.to_vec())
-                        .await
-                        .inspect_err(|err| {
-                            debug!(err=?err, "Error requesting a peer to perform state healing")
-                        })
-                        .unwrap_or(None)
-                    else {
+                    // Waits for a free peer instead of polling. Without one this
+                    // iteration only re-queues the batch, as it did when polling:
+                    // the healing, write and staleness steps below are skipped
+                    // either way. A peer frees up when an in-flight request
+                    // returns, just before its response reaches the channel.
+                    let Some((peer_id, connection, permit)) = wait_for_best_peer(
+                        &peers.peer_table,
+                        SNAP1_ONLY_CAPABILITIES.to_vec(),
+                    )
+                    .await
+                    .inspect_err(
+                        |err| debug!(err=?err, "Error requesting a peer to perform state healing"),
+                    )
+                    .unwrap_or(None) else {
                         // If there are no peers available, re-add the batch to the paths vector, and continue
                         paths.extend(batch.into_iter().map(DepthOrderedMetadata));
-
-                        // Log ~ once every 10 seconds
-                        if logged_no_free_peers_count == 0 {
-                            trace!("We are missing peers in heal_state_trie");
-                            logged_no_free_peers_count = 1000;
-                        }
-                        logged_no_free_peers_count -= 1;
-
-                        // Sleep a bit to avoid busy polling
-                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        trace!("We are missing peers in heal_state_trie");
                         continue;
                     };
 

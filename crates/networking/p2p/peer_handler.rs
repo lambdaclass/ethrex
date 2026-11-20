@@ -3,7 +3,7 @@ use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_table::{
         PeerData, PeerDiagnostics, PeerTable, PeerTableServerProtocol as _, RequestPermit,
-        SelectedPeer,
+        SelectedPeer, wait_for_best_peer,
     },
     rlpx::{
         connection::server::PeerConnection,
@@ -324,8 +324,6 @@ impl PeerHandler {
 
         *METRICS.headers_download_start_time.lock().await = Some(SystemTime::now());
 
-        let mut logged_no_free_peers_count = 0;
-
         loop {
             if let Ok((headers, peer_id, _connection, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
@@ -377,19 +375,11 @@ impl PeerHandler {
                 self.peer_table.record_success(peer_id)?;
                 debug!("Downloader {peer_id} freed");
             }
-            let Some((peer_id, mut connection, permit)) = self
-                .peer_table
-                .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
-                .await?
+            // Waits for a free peer instead of polling.
+            let Some((peer_id, mut connection, permit)) =
+                wait_for_best_peer(&self.peer_table, SUPPORTED_ETH_CAPABILITIES.to_vec()).await?
             else {
-                // Log ~ once every 10 seconds
-                if logged_no_free_peers_count == 0 {
-                    trace!("We are missing peers in request_block_headers");
-                    logged_no_free_peers_count = 1000;
-                }
-                logged_no_free_peers_count -= 1;
-                // Sleep a bit to avoid busy polling
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                trace!("We are missing peers in request_block_headers");
                 continue;
             };
 
@@ -1231,15 +1221,31 @@ impl PeerHandlerError {
             | PeerHandlerError::ReceiveMessageFromPeerTimeout(_)
             | PeerHandlerError::InvalidHeaders
             | PeerHandlerError::NoResponseFromPeer => true,
-            // A timed-out actor request is transient (mailbox pressure or a
-            // slow handler — requests use spawned-concurrency's 5s default
-            // timeout); a stopped actor means p2p is shutting down and must
-            // stay fatal.
-            PeerHandlerError::PeerTableError(ActorError::RequestTimeout) => true,
-            PeerHandlerError::PeerTableError(ActorError::ActorStopped) => false,
+            PeerHandlerError::PeerTableError(err) => peer_table_error_is_recoverable(err),
             PeerHandlerError::StorageFull | PeerHandlerError::Snap(_) => false,
         }
     }
+}
+
+/// Whether a failed peer-table request is worth retrying.
+///
+/// A timeout is transient: the table is alive but its mailbox is backed up
+/// (see [`PEER_SELECTION_TIMEOUT`](crate::peer_table::PEER_SELECTION_TIMEOUT)
+/// for how long peer selection waits), so the next attempt can succeed. A
+/// stopped table is not: while the node runs, it means the p2p layer is gone.
+/// During shutdown the sync cycle never gets this far; see
+/// [`SyncError::failure_action`](crate::sync::SyncError::failure_action).
+///
+/// A reply the table dropped, or a request it refused at a bound
+/// (`Overloaded`, e.g. a full peer-waiter queue), is transient too.
+///
+/// A table that died while answering (`ActorStopped`, with its exit reason)
+/// or was already gone when asked (`NoProc`) is not, and neither is a kind
+/// spawned adds later.
+pub fn peer_table_error_is_recoverable(err: &ActorError) -> bool {
+    // `is_transient` covers `RequestTimeout` and `Overloaded`. A dropped reply
+    // is retried too (see above), which spawned does not count as transient.
+    err.is_transient() || matches!(err, ActorError::ReplyDropped)
 }
 
 #[cfg(test)]

@@ -14,7 +14,7 @@ use spawned_concurrency::{
     actor,
     error::ActorError,
     protocol,
-    tasks::{Actor, ActorStart as _, Context, Handler, spawn_listener},
+    tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, Response, spawn_listener},
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -49,15 +49,14 @@ pub struct ProofCoordinator {
     aligned: bool,
     git_commit_hash: String,
     qpl_tool_path: Option<String>,
-    /// Tracks batch assignments to provers: (batch_number, prover_type) -> assignment time.
-    /// In-memory only; lost on restart. Keyed per proof type so that e.g. a RISC0
-    /// assignment doesn't block an SP1 prover from working on the same batch.
-    assignments: Arc<std::sync::Mutex<HashMap<(u64, ProverType), Instant>>>,
-    prover_timeout: Duration,
+    /// The actor that owns the batch assignments; every connection handler
+    /// claims and releases batches through it.
+    assignments: ActorRef<AssignmentTracker>,
 }
 
 #[actor(protocol = ProofCoordinatorProtocol)]
 impl ProofCoordinator {
+    /// Starts the assignment tracker, so it must run inside the runtime.
     pub fn new(
         config: &SequencerConfig,
         rollup_store: StoreRollup,
@@ -93,8 +92,10 @@ impl ProofCoordinator {
             git_commit_hash: get_git_commit_hash(),
             aligned: config.aligned.aligned_mode,
             qpl_tool_path: config.proof_coordinator.qpl_tool_path.clone(),
-            assignments: Arc::new(std::sync::Mutex::new(HashMap::new())),
-            prover_timeout: Duration::from_millis(config.proof_coordinator.prover_timeout_ms),
+            assignments: AssignmentTracker::new(Duration::from_millis(
+                config.proof_coordinator.prover_timeout_ms,
+            ))
+            .start(),
         })
     }
 
@@ -154,37 +155,12 @@ impl ProofCoordinator {
         let base_batch = 1 + self.rollup_store.get_latest_verified_batch_proof().await?.0;
 
         loop {
-            // Lock briefly to find and claim a candidate
-            let candidate = {
-                let mut assignments = self.assignments.lock().map_err(|_| {
-                    ProofCoordinatorError::Custom("Assignment lock poisoned".to_string())
-                })?;
-
-                assignments.retain(|&(batch, _), _| batch >= base_batch);
-
-                let now = Instant::now();
-                let mut batch = base_batch;
-                // Upper bound: there can be at most assignments.len() consecutive
-                // assigned batches for this prover type.
-                let max_batch =
-                    base_batch.saturating_add(u64::try_from(assignments.len()).unwrap_or(u64::MAX));
-
-                let key = |b| (b, prover_type);
-                while batch <= max_batch {
-                    match assignments.get(&key(batch)) {
-                        None => break,
-                        Some(&assigned_at)
-                            if now.duration_since(assigned_at) > self.prover_timeout =>
-                        {
-                            break;
-                        }
-                        Some(_) => batch += 1,
-                    }
-                }
-
-                assignments.insert(key(batch), now);
-                batch
-            };
+            // The tracker claims the candidate atomically against other provers.
+            let candidate = self
+                .assignments
+                .claim(base_batch, prover_type)
+                .await
+                .map_err(|e| ProofCoordinatorError::InternalError(e.to_string()))?;
 
             // No prover input for this version — nothing left to assign
             let Some(input) = self
@@ -192,9 +168,7 @@ impl ProofCoordinator {
                 .get_prover_input_by_batch_and_version(candidate, commit_hash)
                 .await?
             else {
-                if let Ok(mut assignments) = self.assignments.lock() {
-                    assignments.remove(&(candidate, prover_type));
-                }
+                let _ = self.assignments.release(candidate, prover_type).await;
                 return Ok(None);
             };
 
@@ -283,8 +257,10 @@ impl ProofCoordinator {
                 "A proof was received for a batch and type that is already stored"
             );
         } else {
-            metrics!(if let Ok(assignments) = self.assignments.lock()
-                && let Some(&assigned_at) = assignments.get(&(batch_number, prover_type))
+            metrics!(if let Ok(Some(assigned_at)) = self
+                .assignments
+                .assigned_at(batch_number, prover_type)
+                .await
             {
                 let proving_time: i64 =
                     assigned_at.elapsed().as_secs().try_into().map_err(|_| {
@@ -300,9 +276,7 @@ impl ProofCoordinator {
         }
 
         // Remove the assignment for this (batch, prover_type)
-        if let Ok(mut assignments) = self.assignments.lock() {
-            assignments.remove(&(batch_number, prover_type));
-        }
+        let _ = self.assignments.release(batch_number, prover_type).await;
 
         let response = ProofData::proof_submit_ack(batch_number);
         send_response(stream, &response).await?;
@@ -357,6 +331,85 @@ impl ProofCoordinator {
         send_response(stream, &response).await?;
         info!("ProverSetupACK sent");
         Ok(())
+    }
+}
+
+#[protocol]
+pub trait AssignmentTrackerProtocol: Send + Sync {
+    /// Claims the lowest batch from `base_batch` up that this prover type has
+    /// not been assigned, or whose assignment timed out, and returns it.
+    fn claim(&self, base_batch: u64, prover_type: ProverType) -> Response<u64>;
+    fn release(&self, batch: u64, prover_type: ProverType) -> Response<()>;
+    fn assigned_at(&self, batch: u64, prover_type: ProverType) -> Response<Option<Instant>>;
+}
+
+/// Owns the batch assignments to provers, so that concurrent connections
+/// never hand the same batch to two provers of one type.
+pub struct AssignmentTracker {
+    /// (batch_number, prover_type) -> assignment time. In-memory only; lost on
+    /// restart. Keyed per proof type so that e.g. a RISC0 assignment doesn't
+    /// block an SP1 prover from working on the same batch.
+    assignments: HashMap<(u64, ProverType), Instant>,
+    prover_timeout: Duration,
+}
+
+#[actor(protocol = AssignmentTrackerProtocol)]
+impl AssignmentTracker {
+    fn new(prover_timeout: Duration) -> Self {
+        Self {
+            assignments: HashMap::new(),
+            prover_timeout,
+        }
+    }
+
+    #[request_handler]
+    async fn handle_claim(
+        &mut self,
+        msg: assignment_tracker_protocol::Claim,
+        _ctx: &Context<Self>,
+    ) -> u64 {
+        let (base_batch, prover_type) = (msg.base_batch, msg.prover_type);
+        let assignments = &mut self.assignments;
+        assignments.retain(|&(batch, _), _| batch >= base_batch);
+
+        let now = Instant::now();
+        let mut batch = base_batch;
+        // Upper bound: there can be at most assignments.len() consecutive
+        // assigned batches for this prover type.
+        let max_batch =
+            base_batch.saturating_add(u64::try_from(assignments.len()).unwrap_or(u64::MAX));
+
+        let key = |b| (b, prover_type);
+        while batch <= max_batch {
+            match assignments.get(&key(batch)) {
+                None => break,
+                Some(&assigned_at) if now.duration_since(assigned_at) > self.prover_timeout => {
+                    break;
+                }
+                Some(_) => batch += 1,
+            }
+        }
+
+        assignments.insert(key(batch), now);
+        batch
+    }
+
+    #[request_handler]
+    async fn handle_release(
+        &mut self,
+        msg: assignment_tracker_protocol::Release,
+        _ctx: &Context<Self>,
+    ) {
+        self.assignments.remove(&(msg.batch, msg.prover_type));
+    }
+
+    #[request_handler]
+    async fn handle_assigned_at(
+        &mut self,
+        msg: assignment_tracker_protocol::AssignedAt,
+        _ctx: &Context<Self>,
+    ) -> Option<Instant> {
+        self.assignments.get(&(msg.batch, msg.prover_type)).copied()
     }
 }
 

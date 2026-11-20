@@ -30,6 +30,8 @@ ethrex-rpc.workspace = true
 
 [dev-dependencies]
 ethrex-rpc = { workspace = true, features = ["test-utils"] }
+spawned-concurrency.workspace = true
+spawned-test.workspace = true
 ethrex-vm.workspace = true
 once_cell = "1.21"
 rustc-hash.workspace = true

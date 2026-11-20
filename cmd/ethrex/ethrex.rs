@@ -2,15 +2,13 @@ use clap::Parser;
 use ethrex::{
     cli::CLI,
     initializers::{init_l1, init_tracing},
-    utils::{NodeConfigFile, get_client_version, is_memory_datadir, store_node_config_file},
+    shutdown::{SHUTDOWN_DEADLINE, shutdown_l1},
+    utils::get_client_version,
 };
-use ethrex_p2p::{peer_table::PeerTable, types::SharedLocalNode};
-use ethrex_storage::Store;
 use serde::Deserialize;
-use std::{path::Path, time::Duration};
+use std::time::Duration;
 use tokio::signal::unix::{SignalKind, signal};
-use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::info;
 
 const LATEST_VERSION_URL: &str = "https://api.github.com/repos/lambdaclass/ethrex/releases/latest";
 
@@ -45,42 +43,6 @@ pub static malloc_conf: &[u8] =
 #[allow(non_upper_case_globals)]
 #[unsafe(export_name = "malloc_conf")]
 pub static malloc_conf: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19,background_thread:true,dirty_decay_ms:30000,muzzy_decay_ms:30000\0";
-
-async fn server_shutdown(
-    datadir: &Path,
-    cancel_token: &CancellationToken,
-    peer_table: PeerTable,
-    shared_local_node: SharedLocalNode,
-    store: &Store,
-) {
-    info!("Server shut down started...");
-    // Stop feeding new blocks before draining, so the persist queue can't grow.
-    cancel_token.cancel();
-    // Drain the persist worker, force-flush the block-data buffer, and fsync the
-    // DB. Without this an abrupt exit (e.g. `docker restart -t 0`) loses the
-    // buffered block-data tail and leaves the DB needing WAL recovery on next
-    // start. In-memory trie diff-layers are intentionally left uncommitted and
-    // re-executed on the next start (see `Store::shutdown`).
-    info!("Flushing database to disk...");
-    if let Err(err) = store.shutdown().await {
-        error!("Failed to flush database on shutdown: {err}");
-    }
-    if !is_memory_datadir(datadir) {
-        let node_config_path = datadir.join("node_config.json");
-        info!("Storing config at {:?}...", node_config_path);
-        // Clone the current (possibly updated) record out and drop the guard.
-        let record = {
-            let guard = shared_local_node
-                .read()
-                .expect("shared_local_node poisoned");
-            guard.record.clone()
-        };
-        let node_config = NodeConfigFile::new(peer_table, record).await;
-        store_node_config_file(node_config, node_config_path);
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
-    info!("Server shutting down!");
-}
 
 /// Builds the CPU profile report and writes it to `profile.pb` in the current directory.
 #[cfg(feature = "cpu_profiling")]
@@ -198,25 +160,22 @@ async fn main() -> eyre::Result<()> {
     info!("ethrex version: {}", get_client_version());
     tokio::spawn(periodically_check_version_update());
 
-    let (datadir, cancel_token, peer_table, shared_local_node, store) =
-        init_l1(opts, Some(log_filter_handler)).await?;
+    let node = init_l1(opts, Some(log_filter_handler)).await?;
+    let cancel_token = node.cancel_token.clone();
 
     let mut signal_terminate = signal(SignalKind::terminate())?;
 
     log_global_allocator();
 
+    // The node's one shutdown path, whatever starts it. No actor listens for
+    // ctrl-c on its own.
     tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, shared_local_node, &store).await;
-        }
-        _ = signal_terminate.recv() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, shared_local_node, &store).await;
-        }
+        _ = tokio::signal::ctrl_c() => {}
+        _ = signal_terminate.recv() => {}
         // A fatal subsystem (e.g. the RPC server) cancels the token to abort the node.
-        _ = cancel_token.cancelled() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, shared_local_node, &store).await;
-        }
+        _ = cancel_token.cancelled() => {}
     }
+    let outcome = shutdown_l1(node, SHUTDOWN_DEADLINE).await;
 
     #[cfg(feature = "cpu_profiling")]
     if let Err(e) = write_cpu_profile(profiler_guard) {
@@ -230,6 +189,12 @@ async fn main() -> eyre::Result<()> {
         return Err(eyre::eyre!(
             "node shut down after a fatal subsystem failure: {cause}"
         ));
+    }
+
+    // The database is already flushed. Returning would have the runtime wait,
+    // with no deadline, on whatever did not stop; `shutdown_l1` has named it.
+    if !outcome.complete {
+        std::process::exit(1);
     }
 
     Ok(())
