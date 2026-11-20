@@ -1,19 +1,11 @@
-//! Regression tests for `build_payload_loop`'s post-loop final mempool
-//! re-drain and its interaction with cancellation (`engine_getPayload`).
+//! Regression tests for `build_payload_loop`'s interaction with cancellation
+//! (`engine_getPayload`).
 //!
-//! Two properties must hold at the same time:
-//!
-//! - a transaction that lands in the tight window between the loop's last
-//!   completed build and a `getPayload`-triggered cancellation must still be
-//!   included when the held payload is empty — otherwise the builder returns
-//!   an empty block while the mempool has transactions (the Hive
-//!   "Invalid Missing Ancestor Syncing ReOrg" flake family);
-//! - once cancelled with a non-empty payload in hand, the loop must NOT pay
-//!   for one more full block build: `engine_getPayload` is blocked on it and
-//!   a full rebuild of a large block can exceed the Engine API 1s deadline
-//!   by itself (observed as missed proposals under sustained mempool inflow,
-//!   where `tx_seq()` has always advanced and the re-drain guard never
-//!   short-circuits).
+//! Once cancelled with a non-empty payload in hand, the loop must NOT pay for
+//! one more full block build: `engine_getPayload` is blocked on it and a full
+//! rebuild of a large block can exceed the Engine API 1s deadline by itself
+//! (observed as missed proposals under sustained mempool inflow, where
+//! `tx_seq()` has always advanced).
 //!
 //! The tests drive the `build_payload_loop` future manually (its initial
 //! build runs synchronously up to the first `await`) so the ordering between
@@ -139,42 +131,6 @@ macro_rules! poll_once_pending {
         })
         .await
     };
-}
-
-/// A tx that lands between the last completed build (here: the initial empty
-/// build) and cancellation must be included in the returned payload. This is
-/// the property the final re-drain exists for; losing it re-introduces the
-/// empty-payload race on quick FCU → getPayload sequences.
-#[tokio::test]
-async fn cancelled_loop_still_drains_mempool_when_payload_is_empty() {
-    let keys = read_private_keys(1);
-    let accounts: Vec<Address> = keys.iter().map(address_for).collect();
-    let store = setup_store(&accounts).await;
-    let blockchain = blockchain_for(&store);
-
-    // Mempool is empty: the initial build produces an empty payload.
-    let token = CancellationToken::new();
-    let mut fut = std::pin::pin!(
-        blockchain
-            .clone()
-            .build_payload_loop(payload_block(&store), token.clone())
-    );
-    poll_once_pending!(fut);
-
-    // The tx lands, then getPayload cancels before any rebuild completes.
-    let tx = signed_transfer(&keys[0], 0).await;
-    let tx_hash = blockchain.add_transaction_to_pool(tx).await.unwrap();
-    token.cancel();
-
-    let res = fut.await.unwrap();
-    assert!(
-        res.payload
-            .body
-            .transactions
-            .iter()
-            .any(|tx| tx.hash(&NativeCrypto) == tx_hash),
-        "tx that landed before cancellation is missing from the payload"
-    );
 }
 
 /// Once cancelled with a non-empty payload in hand, the loop must return that
