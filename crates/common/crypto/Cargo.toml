@@ -56,9 +56,9 @@ aws-lc-rs = ["dep:aws-lc-rs", "std"]
 # BLS defaults then return an error and the guest `Crypto` providers override
 # them with the portable `bls12_381` implementation that lives in
 # `ethrex-guest-program`, so this crate carries no `bls12_381` git dependency.
-blst = ["dep:blst", "std"]
+blst = ["dep:blst", "blst/portable", "std"]
 secp256k1 = ["dep:secp256k1", "std"]
-c-kzg = ["dep:c-kzg", "c-kzg/std", "c-kzg/ethereum_kzg_settings", "std"]
+c-kzg = ["dep:c-kzg", "c-kzg/std", "c-kzg/ethereum_kzg_settings", "c-kzg/portable", "std"]
 kzg-rs = ["dep:kzg-rs"]
 
 risc0 = ["c-kzg/std", "c-kzg/ethereum_kzg_settings", "c-kzg/portable", "std"]
