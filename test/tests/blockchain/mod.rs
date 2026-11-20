@@ -28,6 +28,7 @@ mod storage_sharding_tests;
 mod trace_call_log_index_tests;
 mod trace_call_replay_tests;
 mod typed_zero_transaction_tests;
+mod unsealed_payload_tests;
 mod withdrawals_before_requests_tests;
 mod witness_update_order_tests;
 mod wrong_chain_id_tests;

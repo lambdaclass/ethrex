@@ -229,14 +229,15 @@ Blockchain::build_payload(template: Block) -> PayloadBuildResult
 
 ### Payload Rebuilding
 
-Payloads are rebuilt continuously until requested:
+Payloads are rebuilt as new transactions arrive, until requested:
 
 ```rust
 // crates/blockchain/payload.rs
 Blockchain::build_payload_loop(payload, cancel_token)
 ```
 
-This maximizes MEV by including the most profitable transactions available.
+The loop keeps the most valuable build (block value, then gas used) and leaves
+it unsealed; `getPayload` seals it once.
 
 ## Error Handling
 
