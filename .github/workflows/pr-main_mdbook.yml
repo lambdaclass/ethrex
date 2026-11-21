@@ -18,7 +18,7 @@ jobs:
   lint:
     # "Lint" is a required check, don't change the name
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}
     steps:
@@ -48,7 +48,7 @@ jobs:
 
   deploy:
     name: Deploy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     needs: lint
     if: ${{ github.ref == 'refs/heads/main' }}
     concurrency:

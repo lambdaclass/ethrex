@@ -31,7 +31,7 @@ jobs:
   bump:
     name: Bump ere
     if: github.repository == 'lambdaclass/ethrex' && vars.ERE_BUMP_APP_ID != ''
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Generate GitHub App token
         id: app-token

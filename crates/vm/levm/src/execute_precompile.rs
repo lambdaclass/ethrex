@@ -247,7 +247,7 @@ mod tests {
                     block_access_list: Vec::new().into(),
                     slot_number: 0,
                 },
-                versioned_hashes: Vec::new().into(),
+                versioned_hashes: Default::default(),
                 parent_beacon_block_root: [0u8; 32],
                 execution_requests: ExecutionRequests {
                     deposits: Vec::new().into(),

@@ -1,0 +1,47 @@
+# Pins for the hive runs. PR CI (pr-main_l1.yaml) and the daily report
+# (daily_hive_report.yaml) read them through .github/scripts/hive-flags.sh, and
+# the root Makefile reads them for the local targets.
+# Every key is a plain scalar on its own line, so `sed` can read the file
+# without `yq`. `make check-fixture-pins` fails when these pins and the fixture
+# files disagree, and .github/scripts/bump-fixtures.sh moves them together.
+
+# EELS simulator image tag: the execution-specs mainnet fixture release that
+# every EELS hive job runs, with the framework it was published with. From
+# tests@v21.0.0 on that release carries every fork through Amsterdam. It has to
+# be the release `tooling/ef_tests/.fixtures_url` points at: the two pins grade
+# the same client, so a release that only one of them follows fails every
+# fixture the other release changed. The image's framework descends from
+# execution-specs ecd94a47 (PR #3104), which carries the ethrex
+# INVALID_SIGNATURE_VRS exception mappings.
+tag: v21.0.2
+
+# The zkEVM bundle in `tooling/ef_tests/.fixtures_url_zkevm`: its release, and
+# the `tests@` release it is filled from, as that release's notes state. The URL
+# has to name `zkevm_release`, so whoever moves the bundle edits these two lines
+# as well and sees the base. `zkevm_base` has to equal `tag`: when they drift,
+# the two bundles describe slightly different chains.
+zkevm_release: v21.0.7
+zkevm_base: v21.0.2
+
+# Hive commit every job runs unless it has its own below. This is
+# ethereum/hive#1609's merge commit: the EELS simulators run from the images
+# execution-specs publishes, selected with `tag=`. It is after ethereum/hive#1530,
+# which restored the mainnet deposit contract address as the mapper's fallback.
+hive_version: 11864a701d331535f4ed487e4d538bead457d760
+
+# rpc-compat runs its own, older hive commit and execution-apis commit.
+# execution-apis#627 moved the test chain to a pre-merge genesis, which ethrex
+# does not support, so the corpus stays one commit before it. From
+# ethereum/hive#1623 the simulator image runs `make build` in the
+# execution-apis checkout, and that commit predates the Makefile
+# (execution-apis#751), so the image does not build on newer hive.
+rpc_compat_hive_version: 7c4c99ebb79955f23e1952fb0282a0dadcb6e181
+rpc_compat_branch: d08382ae5c808680e976fce4b73f4ba91647199b
+
+# consume-wirex needs a hive commit that has the simulator (ethereum/hive#1640),
+# which the default predates. execution-specs publishes no consume-wirex image
+# per fixture release yet, so `consume_wirex_tag` is the digest of the `latest`
+# image built on 2026-11-01: fixtures tests@v21.0.2, framework forks/bogota at
+# fd9298410. Move it to a release tag once a release ships that image.
+consume_wirex_hive_version: 64d7af92c63962779d0c9bbf404bb58733bd1b05
+consume_wirex_tag: latest@sha256:7b9f515c21e8b9ee44f535c21103f7c9143a99820cccf3ad1537d68192ade46a
