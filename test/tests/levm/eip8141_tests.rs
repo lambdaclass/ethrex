@@ -609,7 +609,7 @@ fn approve_halts_when_frame_scope_is_none() {
 // ==================== Batched VERIFY revert invalidates tx ====================
 
 #[test]
-fn batched_verify_revert_invalidates_tx() {
+fn atomic_batch_flag_on_a_verify_frame_is_a_format_rejection() {
     let reverter = Address::from_low_u64_be(0xF1);
     let stop_ct = Address::from_low_u64_be(0xF2);
     // frame0: VERIFY -> sender, runs APPROVE(3) -> sets payer=sender (tx would be valid).
@@ -649,16 +649,22 @@ fn batched_verify_revert_invalidates_tx() {
         ),
         (stop_ct, U256::zero(), 0, Bytes::from(vec![0x00u8])), // STOP
     ];
+    // EIP-8141 forbids the atomic batch flag on a `VERIFY` frame, so this
+    // transaction never reaches the batch at all: it is rejected by static
+    // validation. The assertion used to read `InvalidFrameTransaction` and so
+    // passed for the wrong reason -- the reverting frame below is never
+    // executed, and a batched `VERIFY` revert is not constructible while the
+    // flag is forbidden.
     let (result, db) = run_frame_tx(&accounts, tx);
-    assert!(
-        matches!(
-            result,
-            Err(VMError::TxValidation(
-                ethrex_levm::errors::TxValidationError::InvalidFrameTransaction
-            ))
+    match result {
+        Err(VMError::TxValidation(
+            ethrex_levm::errors::TxValidationError::InvalidFrameTransactionFormat(ref reason),
+        )) => assert!(
+            reason.contains("atomic batch flag"),
+            "expected the atomic-batch-flag rule, got {reason:?}"
         ),
-        "a batched VERIFY revert must invalidate the tx; got {result:?}"
-    );
+        ref other => panic!("expected InvalidFrameTransactionFormat, got {other:?}"),
+    }
     assert_db_cache_unchanged(&db, &accounts);
 }
 
@@ -4002,5 +4008,183 @@ fn atomic_batch_unroll_keeps_frame_status_and_gas_but_drops_logs() {
     assert!(
         report.gas_used < 2 * BATCH_FRAME_GAS,
         "charging every batch frame its full gas_limit would over-bill the payer"
+    );
+}
+
+// ==================== Rejection-reason granularity ====================
+//
+// A frame transaction that is rejected for the right reason but reports the
+// wrong one is indistinguishable, to a conformance harness, from one rejected
+// by accident. These pin the reason, not just the rejection: every case below
+// was already rejected before this suite existed, but every one of them
+// reported `InvalidFrameTransaction` -- the VERIFY-frame-never-approved
+// message -- regardless of what actually failed.
+
+/// A frame with a reserved mode fails static validation, and the reason travels
+/// with the error instead of being flattened into the approval message.
+#[test]
+fn static_constraint_failure_reports_the_format_reason() {
+    let mut tx = frame_tx_with_frames(vec![Frame {
+        mode: 0xFF, // no such mode
+        flags: 0,
+        target: Some(Address::from_low_u64_be(0xC0)),
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }]);
+    tx.nonce = 0;
+
+    let (result, _db) = run_frame_tx(&[], tx);
+    match result {
+        Err(VMError::TxValidation(
+            ethrex_levm::errors::TxValidationError::InvalidFrameTransactionFormat(reason),
+        )) => {
+            assert!(
+                !reason.is_empty(),
+                "the format error must carry the static-validation reason"
+            );
+        }
+        other => panic!("expected InvalidFrameTransactionFormat, got {other:?}"),
+    }
+}
+
+/// An empty frame list is a format failure, not an approval failure.
+#[test]
+fn empty_frame_list_reports_the_format_reason() {
+    let tx = frame_tx_with_frames(Vec::new());
+    let (result, _db) = run_frame_tx(&[], tx);
+    assert!(
+        matches!(
+            result,
+            Err(VMError::TxValidation(
+                ethrex_levm::errors::TxValidationError::InvalidFrameTransactionFormat(_)
+            ))
+        ),
+        "expected InvalidFrameTransactionFormat, got {result:?}"
+    );
+}
+
+/// EIP-7825 as scoped by EIP-8141: the intrinsic cost plus the frames' gas
+/// limits must fit `TX_MAX_GAS_LIMIT`. Previously this transaction executed and
+/// was only caught downstream.
+#[test]
+fn frame_gas_above_the_transaction_cap_reports_the_gas_cap() {
+    let tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0,
+        target: Some(Address::from_low_u64_be(0xC0)),
+        gas_limit: ethrex_common::constants::TX_MAX_GAS_LIMIT_AMSTERDAM,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }]);
+    assert!(
+        tx.max_gas() > ethrex_common::constants::TX_MAX_GAS_LIMIT_AMSTERDAM,
+        "the frame gas plus the intrinsic cost must exceed the cap for this to test anything"
+    );
+
+    let (result, _db) = run_frame_tx(&[], tx);
+    assert!(
+        matches!(
+            result,
+            Err(VMError::TxValidation(
+                ethrex_levm::errors::TxValidationError::TxMaxGasLimitExceeded { .. }
+            ))
+        ),
+        "expected TxMaxGasLimitExceeded, got {result:?}"
+    );
+}
+
+/// A transaction sized exactly to the cap stays admissible, so the check is a
+/// bound rather than an off-by-one.
+#[test]
+fn frame_gas_exactly_at_the_transaction_cap_is_not_rejected_for_gas() {
+    let cap = ethrex_common::constants::TX_MAX_GAS_LIMIT_AMSTERDAM;
+    let probe = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0,
+        target: Some(Address::from_low_u64_be(0xC0)),
+        gas_limit: 0,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }]);
+    // `max_gas()` with a zero-gas frame is the intrinsic anchor; give the frame
+    // exactly the remainder so the total lands on the cap.
+    let headroom = cap - probe.max_gas();
+    let tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0,
+        target: Some(Address::from_low_u64_be(0xC0)),
+        gas_limit: headroom,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }]);
+    assert_eq!(tx.max_gas(), cap, "this case must sit exactly on the cap");
+
+    let (result, _db) = run_frame_tx(&[], tx);
+    assert!(
+        !matches!(
+            result,
+            Err(VMError::TxValidation(
+                ethrex_levm::errors::TxValidationError::TxMaxGasLimitExceeded { .. }
+            ))
+        ),
+        "a transaction exactly at the cap must not be rejected for exceeding it; got {result:?}"
+    );
+}
+
+/// A nonce at the u64 ceiling can never be incremented, so it is invalid on its
+/// own terms rather than merely mismatched against the sender's nonce.
+#[test]
+fn nonce_at_the_u64_ceiling_reports_nonce_is_max() {
+    let mut tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0,
+        target: Some(Address::from_low_u64_be(0xC0)),
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }]);
+    tx.nonce = u64::MAX;
+
+    // `run_frame_tx` seeds the sender at `tx.nonce`, so the mismatch check
+    // cannot fire and the ceiling rule is the only one left to report.
+    let (result, _db) = run_frame_tx(&[], tx);
+    assert!(
+        matches!(
+            result,
+            Err(VMError::TxValidation(
+                ethrex_levm::errors::TxValidationError::NonceIsMax
+            ))
+        ),
+        "expected NonceIsMax, got {result:?}"
+    );
+}
+
+/// A versioned hash with an unrecognised version byte is an EIP-4844 failure,
+/// not a generic frame-format one.
+#[test]
+fn wrong_blob_version_byte_reports_the_blob_hash_rule() {
+    let mut tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0,
+        target: Some(Address::from_low_u64_be(0xC0)),
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }]);
+    let mut hash = [0u8; 32];
+    hash[0] = 0x02; // not VERSIONED_HASH_VERSION_KZG
+    tx.blob_versioned_hashes = vec![H256(hash)];
+    tx.max_fee_per_blob_gas = U256::from(1_000_000_000u64);
+
+    let (result, _db) = run_frame_tx(&[], tx);
+    assert!(
+        matches!(
+            result,
+            Err(VMError::TxValidation(
+                ethrex_levm::errors::TxValidationError::Type3TxInvalidBlobVersionedHash
+            ))
+        ),
+        "expected Type3TxInvalidBlobVersionedHash, got {result:?}"
     );
 }
