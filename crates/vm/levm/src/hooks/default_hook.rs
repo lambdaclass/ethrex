@@ -144,7 +144,7 @@ impl Hook for DefaultHook {
         // (9) SENDER_NOT_EOA
         if !vm.env.disable_sender_eoa_check {
             let code = vm.db.get_code(sender_info.code_hash)?;
-            validate_sender(sender_address, code.code())?;
+            validate_sender(sender_address, code.code(), vm.env.config.fork)?;
         }
 
         // (10) GAS_ALLOWANCE_EXCEEDED
@@ -829,8 +829,10 @@ pub fn validate_type_4_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     vm.eip7702_set_access_code()
 }
 
-pub fn validate_sender(sender_address: Address, code: &[u8]) -> Result<(), VMError> {
-    if !code.is_empty() && !code_has_delegation(code)? {
+/// EIP-3607: reject a sender that has code. From Prague, EIP-7702 exempts a sender
+/// whose code is a delegation designator; before Prague any code makes it invalid.
+pub fn validate_sender(sender_address: Address, code: &[u8], fork: Fork) -> Result<(), VMError> {
+    if !code.is_empty() && !(fork >= Fork::Prague && code_has_delegation(code)?) {
         return Err(TxValidationError::SenderNotEOA(sender_address).into());
     }
     Ok(())
@@ -988,4 +990,128 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
     vm.current_call_frame.set_code(bytecode)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod sender_not_eoa_tests {
+    use super::*;
+    use crate::{
+        constants::SET_CODE_DELEGATION_BYTES,
+        db::{Database, gen_db::GeneralizedDatabase},
+        environment::{EVMConfig, Environment},
+        errors::DatabaseError,
+        tracing::LevmCallTracer,
+        vm::VMType,
+    };
+    use bytes::Bytes;
+    use ethrex_common::{
+        H256,
+        types::{
+            Account, AccountInfo, AccountState, ChainConfig, CodeMetadata, LegacyTransaction,
+            Transaction, TxKind,
+        },
+    };
+    use ethrex_crypto::NativeCrypto;
+    use rustc_hash::FxHashMap;
+    use std::sync::Arc;
+
+    struct EmptyStore;
+
+    impl Database for EmptyStore {
+        fn get_account_state(&self, _: Address) -> Result<AccountState, DatabaseError> {
+            Ok(AccountState::default())
+        }
+        fn get_storage_value(&self, _: Address, _: H256) -> Result<U256, DatabaseError> {
+            Ok(U256::zero())
+        }
+        fn get_block_hash(&self, _: u64) -> Result<H256, DatabaseError> {
+            Ok(H256::zero())
+        }
+        fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+            Ok(ChainConfig::default())
+        }
+        fn get_account_code(&self, _: H256) -> Result<Code, DatabaseError> {
+            Ok(Code::default())
+        }
+        fn get_code_metadata(&self, _: H256) -> Result<CodeMetadata, DatabaseError> {
+            Ok(CodeMetadata { length: 0 })
+        }
+    }
+
+    /// Runs a plain value transfer from a sender whose code is the EIP-7702
+    /// delegation designator `0xef0100 || delegate`.
+    fn transfer_from_delegated_sender(fork: Fork) -> Result<(), VMError> {
+        let sender = Address::from_low_u64_be(0x100);
+        let delegate = Address::from_low_u64_be(0x200);
+        let recipient = Address::from_low_u64_be(0x300);
+
+        let mut designator = SET_CODE_DELEGATION_BYTES.to_vec();
+        designator.extend_from_slice(delegate.as_bytes());
+        let code = Code::from_bytecode(Bytes::from(designator), &NativeCrypto);
+
+        let mut accounts = FxHashMap::default();
+        accounts.insert(
+            sender,
+            Account {
+                info: AccountInfo {
+                    balance: U256::from(10_000_000),
+                    code_hash: code.hash,
+                    ..Default::default()
+                },
+                code,
+                ..Default::default()
+            },
+        );
+        let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(EmptyStore), accounts);
+
+        let env = Environment {
+            origin: sender,
+            gas_limit: 100_000,
+            gas_price: U256::from(1),
+            block_gas_limit: u64::MAX,
+            config: EVMConfig::new(fork, EVMConfig::canonical_values(fork)),
+            ..Default::default()
+        };
+        let tx = Transaction::LegacyTransaction(LegacyTransaction {
+            gas_price: U256::from(1),
+            gas: 100_000,
+            to: TxKind::Call(recipient),
+            value: U256::from(1),
+            ..Default::default()
+        });
+
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &tx,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &NativeCrypto,
+            None,
+        )?;
+        vm.execute().map(|_| ())
+    }
+
+    #[test]
+    fn delegated_sender_is_not_an_eoa_before_prague() {
+        for fork in [Fork::London, Fork::Shanghai, Fork::Cancun] {
+            let result = transfer_from_delegated_sender(fork);
+            assert!(
+                matches!(
+                    result,
+                    Err(VMError::TxValidation(TxValidationError::SenderNotEOA(_)))
+                ),
+                "{fork:?}: expected SenderNotEOA, got {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn delegated_sender_is_accepted_from_prague() {
+        for fork in [Fork::Prague, Fork::Osaka] {
+            let result = transfer_from_delegated_sender(fork);
+            assert!(result.is_ok(), "{fork:?}: expected Ok, got {result:?}");
+        }
+    }
 }
