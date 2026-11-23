@@ -2,7 +2,7 @@
 	init-l1 rm-db-l1 deploy-l1 deploy-l1-sp1 init-l2 \
 	init-metrics down-metrics restart-metrics down-l2 restart-l2 rm-db-l2 \
 	init-prover-sp1 init-prover-risc0 init-prover-exec build-prover clean-tee clean-tee-contract-deps \
-	test integration-test integration-test-gpu state-diff-test
+	test integration-test integration-test-gpu state-diff-test test-down-l2
 
 .DEFAULT_GOAL := help
 
@@ -220,7 +220,11 @@ down-metrics: ## 🛑 Shuts down the metrics' containers
 restart-metrics: down-metrics init-metrics ## 🔄 Restarts the metrics' containers
 
 down-l2: ## 🛑 Shuts down the L2 Lambda ethrex Client
-	pgrep -a -f "ethrex l2" | awk '!/prover/ {print $1}' | xargs -r kill -s SIGINT
+	pgrep -a -f "ethrex l2" | awk '!/prover/ {print $$1}' | xargs kill -s SIGTERM
+
+test-down-l2: ## 🧪 Verify the down-l2 recipe actually signals the L2 node
+	@./test_down_l2.sh
+	@./test_down_l2_e2e.sh
 
 rm-db-l2: ## 🛑 Removes the DB used by the L2
 	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- l2 removedb --datadir ${ethrex_L2_DEV_DB} --force
