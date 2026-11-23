@@ -676,7 +676,7 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<U256, crate::errors::V
     // (9) SENDER_NOT_EOA
     if !vm.env.disable_sender_eoa_check {
         let code = vm.db.get_code(sender_info.code_hash)?;
-        default_hook::validate_sender(sender_address, code.code())?;
+        default_hook::validate_sender(sender_address, code.code(), vm.env.config.fork)?;
     }
 
     // (10) GAS_ALLOWANCE_EXCEEDED
