@@ -57,7 +57,8 @@ pub enum SendRawTransactionRequest {
     PrivilegedL2(PrivilegedL2Transaction),
     FeeToken(FeeTokenTransaction),
     Frame(FrameTransaction),
-    /// A blob-carrying frame transaction in its EIP-7594 network wrapper.
+    /// A blob-carrying frame transaction in its EIP-7594 network wrapper, or one
+    /// with its dependency signatures in the same wrapper.
     FrameWithBlobs(WrappedFrameTransaction),
 }
 

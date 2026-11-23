@@ -29,6 +29,10 @@ tracing.workspace = true
 # network's `AGGREGATED_VK`, which `leanvm.rs` checks. Needs Rust 1.97 or newer.
 rec_aggregation = { git = "https://github.com/NethermindEth/lean-bindings", rev = "8d54d3165d453f340420cf39d8da174e497c50bc", optional = true }
 lean_sphincs = { git = "https://github.com/NethermindEth/lean-bindings", rev = "8d54d3165d453f340420cf39d8da174e497c50bc", optional = true }
+# The leanSPHINCS scheme leanVM itself ships (7,740-byte signatures). It is not
+# the parameter set lean-bindings vendors
+# for the aggregation guest above, so only mempool admission uses it.
+leanvm_sphincs = { git = "https://github.com/leanEthereum/leanVM", rev = "92a97c919b2f2d6fe09853090b6b23f781ecec07", package = "lean_sphincs", optional = true }
 
 [features]
 default = []
@@ -36,4 +40,4 @@ default = []
 # proving stack, and producing an aggregate peaks around 9-11 GiB of resident
 # memory. A node built without it can still enforce EIP-8288 block-validity rule 1
 # and will reject any block carrying a proof rather than accept one it cannot check.
-leanvm = ["dep:rec_aggregation", "dep:lean_sphincs"]
+leanvm = ["dep:rec_aggregation", "dep:lean_sphincs", "dep:leanvm_sphincs"]

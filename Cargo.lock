@@ -3923,7 +3923,8 @@ dependencies = [
  "ethereum-types 0.15.1",
  "ethrex-common",
  "ethrex-rlp",
- "lean_sphincs",
+ "lean_sphincs 0.1.0 (git+https://github.com/NethermindEth/lean-bindings?rev=8d54d3165d453f340420cf39d8da174e497c50bc)",
+ "lean_sphincs 0.1.0 (git+https://github.com/leanEthereum/leanVM?rev=92a97c919b2f2d6fe09853090b6b23f781ecec07)",
  "rec_aggregation",
  "thiserror 2.0.18",
  "tracing",
@@ -6263,6 +6264,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "keccak256"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM?rev=92a97c919b2f2d6fe09853090b6b23f781ecec07#92a97c919b2f2d6fe09853090b6b23f781ecec07"
+
+[[package]]
 name = "keccak_gkr"
 version = "0.1.0"
 source = "git+https://github.com/leanEthereum/leanVM?rev=f7ba4999ae523b94c8d0969b32762c3effea4cbd#f7ba4999ae523b94c8d0969b32762c3effea4cbd"
@@ -6406,6 +6412,14 @@ dependencies = [
  "parallel",
  "primitives",
  "rand 0.9.4",
+]
+
+[[package]]
+name = "lean_sphincs"
+version = "0.1.0"
+source = "git+https://github.com/leanEthereum/leanVM?rev=92a97c919b2f2d6fe09853090b6b23f781ecec07#92a97c919b2f2d6fe09853090b6b23f781ecec07"
+dependencies = [
+ "keccak256",
 ]
 
 [[package]]
@@ -10798,7 +10812,7 @@ dependencies = [
  "keccak_gkr",
  "lean_compiler",
  "lean_da",
- "lean_sphincs",
+ "lean_sphincs 0.1.0 (git+https://github.com/NethermindEth/lean-bindings?rev=8d54d3165d453f340420cf39d8da174e497c50bc)",
  "lean_xmss",
  "leanvm_core",
  "parallel",

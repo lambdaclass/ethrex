@@ -10,7 +10,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::error::MempoolError;
 use ethrex_common::{
-    Address, H160, H256, U256,
+    Address, Bytes, H160, H256, U256,
     types::{
         BYTES_PER_CELL, BlobTuple, BlobsBundle, BlockHeader, CELLS_PER_EXT_BLOB, ChainConfig,
         FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER, Fork, MempoolTransaction, Transaction, TxType,
@@ -211,6 +211,9 @@ struct MempoolInner {
     broadcast_pool: FxHashSet<H256>,
     transaction_pool: FxHashMap<H256, MempoolTransaction>,
     blobs_bundle_pool: FxHashMap<H256, BlobsBundle>,
+    /// The dependency signatures each pooled frame transaction carries,
+    /// kept apart from `blobs_bundle_pool`, whose keys count as blob transactions.
+    dependency_signatures_pool: FxHashMap<H256, Vec<Bytes>>,
     /// Transaction hashes that have been requested via GetPooledTransactions
     /// but whose responses haven't arrived yet. Used to avoid sending duplicate
     /// requests when multiple peers announce the same transaction.
@@ -320,6 +323,7 @@ impl MempoolInner {
         // (eviction / inclusion / reorg all funnel through here), so no outer
         // call site must decrement anything (which would risk double-decrement).
         if matches!(tx.tx_type(), TxType::Frame) {
+            self.dependency_signatures_pool.remove(hash);
             let sender = tx.sender();
             if self
                 .pending_frame_tx_by_sender
@@ -1175,6 +1179,36 @@ impl Mempool {
     pub fn remove_blobs_bundle(&self, tx_hash: &H256) -> Result<(), StoreError> {
         self.write()?.remove_blob_bundle(tx_hash);
         Ok(())
+    }
+
+    /// Store the dependency signatures of a frame transaction.
+    pub fn add_dependency_signatures(
+        &self,
+        tx_hash: H256,
+        signatures: Vec<Bytes>,
+    ) -> Result<(), StoreError> {
+        self.write()?
+            .dependency_signatures_pool
+            .insert(tx_hash, signatures);
+        Ok(())
+    }
+
+    /// Roll back signatures stored just before a transaction insert that failed.
+    pub fn remove_dependency_signatures(&self, tx_hash: &H256) -> Result<(), StoreError> {
+        self.write()?.dependency_signatures_pool.remove(tx_hash);
+        Ok(())
+    }
+
+    /// The dependency signatures of a pooled frame transaction, if any.
+    pub fn get_dependency_signatures(
+        &self,
+        tx_hash: H256,
+    ) -> Result<Option<Vec<Bytes>>, StoreError> {
+        Ok(self
+            .read()?
+            .dependency_signatures_pool
+            .get(&tx_hash)
+            .cloned())
     }
 
     /// Get a blobs bundle to the pool given its blob transaction hash

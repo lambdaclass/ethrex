@@ -13,11 +13,57 @@
 
 use std::sync::LazyLock;
 
-use ethrex_common::types::{Block, ChainConfig};
-use ethrex_dep_aggregation::{AggregateError, DependencyAggregator, default_aggregator};
+use ethrex_common::Bytes;
+use ethrex_common::types::{Block, ChainConfig, FrameTransaction};
+use ethrex_dep_aggregation::{
+    AggregateError, DependencyAggregator, default_aggregator, verify_leansphincs,
+};
 use tracing::info;
 
-use crate::error::ChainError;
+use crate::error::{ChainError, MempoolError};
+
+/// The most dependencies a pooled transaction may declare.
+///
+/// shortcut: 16 bounds admission at ~2 ms of leanSPHINCS verification, the legacy
+/// mempool wrapper's limit; replace once the spec sets mempool rules.
+pub const MAX_POOLED_TX_DEPENDENCIES: usize = 16;
+
+/// Mempool admission: `signatures` holds one leanSPHINCS signature per
+/// dependency of `tx`, in `dependencies()` order, and each one verifies. Runs
+/// before the transaction is simulated.
+pub fn verify_dependency_signatures(
+    tx: &FrameTransaction,
+    signatures: &[Bytes],
+) -> Result<(), MempoolError> {
+    let deps = tx.dependencies();
+    if deps.len() > MAX_POOLED_TX_DEPENDENCIES {
+        return Err(MempoolError::FrameTxTooManyDependencies {
+            count: deps.len(),
+            limit: MAX_POOLED_TX_DEPENDENCIES,
+        });
+    }
+    if signatures.len() != deps.len() {
+        return Err(MempoolError::FrameTxDependencySignatureCount {
+            expected: deps.len(),
+            actual: signatures.len(),
+        });
+    }
+    for (index, (dep, signature)) in deps.iter().zip(signatures).enumerate() {
+        if !dep.is_leansphincs() {
+            return Err(MempoolError::FrameTxDependencySchemeUnsupported {
+                index,
+                scheme: dep.scheme,
+            });
+        }
+        // The triple's key field is the 32-byte public key itself.
+        match verify_leansphincs(&dep.verification_key_hash.0, &dep.data_hash.0, signature) {
+            Ok(true) => {}
+            Ok(false) => return Err(MempoolError::FrameTxDependencySignatureInvalid { index }),
+            Err(e) => return Err(MempoolError::FrameTxDependencyUnverifiable(e.to_string())),
+        }
+    }
+    Ok(())
+}
 
 /// The aggregation backend this build carries, built once per process: the leanVM
 /// guest compiles on first use, so a node pays for it at startup (see

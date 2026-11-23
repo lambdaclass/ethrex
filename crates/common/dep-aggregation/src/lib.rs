@@ -43,6 +43,34 @@ pub mod test_support;
 /// silently conclude that a stub "verified" a proof.
 pub const LEANVM_AGGREGATOR: bool = cfg!(feature = "leanvm");
 
+/// Whether `signature` is a valid leanSPHINCS
+/// signature of `message` under the 32-byte public key `public_key`, with the
+/// scheme leanVM itself ships (7,740-byte signatures). A signature of any other
+/// length is `Ok(false)`; `Err` means this build cannot
+/// check it at all.
+pub fn verify_leansphincs(
+    public_key: &[u8; 32],
+    message: &[u8; 32],
+    signature: &[u8],
+) -> Result<bool, AggregateError> {
+    #[cfg(feature = "leanvm")]
+    {
+        let Ok(signature) = <&[u8; leanvm_sphincs::SIG_SIZE]>::try_from(signature) else {
+            return Ok(false);
+        };
+        Ok(leanvm_sphincs::verify(
+            &leanvm_sphincs::LeanSphincsPublicKey::from_bytes(public_key),
+            message,
+            &leanvm_sphincs::LeanSphincsSignature::from_bytes(signature),
+        ))
+    }
+    #[cfg(not(feature = "leanvm"))]
+    {
+        let _ = (public_key, message, signature);
+        Err(AggregateError::NoBackend)
+    }
+}
+
 /// The largest block proof a block may carry.
 ///
 /// EIP-8288 sets no bound. The restarted Daisugi network makes 1,310,720 bytes

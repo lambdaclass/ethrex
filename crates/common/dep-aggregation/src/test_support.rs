@@ -41,3 +41,11 @@ pub fn leansphincs_dependency_from_seed(
 
     (triple, DependencyWitness { triple, witness })
 }
+
+/// A leanSPHINCS public key and signature of `message`, derived from
+/// `seed` with the scheme [`crate::verify_leansphincs`] checks.
+pub fn leansphincs_sign(seed: [u8; 32], message: [u8; 32]) -> ([u8; 32], Vec<u8>) {
+    let public = leanvm_sphincs::key_gen(&seed);
+    let signature = leanvm_sphincs::sign(&seed, &message);
+    (public.to_bytes(), signature.to_bytes().to_vec())
+}

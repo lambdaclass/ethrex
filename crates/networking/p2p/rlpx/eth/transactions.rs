@@ -162,6 +162,20 @@ impl NewPooledTransactionHashes {
                     };
                     p2p_tx.encode_canonical_len()
                 }
+                // A dependency tx is announced at the size of the wrapper
+                // that carries its signatures, the form `GetPooledTransactions` serves.
+                Transaction::FrameTransaction(tx) => {
+                    match blockchain
+                        .mempool
+                        .get_dependency_signatures(transaction_hash)?
+                    {
+                        Some(signatures) => {
+                            P2PTransaction::with_dependency_signatures(tx, signatures)
+                                .encode_canonical_len()
+                        }
+                        None => Transaction::FrameTransaction(tx).encode_canonical_len(),
+                    }
+                }
                 _ => transaction.encode_canonical_len(),
             };
             transaction_types.push(transaction_type as u8);
@@ -404,8 +418,8 @@ impl PooledTransactions {
         is_l2_mode: bool,
     ) -> Result<(), MempoolError> {
         for tx in self.pooled_transactions {
-            let (tx, blobs_bundle) = tx
-                .into_transaction_and_blobs()
+            let (tx, blobs_bundle, signatures) = tx
+                .into_transaction_and_sidecars()
                 .map_err(|error| MempoolError::StoreError(StoreError::Custom(error)))?;
             // An EIP-4844 tx or an EIP-8141 frame tx with blobs, with its sidecar.
             match blobs_bundle {
@@ -433,7 +447,15 @@ impl PooledTransactions {
                     }
                 }
                 None => {
-                    if let Err(e) = blockchain.add_transaction_to_pool(tx).await {
+                    // A dependency tx arrives with its signatures.
+                    let added = if signatures.is_empty() {
+                        blockchain.add_transaction_to_pool(tx).await
+                    } else {
+                        blockchain
+                            .add_dependency_transaction_to_pool(tx, signatures)
+                            .await
+                    };
+                    if let Err(e) = added {
                         debug!(
                             peer=%node,
                             error=%e,

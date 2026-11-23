@@ -156,13 +156,25 @@ pub enum MempoolError {
     FrameTxPreFork,
     #[error("Frame transaction expiry deadline has passed")]
     FrameTxExpired,
-    /// EIP-8288: a transaction that declares dependencies travels with the witnesses
-    /// or proof that discharge them, in a proof wrapper, never on its own. The
-    /// reference client refuses one submitted alone with the same advice.
+    /// EIP-8288: a transaction that declares dependencies travels with the
+    /// signatures that discharge them, never on its own.
     #[error(
-        "Frame transaction declares EIP-8288 dependencies; submit dependency transactions through eth_sendProofWrapper"
+        "Frame transaction declares dependencies; submit it with their signatures in the frame transaction's network wrapper"
     )]
     FrameTxDependencyNeedsWrapper,
+    /// One signature per dependency, in `dependencies()` order.
+    #[error("Frame transaction declares {expected} dependencies but carries {actual} signatures")]
+    FrameTxDependencySignatureCount { expected: usize, actual: usize },
+    #[error("Frame transaction declares {count} dependencies, over the pool limit of {limit}")]
+    FrameTxTooManyDependencies { count: usize, limit: usize },
+    #[error("Frame transaction dependency {index} has scheme {scheme:#04x}, not leanSPHINCS")]
+    FrameTxDependencySchemeUnsupported { index: usize, scheme: u8 },
+    #[error("Frame transaction dependency {index} carries an invalid leanSPHINCS signature")]
+    FrameTxDependencySignatureInvalid { index: usize },
+    #[error("Frame transaction dependency signatures cannot be verified by this node: {0}")]
+    FrameTxDependencyUnverifiable(String),
+    #[error("Frame transactions carrying both blobs and dependency signatures are not supported")]
+    FrameTxBlobsWithDependencySignatures,
     #[error("Invalid frame transaction: {0}")]
     InvalidFrameTransaction(String),
     #[error("Invalid frame transaction signature")]

@@ -86,7 +86,7 @@ use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
 use ethrex_common::validate_block_access_list_size;
-use ethrex_common::{Address, H256, U256};
+use ethrex_common::{Address, Bytes, H256, U256};
 pub use ethrex_common::{
     get_total_blob_gas, validate_block_access_list_hash, validate_block_pre_execution,
     validate_gas_used, validate_receipts_root_and_logs_bloom, validate_requests_hash,
@@ -3438,6 +3438,100 @@ impl Blockchain {
         Ok(hash)
     }
 
+    /// Add a frame transaction and the signatures of its dependencies,
+    /// one per entry of `dependencies()` in that order, to the mempool.
+    ///
+    /// This is the P2P entry point; see [`Self::add_local_dependency_transaction_to_pool`]
+    /// for the local-RPC one.
+    pub async fn add_dependency_transaction_to_pool(
+        &self,
+        transaction: Transaction,
+        signatures: Vec<Bytes>,
+    ) -> Result<H256, MempoolError> {
+        self.add_dependency_transaction_to_pool_inner(transaction, signatures, true)
+            .await
+    }
+
+    /// Local-RPC counterpart of [`Self::add_dependency_transaction_to_pool`].
+    pub async fn add_local_dependency_transaction_to_pool(
+        &self,
+        transaction: Transaction,
+        signatures: Vec<Bytes>,
+    ) -> Result<H256, MempoolError> {
+        let broadcast = !self.options.private_mempool;
+        self.add_dependency_transaction_to_pool_inner(transaction, signatures, broadcast)
+            .await
+    }
+
+    async fn add_dependency_transaction_to_pool_inner(
+        &self,
+        transaction: Transaction,
+        signatures: Vec<Bytes>,
+        broadcast: bool,
+    ) -> Result<H256, MempoolError> {
+        // Only a frame transaction declares dependencies, and only its removal
+        // clears stored signatures.
+        if !matches!(transaction, Transaction::FrameTransaction(_)) {
+            return Err(MempoolError::FrameTxDependencySignatureCount {
+                expected: 0,
+                actual: signatures.len(),
+            });
+        }
+        // shortcut: blobs and dependency signatures do not share a wrapper yet;
+        // allow both once the spec says how they travel together.
+        if transaction.is_blob_carrying() {
+            return Err(MempoolError::FrameTxBlobsWithDependencySignatures);
+        }
+        // The signatures ride beside the transaction, so bound the wrapper as the
+        // blob path bounds a transaction and its sidecar.
+        let wrapper_len =
+            transaction.encode_canonical_len() + signatures.iter().map(|s| s.len()).sum::<usize>();
+        if wrapper_len > ethrex_common::types::MAX_BLOB_TX_SIZE {
+            return Err(MempoolError::TxSizeExceeded {
+                actual: wrapper_len,
+                limit: ethrex_common::types::MAX_BLOB_TX_SIZE,
+            });
+        }
+        let hash = transaction.hash(&NativeCrypto);
+        if self.mempool.contains_tx(hash)? {
+            if !broadcast {
+                warn!(%hash, "tx already public; --mempool.private cannot retroactively un-broadcast");
+            }
+            return Ok(hash);
+        }
+        let sender = transaction.sender(&NativeCrypto)?;
+        let (frame_reservation, sender_admission) = self
+            .validate_transaction_with_signatures(&transaction, sender, Some(&signatures))
+            .await?;
+
+        // Stored before the transaction, and rolled back if its insert fails, as
+        // the blob path does with its bundle.
+        self.mempool.add_dependency_signatures(hash, signatures)?;
+        let mempool_tx = MempoolTransaction::new(transaction, sender);
+        let inserted = if broadcast {
+            self.mempool.add_transaction(
+                hash,
+                sender,
+                mempool_tx,
+                frame_reservation,
+                sender_admission,
+            )
+        } else {
+            self.mempool.add_transaction_no_broadcast(
+                hash,
+                sender,
+                mempool_tx,
+                frame_reservation,
+                sender_admission,
+            )
+        };
+        if let Err(e) = inserted {
+            let _ = self.mempool.remove_dependency_signatures(&hash);
+            return Err(e);
+        }
+        Ok(hash)
+    }
+
     /// Add a transaction to the mempool checking that the transaction is valid.
     ///
     /// This is the P2P entry point: the transaction's hash is queued for
@@ -3817,6 +3911,19 @@ impl Blockchain {
         tx: &Transaction,
         sender: Address,
     ) -> Result<(Option<FramePaymasterReservation>, Option<SenderAdmission>), MempoolError> {
+        self.validate_transaction_with_signatures(tx, sender, None)
+            .await
+    }
+
+    /// [`Self::validate_transaction`] for a frame transaction submitted with the
+    /// signatures of its dependencies, which are verified before the
+    /// transaction is simulated.
+    async fn validate_transaction_with_signatures(
+        &self,
+        tx: &Transaction,
+        sender: Address,
+        dependency_signatures: Option<&[Bytes]>,
+    ) -> Result<(Option<FramePaymasterReservation>, Option<SenderAdmission>), MempoolError> {
         let nonce = tx.nonce();
 
         // On an L1 node, reject L2-only transaction types (FeeToken 0x7d,
@@ -3887,12 +3994,17 @@ impl Blockchain {
                 })
                 .map_err(MempoolError::InvalidFrameTransaction)?;
 
-            // EIP-8288: a transaction declaring dependencies never enters the pool on
-            // its own. Without the witnesses or proof that discharge its dependencies a
-            // builder could never seal a block holding it, and the reference client
-            // neither accepts nor relays one outside a proof wrapper.
-            if frame_tx.declared_dependency_count() > 0 {
-                return Err(MempoolError::FrameTxDependencyNeedsWrapper);
+            // EIP-8288: a transaction declaring dependencies never enters the pool
+            // on its own. It travels with the signatures that discharge them, checked
+            // here before the transaction is simulated.
+            match dependency_signatures {
+                Some(signatures) => {
+                    crate::eip8288::verify_dependency_signatures(frame_tx, signatures)?
+                }
+                None if frame_tx.declared_dependency_count() > 0 => {
+                    return Err(MempoolError::FrameTxDependencyNeedsWrapper);
+                }
+                None => {}
             }
 
             // Frame `data` size is bounded by the wire-size cap below
@@ -4452,7 +4564,13 @@ impl Blockchain {
                 ));
             }
             Transaction::FeeTokenTransaction(itx) => P2PTransaction::FeeTokenTransaction(itx),
-            Transaction::FrameTransaction(itx) => P2PTransaction::FrameTransaction(itx),
+            // A dependency tx travels with its signatures.
+            Transaction::FrameTransaction(itx) => {
+                match self.mempool.get_dependency_signatures(*hash)? {
+                    Some(signatures) => P2PTransaction::with_dependency_signatures(itx, signatures),
+                    None => P2PTransaction::FrameTransaction(itx),
+                }
+            }
             // Blob-carrying, so taken by the arm above.
             Transaction::EIP4844Transaction(_) => {
                 return Err(StoreError::Custom(format!(

@@ -89,7 +89,8 @@ pub enum P2PTransaction {
     FeeTokenTransaction(FeeTokenTransaction),
     FrameTransaction(FrameTransaction),
     /// An EIP-8141 frame transaction carrying blobs, in its EIP-7594 network
-    /// wrapper. A blobless frame transaction travels as `FrameTransaction`.
+    /// wrapper, or one carrying dependency signatures in the same
+    /// wrapper. A frame transaction with neither travels as `FrameTransaction`.
     FrameTransactionWithBlobs(WrappedFrameTransaction),
 }
 
@@ -127,25 +128,45 @@ impl P2PTransaction {
                     tx,
                     wrapper_version,
                     blobs_bundle,
+                    signatures: Vec::new(),
                 }))
             }
             _ => None,
         }
     }
 
-    /// Splits a transaction received from a peer into the transaction and, for a
-    /// network-wrapped blob-carrying one, its blobs bundle.
-    pub fn into_transaction_and_blobs(self) -> Result<(Transaction, Option<BlobsBundle>), String> {
+    /// The network form of a frame transaction with the signatures of
+    /// its dependencies, one per entry of `dependencies()` in that order.
+    pub fn with_dependency_signatures(tx: FrameTransaction, signatures: Vec<Bytes>) -> Self {
+        Self::FrameTransactionWithBlobs(WrappedFrameTransaction {
+            tx,
+            wrapper_version: None,
+            blobs_bundle: BlobsBundle::empty(),
+            signatures,
+        })
+    }
+
+    /// Splits a transaction received from a peer into the transaction, the blobs
+    /// bundle of a network-wrapped blob-carrying one, and the dependency
+    /// signatures of a frame transaction that carries them.
+    pub fn into_transaction_and_sidecars(
+        self,
+    ) -> Result<(Transaction, Option<BlobsBundle>, Vec<Bytes>), String> {
         match self {
             Self::EIP4844TransactionWithBlobs(wrapped) => Ok((
                 Transaction::EIP4844Transaction(wrapped.tx),
                 Some(wrapped.blobs_bundle),
+                Vec::new(),
             )),
-            Self::FrameTransactionWithBlobs(wrapped) => Ok((
-                Transaction::FrameTransaction(wrapped.tx),
-                Some(wrapped.blobs_bundle),
-            )),
-            other => Ok((other.try_into()?, None)),
+            Self::FrameTransactionWithBlobs(wrapped) => {
+                let blobs_bundle = wrapped.carries_blobs().then_some(wrapped.blobs_bundle);
+                Ok((
+                    Transaction::FrameTransaction(wrapped.tx),
+                    blobs_bundle,
+                    wrapped.signatures,
+                ))
+            }
+            other => Ok((other.try_into()?, None, Vec::new())),
         }
     }
 
@@ -156,7 +177,7 @@ impl P2PTransaction {
             Self::EIP4844TransactionWithBlobs(wrapped) => {
                 Some((&wrapped.tx.blob_versioned_hashes, &wrapped.blobs_bundle))
             }
-            Self::FrameTransactionWithBlobs(wrapped) => {
+            Self::FrameTransactionWithBlobs(wrapped) if wrapped.carries_blobs() => {
                 Some((&wrapped.tx.blob_versioned_hashes, &wrapped.blobs_bundle))
             }
             _ => None,
@@ -288,9 +309,19 @@ pub struct WrappedFrameTransaction {
     pub tx: FrameTransaction,
     pub wrapper_version: Option<u8>,
     pub blobs_bundle: BlobsBundle,
+    /// One leanSPHINCS signature per entry of `tx.dependencies()`, in
+    /// that order. Encoded as an optional trailing item, only when non-empty, so a
+    /// blob wrapper's encoding is unchanged.
+    pub signatures: Vec<Bytes>,
 }
 
 impl WrappedFrameTransaction {
+    /// Whether this is a blob wrapper rather than one that only carries
+    /// dependency signatures.
+    pub fn carries_blobs(&self) -> bool {
+        self.signatures.is_empty() || !self.tx.blob_versioned_hashes.is_empty()
+    }
+
     /// Whether a type-6 payload is the network wrapper rather than a bare frame
     /// transaction: the wrapper's first item is the transaction body, a list, where
     /// a bare transaction's first item is its `chain_id`.
@@ -306,14 +337,17 @@ impl WrappedFrameTransaction {
 
 impl RLPEncode for WrappedFrameTransaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        let encoder = Encoder::new(buf);
-        encoder
+        let encoder = Encoder::new(buf)
             .encode_field(&self.tx)
             .encode_optional_field(&self.wrapper_version)
             .encode_field(&self.blobs_bundle.blobs)
             .encode_field(&self.blobs_bundle.commitments)
-            .encode_field(&self.blobs_bundle.proofs)
-            .finish();
+            .encode_field(&self.blobs_bundle.proofs);
+        if self.signatures.is_empty() {
+            encoder.finish();
+        } else {
+            encoder.encode_field(&self.signatures).finish();
+        }
     }
 }
 
@@ -325,6 +359,7 @@ impl RLPDecode for WrappedFrameTransaction {
         let (blobs, decoder) = decoder.decode_field("blobs")?;
         let (commitments, decoder) = decoder.decode_field("commitments")?;
         let (proofs, decoder) = decoder.decode_field("proofs")?;
+        let (signatures, decoder) = decoder.decode_optional_field::<Vec<Bytes>>();
         let wrapped = WrappedFrameTransaction {
             tx,
             wrapper_version,
@@ -334,6 +369,7 @@ impl RLPDecode for WrappedFrameTransaction {
                 proofs,
                 version: wrapper_version.unwrap_or_default(),
             },
+            signatures: signatures.unwrap_or_default(),
         };
         Ok((wrapped, decoder.finish()?))
     }
