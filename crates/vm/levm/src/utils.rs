@@ -298,7 +298,9 @@ pub fn eip7702_peek_delegation(
     }
     let code_hash = account.info.code_hash;
     let bytecode = db.get_code(code_hash)?.clone();
-    if !code_has_delegation(bytecode.code())? {
+    // Delegation designations exist only from Prague (EIP-7702). Before it, the
+    // account's own code runs, and its leading 0xEF is an undefined opcode.
+    if fork < Fork::Prague || !code_has_delegation(bytecode.code())? {
         return Ok((Some(bytecode), None));
     }
     let auth_address = get_authorized_address_from_code(bytecode.code())?;
@@ -1127,5 +1129,161 @@ pub fn create_eth_transfer_log(
             H256::from(to_topic),
         ],
         data: Bytes::from(data.to_vec()),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod eip7702_fork_tests {
+    use super::*;
+    use crate::{
+        db::Database, errors::DatabaseError, errors::ExecutionReport, tracing::LevmCallTracer,
+        vm::VMType,
+    };
+    use ethrex_common::types::{
+        AccountInfo, AccountState, ChainConfig, CodeMetadata, LegacyTransaction,
+    };
+    use ethrex_crypto::NativeCrypto;
+    use std::sync::Arc;
+
+    struct EmptyStore;
+
+    impl Database for EmptyStore {
+        fn get_account_state(&self, _: Address) -> Result<AccountState, DatabaseError> {
+            Ok(AccountState::default())
+        }
+        fn get_storage_value(&self, _: Address, _: H256) -> Result<U256, DatabaseError> {
+            Ok(U256::zero())
+        }
+        fn get_block_hash(&self, _: u64) -> Result<H256, DatabaseError> {
+            Ok(H256::zero())
+        }
+        fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+            Ok(ChainConfig::default())
+        }
+        fn get_account_code(&self, _: H256) -> Result<Code, DatabaseError> {
+            Ok(Code::default())
+        }
+        fn get_code_metadata(&self, _: H256) -> Result<CodeMetadata, DatabaseError> {
+            Ok(CodeMetadata { length: 0 })
+        }
+    }
+
+    const SENDER: u64 = 0x100;
+    const DELEGATED: u64 = 0x200;
+    const DELEGATE: u64 = 0x300;
+
+    fn account_with_code(bytecode: Vec<u8>) -> Account {
+        let code = Code::from_bytecode(Bytes::from(bytecode), &NativeCrypto);
+        Account {
+            info: AccountInfo {
+                code_hash: code.hash,
+                ..Default::default()
+            },
+            code,
+            ..Default::default()
+        }
+    }
+
+    /// `DELEGATED` holds the designator `0xef0100 || DELEGATE`; `DELEGATE` holds STOP.
+    fn db_with_delegation() -> GeneralizedDatabase {
+        let delegate = Address::from_low_u64_be(DELEGATE);
+        let mut designator = SET_CODE_DELEGATION_BYTES.to_vec();
+        designator.extend_from_slice(delegate.as_bytes());
+
+        let mut accounts = FxHashMap::default();
+        accounts.insert(
+            Address::from_low_u64_be(SENDER),
+            Account {
+                info: AccountInfo {
+                    balance: U256::from(10_000_000),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        accounts.insert(
+            Address::from_low_u64_be(DELEGATED),
+            account_with_code(designator),
+        );
+        accounts.insert(delegate, account_with_code(vec![0x00]));
+        GeneralizedDatabase::new_with_account_state(Arc::new(EmptyStore), accounts)
+    }
+
+    fn call_delegated_account(fork: Fork) -> ExecutionReport {
+        let mut db = db_with_delegation();
+        let env = Environment {
+            origin: Address::from_low_u64_be(SENDER),
+            gas_limit: 100_000,
+            gas_price: U256::from(1),
+            block_gas_limit: u64::MAX,
+            config: EVMConfig::new(fork, EVMConfig::canonical_values(fork)),
+            ..Default::default()
+        };
+        let tx = Transaction::LegacyTransaction(LegacyTransaction {
+            gas_price: U256::from(1),
+            gas: 100_000,
+            to: TxKind::Call(Address::from_low_u64_be(DELEGATED)),
+            ..Default::default()
+        });
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &tx,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &NativeCrypto,
+            None,
+        )
+        .unwrap();
+        vm.execute().unwrap()
+    }
+
+    #[test]
+    fn designator_is_not_followed_before_prague() {
+        for fork in [Fork::London, Fork::Shanghai, Fork::Cancun] {
+            let mut db = db_with_delegation();
+            let (code, delegation) = eip7702_peek_delegation(
+                &mut db,
+                &Substate::default(),
+                Address::from_low_u64_be(DELEGATED),
+                fork,
+            )
+            .unwrap();
+            assert!(
+                code.is_some(),
+                "{fork:?}: the account's own code is returned"
+            );
+            assert_eq!(delegation, None, "{fork:?}: no delegation before Prague");
+
+            // The account's own code starts with 0xEF, an undefined opcode before
+            // Prague, so the call halts and uses all its gas.
+            let report = call_delegated_account(fork);
+            assert!(
+                !report.is_success(),
+                "{fork:?}: expected a halt, got {report:?}"
+            );
+            assert_eq!(report.gas_used, 100_000, "{fork:?}: a halt uses all gas");
+        }
+    }
+
+    #[test]
+    fn designator_is_followed_from_prague() {
+        for fork in [Fork::Prague, Fork::Osaka] {
+            let mut db = db_with_delegation();
+            let (_, delegation) = eip7702_peek_delegation(
+                &mut db,
+                &Substate::default(),
+                Address::from_low_u64_be(DELEGATED),
+                fork,
+            )
+            .unwrap();
+            assert_eq!(
+                delegation.map(|(address, _)| address),
+                Some(Address::from_low_u64_be(DELEGATE)),
+                "{fork:?}"
+            );
+            assert!(call_delegated_account(fork).is_success(), "{fork:?}");
+        }
     }
 }
