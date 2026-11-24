@@ -1984,17 +1984,22 @@ pub enum FrameMode {
     /// `TXTRACE` and `EVENTDATACOPY` are valid. One that fails reverts
     /// the execution body without invalidating the transaction.
     Assert = 3,
+    /// EIP-8504 proof frame: it declares the transaction's dependencies, which
+    /// are satisfied outside the EVM, and executes no code.
+    Proof = 4,
 }
 
 impl FrameMode {
     /// Convert from the lower 8 bits of the mode field.
-    /// Returns None for reserved values (4-255).
+    /// Returns None for reserved values (5-255). Whether `Proof` is valid on a
+    /// given chain is decided by `validate_static_constraints_with`.
     pub fn from_u8(val: u8) -> Option<Self> {
         match val {
             0 => Some(FrameMode::Default),
             1 => Some(FrameMode::Verify),
             2 => Some(FrameMode::Sender),
             3 => Some(FrameMode::Assert),
+            4 => Some(FrameMode::Proof),
             _ => None,
         }
     }
@@ -2007,13 +2012,15 @@ impl From<FrameMode> for u8 {
             FrameMode::Verify => 1,
             FrameMode::Sender => 2,
             FrameMode::Assert => 3,
+            FrameMode::Proof => 4,
         }
     }
 }
 
 /// EIP-8141 Frame: a single execution step within a frame transaction.
 ///
-/// `mode` is the execution mode (0=DEFAULT, 1=VERIFY, 2=SENDER; 3-255 reserved).
+/// `mode` is the execution mode (0=DEFAULT, 1=VERIFY, 2=SENDER, 3=ASSERT under
+/// EIP-7906, 4=PROOF under EIP-8504; 5-255 reserved).
 /// `flags` bits: 0-1 = APPROVE scope restriction, 2 = atomic batch flag (valid
 /// on DEFAULT and SENDER frames only), 3-7 reserved (must be zero).
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
@@ -2058,6 +2065,30 @@ impl Frame {
     pub fn is_expiry_verifier(&self) -> bool {
         self.execution_mode() == FrameMode::Verify
             && self.target == Some(frame_tx_expiry_verifier())
+    }
+
+    /// An EIP-8504 proof frame. Contracts and the protocol identify it by its
+    /// mode, not by its target.
+    pub fn is_proof(&self) -> bool {
+        self.mode == PROOF_FRAME_MODE
+    }
+
+    /// The dependencies a proof frame declares, in order and as encoded: a zero
+    /// `data_hash` is returned as zero. Empty for any other frame. Trailing bytes
+    /// that do not fill a triple are ignored; `validate_static_constraints_with`
+    /// rejects such a frame.
+    pub fn declared_dependencies(&self) -> Vec<Dependency> {
+        if !self.is_proof() {
+            return Vec::new();
+        }
+        self.data
+            .chunks_exact(DEPENDENCY_TRIPLE_BYTES)
+            .map(|triple| Dependency {
+                scheme: triple[31],
+                data_hash: H256::from_slice(&triple[32..64]),
+                verification_key_hash: H256::from_slice(&triple[64..96]),
+            })
+            .collect()
     }
 
     /// EIP-8272 §Recent root verifier frame: a VERIFY frame to `RECENT_ROOT_ADDRESS`
@@ -2310,6 +2341,24 @@ pub const APPROVE_EXECUTION_AND_PAYMENT: u8 = 0x3;
 /// (FRAME_CANONICAL_PAYMASTER_CODE_HASH is unresolved in the draft EIP), so
 /// this de-facto limits sponsored frame txs to 1 per paymaster in the pool.
 pub const FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER: u8 = 1;
+/// EIP-8504: the frame mode of a proof frame.
+pub const PROOF_FRAME_MODE: u8 = 4;
+/// EIP-8504: the scheme byte of a leanSPHINCS dependency.
+pub const LEANSPHINCS_SCHEME: u8 = 0x10;
+/// EIP-8504: bytes of one `(scheme, data_hash, verification_key_hash)` triple in
+/// a proof frame's data.
+pub const DEPENDENCY_TRIPLE_BYTES: usize = 96;
+/// EIP-8504: the most triples one proof frame may declare (provisional).
+pub const MAX_DEPENDENCIES_PER_FRAME: usize = 256;
+/// EIP-8504: execution gas a proof frame declares, and consumes, per triple
+/// (provisional).
+pub const LEANSPHINCS_VERIFICATION_GAS: u64 = 3000;
+/// EIP-8504: bytes of a leanSPHINCS signature (provisional).
+pub const LEANSPHINCS_SIGNATURE_SIZE: usize = 7740;
+/// EIP-8504: the most dependencies a transaction may have to enter the public
+/// mempool (provisional). It bounds the witnesses a node verifies for one
+/// transaction and is not a validity rule.
+pub const MAX_SIGS_PER_TX: usize = 16;
 
 /// Returns the ENTRY_POINT `Address` (0x…00aa) used as caller for
 /// DEFAULT/VERIFY frames per EIP-8141.
@@ -2486,7 +2535,89 @@ impl FrameFeeBudget {
     }
 }
 
+/// EIP-8504 dependency: `(scheme, data_hash, verification_key_hash)`.
+///
+/// `(LEANSPHINCS_SCHEME, m, pk)` states that the 32-byte message `m` is signed
+/// under the leanSPHINCS public key `pk`. A witness, the signature itself,
+/// satisfies it; witnesses travel beside the transaction and in the block.
+///
+/// The derived ordering is the one the EIP specifies: first by `scheme`, then by
+/// `data_hash`, and finally by `verification_key_hash`, the two 32-byte fields
+/// compared byte by byte.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Dependency {
+    pub scheme: u8,
+    pub data_hash: H256,
+    pub verification_key_hash: H256,
+}
+
+impl Dependency {
+    /// The 96-byte encoding of the dependency, laid out as a proof frame triple:
+    /// 31 zero bytes and the scheme byte, then `data_hash`, then
+    /// `verification_key_hash`.
+    pub fn encode(&self) -> [u8; DEPENDENCY_TRIPLE_BYTES] {
+        let mut encoded = [0u8; DEPENDENCY_TRIPLE_BYTES];
+        encoded[31] = self.scheme;
+        encoded[32..64].copy_from_slice(self.data_hash.as_bytes());
+        encoded[64..96].copy_from_slice(self.verification_key_hash.as_bytes());
+        encoded
+    }
+}
+
+/// Sorts dependencies in the EIP-8504 order and removes repeated ones.
+fn deduplicate_and_sort(mut dependencies: Vec<Dependency>) -> Vec<Dependency> {
+    dependencies.sort_unstable();
+    dependencies.dedup();
+    dependencies
+}
+
+/// EIP-8504 `block_dependencies`: the combined dependencies of a block's
+/// transactions, sorted and deduplicated. A block carries exactly one witness
+/// for each, in this order.
+pub fn block_dependencies(transactions: &[Transaction]) -> Vec<Dependency> {
+    deduplicate_and_sort(
+        transactions
+            .iter()
+            .filter_map(|tx| match tx {
+                Transaction::FrameTransaction(frame_tx) => Some(frame_tx.dependencies()),
+                _ => None,
+            })
+            .flatten()
+            .collect(),
+    )
+}
+
 impl FrameTransaction {
+    /// EIP-8504 `dependencies(tx)`: the triples of every proof frame, each zero
+    /// `data_hash` replaced with the transaction's signature hash, sorted and
+    /// deduplicated. The substitution happens only here: the frame's encoded data
+    /// keeps the zero bytes, so the signature hash covers them.
+    pub fn dependencies(&self) -> Vec<Dependency> {
+        if !self.has_proof_frames() {
+            return Vec::new();
+        }
+        let sig_hash = self.compute_sig_hash();
+        deduplicate_and_sort(
+            self.frames
+                .iter()
+                .flat_map(Frame::declared_dependencies)
+                .map(|mut dependency| {
+                    if dependency.data_hash.is_zero() {
+                        dependency.data_hash = sig_hash;
+                    }
+                    dependency
+                })
+                .collect(),
+        )
+    }
+
+    /// Whether the transaction has at least one proof frame, which makes it a
+    /// dependency transaction: it is handled together with its witnesses until
+    /// it is included in a block.
+    pub fn has_proof_frames(&self) -> bool {
+        self.frames.iter().any(Frame::is_proof)
+    }
+
     /// Canonical signature hash (EIP-8141): the raw `signature` bytes of every
     /// signature with empty `msg` are replaced by their byte length, RLP-encoded
     /// as an unsigned integer. A signature over this hash cannot commit to its own
@@ -2826,9 +2957,21 @@ impl FrameTransaction {
             })
     }
 
-    /// Validate static constraints per EIP-8141 spec.
+    /// Validate static constraints per EIP-8141 spec on a chain where EIP-8504
+    /// is not active, so mode 4 is still a reserved mode.
     /// Returns an error string if the transaction is invalid.
     pub fn validate_static_constraints(&self) -> Result<(), String> {
+        self.validate_static_constraints_with(false)
+    }
+
+    /// Validate static constraints per EIP-8141 spec. `proof_frames_active` says
+    /// whether EIP-8504 is active: when it is, a proof frame is valid if it meets
+    /// that EIP's constraints; when it is not, its mode is reserved.
+    /// Returns an error string if the transaction is invalid.
+    pub fn validate_static_constraints_with(
+        &self,
+        proof_frames_active: bool,
+    ) -> Result<(), String> {
         // EIP-8250: the account nonce cannot be used at `MAX_NONCE_SEQ`, which only
         // a keyed set may select, as its single-use form.
         if !self.is_keyed() && self.nonce_seq == FRAME_TX_MAX_NONCE_SEQ {
@@ -2896,10 +3039,75 @@ impl FrameTransaction {
         let mut expiry_frame_count: usize = 0;
         let mut seen_assert = false;
         for (i, frame) in self.frames.iter().enumerate() {
-            // Reject reserved execution modes (4-255). EIP-7906 adds ASSERT (3) to
-            // the modes EIP-8141 accepts.
-            if FrameMode::from_u8(frame.mode).is_none() {
+            // Reject reserved execution modes. EIP-7906 adds ASSERT (3) to the modes
+            // EIP-8141 accepts, and EIP-8504 adds PROOF (4) once it is active.
+            let reserved = match FrameMode::from_u8(frame.mode) {
+                None => true,
+                Some(FrameMode::Proof) => !proof_frames_active,
+                Some(_) => false,
+            };
+            if reserved {
                 return Err(format!("Frame {i}: reserved execution mode {}", frame.mode));
+            }
+            // EIP-8504 constraints on a proof frame. They apply in addition to the
+            // rules below, which also hold for proof frames.
+            if frame.is_proof() {
+                let len = frame.data.len();
+                if len == 0 || !len.is_multiple_of(DEPENDENCY_TRIPLE_BYTES) {
+                    return Err(format!(
+                        "Frame {i}: proof frame data must be a nonzero multiple of {DEPENDENCY_TRIPLE_BYTES} bytes (got {len})"
+                    ));
+                }
+                let triples = len / DEPENDENCY_TRIPLE_BYTES;
+                if triples > MAX_DEPENDENCIES_PER_FRAME {
+                    return Err(format!(
+                        "Frame {i}: proof frame declares {triples} dependencies, more than {MAX_DEPENDENCIES_PER_FRAME}"
+                    ));
+                }
+                for (j, triple) in frame.data.chunks_exact(DEPENDENCY_TRIPLE_BYTES).enumerate() {
+                    // The scheme occupies a 32-byte word: 31 zero bytes, then the
+                    // scheme byte. leanSPHINCS is the only scheme.
+                    if triple[..31].iter().any(|b| *b != 0) || triple[31] != LEANSPHINCS_SCHEME {
+                        return Err(format!(
+                            "Frame {i}: dependency {j} of the proof frame has an unknown scheme"
+                        ));
+                    }
+                }
+                if frame.target.is_some() {
+                    return Err(format!("Frame {i}: proof frame must have no target"));
+                }
+                if !frame.value.is_zero() {
+                    return Err(format!("Frame {i}: proof frame must have value == 0"));
+                }
+                if frame.flags != 0 {
+                    return Err(format!(
+                        "Frame {i}: proof frame must have flags == 0 (flags={:#04x})",
+                        frame.flags
+                    ));
+                }
+                // The frame must not belong to an atomic batch. Its own flags are
+                // zero, so only the preceding frame's batch flag needs checking.
+                let predecessor_batches = i
+                    .checked_sub(1)
+                    .and_then(|prev| self.frames.get(prev))
+                    .is_some_and(|prev| prev.is_atomic_batch());
+                if predecessor_batches {
+                    return Err(format!("Frame {i}: proof frame in an atomic batch"));
+                }
+                // `triples` is at most 256, so the product cannot overflow.
+                let expected_gas = (triples as u64).saturating_mul(LEANSPHINCS_VERIFICATION_GAS);
+                if frame.gas_limit != expected_gas {
+                    return Err(format!(
+                        "Frame {i}: proof frame must declare {expected_gas} execution gas (got {})",
+                        frame.gas_limit
+                    ));
+                }
+                if frame.state_gas_limit != 0 {
+                    return Err(format!(
+                        "Frame {i}: proof frame must have state_gas_limit == 0 (got {})",
+                        frame.state_gas_limit
+                    ));
+                }
             }
             // EIP-7906: ASSERT frames form a contiguous trailing suffix, so the diff
             // they observe is the transaction's final outcome.
@@ -6899,5 +7107,257 @@ mod tests {
             got, expected,
             "blob-gas term missing from cost_without_base_fee() for EIP-4844"
         );
+    }
+
+    // ── Proof frames (EIP-8504) ──
+
+    /// A proof frame that declares the given `(data_hash, public key)` pairs under
+    /// the leanSPHINCS scheme, with the gas the EIP requires.
+    fn proof_frame(declarations: &[(H256, H256)]) -> Frame {
+        let mut data = Vec::new();
+        for (data_hash, public_key) in declarations {
+            data.extend_from_slice(&[0u8; 31]);
+            data.push(LEANSPHINCS_SCHEME);
+            data.extend_from_slice(data_hash.as_bytes());
+            data.extend_from_slice(public_key.as_bytes());
+        }
+        Frame {
+            mode: PROOF_FRAME_MODE,
+            flags: 0,
+            target: None,
+            gas_limit: declarations.len() as u64 * LEANSPHINCS_VERIFICATION_GAS,
+            state_gas_limit: 0,
+            value: U256::zero(),
+            data: Bytes::from(data),
+        }
+    }
+
+    /// The test transaction with `frame` inserted between its VERIFY and SENDER
+    /// frames.
+    fn frame_tx_with_proof_frame(frame: Frame) -> FrameTransaction {
+        let mut tx = make_test_frame_tx();
+        tx.frames.insert(1, frame);
+        tx
+    }
+
+    #[test]
+    fn proof_frame_is_a_reserved_mode_until_eip8504_is_active() {
+        let key = H256::repeat_byte(0xAA);
+        let tx = frame_tx_with_proof_frame(proof_frame(&[(H256::zero(), key)]));
+        let err = tx
+            .validate_static_constraints()
+            .expect_err("mode 4 is reserved without EIP-8504");
+        assert!(err.contains("reserved execution mode 4"), "{err}");
+        tx.validate_static_constraints_with(true)
+            .expect("a well-formed proof frame is valid once EIP-8504 is active");
+    }
+
+    #[test]
+    fn proof_frame_may_sit_at_any_position() {
+        let frame = proof_frame(&[(H256::zero(), H256::repeat_byte(0xAA))]);
+        for position in 0..=2 {
+            let mut tx = make_test_frame_tx();
+            tx.frames.insert(position, frame.clone());
+            tx.validate_static_constraints_with(true)
+                .unwrap_or_else(|e| panic!("position {position}: {e}"));
+        }
+    }
+
+    #[test]
+    fn proof_frame_static_constraints_are_enforced() {
+        let key = H256::repeat_byte(0xAA);
+        let valid = proof_frame(&[(H256::zero(), key)]);
+        let reject = |frame: Frame, expected: &str| {
+            let err = frame_tx_with_proof_frame(frame)
+                .validate_static_constraints_with(true)
+                .expect_err(expected);
+            assert!(err.contains(expected), "expected {expected:?}, got {err:?}");
+        };
+
+        let mut empty = valid.clone();
+        empty.data = Bytes::new();
+        empty.gas_limit = 0;
+        reject(empty, "nonzero multiple of 96 bytes");
+
+        let mut ragged = valid.clone();
+        ragged.data = Bytes::from([valid.data.as_ref(), &[0u8]].concat());
+        reject(ragged, "nonzero multiple of 96 bytes");
+
+        let too_many = proof_frame(&vec![(H256::zero(), key); MAX_DEPENDENCIES_PER_FRAME + 1]);
+        reject(too_many, "more than 256");
+
+        let mut padded_scheme = valid.clone();
+        let mut data = valid.data.to_vec();
+        data[0] = 1;
+        padded_scheme.data = Bytes::from(data);
+        reject(padded_scheme, "unknown scheme");
+
+        let mut other_scheme = valid.clone();
+        let mut data = valid.data.to_vec();
+        data[31] = 0x11;
+        other_scheme.data = Bytes::from(data);
+        reject(other_scheme, "unknown scheme");
+
+        let mut with_target = valid.clone();
+        with_target.target = Some(Address::from_low_u64_be(0xABCD));
+        reject(with_target, "must have no target");
+
+        let mut with_value = valid.clone();
+        with_value.value = U256::one();
+        reject(with_value, "must have value == 0");
+
+        let mut with_flags = valid.clone();
+        with_flags.flags = APPROVE_EXECUTION;
+        reject(with_flags, "must have flags == 0");
+
+        let mut wrong_gas = valid.clone();
+        wrong_gas.gas_limit += 1;
+        reject(wrong_gas, "must declare 3000 execution gas");
+
+        let mut with_state_gas = valid.clone();
+        with_state_gas.state_gas_limit = 1;
+        reject(with_state_gas, "must have state_gas_limit == 0");
+
+        // The largest frame the EIP allows is accepted.
+        let full = proof_frame(&vec![(H256::zero(), key); MAX_DEPENDENCIES_PER_FRAME]);
+        frame_tx_with_proof_frame(full)
+            .validate_static_constraints_with(true)
+            .expect("256 triples are allowed");
+    }
+
+    #[test]
+    fn proof_frame_cannot_follow_an_atomic_batch_frame() {
+        let mut tx = make_test_frame_tx();
+        tx.frames = vec![
+            tx.frames[0].clone(),
+            Frame {
+                mode: FrameMode::Sender as u8,
+                flags: 0x04, // atomic batch
+                target: Some(Address::from_low_u64_be(0x1234)),
+                gas_limit: 21_000,
+                state_gas_limit: 0,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+            proof_frame(&[(H256::zero(), H256::repeat_byte(0xAA))]),
+        ];
+        let err = tx
+            .validate_static_constraints_with(true)
+            .expect_err("a proof frame cannot end an atomic batch");
+        assert!(err.contains("proof frame in an atomic batch"), "{err}");
+    }
+
+    #[test]
+    fn dependencies_substitute_the_signature_hash_then_sort_and_deduplicate() {
+        let key_a = H256::repeat_byte(0xAA);
+        let key_b = H256::repeat_byte(0xBB);
+        let explicit = H256::repeat_byte(0x01);
+        let mut tx = make_test_frame_tx();
+        // Two proof frames; the triple (zero, key_a) is declared in both, and
+        // (explicit, key_b) twice in the same frame.
+        tx.frames.insert(
+            1,
+            proof_frame(&[(H256::zero(), key_b), (explicit, key_b), (explicit, key_b)]),
+        );
+        tx.frames
+            .push(proof_frame(&[(H256::zero(), key_a), (H256::zero(), key_b)]));
+        tx.validate_static_constraints_with(true)
+            .expect("repeated declarations are allowed");
+
+        let sig_hash = tx.compute_sig_hash();
+        assert_ne!(sig_hash, H256::zero());
+        let dependency = |data_hash, verification_key_hash| Dependency {
+            scheme: LEANSPHINCS_SCHEME,
+            data_hash,
+            verification_key_hash,
+        };
+        let mut expected = vec![
+            dependency(explicit, key_b),
+            dependency(sig_hash, key_a),
+            dependency(sig_hash, key_b),
+        ];
+        expected.sort();
+        assert_eq!(tx.dependencies(), expected);
+
+        // The frames keep the zero bytes: the substitution happens only in the
+        // derived list, so the signature hash it uses covers the data as encoded.
+        assert_eq!(
+            tx.frames[1].declared_dependencies()[0].data_hash,
+            H256::zero()
+        );
+        assert!(tx.has_proof_frames());
+        assert!(make_test_frame_tx().dependencies().is_empty());
+        assert!(!make_test_frame_tx().has_proof_frames());
+    }
+
+    #[test]
+    fn dependencies_are_ordered_by_scheme_then_message_then_key() {
+        let low = H256::from_low_u64_be(1);
+        let high = H256::repeat_byte(0xFF);
+        let dependency = |scheme, data_hash, verification_key_hash| Dependency {
+            scheme,
+            data_hash,
+            verification_key_hash,
+        };
+        let mut dependencies = vec![
+            dependency(0x11, low, low),
+            dependency(0x10, high, low),
+            dependency(0x10, low, high),
+            dependency(0x10, low, low),
+        ];
+        dependencies.sort();
+        assert_eq!(
+            dependencies,
+            vec![
+                dependency(0x10, low, low),
+                dependency(0x10, low, high),
+                dependency(0x10, high, low),
+                dependency(0x11, low, low),
+            ]
+        );
+    }
+
+    #[test]
+    fn encoded_dependency_has_the_layout_of_a_triple() {
+        let dependency = Dependency {
+            scheme: LEANSPHINCS_SCHEME,
+            data_hash: H256::repeat_byte(0x01),
+            verification_key_hash: H256::repeat_byte(0x02),
+        };
+        let frame = proof_frame(&[(dependency.data_hash, dependency.verification_key_hash)]);
+        assert_eq!(dependency.encode().as_slice(), frame.data.as_ref());
+        assert_eq!(frame.declared_dependencies(), vec![dependency]);
+    }
+
+    #[test]
+    fn block_dependencies_merge_the_transactions_of_a_block() {
+        let shared = H256::repeat_byte(0x07);
+        let key_a = H256::repeat_byte(0xAA);
+        let key_b = H256::repeat_byte(0xBB);
+
+        // Both transactions declare the same explicit message under key_a, and
+        // each declares its own signature hash under its own key.
+        let mut first = make_test_frame_tx();
+        first
+            .frames
+            .push(proof_frame(&[(shared, key_a), (H256::zero(), key_a)]));
+        let mut second = make_test_frame_tx();
+        second.nonce_seq += 1;
+        second
+            .frames
+            .push(proof_frame(&[(shared, key_a), (H256::zero(), key_b)]));
+
+        let transactions = vec![
+            Transaction::FrameTransaction(first.clone()),
+            Transaction::EIP1559Transaction(Default::default()),
+            Transaction::FrameTransaction(second.clone()),
+        ];
+        let dependencies = block_dependencies(&transactions);
+
+        let mut expected: Vec<Dependency> = [first.dependencies(), second.dependencies()].concat();
+        expected.sort();
+        expected.dedup();
+        assert_eq!(dependencies.len(), 3);
+        assert_eq!(dependencies, expected);
     }
 }
