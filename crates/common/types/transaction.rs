@@ -396,6 +396,13 @@ impl ProofWrapper {
         self.deps == Self::encoded_dependencies(&self.tx) && self.witnesses.len() == self.deps.len()
     }
 
+    /// The hash of the wrapper's transaction.
+    pub fn tx_hash(&self, crypto: &dyn Crypto) -> H256 {
+        let mut canonical = vec![TxType::Frame as u8];
+        self.tx.encode(&mut canonical);
+        H256(crypto.keccak256(&canonical))
+    }
+
     /// The Keccak-256 hash of the wrapper's RLP serialization, which identifies it
     /// on the network.
     pub fn hash(&self, crypto: &dyn Crypto) -> H256 {
@@ -7752,6 +7759,10 @@ mod tests {
             assert_eq!(
                 wrapper.hash(&NativeCrypto),
                 H256(NativeCrypto.keccak256(&encoded))
+            );
+            assert_eq!(
+                wrapper.tx_hash(&NativeCrypto),
+                Transaction::FrameTransaction(wrapper.tx.clone()).hash(&NativeCrypto)
             );
         }
     }

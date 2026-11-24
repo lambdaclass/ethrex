@@ -159,6 +159,8 @@ pub(crate) async fn perform(
             pending_tx_requests_72: Vec::new(),
             pending_cell_requests: Vec::new(),
             requested_cells: HashMap::new(),
+            pending_proof_wrappers: Vec::new(),
+            requested_proof_wrappers: HashMap::new(),
             last_custody_generation: 0,
             client_version: context.client_version.clone(),
             connection_broadcast_send: context.broadcast.clone(),

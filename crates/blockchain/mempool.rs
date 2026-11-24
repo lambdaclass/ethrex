@@ -242,6 +242,12 @@ struct MempoolInner {
     dependency_witnesses_pool: FxHashMap<H256, PooledDependencyWitnesses>,
     /// For each pooled wrapper's hash, the hash of its transaction.
     tx_by_wrapper_hash: FxHashMap<H256, H256>,
+    /// Hashes of the transactions whose wrapper has been requested from a peer
+    /// with `GetProofWrappers` and not yet answered. Keyed by transaction, not by
+    /// wrapper, because one wrapper is enough for a transaction that has several.
+    /// Kept apart from `in_flight_txs`, so announcing a hash in one protocol
+    /// cannot hold back a request in the other.
+    in_flight_proof_wrappers: FxHashSet<H256>,
     /// Transaction hashes that have been requested via GetPooledTransactions
     /// but whose responses haven't arrived yet. Used to avoid sending duplicate
     /// requests when multiple peers announce the same transaction.
@@ -1235,6 +1241,44 @@ impl Mempool {
                 wrapper_len: pooled.wrapper_len,
             })
             .collect())
+    }
+
+    /// Splits the wrappers a peer announced (EIP-8504) into the ones to request
+    /// from it now, which are marked as in flight under the same lock, and the
+    /// ones another connection is already fetching, which the caller keeps to try
+    /// again if that fetch fails. A wrapper whose transaction is already pooled,
+    /// or that repeats an earlier entry's transaction, is dropped.
+    pub fn reserve_proof_wrappers(
+        &self,
+        announced: Vec<ProofWrapperAnnouncement>,
+    ) -> Result<(Vec<ProofWrapperAnnouncement>, Vec<ProofWrapperAnnouncement>), StoreError> {
+        let mut inner = self.write()?;
+        let mut seen = FxHashSet::default();
+        let mut to_request = Vec::new();
+        let mut in_flight_elsewhere = Vec::new();
+        for wrapper in announced {
+            if inner.transaction_pool.contains_key(&wrapper.tx_hash)
+                || !seen.insert(wrapper.tx_hash)
+            {
+                continue;
+            }
+            if inner.in_flight_proof_wrappers.insert(wrapper.tx_hash) {
+                to_request.push(wrapper);
+            } else {
+                in_flight_elsewhere.push(wrapper);
+            }
+        }
+        Ok((to_request, in_flight_elsewhere))
+    }
+
+    /// Releases the in-flight mark of the given transactions' wrappers, once the
+    /// request for them was answered, failed or timed out.
+    pub fn clear_in_flight_proof_wrappers(&self, tx_hashes: &[H256]) -> Result<(), StoreError> {
+        let mut inner = self.write()?;
+        for tx_hash in tx_hashes {
+            inner.in_flight_proof_wrappers.remove(tx_hash);
+        }
+        Ok(())
     }
 
     /// The witnesses of a pooled dependency transaction (EIP-8504), one for each
