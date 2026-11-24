@@ -13,7 +13,7 @@ repository.workspace = true
 [dependencies]
 ethrex-rlp.workspace = true
 ethrex-common = { workspace = true, default-features = false }
-ethrex-crypto.workspace = true
+ethrex-crypto = { workspace = true, features = ["leansphincs"] }
 ethrex-storage.workspace = true
 ethrex-trie.workspace = true
 ethrex-vm.workspace = true
@@ -35,6 +35,8 @@ tokio-util.workspace = true
 tokio = { workspace = true, features = ["full"] }
 ethrex-levm.workspace = true
 tempfile.workspace = true
+# Signs the witnesses the EIP-8504 tests verify.
+lean_sphincs.workspace = true
 
 [lib]
 path = "./blockchain.rs"

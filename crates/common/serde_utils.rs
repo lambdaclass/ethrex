@@ -497,6 +497,39 @@ pub mod bytes {
             serialize_vec_of_hex_encodables(value, serializer)
         }
     }
+
+    /// An optional list of byte strings, each a 0x prefixed hex string. An absent
+    /// or `null` value is `None`.
+    pub mod vec_opt {
+        use super::*;
+
+        pub fn deserialize<'de, D>(d: D) -> Result<Option<Vec<Bytes>>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let Some(value) = Option::<Vec<String>>::deserialize(d)? else {
+                return Ok(None);
+            };
+            let mut output = Vec::with_capacity(value.len());
+            for str in value {
+                let bytes = hex_simd::decode_to_vec(str.trim_start_matches("0x"))
+                    .map_err(|e| D::Error::custom(e.to_string()))?
+                    .into();
+                output.push(bytes);
+            }
+            Ok(Some(output))
+        }
+
+        pub fn serialize<S>(value: &Option<Vec<Bytes>>, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            match value {
+                Some(value) => serialize_vec_of_hex_encodables(value, serializer),
+                None => serializer.serialize_none(),
+            }
+        }
+    }
 }
 
 /// Serializes to and deserializes from 0x prefixed hex string

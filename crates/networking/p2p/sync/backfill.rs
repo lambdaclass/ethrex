@@ -554,6 +554,7 @@ mod tests {
                         transactions: vec![],
                         ommers: vec![],
                         withdrawals: Some(vec![]),
+                        dependency_witnesses: None,
                     },
                 )
                 .await

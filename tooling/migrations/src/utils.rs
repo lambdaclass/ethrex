@@ -34,6 +34,7 @@ pub fn migrate_block_header(header: LibmdbxBlockHeader) -> BlockHeader {
         requests_hash: header.requests_hash,
         block_access_list_hash: None,
         slot_number: None,
+        dependency_witnesses_hash: None,
         burned_fees: None,
     }
 }
@@ -57,6 +58,7 @@ pub fn migrate_block_body(body: LibmdbxBlockBody) -> BlockBody {
                 })
                 .collect()
         }),
+        dependency_witnesses: None,
     }
 }
 

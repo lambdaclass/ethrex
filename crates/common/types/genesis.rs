@@ -14,7 +14,8 @@ use tracing::warn;
 
 use super::{
     AccountState, Block, BlockBody, BlockHeader, BlockNumber, INITIAL_BASE_FEE,
-    compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
+    compute_dependency_witnesses_hash, compute_receipts_root, compute_transactions_root,
+    compute_withdrawals_root,
 };
 use crate::{
     constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, EMPTY_BLOCK_ACCESS_LIST_HASH},
@@ -852,6 +853,13 @@ impl Genesis {
             .is_amsterdam_activated(self.timestamp)
             .then_some(self.slot_number.unwrap_or(0));
 
+        // EIP-8504: a chain that starts with it active commits, at genesis, to an
+        // empty list of dependency witnesses.
+        let dependency_witnesses_hash = self
+            .config
+            .is_eip8504_activated(self.timestamp)
+            .then(|| compute_dependency_witnesses_hash(&[], &NativeCrypto));
+
         BlockHeader {
             parent_hash: H256::zero(),
             ommers_hash: *DEFAULT_OMMERS_HASH,
@@ -876,6 +884,7 @@ impl Genesis {
             requests_hash,
             block_access_list_hash,
             slot_number,
+            dependency_witnesses_hash,
             ..Default::default()
         }
     }
@@ -885,6 +894,10 @@ impl Genesis {
             transactions: vec![],
             ommers: vec![],
             withdrawals: Some(vec![]),
+            dependency_witnesses: self
+                .config
+                .is_eip8504_activated(self.timestamp)
+                .then(Vec::new),
         }
     }
 
@@ -1666,5 +1679,54 @@ mod tests {
         };
         config.blob_schedule.amsterdam = Some(pinned);
         assert_eq!(config.get_fork_blob_schedule(100), Some(pinned));
+    }
+
+    #[test]
+    fn eip8504_needs_hegota_and_its_own_timestamp() {
+        let mut config = ChainConfig {
+            eip8504_time: Some(100),
+            ..Default::default()
+        };
+        assert!(!config.is_eip8504_activated(100), "not without Hegota");
+        config.hegota_time = Some(50);
+        assert!(!config.is_eip8504_activated(99));
+        assert!(config.is_eip8504_activated(100));
+        config.eip8504_time = None;
+        assert!(
+            !config.is_eip8504_activated(100),
+            "Hegota alone does not switch it on"
+        );
+
+        // The key is `eip8504Time` in the genesis JSON, and a config that does not
+        // name it serializes without it.
+        let parsed: ChainConfig = serde_json::from_str(
+            r#"{"chainId": 1, "depositContractAddress": "0x0000000000000000000000000000000000000000", "eip8504Time": 7}"#,
+        )
+        .expect("the config parses");
+        assert_eq!(parsed.eip8504_time, Some(7));
+        let json = serde_json::to_string(&ChainConfig::default()).expect("serializes");
+        assert!(!json.contains("eip8504Time"));
+    }
+
+    #[test]
+    fn genesis_commits_to_an_empty_witness_list_only_when_eip8504_starts_active() {
+        let plain = Genesis::default().get_block();
+        assert_eq!(plain.header.dependency_witnesses_hash, None);
+        assert_eq!(plain.body.dependency_witnesses, None);
+
+        let genesis = Genesis {
+            config: ChainConfig {
+                hegota_time: Some(0),
+                eip8504_time: Some(0),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let block = genesis.get_block();
+        assert_eq!(block.body.dependency_witnesses, Some(Vec::new()));
+        assert_eq!(
+            block.header.dependency_witnesses_hash,
+            Some(compute_dependency_witnesses_hash(&[], &NativeCrypto))
+        );
     }
 }

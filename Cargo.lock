@@ -3832,6 +3832,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
+ "lean_sphincs",
  "libssz",
  "libssz-merkle",
  "rayon",

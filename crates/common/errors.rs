@@ -49,4 +49,8 @@ pub enum InvalidBlockError {
     UnsupportedTransactionType(u8),
     #[error("Transaction has invalid chain id: have {have}, want {want}")]
     InvalidTransactionChainId { have: u64, want: u64 },
+    #[error("Block carries {found} dependency witnesses for its {expected} dependencies")]
+    DependencyWitnessesCountMismatch { expected: usize, found: usize },
+    #[error("Dependency witness {0} does not satisfy its dependency")]
+    DependencyNotSatisfied(usize),
 }

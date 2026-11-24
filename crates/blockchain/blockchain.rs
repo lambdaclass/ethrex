@@ -43,6 +43,7 @@
 //! ```
 
 pub mod constants;
+pub mod dependency_witnesses;
 pub mod error;
 pub mod fork_choice;
 mod glamsterdam;
@@ -60,6 +61,7 @@ use ::tracing::{error, info, instrument, warn};
 #[cfg(feature = "rayon")]
 use ::tracing::debug;
 use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
+use dependency_witnesses::validate_dependency_witnesses;
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{
@@ -780,6 +782,7 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block_pre_execution(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         self.validate_l1_transaction_types(block)?;
+        validate_dependency_witnesses(block, &chain_config)?;
 
         let parent_timestamp = parent_header.timestamp;
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
@@ -870,6 +873,11 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         self.validate_l1_transaction_types(block)?;
+        // EIP-8504: every dependency of the block's transactions must be satisfied
+        // by a witness the block carries. It runs on every path, including blocks
+        // assembled from an engine payload, whose body commitments are derived and
+        // so say nothing about whether the witnesses are valid.
+        validate_dependency_witnesses(block, &chain_config)?;
         match body_check {
             BodyCheck::Verify => validate_block_body(&block.header, &block.body, &NativeCrypto)
                 .map_err(|e| ChainError::InvalidBlock(InvalidBlockError::InvalidBody(e)))?,

@@ -90,6 +90,7 @@ async fn l1_rejects_privileged_l2_transaction_block() {
         transactions: vec![decoded_tx],
         ommers: Vec::new(),
         withdrawals: None,
+        dependency_witnesses: None,
     };
 
     // Post-state consistent with ethrex executing the privileged tx, so the block
