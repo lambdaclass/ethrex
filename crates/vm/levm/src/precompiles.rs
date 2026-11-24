@@ -1137,9 +1137,11 @@ pub fn blake2f(
 
     crypto.blake2_compress(rounds, &mut h, m, t, f);
 
-    Ok(Bytes::from_iter(
-        h.into_iter().flat_map(|value| value.to_le_bytes()),
-    ))
+    let mut output = [0u8; 64];
+    for (chunk, value) in output.chunks_exact_mut(8).zip(h) {
+        chunk.copy_from_slice(&value.to_le_bytes());
+    }
+    Ok(Bytes::copy_from_slice(&output))
 }
 
 /// Converts the provided commitment to match the provided versioned_hash.

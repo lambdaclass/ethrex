@@ -120,7 +120,7 @@ fn encode_sample_input() -> Vec<u8> {
     let input = SszStatelessInput {
         new_payload_request: NewPayloadRequest {
             execution_payload: sample_execution_payload(),
-            versioned_hashes: Vec::new().into(),
+            versioned_hashes: Default::default(),
             parent_beacon_block_root: [0u8; 32],
             execution_requests: ExecutionRequests {
                 deposits: Vec::new().into(),

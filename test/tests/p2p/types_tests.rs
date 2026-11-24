@@ -65,6 +65,30 @@ fn parse_node_from_enr_string() {
     assert_eq!(node, expected_node);
 }
 
+#[test]
+fn enr_url_omits_base64_padding() {
+    for (seq, remainder) in [(1, 2), (128, 0), (256, 1)] {
+        let record = NodeRecord::from_pairs(
+            seq,
+            &test_signer(),
+            NodeRecordPairs {
+                ip: Some(Ipv4Addr::LOCALHOST),
+                udp_port: Some(30303),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(record.encode_to_vec().len() % 3, remainder);
+
+        let url = record.enr_url().unwrap();
+        assert!(url.starts_with("enr:"));
+        assert!(!url.contains('='));
+        let decoded = through_enr_url(&record);
+        assert_eq!(decoded, record);
+        assert!(decoded.verify_signature());
+    }
+}
+
 #[tokio::test]
 async fn encode_node_record_to_enr_url() {
     // https://github.com/ethereum/devp2p/blob/master/enr.md#test-vectors

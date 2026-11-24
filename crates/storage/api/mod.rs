@@ -73,6 +73,15 @@ pub trait StorageBackend: Debug + Send + Sync {
     /// Opens a new read view.
     fn begin_read(&self) -> Result<Arc<dyn StorageReadView>, StoreError>;
 
+    /// Opens a read view pinned to the database as it is now: writes committed
+    /// after it opens are not visible through it. For reads that must not see a
+    /// commit land partway through, such as checking that a state root is held
+    /// and then reading that state. Backends whose `begin_read` already reads a
+    /// snapshot keep this default.
+    fn begin_snapshot_read(&self) -> Result<Arc<dyn StorageReadView>, StoreError> {
+        self.begin_read()
+    }
+
     /// Creates a new write batch.
     fn begin_write(&self) -> Result<Box<dyn StorageWriteBatch + 'static>, StoreError>;
 

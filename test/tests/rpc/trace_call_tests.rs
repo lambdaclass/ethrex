@@ -463,12 +463,10 @@ async fn trace_call_still_rejects_out_of_range_tx_index() {
         "expected an out-of-range txIndex error, got: {message}"
     );
     // The message substring alone would also match an `RpcErr::Internal` — asserting the
-    // code pins this down as `RpcErr::BadParams`, which maps to -32000 in this crate (not
-    // the JSON-RPC spec's -32602; see `RpcErrorMetadata::from(RpcErr::BadParams)` in
-    // `crates/networking/rpc/utils.rs`).
+    // code pins this down as `RpcErr::ServerError` (-32000).
     assert_eq!(
         error["code"].as_i64(),
         Some(-32000),
-        "expected the out-of-range txIndex error to be RpcErr::BadParams (-32000), got: {error}"
+        "expected the out-of-range txIndex error to be RpcErr::ServerError (-32000), got: {error}"
     );
 }

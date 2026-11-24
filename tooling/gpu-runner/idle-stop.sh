@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# Power off this Paperspace machine once the GitHub Actions runner has been
+# idle for IDLE_MINUTES. Run every minute by gpu-runner-idle.timer.
+#
+# It shuts down from inside (`systemctl poweroff`), which stops compute billing
+# just like a stop through the API, so no Paperspace API key is needed here:
+# CI jobs on this machine have sudo and could read anything stored on it.
+#
+# The machine counts as busy while:
+#   - a job is running on it (a Runner.Worker process exists), or
+#   - a run of a workflow that needs the GPU runner is waiting or in progress
+#     on GitHub (so a run that just started the machine is not cut off before
+#     the runner picks up its job).
+#
+# Environment (from /etc/gpu-runner-idle.env):
+#   GITHUB_TOKEN     fine-grained token, Actions: read on GITHUB_REPO
+#   GITHUB_REPO      default lambdaclass/ethrex
+#   GPU_WORKFLOWS    space-separated workflow files using the GPU runner
+#                    (default main_prover.yaml)
+#   IDLE_MINUTES     default 15
+#   DRY_RUN          exactly 0 really stops; anything else (default 1) only
+#                    logs "would stop"
+set -euo pipefail
+
+GITHUB_REPO="${GITHUB_REPO:-lambdaclass/ethrex}"
+GPU_WORKFLOWS="${GPU_WORKFLOWS:-main_prover.yaml}"
+IDLE_MINUTES="${IDLE_MINUTES:-15}"
+DRY_RUN="${DRY_RUN:-1}"
+: "${GITHUB_TOKEN:?GITHUB_TOKEN is not set}"
+[[ $IDLE_MINUTES =~ ^[0-9]+$ ]] || {
+  echo "IDLE_MINUTES must be a whole number of minutes, got '${IDLE_MINUTES}'" >&2
+  exit 1
+}
+
+# /run is cleared on boot, so a fresh boot always gets a full idle window.
+STATE_DIR="${STATE_DIR:-/run/gpu-runner-idle}"
+LAST_BUSY="$STATE_DIR/last_busy"
+mkdir -p "$STATE_DIR"
+now=$(date +%s)
+# Reset a missing or corrupt timestamp (e.g. a truncated write) to now.
+last_busy=$(cat "$LAST_BUSY" 2>/dev/null || true)
+if ! [[ $last_busy =~ ^[0-9]+$ ]]; then
+  last_busy=$now
+  echo "$now" >"$LAST_BUSY"
+fi
+
+# Number of runs of the GPU workflows that have not finished yet. Prints
+# "reject <HTTP code>" if GitHub refuses the request for a reason that won't
+# go away by itself (bad token, no access, wrong repo or workflow name), and
+# nothing if the API cannot be reached or the error may be transient.
+#
+# One request per workflow lists its latest runs (newest first) and counts the
+# ones whose status is not "completed". A single snapshot can't miss a run
+# that changes status between requests, as separate per-status queries could.
+# A run still waiting while 50 newer runs of the same workflow already
+# finished is not realistic.
+github_active_runs() {
+  local total=0 wf out code body n
+  for wf in $GPU_WORKFLOWS; do
+    # The token goes through a config file descriptor, not argv, so it does
+    # not show up in `ps`.
+    out=$(curl --silent --show-error --max-time 30 \
+      --config <(printf 'header = "Authorization: Bearer %s"\n' "$GITHUB_TOKEN") \
+      -H "Accept: application/vnd.github+json" \
+      -w '\n%{http_code}' \
+      "https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${wf}/runs?per_page=50") ||
+      return 0
+    code=${out##*$'\n'}
+    body=${out%$'\n'*}
+    # GitHub also answers 403 when it rate-limits a request ("API rate limit
+    # exceeded", "secondary rate limit"): that is transient, not a bad token.
+    if [[ $code == 403 && $body == *"rate limit"* ]]; then
+      return 0
+    fi
+    # 401/403: bad or expired token. 404: wrong GITHUB_REPO or GPU_WORKFLOWS,
+    # or a fine-grained token without access to the repo (GitHub answers 404,
+    # not 403, for repos the token can't see).
+    if [[ $code == 401 || $code == 403 || $code == 404 ]]; then
+      echo "reject $code"
+      return 0
+    fi
+    [[ $code == 200 ]] || return 0
+    n=$(python3 -c '
+import json, sys
+runs = json.load(sys.stdin)["workflow_runs"]
+print(sum(r["status"] != "completed" for r in runs))' <<<"$body" 2>/dev/null) ||
+      return 0
+    total=$((total + n))
+  done
+  echo "$total"
+}
+
+# Match the process name exactly: `-f` would also match any shell or pager
+# whose command line mentions Runner.Worker.
+if pgrep -x Runner.Worker >/dev/null; then
+  echo "$now" >"$LAST_BUSY"
+  echo "busy: job running"
+  exit 0
+fi
+
+runs=$(github_active_runs)
+if [[ $runs == reject* ]]; then
+  # A bad token or a wrong repo/workflow name would otherwise keep the machine
+  # on forever without anyone noticing: fail the unit so `systemctl --failed`
+  # shows it.
+  echo "GitHub refused the request (HTTP ${runs#reject }): check GITHUB_TOKEN, GITHUB_REPO and GPU_WORKFLOWS in /etc/gpu-runner-idle.env; not stopping" >&2
+  exit 1
+fi
+if [[ -z $runs ]]; then
+  # Can't tell whether a run is waiting: stay on rather than cut it off.
+  # Paperspace auto-shutdown is the backstop if this keeps failing.
+  echo "busy: GitHub API unreachable or rate-limited, not stopping" >&2
+  exit 0
+fi
+if ((runs > 0)); then
+  echo "$now" >"$LAST_BUSY"
+  echo "busy: ${runs} GPU workflow run(s) waiting or in progress"
+  exit 0
+fi
+
+idle_secs=$((now - last_busy))
+if ((idle_secs < IDLE_MINUTES * 60)); then
+  echo "idle for $((idle_secs / 60))m (stop at ${IDLE_MINUTES}m)"
+  exit 0
+fi
+
+# Fail closed: only an exact 0 stops the machine, so a typo or a trailing
+# comment in the env file keeps it in dry-run mode.
+if [[ $DRY_RUN != 0 ]]; then
+  echo "idle for $((idle_secs / 60))m: would stop (DRY_RUN=${DRY_RUN})"
+  exit 0
+fi
+
+echo "idle for $((idle_secs / 60))m: powering off"
+systemctl poweroff

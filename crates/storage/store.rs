@@ -39,6 +39,7 @@ use ethrex_crypto::{NativeCrypto, keccak::keccak_hash};
 use ethrex_rlp::{
     decode::{RLPDecode, decode_bytes, decode_rlp_item},
     encode::RLPEncode,
+    error::RLPDecodeError,
 };
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
 use ethrex_trie::{Node, NodeRLP};
@@ -495,6 +496,10 @@ pub struct Store {
     /// ends (the pruned range starts at the lowest entry still present).
     journal_pruning_paused: Arc<std::sync::atomic::AtomicBool>,
 
+    /// Signalled when an input of the node's sync status may have changed: the
+    /// canonical head, the sync target, the executed head or the synced flag.
+    sync_status_changed: Arc<tokio::sync::watch::Sender<()>>,
+
     background_threads: Arc<ThreadList>,
 }
 
@@ -855,6 +860,28 @@ impl Store {
         blocks: Vec<BackfilledBlock>,
         new_earliest: BlockNumber,
     ) -> Result<(), StoreError> {
+        // The frontier block is already stored, and indexed if it is a snap pivot.
+        // `earliest` and the floor are read outside the write transaction: backfill is
+        // their only writer once the node is synced, and it writes one batch at a time.
+        let earliest = self
+            .read_chain_data_block_number(ChainDataIndex::EarliestBlockNumber)
+            .await?
+            .unwrap_or(BlockNumber::MAX);
+        let unindexed_top = blocks
+            .iter()
+            .filter(|block| {
+                !block.index_transactions
+                    && !block.body.transactions.is_empty()
+                    && block.header.number < earliest
+            })
+            .map(|block| block.header.number)
+            .max();
+        let mut tx_index_floor = None;
+        if let Some(top) = unindexed_top {
+            let floor = top.saturating_add(1);
+            let current = self.get_tx_index_floor().await?;
+            tx_index_floor = Some(current.map_or(floor, |current| current.max(floor)));
+        }
         let backend = self.backend.clone();
         tokio::task::spawn_blocking(move || {
             let mut txn = backend.begin_write()?;
@@ -888,6 +915,13 @@ impl Store {
                 &chain_data_key(ChainDataIndex::EarliestBlockNumber),
                 &new_earliest.to_le_bytes(),
             )?;
+            if let Some(floor) = tx_index_floor {
+                txn.put(
+                    CHAIN_DATA,
+                    &chain_data_key(ChainDataIndex::TxIndexFloor),
+                    &floor.to_le_bytes(),
+                )?;
+            }
             txn.commit()
         })
         .await
@@ -1089,6 +1123,34 @@ impl Store {
             .await?
             .map(decode_block_number)
             .transpose()
+    }
+
+    /// Whether the transaction index holds `transaction_hash` for the block `block_hash`.
+    ///
+    /// Unlike [`Self::get_transaction_location`] this does not ask whether the block is
+    /// canonical, so the answer does not change while a forkchoice update is written.
+    pub async fn is_transaction_indexed_in(
+        &self,
+        transaction_hash: H256,
+        block_hash: BlockHash,
+    ) -> Result<bool, StoreError> {
+        let buffered = self.buffer()?.get_tx_locations(&transaction_hash);
+        if buffered.iter().any(|(_, hash, _)| *hash == block_hash) {
+            return Ok(true);
+        }
+        // The buffer is read first: a flush commits to disk before it evicts, so an
+        // entry that has left the buffer since is on disk by now.
+        let db = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let tx = db.begin_read()?;
+            let Some(bytes) = tx.get(TRANSACTION_LOCATIONS, transaction_hash.as_bytes())? else {
+                return Ok(false);
+            };
+            let locations = <Vec<(BlockNumber, BlockHash, Index)>>::decode(&bytes)?;
+            Ok(locations.iter().any(|(_, hash, _)| *hash == block_hash))
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Store transaction location (block number and index of the transaction within the block)
@@ -1599,12 +1661,14 @@ impl Store {
         block_hash: H256,
         index: u64,
     ) -> Result<Option<Transaction>, StoreError> {
-        let block_body = match self.get_block_body_by_hash(block_hash).await? {
-            Some(body) => body,
-            None => return Ok(None),
-        };
         let index: usize = index.try_into()?;
-        Ok(block_body.transactions.get(index).cloned())
+        if let Some(transaction) = self.buffer()?.get_transaction(&block_hash, index) {
+            return Ok(transaction);
+        }
+        let Some(body) = self.read_async(BODIES, block_hash.encode_to_vec()).await? else {
+            return Ok(None);
+        };
+        Ok(decode_body_transaction(&body, index)?)
     }
 
     pub async fn get_block_by_hash(
@@ -1696,6 +1760,51 @@ impl Store {
             .ok_or(StoreError::MissingEarliestBlockNumber)
     }
 
+    /// Lowest block from which every stored block is in the transaction index, if backfill skipped any.
+    pub async fn get_tx_index_floor(&self) -> Result<Option<BlockNumber>, StoreError> {
+        self.read_chain_data_block_number(ChainDataIndex::TxIndexFloor)
+            .await
+    }
+
+    /// Whether the history bounds (`earliest_block_number` and the transaction index
+    /// floor) were tracked since the database was created, or have been reconciled
+    /// since. A database created before they were tracked holds stale ones until then.
+    /// The marker is not cleared if a release from before it backfills the database
+    /// afterwards.
+    pub async fn history_bounds_reconciled(&self) -> Result<bool, StoreError> {
+        Ok(self
+            .read_chain_data_block_number(ChainDataIndex::HistoryBoundsReconciled)
+            .await?
+            .is_some())
+    }
+
+    /// Marks the history bounds as reconciled, recording the transaction index floor
+    /// if the reconciliation found one.
+    pub async fn mark_history_bounds_reconciled(
+        &self,
+        tx_index_floor: Option<BlockNumber>,
+    ) -> Result<(), StoreError> {
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut txn = backend.begin_write()?;
+            if let Some(floor) = tx_index_floor {
+                txn.put(
+                    CHAIN_DATA,
+                    &chain_data_key(ChainDataIndex::TxIndexFloor),
+                    &floor.to_le_bytes(),
+                )?;
+            }
+            txn.put(
+                CHAIN_DATA,
+                &chain_data_key(ChainDataIndex::HistoryBoundsReconciled),
+                &1u64.to_le_bytes(),
+            )?;
+            txn.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("History bounds write task panicked: {e}")))?
+    }
+
     /// Obtain finalized block number
     pub async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         self.read_chain_data_block_number(ChainDataIndex::FinalizedBlockNumber)
@@ -1711,6 +1820,17 @@ impl Store {
     /// Obtain latest block number
     pub fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
         Ok(self.latest_block_header.get().number)
+    }
+
+    /// Wakes the receivers of [`Self::sync_status_changes`].
+    pub fn notify_sync_status_changed(&self) {
+        self.sync_status_changed.send_replace(());
+    }
+
+    /// Resolves `changed()` after each [`Self::notify_sync_status_changed`];
+    /// signals sent before it is awaited collapse into one.
+    pub fn sync_status_changes(&self) -> tokio::sync::watch::Receiver<()> {
+        self.sync_status_changed.subscribe()
     }
 
     /// Update pending block number
@@ -2520,6 +2640,7 @@ impl Store {
             fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
             safe_commit_root,
             journal_pruning_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            sync_status_changed: Arc::new(tokio::sync::watch::Sender::new(())),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -3314,6 +3435,13 @@ impl Store {
         self.add_block(genesis_block).await?;
         self.update_earliest_block_number(genesis_block_number)
             .await?;
+        // A new database tracks its history bounds from the first block, so it has none
+        // from before the tracking to reconcile. Only this path marks one: the early
+        // returns above are for a database that already holds a genesis, which may
+        // predate the tracking. They need the genesis to be canonical, which only the
+        // forkchoice update below makes it, so a stop before that repeats this path
+        // and cannot leave a new database unmarked.
+        self.mark_history_bounds_reconciled(None).await?;
         self.forkchoice_update(vec![], genesis_block_number, genesis_hash, None, None)
             .await?;
         Ok(())
@@ -3349,12 +3477,32 @@ impl Store {
         address: Address,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        let account_hash = hash_address_fixed(&address);
-
         // Pre-acquire shared resources once for both trie opens
         let read_view = self.backend.begin_read()?;
         let cache = self.gated_snapshot(state_root)?;
         let last_written = self.last_written()?;
+        self.storage_at_with(
+            state_root,
+            address,
+            storage_key,
+            read_view,
+            cache,
+            last_written,
+        )
+    }
+
+    /// [`Self::get_storage_at_root`] over resources the caller already holds,
+    /// such as a [`StateView`]'s.
+    fn storage_at_with(
+        &self,
+        state_root: H256,
+        address: Address,
+        storage_key: H256,
+        read_view: Arc<dyn StorageReadView>,
+        cache: Arc<TrieLayerCache>,
+        last_written: Vec<u8>,
+    ) -> Result<Option<U256>, StoreError> {
+        let account_hash = hash_address_fixed(&address);
         // While a deep-reorg overlay serves this root, flat-KV reads must
         // go through the trie: journal entries written while the FKV generator was
         // running lack pre-images for keys past the generator frontier, so disk
@@ -3489,6 +3637,7 @@ impl Store {
             self.latest_block_header.update((*previous_head).clone());
             return Err(err);
         }
+        self.notify_sync_status_changed();
 
         // Refresh the canonical safe-commit root now that the canonical tables reflect the new
         // head. `None` (chain shorter than the threshold, e.g. genesis init at head 0) leaves the
@@ -4432,14 +4581,39 @@ impl Store {
             return Ok(true);
         }
         let trie = self.open_state_trie(state_root)?;
-        // NOTE: here we hash the root because the trie doesn't check the state root is correct
-        let Some(root) = trie.db().get(Nibbles::default())? else {
-            return Ok(false);
-        };
-        let root_hash = ethrex_trie::Node::decode(&root)?
-            .compute_hash(&NativeCrypto)
-            .finalize(&NativeCrypto);
-        Ok(state_root == root_hash)
+        trie_holds_root(&trie, state_root)
+    }
+
+    /// Opens a [`StateView`] of `state_root`, or `None` when the node does not
+    /// hold that state.
+    pub fn state_view(&self, state_root: H256) -> Result<Option<StateView>, StoreError> {
+        // The order matters. The flat-key-value frontier only moves forward while
+        // it is generated, so reading it before the snapshot never has reads skip
+        // the trie for keys the snapshot has no flat value for yet. A commit
+        // writes the disk before it drops the committed layer from the cache, so
+        // taking the snapshot before the cache can pair an older disk with a newer
+        // cache, where the root then reads as not held, but never a newer disk with
+        // layers it has already absorbed, which would answer with newer state.
+        let last_written = self.last_written()?;
+        let read_view = self.backend.begin_snapshot_read()?;
+        let cache = self.gated_snapshot(state_root)?;
+        let state_trie = self.open_state_trie_shared(
+            state_root,
+            read_view.clone(),
+            cache.clone(),
+            last_written.clone(),
+        )?;
+        if state_root != EMPTY_TRIE_HASH && !trie_holds_root(&state_trie, state_root)? {
+            return Ok(None);
+        }
+        Ok(Some(StateView {
+            store: self.clone(),
+            state_root,
+            read_view,
+            cache,
+            last_written,
+            state_trie,
+        }))
     }
 
     // ===========================================================================
@@ -5196,6 +5370,59 @@ impl PendingTrieRoots {
             roots = self.ready.wait(roots).map_err(|_| StoreError::LockError)?;
         }
         Ok(())
+    }
+}
+
+/// Whether `trie`, opened at `state_root`, actually holds that root: opening a
+/// trie does not check it, and the path-keyed disk answers for any root.
+fn trie_holds_root(trie: &Trie, state_root: H256) -> Result<bool, StoreError> {
+    let Some(root) = trie.db().get(Nibbles::default())? else {
+        return Ok(false);
+    };
+    let root_hash = ethrex_trie::Node::decode(&root)?
+        .compute_hash(&NativeCrypto)
+        .finalize(&NativeCrypto);
+    Ok(state_root == root_hash)
+}
+
+/// One block's state, read from a database snapshot and trie layer cache taken
+/// together (see [`Store::state_view`]), so that a commit that lands while it is
+/// read can neither prune it nor show newer state through it.
+pub struct StateView {
+    store: Store,
+    state_root: H256,
+    read_view: Arc<dyn StorageReadView>,
+    cache: Arc<TrieLayerCache>,
+    last_written: Vec<u8>,
+    state_trie: Trie,
+}
+
+impl StateView {
+    /// The state root this view reads.
+    pub fn state_root(&self) -> H256 {
+        self.state_root
+    }
+
+    /// The account at `address`, or `None` if it does not exist in this state.
+    pub fn account_state(&self, address: Address) -> Result<Option<AccountState>, StoreError> {
+        self.store
+            .get_account_state_from_trie(&self.state_trie, address)
+    }
+
+    /// The value of `address`'s storage slot `storage_key`, or `None` if unset.
+    pub fn storage_at(
+        &self,
+        address: Address,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        self.store.storage_at_with(
+            self.state_root,
+            address,
+            storage_key,
+            self.read_view.clone(),
+            self.cache.clone(),
+            self.last_written.clone(),
+        )
     }
 }
 
@@ -6147,6 +6374,153 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     {
         let _ = path;
         None
+    }
+}
+
+/// Decodes only the transaction at `index` of an RLP-encoded block body, or
+/// `None` if the body has fewer transactions. The transactions before it are
+/// skipped over by their RLP length prefix rather than decoded, so reading one
+/// transaction does not cost decoding the whole body.
+fn decode_body_transaction(
+    body_rlp: &[u8],
+    index: usize,
+) -> Result<Option<Transaction>, RLPDecodeError> {
+    let (is_list, body, _) = decode_rlp_item(body_rlp)?;
+    if !is_list {
+        return Err(RLPDecodeError::UnexpectedString);
+    }
+    let (is_list, mut transactions, _) = decode_rlp_item(body)?;
+    if !is_list {
+        return Err(RLPDecodeError::UnexpectedString);
+    }
+    for _ in 0..index {
+        if transactions.is_empty() {
+            return Ok(None);
+        }
+        (_, _, transactions) = decode_rlp_item(transactions)?;
+    }
+    if transactions.is_empty() {
+        return Ok(None);
+    }
+    let (transaction, _) = Transaction::decode_unfinished(transactions)?;
+    Ok(Some(transaction))
+}
+
+#[cfg(test)]
+mod body_transaction_tests {
+    use super::*;
+    use ethrex_common::types::{EIP1559Transaction, LegacyTransaction, TxKind, Withdrawal};
+
+    fn transactions() -> Vec<Transaction> {
+        (0..6u64)
+            .map(|nonce| {
+                if nonce % 2 == 0 {
+                    // Legacy transactions are encoded as RLP lists in a body.
+                    Transaction::LegacyTransaction(LegacyTransaction {
+                        nonce,
+                        gas: 21_000,
+                        to: TxKind::Call(Address::repeat_byte(nonce as u8)),
+                        data: vec![nonce as u8; 60 * nonce as usize].into(),
+                        v: U256::from(27),
+                        r: U256::from(nonce + 1),
+                        s: U256::from(nonce + 2),
+                        ..Default::default()
+                    })
+                } else {
+                    // Typed transactions are encoded as RLP strings in a body.
+                    Transaction::EIP1559Transaction(EIP1559Transaction {
+                        chain_id: 1,
+                        nonce,
+                        gas_limit: 21_000,
+                        to: TxKind::Create,
+                        data: vec![nonce as u8; 60 * nonce as usize].into(),
+                        signature_r: U256::from(nonce + 1),
+                        signature_s: U256::from(nonce + 2),
+                        ..Default::default()
+                    })
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn decodes_the_same_transaction_as_the_whole_body() {
+        let withdrawal = Withdrawal {
+            index: 1,
+            validator_index: 2,
+            address: Address::repeat_byte(3),
+            amount: 4,
+        };
+        for withdrawals in [None, Some(vec![withdrawal])] {
+            let body = BlockBody {
+                transactions: transactions(),
+                ommers: vec![],
+                withdrawals,
+            };
+            let rlp = body.encode_to_vec();
+            let decoded = BlockBody::decode(&rlp).unwrap();
+            for (index, expected) in decoded.transactions.iter().enumerate() {
+                let transaction = decode_body_transaction(&rlp, index).unwrap().unwrap();
+                assert_eq!(transaction.encode_to_vec(), expected.encode_to_vec());
+                assert_eq!(
+                    transaction.hash(&NativeCrypto),
+                    expected.hash(&NativeCrypto)
+                );
+            }
+            assert!(
+                decode_body_transaction(&rlp, decoded.transactions.len())
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn a_body_without_transactions_has_none() {
+        let rlp = BlockBody::default().encode_to_vec();
+        assert!(decode_body_transaction(&rlp, 0).unwrap().is_none());
+        assert!(decode_body_transaction(&rlp, 3).unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn reads_a_stored_transaction_by_location() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let block = Block::new(
+            BlockHeader {
+                number: 1,
+                ..Default::default()
+            },
+            BlockBody {
+                transactions: transactions(),
+                ommers: vec![],
+                withdrawals: None,
+            },
+        );
+        let hash = block.hash();
+        let expected = block.body.transactions.clone();
+        store.add_block(block).await.unwrap();
+        for (index, transaction) in expected.iter().enumerate() {
+            let stored = store
+                .get_transaction_by_location(hash, index as u64)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(stored.encode_to_vec(), transaction.encode_to_vec());
+        }
+        assert!(
+            store
+                .get_transaction_by_location(hash, expected.len() as u64)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .get_transaction_by_location(H256::repeat_byte(9), 0)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 }
 
@@ -8245,6 +8619,75 @@ mod backfill_write_tests {
             None,
             "transaction index must be skipped when index_transactions is false"
         );
+        assert_eq!(
+            store.get_tx_index_floor().await.unwrap(),
+            Some(100),
+            "the tx index floor must rise above the unindexed block"
+        );
+    }
+
+    #[tokio::test]
+    async fn tx_index_floor_tracks_highest_unindexed_block() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        store.update_earliest_block_number(100).await.unwrap();
+        let backfilled = |number: u64, index_transactions: bool| BackfilledBlock {
+            header: test_header(number),
+            body: BlockBody {
+                transactions: vec![test_tx(number)],
+                ommers: vec![],
+                withdrawals: Some(vec![]),
+            },
+            receipts: vec![test_receipt()],
+            index_transactions,
+        };
+
+        store
+            .add_backfilled_blocks(
+                vec![
+                    backfilled(100, false),
+                    backfilled(99, true),
+                    backfilled(98, true),
+                ],
+                98,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get_tx_index_floor().await.unwrap(),
+            None,
+            "the re-fetched frontier block must not raise the floor"
+        );
+
+        store
+            .add_backfilled_blocks(vec![backfilled(97, true), backfilled(96, false)], 96)
+            .await
+            .unwrap();
+        assert_eq!(store.get_tx_index_floor().await.unwrap(), Some(97));
+
+        store
+            .add_backfilled_blocks(vec![backfilled(95, false)], 95)
+            .await
+            .unwrap();
+        assert_eq!(store.get_tx_index_floor().await.unwrap(), Some(97));
+
+        // An empty block has nothing to index, so it does not raise the floor.
+        let empty = BackfilledBlock {
+            header: test_header(98),
+            body: BlockBody {
+                transactions: vec![],
+                ommers: vec![],
+                withdrawals: Some(vec![]),
+            },
+            receipts: vec![],
+            index_transactions: false,
+        };
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        store.update_earliest_block_number(99).await.unwrap();
+        store
+            .add_backfilled_blocks(vec![empty, backfilled(97, false)], 97)
+            .await
+            .unwrap();
+        assert_eq!(store.get_tx_index_floor().await.unwrap(), Some(98));
     }
 
     /// End-to-end at the storage/RPC boundary: the getters the RPC handlers use
@@ -8373,6 +8816,88 @@ mod backfill_write_tests {
                 "block {n} must have a body (no gap left by resume)"
             );
         }
+    }
+
+    /// The index is asked about a block by hash, whether or not the block is canonical:
+    /// a block is indexed when it is stored, before forkchoice makes it canonical.
+    #[tokio::test]
+    async fn a_stored_block_is_indexed_before_it_is_canonical() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        let header = test_header(1);
+        let hash = header.hash();
+        let tx = test_tx(7);
+        let tx_hash = tx.hash(&NativeCrypto);
+        let body = BlockBody {
+            transactions: vec![tx],
+            ommers: vec![],
+            withdrawals: Some(vec![]),
+        };
+        store.add_block(Block::new(header, body)).await.unwrap();
+
+        assert_eq!(store.get_transaction_location(tx_hash).await.unwrap(), None);
+        assert!(
+            store
+                .is_transaction_indexed_in(tx_hash, hash)
+                .await
+                .unwrap()
+        );
+        let other_block = test_header(2).hash();
+        assert!(
+            !store
+                .is_transaction_indexed_in(tx_hash, other_block)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !store
+                .is_transaction_indexed_in(test_tx(8).hash(&NativeCrypto), hash)
+                .await
+                .unwrap()
+        );
+
+        // A block still in the buffer, which is where a new payload waits to be flushed.
+        let buffered_header = test_header(3);
+        let buffered_hash = buffered_header.hash();
+        let buffered_tx = test_tx(9);
+        let buffered_tx_hash = buffered_tx.hash(&NativeCrypto);
+        let buffered_body = BlockBody {
+            transactions: vec![buffered_tx],
+            ommers: vec![],
+            withdrawals: Some(vec![]),
+        };
+        store.buffer_block_for_test(&Block::new(buffered_header, buffered_body));
+        assert!(
+            store
+                .is_transaction_indexed_in(buffered_tx_hash, buffered_hash)
+                .await
+                .unwrap()
+        );
+    }
+
+    /// Opening a database marks its history bounds as reconciled only when it is new.
+    /// One that already holds a genesis may predate the bounds, and is left for the
+    /// reconciliation to correct and mark.
+    #[tokio::test]
+    async fn only_a_new_database_starts_with_reconciled_history_bounds() {
+        let mut new = Store::new("", EngineType::InMemory).expect("in-memory store");
+        new.add_initial_state(Genesis::default()).await.unwrap();
+        assert!(new.history_bounds_reconciled().await.unwrap());
+
+        // The same genesis stored without the marker, as before the bounds were tracked.
+        let mut existing = Store::new("", EngineType::InMemory).expect("in-memory store");
+        let genesis_block = Genesis::default().get_block();
+        let genesis_hash = genesis_block.hash();
+        existing.add_block(genesis_block).await.unwrap();
+        existing.update_earliest_block_number(0).await.unwrap();
+        existing
+            .forkchoice_update(vec![], 0, genesis_hash, None, None)
+            .await
+            .unwrap();
+        existing
+            .add_initial_state(Genesis::default())
+            .await
+            .unwrap();
+        assert!(!existing.history_bounds_reconciled().await.unwrap());
     }
 }
 
@@ -8699,5 +9224,59 @@ mod witness_pruning_tests {
         assert!(kept(4, fork(1)));
         assert!(kept(MAX_WITNESSES + 1, fork(1)));
         assert!(kept(MAX_WITNESSES + 3, fork(1)));
+    }
+}
+
+#[cfg(test)]
+mod state_view_tests {
+    use super::*;
+
+    /// Writes `address` with `nonce` into the on-disk state trie at `root` and
+    /// returns the new root. Like a commit, it rewrites the path-keyed disk in
+    /// place, so the previous root's nodes are gone afterwards.
+    fn write_account_nonce(store: &Store, root: H256, address: Address, nonce: u64) -> H256 {
+        let mut trie = store.open_direct_state_trie(root).unwrap();
+        let account = AccountState {
+            nonce,
+            ..Default::default()
+        };
+        trie.insert(
+            hash_address_fixed(&address).as_bytes().to_vec(),
+            account.encode_to_vec(),
+        )
+        .unwrap();
+        trie.commit(&NativeCrypto).unwrap();
+        trie.hash_no_commit(&NativeCrypto)
+    }
+
+    /// A `StateView` keeps reading the state it was checked against after a commit
+    /// rewrites the disk under it, while the root itself is no longer held.
+    fn state_view_is_pinned_across_a_commit(store: Store) {
+        let address = Address::from_low_u64_be(0xabcd);
+        let root = write_account_nonce(&store, EMPTY_TRIE_HASH, address, 1);
+        let view = store
+            .state_view(root)
+            .unwrap()
+            .expect("the state was just written");
+
+        let newer_root = write_account_nonce(&store, root, address, 2);
+        assert_ne!(newer_root, root);
+        assert!(!store.has_state_root(root).unwrap());
+        assert!(store.state_view(root).unwrap().is_none());
+        assert_eq!(view.account_state(address).unwrap().unwrap().nonce, 1);
+        let newer = store.state_view(newer_root).unwrap().unwrap();
+        assert_eq!(newer.account_state(address).unwrap().unwrap().nonce, 2);
+    }
+
+    #[test]
+    fn state_view_is_pinned_across_a_commit_in_memory() {
+        state_view_is_pinned_across_a_commit(Store::new("", EngineType::InMemory).unwrap());
+    }
+
+    #[cfg(feature = "rocksdb")]
+    #[test]
+    fn state_view_is_pinned_across_a_commit_rocksdb() {
+        let dir = tempfile::tempdir().unwrap();
+        state_view_is_pinned_across_a_commit(Store::new(dir.path(), EngineType::RocksDB).unwrap());
     }
 }

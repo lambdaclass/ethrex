@@ -38,21 +38,54 @@ env:
   VERSION: dev-${{ github.sha }}
 
 jobs:
+  # The GPU runner (Paperspace machine) is off while idle: it stops itself
+  # after 15 idle minutes (tooling/gpu-runner). This job turns it on and
+  # `test` needs it, so a failed start fails the run instead of leaving
+  # `test` queued for up to 24h.
+  start-gpu-runner:
+    name: Start GPU runner
+    # Same guard as `test`: fork PRs must not be able to start the machine.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6.1.0
+        with:
+          # The workflow's own commit, which has the start script (inputs.ref
+          # may be an older tag that predates it).
+          sparse-checkout: |
+            .github/actions
+            tooling/gpu-runner
+
+      - name: Start GPU runner
+        uses: $/.github/actions/start-paperspace-machine
+        with:
+          machine-id: ${{ vars.GPU_RUNNER_MACHINE_ID }}
+          api-key: ${{ secrets.PAPERSPACE_API_KEY }}
+
   test:
     name: Integration Test Prover SP1
+    needs: start-gpu-runner
     # Self-hosted GPU runner: only fire for non-PR events or in-org PRs.
     # Fork PRs would otherwise execute attacker-controlled code on the GPU CI machine.
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: gpu
+    # A hung job would otherwise keep the billed machine on for GitHub's 6h
+    # default (the idle watchdog counts it as busy). Recent successful runs
+    # took 70-90 min, the slowest 141 min.
+    timeout-minutes: 180
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: prover
           save-cache: 'true'
@@ -64,11 +97,11 @@ jobs:
         # if: ${{ always() && github.event_name == 'merge_group' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        uses: ./.github/actions/install-sp1
+        uses: $/.github/actions/install-sp1
 
       - name: Set up Docker Buildx
         # if: ${{ always() && github.event_name == 'merge_group' }}
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@v4.4.1
 
       # This step is needed because of an state bug in the GPU runner.
       # Issue to fix this: https://github.com/lambdaclass/ethrex/pull/2741.

@@ -7,6 +7,8 @@ mod bls12_tests;
 mod buffer_pool_tests;
 mod call_args_tests;
 mod destroyed_refault_tests;
+mod difffuzz_bls;
+mod difffuzz_ops;
 mod eip2780_tests;
 mod eip7702_tests;
 mod eip7708_tests;

@@ -25,18 +25,18 @@ env:
 jobs:
   check-l2-genesis:
     name: Check L2 Genesis is up to date
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
+        uses: $/.github/actions/setup-rust
         with:
           cache-pool: l2
 
       - name: Install solc
-        uses: ./.github/actions/install-solc
+        uses: $/.github/actions/install-solc
 
       - name: Compile deployer with contracts
         run: COMPILE_CONTRACTS=1 cargo build --release --features l2 --bin ethrex

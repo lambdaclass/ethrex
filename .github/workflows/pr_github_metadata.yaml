@@ -17,10 +17,10 @@ jobs:
   assign-author:
     name: Assign Author
     if: github.event.action == 'opened' && github.event.pull_request.head.repo.fork == false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Assign PR author
-        uses: actions/github-script@v8
+        uses: actions/github-script@v8.0.0
         with:
           script: |
             await github.rest.issues.addAssignees({
@@ -33,13 +33,13 @@ jobs:
   label-pr:
     name: Set Labels
     if: github.event.pull_request.head.repo.fork == false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.1.0
 
       - name: Apply labels from PR title
-        uses: actions/github-script@v8
+        uses: actions/github-script@v8.0.0
         with:
           script: |
             const run = require('./.github/scripts/set-pr-labels.js');

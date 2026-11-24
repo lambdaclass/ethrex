@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, HashMap};
+
 use serde_json::{Value, value::RawValue};
 use tracing::debug;
 
@@ -5,8 +7,9 @@ use crate::rpc::{RpcApiContext, RpcHandler};
 use crate::types::account_proof::{AccountProof, StorageProof};
 use crate::types::block_identifier::{BlockIdentifierOrHash, BlockTag};
 use crate::utils::RpcErr;
-use ethrex_common::types::AccountState;
+use ethrex_common::types::{AccountState, BlockHeader};
 use ethrex_common::{Address, BigEndianHash, H256, U256, serde_utils};
+use ethrex_storage::StateView;
 
 pub struct GetBalanceRequest {
     pub address: Address,
@@ -79,17 +82,57 @@ fn state_is_caught_up(context: &RpcApiContext, block_number: u64) -> Result<bool
     }
 }
 
+/// Resolves the block a state read is answered from, and a view of its state
+/// to read through. A block the node does not know, and a known block whose
+/// state it does not hold, are errors: reading on would answer with default
+/// values or another block's state, which look like real data. The view pins
+/// the state it was checked against, so a commit landing mid-request cannot
+/// swap it for newer state.
+async fn resolve_state(
+    context: &RpcApiContext,
+    block: &BlockIdentifierOrHash,
+) -> Result<(BlockHeader, StateView), RpcErr> {
+    let storage = &context.storage;
+    // A hash must resolve to its own header. Going through the block number
+    // would return the canonical header at that height for a fork block.
+    let header = match block {
+        BlockIdentifierOrHash::Hash(hash) => storage.get_block_header_by_hash(*hash)?,
+        BlockIdentifierOrHash::Identifier(id) => id.resolve_block_header(storage).await?,
+    };
+    let Some(header) = header else {
+        return Err(block.not_found());
+    };
+    let Some(state) = storage.state_view(header.state_root)? else {
+        if state_is_caught_up(context, header.number)? {
+            return Err(RpcErr::PrunedHistoryUnavailable(format!(
+                "state for block {:#x} is unavailable",
+                header.hash()
+            )));
+        }
+        return Err(RpcErr::Internal(format!(
+            "state for block {:#x} is not available yet: the node is syncing",
+            header.hash()
+        )));
+    };
+    Ok((header, state))
+}
+
 impl RpcHandler for GetBalanceRequest {
     fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<GetBalanceRequest, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() != 2 {
-            return Err(RpcErr::BadParams("Expected 2 params".to_owned()));
+        // The block parameter is optional and defaults to "latest" (per execution-apis).
+        if params.len() != 1 && params.len() != 2 {
+            return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         };
         Ok(GetBalanceRequest {
             address: serde_json::from_str(params[0].get())?,
-            block: BlockIdentifierOrHash::parse_param(&params[1], 1)?,
+            block: params
+                .get(1)
+                .map(|param| BlockIdentifierOrHash::parse_param(param, 1))
+                .transpose()?
+                .unwrap_or_default(),
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -98,17 +141,11 @@ impl RpcHandler for GetBalanceRequest {
             self.address, self.block
         );
 
-        let Some(block_number) = self.block.resolve_block_number(&context.storage).await? else {
-            return Err(RpcErr::Internal(
-                "Could not resolve block number".to_owned(),
-            )); // Should we return Null here?
-        };
-
-        let account = context
-            .storage
-            .get_account_info(block_number, self.address)
-            .await?;
-        let balance = account.map(|acc| acc.balance).unwrap_or_default();
+        let (_, state) = resolve_state(&context, &self.block).await?;
+        let balance = state
+            .account_state(self.address)?
+            .map(|acc| acc.balance)
+            .unwrap_or_default();
 
         serde_json::to_value(format!("{balance:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
@@ -120,12 +157,17 @@ impl RpcHandler for GetCodeRequest {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() != 2 {
-            return Err(RpcErr::BadParams("Expected 2 params".to_owned()));
+        // The block parameter is optional and defaults to "latest" (per execution-apis).
+        if params.len() != 1 && params.len() != 2 {
+            return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         };
         Ok(GetCodeRequest {
             address: serde_json::from_str(params[0].get())?,
-            block: BlockIdentifierOrHash::parse_param(&params[1], 1)?,
+            block: params
+                .get(1)
+                .map(|param| BlockIdentifierOrHash::parse_param(param, 1))
+                .transpose()?
+                .unwrap_or_default(),
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -134,18 +176,15 @@ impl RpcHandler for GetCodeRequest {
             self.address, self.block
         );
 
-        let Some(block_number) = self.block.resolve_block_number(&context.storage).await? else {
-            return Err(RpcErr::Internal(
-                "Could not resolve block number".to_owned(),
-            )); // Should we return Null here?
+        let (_, state) = resolve_state(&context, &self.block).await?;
+        let code = match state.account_state(self.address)? {
+            Some(account) => context
+                .storage
+                .get_account_code(account.code_hash)?
+                .map(|c| c.code_bytes())
+                .unwrap_or_default(),
+            None => Default::default(),
         };
-
-        let code = context
-            .storage
-            .get_code_by_account_address(block_number, self.address)
-            .await?
-            .map(|c| c.code_bytes())
-            .unwrap_or_default();
 
         serde_json::to_value(format!("0x{code:x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
@@ -157,14 +196,19 @@ impl RpcHandler for GetStorageAtRequest {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() != 3 {
-            return Err(RpcErr::BadParams("Expected 3 params".to_owned()));
+        // The block parameter is optional and defaults to "latest" (per execution-apis).
+        if params.len() != 2 && params.len() != 3 {
+            return Err(RpcErr::BadParams("Expected 2 or 3 params".to_owned()));
         };
         let storage_slot_u256 = serde_utils::u256::deser_hex_or_dec_str(&*params[1])?;
         Ok(GetStorageAtRequest {
             address: serde_json::from_str(params[0].get())?,
             storage_slot: H256::from_uint(&storage_slot_u256),
-            block: BlockIdentifierOrHash::parse_param(&params[2], 2)?,
+            block: params
+                .get(2)
+                .map(|param| BlockIdentifierOrHash::parse_param(param, 2))
+                .transpose()?
+                .unwrap_or_default(),
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -173,15 +217,9 @@ impl RpcHandler for GetStorageAtRequest {
             self.storage_slot, self.address, self.block
         );
 
-        let Some(block_number) = self.block.resolve_block_number(&context.storage).await? else {
-            return Err(RpcErr::Internal(
-                "Could not resolve block number".to_owned(),
-            )); // Should we return Null here?
-        };
-
-        let storage_value = context
-            .storage
-            .get_storage_at(block_number, self.address, self.storage_slot)?
+        let (_, state) = resolve_state(&context, &self.block).await?;
+        let storage_value = state
+            .storage_at(self.address, self.storage_slot)?
             .unwrap_or_default();
         let storage_value = H256::from_uint(&storage_value);
         serde_json::to_value(format!("{storage_value:#x}"))
@@ -194,12 +232,17 @@ impl RpcHandler for GetTransactionCountRequest {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() != 2 {
-            return Err(RpcErr::BadParams("Expected 2 params".to_owned()));
+        // The block parameter is optional and defaults to "latest" (per execution-apis).
+        if params.len() != 1 && params.len() != 2 {
+            return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         };
         Ok(GetTransactionCountRequest {
             address: serde_json::from_str(params[0].get())?,
-            block: BlockIdentifierOrHash::parse_param(&params[1], 1)?,
+            block: params
+                .get(1)
+                .map(|param| BlockIdentifierOrHash::parse_param(param, 1))
+                .transpose()?
+                .unwrap_or_default(),
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -208,16 +251,12 @@ impl RpcHandler for GetTransactionCountRequest {
             self.address, self.block
         );
 
-        // Resolve the canonical nonce for the requested block first. For the
-        // `Pending` tag this resolves to the latest block.
-        let Some(block_number) = self.block.resolve_block_number(&context.storage).await? else {
-            return serde_json::to_value("0x0")
-                .map_err(|error| RpcErr::Internal(error.to_string()));
-        };
-        let account_nonce = context
-            .storage
-            .get_nonce_by_account_address(block_number, self.address)
-            .await?
+        // Resolve the nonce for the requested block first. For the `Pending` tag
+        // this resolves to the latest block.
+        let (_, state) = resolve_state(&context, &self.block).await?;
+        let account_nonce = state
+            .account_state(self.address)?
+            .map(|acc| acc.nonce)
             .unwrap_or_default();
 
         // For `Pending`, the mempool may advance the nonce past the on-chain
@@ -237,16 +276,43 @@ impl RpcHandler for GetTransactionCountRequest {
     }
 }
 
+/// Maximum number of storage keys accepted in a single `eth_getProof` call, the same
+/// bound `eth_getStorageValues` puts on its slots. Every key costs a storage-trie
+/// walk and a multi-kilobyte proof in the response, and a key can be as short as
+/// `"0x"`, so without a cap one request body could ask for hundreds of thousands
+/// of proofs and have them all held in memory at once.
+pub(crate) const MAX_PROOF_STORAGE_KEYS: usize = 1024;
+
+/// The storage keys an `eth_getProof` request asks for, 0 for any other method or
+/// for keys that do not parse (the call itself then fails). Batches use it to hold
+/// all their proofs to [`MAX_PROOF_STORAGE_KEYS`] together, not just each call.
+pub(crate) fn proof_storage_key_count(req: &crate::utils::RpcRequest) -> usize {
+    if req.method != "eth_getProof" {
+        return 0;
+    }
+    req.params
+        .as_deref()
+        .and_then(|params| params.get(1))
+        .and_then(|keys| serde_json::from_str::<Vec<serde::de::IgnoredAny>>(keys.get()).ok())
+        .map_or(0, |keys| keys.len())
+}
+
 impl RpcHandler for GetProofRequest {
     fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
         let params = params
             .as_ref()
             .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
-        if params.len() != 3 {
-            return Err(RpcErr::BadParams("Expected 3 params".to_owned()));
+        // The block parameter is optional and defaults to "latest" (per execution-apis).
+        if params.len() != 2 && params.len() != 3 {
+            return Err(RpcErr::BadParams("Expected 2 or 3 params".to_owned()));
         };
         let raw_keys: Vec<String> = serde_json::from_str(params[1].get())
             .map_err(|error| RpcErr::InvalidParams(format!("invalid storage keys: {error}")))?;
+        if raw_keys.len() > MAX_PROOF_STORAGE_KEYS {
+            return Err(RpcErr::LimitExceeded(format!(
+                "too many storage keys (max {MAX_PROOF_STORAGE_KEYS})"
+            )));
+        }
         let (storage_keys, storage_key_echoes) = raw_keys
             .iter()
             .map(|key| parse_storage_key(key))
@@ -257,7 +323,11 @@ impl RpcHandler for GetProofRequest {
             address: serde_json::from_str(params[0].get())?,
             storage_keys,
             storage_key_echoes,
-            block: BlockIdentifierOrHash::parse_param(&params[2], 2)?,
+            block: params
+                .get(2)
+                .map(|param| BlockIdentifierOrHash::parse_param(param, 2))
+                .transpose()?
+                .unwrap_or_default(),
         })
     }
 
@@ -267,27 +337,7 @@ impl RpcHandler for GetProofRequest {
             "Requested proof for account {} at block {} with storage keys: {:?}",
             self.address, self.block, self.storage_keys
         );
-        // A hash must resolve to its own header. Going through the block number
-        // would return the canonical header at that height for a fork block.
-        let header = match &self.block {
-            BlockIdentifierOrHash::Hash(hash) => storage.get_block_header_by_hash(*hash)?,
-            BlockIdentifierOrHash::Identifier(id) => id.resolve_block_header(storage).await?,
-        };
-        let Some(header) = header else {
-            return Ok(Value::Null);
-        };
-        if !storage.has_state_root(header.state_root)? {
-            if state_is_caught_up(&context, header.number)? {
-                return Err(RpcErr::PrunedHistoryUnavailable(format!(
-                    "state for block {:#x} is unavailable",
-                    header.hash()
-                )));
-            }
-            return Err(RpcErr::Internal(format!(
-                "state for block {:#x} is not available yet: the node is syncing",
-                header.hash()
-            )));
-        }
+        let (header, _) = resolve_state(&context, &self.block).await?;
         let Some(account_proof) = storage
             .get_account_proof(header.state_root, self.address, &self.storage_keys)
             .await?
@@ -321,6 +371,98 @@ impl RpcHandler for GetProofRequest {
             storage_proof,
         };
         serde_json::to_value(account_proof).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+/// Maximum number of storage slots that can be requested across all accounts in a
+/// single `eth_getStorageValues` call (matches go-ethereum's limit).
+const MAX_STORAGE_VALUES_SLOTS: usize = 1024;
+
+pub struct GetStorageValuesRequest {
+    pub requests: HashMap<Address, Vec<H256>>,
+    pub block: BlockIdentifierOrHash,
+}
+
+/// Parses a storage slot as the spec's `bytesMax32`: `0x` and at most 64 hex
+/// digits, where `0x` alone is slot 0.
+fn parse_storage_slot(slot: &str) -> Result<H256, RpcErr> {
+    let invalid =
+        || RpcErr::InvalidParams("storage slot must be 0x and at most 64 hex digits".to_owned());
+    let digits = slot.strip_prefix("0x").ok_or_else(invalid)?;
+    if digits.len() > 64 || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(invalid());
+    }
+    if digits.is_empty() {
+        return Ok(H256::zero());
+    }
+    let slot = U256::from_str_radix(digits, 16).map_err(|_| invalid())?;
+    Ok(H256::from_uint(&slot))
+}
+
+impl RpcHandler for GetStorageValuesRequest {
+    fn parse(params: &Option<Vec<Box<RawValue>>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        // The block parameter is optional and defaults to "latest" (per execution-apis).
+        if params.len() != 1 && params.len() != 2 {
+            return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
+        };
+        // params[0] is an object mapping address -> array of storage slots. A
+        // BTreeMap reads it in a fixed order, so when two keys spell the same
+        // address the same one wins on every call.
+        let raw: BTreeMap<String, Vec<String>> = serde_json::from_str(params[0].get())?;
+        let mut requests = HashMap::with_capacity(raw.len());
+        let mut total_slots = 0usize;
+        for (address, slots) in raw {
+            total_slots += slots.len();
+            if total_slots > MAX_STORAGE_VALUES_SLOTS {
+                return Err(RpcErr::LimitExceeded(format!(
+                    "too many slots (max {MAX_STORAGE_VALUES_SLOTS})"
+                )));
+            }
+            let address: Address = serde_json::from_value(Value::String(address))?;
+            let slots = slots
+                .iter()
+                .map(|slot| parse_storage_slot(slot))
+                .collect::<Result<_, _>>()?;
+            requests.insert(address, slots);
+        }
+        if total_slots == 0 {
+            return Err(RpcErr::InvalidParams("empty request".to_owned()));
+        }
+        Ok(GetStorageValuesRequest {
+            requests,
+            block: params
+                .get(1)
+                .map(|param| BlockIdentifierOrHash::parse_param(param, 1))
+                .transpose()?
+                .unwrap_or_default(),
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        debug!(
+            "Requested storage values for {} accounts at block {}",
+            self.requests.len(),
+            self.block
+        );
+        // Resolve the block once and read every slot through one view of its state.
+        // Going through the block number for each slot could read two blocks' states
+        // if the chain reorged mid-request, read the canonical block instead of the
+        // one a hash names, and answer zeros for a block above the head or whose
+        // state is not held.
+        let (_, state) = resolve_state(&context, &self.block).await?;
+        let mut result: HashMap<String, Vec<String>> = HashMap::with_capacity(self.requests.len());
+        for (address, slots) in &self.requests {
+            let mut values = Vec::with_capacity(slots.len());
+            for slot in slots {
+                let value = state.storage_at(*address, *slot)?.unwrap_or_default();
+                values.push(format!("{:#x}", H256::from_uint(&value)));
+            }
+            result.insert(format!("{address:#x}"), values);
+        }
+        serde_json::to_value(result).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
@@ -364,6 +506,212 @@ mod tests {
         assert_eq!(request.address, expected_address);
         assert_eq!(request.storage_slot, H256::from_uint(&U256::from(1u64)));
         assert_eq!(request.block, BlockTag::Latest);
+    }
+
+    #[test]
+    fn test_state_methods_default_block_to_latest_when_omitted() {
+        // Per execution-apis the Block parameter is optional and defaults to
+        // "latest". Each state method must parse a request with the block omitted
+        // and resolve it to the latest tag.
+        let addr = json!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+        assert_eq!(
+            GetBalanceRequest::parse(&raw_params(&Some(vec![addr.clone()])))
+                .unwrap()
+                .block,
+            BlockTag::Latest
+        );
+        assert_eq!(
+            GetCodeRequest::parse(&raw_params(&Some(vec![addr.clone()])))
+                .unwrap()
+                .block,
+            BlockTag::Latest
+        );
+        assert_eq!(
+            GetTransactionCountRequest::parse(&raw_params(&Some(vec![addr.clone()])))
+                .unwrap()
+                .block,
+            BlockTag::Latest
+        );
+        assert_eq!(
+            GetStorageAtRequest::parse(&raw_params(&Some(vec![addr.clone(), json!("0x0")])))
+                .unwrap()
+                .block,
+            BlockTag::Latest
+        );
+        assert_eq!(
+            GetProofRequest::parse(&raw_params(&Some(vec![addr, json!([])])))
+                .unwrap()
+                .block,
+            BlockTag::Latest
+        );
+    }
+
+    #[test]
+    fn test_get_storage_values_request_parse_defaults_to_latest() {
+        let params = Some(vec![json!({
+            "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef": ["0x1"]
+        })]);
+        let request = GetStorageValuesRequest::parse(&raw_params(&params)).unwrap();
+        assert_eq!(request.block, BlockTag::Latest);
+        let addr: Address = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            request.requests.get(&addr).unwrap(),
+            &vec![H256::from_uint(&U256::from(1u64))]
+        );
+    }
+
+    #[test]
+    fn test_get_storage_values_request_rejects_empty() {
+        for requests in [
+            json!({}),
+            json!({"0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef": []}),
+        ] {
+            assert!(matches!(
+                GetStorageValuesRequest::parse(&raw_params(&Some(vec![requests]))),
+                Err(RpcErr::InvalidParams(ref msg)) if msg == "empty request"
+            ));
+        }
+    }
+
+    #[test]
+    fn test_get_storage_values_request_slot_format() {
+        let parse = |slot: &str| {
+            GetStorageValuesRequest::parse(&raw_params(&Some(vec![json!({
+                "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef": [slot]
+            })])))
+        };
+        let addr: Address = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            .parse()
+            .unwrap();
+        for (slot, expected) in [
+            ("0x", U256::zero()),
+            ("0x10", U256::from(16u64)),
+            (
+                "0x0100000000000000000000000000000000000000000000000000000000000000",
+                U256::one() << 248,
+            ),
+        ] {
+            let request = parse(slot).unwrap();
+            assert_eq!(
+                request.requests.get(&addr).unwrap(),
+                &vec![H256::from_uint(&expected)],
+                "{slot}"
+            );
+        }
+        // Without 0x, `10` would read slot 16 where eth_getStorageAt reads slot 10.
+        let too_long = format!("0x{}", "0".repeat(65));
+        for slot in ["10", "0xzz", too_long.as_str()] {
+            assert!(
+                matches!(parse(slot), Err(RpcErr::InvalidParams(_))),
+                "{slot} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_storage_values_request_accepts_the_cap() {
+        let slots: Vec<_> = (0..MAX_STORAGE_VALUES_SLOTS)
+            .map(|slot| format!("{slot:#x}"))
+            .collect();
+        let params = Some(vec![json!({
+            "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef": slots
+        })]);
+        assert!(GetStorageValuesRequest::parse(&raw_params(&params)).is_ok());
+    }
+
+    #[test]
+    fn test_get_storage_values_request_rejects_single_account_over_cap() {
+        let slots: Vec<_> = (0..=MAX_STORAGE_VALUES_SLOTS)
+            .map(|slot| format!("{slot:#x}"))
+            .collect();
+        let params = Some(vec![json!({
+            "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef": slots
+        })]);
+
+        assert!(matches!(
+            GetStorageValuesRequest::parse(&raw_params(&params)),
+            Err(RpcErr::LimitExceeded(ref msg)) if msg.contains("too many slots")
+        ));
+    }
+
+    #[test]
+    fn test_get_storage_values_request_rejects_multi_account_over_cap() {
+        let first_slots: Vec<_> = (0..600).map(|slot| format!("{slot:#x}")).collect();
+        let second_slots: Vec<_> = (600..1200).map(|slot| format!("{slot:#x}")).collect();
+        let params = Some(vec![json!({
+            "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef": first_slots,
+            "0xfeedfeedfeedfeedfeedfeedfeedfeedfeedfeed": second_slots,
+        })]);
+
+        assert!(matches!(
+            GetStorageValuesRequest::parse(&raw_params(&params)),
+            Err(RpcErr::LimitExceeded(ref msg)) if msg.contains("too many slots")
+        ));
+    }
+
+    /// Values come from the requested block's state, keyed by the lowercase
+    /// address, with zeros for an absent account or slot. A block the node does
+    /// not have is an error rather than zeros.
+    #[tokio::test]
+    async fn test_get_storage_values_handle() {
+        use crate::test_utils::{TEST_GENESIS, default_context_with_storage};
+        use crate::types::block_identifier::BlockIdentifier;
+        use ethrex_common::types::{Genesis, GenesisAccount};
+        use ethrex_storage::{EngineType, Store};
+
+        let contract = Address::from_low_u64_be(0xabcd);
+        let mut genesis: Genesis = serde_json::from_str(TEST_GENESIS).unwrap();
+        genesis.alloc.insert(
+            contract,
+            GenesisAccount {
+                code: Default::default(),
+                storage: [(U256::from(1u64), U256::from(0x33u64))].into(),
+                balance: U256::zero(),
+                nonce: 1,
+            },
+        );
+        let mut store = Store::new("", EngineType::InMemory).unwrap();
+        store.add_initial_state(genesis).await.unwrap();
+        let context = default_context_with_storage(store).await;
+        let genesis_hash = context.storage.get_block_header(0).unwrap().unwrap().hash();
+
+        let absent = Address::from_low_u64_be(0xdead);
+        let requests: HashMap<Address, Vec<H256>> = [
+            (
+                contract,
+                vec![H256::from_low_u64_be(1), H256::from_low_u64_be(2)],
+            ),
+            (absent, vec![H256::from_low_u64_be(1)]),
+        ]
+        .into();
+        let word = |value: u64| format!("{:#x}", H256::from_low_u64_be(value));
+        let expected = json!({
+            format!("{contract:#x}"): [word(0x33), word(0)],
+            format!("{absent:#x}"): [word(0)],
+        });
+        for block in [
+            BlockIdentifierOrHash::default(),
+            BlockIdentifierOrHash::Hash(genesis_hash),
+        ] {
+            let result = GetStorageValuesRequest {
+                requests: requests.clone(),
+                block,
+            }
+            .handle(context.clone())
+            .await
+            .unwrap();
+            assert_eq!(result, expected);
+        }
+
+        let above_head = GetStorageValuesRequest {
+            requests,
+            block: BlockIdentifierOrHash::Identifier(BlockIdentifier::Number(5)),
+        }
+        .handle(context.clone())
+        .await;
+        assert!(matches!(above_head, Err(RpcErr::ResourceNotFound(_))));
     }
 
     /// Builds an in-memory store whose genesis pre-sets `address`'s nonce, and a
@@ -522,6 +870,24 @@ mod tests {
     }
 
     #[test]
+    fn get_proof_parse_accepts_the_storage_key_cap() {
+        let keys = vec!["0x"; MAX_PROOF_STORAGE_KEYS];
+        let request = GetProofRequest::parse(&proof_params(json!(keys))).unwrap();
+        assert_eq!(request.storage_keys.len(), MAX_PROOF_STORAGE_KEYS);
+    }
+
+    #[test]
+    fn get_proof_parse_rejects_more_storage_keys_than_the_cap() {
+        // `"0x"` is a valid key, so a request body this size could otherwise
+        // carry hundreds of thousands of them.
+        let keys = vec!["0x"; MAX_PROOF_STORAGE_KEYS + 1];
+        assert!(matches!(
+            GetProofRequest::parse(&proof_params(json!(keys))),
+            Err(RpcErr::LimitExceeded(ref msg)) if msg.contains("too many storage keys")
+        ));
+    }
+
+    #[test]
     fn get_proof_parse_rejects_invalid_storage_keys() {
         let key_66 = format!("0x{}", "0".repeat(66));
         for keys in [
@@ -594,10 +960,13 @@ mod tests {
         assert_eq!(response["storageProof"], json!([entry, entry]));
     }
 
-    #[tokio::test]
-    async fn get_proof_missing_state_error_depends_on_sync() {
+    /// A context whose canonical block 1 has a state root the store does not
+    /// hold, under a head (block 2) whose state it does. Returns block 1's header
+    /// and the head's hash.
+    async fn context_with_stateless_block(
+        address: Address,
+    ) -> (TestContext, ethrex_common::types::BlockHeader, H256) {
         use crate::test_utils::add_empty_blocks;
-        let address = Address::from_low_u64_be(0xabcd);
         let context = context_with_account_nonce(address, 1).await;
         let genesis = context.storage.get_block_header(0).unwrap().unwrap();
         // Test blocks carry a state root that the store does not hold.
@@ -620,6 +989,13 @@ mod tests {
             .forkchoice_update(vec![], 2, head_hash, None, None)
             .await
             .unwrap();
+        (context, block_one, head_hash)
+    }
+
+    #[tokio::test]
+    async fn get_proof_missing_state_error_depends_on_sync() {
+        let address = Address::from_low_u64_be(0xabcd);
+        let (context, block_one, head_hash) = context_with_stateless_block(address).await;
 
         let syncing = proof_request(address, &[], BlockIdentifierOrHash::Hash(block_one.hash()))
             .handle(context.clone())
@@ -684,5 +1060,91 @@ mod tests {
                 .await
                 .unwrap_err();
         assert!(matches!(canonical_err, RpcErr::Internal(_)));
+    }
+
+    /// Sends `method` with `params` through the JSON-RPC dispatch.
+    async fn dispatch(
+        context: &RpcApiContext,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, RpcErr> {
+        let request: crate::utils::RpcRequest = serde_json::from_value(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": method,
+            "params": params,
+        }))
+        .unwrap();
+        crate::rpc::map_http_requests(&request, context.clone()).await
+    }
+
+    /// The methods that read an account's state, each with `block` as its block
+    /// parameter. The first six read the state directly, the rest execute on it.
+    fn state_reads(address: Address, block: Value) -> Vec<(&'static str, Value)> {
+        let address = format!("{address:#x}");
+        let call = json!({"from": address, "to": address});
+        vec![
+            ("eth_getBalance", json!([address, block])),
+            ("eth_getCode", json!([address, block])),
+            ("eth_getStorageAt", json!([address, "0x0", block])),
+            ("eth_getTransactionCount", json!([address, block])),
+            ("eth_getProof", json!([address, [], block])),
+            (
+                "eth_getStorageValues",
+                json!([{ address.as_str(): ["0x0"] }, block]),
+            ),
+            ("eth_call", json!([call, block])),
+            ("eth_estimateGas", json!([call, block])),
+            ("eth_createAccessList", json!([call, block])),
+        ]
+    }
+
+    #[tokio::test]
+    async fn state_reads_of_an_unknown_block_are_not_found() {
+        let address = Address::from_low_u64_be(0xabcd);
+        let context = context_with_account_nonce(address, 1).await;
+        let unknown_hash = format!("{:#x}", H256::from_low_u64_be(0xbad));
+        for block in [
+            json!("0x5"),
+            json!("0xffffffffffffffff"),
+            json!(unknown_hash),
+            json!({"blockHash": unknown_hash}),
+        ] {
+            for (method, params) in state_reads(address, block.clone()) {
+                let result = dispatch(&context, method, params).await;
+                assert!(
+                    matches!(result, Err(RpcErr::ResourceNotFound(_))),
+                    "{method} at {block} gave {result:?}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn state_reads_of_a_block_without_state_are_errors() {
+        let address = Address::from_low_u64_be(0xabcd);
+        let (context, block_one, _) = context_with_stateless_block(address).await;
+        let block = json!(format!("{:#x}", block_one.number));
+
+        for (method, params) in state_reads(address, block.clone()).into_iter().take(6) {
+            let result = dispatch(&context, method, params).await;
+            assert!(
+                matches!(result, Err(RpcErr::Internal(_))),
+                "{method} while syncing gave {result:?}"
+            );
+        }
+        context.blockchain.set_synced();
+        for (method, params) in state_reads(address, block.clone()).into_iter().take(6) {
+            let result = dispatch(&context, method, params).await;
+            assert!(
+                matches!(result, Err(RpcErr::PrunedHistoryUnavailable(_))),
+                "{method} when synced gave {result:?}"
+            );
+        }
+        // The head's state is held, so it still answers.
+        for (method, params) in state_reads(address, json!("latest")).into_iter().take(6) {
+            let result = dispatch(&context, method, params).await;
+            assert!(result.is_ok(), "{method} at latest gave {result:?}");
+        }
     }
 }

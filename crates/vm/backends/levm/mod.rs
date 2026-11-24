@@ -11,7 +11,7 @@ use crate::system_contracts::{
     EXPIRY_VERIFIER_PREDEPLOY, EXPIRY_VERIFIER_RUNTIME_BYTECODE, HISTORY_STORAGE_ADDRESS,
     PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
-use crate::{EvmError, ExecutionResult};
+use crate::{EvmError, ExecutionResult, SimulationTxError};
 use bytes::Bytes;
 use ethrex_common::H256;
 #[cfg(feature = "rayon")]
@@ -88,11 +88,74 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
+/// Tracing target of the per-block event that names the executor chosen for a block
+/// (`path`: `parallel` or `sequential`) and, for the sequential one, the first
+/// condition that ruled parallel out (`reason`). Test runners turn it on to report
+/// the choice; a node logs it only when that target is enabled at debug level.
+pub const BAL_EXECUTION_TARGET: &str = "ethrex_vm::bal_execution";
+
+/// The first condition, in gate order, that keeps a block off the parallel executor,
+/// or `None` when it runs there. `disabled` covers every caller that turns parallel
+/// off: `--no-bal-parallel-exec`, and witness collection.
+fn sequential_execution_reason(
+    has_access_list: bool,
+    is_amsterdam: bool,
+    bal_parallel_exec_enabled: bool,
+) -> Option<&'static str> {
+    if !cfg!(feature = "rayon") {
+        return Some("no-rayon");
+    }
+    if !has_access_list {
+        return Some("no-access-list");
+    }
+    if !is_amsterdam {
+        return Some("pre-amsterdam");
+    }
+    if !bal_parallel_exec_enabled {
+        return Some("disabled");
+    }
+    None
+}
+
 /// Accounts per task in [`LEVM::warm_block_from_bal`]. Small enough that the first
 /// warmed states and code reach the executor within a few point reads, large enough
 /// to keep the per-chunk batch read worthwhile.
 #[cfg(feature = "rayon")]
 const BAL_WARM_CHUNK_ACCOUNTS: usize = 64;
+
+/// Block access lists with at most this many accounts are warmed on the calling
+/// thread instead of the pool, see [`LEVM::warm_block_from_bal`].
+#[cfg(feature = "rayon")]
+const BAL_WARM_INLINE_ACCOUNTS: usize = 2 * BAL_WARM_CHUNK_ACCOUNTS;
+
+/// Floor on the BAL warmer's thread count, and its size when the host does not
+/// report its parallelism, see [`bal_warm_pool`].
+#[cfg(feature = "rayon")]
+const BAL_WARM_MIN_THREADS: usize = 64;
+
+/// Thread pool for [`LEVM::warm_block_from_bal`].
+///
+/// Warming is a stream of point reads that block on storage, not on CPU. On the
+/// global pool (one thread per core) it kept at most one read in flight per core
+/// and competed with the parallel transaction execution for those same threads,
+/// so a block touching tens of thousands of cold accounts was bound by read
+/// latency at a queue depth of a handful. A dedicated pool wider than the core
+/// count keeps enough reads in flight to use the device's parallelism; when the
+/// data is already cached the chunks finish in microseconds either way.
+#[cfg(feature = "rayon")]
+fn bal_warm_pool() -> &'static rayon::ThreadPool {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let threads = std::thread::available_parallelism()
+            .map_or(BAL_WARM_MIN_THREADS, |cpus| cpus.get().saturating_mul(2))
+            .max(BAL_WARM_MIN_THREADS);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|i| format!("bal-warmer-{i}"))
+            .build()
+            .expect("Failed to create BAL warmer thread pool")
+    })
+}
 
 /// EIP-7928 `block_access_index` of the pre-block system calls.
 /// Only the parallel BAL path reads it, and that path is rayon-gated.
@@ -594,6 +657,9 @@ impl LEVM {
     /// `merkleizer` is `Some` on the streaming (non-BAL) path; the BAL validation path
     /// passes `None` because the caller merkleizes optimistically from the input BAL and
     /// the EVM-side `bal_to_account_updates` send is then redundant work.
+    ///
+    /// Emits one debug event per block on [`BAL_EXECUTION_TARGET`] naming the executor
+    /// chosen and, for the sequential one, why.
     #[allow(clippy::too_many_arguments)]
     pub fn execute_block_pipeline(
         block: &Block,
@@ -628,6 +694,19 @@ impl LEVM {
                     EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
                 })?;
 
+        let sequential_reason = sequential_execution_reason(
+            header_bal.is_some(),
+            is_amsterdam,
+            bal_parallel_exec_enabled,
+        );
+        ::tracing::debug!(
+            target: BAL_EXECUTION_TARGET,
+            block = block.header.number,
+            hash = %format_args!("{:#x}", block.hash()),
+            path = if sequential_reason.is_some() { "sequential" } else { "parallel" },
+            reason = sequential_reason.unwrap_or_default(),
+            "Executing block"
+        );
         #[cfg(not(feature = "rayon"))]
         // Without rayon there is no parallel BAL path, so these are unused.
         // Adding dummy let to avoid unused warnings.
@@ -638,9 +717,9 @@ impl LEVM {
         // optimistic merkleization it feeds) is only correct on Amsterdam+; a
         // pre-Amsterdam call here in release would skip the inner debug_assert.
         // `--no-bal-parallel-exec` opts out and falls through to the sequential pipeline below.
+        // See `sequential_execution_reason` for the full gate.
         if let Some(bal) = header_bal
-            && is_amsterdam
-            && bal_parallel_exec_enabled
+            && sequential_reason.is_none()
         {
             // Validate header BAL structural properties before execution.
             // This catches index-out-of-bounds early, before wasting execution time.
@@ -3366,28 +3445,39 @@ impl LEVM {
         // warmer read the same data in the background, and both finished together.
         // Storage slots are prefetched synchronously before the executor starts (see
         // `bal_storage_slots` at the call site), so only states and code are left here.
-        accounts
-            .par_chunks(BAL_WARM_CHUNK_ACCOUNTS)
-            .try_for_each(|chunk| -> Result<(), EvmError> {
+        let warm_chunk = |chunk: &[AccountChanges]| -> Result<(), EvmError> {
+            if cancelled.load(Ordering::Relaxed) {
+                return Ok(());
+            }
+            let addresses: Vec<Address> = chunk.iter().map(|ac| ac.address).collect();
+            store
+                .prefetch_accounts(&addresses)
+                .map_err(|e| EvmError::Custom(format!("prefetch_accounts: {e}")))?;
+            for address in addresses {
                 if cancelled.load(Ordering::Relaxed) {
                     return Ok(());
                 }
-                let addresses: Vec<Address> = chunk.iter().map(|ac| ac.address).collect();
-                store
-                    .prefetch_accounts(&addresses)
-                    .map_err(|e| EvmError::Custom(format!("prefetch_accounts: {e}")))?;
-                for address in addresses {
-                    if cancelled.load(Ordering::Relaxed) {
-                        return Ok(());
-                    }
-                    if let Ok(state) = store.get_account_state(address)
-                        && state.code_hash != *EMPTY_KECCAK_HASH
-                    {
-                        let _ = store.get_account_code(state.code_hash);
-                    }
+                if let Ok(state) = store.get_account_state(address)
+                    && state.code_hash != *EMPTY_KECCAK_HASH
+                {
+                    let _ = store.get_account_code(state.code_hash);
                 }
-                Ok(())
-            })
+            }
+            Ok(())
+        };
+
+        // A short list is read on this thread: waking dozens of pool threads costs
+        // more than the handful of reads, and on a short block that wake-up shows.
+        if accounts.len() <= BAL_WARM_INLINE_ACCOUNTS {
+            return accounts
+                .chunks(BAL_WARM_CHUNK_ACCOUNTS)
+                .try_for_each(warm_chunk);
+        }
+        bal_warm_pool().install(|| {
+            accounts
+                .par_chunks(BAL_WARM_CHUNK_ACCOUNTS)
+                .try_for_each(warm_chunk)
+        })
     }
 
     fn send_state_transitions_tx(
@@ -3409,7 +3499,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &GeneralizedDatabase,
         vm_type: VMType,
-    ) -> Result<Environment, EvmError> {
+    ) -> Result<Environment, VMError> {
         // `chain_config` (a dyn-dispatch copy) and `EVMConfig`/fork/blob-schedule are
         // block-invariant; in a block loop, compute them once and use
         // `setup_env_with_config` instead. This single-tx entry point computes them here.
@@ -3439,7 +3529,7 @@ impl LEVM {
         chain_id: u64,
         vm_type: VMType,
         base_blob_fee_per_gas: U256,
-    ) -> Result<Environment, EvmError> {
+    ) -> Result<Environment, VMError> {
         let gas_price: U256 = calculate_gas_price_for_tx(
             tx,
             block_header.base_fee_per_gas.unwrap_or_default(),
@@ -3476,6 +3566,7 @@ impl LEVM {
             fee_token: tx.fee_token(),
             disable_balance_check: false,
             disable_nonce_check: false,
+            trace_eth_transfers: false,
             disable_gas_allowance_check: false,
             disable_sender_eoa_check: false,
             disable_execution_gas_cap: false,
@@ -3509,6 +3600,56 @@ impl LEVM {
         )?;
 
         vm.execute().map_err(VMError::into)
+    }
+
+    /// Like [`LEVM::execute_tx`] but for `eth_simulateV1`: validation failures
+    /// come back as structured [`SimulationTxError::Validation`] (the caller
+    /// maps each variant to its spec error code and aborts the request), and
+    /// the simulation relaxations are applied to the environment.
+    #[allow(clippy::too_many_arguments)]
+    pub fn execute_tx_for_simulation(
+        tx: &Transaction,
+        tx_sender: Address,
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+        validate: bool,
+        trace_eth_transfers: bool,
+    ) -> Result<ExecutionReport, SimulationTxError> {
+        let mut env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        // The sender-is-EOA check is always skipped in eth_simulateV1; nonce
+        // enforcement only applies with `validation: true`.
+        env.disable_sender_eoa_check = true;
+        env.disable_nonce_check = !validate;
+        // Without `validation` a call may spend its whole gas limit on execution after
+        // Amsterdam, as `eth_call` may; with it, the EIP-8037 cap holds as for a real
+        // transaction. geth: `if !sim.validate { msg.SkipExecutionGasCapCheck() }`.
+        env.disable_execution_gas_cap = !validate;
+        env.trace_eth_transfers = trace_eth_transfers;
+        if !validate {
+            adjust_disabled_base_fee(&mut env);
+        }
+        // With `validation: false` blob fees are zeroed unless the call prices
+        // them explicitly (mirrors `adjust_disabled_base_fee`'s blob branch).
+        if !validate && tx.max_fee_per_blob_gas().unwrap_or_default().is_zero() {
+            env.base_blob_fee_per_gas = U256::zero();
+            env.block_excess_blob_gas = None;
+        }
+        // No stateless validator: simulation answers a query and produces no
+        // EIP-8025 execution proof, matching every other simulation and tracing path.
+        let mut vm = VM::new(
+            env,
+            db,
+            tx,
+            LevmCallTracer::disabled(),
+            vm_type,
+            crypto,
+            None,
+        )?;
+        vm.validate_base_fee = validate;
+
+        vm.execute().map_err(SimulationTxError::from)
     }
 
     // Like execute_tx but reuses the caller's pools of stacks, memory and initcode buffers,
@@ -4309,12 +4450,6 @@ pub fn calculate_gas_price_for_tx(
         fee_per_gas += operator_fee_config.operator_fee_per_gas;
     }
 
-    if fee_per_gas > max_fee_per_gas {
-        return Err(VMError::TxValidation(
-            TxValidationError::InsufficientMaxFeePerGas,
-        ));
-    }
-
     Ok(min(max_priority_fee + fee_per_gas, max_fee_per_gas).into())
 }
 
@@ -4443,6 +4578,10 @@ pub(crate) fn env_from_generic(
         // Same reasoning: a simulated call carries no signature, so EIP-3607 has nothing
         // to protect, and a contract as `from` is a normal thing to simulate.
         disable_sender_eoa_check: true,
+        // The eth_call family emits no traceTransfers logs; that relaxation exists for
+        // `eth_simulateV1`, which builds its environment through `setup_env` and opts
+        // in there.
+        trace_eth_transfers: false,
         // Lifted per caller: `eth_call` and `debug_traceCall` may spend their whole gas
         // limit on execution after Amsterdam, `eth_estimateGas` and `eth_createAccessList`
         // keep the transaction rule so their answers hold for a real transaction.
@@ -5169,7 +5308,7 @@ mod burned_fees_tests {
         Transaction::EIP1559Transaction(EIP1559Transaction {
             signature_r: U256::from_big_endian(&sig_bytes[..32]),
             signature_s: U256::from_big_endian(&sig_bytes[32..]),
-            signature_y_parity: rid.to_byte() != 0,
+            signature_y_parity: rid.to_byte().into(),
             ..tx
         })
     }
@@ -5264,7 +5403,7 @@ mod burned_fees_tests {
         Transaction::EIP1559Transaction(EIP1559Transaction {
             signature_r: U256::from_big_endian(&sig_bytes[..32]),
             signature_s: U256::from_big_endian(&sig_bytes[32..]),
-            signature_y_parity: rid.to_byte() != 0,
+            signature_y_parity: rid.to_byte().into(),
             ..tx
         })
     }
@@ -5551,7 +5690,7 @@ mod simulated_tx_encoding_tests {
             value: U256::from(1u64),
             data,
             access_list: vec![],
-            signature_y_parity: true,
+            signature_y_parity: 1u8.into(),
             signature_r: U256::MAX,
             signature_s: U256::MAX,
             ..Default::default()
@@ -5642,5 +5781,27 @@ mod first_failure_by_key_tests {
             })
         });
         assert_eq!(result, Err((7, 3)));
+    }
+}
+
+#[cfg(all(test, feature = "rayon"))]
+mod sequential_execution_reason_tests {
+    use super::sequential_execution_reason;
+
+    #[test]
+    fn names_the_first_gate_that_rules_out_parallel() {
+        assert_eq!(sequential_execution_reason(true, true, true), None);
+        assert_eq!(
+            sequential_execution_reason(false, false, false),
+            Some("no-access-list")
+        );
+        assert_eq!(
+            sequential_execution_reason(true, false, false),
+            Some("pre-amsterdam")
+        );
+        assert_eq!(
+            sequential_execution_reason(true, true, false),
+            Some("disabled")
+        );
     }
 }
