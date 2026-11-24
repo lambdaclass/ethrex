@@ -117,7 +117,7 @@ fn engine_runner(path: &Path) -> datatest_stable::Result<()> {
             continue;
         }
         total += 1;
-        let result = runtime().block_on(run_fixture(name, fixture, &opts));
+        let result = runtime().block_on(run_fixture(name, fixture, &opts, &mut Vec::new()));
         match result {
             Ok(()) => passed += 1,
             Err(e) if e.is_skip() => skipped += 1,

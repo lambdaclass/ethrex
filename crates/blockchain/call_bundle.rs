@@ -1,5 +1,7 @@
 //! `eth_callBundle` execution, following reth's `EthBundle::call_bundle`.
 
+use std::sync::Arc;
+
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
@@ -9,7 +11,10 @@ use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_vm::{SimTxConfig, SimulationTxError, TxResult, TxValidationError};
 use thiserror::Error;
 
-use crate::{Blockchain, vm::StoreVmDatabase};
+use crate::{
+    Blockchain,
+    vm::{OverlaidVmDatabase, StoreVmDatabase},
+};
 
 const BUNDLE_BLOCK_TIME: u64 = 12;
 
@@ -93,6 +98,9 @@ pub enum CallBundleError {
     InvalidChainId,
     #[error("invalid transaction: {0}")]
     InvalidTx(TxValidationError),
+    /// A transaction's gas limit exceeds what the earlier ones left of the block's.
+    #[error("block gas limit reached: transaction gas limit {requested}, remaining {remaining}")]
+    BlockGasLimitReached { requested: u64, remaining: u64 },
     #[error("internal error: {0}")]
     Internal(String),
 }
@@ -112,7 +120,13 @@ impl Blockchain {
         let chain_id = self.storage.get_chain_config().chain_id;
         let store_db =
             StoreVmDatabase::new(self.storage.clone(), parent.clone()).map_err(internal)?;
-        let mut evm = self.new_evm(store_db).map_err(internal)?;
+        // The bundle block sits right after the state block whatever `number` says, so
+        // BLOCKHASH resolves up to and including the state block and is zero past it,
+        // as it is for `eth_call` and `eth_simulateV1`. A bare `StoreVmDatabase` would
+        // instead fail the request on a canonical block number that is not mined yet.
+        let base_block_number = parent.number.saturating_add(1);
+        let overlaid_db = OverlaidVmDatabase::new(store_db, Arc::default(), base_block_number);
+        let mut evm = self.new_evm(overlaid_db).map_err(internal)?;
         let config = SimTxConfig {
             validate: true,
             trace_transfers: false,
@@ -139,6 +153,16 @@ impl Blockchain {
                 .is_some_and(|tx_chain_id| tx_chain_id != chain_id)
             {
                 return Err(CallBundleError::InvalidChainId);
+            }
+            // The EVM checks each transaction's gas limit against the block's on its own;
+            // the bundle as a whole has to fit the block too, which bounds a request's
+            // work at one block's gas (`--rpc.gascap` by default).
+            let remaining = header.gas_limit.saturating_sub(cumulative_gas_spent);
+            if tx.gas_limit() > remaining {
+                return Err(CallBundleError::BlockGasLimitReached {
+                    requested: tx.gas_limit(),
+                    remaining,
+                });
             }
 
             let report = match evm.execute_tx_simulate(

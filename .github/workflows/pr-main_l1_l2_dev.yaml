@@ -23,7 +23,7 @@ env:
 
 jobs:
   detect-changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
@@ -41,7 +41,7 @@ jobs:
     needs: detect-changes
     if: ${{ github.event_name != 'merge_group' && needs.detect-changes.outputs.run_tests == 'true' }}
     name: Integration Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0

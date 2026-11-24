@@ -496,6 +496,10 @@ pub struct Store {
     /// ends (the pruned range starts at the lowest entry still present).
     journal_pruning_paused: Arc<std::sync::atomic::AtomicBool>,
 
+    /// Signalled when an input of the node's sync status may have changed: the
+    /// canonical head, the sync target, the executed head or the synced flag.
+    sync_status_changed: Arc<tokio::sync::watch::Sender<()>>,
+
     background_threads: Arc<ThreadList>,
 }
 
@@ -856,6 +860,28 @@ impl Store {
         blocks: Vec<BackfilledBlock>,
         new_earliest: BlockNumber,
     ) -> Result<(), StoreError> {
+        // The frontier block is already stored, and indexed if it is a snap pivot.
+        // `earliest` and the floor are read outside the write transaction: backfill is
+        // their only writer once the node is synced, and it writes one batch at a time.
+        let earliest = self
+            .read_chain_data_block_number(ChainDataIndex::EarliestBlockNumber)
+            .await?
+            .unwrap_or(BlockNumber::MAX);
+        let unindexed_top = blocks
+            .iter()
+            .filter(|block| {
+                !block.index_transactions
+                    && !block.body.transactions.is_empty()
+                    && block.header.number < earliest
+            })
+            .map(|block| block.header.number)
+            .max();
+        let mut tx_index_floor = None;
+        if let Some(top) = unindexed_top {
+            let floor = top.saturating_add(1);
+            let current = self.get_tx_index_floor().await?;
+            tx_index_floor = Some(current.map_or(floor, |current| current.max(floor)));
+        }
         let backend = self.backend.clone();
         tokio::task::spawn_blocking(move || {
             let mut txn = backend.begin_write()?;
@@ -889,6 +915,13 @@ impl Store {
                 &chain_data_key(ChainDataIndex::EarliestBlockNumber),
                 &new_earliest.to_le_bytes(),
             )?;
+            if let Some(floor) = tx_index_floor {
+                txn.put(
+                    CHAIN_DATA,
+                    &chain_data_key(ChainDataIndex::TxIndexFloor),
+                    &floor.to_le_bytes(),
+                )?;
+            }
             txn.commit()
         })
         .await
@@ -1090,6 +1123,34 @@ impl Store {
             .await?
             .map(decode_block_number)
             .transpose()
+    }
+
+    /// Whether the transaction index holds `transaction_hash` for the block `block_hash`.
+    ///
+    /// Unlike [`Self::get_transaction_location`] this does not ask whether the block is
+    /// canonical, so the answer does not change while a forkchoice update is written.
+    pub async fn is_transaction_indexed_in(
+        &self,
+        transaction_hash: H256,
+        block_hash: BlockHash,
+    ) -> Result<bool, StoreError> {
+        let buffered = self.buffer()?.get_tx_locations(&transaction_hash);
+        if buffered.iter().any(|(_, hash, _)| *hash == block_hash) {
+            return Ok(true);
+        }
+        // The buffer is read first: a flush commits to disk before it evicts, so an
+        // entry that has left the buffer since is on disk by now.
+        let db = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let tx = db.begin_read()?;
+            let Some(bytes) = tx.get(TRANSACTION_LOCATIONS, transaction_hash.as_bytes())? else {
+                return Ok(false);
+            };
+            let locations = <Vec<(BlockNumber, BlockHash, Index)>>::decode(&bytes)?;
+            Ok(locations.iter().any(|(_, hash, _)| *hash == block_hash))
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Store transaction location (block number and index of the transaction within the block)
@@ -1699,6 +1760,51 @@ impl Store {
             .ok_or(StoreError::MissingEarliestBlockNumber)
     }
 
+    /// Lowest block from which every stored block is in the transaction index, if backfill skipped any.
+    pub async fn get_tx_index_floor(&self) -> Result<Option<BlockNumber>, StoreError> {
+        self.read_chain_data_block_number(ChainDataIndex::TxIndexFloor)
+            .await
+    }
+
+    /// Whether the history bounds (`earliest_block_number` and the transaction index
+    /// floor) were tracked since the database was created, or have been reconciled
+    /// since. A database created before they were tracked holds stale ones until then.
+    /// The marker is not cleared if a release from before it backfills the database
+    /// afterwards.
+    pub async fn history_bounds_reconciled(&self) -> Result<bool, StoreError> {
+        Ok(self
+            .read_chain_data_block_number(ChainDataIndex::HistoryBoundsReconciled)
+            .await?
+            .is_some())
+    }
+
+    /// Marks the history bounds as reconciled, recording the transaction index floor
+    /// if the reconciliation found one.
+    pub async fn mark_history_bounds_reconciled(
+        &self,
+        tx_index_floor: Option<BlockNumber>,
+    ) -> Result<(), StoreError> {
+        let backend = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut txn = backend.begin_write()?;
+            if let Some(floor) = tx_index_floor {
+                txn.put(
+                    CHAIN_DATA,
+                    &chain_data_key(ChainDataIndex::TxIndexFloor),
+                    &floor.to_le_bytes(),
+                )?;
+            }
+            txn.put(
+                CHAIN_DATA,
+                &chain_data_key(ChainDataIndex::HistoryBoundsReconciled),
+                &1u64.to_le_bytes(),
+            )?;
+            txn.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("History bounds write task panicked: {e}")))?
+    }
+
     /// Obtain finalized block number
     pub async fn get_finalized_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         self.read_chain_data_block_number(ChainDataIndex::FinalizedBlockNumber)
@@ -1714,6 +1820,17 @@ impl Store {
     /// Obtain latest block number
     pub fn get_latest_block_number(&self) -> Result<BlockNumber, StoreError> {
         Ok(self.latest_block_header.get().number)
+    }
+
+    /// Wakes the receivers of [`Self::sync_status_changes`].
+    pub fn notify_sync_status_changed(&self) {
+        self.sync_status_changed.send_replace(());
+    }
+
+    /// Resolves `changed()` after each [`Self::notify_sync_status_changed`];
+    /// signals sent before it is awaited collapse into one.
+    pub fn sync_status_changes(&self) -> tokio::sync::watch::Receiver<()> {
+        self.sync_status_changed.subscribe()
     }
 
     /// Update pending block number
@@ -2523,6 +2640,7 @@ impl Store {
             fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
             safe_commit_root,
             journal_pruning_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            sync_status_changed: Arc::new(tokio::sync::watch::Sender::new(())),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -3317,6 +3435,13 @@ impl Store {
         self.add_block(genesis_block).await?;
         self.update_earliest_block_number(genesis_block_number)
             .await?;
+        // A new database tracks its history bounds from the first block, so it has none
+        // from before the tracking to reconcile. Only this path marks one: the early
+        // returns above are for a database that already holds a genesis, which may
+        // predate the tracking. They need the genesis to be canonical, which only the
+        // forkchoice update below makes it, so a stop before that repeats this path
+        // and cannot leave a new database unmarked.
+        self.mark_history_bounds_reconciled(None).await?;
         self.forkchoice_update(vec![], genesis_block_number, genesis_hash, None, None)
             .await?;
         Ok(())
@@ -3512,6 +3637,7 @@ impl Store {
             self.latest_block_header.update((*previous_head).clone());
             return Err(err);
         }
+        self.notify_sync_status_changed();
 
         // Refresh the canonical safe-commit root now that the canonical tables reflect the new
         // head. `None` (chain shorter than the threshold, e.g. genesis init at head 0) leaves the
@@ -8493,6 +8619,75 @@ mod backfill_write_tests {
             None,
             "transaction index must be skipped when index_transactions is false"
         );
+        assert_eq!(
+            store.get_tx_index_floor().await.unwrap(),
+            Some(100),
+            "the tx index floor must rise above the unindexed block"
+        );
+    }
+
+    #[tokio::test]
+    async fn tx_index_floor_tracks_highest_unindexed_block() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        store.update_earliest_block_number(100).await.unwrap();
+        let backfilled = |number: u64, index_transactions: bool| BackfilledBlock {
+            header: test_header(number),
+            body: BlockBody {
+                transactions: vec![test_tx(number)],
+                ommers: vec![],
+                withdrawals: Some(vec![]),
+            },
+            receipts: vec![test_receipt()],
+            index_transactions,
+        };
+
+        store
+            .add_backfilled_blocks(
+                vec![
+                    backfilled(100, false),
+                    backfilled(99, true),
+                    backfilled(98, true),
+                ],
+                98,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get_tx_index_floor().await.unwrap(),
+            None,
+            "the re-fetched frontier block must not raise the floor"
+        );
+
+        store
+            .add_backfilled_blocks(vec![backfilled(97, true), backfilled(96, false)], 96)
+            .await
+            .unwrap();
+        assert_eq!(store.get_tx_index_floor().await.unwrap(), Some(97));
+
+        store
+            .add_backfilled_blocks(vec![backfilled(95, false)], 95)
+            .await
+            .unwrap();
+        assert_eq!(store.get_tx_index_floor().await.unwrap(), Some(97));
+
+        // An empty block has nothing to index, so it does not raise the floor.
+        let empty = BackfilledBlock {
+            header: test_header(98),
+            body: BlockBody {
+                transactions: vec![],
+                ommers: vec![],
+                withdrawals: Some(vec![]),
+            },
+            receipts: vec![],
+            index_transactions: false,
+        };
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        store.update_earliest_block_number(99).await.unwrap();
+        store
+            .add_backfilled_blocks(vec![empty, backfilled(97, false)], 97)
+            .await
+            .unwrap();
+        assert_eq!(store.get_tx_index_floor().await.unwrap(), Some(98));
     }
 
     /// End-to-end at the storage/RPC boundary: the getters the RPC handlers use
@@ -8621,6 +8816,88 @@ mod backfill_write_tests {
                 "block {n} must have a body (no gap left by resume)"
             );
         }
+    }
+
+    /// The index is asked about a block by hash, whether or not the block is canonical:
+    /// a block is indexed when it is stored, before forkchoice makes it canonical.
+    #[tokio::test]
+    async fn a_stored_block_is_indexed_before_it_is_canonical() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        let header = test_header(1);
+        let hash = header.hash();
+        let tx = test_tx(7);
+        let tx_hash = tx.hash(&NativeCrypto);
+        let body = BlockBody {
+            transactions: vec![tx],
+            ommers: vec![],
+            withdrawals: Some(vec![]),
+        };
+        store.add_block(Block::new(header, body)).await.unwrap();
+
+        assert_eq!(store.get_transaction_location(tx_hash).await.unwrap(), None);
+        assert!(
+            store
+                .is_transaction_indexed_in(tx_hash, hash)
+                .await
+                .unwrap()
+        );
+        let other_block = test_header(2).hash();
+        assert!(
+            !store
+                .is_transaction_indexed_in(tx_hash, other_block)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !store
+                .is_transaction_indexed_in(test_tx(8).hash(&NativeCrypto), hash)
+                .await
+                .unwrap()
+        );
+
+        // A block still in the buffer, which is where a new payload waits to be flushed.
+        let buffered_header = test_header(3);
+        let buffered_hash = buffered_header.hash();
+        let buffered_tx = test_tx(9);
+        let buffered_tx_hash = buffered_tx.hash(&NativeCrypto);
+        let buffered_body = BlockBody {
+            transactions: vec![buffered_tx],
+            ommers: vec![],
+            withdrawals: Some(vec![]),
+        };
+        store.buffer_block_for_test(&Block::new(buffered_header, buffered_body));
+        assert!(
+            store
+                .is_transaction_indexed_in(buffered_tx_hash, buffered_hash)
+                .await
+                .unwrap()
+        );
+    }
+
+    /// Opening a database marks its history bounds as reconciled only when it is new.
+    /// One that already holds a genesis may predate the bounds, and is left for the
+    /// reconciliation to correct and mark.
+    #[tokio::test]
+    async fn only_a_new_database_starts_with_reconciled_history_bounds() {
+        let mut new = Store::new("", EngineType::InMemory).expect("in-memory store");
+        new.add_initial_state(Genesis::default()).await.unwrap();
+        assert!(new.history_bounds_reconciled().await.unwrap());
+
+        // The same genesis stored without the marker, as before the bounds were tracked.
+        let mut existing = Store::new("", EngineType::InMemory).expect("in-memory store");
+        let genesis_block = Genesis::default().get_block();
+        let genesis_hash = genesis_block.hash();
+        existing.add_block(genesis_block).await.unwrap();
+        existing.update_earliest_block_number(0).await.unwrap();
+        existing
+            .forkchoice_update(vec![], 0, genesis_hash, None, None)
+            .await
+            .unwrap();
+        existing
+            .add_initial_state(Genesis::default())
+            .await
+            .unwrap();
+        assert!(!existing.history_bounds_reconciled().await.unwrap());
     }
 }
 

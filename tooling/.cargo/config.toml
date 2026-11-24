@@ -1,0 +1,14 @@
+[env]
+# Compile C dependencies as C17 (gnu17), the default of every GCC before 15.
+#
+# `migrations` pulls in mdbx-sys 12.12.0 (through ethrex-storage v1.0.0 with the
+# `libmdbx` feature). Under C23, its `mdbx.h` defines `MDBX_NORETURN` as
+# `[[noreturn]]` and `mdbx.c` places it after the declarator of
+# `__assert_fail(...) __THROW`, which GCC rejects. GCC 15+ (ubuntu-26.04
+# runners) defaults to C23, so the tooling workspace stops compiling.
+#
+# Cargo has no per-package env, so this applies to every C dependency built
+# from this workspace. Cargo reads this file based on the working directory,
+# so it only applies when cargo runs inside `tooling/`, not via
+# `--manifest-path tooling/Cargo.toml` from the repo root.
+CFLAGS = "-std=gnu17"
