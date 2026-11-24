@@ -92,14 +92,26 @@ pub struct Environment {
 pub struct EVMConfig {
     pub fork: Fork,
     pub blob_schedule: ForkBlobSchedule,
+    /// Whether EIP-8504 is active, so a frame transaction may carry proof frames.
+    /// It is a switch of its own, not a fork: see `ChainConfig::eip8504_time`.
+    pub proof_frames: bool,
 }
 
 impl EVMConfig {
+    /// A configuration for `fork` without EIP-8504; `with_proof_frames` switches
+    /// it on.
     pub fn new(fork: Fork, blob_schedule: ForkBlobSchedule) -> EVMConfig {
         EVMConfig {
             fork,
             blob_schedule,
+            proof_frames: false,
         }
+    }
+
+    /// The same configuration with EIP-8504 active or not.
+    pub fn with_proof_frames(mut self, proof_frames: bool) -> EVMConfig {
+        self.proof_frames = proof_frames;
+        self
     }
 
     pub fn new_from_chain_config(chain_config: &ChainConfig, block_header: &BlockHeader) -> Self {
@@ -110,6 +122,7 @@ impl EVMConfig {
             .unwrap_or_else(|| EVMConfig::canonical_values(fork));
 
         EVMConfig::new(fork, blob_schedule)
+            .with_proof_frames(chain_config.is_eip8504_activated(block_header.timestamp))
     }
 
     /// This function is used for running the EF tests. If you don't
@@ -159,9 +172,6 @@ impl Default for EVMConfig {
     /// The default EVMConfig depends on the default Fork.
     fn default() -> Self {
         let fork = core::default::Default::default();
-        EVMConfig {
-            fork,
-            blob_schedule: Self::canonical_values(fork),
-        }
+        EVMConfig::new(fork, Self::canonical_values(fork))
     }
 }

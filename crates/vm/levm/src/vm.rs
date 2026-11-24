@@ -2010,7 +2010,7 @@ impl<'a> VM<'a> {
         // The reason is carried through: a client that rejects the transaction for the
         // right reason but reports the wrong one is indistinguishable from a client that
         // rejected it by accident (see the mapper note above `TxValidationError`).
-        if let Err(e) = frame_tx.validate_static_constraints() {
+        if let Err(e) = frame_tx.validate_static_constraints_with(self.env.config.proof_frames) {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InvalidFrameTransactionFormat(e),
             ));
@@ -2193,6 +2193,30 @@ impl<'a> VM<'a> {
                 in_atomic_batch = false;
             }
 
+            // EIP-8504: a proof frame performs no call, accesses no account and
+            // changes no state. It consumes its whole execution limit and, like any
+            // other frame, yields a receipt: status 1, no state gas, no logs. The
+            // dependencies it declares are satisfied by witnesses the block carries,
+            // which are checked before the block executes, not here. Static rules
+            // keep it out of every atomic batch, so none is open at this point.
+            if frame.is_proof() {
+                let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
+                    InternalError::Custom("missing frame tx context".to_string()),
+                ))?;
+                ctx.current_frame_index = frame_idx;
+                ctx.approve_called_in_current_frame = false;
+                ctx.frame_results.push((
+                    ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
+                    frame.gas_limit,
+                    0,
+                    Vec::new(),
+                ));
+                total_gas_used = total_gas_used
+                    .checked_add(frame.gas_limit)
+                    .ok_or(VMError::Internal(InternalError::Overflow))?;
+                continue;
+            }
+
             // Clear the outer call-frame backup at the start of each independent
             // frame so that a later frame's failure-path `restore_cache_state()`
             // only reverts that frame's own effects — not APPROVE/state deltas
@@ -2268,6 +2292,12 @@ impl<'a> VM<'a> {
                         break;
                     }
                     (sender, false)
+                }
+                // Proof frames run no code and were settled at the top of the loop.
+                FrameMode::Proof => {
+                    return Err(VMError::Internal(InternalError::Custom(
+                        "proof frame reached the frame call dispatch".to_string(),
+                    )));
                 }
             };
 
@@ -3211,7 +3241,7 @@ impl<'a> VM<'a> {
 
         let sender = frame_tx.sender;
 
-        if let Err(e) = frame_tx.validate_static_constraints() {
+        if let Err(e) = frame_tx.validate_static_constraints_with(self.env.config.proof_frames) {
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InvalidFrameTransactionFormat(e),
             ));
@@ -3313,6 +3343,25 @@ impl<'a> VM<'a> {
                 break;
             }
 
+            // EIP-8504: a proof frame runs no code. It is recorded as block
+            // execution records it, so a later prefix frame that reads its status or
+            // gas through `FRAMEPARAM` sees the same values. Its gas stays out of the
+            // total: the witnesses it stands for are verified outside this
+            // simulation and bounded by their own limit, not by `MAX_VERIFY_GAS`.
+            if frame.is_proof() {
+                let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
+                    InternalError::Custom("missing frame tx context".to_string()),
+                ))?;
+                ctx.current_frame_index = frame_idx;
+                ctx.frame_results.push((
+                    ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
+                    frame.gas_limit,
+                    0,
+                    Vec::new(),
+                ));
+                continue;
+            }
+
             // Each independent prefix frame starts with a clean call-frame backup
             // so a later frame's failure only reverts its own effects.
             self.current_call_frame.call_frame_backup.clear();
@@ -3342,6 +3391,12 @@ impl<'a> VM<'a> {
                     // prefix.
                     return Err(VMError::Internal(InternalError::Custom(
                         "SENDER or ASSERT frame in validation prefix".to_string(),
+                    )));
+                }
+                // Proof frames run no code and were settled at the top of the loop.
+                FrameMode::Proof => {
+                    return Err(VMError::Internal(InternalError::Custom(
+                        "proof frame reached the prefix call dispatch".to_string(),
                     )));
                 }
             };

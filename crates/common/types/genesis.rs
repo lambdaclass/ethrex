@@ -273,6 +273,12 @@ pub struct ChainConfig {
     )]
     pub hegota_time: Option<u64>,
     pub lstar_time: Option<u64>,
+    /// EIP-8504 (proof frames and leanSPHINCS signatures carried beside the
+    /// transaction): the timestamp from which it is active. It is not a fork of
+    /// its own: it switches on over a chain where frame transactions are already
+    /// active, so a chain that does not name it keeps today's rules.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eip8504_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
@@ -392,6 +398,15 @@ impl ChainConfig {
 
     pub fn is_lstar_activated(&self, block_timestamp: u64) -> bool {
         self.lstar_time.is_some_and(|time| time <= block_timestamp)
+    }
+
+    /// Whether EIP-8504 is active at `block_timestamp`. Proof frames are frames
+    /// of a frame transaction, so it is never active before Hegota.
+    pub fn is_eip8504_activated(&self, block_timestamp: u64) -> bool {
+        self.is_hegota_activated(block_timestamp)
+            && self
+                .eip8504_time
+                .is_some_and(|time| time <= block_timestamp)
     }
 
     pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool {

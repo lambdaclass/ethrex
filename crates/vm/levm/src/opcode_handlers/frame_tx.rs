@@ -700,6 +700,11 @@ pub fn execute_default_code(
         // the caller's deferred transfer).
         // EIP-7906: an ASSERT frame is handled like SENDER or DEFAULT.
         FrameMode::Sender | FrameMode::Default | FrameMode::Assert => Ok((true, 0, Vec::new())),
+        // EIP-8504: a proof frame is settled before any target is resolved, so
+        // default code is never asked to stand in for one.
+        FrameMode::Proof => Err(VMError::Internal(crate::errors::InternalError::Custom(
+            "proof frame reached the default code".to_string(),
+        ))),
     }
 }
 

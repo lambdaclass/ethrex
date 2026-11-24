@@ -20,6 +20,7 @@ mod eip8246_tests;
 mod eip8250_tests;
 mod eip8272_tests;
 mod eip8298_tests;
+mod eip8504_tests;
 mod frame_contract_deployment_tests;
 mod l2_fee_token_ratio_tests;
 mod l2_fee_token_tests;

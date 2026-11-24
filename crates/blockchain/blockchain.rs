@@ -3876,7 +3876,7 @@ impl Blockchain {
             // EIP-8141 static constraints at admission (mirrors the VM check)
             // so malformed frame txs never occupy pool slots.
             frame_tx
-                .validate_static_constraints()
+                .validate_static_constraints_with(config.is_eip8504_activated(header.timestamp))
                 .map_err(MempoolError::InvalidFrameTransaction)?;
 
             // Frame `data` size is bounded by the wire-size cap below
