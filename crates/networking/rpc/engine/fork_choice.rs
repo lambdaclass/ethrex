@@ -502,7 +502,9 @@ async fn handle_forkchoice(
                 // `-38002` case the engine spec mandates (execution-apis, "Unknown
                 // SafeBlockHash"/"Unknown FinalizedBlockHash"). The genuine fell-behind wedge
                 // surfaces as the head-absent `Syncing` path or `StateNotReachable`, not here.
-                InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {
+                InvalidForkChoice::Disconnected(_, _)
+                | InvalidForkChoice::ElementNotFound(_)
+                | InvalidForkChoice::Unordered => {
                     warn!("Invalid fork choice state. Reason: {:?}", forkchoice_error);
                     return Err(RpcErr::InvalidForkChoiceState(forkchoice_error.to_string()));
                 }

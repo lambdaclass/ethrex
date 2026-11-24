@@ -189,6 +189,42 @@ async fn test_fcu_v3_finalized_ancestor_returns_valid_with_null_payload_id() {
     );
 }
 
+#[tokio::test]
+async fn test_fcu_with_safe_above_head_is_invalid_forkchoice_state() {
+    let store = test_store().await;
+    let genesis_header = store.get_block_header(0).unwrap().unwrap();
+    let blockchain = Blockchain::default_with_store(store.clone());
+
+    let block_1 = new_block(&store, &genesis_header).await;
+    let hash_1 = block_1.hash();
+    blockchain.add_block(block_1.clone()).unwrap();
+
+    let block_2 = new_block(&store, &block_1.header).await;
+    let hash_2 = block_2.hash();
+    blockchain.add_block(block_2).unwrap();
+
+    let body = format!(
+        r#"{{
+            "jsonrpc": "2.0",
+            "method": "engine_forkchoiceUpdatedV3",
+            "params": [
+                {{
+                    "headBlockHash": "{hash_1:#x}",
+                    "safeBlockHash": "{hash_2:#x}",
+                    "finalizedBlockHash": "{hash_1:#x}"
+                }},
+                null
+            ],
+            "id": 1
+        }}"#
+    );
+    let request: RpcRequest = serde_json::from_str(&body).expect("valid FCU request");
+    let context = default_context_with_storage(store).await;
+
+    let result = ForkChoiceUpdatedV3::call(&request, context.clone()).await;
+    assert!(matches!(result, Err(RpcErr::InvalidForkChoiceState(_))));
+}
+
 // execution-apis#796: PayloadAttributesV4 carries a required CL-supplied
 // targetGasLimit. An absent or null value fails deserialization, so the FCUv4
 // request is rejected (see parse_v4); the e2e tests below exercise that path.
