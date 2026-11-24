@@ -234,6 +234,21 @@ async fn new_head_ancestor_of_finalized_should_skip() {
 }
 
 #[tokio::test]
+async fn unknown_finalized_with_zero_safe_is_rejected() {
+    let store = test_store().await;
+    let genesis_header = store.get_block_header(0).unwrap().unwrap();
+    let blockchain = Blockchain::default_with_store(store.clone());
+
+    let block_1 = new_block(&store, &genesis_header).await;
+    let hash_1 = block_1.hash();
+    blockchain.add_block(block_1).unwrap();
+
+    let unknown = H256::from_low_u64_be(1);
+    let result = apply_fork_choice(&store, hash_1, H256::zero(), unknown, None).await;
+    assert!(matches!(result, Err(InvalidForkChoice::ElementNotFound(_))));
+}
+
+#[tokio::test]
 async fn latest_block_number_should_always_be_the_canonical_head() {
     // Goal: put a, b in the same branch, both canonical.
     // Then add one in a different branch. Check that the last one is still the same.
