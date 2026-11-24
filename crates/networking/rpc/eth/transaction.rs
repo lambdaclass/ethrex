@@ -980,6 +980,11 @@ impl RpcHandler for SendRawTransactionRequest {
                     wrapped_frame_tx.blobs_bundle.clone(),
                 )
                 .await
+        } else if let SendRawTransactionRequest::FrameWithWitnesses(wrapper) = self {
+            context
+                .blockchain
+                .add_local_dependency_transaction_to_pool(wrapper.clone())
+                .await
         } else {
             context
                 .blockchain

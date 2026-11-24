@@ -13,6 +13,7 @@ mod eip8037_block_gate_tests;
 mod eip8070_kzg_tests;
 mod eip8253_tests;
 mod eip8298_tests;
+mod eip8504_tests;
 mod explicit_blob_tx_tests;
 mod frame_blob_tx_tests;
 mod l1_tx_type_tests;

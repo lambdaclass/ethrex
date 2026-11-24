@@ -163,6 +163,14 @@ pub enum MempoolError {
     FrameTxValidationFailed(String),
     #[error("Frame transaction has dependencies but was submitted without their witnesses")]
     DependencyTransactionWithoutWitnesses,
+    #[error("Transaction submitted with witnesses declares no dependencies")]
+    WitnessesWithoutDependencies,
+    #[error("Transaction has {actual} dependencies, more than the {limit} this node verifies")]
+    TooManyDependencies { actual: usize, limit: usize },
+    #[error("Wrapper does not state its transaction's dependencies with one witness for each")]
+    WrapperDependenciesMismatch,
+    #[error("Witness {0} does not satisfy its dependency")]
+    DependencyNotSatisfied(usize),
     #[error("Frame transaction paymaster has insufficient balance to cover the reserved max cost")]
     FrameTxPaymasterUnderfunded,
     #[error(

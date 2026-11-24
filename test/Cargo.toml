@@ -69,6 +69,7 @@ libssz-types.workspace = true
 ethrex-crypto.workspace = true
 ethrex-metrics = { workspace = true, features = ["metrics"] }
 serial_test = "3"
+lean_sphincs.workspace = true
 
 [[test]]
 name = "ethrex_tests"

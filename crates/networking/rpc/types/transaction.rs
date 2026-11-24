@@ -4,7 +4,8 @@ use ethrex_common::{
     types::{
         BlockHash, BlockNumber, EIP1559Transaction, EIP2930Transaction, EIP7702Transaction,
         EnvelopeTxType, FeeTokenTransaction, FrameTransaction, LegacyTransaction,
-        PrivilegedL2Transaction, Transaction, WrappedEIP4844Transaction, WrappedFrameTransaction,
+        PrivilegedL2Transaction, ProofWrapper, Transaction, WrappedEIP4844Transaction,
+        WrappedFrameTransaction,
     },
 };
 use ethrex_crypto::NativeCrypto;
@@ -59,6 +60,10 @@ pub enum SendRawTransactionRequest {
     Frame(FrameTransaction),
     /// A blob-carrying frame transaction in its EIP-7594 network wrapper.
     FrameWithBlobs(WrappedFrameTransaction),
+    /// A dependency transaction (EIP-8504) submitted with its witnesses, and with
+    /// its blob sidecar when it carries blobs, as the wrapper the node built
+    /// from them.
+    FrameWithWitnesses(ProofWrapper),
 }
 
 impl SendRawTransactionRequest {
@@ -76,6 +81,9 @@ impl SendRawTransactionRequest {
             SendRawTransactionRequest::Frame(t) => Transaction::FrameTransaction(t.clone()),
             SendRawTransactionRequest::FrameWithBlobs(t) => {
                 Transaction::FrameTransaction(t.tx.clone())
+            }
+            SendRawTransactionRequest::FrameWithWitnesses(wrapper) => {
+                Transaction::FrameTransaction(wrapper.tx.clone())
             }
         }
     }
@@ -101,6 +109,12 @@ impl SendRawTransactionRequest {
                         .map(SendRawTransactionRequest::EIP4844),
                     EnvelopeTxType::EIP7702 => {
                         EIP7702Transaction::decode(tx_bytes).map(SendRawTransactionRequest::EIP7702)
+                    }
+                    // EIP-8504: `rlp([tx_payload_body, witnesses])`, or the blob
+                    // wrapper's items followed by `witnesses`.
+                    EnvelopeTxType::Frame if ProofWrapper::is_submission(tx_bytes)? => {
+                        ProofWrapper::decode_submission(tx_bytes)
+                            .map(SendRawTransactionRequest::FrameWithWitnesses)
                     }
                     EnvelopeTxType::Frame if WrappedFrameTransaction::is_wrapped(tx_bytes)? => {
                         WrappedFrameTransaction::decode(tx_bytes)

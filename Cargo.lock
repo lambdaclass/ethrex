@@ -4416,6 +4416,7 @@ dependencies = [
  "hex-literal 0.4.1",
  "k256",
  "lazy_static",
+ "lean_sphincs",
  "libssz",
  "libssz-merkle",
  "libssz-types",

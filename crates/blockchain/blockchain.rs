@@ -71,7 +71,7 @@ use ethrex_common::constants::{
 use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
 use crate::vm::{OverlaidVmDatabase, StateOverride, precompile_moves};
-#[cfg(feature = "c-kzg")]
+use dependency_witnesses::satisfies;
 use ethrex_common::types::MAX_BLOB_TX_SIZE;
 use ethrex_common::types::MAX_TX_SIZE;
 use ethrex_common::types::block_access_list::BlockAccessList;
@@ -85,6 +85,7 @@ use ethrex_common::types::{
 use ethrex_common::types::{EIP7702_DELEGATED_CODE_LEN, is_eip7702_delegation};
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
+use ethrex_common::types::{MAX_SIGS_PER_TX, ProofWrapper, proof_wrapper_overhead};
 use ethrex_common::utils::keccak;
 use ethrex_common::validate_block_access_list_size;
 use ethrex_common::{Address, H256, U256};
@@ -113,7 +114,7 @@ use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError, VmDatabase};
 use mempool::{
     BalanceCheck, FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, Mempool,
-    SenderAdmission, is_canonical_paymaster,
+    PooledDependencyWitnesses, SenderAdmission, is_canonical_paymaster,
 };
 use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -435,6 +436,10 @@ pub struct BlockchainOptions {
     /// validating signatures and simulating a frame transaction's validation
     /// prefix. Mempool policy (SHOULD), not consensus, so it is operator-tunable.
     pub max_verify_gas: u64,
+    /// EIP-8504 `MAX_SIGS_PER_TX`: the most dependencies a transaction may have
+    /// for this node to verify their witnesses and admit it. Mempool policy, not
+    /// consensus, so it is operator-tunable.
+    pub max_sigs_per_tx: usize,
 }
 
 impl Default for BlockchainOptions {
@@ -460,6 +465,7 @@ impl Default for BlockchainOptions {
             gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
             mempool_prewarm_enabled: true,
             max_verify_gas: DEFAULT_MAX_VERIFY_GAS,
+            max_sigs_per_tx: DEFAULT_MAX_SIGS_PER_TX,
         }
     }
 }
@@ -481,6 +487,10 @@ pub const DEFAULT_MAX_QUEUED_TXS_PER_ACCOUNT: usize = 64;
 /// Default frame-transaction verify-gas budget: the EIP-8141 §Mempool
 /// `MAX_VERIFY_GAS` value.
 pub const DEFAULT_MAX_VERIFY_GAS: u64 = FRAME_TX_MAX_VERIFY_GAS;
+
+/// Default number of dependencies per transaction this node verifies witnesses
+/// for: the EIP-8504 `MAX_SIGS_PER_TX` value.
+pub const DEFAULT_MAX_SIGS_PER_TX: usize = MAX_SIGS_PER_TX;
 
 #[derive(Debug, Clone)]
 pub struct BatchBlockProcessingFailure {
@@ -3334,7 +3344,7 @@ impl Blockchain {
         transaction: Transaction,
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, MempoolError> {
-        self.add_blob_transaction_to_pool_inner(transaction, blobs_bundle, true)
+        self.add_blob_transaction_to_pool_inner(transaction, blobs_bundle, None, true)
             .await
     }
 
@@ -3349,17 +3359,21 @@ impl Blockchain {
         blobs_bundle: BlobsBundle,
     ) -> Result<H256, MempoolError> {
         let broadcast = !self.options.private_mempool;
-        self.add_blob_transaction_to_pool_inner(transaction, blobs_bundle, broadcast)
+        self.add_blob_transaction_to_pool_inner(transaction, blobs_bundle, None, broadcast)
             .await
     }
 
     /// Admits a blob-carrying transaction, an EIP-4844 transaction or an EIP-8141
     /// frame transaction with blobs, together with its blobs bundle.
+    ///
+    /// `dependency_witnesses` holds the verified witnesses of a dependency
+    /// transaction (EIP-8504) and is `None` for every other transaction.
     #[cfg(feature = "c-kzg")]
     async fn add_blob_transaction_to_pool_inner(
         &self,
         transaction: Transaction,
         blobs_bundle: BlobsBundle,
+        dependency_witnesses: Option<PooledDependencyWitnesses>,
         broadcast: bool,
     ) -> Result<H256, MempoolError> {
         let fork = self.current_fork()?;
@@ -3407,8 +3421,9 @@ impl Blockchain {
         // per-sender gate inputs, re-checked atomically inside `add_transaction`,
         // which also removes any same-nonce tx being replaced under the same lock
         // (#6938) — so no separate pre-removal here.
-        let (frame_reservation, sender_admission) =
-            self.validate_transaction(&transaction, sender).await?;
+        let (frame_reservation, sender_admission) = self
+            .validate_transaction_inner(&transaction, sender, dependency_witnesses.is_some())
+            .await?;
 
         // Add blobs bundle before the transaction so that when add_transaction
         // notifies payload builders the blob data is already available.
@@ -3418,23 +3433,15 @@ impl Blockchain {
         // original error (a failing insert means the write lock is poisoned or
         // eviction failed, in which case the cleanup can't do better anyway).
         let mempool_tx = MempoolTransaction::new(transaction, sender);
-        let inserted = if broadcast {
-            self.mempool.add_transaction(
-                hash,
-                sender,
-                mempool_tx,
-                frame_reservation,
-                sender_admission,
-            )
-        } else {
-            self.mempool.add_transaction_no_broadcast(
-                hash,
-                sender,
-                mempool_tx,
-                frame_reservation,
-                sender_admission,
-            )
-        };
+        let inserted = self.insert_into_mempool(
+            hash,
+            sender,
+            mempool_tx,
+            frame_reservation,
+            sender_admission,
+            dependency_witnesses,
+            broadcast,
+        );
         if let Err(e) = inserted {
             let _ = self.mempool.remove_blobs_bundle(&hash);
             return Err(e);
@@ -3452,7 +3459,8 @@ impl Blockchain {
         &self,
         transaction: Transaction,
     ) -> Result<H256, MempoolError> {
-        self.add_transaction_to_pool_inner(transaction, true).await
+        self.add_transaction_to_pool_inner(transaction, None, true)
+            .await
     }
 
     /// Equivalent of `add_transaction_to_pool` for transactions submitted via
@@ -3464,13 +3472,18 @@ impl Blockchain {
         transaction: Transaction,
     ) -> Result<H256, MempoolError> {
         let broadcast = !self.options.private_mempool;
-        self.add_transaction_to_pool_inner(transaction, broadcast)
+        self.add_transaction_to_pool_inner(transaction, None, broadcast)
             .await
     }
 
+    /// Admits a transaction that carries no blobs.
+    ///
+    /// `dependency_witnesses` holds the verified witnesses of a dependency
+    /// transaction (EIP-8504) and is `None` for every other transaction.
     async fn add_transaction_to_pool_inner(
         &self,
         transaction: Transaction,
+        dependency_witnesses: Option<PooledDependencyWitnesses>,
         broadcast: bool,
     ) -> Result<H256, MempoolError> {
         // Blob-carrying transactions, EIP-4844 ones and EIP-8141 frame ones with blobs,
@@ -3505,30 +3518,213 @@ impl Blockchain {
         // removal, and the insert are one atomic scope (#6938). For a frame tx
         // the removal happens only after the locked paymaster re-check, so a
         // rejected fee-bump leaves the original pending tx intact.
-        let (frame_reservation, sender_admission) =
-            self.validate_transaction(&transaction, sender).await?;
+        let (frame_reservation, sender_admission) = self
+            .validate_transaction_inner(&transaction, sender, dependency_witnesses.is_some())
+            .await?;
 
         // Add transaction to storage
         let mempool_tx = MempoolTransaction::new(transaction, sender);
-        if broadcast {
-            self.mempool.add_transaction(
-                hash,
-                sender,
-                mempool_tx,
-                frame_reservation,
-                sender_admission,
-            )?;
-        } else {
-            self.mempool.add_transaction_no_broadcast(
-                hash,
-                sender,
-                mempool_tx,
-                frame_reservation,
-                sender_admission,
-            )?;
-        }
+        self.insert_into_mempool(
+            hash,
+            sender,
+            mempool_tx,
+            frame_reservation,
+            sender_admission,
+            dependency_witnesses,
+            broadcast,
+        )?;
 
         Ok(hash)
+    }
+
+    /// Inserts an admitted transaction into the mempool: with its witnesses when
+    /// it is a dependency transaction (EIP-8504), and queued for P2P broadcast
+    /// only when `broadcast` is set.
+    #[allow(clippy::too_many_arguments)]
+    fn insert_into_mempool(
+        &self,
+        hash: H256,
+        sender: Address,
+        transaction: MempoolTransaction,
+        frame_reservation: Option<FramePaymasterReservation>,
+        sender_admission: Option<SenderAdmission>,
+        dependency_witnesses: Option<PooledDependencyWitnesses>,
+        broadcast: bool,
+    ) -> Result<(), MempoolError> {
+        match dependency_witnesses {
+            Some(dependency_witnesses) => self.mempool.add_dependency_transaction(
+                hash,
+                sender,
+                transaction,
+                frame_reservation,
+                sender_admission,
+                dependency_witnesses,
+                broadcast,
+            ),
+            None if broadcast => self.mempool.add_transaction(
+                hash,
+                sender,
+                transaction,
+                frame_reservation,
+                sender_admission,
+            ),
+            None => self.mempool.add_transaction_no_broadcast(
+                hash,
+                sender,
+                transaction,
+                frame_reservation,
+                sender_admission,
+            ),
+        }
+    }
+
+    /// Adds a dependency transaction (EIP-8504), a frame transaction with at
+    /// least one proof frame, to the mempool together with its witnesses, checking
+    /// that the wrapper and the transaction are valid.
+    ///
+    /// This is the P2P entry point: the wrapper is queued for announcement to
+    /// peers regardless of `BlockchainOptions::private_mempool`. For the local-RPC
+    /// path that honors `private_mempool`, use
+    /// [`Self::add_local_dependency_transaction_to_pool`].
+    pub async fn add_dependency_transaction_to_pool(
+        &self,
+        wrapper: ProofWrapper,
+    ) -> Result<H256, MempoolError> {
+        self.add_dependency_transaction_to_pool_inner(wrapper, true)
+            .await
+    }
+
+    /// Local-RPC counterpart of [`Self::add_dependency_transaction_to_pool`].
+    /// When `BlockchainOptions::private_mempool` is `true`, the transaction is
+    /// added to the mempool but its wrapper is not announced to peers.
+    pub async fn add_local_dependency_transaction_to_pool(
+        &self,
+        wrapper: ProofWrapper,
+    ) -> Result<H256, MempoolError> {
+        let broadcast = !self.options.private_mempool;
+        self.add_dependency_transaction_to_pool_inner(wrapper, broadcast)
+            .await
+    }
+
+    /// The largest wrapper (EIP-8504) this node accepts, in bytes of its RLP
+    /// serialization: the largest transaction it accepts in its pooled network
+    /// form, plus a triple and a signature for each of the `max_sigs_per_tx`
+    /// dependencies it verifies.
+    pub fn max_proof_wrapper_size(&self, with_blobs: bool) -> usize {
+        let max_pooled_tx_size = if with_blobs {
+            MAX_BLOB_TX_SIZE
+        } else {
+            MAX_TX_SIZE
+        };
+        max_pooled_tx_size + proof_wrapper_overhead(self.options.max_sigs_per_tx)
+    }
+
+    /// Admits a dependency transaction (EIP-8504) with its witnesses. The checks
+    /// run in the order of the EIP's admission rules, cheapest first, and the
+    /// acceptance algorithm of EIP-8141 runs last, once every witness is known to
+    /// satisfy its dependency.
+    async fn add_dependency_transaction_to_pool_inner(
+        &self,
+        wrapper: ProofWrapper,
+        broadcast: bool,
+    ) -> Result<H256, MempoolError> {
+        // Size cap of the wrapper as it travels on the network. It bounds the
+        // work below before any of it runs.
+        let encoded_wrapper = wrapper.encode_to_vec();
+        let limit = self.max_proof_wrapper_size(wrapper.blobs_bundle.is_some());
+        if encoded_wrapper.len() > limit {
+            return Err(MempoolError::TxSizeExceeded {
+                actual: encoded_wrapper.len(),
+                limit,
+            });
+        }
+
+        // A key holder can sign the same message more than once, so a transaction
+        // may have more than one valid wrapper. The node keeps a single one: an
+        // additional wrapper for a pooled transaction is ignored.
+        let transaction = Transaction::FrameTransaction(wrapper.tx.clone());
+        let hash = transaction.hash(&NativeCrypto);
+        if self.mempool.contains_tx(hash)? {
+            if !broadcast {
+                warn!(%hash, "tx already public; --mempool.private cannot retroactively un-broadcast");
+            }
+            return Ok(hash);
+        }
+
+        // The wrapper's form (one transaction, mode 0) was checked when it was
+        // decoded or built. Next, the static constraints of EIP-8141 and of the
+        // proof frames, under the rules of the current head.
+        let header_no = self.storage.get_latest_block_number()?;
+        let header = self
+            .storage
+            .get_block_header(header_no)?
+            .ok_or(MempoolError::NoBlockHeaderError)?;
+        let config = self.storage.get_chain_config();
+        wrapper
+            .tx
+            .validate_static_constraints_with(config.is_eip8504_activated(header.timestamp))
+            .map_err(MempoolError::InvalidFrameTransaction)?;
+
+        // At least one dependency, and no more than this node verifies. The limit
+        // applies to the deduplicated list, so a triple declared twice counts once.
+        let dependencies = wrapper.tx.dependencies();
+        if dependencies.is_empty() {
+            return Err(MempoolError::WitnessesWithoutDependencies);
+        }
+        if dependencies.len() > self.options.max_sigs_per_tx {
+            return Err(MempoolError::TooManyDependencies {
+                actual: dependencies.len(),
+                limit: self.options.max_sigs_per_tx,
+            });
+        }
+
+        // The wrapper states exactly the transaction's dependencies and carries
+        // one witness for each.
+        if !wrapper.states_its_dependencies() {
+            return Err(MempoolError::WrapperDependenciesMismatch);
+        }
+
+        // Each witness satisfies its dependency. This does not depend on state,
+        // so it is done once: the revalidation after each block does not repeat it.
+        for (index, (dependency, witness)) in
+            dependencies.iter().zip(&wrapper.witnesses).enumerate()
+        {
+            if !satisfies(dependency, witness) {
+                return Err(MempoolError::DependencyNotSatisfied(index));
+            }
+        }
+
+        let dependency_witnesses = PooledDependencyWitnesses {
+            wrapper_hash: keccak(&encoded_wrapper),
+            wrapper_len: encoded_wrapper.len(),
+            witnesses: wrapper.witnesses,
+        };
+
+        // EIP-8141's acceptance algorithm, through the same path as any other
+        // frame transaction.
+        match wrapper.blobs_bundle {
+            #[cfg(feature = "c-kzg")]
+            Some(blobs_bundle) => {
+                self.add_blob_transaction_to_pool_inner(
+                    transaction,
+                    blobs_bundle,
+                    Some(dependency_witnesses),
+                    broadcast,
+                )
+                .await
+            }
+            // Without KZG support the sidecar cannot be validated.
+            #[cfg(not(feature = "c-kzg"))]
+            Some(_) => Err(MempoolError::BlobTxNoBlobsBundle),
+            None => {
+                self.add_transaction_to_pool_inner(
+                    transaction,
+                    Some(dependency_witnesses),
+                    broadcast,
+                )
+                .await
+            }
+        }
     }
 
     /// Remove a transaction from the mempool
@@ -3821,6 +4017,18 @@ impl Blockchain {
         tx: &Transaction,
         sender: Address,
     ) -> Result<(Option<FramePaymasterReservation>, Option<SenderAdmission>), MempoolError> {
+        self.validate_transaction_inner(tx, sender, false).await
+    }
+
+    /// [`Self::validate_transaction`], told whether the transaction arrived with
+    /// witnesses that were verified against its dependencies (EIP-8504). A
+    /// transaction with proof frames passes only in that case.
+    async fn validate_transaction_inner(
+        &self,
+        tx: &Transaction,
+        sender: Address,
+        dependency_witnesses_verified: bool,
+    ) -> Result<(Option<FramePaymasterReservation>, Option<SenderAdmission>), MempoolError> {
         let nonce = tx.nonce();
 
         // On an L1 node, reject L2-only transaction types (FeeToken 0x7d,
@@ -3890,7 +4098,7 @@ impl Blockchain {
             // EIP-8504: a transaction with proof frames is admitted only together
             // with a witness for each of its dependencies. It can never be included
             // without them, so one that arrives alone is rejected here.
-            if frame_tx.has_proof_frames() {
+            if frame_tx.has_proof_frames() && !dependency_witnesses_verified {
                 return Err(MempoolError::DependencyTransactionWithoutWitnesses);
             }
 
@@ -4418,6 +4626,13 @@ impl Blockchain {
         if self.mempool.is_private(*hash)? {
             return Err(StoreError::Custom(format!(
                 "Hash {hash} is private and must not propagate",
+            )));
+        }
+        // EIP-8504: a dependency transaction is sent only inside its wrapper,
+        // never in a `PooledTransactions` message.
+        if self.mempool.is_dependency_transaction(*hash)? {
+            return Err(StoreError::Custom(format!(
+                "Hash {hash} is a dependency transaction and travels only in its wrapper",
             )));
         }
         let Some(tx) = self.mempool.get_transaction_by_hash(*hash)? else {

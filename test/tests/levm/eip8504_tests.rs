@@ -37,7 +37,7 @@ const RECIPIENT: Address = Address::repeat_byte(0xBB);
 /// a proof frame and the triple is `(LEANSPHINCS_SCHEME, 0, public_key)`, that
 /// is, when the transaction depends on a signature of its own signature hash
 /// under the account's key. It reverts otherwise.
-fn account_code(public_key: H256) -> Vec<u8> {
+pub(crate) fn account_code(public_key: H256) -> Vec<u8> {
     let mut code = vec![
         // FRAMEPARAM(mode, index) == PROOF_FRAME_MODE
         0x60,
@@ -126,7 +126,7 @@ fn frame_tx_env(tx: &FrameTransaction, proof_frames: bool) -> Environment {
 }
 
 /// A proof frame declaring the given `(data_hash, public key)` pairs.
-fn proof_frame(declarations: &[(H256, H256)]) -> Frame {
+pub(crate) fn proof_frame(declarations: &[(H256, H256)]) -> Frame {
     let mut data = Vec::new();
     for (data_hash, public_key) in declarations {
         data.extend_from_slice(&[0u8; 31]);
