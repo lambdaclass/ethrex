@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::{ExecutionWitness, GuestProgramState};
-use ethrex_common::types::{Block, Receipt, validate_block_body};
+use ethrex_common::types::{Block, Receipt, Transaction, validate_block_body};
 use ethrex_common::{
     H256, U256, validate_block_access_list_hash, validate_block_pre_execution, validate_gas_used,
     validate_receipts_root_and_logs_bloom, validate_requests_hash,
@@ -33,6 +33,22 @@ pub struct BatchExecutionResult {
     /// Per-block recomputed Block Access List (EIP-7928, Amsterdam+). `None` for pre-Amsterdam.
     /// One entry per block in the same order as `receipts`.
     pub bals: Vec<Option<BlockAccessList>>,
+}
+
+/// EIP-8504: the witnesses of a block's dependencies are verified natively,
+/// before execution, by the node. Stateless execution does not link the verifier,
+/// so it must not vouch for a block that depends on them: executing its proof
+/// frames would accept signatures nobody checked. Such a block is rejected.
+pub fn reject_unverified_dependency_witnesses(block: &Block) -> Result<(), ExecutionError> {
+    let has_proof_frames = block.body.transactions.iter().any(
+        |tx| matches!(tx, Transaction::FrameTransaction(frame_tx) if frame_tx.has_proof_frames()),
+    );
+    if has_proof_frames {
+        return Err(ExecutionError::UnverifiedDependencyWitnesses(
+            block.header.number,
+        ));
+    }
+    Ok(())
 }
 
 /// Execute a batch of blocks using the provided VM factory.
@@ -129,6 +145,8 @@ where
             .map_err(ExecutionError::BlockValidation)
         })?;
 
+        reject_unverified_dependency_witnesses(block)?;
+
         // Create VM using the provided factory
         let mut vm = report_cycles("setup_evm", || vm_factory(&wrapped_db, i))?;
 
@@ -221,4 +239,58 @@ where
         burned_fees: acc_burned_fees,
         bals: acc_bals,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use ethrex_common::types::{BlockBody, BlockHeader, Frame, FrameTransaction, PROOF_FRAME_MODE};
+
+    fn block_with(transactions: Vec<Transaction>) -> Block {
+        Block::new(
+            BlockHeader {
+                number: 7,
+                ..Default::default()
+            },
+            BlockBody {
+                transactions,
+                ommers: Vec::new(),
+                withdrawals: Some(Vec::new()),
+                dependency_witnesses: Some(Vec::new()),
+            },
+        )
+    }
+
+    fn frame_tx(mode: u8) -> Transaction {
+        Transaction::FrameTransaction(FrameTransaction {
+            frames: vec![Frame {
+                mode,
+                data: Bytes::from(vec![0u8; 96]),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn stateless_execution_rejects_a_block_with_proof_frames() {
+        // Any other block is left to the rest of the validation.
+        reject_unverified_dependency_witnesses(&block_with(Vec::new())).expect("no transactions");
+        reject_unverified_dependency_witnesses(&block_with(vec![frame_tx(0)]))
+            .expect("a frame transaction without proof frames");
+
+        // A proof frame stands for a signature this path cannot check.
+        let result = reject_unverified_dependency_witnesses(&block_with(vec![
+            frame_tx(0),
+            frame_tx(PROOF_FRAME_MODE),
+        ]));
+        assert!(
+            matches!(
+                result,
+                Err(ExecutionError::UnverifiedDependencyWitnesses(7))
+            ),
+            "got {result:?}"
+        );
+    }
 }

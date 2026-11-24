@@ -930,7 +930,7 @@ pub fn validate_prague_header_fields(
     }
     // EIP-8504: the commitment to the dependency witnesses is a header field
     // exactly while the EIP is active.
-    if chain_config.is_hegota_activated(header.timestamp) {
+    if chain_config.fork(header.timestamp) >= Fork::Hegota {
         if header.dependency_witnesses_hash.is_none() {
             return Err(InvalidBlockHeaderError::DependencyWitnessesHashNotPresent);
         }

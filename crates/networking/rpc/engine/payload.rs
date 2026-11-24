@@ -492,7 +492,7 @@ impl NewPayloadV5Request {
             Some(self.parent_beacon_block_root),
             Some(requests_hash),
             block_access_list_hash,
-            chain_config.is_hegota_activated(self.payload.timestamp),
+            chain_config.fork(self.payload.timestamp) >= Fork::Hegota,
         ) {
             Ok(block) => block,
             Err(err) => {
@@ -1553,10 +1553,7 @@ async fn try_execute_payload(
             parent_beacon_block_root,
             requests_hash,
             block_access_list_hash,
-            context
-                .storage
-                .get_chain_config()
-                .is_hegota_activated(payload.timestamp),
+            context.storage.get_chain_config().fork(payload.timestamp) >= Fork::Hegota,
         )?;
         status =
             payload_status_for_existing_block(&block, &context.storage, &context.blockchain, true)
@@ -1630,9 +1627,7 @@ async fn classify_execution(
             parent_beacon_block_root,
             requests_hash,
             block_access_list_hash,
-            storage
-                .get_chain_config()
-                .is_hegota_activated(payload.timestamp),
+            storage.get_chain_config().fork(payload.timestamp) >= Fork::Hegota,
         )
     };
 

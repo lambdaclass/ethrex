@@ -840,9 +840,7 @@ impl Genesis {
 
         // EIP-8504, part of Hegota: a chain that starts in Hegota commits, at
         // genesis, to an empty list of dependency witnesses.
-        let dependency_witnesses_hash = self
-            .config
-            .is_hegota_activated(self.timestamp)
+        let dependency_witnesses_hash = (self.config.fork(self.timestamp) >= Fork::Hegota)
             .then(|| compute_dependency_witnesses_hash(&[], &NativeCrypto));
 
         BlockHeader {
@@ -879,10 +877,7 @@ impl Genesis {
             transactions: vec![],
             ommers: vec![],
             withdrawals: Some(vec![]),
-            dependency_witnesses: self
-                .config
-                .is_hegota_activated(self.timestamp)
-                .then(Vec::new),
+            dependency_witnesses: (self.config.fork(self.timestamp) >= Fork::Hegota).then(Vec::new),
         }
     }
 

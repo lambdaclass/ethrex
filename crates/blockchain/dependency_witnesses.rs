@@ -8,7 +8,7 @@
 
 use ethrex_common::{
     errors::InvalidBlockError,
-    types::{Block, ChainConfig, Dependency, LEANSPHINCS_SCHEME, block_dependencies},
+    types::{Block, ChainConfig, Dependency, Fork, LEANSPHINCS_SCHEME, block_dependencies},
 };
 use ethrex_crypto::leansphincs::{LEANSPHINCS_SIGNATURE_SIZE, leansphincs_verify};
 use ethrex_metrics::metrics;
@@ -42,11 +42,17 @@ pub fn satisfies(dependency: &Dependency, witness: &[u8]) -> bool {
 /// EIP-8504 is part of Hegota. Before it a block has no frame transactions,
 /// hence no dependencies, and no witness list, because the header rules reject
 /// its commitment; there is nothing to check.
+///
+/// Hegota is resolved through the fork ordinal, exactly as execution resolves
+/// it. The rule that accepts proof frames and the rule that requires their
+/// witnesses must come from the same test: with a check on the `hegotaTime`
+/// field alone, a chain that schedules a later fork without naming Hegota would
+/// execute proof frames with no signature behind them.
 pub fn validate_dependency_witnesses(
     block: &Block,
     chain_config: &ChainConfig,
 ) -> Result<(), InvalidBlockError> {
-    if !chain_config.is_hegota_activated(block.header.timestamp) {
+    if chain_config.fork(block.header.timestamp) < Fork::Hegota {
         return Ok(());
     }
     #[cfg(feature = "metrics")]
@@ -325,6 +331,27 @@ mod tests {
         assert!(satisfies(&dependency, &witness));
         dependency.scheme = 0x11;
         assert!(!satisfies(&dependency, &witness));
+    }
+
+    #[test]
+    fn a_later_fork_scheduled_without_hegota_still_requires_witnesses() {
+        // Execution resolves the fork by its ordinal, so on this chain it accepts
+        // proof frames from the later fork's activation. The witnesses must be
+        // required by the same test.
+        let later_fork_only = ChainConfig {
+            lstar_time: Some(ACTIVATION),
+            ..Default::default()
+        };
+        assert!(later_fork_only.hegota_time.is_none());
+        let signer = key(1);
+        let transactions = vec![dependency_tx(0, &[(H256::zero(), signer.public)])];
+        assert!(matches!(
+            validate_dependency_witnesses(&block(transactions, Some(Vec::new())), &later_fork_only),
+            Err(InvalidBlockError::DependencyWitnessesCountMismatch {
+                expected: 1,
+                found: 0
+            })
+        ));
     }
 
     #[test]
