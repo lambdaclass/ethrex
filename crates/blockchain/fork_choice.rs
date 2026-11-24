@@ -102,8 +102,13 @@ pub async fn apply_fork_choice(
         check_order(&safe_res, &head_res, ForkChoiceElement::Safe)?;
     }
 
-    if !finalized_hash.is_zero() && !safe_hash.is_zero() {
-        check_order(&finalized_res, &safe_res, ForkChoiceElement::Finalized)?;
+    if !finalized_hash.is_zero() {
+        let upper = if safe_hash.is_zero() {
+            &head_res
+        } else {
+            &safe_res
+        };
+        check_order(&finalized_res, upper, ForkChoiceElement::Finalized)?;
     }
 
     let Some(head) = head_res else {
