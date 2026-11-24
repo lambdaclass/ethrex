@@ -551,15 +551,6 @@ pub struct Options {
     )]
     pub precompute_witnesses: bool,
     #[arg(
-        long = "eip8504-with-hegota",
-        action = ArgAction::SetTrue,
-        default_value = "false",
-        help = "Activate EIP-8504 together with Hegota when the chain config does not set eip8504Time. For networks whose genesis generator does not emit that key. Hegota must be scheduled after genesis, or the genesis block differs from the one the generator computed.",
-        help_heading = "Node options",
-        env = "ETHREX_EIP8504_WITH_HEGOTA"
-    )]
-    pub eip8504_with_hegota: bool,
-    #[arg(
         long = "blob-sampling",
         action = ArgAction::SetTrue,
         default_value = "false",
@@ -688,7 +679,6 @@ impl Default for Options {
             no_bal_parallel_exec: false,
             no_bal_prefetch: false,
             no_bal_parallel_trie: false,
-            eip8504_with_hegota: false,
             blob_sampling: false,
             blob_eager_provider: false,
             max_reorg_depth: None,

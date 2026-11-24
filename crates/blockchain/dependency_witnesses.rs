@@ -39,14 +39,14 @@ pub fn satisfies(dependency: &Dependency, witness: &[u8]) -> bool {
 /// carries exactly one witness for each entry of `block_dependencies`, in the
 /// same order, and each witness satisfies its dependency.
 ///
-/// Before EIP-8504 is active a block has no dependencies, because the static
-/// rules reject proof frames, and no witness list, because the header rules
-/// reject its commitment; there is nothing to check.
+/// EIP-8504 is part of Hegota. Before it a block has no frame transactions,
+/// hence no dependencies, and no witness list, because the header rules reject
+/// its commitment; there is nothing to check.
 pub fn validate_dependency_witnesses(
     block: &Block,
     chain_config: &ChainConfig,
 ) -> Result<(), InvalidBlockError> {
-    if !chain_config.is_eip8504_activated(block.header.timestamp) {
+    if !chain_config.is_hegota_activated(block.header.timestamp) {
         return Ok(());
     }
     #[cfg(feature = "metrics")]
@@ -102,8 +102,7 @@ mod tests {
 
     fn active_config() -> ChainConfig {
         ChainConfig {
-            hegota_time: Some(0),
-            eip8504_time: Some(ACTIVATION),
+            hegota_time: Some(ACTIVATION),
             ..Default::default()
         }
     }
@@ -329,11 +328,11 @@ mod tests {
     }
 
     #[test]
-    fn nothing_is_checked_before_eip8504_is_active() {
+    fn nothing_is_checked_before_hegota() {
         let (transactions, _) = two_transactions();
         let mut early = block(transactions, None);
         early.header.timestamp = ACTIVATION - 1;
         validate_dependency_witnesses(&early, &active_config())
-            .expect("the static rules and the header rules cover a chain before activation");
+            .expect("the header rules cover a chain before Hegota");
     }
 }

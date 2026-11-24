@@ -882,7 +882,7 @@ fn static_validation_enforces_the_eip_7906_assert_rules() {
             ],
             "followed by an ASSERT frame",
         ),
-        ("mode 4", vec![verify, (4, 0)], "reserved execution mode"),
+        ("mode 5", vec![verify, (5, 0)], "reserved execution mode"),
     ] {
         let err = with(&frames).expect_err(label);
         assert!(err.contains(reason), "{label}: unexpected reason {err:?}");

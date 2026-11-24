@@ -492,7 +492,7 @@ impl NewPayloadV5Request {
             Some(self.parent_beacon_block_root),
             Some(requests_hash),
             block_access_list_hash,
-            chain_config.is_eip8504_activated(self.payload.timestamp),
+            chain_config.is_hegota_activated(self.payload.timestamp),
         ) {
             Ok(block) => block,
             Err(err) => {
@@ -1556,7 +1556,7 @@ async fn try_execute_payload(
             context
                 .storage
                 .get_chain_config()
-                .is_eip8504_activated(payload.timestamp),
+                .is_hegota_activated(payload.timestamp),
         )?;
         status =
             payload_status_for_existing_block(&block, &context.storage, &context.blockchain, true)
@@ -1632,7 +1632,7 @@ async fn classify_execution(
             block_access_list_hash,
             storage
                 .get_chain_config()
-                .is_eip8504_activated(payload.timestamp),
+                .is_hegota_activated(payload.timestamp),
         )
     };
 

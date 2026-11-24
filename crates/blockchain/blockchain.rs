@@ -3684,18 +3684,23 @@ impl Blockchain {
             return Ok(hash);
         }
 
-        // The wrapper's form (one transaction, mode 0) was checked when it was
-        // decoded or built. Next, the static constraints of EIP-8141 and of the
-        // proof frames, under the rules of the current head.
+        // A dependency transaction is a frame transaction: there are none before
+        // Hegota, and nothing below is worth doing for one that arrives early.
         let header_no = self.storage.get_latest_block_number()?;
         let header = self
             .storage
             .get_block_header(header_no)?
             .ok_or(MempoolError::NoBlockHeaderError)?;
-        let config = self.storage.get_chain_config();
+        if self.storage.get_chain_config().fork(header.timestamp) < Fork::Hegota {
+            return Err(MempoolError::FrameTxPreFork);
+        }
+
+        // The wrapper's form (one transaction, mode 0) was checked when it was
+        // decoded or built. Next, the static constraints of EIP-8141 and of the
+        // proof frames.
         wrapper
             .tx
-            .validate_static_constraints_with(config.is_eip8504_activated(header.timestamp))
+            .validate_static_constraints()
             .map_err(MempoolError::InvalidFrameTransaction)?;
 
         // At least one dependency, and no more than this node verifies. The limit
@@ -4136,7 +4141,7 @@ impl Blockchain {
             // EIP-8141 static constraints at admission (mirrors the VM check)
             // so malformed frame txs never occupy pool slots.
             frame_tx
-                .validate_static_constraints_with(config.is_eip8504_activated(header.timestamp))
+                .validate_static_constraints()
                 .map_err(MempoolError::InvalidFrameTransaction)?;
 
             // EIP-8504: a transaction with proof frames is admitted only together

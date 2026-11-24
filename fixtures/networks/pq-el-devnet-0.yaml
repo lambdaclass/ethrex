@@ -17,9 +17,6 @@ participants:
   - el_type: ethrex
     el_image: ethrex:pq-el-devnet-0
     el_extra_params:
-      # The genesis generator does not emit `eip8504Time`: activate EIP-8504
-      # with Hegota.
-      - --eip8504-with-hegota
       # Dependency transactions travel over eth/73, which ethrex offers under
       # the same condition as eth/72.
       - --blob-sampling
@@ -34,9 +31,10 @@ network_params:
   # ethlambda's execution payload is the Gloas one, with the dependency
   # witnesses appended, from genesis.
   gloas_fork_epoch: 0
-  # Hegota on the execution layer only, one epoch after genesis: the consensus
-  # layer stays on Gloas. It cannot be at genesis, because the genesis block
-  # the generator computes has no dependency witnesses commitment.
+  # Hegota, and EIP-8504 with it, on the execution layer only, one epoch after
+  # genesis: the consensus layer stays on Gloas. It cannot be at genesis,
+  # because the genesis block the generator computes has no dependency
+  # witnesses commitment.
   heze_fork_epoch: 1
   frames_enabled: true
   # The accounts `leansphincs_sender alloc --accounts 16` prints for the

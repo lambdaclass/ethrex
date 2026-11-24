@@ -198,7 +198,7 @@ pub fn create_payload(
         // set again when the payload is finalized, once the transactions and so
         // the witnesses are known.
         dependency_witnesses_hash: chain_config
-            .is_eip8504_activated(args.timestamp)
+            .is_hegota_activated(args.timestamp)
             .then(|| compute_dependency_witnesses_hash(&[], &NativeCrypto)),
         ..Default::default()
     };
@@ -218,7 +218,7 @@ pub fn create_payload(
         // EIP-8504: the list is part of the body from activation on, empty until
         // a transaction with dependencies is included.
         dependency_witnesses: chain_config
-            .is_eip8504_activated(args.timestamp)
+            .is_hegota_activated(args.timestamp)
             .then(Vec::new),
     };
 

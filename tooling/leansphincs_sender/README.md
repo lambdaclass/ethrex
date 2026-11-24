@@ -16,8 +16,8 @@ Commands:
   send   Sends transactions from the accounts at a fixed rate
 ```
 
-1. Print the genesis entries and merge them into the `alloc` of a genesis whose config sets
-   `eip8504Time`:
+1. Print the genesis entries and merge them into the `alloc` of a genesis that schedules
+   Hegotá, which EIP-8504 is part of:
 
    ```sh
    cargo run --release --manifest-path tooling/Cargo.toml -p leansphincs_sender -- \

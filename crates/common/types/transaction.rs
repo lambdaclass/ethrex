@@ -2236,8 +2236,7 @@ pub enum FrameMode {
 
 impl FrameMode {
     /// Convert from the lower 8 bits of the mode field.
-    /// Returns None for reserved values (5-255). Whether `Proof` is valid on a
-    /// given chain is decided by `validate_static_constraints_with`.
+    /// Returns None for reserved values (5-255).
     pub fn from_u8(val: u8) -> Option<Self> {
         match val {
             0 => Some(FrameMode::Default),
@@ -2320,7 +2319,7 @@ impl Frame {
 
     /// The dependencies a proof frame declares, in order and as encoded: a zero
     /// `data_hash` is returned as zero. Empty for any other frame. Trailing bytes
-    /// that do not fill a triple are ignored; `validate_static_constraints_with`
+    /// that do not fill a triple are ignored; `validate_static_constraints`
     /// rejects such a frame.
     pub fn declared_dependencies(&self) -> Vec<Dependency> {
         if !self.is_proof() {
@@ -3225,21 +3224,10 @@ impl FrameTransaction {
             })
     }
 
-    /// Validate static constraints per EIP-8141 spec on a chain where EIP-8504
-    /// is not active, so mode 4 is still a reserved mode.
+    /// Validate static constraints per EIP-8141 spec, with the constraints
+    /// EIP-8504 adds for proof frames.
     /// Returns an error string if the transaction is invalid.
     pub fn validate_static_constraints(&self) -> Result<(), String> {
-        self.validate_static_constraints_with(false)
-    }
-
-    /// Validate static constraints per EIP-8141 spec. `proof_frames_active` says
-    /// whether EIP-8504 is active: when it is, a proof frame is valid if it meets
-    /// that EIP's constraints; when it is not, its mode is reserved.
-    /// Returns an error string if the transaction is invalid.
-    pub fn validate_static_constraints_with(
-        &self,
-        proof_frames_active: bool,
-    ) -> Result<(), String> {
         // EIP-8250: the account nonce cannot be used at `MAX_NONCE_SEQ`, which only
         // a keyed set may select, as its single-use form.
         if !self.is_keyed() && self.nonce_seq == FRAME_TX_MAX_NONCE_SEQ {
@@ -3308,13 +3296,8 @@ impl FrameTransaction {
         let mut seen_assert = false;
         for (i, frame) in self.frames.iter().enumerate() {
             // Reject reserved execution modes. EIP-7906 adds ASSERT (3) to the modes
-            // EIP-8141 accepts, and EIP-8504 adds PROOF (4) once it is active.
-            let reserved = match FrameMode::from_u8(frame.mode) {
-                None => true,
-                Some(FrameMode::Proof) => !proof_frames_active,
-                Some(_) => false,
-            };
-            if reserved {
+            // EIP-8141 accepts, and EIP-8504 adds PROOF (4).
+            if FrameMode::from_u8(frame.mode).is_none() {
                 return Err(format!("Frame {i}: reserved execution mode {}", frame.mode));
             }
             // EIP-8504 constraints on a proof frame. They apply in addition to the
@@ -7419,15 +7402,16 @@ mod tests {
     }
 
     #[test]
-    fn proof_frame_is_a_reserved_mode_until_eip8504_is_active() {
+    fn proof_frame_is_an_accepted_mode_and_the_next_one_is_reserved() {
         let key = H256::repeat_byte(0xAA);
-        let tx = frame_tx_with_proof_frame(proof_frame(&[(H256::zero(), key)]));
+        let mut tx = frame_tx_with_proof_frame(proof_frame(&[(H256::zero(), key)]));
+        tx.validate_static_constraints()
+            .expect("a well-formed proof frame is valid");
+        tx.frames[1].mode = PROOF_FRAME_MODE + 1;
         let err = tx
             .validate_static_constraints()
-            .expect_err("mode 4 is reserved without EIP-8504");
-        assert!(err.contains("reserved execution mode 4"), "{err}");
-        tx.validate_static_constraints_with(true)
-            .expect("a well-formed proof frame is valid once EIP-8504 is active");
+            .expect_err("mode 5 is reserved");
+        assert!(err.contains("reserved execution mode 5"), "{err}");
     }
 
     #[test]
@@ -7436,7 +7420,7 @@ mod tests {
         for position in 0..=2 {
             let mut tx = make_test_frame_tx();
             tx.frames.insert(position, frame.clone());
-            tx.validate_static_constraints_with(true)
+            tx.validate_static_constraints()
                 .unwrap_or_else(|e| panic!("position {position}: {e}"));
         }
     }
@@ -7447,7 +7431,7 @@ mod tests {
         let valid = proof_frame(&[(H256::zero(), key)]);
         let reject = |frame: Frame, expected: &str| {
             let err = frame_tx_with_proof_frame(frame)
-                .validate_static_constraints_with(true)
+                .validate_static_constraints()
                 .expect_err(expected);
             assert!(err.contains(expected), "expected {expected:?}, got {err:?}");
         };
@@ -7499,7 +7483,7 @@ mod tests {
         // The largest frame the EIP allows is accepted.
         let full = proof_frame(&vec![(H256::zero(), key); MAX_DEPENDENCIES_PER_FRAME]);
         frame_tx_with_proof_frame(full)
-            .validate_static_constraints_with(true)
+            .validate_static_constraints()
             .expect("256 triples are allowed");
     }
 
@@ -7520,7 +7504,7 @@ mod tests {
             proof_frame(&[(H256::zero(), H256::repeat_byte(0xAA))]),
         ];
         let err = tx
-            .validate_static_constraints_with(true)
+            .validate_static_constraints()
             .expect_err("a proof frame cannot end an atomic batch");
         assert!(err.contains("proof frame in an atomic batch"), "{err}");
     }
@@ -7539,7 +7523,7 @@ mod tests {
         );
         tx.frames
             .push(proof_frame(&[(H256::zero(), key_a), (H256::zero(), key_b)]));
-        tx.validate_static_constraints_with(true)
+        tx.validate_static_constraints()
             .expect("repeated declarations are allowed");
 
         let sig_hash = tx.compute_sig_hash();

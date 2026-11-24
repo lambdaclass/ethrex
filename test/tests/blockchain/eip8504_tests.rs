@@ -64,15 +64,17 @@ fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
-/// `l1-hegota.json` (every fork through Hegota active at genesis) with each key's
-/// account funded and running the validation code for that key. EIP-8504 is
-/// active from genesis when `eip8504_time` is set.
-async fn setup_store(keys: &[&Key], eip8504_time: Option<u64>) -> (Store, u64) {
+/// `l1-hegota.json` (every fork through Hegota active at genesis, and EIP-8504
+/// with it) with each key's account funded and running the validation code for
+/// that key. With `hegota` unset the chain stops at the fork before it.
+async fn setup_store_at(keys: &[&Key], hegota: bool) -> (Store, u64) {
     let file = File::open(workspace_root().join("fixtures/genesis/l1-hegota.json"))
         .expect("open l1-hegota genesis");
     let mut genesis: Genesis =
         serde_json::from_reader(BufReader::new(file)).expect("parse l1-hegota genesis");
-    genesis.config.eip8504_time = eip8504_time;
+    if !hegota {
+        genesis.config.hegota_time = None;
+    }
     for key in keys {
         genesis.alloc.insert(
             key.account,
@@ -91,6 +93,10 @@ async fn setup_store(keys: &[&Key], eip8504_time: Option<u64>) -> (Store, u64) {
         .await
         .expect("add genesis state");
     (store, chain_id)
+}
+
+async fn setup_store(keys: &[&Key]) -> (Store, u64) {
+    setup_store_at(keys, true).await
 }
 
 fn blockchain(store: Store) -> Blockchain {
@@ -198,7 +204,7 @@ fn with_witnesses(mut block: Block, witnesses: Vec<Bytes>) -> Block {
 #[tokio::test]
 async fn dependency_transaction_goes_from_the_pool_into_a_block_that_imports() {
     let key = key(0x51);
-    let (store, chain_id) = setup_store(&[&key], Some(0)).await;
+    let (store, chain_id) = setup_store(&[&key]).await;
     let blockchain = blockchain(store.clone());
 
     let wrapper = wrapper(dependency_transaction(chain_id, &key, &[]), &[&key]);
@@ -268,11 +274,11 @@ async fn dependency_transaction_goes_from_the_pool_into_a_block_that_imports() {
 
     // It imports on every path.
     let bal = Arc::new(built.block_access_list.expect("a Hegota block has a BAL"));
-    let (other_store, _) = setup_store(&[&key], Some(0)).await;
+    let (other_store, _) = setup_store(&[&key]).await;
     self::blockchain(other_store)
         .add_block_pipeline(block.clone(), Some(bal.clone()))
         .expect("pipeline import");
-    let (other_store, _) = setup_store(&[&key], Some(0)).await;
+    let (other_store, _) = setup_store(&[&key]).await;
     self::blockchain(other_store)
         .add_block(block.clone())
         .expect("plain import");
@@ -282,7 +288,7 @@ async fn dependency_transaction_goes_from_the_pool_into_a_block_that_imports() {
     let mut tampered = witness.to_vec();
     tampered[100] ^= 0x01;
     let tampered_block = with_witnesses(block.clone(), vec![Bytes::from(tampered)]);
-    let (other_store, _) = setup_store(&[&key], Some(0)).await;
+    let (other_store, _) = setup_store(&[&key]).await;
     let result = self::blockchain(other_store).add_block(tampered_block.clone());
     assert!(
         matches!(
@@ -293,7 +299,7 @@ async fn dependency_transaction_goes_from_the_pool_into_a_block_that_imports() {
         ),
         "got {result:?}"
     );
-    let (other_store, _) = setup_store(&[&key], Some(0)).await;
+    let (other_store, _) = setup_store(&[&key]).await;
     let result = self::blockchain(other_store).add_block_pipeline(tampered_block, Some(bal));
     assert!(
         matches!(
@@ -306,7 +312,7 @@ async fn dependency_transaction_goes_from_the_pool_into_a_block_that_imports() {
     );
 
     // So is a block that leaves the witness out.
-    let (other_store, _) = setup_store(&[&key], Some(0)).await;
+    let (other_store, _) = setup_store(&[&key]).await;
     let result = self::blockchain(other_store).add_block(with_witnesses(block, Vec::new()));
     assert!(
         matches!(
@@ -327,7 +333,7 @@ async fn block_carries_one_witness_for_a_dependency_two_transactions_share() {
     let first = key(0x52);
     let second = key(0x53);
     let shared = key(0x54);
-    let (store, chain_id) = setup_store(&[&first, &second], Some(0)).await;
+    let (store, chain_id) = setup_store(&[&first, &second]).await;
     let blockchain = blockchain(store.clone());
 
     // Both transactions also depend on a signature of the same message under a
@@ -373,7 +379,7 @@ async fn block_carries_one_witness_for_a_dependency_two_transactions_share() {
         );
     }
 
-    let (other_store, _) = setup_store(&[&first, &second], Some(0)).await;
+    let (other_store, _) = setup_store(&[&first, &second]).await;
     self::blockchain(other_store)
         .add_block(block)
         .expect("the block imports");
@@ -383,7 +389,7 @@ async fn block_carries_one_witness_for_a_dependency_two_transactions_share() {
 async fn pool_admits_a_dependency_transaction_only_with_valid_witnesses() {
     let key = key(0x55);
     let other_key = self::key(0x56);
-    let (store, chain_id) = setup_store(&[&key], Some(0)).await;
+    let (store, chain_id) = setup_store(&[&key]).await;
     let blockchain = blockchain(store.clone());
     let tx = dependency_transaction(chain_id, &key, &[]);
 
@@ -496,7 +502,7 @@ async fn pool_admits_a_dependency_transaction_only_with_valid_witnesses() {
 async fn pool_limits_the_dependencies_of_a_transaction_to_max_sigs_per_tx() {
     let key = key(0x57);
     let second_key = self::key(0x58);
-    let (store, chain_id) = setup_store(&[&key], Some(0)).await;
+    let (store, chain_id) = setup_store(&[&key]).await;
     let tx = dependency_transaction(
         chain_id,
         &key,
@@ -534,15 +540,15 @@ async fn pool_limits_the_dependencies_of_a_transaction_to_max_sigs_per_tx() {
 }
 
 #[tokio::test]
-async fn pool_rejects_a_dependency_transaction_before_eip8504_is_active() {
+async fn pool_rejects_a_dependency_transaction_before_hegota() {
     let key = key(0x59);
-    let (store, chain_id) = setup_store(&[&key], None).await;
+    let (store, chain_id) = setup_store_at(&[&key], false).await;
     let blockchain = blockchain(store);
     let wrapper = wrapper(dependency_transaction(chain_id, &key, &[]), &[&key]);
 
     let result = blockchain.add_dependency_transaction_to_pool(wrapper).await;
     assert!(
-        matches!(result, Err(MempoolError::InvalidFrameTransaction(_))),
+        matches!(result, Err(MempoolError::FrameTxPreFork)),
         "got {result:?}"
     );
 }
@@ -550,7 +556,7 @@ async fn pool_rejects_a_dependency_transaction_before_eip8504_is_active() {
 #[tokio::test]
 async fn dependency_transaction_is_submitted_with_its_witnesses_through_the_rpc() {
     let key = key(0x5a);
-    let (store, chain_id) = setup_store(&[&key], Some(0)).await;
+    let (store, chain_id) = setup_store(&[&key]).await;
     let ctx = default_context_with_storage(store).await;
     let wrapper = wrapper(dependency_transaction(chain_id, &key, &[]), &[&key]);
 
@@ -579,7 +585,7 @@ async fn dependency_transaction_is_submitted_with_its_witnesses_through_the_rpc(
 
     // The same transaction submitted alone is rejected.
     let key = self::key(0x5b);
-    let (store, chain_id) = setup_store(&[&key], Some(0)).await;
+    let (store, chain_id) = setup_store(&[&key]).await;
     let ctx = default_context_with_storage(store).await;
     let bare = Transaction::FrameTransaction(dependency_transaction(chain_id, &key, &[]))
         .encode_canonical_to_vec();

@@ -17,7 +17,7 @@ use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::environment::{EVMConfig, Environment};
-use ethrex_levm::errors::{ExecutionReport, TxValidationError, VMError};
+use ethrex_levm::errors::{ExecutionReport, VMError};
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::vm::{VM, VMType};
 use ethrex_storage::Store;
@@ -108,13 +108,12 @@ fn seeded_db(sender_code: Vec<u8>) -> GeneralizedDatabase {
     GeneralizedDatabase::new_with_account_state(Arc::new(store), cache)
 }
 
-fn frame_tx_env(tx: &FrameTransaction, proof_frames: bool) -> Environment {
+fn frame_tx_env(tx: &FrameTransaction) -> Environment {
     Environment {
         origin: tx.sender,
         gas_limit: tx.max_gas(),
         block_gas_limit: (i64::MAX - 1) as u64,
-        config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota))
-            .with_proof_frames(proof_frames),
+        config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
         chain_id: U256::from(HARNESS_CHAIN_ID),
         base_fee_per_gas: U256::from(HARNESS_BASE_FEE),
         gas_price: tx
@@ -187,13 +186,9 @@ fn transfer(proof: Frame, triple_offset: u64) -> FrameTransaction {
     }
 }
 
-fn run(
-    sender_code: Vec<u8>,
-    tx: FrameTransaction,
-    proof_frames: bool,
-) -> Result<ExecutionReport, VMError> {
+fn run(sender_code: Vec<u8>, tx: FrameTransaction) -> Result<ExecutionReport, VMError> {
     let mut db = seeded_db(sender_code);
-    let env = frame_tx_env(&tx, proof_frames);
+    let env = frame_tx_env(&tx);
     let transaction = Transaction::FrameTransaction(tx);
     let mut vm = VM::new(
         env,
@@ -216,8 +211,7 @@ fn proof_frame_runs_no_code_and_consumes_its_whole_limit() {
         (H256::repeat_byte(0x01), H256::repeat_byte(0x77)),
         (H256::zero(), key),
     ]);
-    let report =
-        run(account_code(key), transfer(proof, 96), true).expect("the transaction is valid");
+    let report = run(account_code(key), transfer(proof, 96)).expect("the transaction is valid");
     assert!(report.is_success(), "{report:?}");
 
     let frames = report.frame_results.expect("frame results present");
@@ -243,13 +237,11 @@ fn proof_frame_gas_is_part_of_what_the_transaction_uses() {
     let one = run(
         account_code(key),
         transfer(proof_frame(&[(H256::zero(), key)]), 0),
-        true,
     )
     .expect("valid");
     let two = run(
         account_code(key),
         transfer(proof_frame(&[(H256::zero(), key), (H256::zero(), key)]), 0),
-        true,
     )
     .expect("valid");
     let frames_one = one.frame_results.expect("frame results present");
@@ -271,7 +263,6 @@ fn account_code_rejects_a_proof_frame_that_names_another_key() {
     let result = run(
         account_code(key),
         transfer(proof_frame(&[(H256::zero(), other)]), 0),
-        true,
     );
     assert!(
         result.is_err(),
@@ -288,23 +279,6 @@ fn account_code_rejects_an_explicit_message_as_its_own_authorization() {
     let result = run(
         account_code(key),
         transfer(proof_frame(&[(H256::repeat_byte(0x01), key)]), 0),
-        true,
     );
     assert!(result.is_err(), "{result:?}");
-}
-
-#[test]
-fn proof_frame_is_a_reserved_mode_while_eip8504_is_inactive() {
-    let key = H256::repeat_byte(0x5A);
-    let result = run(
-        account_code(key),
-        transfer(proof_frame(&[(H256::zero(), key)]), 0),
-        false,
-    );
-    match result {
-        Err(VMError::TxValidation(TxValidationError::InvalidFrameTransactionFormat(reason))) => {
-            assert!(reason.contains("reserved execution mode 4"), "{reason}");
-        }
-        other => panic!("expected a frame format rejection, got {other:?}"),
-    }
 }

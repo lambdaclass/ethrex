@@ -504,7 +504,7 @@ mod tests {
             U256::exp10(10),
             U256::exp10(9),
         );
-        tx.validate_static_constraints_with(true)
+        tx.validate_static_constraints()
             .expect("the transaction satisfies the static constraints");
         // The fee budget covers every unit of gas the transaction may use.
         assert_eq!(tx.max_fee, U256::exp10(10) * U256::from(tx.max_gas()));
