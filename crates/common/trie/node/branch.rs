@@ -274,12 +274,16 @@ impl BranchNode {
     }
 
     /// Computes the node's hash
-    pub fn compute_hash(&self, crypto: &dyn Crypto) -> NodeHash {
+    pub fn compute_hash(&self, crypto: &(impl Crypto + ?Sized)) -> NodeHash {
         self.compute_hash_no_alloc(&mut vec![], crypto)
     }
 
     /// Computes the node's hash, using the provided buffer
-    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> NodeHash {
+    pub fn compute_hash_no_alloc(
+        &self,
+        buf: &mut Vec<u8>,
+        crypto: &(impl Crypto + ?Sized),
+    ) -> NodeHash {
         buf.clear();
         self.encode_into_vec(buf);
         let hash = NodeHash::from_encoded(buf, crypto);

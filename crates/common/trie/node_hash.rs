@@ -42,7 +42,17 @@ impl AsRef<[u8]> for NodeHash {
 
 impl NodeHash {
     /// Returns the `NodeHash` of an encoded node (encoded using the NodeEncoder)
-    pub fn from_encoded(encoded: &[u8], crypto: &dyn Crypto) -> NodeHash {
+    ///
+    /// `crypto` is a generic parameter, here and in every hashing function of
+    /// this crate, instead of a `&dyn Crypto`. Passing a concrete provider to a
+    /// `&dyn Crypto` parameter makes the compiler emit that provider's whole
+    /// vtable, which keeps every one of its methods linked in. This crate names
+    /// `NativeCrypto` where no provider is in scope, so a zkVM guest, which
+    /// hashes through its own provider, would also link `NativeCrypto`'s
+    /// modexp, pairing and signature code. With a generic parameter those calls
+    /// are dispatched statically and reference `keccak256` alone. `?Sized`
+    /// keeps accepting the callers that hold a `&dyn Crypto`.
+    pub fn from_encoded(encoded: &[u8], crypto: &(impl Crypto + ?Sized)) -> NodeHash {
         if encoded.len() >= 32 {
             let hash = crypto.keccak256(encoded);
             NodeHash::Hashed(H256::from_slice(&hash))
@@ -67,7 +77,7 @@ impl NodeHash {
 
     /// Returns the finalized hash
     /// NOTE: This will hash smaller nodes, only use to get the final root hash, not for intermediate node hashes
-    pub fn finalize(self, crypto: &dyn Crypto) -> H256 {
+    pub fn finalize(self, crypto: &(impl Crypto + ?Sized)) -> H256 {
         match self {
             NodeHash::Inline(_) => H256(crypto.keccak256(self.as_ref())),
             NodeHash::Hashed(x) => x,
