@@ -369,13 +369,15 @@ jobs:
       # status is ignored, and the step passes only if ZisK reported that it
       # generated every emulator. ere-server is removed first to give its memory
       # back, and the memory limit keeps a build that outgrows the runner from
-      # taking the runner down with it.
+      # taking the runner down with it. `--memory-swap` is set to the same value
+      # because Docker otherwise lets the container use as much swap again.
       - name: Build the ZisK proving emulators
         if: matrix.zkvm == 'zisk'
         run: |
-          docker rm -f ere-server > /dev/null
+          docker rm -f ere-server > /dev/null 2>&1 || true
           docker run --rm \
             --memory 12g \
+            --memory-swap 12g \
             --ulimit memlock=0:0 \
             -v $PWD/output:/output \
             --entrypoint cargo-zisk \
