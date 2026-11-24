@@ -72,12 +72,14 @@ pub mod journal;
 mod layering;
 pub mod migrations;
 pub mod rlp;
+pub mod rocksdb_options;
 pub mod store;
 pub mod trie;
 pub mod utils;
 
 pub use api::{CfStats, RocksDbStats};
 pub use layering::apply_prefix;
+pub use rocksdb_options::{RocksDbCfOptions, RocksDbCompression, RocksDbDbOptions, RocksDbOptions};
 pub use store::{
     AccountUpdatesList, BATCH_COMMIT_THRESHOLD, BackfilledBlock, DB_COMMIT_THRESHOLD, EngineType,
     MAX_ROCKSDB_BLOCK_CACHE_SIZE_BYTES, MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,

@@ -8,6 +8,9 @@ use crate::api::{
     tables::TABLES,
 };
 use crate::error::StoreError;
+use crate::rocksdb_options::{
+    RocksDbCfOptions, RocksDbCompression, RocksDbDbOptions, RocksDbOptions,
+};
 use rocksdb::DBWithThreadMode;
 use rocksdb::checkpoint::Checkpoint;
 use rocksdb::{
@@ -89,8 +92,113 @@ fn parse_stats_ticker(stats: &str, ticker: &str) -> u64 {
         .unwrap_or(0)
 }
 
+/// Replaces the database-wide options set in `overrides`.
+fn apply_db_overrides(opts: &mut Options, overrides: &RocksDbDbOptions) {
+    let RocksDbDbOptions {
+        max_background_jobs,
+        max_open_files,
+        db_write_buffer_size,
+        max_total_wal_size,
+        bytes_per_sync,
+        wal_bytes_per_sync,
+        compaction_readahead_size,
+    } = *overrides;
+
+    if let Some(jobs) = max_background_jobs {
+        opts.set_max_background_jobs(jobs);
+    }
+    if let Some(files) = max_open_files {
+        opts.set_max_open_files(files);
+    }
+    if let Some(size) = db_write_buffer_size {
+        opts.set_db_write_buffer_size(size);
+    }
+    if let Some(size) = max_total_wal_size {
+        opts.set_max_total_wal_size(size);
+    }
+    if let Some(bytes) = bytes_per_sync {
+        opts.set_bytes_per_sync(bytes);
+    }
+    if let Some(bytes) = wal_bytes_per_sync {
+        opts.set_wal_bytes_per_sync(bytes);
+    }
+    if let Some(size) = compaction_readahead_size {
+        opts.set_compaction_readahead_size(size);
+    }
+}
+
+/// Replaces the options of one column family set in `overrides`. The table options
+/// go to `block_opts`, which the caller installs afterwards.
+fn apply_cf_overrides(
+    cf_opts: &mut Options,
+    block_opts: &mut BlockBasedOptions,
+    overrides: &RocksDbCfOptions,
+) {
+    let RocksDbCfOptions {
+        write_buffer_size,
+        max_write_buffer_number,
+        min_write_buffer_number_to_merge,
+        target_file_size_base,
+        max_bytes_for_level_base,
+        level_zero_file_num_compaction_trigger,
+        level_zero_slowdown_writes_trigger,
+        level_zero_stop_writes_trigger,
+        compression,
+        block_size,
+        bloom_filter_bits_per_key,
+    } = *overrides;
+
+    if let Some(size) = write_buffer_size {
+        cf_opts.set_write_buffer_size(size);
+    }
+    if let Some(number) = max_write_buffer_number {
+        cf_opts.set_max_write_buffer_number(number);
+    }
+    if let Some(number) = min_write_buffer_number_to_merge {
+        cf_opts.set_min_write_buffer_number_to_merge(number);
+    }
+    if let Some(size) = target_file_size_base {
+        cf_opts.set_target_file_size_base(size);
+    }
+    if let Some(size) = max_bytes_for_level_base {
+        cf_opts.set_max_bytes_for_level_base(size);
+    }
+    if let Some(files) = level_zero_file_num_compaction_trigger {
+        cf_opts.set_level_zero_file_num_compaction_trigger(files);
+    }
+    if let Some(files) = level_zero_slowdown_writes_trigger {
+        cf_opts.set_level_zero_slowdown_writes_trigger(files);
+    }
+    if let Some(files) = level_zero_stop_writes_trigger {
+        cf_opts.set_level_zero_stop_writes_trigger(files);
+    }
+    if let Some(compression) = compression {
+        cf_opts.set_compression_type(match compression {
+            RocksDbCompression::None => rocksdb::DBCompressionType::None,
+            RocksDbCompression::Lz4 => rocksdb::DBCompressionType::Lz4,
+        });
+    }
+    if let Some(size) = block_size {
+        block_opts.set_block_size(size);
+    }
+    if let Some(bits_per_key) = bloom_filter_bits_per_key {
+        block_opts.set_bloom_filter(bits_per_key, false);
+    }
+}
+
 impl RocksDBBackend {
+    /// Opens (or creates) the database at `path` with the built-in options.
     pub fn open(path: impl AsRef<Path>, block_cache_size: usize) -> Result<Self, StoreError> {
+        Self::open_with_options(path, block_cache_size, &RocksDbOptions::default())
+    }
+
+    /// Opens (or creates) the database at `path`. The options set in `overrides`
+    /// replace the built-in ones.
+    pub fn open_with_options(
+        path: impl AsRef<Path>,
+        block_cache_size: usize,
+        overrides: &RocksDbOptions,
+    ) -> Result<Self, StoreError> {
         // Rocksdb optimizations options
         let mut opts = Options::default();
         opts.create_if_missing(true);
@@ -126,6 +234,8 @@ impl RocksDBBackend {
         opts.set_compaction_readahead_size(4 * 1024 * 1024); // 4MB
         opts.set_advise_random_on_open(false);
         opts.set_compression_type(rocksdb::DBCompressionType::None);
+
+        apply_db_overrides(&mut opts, &overrides.db);
 
         // Opt-in RocksDB statistics (block-cache hit/miss tickers) for DB
         // observability. Off by default to avoid the per-operation counter
@@ -210,7 +320,7 @@ impl RocksDBBackend {
                 cf_opts.set_compression_type(rocksdb::DBCompressionType::None);
             }
 
-            match cf_name.as_str() {
+            let mut block_opts = match cf_name.as_str() {
                 HEADERS | BODIES => {
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
                     cf_opts.set_max_write_buffer_number(4);
@@ -218,8 +328,7 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB blocks
-                    configure_block_cache(&mut block_opts);
-                    cf_opts.set_block_based_table_factory(&block_opts);
+                    block_opts
                 }
                 CANONICAL_BLOCK_HASHES | BLOCK_NUMBERS => {
                     cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
@@ -229,8 +338,7 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false);
-                    configure_block_cache(&mut block_opts);
-                    cf_opts.set_block_based_table_factory(&block_opts);
+                    block_opts
                 }
                 TRANSACTION_LOCATIONS => {
                     cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
@@ -257,10 +365,7 @@ impl RocksDBBackend {
                     // floor is unaffected — see PR #6737.)
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
-                    // Bound this CF's index blocks in the shared cache too (no bloom
-                    // here, but index still grows with SST count if pinned in heap).
-                    configure_block_cache(&mut block_opts);
-                    cf_opts.set_block_based_table_factory(&block_opts);
+                    block_opts
                 }
                 ACCOUNT_TRIE_NODES | STORAGE_TRIE_NODES => {
                     cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
@@ -272,8 +377,7 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
-                    configure_block_cache(&mut block_opts);
-                    cf_opts.set_block_based_table_factory(&block_opts);
+                    block_opts
                 }
                 ACCOUNT_FLATKEYVALUE | STORAGE_FLATKEYVALUE => {
                     cf_opts.set_write_buffer_size(512 * 1024 * 1024); // 512MB
@@ -285,8 +389,7 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
-                    configure_block_cache(&mut block_opts);
-                    cf_opts.set_block_based_table_factory(&block_opts);
+                    block_opts
                 }
                 ACCOUNT_CODES | ACCOUNT_CODE_METADATA => {
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
@@ -322,8 +425,7 @@ impl RocksDBBackend {
                         // used before it had an arm of its own.
                         block_opts.set_block_size(16 * 1024); // 16KB
                     }
-                    configure_block_cache(&mut block_opts);
-                    cf_opts.set_block_based_table_factory(&block_opts);
+                    block_opts
                 }
                 RECEIPTS_V2 => {
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
@@ -332,8 +434,7 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB
-                    configure_block_cache(&mut block_opts);
-                    cf_opts.set_block_based_table_factory(&block_opts);
+                    block_opts
                 }
                 _ => {
                     // Default for other CFs
@@ -343,10 +444,19 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024);
-                    configure_block_cache(&mut block_opts);
-                    cf_opts.set_block_based_table_factory(&block_opts);
+                    block_opts
                 }
+            };
+
+            if let Some(cf_overrides) = overrides.column_families.get(cf_name) {
+                apply_cf_overrides(&mut cf_opts, &mut block_opts, cf_overrides);
             }
+
+            // Every CF keeps its index and filter blocks in the shared cache, the ones
+            // without a bloom filter too: an index pinned in heap still grows with the
+            // number of SST files.
+            configure_block_cache(&mut block_opts);
+            cf_opts.set_block_based_table_factory(&block_opts);
 
             cf_descriptors.push(ColumnFamilyDescriptor::new(cf_name, cf_opts));
         }
@@ -892,6 +1002,106 @@ mod tests {
     use ethrex_common::H256;
     use ethrex_common::types::{BlockHash, BlockNumber, Index};
     use ethrex_rlp::decode::RLPDecode;
+    use std::collections::HashMap;
+
+    /// Values of the options file RocksDB writes on open, by section and option name.
+    fn written_options(db_dir: &Path) -> HashMap<String, HashMap<String, String>> {
+        let options_file = std::fs::read_dir(db_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                name.starts_with("OPTIONS-") && !name.ends_with(".dbtmp")
+            })
+            .max()
+            .expect("RocksDB writes an OPTIONS file on open");
+
+        let mut sections: HashMap<String, HashMap<String, String>> = HashMap::new();
+        let mut section = String::new();
+        for line in std::fs::read_to_string(options_file).unwrap().lines() {
+            let line = line.trim();
+            if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+                section = name.to_string();
+            } else if let Some((key, value)) = line.split_once('=') {
+                sections
+                    .entry(section.clone())
+                    .or_default()
+                    .insert(key.to_string(), value.to_string());
+            }
+        }
+        sections
+    }
+
+    /// Options set in a `RocksDbOptions` SHALL replace the built-in ones for the
+    /// database and for the column families they name, and leave every other
+    /// option and column family as it was.
+    #[test]
+    fn option_overrides_reach_the_database() {
+        let overrides = RocksDbOptions::from_json(
+            r#"{
+                "db": { "max_background_jobs": 3, "max_total_wal_size": 123456789 },
+                "column_families": {
+                    "account_trie_nodes": {
+                        "write_buffer_size": 33554432,
+                        "max_write_buffer_number": 2,
+                        "level_zero_file_num_compaction_trigger": 7,
+                        "compression": "lz4",
+                        "block_size": 4096,
+                        "bloom_filter_bits_per_key": 14
+                    },
+                    "headers": { "bloom_filter_bits_per_key": 8 }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let backend = RocksDBBackend::open_with_options(
+            dir.path(),
+            crate::store::MIN_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+            &overrides,
+        )
+        .unwrap();
+        let options = written_options(dir.path());
+        drop(backend);
+
+        let db = &options["DBOptions"];
+        assert_eq!(db["max_background_jobs"], "3");
+        assert_eq!(db["max_total_wal_size"], "123456789");
+        // Not overridden: keeps the built-in value.
+        assert_eq!(db["bytes_per_sync"], (32 * 1024 * 1024).to_string());
+
+        let cf = &options[&format!("CFOptions \"{ACCOUNT_TRIE_NODES}\"")];
+        assert_eq!(cf["write_buffer_size"], "33554432");
+        assert_eq!(cf["max_write_buffer_number"], "2");
+        assert_eq!(cf["level0_file_num_compaction_trigger"], "7");
+        assert_eq!(cf["compression"], "kLZ4Compression");
+        assert_eq!(cf["target_file_size_base"], (256 * 1024 * 1024).to_string());
+
+        let table = &options[&format!("TableOptions/BlockBasedTable \"{ACCOUNT_TRIE_NODES}\"")];
+        assert_eq!(table["block_size"], "4096");
+        // The override does not undo the shared block cache settings.
+        assert_eq!(table["cache_index_and_filter_blocks"], "true");
+
+        // A bloom filter can be given to a column family that has none by default.
+        // RocksDB records only that a filter is set, not its bits per key.
+        let headers = &options[&format!("TableOptions/BlockBasedTable \"{HEADERS}\"")];
+        assert_eq!(headers["filter_policy"], "bloomfilter");
+        let receipts = &options[&format!("TableOptions/BlockBasedTable \"{RECEIPTS_V2}\"")];
+        assert_eq!(receipts["filter_policy"], "nullptr");
+        assert_eq!(headers["block_size"], (32 * 1024).to_string());
+
+        // The sibling trie column family is not named, so nothing changes for it.
+        let sibling = &options[&format!("CFOptions \"{STORAGE_TRIE_NODES}\"")];
+        assert_eq!(
+            sibling["write_buffer_size"],
+            (512 * 1024 * 1024).to_string()
+        );
+        assert_eq!(sibling["compression"], "kNoCompression");
+        let sibling_table =
+            &options[&format!("TableOptions/BlockBasedTable \"{STORAGE_TRIE_NODES}\"")];
+        assert_eq!(sibling_table["block_size"], (16 * 1024).to_string());
+    }
 
     /// A column family that receives only range deletes SHALL be flushed once its
     /// memtable holds `MAX_RANGE_DELETES_BEFORE_FLUSH` of them. Without the limit

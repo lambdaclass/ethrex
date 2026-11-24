@@ -26,8 +26,8 @@ use ethrex_p2p::{
     utils::public_key_from_signing_key,
 };
 use ethrex_storage::{
-    DB_COMMIT_THRESHOLD, EngineType, Store, StoreConfig, error::StoreError, has_valid_db,
-    read_chain_id_from_db,
+    DB_COMMIT_THRESHOLD, EngineType, RocksDbOptions, Store, StoreConfig, error::StoreError,
+    has_valid_db, read_chain_id_from_db,
 };
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
@@ -846,6 +846,19 @@ async fn set_sync_block(store: &Store) {
     }
 }
 
+/// Loads the RocksDB option overrides from `--rocksdb.options-file`, if it was given.
+pub fn load_rocksdb_options(opts: &Options) -> eyre::Result<RocksDbOptions> {
+    let Some(path) = &opts.rocksdb_options_file else {
+        return Ok(RocksDbOptions::default());
+    };
+    let options = RocksDbOptions::from_file(path)?;
+    info!(
+        path = %path.display(),
+        "Replacing built-in RocksDB options with the ones in the options file"
+    );
+    Ok(options)
+}
+
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
@@ -876,6 +889,7 @@ pub async fn init_l1(
     // it once and logs the derivation.
     let store_config = StoreConfig {
         code_cache_size: opts.code_cache_size,
+        rocksdb_options: load_rocksdb_options(&opts)?,
         ..opts
             .rocksdb_block_cache_size
             .map(StoreConfig::with_rocksdb_block_cache_size)

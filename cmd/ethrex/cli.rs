@@ -116,6 +116,19 @@ pub struct Options {
     )]
     pub rocksdb_block_cache_size: Option<usize>,
     #[arg(
+        long = "rocksdb.options-file",
+        value_name = "PATH",
+        help = "JSON file with RocksDB options that replace ethrex's built-in ones, for \
+                trying a different tuning without rebuilding. `db` holds database-wide \
+                options and `column_families` holds per-table ones, e.g. \
+                {\"db\": {\"max_background_jobs\": 12}, \"column_families\": \
+                {\"account_trie_nodes\": {\"block_size\": 4096}}}. Options left out keep \
+                their default; an unknown option or table is an error.",
+        help_heading = "Storage options",
+        env = "ETHREX_ROCKSDB_OPTIONS_FILE"
+    )]
+    pub rocksdb_options_file: Option<PathBuf>,
+    #[arg(
         long = "code-cache-size",
         value_name = "BYTES",
         help = "Byte budget of the in-memory bytecode cache. Defaults to 2 GiB, which holds \
@@ -701,6 +714,7 @@ impl Default for Options {
             bootnodes: Default::default(),
             datadir: Default::default(),
             rocksdb_block_cache_size: None,
+            rocksdb_options_file: None,
             code_cache_size: None,
             syncmode: Default::default(),
             history_chain: Default::default(),
