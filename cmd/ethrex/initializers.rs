@@ -854,7 +854,13 @@ pub async fn init_l1(
         init_datadir(&datadir);
     }
 
-    let genesis = network.get_genesis()?;
+    let mut genesis = network.get_genesis()?;
+    // EIP-8504 has its own activation time. A chain config written by a
+    // generator that does not know the key can opt into activating it with
+    // Hegota; an explicit `eip8504Time` always wins.
+    if opts.eip8504_with_hegota && genesis.config.eip8504_time.is_none() {
+        genesis.config.eip8504_time = genesis.config.hegota_time;
+    }
     display_chain_initialization(&genesis);
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();

@@ -161,6 +161,11 @@ Node options:
           
           [env: ETHREX_PRECOMPUTE_WITNESSES=]
 
+      --eip8504-with-hegota
+          Activate EIP-8504 together with Hegota when the chain config does not set eip8504Time. For networks whose genesis generator does not emit that key. Hegota must be scheduled after genesis, or the genesis block differs from the one the generator computed.
+          
+          [env: ETHREX_EIP8504_WITH_HEGOTA=]
+
       --max-reorg-depth <MAX_REORG_DEPTH>
           Optional operator override for the maximum reorg depth. Omit for finality-bounded cap. Set to 0 to disable deep reorgs entirely. Set to d to reject reorgs of depth > d.
           
