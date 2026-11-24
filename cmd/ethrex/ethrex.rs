@@ -2,7 +2,10 @@ use clap::Parser;
 use ethrex::{
     cli::CLI,
     initializers::{init_l1, init_tracing},
-    utils::{NodeConfigFile, get_client_version, is_memory_datadir, store_node_config_file},
+    utils::{
+        NodeConfigFile, get_client_version, get_compiled_features_string, is_memory_datadir,
+        store_node_config_file,
+    },
 };
 use ethrex_p2p::{peer_table::PeerTable, types::SharedLocalNode};
 use ethrex_storage::Store;
@@ -196,6 +199,7 @@ async fn main() -> eyre::Result<()> {
     };
 
     info!("ethrex version: {}", get_client_version());
+    info!("ethrex features: {}", get_compiled_features_string());
     tokio::spawn(periodically_check_version_update());
 
     let (datadir, cancel_token, peer_table, shared_local_node, store) =

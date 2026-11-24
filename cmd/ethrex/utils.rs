@@ -232,6 +232,72 @@ pub fn get_client_version_string() -> String {
     get_client_version().to_string()
 }
 
+/// Pairs each given Cargo feature name with whether it was enabled at compile time.
+macro_rules! cargo_features {
+    ($($name:literal),* $(,)?) => {
+        &[$(($name, cfg!(feature = $name))),*]
+    };
+}
+
+/// Every Cargo feature of this crate, paired with whether this build enables it.
+///
+/// `default` is left out, as it only groups other features. The list must match
+/// the `[features]` table of `cmd/ethrex/Cargo.toml`; the
+/// `cargo_features_match_manifest` test fails when a feature is missing here.
+const CARGO_FEATURES: &[(&str, bool)] = cargo_features![
+    "c-kzg",
+    "cpu_profiling",
+    "debug",
+    "dev",
+    "gpu",
+    "jemalloc",
+    "jemalloc_profiling",
+    "l2",
+    "l2-sql",
+    "metrics",
+    "partial",
+    "perf_opcode_timings",
+    "rayon",
+    "risc0",
+    "rocksdb",
+    "secp256k1",
+    "sp1",
+    "sync-test",
+];
+
+/// Returns the Cargo features this binary was compiled with, in alphabetical order.
+pub fn get_compiled_features() -> Vec<&'static str> {
+    CARGO_FEATURES
+        .iter()
+        .filter(|(_, enabled)| *enabled)
+        .map(|(name, _)| *name)
+        .collect()
+}
+
+/// Returns the compiled features as a comma-separated list, or `none` if the
+/// binary was built without any.
+pub fn get_compiled_features_string() -> String {
+    let features = get_compiled_features();
+    if features.is_empty() {
+        "none".to_string()
+    } else {
+        features.join(", ")
+    }
+}
+
+/// Returns the client version string followed by the list of compiled features
+/// (for clap's `--version`). The first line is the same string `-V` prints.
+///
+/// Release binaries built with different feature sets are commonly installed
+/// under the same `ethrex` name, so the feature list is what tells them apart.
+pub fn get_long_client_version_string() -> String {
+    format!(
+        "{}\nFeatures: {}",
+        get_client_version_string(),
+        get_compiled_features_string()
+    )
+}
+
 /// Returns a minimal client version string without git info.
 pub fn get_minimal_client_version() -> String {
     format!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
@@ -267,4 +333,57 @@ pub fn display_chain_initialization(genesis: &Genesis) {
 
 pub fn is_memory_datadir(datadir: &Path) -> bool {
     datadir.ends_with("memory")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Names of the features declared in the `[features]` table of this crate's
+    /// manifest, except `default`.
+    fn manifest_features() -> Vec<&'static str> {
+        include_str!("Cargo.toml")
+            .lines()
+            .skip_while(|line| line.trim() != "[features]")
+            .skip(1)
+            .take_while(|line| !line.starts_with('['))
+            // Feature names start at the first column; the entries of a
+            // multi-line feature are indented and comments start with `#`.
+            .filter(|line| line.starts_with(|c: char| c.is_ascii_alphanumeric()))
+            .filter_map(|line| line.split_once('='))
+            .map(|(name, _)| name.trim())
+            .filter(|name| *name != "default")
+            .collect()
+    }
+
+    /// A feature added to the manifest must also be added to `CARGO_FEATURES`,
+    /// or `--version` would silently leave it out.
+    #[test]
+    fn cargo_features_match_manifest() {
+        let mut expected = manifest_features();
+        expected.sort_unstable();
+        let listed: Vec<_> = CARGO_FEATURES.iter().map(|(name, _)| *name).collect();
+        assert_eq!(listed, expected);
+    }
+
+    #[test]
+    fn compiled_features_reflect_the_build() {
+        let features = get_compiled_features();
+        assert_eq!(features.contains(&"l2"), cfg!(feature = "l2"));
+        assert_eq!(features.contains(&"rocksdb"), cfg!(feature = "rocksdb"));
+    }
+
+    /// The long version keeps the short version as its first line, so scripts
+    /// that read it keep working.
+    #[test]
+    fn long_version_appends_the_feature_list() {
+        let long_version = get_long_client_version_string();
+        let mut lines = long_version.lines();
+        assert_eq!(lines.next(), Some(get_client_version_string().as_str()));
+        assert_eq!(
+            lines.next(),
+            Some(format!("Features: {}", get_compiled_features_string()).as_str())
+        );
+        assert_eq!(lines.next(), None);
+    }
 }

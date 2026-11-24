@@ -465,7 +465,7 @@ Both arguments come from the release you are upgrading to:
 
 ```bash
 # The hashed value is the ASCII sha the binary reports, not the tag.
-TO_SHA=$("$WORK/ethrex-$VERSION_TO/ethrex" --version | sed 's|.*HEAD-||; s|/.*||')
+TO_SHA=$("$WORK/ethrex-$VERSION_TO/ethrex" -V | sed 's|.*HEAD-||; s|/.*||')
 TO_COMMIT_HASH=$(cast keccak "$TO_SHA")
 
 # The vk is the same hex-text file the deployer takes via --sp1-vk-path,
