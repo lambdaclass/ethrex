@@ -20,7 +20,11 @@ use ethrex_common::{
     utils::keccak,
 };
 use ethrex_crypto::NativeCrypto;
+use ethrex_metrics::metrics;
 use ethrex_storage::error::StoreError;
+
+#[cfg(feature = "metrics")]
+use ethrex_metrics::eip8504::METRICS_EIP8504;
 use ethrex_vm::{intrinsic_gas_dimensions, intrinsic_gas_floor};
 use tracing::{info, warn};
 
@@ -220,6 +224,13 @@ pub struct PooledDependencyWitnesses {
     pub witnesses: Vec<Bytes>,
 }
 
+impl PooledDependencyWitnesses {
+    /// Total size of the witnesses, in bytes.
+    fn witness_bytes(&self) -> usize {
+        self.witnesses.iter().map(Bytes::len).sum()
+    }
+}
+
 /// A pooled wrapper as it is announced to peers: its hash, the hash of its
 /// transaction and the length of its RLP serialization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -242,6 +253,8 @@ struct MempoolInner {
     dependency_witnesses_pool: FxHashMap<H256, PooledDependencyWitnesses>,
     /// For each pooled wrapper's hash, the hash of its transaction.
     tx_by_wrapper_hash: FxHashMap<H256, H256>,
+    /// Total size in bytes of the witnesses in `dependency_witnesses_pool`.
+    dependency_witness_bytes: usize,
     /// Hashes of the transactions whose wrapper has been requested from a peer
     /// with `GetProofWrappers` and not yet answered. Keyed by transaction, not by
     /// wrapper, because one wrapper is enough for a transaction that has several.
@@ -355,6 +368,10 @@ impl MempoolInner {
         // EIP-8504: a dependency transaction's witnesses leave with it.
         if let Some(pooled) = self.dependency_witnesses_pool.remove(hash) {
             self.tx_by_wrapper_hash.remove(&pooled.wrapper_hash);
+            self.dependency_witness_bytes = self
+                .dependency_witness_bytes
+                .saturating_sub(pooled.witness_bytes());
+            self.record_dependency_witnesses_metrics();
         }
 
         // Clear ALL frame-tx reservation state in this single removal path
@@ -397,6 +414,18 @@ impl MempoolInner {
         }
 
         Ok(())
+    }
+
+    /// Publishes the size of the dependency witnesses pool (EIP-8504).
+    fn record_dependency_witnesses_metrics(&self) {
+        metrics!({
+            METRICS_EIP8504
+                .pool_transactions
+                .set(self.dependency_witnesses_pool.len() as i64);
+            METRICS_EIP8504
+                .pool_witness_bytes
+                .set(self.dependency_witness_bytes as i64);
+        });
     }
 
     /// Remove a blobs bundle from the pool
@@ -1132,7 +1161,11 @@ impl Mempool {
         // transaction cannot take these with it.
         if let Some(pooled) = dependency_witnesses {
             inner.tx_by_wrapper_hash.insert(pooled.wrapper_hash, hash);
+            inner.dependency_witness_bytes = inner
+                .dependency_witness_bytes
+                .saturating_add(pooled.witness_bytes());
             inner.dependency_witnesses_pool.insert(hash, pooled);
+            inner.record_dependency_witnesses_metrics();
         }
         // Private txs are held for local block building only: they never enter
         // the broadcast pool, so no P2P path can pick them up.
@@ -1349,13 +1382,10 @@ impl Mempool {
     /// size in bytes of their witnesses.
     pub fn dependency_witnesses_size(&self) -> Result<(usize, usize), StoreError> {
         let inner = self.read()?;
-        let bytes = inner
-            .dependency_witnesses_pool
-            .values()
-            .flat_map(|pooled| pooled.witnesses.iter())
-            .map(Bytes::len)
-            .sum();
-        Ok((inner.dependency_witnesses_pool.len(), bytes))
+        Ok((
+            inner.dependency_witnesses_pool.len(),
+            inner.dependency_witness_bytes,
+        ))
     }
 
     pub fn remove_broadcasted_txs(&self, hashes: &[H256]) -> Result<(), StoreError> {

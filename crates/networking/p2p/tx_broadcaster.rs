@@ -438,6 +438,10 @@ impl TxBroadcaster {
                 to_announce.iter().map(|wrapper| wrapper.tx_hash).collect(),
                 peer_id,
             );
+            #[cfg(feature = "metrics")]
+            ethrex_metrics::eip8504::METRICS_EIP8504
+                .wrappers_announced_total
+                .inc_by(to_announce.len() as u64);
             for chunk in to_announce.chunks(MAX_PROOF_WRAPPER_ANNOUNCEMENTS) {
                 let message =
                     Message::NewProofWrapperHashes(NewProofWrapperHashes::new(chunk.to_vec()));

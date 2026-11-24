@@ -138,6 +138,8 @@ use vm::StoreVmDatabase;
 use ethrex_metrics::bal::METRICS_BAL;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::blocks::METRICS_BLOCKS;
+#[cfg(feature = "metrics")]
+use ethrex_metrics::eip8504::METRICS_EIP8504;
 
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::BlobsBundle;
@@ -491,6 +493,22 @@ pub const DEFAULT_MAX_VERIFY_GAS: u64 = FRAME_TX_MAX_VERIFY_GAS;
 /// Default number of dependencies per transaction this node verifies witnesses
 /// for: the EIP-8504 `MAX_SIGS_PER_TX` value.
 pub const DEFAULT_MAX_SIGS_PER_TX: usize = MAX_SIGS_PER_TX;
+
+/// The admission check of EIP-8504 a dependency transaction failed, as a metric
+/// label. Everything that is not one of the wrapper's own checks is the
+/// acceptance of the transaction itself.
+#[cfg(feature = "metrics")]
+fn dependency_rejection_reason(error: &MempoolError) -> &'static str {
+    match error {
+        MempoolError::TxSizeExceeded { .. } => "size",
+        MempoolError::InvalidFrameTransaction(_) => "static_constraints",
+        MempoolError::WitnessesWithoutDependencies => "no_dependencies",
+        MempoolError::TooManyDependencies { .. } => "too_many_dependencies",
+        MempoolError::WrapperDependenciesMismatch => "dependencies_mismatch",
+        MempoolError::DependencyNotSatisfied(_) => "witness",
+        _ => "acceptance",
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct BatchBlockProcessingFailure {
@@ -3619,11 +3637,26 @@ impl Blockchain {
         max_pooled_tx_size + proof_wrapper_overhead(self.options.max_sigs_per_tx)
     }
 
+    async fn add_dependency_transaction_to_pool_inner(
+        &self,
+        wrapper: ProofWrapper,
+        broadcast: bool,
+    ) -> Result<H256, MempoolError> {
+        let result = self.admit_dependency_transaction(wrapper, broadcast).await;
+        metrics!(if let Err(error) = &result {
+            METRICS_EIP8504
+                .rejected_total
+                .with_label_values(&[dependency_rejection_reason(error)])
+                .inc();
+        });
+        result
+    }
+
     /// Admits a dependency transaction (EIP-8504) with its witnesses. The checks
     /// run in the order of the EIP's admission rules, cheapest first, and the
     /// acceptance algorithm of EIP-8141 runs last, once every witness is known to
     /// satisfy its dependency.
-    async fn add_dependency_transaction_to_pool_inner(
+    async fn admit_dependency_transaction(
         &self,
         wrapper: ProofWrapper,
         broadcast: bool,
@@ -3686,6 +3719,8 @@ impl Blockchain {
 
         // Each witness satisfies its dependency. This does not depend on state,
         // so it is done once: the revalidation after each block does not repeat it.
+        #[cfg(feature = "metrics")]
+        let verification_started = Instant::now();
         for (index, (dependency, witness)) in
             dependencies.iter().zip(&wrapper.witnesses).enumerate()
         {
@@ -3693,6 +3728,11 @@ impl Blockchain {
                 return Err(MempoolError::DependencyNotSatisfied(index));
             }
         }
+        metrics!(
+            METRICS_EIP8504
+                .admission_witness_verification_seconds
+                .observe(verification_started.elapsed().as_secs_f64())
+        );
 
         let dependency_witnesses = PooledDependencyWitnesses {
             wrapper_hash: keccak(&encoded_wrapper),
@@ -3702,7 +3742,7 @@ impl Blockchain {
 
         // EIP-8141's acceptance algorithm, through the same path as any other
         // frame transaction.
-        match wrapper.blobs_bundle {
+        let admitted = match wrapper.blobs_bundle {
             #[cfg(feature = "c-kzg")]
             Some(blobs_bundle) => {
                 self.add_blob_transaction_to_pool_inner(
@@ -3724,7 +3764,11 @@ impl Blockchain {
                 )
                 .await
             }
-        }
+        };
+        metrics!(if admitted.is_ok() {
+            METRICS_EIP8504.admitted_total.inc();
+        });
+        admitted
     }
 
     /// Remove a transaction from the mempool

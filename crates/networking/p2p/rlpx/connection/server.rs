@@ -1233,6 +1233,10 @@ async fn send_all_pooled_tx_hashes(
                     state.node.node_id(),
                 )
                 .map_err(|e| PeerConnectionError::BroadcastError(e.to_string()))?;
+            #[cfg(feature = "metrics")]
+            ethrex_metrics::eip8504::METRICS_EIP8504
+                .wrappers_announced_total
+                .inc_by(wrappers.len() as u64);
             for chunk in wrappers.chunks(MAX_PROOF_WRAPPER_ANNOUNCEMENTS) {
                 connection
                     .outgoing_message(Message::NewProofWrapperHashes(NewProofWrapperHashes::new(
@@ -2360,6 +2364,10 @@ async fn handle_incoming_message(
         }
         Message::GetProofWrappers(req) if peer_supports_eth => {
             let response = req.handle(&state.blockchain)?;
+            #[cfg(feature = "metrics")]
+            ethrex_metrics::eip8504::METRICS_EIP8504
+                .wrappers_served_total
+                .inc_by(response.wrappers.len() as u64);
             send(state, Message::ProofWrappers(response)).await?;
         }
         Message::ProofWrappers(msg) if peer_supports_eth => {
@@ -3077,6 +3085,10 @@ async fn handle_proof_wrappers(
     if !msg.wrappers.is_empty() {
         state.received_txs_from_peer = true;
     }
+    #[cfg(feature = "metrics")]
+    ethrex_metrics::eip8504::METRICS_EIP8504
+        .wrappers_received_total
+        .inc_by(msg.wrappers.len() as u64);
     if !state.blockchain.is_synced() {
         return Ok(());
     }

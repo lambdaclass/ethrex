@@ -11,6 +11,10 @@ use ethrex_common::{
     types::{Block, ChainConfig, Dependency, LEANSPHINCS_SCHEME, block_dependencies},
 };
 use ethrex_crypto::leansphincs::{LEANSPHINCS_SIGNATURE_SIZE, leansphincs_verify};
+use ethrex_metrics::metrics;
+
+#[cfg(feature = "metrics")]
+use ethrex_metrics::eip8504::METRICS_EIP8504;
 
 // The witness size the transaction types price and the one the verifier accepts
 // are the same consensus constant, declared in two crates.
@@ -45,6 +49,8 @@ pub fn validate_dependency_witnesses(
     if !chain_config.is_eip8504_activated(block.header.timestamp) {
         return Ok(());
     }
+    #[cfg(feature = "metrics")]
+    let started = std::time::Instant::now();
     let dependencies = block_dependencies(&block.body.transactions);
     let witnesses = block
         .body
@@ -62,6 +68,21 @@ pub fn validate_dependency_witnesses(
             return Err(InvalidBlockError::DependencyNotSatisfied(index));
         }
     }
+    metrics!({
+        let count = witnesses.len() as u64;
+        let bytes = witnesses
+            .iter()
+            .map(|witness| witness.len() as u64)
+            .sum::<u64>();
+        METRICS_EIP8504.blocks_total.inc();
+        METRICS_EIP8504.block_witnesses.set(count as i64);
+        METRICS_EIP8504.block_witness_bytes.set(bytes as i64);
+        METRICS_EIP8504.witnesses_total.inc_by(count);
+        METRICS_EIP8504.witness_bytes_total.inc_by(bytes);
+        METRICS_EIP8504
+            .block_witness_verification_seconds
+            .observe(started.elapsed().as_secs_f64());
+    });
     Ok(())
 }
 

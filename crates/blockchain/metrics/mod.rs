@@ -6,6 +6,8 @@ pub mod bal;
 pub mod blocks;
 #[cfg(any(feature = "api", feature = "metrics"))]
 pub mod db;
+#[cfg(any(feature = "api", feature = "metrics"))]
+pub mod eip8504;
 #[cfg(feature = "api")]
 pub mod l2;
 #[cfg(feature = "api")]
