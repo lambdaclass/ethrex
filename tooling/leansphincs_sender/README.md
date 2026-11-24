@@ -53,7 +53,7 @@ Commands:
    sent 0x9e97…aa7e from 0xbd6f…ae50 nonce 0 (8032 bytes)
    sent 0xc1ac…3d01 from 0x0082…d970 nonce 0 (8032 bytes)
    ...
-   Done in 3.6s: 8 sent, 4 seen included, 0 rejected
+   Done in 3.6s: 8 sent, 0 sent again, 4 seen included, 0 rejected
    ```
 
 `send` options:
@@ -64,7 +64,7 @@ Commands:
 | `--accounts` | `16` | Number of accounts |
 | `--seed` | `pq-el-devnet-0` | Seed the keys are derived from |
 | `--rate` | `1` | Transactions per second |
-| `--count` | unlimited | Transactions to submit, counting the rejected ones |
+| `--count` | unlimited | Submissions to make, counting the rejected ones and the transactions sent again |
 | `--recipient` | `0x…dEaD` | Address the transactions call |
 | `--max-fee-per-gas-gwei` | `10` | Fee per gas the transactions are willing to pay |
 | `--max-priority-fee-per-gas-gwei` | `1` | Priority fee per gas |

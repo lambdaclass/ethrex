@@ -56,8 +56,8 @@ enum Command {
         /// number of accounts per block.
         #[arg(long, default_value_t = 1.0)]
         rate: f64,
-        /// Number of transactions to submit, counting the ones the node rejects.
-        /// Runs until interrupted when omitted.
+        /// Number of submissions to make, counting the ones the node rejects and
+        /// the transactions sent again. Runs until interrupted when omitted.
         #[arg(long)]
         count: Option<u64>,
         /// Address the transactions call.
@@ -343,8 +343,8 @@ async fn send(
     let started = Instant::now();
     let mut ticks = tokio::time::interval(Duration::from_secs_f64(1.0 / rate));
     let mut next = 0;
-    let (mut sent, mut included, mut failed) = (0u64, 0u64, 0u64);
-    while count.is_none_or(|count| sent + failed < count) {
+    let (mut sent, mut resent, mut included, mut failed) = (0u64, 0u64, 0u64, 0u64);
+    while count.is_none_or(|count| sent + resent + failed < count) {
         ticks.tick().await;
 
         // The next account, in turn, that has no transaction waiting for a block.
@@ -372,6 +372,11 @@ async fn send(
         next = index + 1;
 
         let account = &accounts[index];
+        // The same nonce as the pending transaction: this is that transaction
+        // again, not a new one.
+        let is_resend = account
+            .pending
+            .is_some_and(|(pending_nonce, _)| pending_nonce == nonce);
         let tx = transaction(
             chain_id,
             account,
@@ -388,10 +393,15 @@ async fn send(
         let raw = format!("0x{}", hex::encode(&submission));
         match client.call("eth_sendRawTransaction", json!([raw])).await {
             Ok(_) => {
-                sent += 1;
+                if is_resend {
+                    resent += 1;
+                } else {
+                    sent += 1;
+                }
                 accounts[index].pending = Some((nonce, Instant::now()));
                 println!(
-                    "sent {tx_hash:#x} from {:#x} nonce {nonce} ({} bytes)",
+                    "{} {tx_hash:#x} from {:#x} nonce {nonce} ({} bytes)",
+                    if is_resend { "sent again" } else { "sent" },
                     accounts[index].address,
                     submission.len()
                 );
@@ -406,7 +416,7 @@ async fn send(
         }
     }
     println!(
-        "Done in {:.1}s: {sent} sent, {included} seen included, {failed} rejected",
+        "Done in {:.1}s: {sent} sent, {resent} sent again, {included} seen included, {failed} rejected",
         started.elapsed().as_secs_f64()
     );
     Ok(())
