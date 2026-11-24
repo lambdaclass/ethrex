@@ -16,9 +16,10 @@ use ethrex_common::{
     },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal,
+        ChainConfig, Dependency, Fork, MempoolTransaction, Receipt, Transaction, TxType,
+        Withdrawal,
         block_access_list::BlockAccessList,
-        bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
+        block_dependencies, bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
         calculate_base_fee_per_gas, compute_dependency_witnesses_hash, compute_receipts_root,
         compute_transactions_root, compute_withdrawals_root,
         requests::{EncodedRequests, compute_requests_hash},
@@ -275,6 +276,9 @@ pub struct PayloadBuildContext {
     /// which carries no blob sidecars. Lets the blob path derive blob gas from the
     /// tx's versioned hashes instead of a mempool bundle.
     pub explicit_build: bool,
+    /// EIP-8504: the witness of each dependency of the transactions added so far.
+    /// A dependency shared by several transactions keeps the witness of the first.
+    pub dependency_witnesses: BTreeMap<Dependency, Bytes>,
 }
 
 impl PayloadBuildContext {
@@ -354,6 +358,7 @@ impl PayloadBuildContext {
             payload_size,
             block_access_list: None,
             explicit_build: false,
+            dependency_witnesses: BTreeMap::new(),
         })
     }
 
@@ -1009,8 +1014,25 @@ impl Blockchain {
             // Check adding a transaction wouldn't exceed the Osaka block size limit of 10 MiB
             // if inclusion of the transaction puts the block size over the size limit
             // we don't add any more txs to the payload.
-            let potential_rlp_block_size =
-                context.payload_size + head_tx.encode_canonical_len() as u64;
+            // EIP-8504: a transaction with dependencies also brings a witness for
+            // each one no earlier transaction of the block already has. A pooled
+            // one always has them; without them it can never be included.
+            let new_witnesses = match self.new_dependency_witnesses(&head_tx.tx, context) {
+                Ok(new_witnesses) => new_witnesses,
+                Err(e) => {
+                    let tx_hash = head_tx.tx.hash(&NativeCrypto);
+                    debug!("Evicting transaction {tx_hash} from the pool: {e}");
+                    txs.pop();
+                    self.remove_transaction_from_pool(&tx_hash)?;
+                    continue;
+                }
+            };
+            let potential_rlp_block_size = context.payload_size
+                + head_tx.encode_canonical_len() as u64
+                + new_witnesses
+                    .iter()
+                    .map(|(_, witness)| witness.length() as u64)
+                    .sum::<u64>();
             if context
                 .chain_config()
                 .is_osaka_activated(context.payload.header.timestamp)
@@ -1225,7 +1247,10 @@ impl Blockchain {
         head: &HeadTransaction,
         context: &mut PayloadBuildContext,
     ) -> Result<Receipt, ChainError> {
-        match **head {
+        // EIP-8504: the block must carry a witness for each dependency of the
+        // transaction, so they are taken before it runs and kept once it is in.
+        let new_witnesses = self.new_dependency_witnesses(&head.tx, context)?;
+        let receipt = match **head {
             Transaction::EIP4844Transaction(_) => self.apply_blob_transaction(head, context),
             // EIP-8141: a frame tx with blobs counts toward the block's blob gas and
             // carries its bundle into the payload, as an EIP-4844 tx does.
@@ -1235,7 +1260,41 @@ impl Blockchain {
                 self.apply_blob_transaction(head, context)
             }
             _ => apply_plain_transaction(head, context),
+        }?;
+        context.dependency_witnesses.extend(new_witnesses);
+        Ok(receipt)
+    }
+
+    /// EIP-8504: the witnesses `tx` adds to the block being built, one for each of
+    /// its dependencies that no earlier transaction of the block already has.
+    /// They come from the pool, where they were verified when the transaction was
+    /// admitted. Empty for a transaction without proof frames.
+    fn new_dependency_witnesses(
+        &self,
+        tx: &Transaction,
+        context: &PayloadBuildContext,
+    ) -> Result<Vec<(Dependency, Bytes)>, ChainError> {
+        let Transaction::FrameTransaction(frame_tx) = tx else {
+            return Ok(Vec::new());
+        };
+        if !frame_tx.has_proof_frames() {
+            return Ok(Vec::new());
         }
+        let dependencies = frame_tx.dependencies();
+        let witnesses = self
+            .mempool
+            .get_dependency_witnesses(tx.hash(&NativeCrypto))?
+            .filter(|witnesses| witnesses.len() == dependencies.len())
+            .ok_or_else(|| {
+                ChainError::Custom(
+                    "transaction with dependencies has no witnesses in the pool".to_string(),
+                )
+            })?;
+        Ok(dependencies
+            .into_iter()
+            .zip(witnesses)
+            .filter(|(dependency, _)| !context.dependency_witnesses.contains_key(dependency))
+            .collect())
     }
 
     /// Runs a blob transaction, updates the gas count & blob data and returns the receipt
@@ -1367,7 +1426,25 @@ impl Blockchain {
             compute_transactions_root(&context.payload.body.transactions, &NativeCrypto);
         context.payload.header.receipts_root =
             compute_receipts_root(&context.receipts, &NativeCrypto);
-        // EIP-8504: commit to the witnesses the body carries.
+        // EIP-8504: the body carries one witness for each of the block's
+        // dependencies, in their order, and the header commits to that list.
+        if context.payload.body.dependency_witnesses.is_some() {
+            let witnesses = block_dependencies(&context.payload.body.transactions)
+                .iter()
+                .map(|dependency| {
+                    context
+                        .dependency_witnesses
+                        .get(dependency)
+                        .cloned()
+                        .ok_or_else(|| {
+                            ChainError::Custom(
+                                "a dependency of the block has no witness".to_string(),
+                            )
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            context.payload.body.dependency_witnesses = Some(witnesses);
+        }
         context.payload.header.dependency_witnesses_hash = context
             .payload
             .body
