@@ -17,6 +17,7 @@ ethrex --network fixtures/genesis/perf-ci.json import  fixtures/blockchain/l2-1k
 - The network argument is common to all ethrex commands. It specifies the genesis file, or a public network like hoodi. This is the starting state of the blockchain.
 - The import command means that this node will not start rpc endpoints or peer to peer communication. It will just read a file, parse the blocks, execute them, and save the EVM state (accounts info and storage) after each execution.
 - The file is an RLP encoded file with a list of blocks.
+- The path can also be a directory of such files. Files named by a number (`1.rlp`, `2.rlp`, ..., `10.rlp`) are imported in numeric order, then any others by name. Hidden files and subdirectories are ignored. A file that fails to decode or import is skipped and the rest are still applied; the command exits with an error at the end saying how many files failed. A file that fails leaves the head where it was, and the blocks it stored before the failure become canonical when a later file builds on them. A database failure is not skipped: it stops the import at once.
 
 ### Block execution
 

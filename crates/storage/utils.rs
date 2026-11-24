@@ -8,6 +8,12 @@ pub enum ChainDataIndex {
     SafeBlockNumber = 3,
     LatestBlockNumber = 4,
     PendingBlockNumber = 5,
+    TxIndexFloor = 6,
+    // First written, by unreleased builds only, as the marker of a reconciled
+    // transaction index floor alone. The reconciliation that wrote it corrected
+    // `EarliestBlockNumber` first, so it already stood for both bounds and the value
+    // is kept.
+    HistoryBoundsReconciled = 7,
 }
 
 /// Represents the key for each unique value of the snap state stored in the db

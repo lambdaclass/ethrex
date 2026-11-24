@@ -31,7 +31,7 @@ concurrency:
 jobs:
   promote-smoke:
     name: Promote smoke test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0

@@ -271,14 +271,21 @@ fn single_fork(s: &str) -> anyhow::Result<ethrex_common::types::Fork> {
         "BPO4" => Fork::BPO4,
         "BPO5" => Fork::BPO5,
         "Amsterdam" => Fork::Amsterdam,
+        // The test-only BPO forks after Amsterdam (tests@v21.0.2) take the next free BPO
+        // slot, BPO3. Transitions name them without the prefix, as in
+        // `AmsterdamToBPOIncreaseAtTime15k`.
+        "AmsterdamBPOIncrease" | "AmsterdamBPODecrease" | "BPOIncrease" | "BPODecrease" => {
+            Fork::BPO3
+        }
         other => anyhow::bail!("Unknown network: {other}"),
     };
     Ok(f)
 }
 
 /// Build a Geth-style chain config. All pre-Paris block-numbered forks activate at block 0.
-/// Time-based forks activate at 0 for everything `<=` the target fork, except the transition
-/// target (when set) which activates at `transition.1`. Later forks are not set.
+/// Time-based forks activate at 0 for everything up to the target fork in activation order,
+/// except the transition target (when set) which activates at `transition.1`. Later forks
+/// are not set.
 fn build_chain_config_json(
     genesis_fork: ethrex_common::types::Fork,
     transition: Option<(ethrex_common::types::Fork, u64)>,
@@ -313,6 +320,8 @@ fn build_chain_config_json(
     let target_fork = transition.map(|(to, _)| to).unwrap_or(genesis_fork);
     let obj = cfg.as_object_mut().expect("json object");
 
+    // In activation order, which is not the `Fork` enum's: since tests@v21.0.2 BPO3 and
+    // later come after Amsterdam.
     const TIME_FORKS: &[(Fork, &str)] = &[
         (Fork::Shanghai, "shanghaiTime"),
         (Fork::Cancun, "cancunTime"),
@@ -320,15 +329,17 @@ fn build_chain_config_json(
         (Fork::Osaka, "osakaTime"),
         (Fork::BPO1, "bpo1Time"),
         (Fork::BPO2, "bpo2Time"),
+        (Fork::Amsterdam, "amsterdamTime"),
         (Fork::BPO3, "bpo3Time"),
         (Fork::BPO4, "bpo4Time"),
         (Fork::BPO5, "bpo5Time"),
-        (Fork::Amsterdam, "amsterdamTime"),
     ];
+    // Pre-Shanghai targets are not in the list and set no time-based fork.
+    let last = TIME_FORKS.iter().position(|&(fork, _)| fork == target_fork);
 
-    for &(fork, field) in TIME_FORKS {
-        if fork > target_fork {
-            continue;
+    for (position, &(fork, field)) in TIME_FORKS.iter().enumerate() {
+        if last.is_none_or(|last| position > last) {
+            break;
         }
         let time = match transition {
             Some((to, t)) if to == fork => t,
@@ -348,7 +359,12 @@ fn convert_blob_schedule(eest: &Value) -> Value {
         return Value::Object(out);
     };
     for (k, v) in obj {
-        out.insert(k.to_lowercase(), convert_blob_entry(v));
+        let key = match k.as_str() {
+            // See `single_fork`: these run in the BPO3 slot.
+            "AmsterdamBPOIncrease" | "AmsterdamBPODecrease" => "bpo3".to_string(),
+            _ => k.to_lowercase(),
+        };
+        out.insert(key, convert_blob_entry(v));
     }
     Value::Object(out)
 }
@@ -451,5 +467,63 @@ mod tests {
         let fork = fixture.fork().expect("fork() must succeed for London");
         assert_eq!(fork, ethrex_common::types::Fork::London);
         assert!(is_pre_paris(fork), "London is pre-Paris");
+    }
+
+    fn time_forks(network: &str) -> Vec<(String, u64)> {
+        let (genesis_fork, transition) = parse_network(network).expect("known network");
+        let config = build_chain_config_json(genesis_fork, transition, 1);
+        config
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter(|(k, _)| k.ends_with("Time"))
+            .map(|(k, v)| (k.clone(), v.as_u64().unwrap()))
+            .collect()
+    }
+
+    #[test]
+    fn bpo_forks_after_amsterdam_activate_after_it() {
+        let through_amsterdam = [
+            "amsterdamTime",
+            "bpo1Time",
+            "bpo2Time",
+            "cancunTime",
+            "osakaTime",
+            "pragueTime",
+            "shanghaiTime",
+        ];
+        let at = |names: &[&str], extra: Option<(&str, u64)>| {
+            let mut v: Vec<(String, u64)> = names.iter().map(|n| (n.to_string(), 0)).collect();
+            v.extend(extra.map(|(n, t)| (n.to_string(), t)));
+            v.sort();
+            v
+        };
+        let sorted = |mut v: Vec<(String, u64)>| {
+            v.sort();
+            v
+        };
+
+        assert_eq!(
+            sorted(time_forks("Amsterdam")),
+            at(&through_amsterdam, None)
+        );
+        assert_eq!(
+            sorted(time_forks("AmsterdamBPOIncrease")),
+            at(&through_amsterdam, Some(("bpo3Time", 0)))
+        );
+        assert_eq!(
+            sorted(time_forks("AmsterdamToBPODecreaseAtTime15k")),
+            at(&through_amsterdam, Some(("bpo3Time", 15_000)))
+        );
+    }
+
+    #[test]
+    fn amsterdam_bpo_blob_schedule_lands_in_bpo3() {
+        let converted = convert_blob_schedule(&serde_json::json!({
+            "Amsterdam": {"target": "0x0e", "max": "0x15", "baseFeeUpdateFraction": "0xb24b3f"},
+            "AmsterdamBPOIncrease": {"target": "0x15", "max": "0x20", "baseFeeUpdateFraction": "0x010b70de"},
+        }));
+        assert_eq!(converted["bpo3"]["max"], 32);
+        assert_eq!(converted["amsterdam"]["max"], 21);
     }
 }

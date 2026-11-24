@@ -19,7 +19,7 @@ concurrency:
 jobs:
   check-license:
     name: Verify Dual License
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Checkout sources

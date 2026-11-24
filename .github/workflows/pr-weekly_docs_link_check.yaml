@@ -27,7 +27,7 @@ concurrency:
 jobs:
   link-check:
     name: Link Check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v6.1.0
 
