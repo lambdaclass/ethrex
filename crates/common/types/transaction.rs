@@ -2786,15 +2786,19 @@ impl FrameTransaction {
     /// frame. A matching frame anywhere else is not the protocol verifier and fails
     /// the structural rules ([`FrameValidationError::RecentRootFrameMisplaced`]).
     pub fn recent_root_verifier_index(&self) -> Option<usize> {
-        match self.frames.as_slice() {
-            [first, ..] if first.is_recent_root_verifier() => Some(0),
-            [first, second, ..]
-                if first.is_expiry_verifier() && second.is_recent_root_verifier() =>
-            {
-                Some(1)
-            }
-            _ => None,
+        // EIP-8504: proof frames run no code and take no position of their own, so
+        // "first" and "second" are counted over the frames left without them.
+        let mut frames = self
+            .frames
+            .iter()
+            .enumerate()
+            .filter(|(_, frame)| !frame.is_proof());
+        let (first_index, first) = frames.next()?;
+        if first.is_recent_root_verifier() {
+            return Some(first_index);
         }
+        let (second_index, second) = frames.next()?;
+        (first.is_expiry_verifier() && second.is_recent_root_verifier()).then_some(second_index)
     }
 
     /// The `(source_id, slot, root)` tuples the recent root verifier frame declares,
@@ -3298,11 +3302,15 @@ impl FrameTransaction {
         // shape or the structural rules.
         let recent_root_index = self.recent_root_verifier_index();
         // Collect the frame indices left after the protocol verifier frames, in order.
+        // EIP-8504: proof frames are skipped like the expiry verifier frame, so one
+        // may sit anywhere among the frames that make the shape.
         let non_expiry: Vec<usize> = self
             .frames
             .iter()
             .enumerate()
-            .filter(|(idx, f)| !f.is_expiry_verifier() && Some(*idx) != recent_root_index)
+            .filter(|(idx, f)| {
+                !f.is_expiry_verifier() && !f.is_proof() && Some(*idx) != recent_root_index
+            })
             .map(|(i, _)| i)
             .collect();
 
@@ -3498,10 +3506,13 @@ impl FrameTransaction {
         // only as the first frame of the frame list. Expiry frames are otherwise
         // transparent to prefix matching, so a misplaced one would silently pin
         // the transaction's validity to a deadline outside the recognized shapes.
+        // EIP-8504: proof frames are skipped by this rule too, so "first" means
+        // first among the other frames.
         if let Some((frame_index, _)) = self
             .frames
             .iter()
             .enumerate()
+            .filter(|(_, frame)| !frame.is_proof())
             .skip(1)
             .find(|(_, frame)| frame.is_expiry_verifier())
         {
@@ -3536,6 +3547,9 @@ impl FrameTransaction {
 
         // Gas budget: prefix frame gas limits + signature cost ≤ MAX_VERIFY_GAS.
         // EIP-8272 counts the recent root verifier frame's `limits.execution` too.
+        // EIP-8504: a proof frame is never among `frame_indices`, so its
+        // `limits.execution` stays out of this sum. The witnesses it stands for are
+        // bounded by `MAX_SIGS_PER_TX`, not by this budget.
         let prefix_gas: u64 = prefix
             .frame_indices
             .iter()
