@@ -541,7 +541,7 @@ mod test {
             (None, false, None),
             (Some(Vec::new()), false, None),
             // Kept, so the header rules reject a block that carries witnesses early.
-            (Some(witness.clone()), false, Some(witness.clone())),
+            (Some(witness.clone()), false, Some(witness)),
         ];
         for (received, active, expected) in cases {
             let mut payload = payload_with_witnesses(received.clone());

@@ -390,5 +390,5 @@ fn a_transaction_is_requested_from_a_peer_at_most_once() {
 
     // A peer is dropped long before the wrappers it announces and withholds could
     // fill that memory.
-    assert!(MAX_UNDELIVERED_FROM_PEER < MAX_REQUESTED_FROM_PEER);
+    const { assert!(MAX_UNDELIVERED_FROM_PEER < MAX_REQUESTED_FROM_PEER) };
 }

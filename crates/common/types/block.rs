@@ -1651,7 +1651,7 @@ mod test {
             validate_block_body(&uncommitted, &body, &NativeCrypto),
             Err(InvalidBlockBodyError::DependencyWitnessesHashNotMatch)
         ));
-        let mut listless = body.clone();
+        let mut listless = body;
         listless.dependency_witnesses = None;
         assert!(matches!(
             validate_block_body(&header, &listless, &NativeCrypto),

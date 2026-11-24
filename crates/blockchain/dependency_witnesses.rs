@@ -195,7 +195,7 @@ mod tests {
         let tx_a = dependency_tx(0, &[(H256::zero(), first.public), (shared, first.public)]);
         let tx_b = dependency_tx(1, &[(shared, first.public), (H256::zero(), second.public)]);
 
-        let transactions = vec![tx_a.clone(), tx_b.clone()];
+        let transactions = vec![tx_a, tx_b];
         let dependencies = block_dependencies(
             &transactions
                 .iter()

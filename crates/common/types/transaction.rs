@@ -7492,7 +7492,7 @@ mod tests {
         wrong_gas.gas_limit += 1;
         reject(wrong_gas, "must declare 3000 execution gas");
 
-        let mut with_state_gas = valid.clone();
+        let mut with_state_gas = valid;
         with_state_gas.state_gas_limit = 1;
         reject(with_state_gas, "must have state_gas_limit == 0");
 

@@ -261,7 +261,7 @@ async fn dependency_transaction_goes_from_the_pool_into_a_block_that_imports() {
     assert_eq!(
         block.header.dependency_witnesses_hash,
         Some(compute_dependency_witnesses_hash(
-            &[witness.clone()],
+            std::slice::from_ref(&witness),
             &NativeCrypto
         ))
     );
@@ -368,7 +368,7 @@ async fn block_carries_one_witness_for_a_dependency_two_transactions_share() {
     assert_eq!(witnesses.len(), 3);
     for (dependency, witness) in dependencies.iter().zip(&witnesses) {
         assert!(
-            all_witnesses.contains(&(dependency.clone(), witness.clone())),
+            all_witnesses.contains(&(*dependency, witness.clone())),
             "the witness of {dependency:?} comes from the pool"
         );
     }
