@@ -143,10 +143,9 @@ pub async fn apply_fork_choice(
         return Err(InvalidForkChoice::UnlinkedHead);
     };
 
-    let (link_block_number, link_block_hash) = match new_canonical_blocks.last() {
-        Some((number, hash)) => (*number, *hash),
-        None => (head.number, head_hash),
-    };
+    let link_block_hash = new_canonical_blocks
+        .last()
+        .map_or(head_hash, |(_, hash)| *hash);
 
     // execution-apis PR 786 point 6: -38006 TooDeepReorg is returned when the reorg
     // depth exceeds the limitation specific to the client software. ethrex's limit is
@@ -184,7 +183,7 @@ pub async fn apply_fork_choice(
     // Check that finalized and safe blocks are part of the new canonical chain.
     if let Some(ref finalized) = finalized_res
         && !((is_canonical(store, finalized.number, finalized_hash).await?
-            && finalized.number <= link_block_number)
+            && finalized.number <= canonical_link_height)
             || (finalized.number == head.number && finalized_hash == head_hash)
             || new_canonical_blocks.contains(&(finalized.number, finalized_hash)))
     {
@@ -196,7 +195,7 @@ pub async fn apply_fork_choice(
 
     if let Some(ref safe) = safe_res
         && !((is_canonical(store, safe.number, safe_hash).await?
-            && safe.number <= link_block_number)
+            && safe.number <= canonical_link_height)
             || (safe.number == head.number && safe_hash == head_hash)
             || new_canonical_blocks.contains(&(safe.number, safe_hash)))
     {
