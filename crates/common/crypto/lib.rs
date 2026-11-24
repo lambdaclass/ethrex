@@ -8,6 +8,8 @@ pub mod blake2f;
 mod bls_blst;
 pub mod keccak;
 pub mod kzg;
+#[cfg(feature = "leansphincs")]
+pub mod leansphincs;
 pub mod native;
 #[cfg(feature = "aws-lc-rs")]
 mod p256_awslc;
