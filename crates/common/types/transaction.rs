@@ -339,6 +339,244 @@ impl RLPDecode for WrappedFrameTransaction {
     }
 }
 
+/// EIP-8504's wrapper: one dependency transaction, a frame transaction with at
+/// least one proof frame, together with its witnesses. Until inclusion in a block
+/// such a transaction is handled only in this form.
+///
+/// On the network it is `rlp([[tx], mode, [deps, witnesses]])`: `tx` is the
+/// transaction's pooled network form as a byte string, `mode` is `0`, `deps` holds
+/// the transaction's dependencies as 96-byte triples and `witnesses` one signature
+/// for each of them. A user submits the same content as
+/// `FRAME_TX_TYPE || rlp([tx_payload_body, witnesses])`, or with the blob sidecar
+/// fields between the two items when the transaction carries blobs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProofWrapper {
+    pub tx: FrameTransaction,
+    /// The blob sidecar of a transaction that carries blobs.
+    pub blobs_bundle: Option<BlobsBundle>,
+    /// The dependencies as the wrapper states them. A wrapper is only valid when
+    /// they are exactly `tx.dependencies()`, encoded, in that order; see
+    /// [`Self::states_its_dependencies`].
+    pub deps: Vec<Bytes>,
+    /// One witness for each entry of `deps`, in the same order.
+    pub witnesses: Vec<Bytes>,
+}
+
+impl ProofWrapper {
+    /// The only wrapper mode this EIP defines.
+    pub const MODE: u8 = 0;
+
+    /// Builds the wrapper of `tx` from the witnesses it was submitted with,
+    /// deriving `deps` from the transaction.
+    pub fn new(
+        tx: FrameTransaction,
+        blobs_bundle: Option<BlobsBundle>,
+        witnesses: Vec<Bytes>,
+    ) -> Self {
+        let deps = Self::encoded_dependencies(&tx);
+        Self {
+            tx,
+            blobs_bundle,
+            deps,
+            witnesses,
+        }
+    }
+
+    /// `[encode_dependency(d) for d in dependencies(tx)]`.
+    fn encoded_dependencies(tx: &FrameTransaction) -> Vec<Bytes> {
+        tx.dependencies()
+            .iter()
+            .map(|dependency| Bytes::copy_from_slice(&dependency.encode()))
+            .collect()
+    }
+
+    /// Whether `deps` is the encoded list of the transaction's dependencies and
+    /// `witnesses` has one item for each of them.
+    pub fn states_its_dependencies(&self) -> bool {
+        self.deps == Self::encoded_dependencies(&self.tx) && self.witnesses.len() == self.deps.len()
+    }
+
+    /// The Keccak-256 hash of the wrapper's RLP serialization, which identifies it
+    /// on the network.
+    pub fn hash(&self, crypto: &dyn Crypto) -> H256 {
+        H256(crypto.keccak256(&self.encode_to_vec()))
+    }
+
+    /// Whether a type-6 payload is the submitted form of a dependency
+    /// transaction. Its first item is the transaction body, a list, as in the blob
+    /// network wrapper, and it is told apart from that wrapper by its number of
+    /// items: two without blobs and six with them, where the blob wrapper has four
+    /// or five.
+    pub fn is_submission(rlp: &[u8]) -> Result<bool, RLPDecodeError> {
+        if !WrappedFrameTransaction::is_wrapped(rlp)? {
+            return Ok(false);
+        }
+        Ok(matches!(Self::item_count(rlp)?, 2 | 6))
+    }
+
+    /// The number of items of the RLP list `rlp`.
+    fn item_count(rlp: &[u8]) -> Result<usize, RLPDecodeError> {
+        let (is_list, mut items, _) = decode_rlp_item(rlp)?;
+        if !is_list {
+            return Err(RLPDecodeError::UnexpectedString);
+        }
+        let mut count = 0usize;
+        while !items.is_empty() {
+            let (_, _, rest) = decode_rlp_item(items)?;
+            items = rest;
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    /// Decodes the submitted form, without its type byte, and builds the wrapper.
+    pub fn decode_submission(rlp: &[u8]) -> Result<Self, RLPDecodeError> {
+        let with_blobs = match Self::item_count(rlp)? {
+            2 => false,
+            6 => true,
+            count => {
+                return Err(RLPDecodeError::Custom(format!(
+                    "a dependency transaction is submitted as 2 items, or 6 with blobs, got {count}"
+                )));
+            }
+        };
+        let decoder = Decoder::new(rlp)?;
+        let (tx, decoder) = decoder.decode_field("tx")?;
+        let (blobs_bundle, decoder) = if with_blobs {
+            let (version, decoder) = decoder.decode_field("wrapper_version")?;
+            let (blobs, decoder) = decoder.decode_field("blobs")?;
+            let (commitments, decoder) = decoder.decode_field("commitments")?;
+            let (proofs, decoder) = decoder.decode_field("proofs")?;
+            let blobs_bundle = BlobsBundle {
+                blobs,
+                commitments,
+                proofs,
+                version,
+            };
+            (Some(blobs_bundle), decoder)
+        } else {
+            (None, decoder)
+        };
+        let (witnesses, decoder) = decoder.decode_field("witnesses")?;
+        decoder.finish()?;
+        Ok(Self::new(tx, blobs_bundle, witnesses))
+    }
+
+    /// Encodes the submitted form: the type byte and the transaction with its
+    /// witnesses.
+    pub fn encode_submission(&self, buf: &mut dyn bytes::BufMut) {
+        buf.put_u8(TxType::Frame as u8);
+        match &self.blobs_bundle {
+            None => Encoder::new(buf)
+                .encode_field(&self.tx)
+                .encode_field(&self.witnesses)
+                .finish(),
+            Some(bundle) => Encoder::new(buf)
+                .encode_field(&self.tx)
+                .encode_field(&bundle.version)
+                .encode_field(&bundle.blobs)
+                .encode_field(&bundle.commitments)
+                .encode_field(&bundle.proofs)
+                .encode_field(&self.witnesses)
+                .finish(),
+        }
+    }
+
+    /// The transaction in its pooled network form: the type byte and either the
+    /// transaction or, when it carries blobs, its blob network wrapper.
+    fn pooled_transaction(&self) -> Vec<u8> {
+        let mut buf = vec![TxType::Frame as u8];
+        match &self.blobs_bundle {
+            None => self.tx.encode(&mut buf),
+            Some(bundle) => {
+                let wrapper_version = (bundle.version != 0).then_some(bundle.version);
+                Encoder::new(&mut buf)
+                    .encode_field(&self.tx)
+                    .encode_optional_field(&wrapper_version)
+                    .encode_field(&bundle.blobs)
+                    .encode_field(&bundle.commitments)
+                    .encode_field(&bundle.proofs)
+                    .finish();
+            }
+        }
+        buf
+    }
+}
+
+/// The most bytes a wrapper adds to its transaction's pooled network form when
+/// the transaction has `dependencies` dependencies: a 96-byte triple and a
+/// signature for each, with their RLP headers, and the headers of the lists
+/// around them. Nodes use it to bound the size of a wrapper they accept.
+pub const fn proof_wrapper_overhead(dependencies: usize) -> usize {
+    // A 96-byte string has a 2-byte header and a signature a 3-byte one.
+    let per_dependency = (2 + DEPENDENCY_TRIPLE_BYTES) + (3 + LEANSPHINCS_SIGNATURE_SIZE);
+    // The wrapper, `transactions`, the transaction string, `content`, `deps` and
+    // `witnesses` have a header of at most 4 bytes each; `mode` is one byte.
+    dependencies * per_dependency + 6 * 4 + 1
+}
+
+impl RLPEncode for ProofWrapper {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        let mut transactions = Vec::new();
+        Encoder::new(&mut transactions)
+            .encode_bytes(&self.pooled_transaction())
+            .finish();
+        let mut content = Vec::new();
+        Encoder::new(&mut content)
+            .encode_field(&self.deps)
+            .encode_field(&self.witnesses)
+            .finish();
+        Encoder::new(buf)
+            .encode_raw(&transactions)
+            .encode_field(&Self::MODE)
+            .encode_raw(&content)
+            .finish();
+    }
+}
+
+impl RLPDecode for ProofWrapper {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(ProofWrapper, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (transactions, decoder) = decoder.decode_field::<Vec<Bytes>>("transactions")?;
+        let (mode, decoder) = decoder.decode_field::<u8>("mode")?;
+        let ((deps, witnesses), decoder) =
+            decoder.decode_field::<(Vec<Bytes>, Vec<Bytes>)>("content")?;
+        let rest = decoder.finish()?;
+
+        if mode != Self::MODE {
+            return Err(RLPDecodeError::Custom(format!(
+                "unknown wrapper mode {mode}"
+            )));
+        }
+        let [pooled] = transactions.as_slice() else {
+            return Err(RLPDecodeError::Custom(
+                "a wrapper carries exactly one transaction".to_string(),
+            ));
+        };
+        let (tx_type, payload) = pooled.split_first().ok_or(RLPDecodeError::InvalidLength)?;
+        if *tx_type != TxType::Frame as u8 {
+            return Err(RLPDecodeError::Custom(
+                "a wrapper carries a frame transaction".to_string(),
+            ));
+        }
+        let (tx, blobs_bundle) = if WrappedFrameTransaction::is_wrapped(payload)? {
+            let wrapped = WrappedFrameTransaction::decode(payload)?;
+            (wrapped.tx, Some(wrapped.blobs_bundle))
+        } else {
+            (FrameTransaction::decode(payload)?, None)
+        };
+        Ok((
+            ProofWrapper {
+                tx,
+                blobs_bundle,
+                deps,
+                witnesses,
+            },
+            rest,
+        ))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct LegacyTransaction {
     pub nonce: u64,
@@ -7435,5 +7673,152 @@ mod tests {
             tx.calldata_floor_total(),
             unpriced_mandatory + 2 * LEANSPHINCS_WITNESS_GAS + tx.calldata_floor_gas()
         );
+    }
+
+    // ── The wrapper of a dependency transaction (EIP-8504) ──
+
+    /// A dependency transaction with two dependencies and a witness for each.
+    /// The witnesses are not signatures: these tests only cover the encodings.
+    fn test_proof_wrapper(blobs_bundle: Option<BlobsBundle>) -> ProofWrapper {
+        let mut tx = frame_tx_with_proof_frame(proof_frame(&[
+            (H256::zero(), H256::repeat_byte(0xAA)),
+            (H256::repeat_byte(0x01), H256::repeat_byte(0xBB)),
+        ]));
+        if blobs_bundle.is_some() {
+            tx.blob_versioned_hashes = vec![H256::repeat_byte(0x01)];
+        }
+        let witnesses = vec![
+            Bytes::from(vec![0x11; LEANSPHINCS_SIGNATURE_SIZE]),
+            Bytes::from(vec![0x22; LEANSPHINCS_SIGNATURE_SIZE]),
+        ];
+        ProofWrapper::new(tx, blobs_bundle, witnesses)
+    }
+
+    fn test_blobs_bundle() -> BlobsBundle {
+        BlobsBundle {
+            blobs: vec![[0x33; crate::types::BYTES_PER_BLOB]],
+            commitments: vec![[0x44; 48]],
+            proofs: vec![[0x55; 48]; 128],
+            version: 1,
+        }
+    }
+
+    #[test]
+    fn wrapper_states_the_dependencies_of_its_transaction() {
+        let wrapper = test_proof_wrapper(None);
+        let dependencies = wrapper.tx.dependencies();
+        assert_eq!(dependencies.len(), 2);
+        // The zero `data_hash` is stated as the transaction's signature hash.
+        let sig_hash = wrapper.tx.compute_sig_hash();
+        assert!(
+            wrapper
+                .deps
+                .iter()
+                .any(|dep| dep[32..64] == *sig_hash.as_bytes())
+        );
+        assert_eq!(
+            wrapper.deps,
+            dependencies
+                .iter()
+                .map(|dependency| Bytes::copy_from_slice(&dependency.encode()))
+                .collect::<Vec<_>>()
+        );
+        assert!(wrapper.states_its_dependencies());
+
+        // Any other list of dependencies, or a different number of witnesses, is
+        // not this transaction's.
+        let mut reordered = wrapper.clone();
+        reordered.deps.swap(0, 1);
+        assert!(!reordered.states_its_dependencies());
+
+        let mut missing_witness = wrapper.clone();
+        missing_witness.witnesses.pop();
+        assert!(!missing_witness.states_its_dependencies());
+
+        let mut extra_dependency = wrapper;
+        extra_dependency.deps.push(Bytes::from(vec![0u8; 96]));
+        extra_dependency.witnesses.push(Bytes::new());
+        assert!(!extra_dependency.states_its_dependencies());
+    }
+
+    #[test]
+    fn wrapper_round_trips_on_the_network() {
+        for blobs_bundle in [None, Some(test_blobs_bundle())] {
+            let wrapper = test_proof_wrapper(blobs_bundle);
+            let encoded = wrapper.encode_to_vec();
+            let decoded = ProofWrapper::decode(&encoded).expect("decodes");
+            assert_eq!(decoded, wrapper);
+            assert_eq!(decoded.encode_to_vec(), encoded);
+            assert_eq!(
+                wrapper.hash(&NativeCrypto),
+                H256(NativeCrypto.keccak256(&encoded))
+            );
+        }
+    }
+
+    #[test]
+    fn wrapper_is_a_list_of_one_transaction_a_zero_mode_and_the_content() {
+        let wrapper = test_proof_wrapper(None);
+        let encoded = wrapper.encode_to_vec();
+
+        // [[tx], 0, [deps, witnesses]], with tx as a byte string holding the type
+        // byte and the transaction.
+        let (transactions, mode, (deps, witnesses)) =
+            <(Vec<Bytes>, u8, (Vec<Bytes>, Vec<Bytes>))>::decode(&encoded).expect("decodes");
+        assert_eq!(mode, 0);
+        assert_eq!(transactions.len(), 1);
+        assert_eq!(
+            transactions[0],
+            Transaction::FrameTransaction(wrapper.tx.clone()).encode_canonical_to_vec()
+        );
+        assert_eq!(deps, wrapper.deps);
+        assert_eq!(witnesses, wrapper.witnesses);
+
+        // Another mode, no transaction or two transactions are not wrappers.
+        let pooled = transactions[0].clone();
+        let content = (deps, witnesses);
+        let other_mode = (vec![pooled.clone()], 1u8, content.clone()).encode_to_vec();
+        assert!(ProofWrapper::decode(&other_mode).is_err());
+        let no_transaction = (Vec::<Bytes>::new(), 0u8, content.clone()).encode_to_vec();
+        assert!(ProofWrapper::decode(&no_transaction).is_err());
+        let two_transactions = (vec![pooled.clone(), pooled], 0u8, content).encode_to_vec();
+        assert!(ProofWrapper::decode(&two_transactions).is_err());
+    }
+
+    #[test]
+    fn submitted_forms_are_told_apart_by_their_number_of_items() {
+        // Without blobs: the transaction and its witnesses.
+        let wrapper = test_proof_wrapper(None);
+        let mut submitted = Vec::new();
+        wrapper.encode_submission(&mut submitted);
+        assert_eq!(submitted[0], TxType::Frame as u8);
+        assert!(ProofWrapper::is_submission(&submitted[1..]).expect("is a list"));
+        assert_eq!(
+            ProofWrapper::decode_submission(&submitted[1..]).expect("decodes"),
+            wrapper
+        );
+
+        // With blobs: the witnesses follow the sidecar fields.
+        let wrapper = test_proof_wrapper(Some(test_blobs_bundle()));
+        let mut submitted = Vec::new();
+        wrapper.encode_submission(&mut submitted);
+        assert!(ProofWrapper::is_submission(&submitted[1..]).expect("is a list"));
+        assert_eq!(
+            ProofWrapper::decode_submission(&submitted[1..]).expect("decodes"),
+            wrapper
+        );
+
+        // A transaction alone and a blob network wrapper are not submitted forms.
+        let bare = wrapper.tx.encode_to_vec();
+        assert!(!ProofWrapper::is_submission(&bare).expect("is a list"));
+        let blob_wrapper = WrappedFrameTransaction {
+            tx: wrapper.tx.clone(),
+            wrapper_version: Some(1),
+            blobs_bundle: test_blobs_bundle(),
+        }
+        .encode_to_vec();
+        assert!(WrappedFrameTransaction::is_wrapped(&blob_wrapper).expect("is a list"));
+        assert!(!ProofWrapper::is_submission(&blob_wrapper).expect("is a list"));
+        assert!(ProofWrapper::decode_submission(&blob_wrapper).is_err());
     }
 }
