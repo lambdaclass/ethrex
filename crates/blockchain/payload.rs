@@ -19,8 +19,8 @@ use ethrex_common::{
         ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, TxType, Withdrawal,
         block_access_list::BlockAccessList,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
-        calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
-        compute_withdrawals_root,
+        calculate_base_fee_per_gas, compute_dependency_witnesses_hash, compute_receipts_root,
+        compute_transactions_root, compute_withdrawals_root,
         requests::{EncodedRequests, compute_requests_hash},
     },
 };
@@ -193,6 +193,12 @@ pub fn create_payload(
             .is_prague_activated(args.timestamp)
             .then_some(*DEFAULT_REQUESTS_HASH),
         slot_number: args.slot_number,
+        // EIP-8504: the commitment to the witnesses the block will carry. It is
+        // set again when the payload is finalized, once the transactions and so
+        // the witnesses are known.
+        dependency_witnesses_hash: chain_config
+            .is_eip8504_activated(args.timestamp)
+            .then(|| compute_dependency_witnesses_hash(&[], &NativeCrypto)),
         ..Default::default()
     };
 
@@ -208,7 +214,11 @@ pub fn create_payload(
         withdrawals: chain_config
             .is_shanghai_activated(args.timestamp)
             .then(|| args.withdrawals.clone().unwrap_or_default()),
-        dependency_witnesses: None,
+        // EIP-8504: the list is part of the body from activation on, empty until
+        // a transaction with dependencies is included.
+        dependency_witnesses: chain_config
+            .is_eip8504_activated(args.timestamp)
+            .then(Vec::new),
     };
 
     // Delay applying withdrawals until the payload is requested and built
@@ -1357,6 +1367,13 @@ impl Blockchain {
             compute_transactions_root(&context.payload.body.transactions, &NativeCrypto);
         context.payload.header.receipts_root =
             compute_receipts_root(&context.receipts, &NativeCrypto);
+        // EIP-8504: commit to the witnesses the body carries.
+        context.payload.header.dependency_witnesses_hash = context
+            .payload
+            .body
+            .dependency_witnesses
+            .as_ref()
+            .map(|witnesses| compute_dependency_witnesses_hash(witnesses, &NativeCrypto));
         context.payload.header.requests_hash = context
             .requests
             .as_ref()

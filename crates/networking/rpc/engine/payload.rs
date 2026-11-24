@@ -51,7 +51,7 @@ impl RpcHandler for NewPayloadV1Request {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         validate_execution_payload_v1(&self.payload)?;
-        let block = match get_block_from_payload(&self.payload, None, None, None) {
+        let block = match get_block_from_payload(&self.payload, None, None, None, false) {
             Ok(block) => block,
             Err(err) => {
                 return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
@@ -84,7 +84,7 @@ impl RpcHandler for NewPayloadV2Request {
             // Behave as a v1
             validate_execution_payload_v1(&self.payload)?;
         }
-        let block = match get_block_from_payload(&self.payload, None, None, None) {
+        let block = match get_block_from_payload(&self.payload, None, None, None, false) {
             Ok(block) => block,
             Err(err) => {
                 return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
@@ -142,6 +142,7 @@ impl RpcHandler for NewPayloadV3Request {
             Some(self.parent_beacon_block_root),
             None,
             None,
+            false,
         ) {
             Ok(block) => block,
             Err(err) => {
@@ -238,6 +239,7 @@ impl NewPayloadV4Request {
             Some(self.parent_beacon_block_root),
             Some(requests_hash),
             None,
+            false,
         ) {
             Ok(block) => block,
             Err(err) => {
@@ -483,11 +485,14 @@ impl NewPayloadV5Request {
         // so the block hash check correctly detects BAL corruption.
         let block_access_list_hash = self.raw_bal_hash;
 
+        let chain_config = context.storage.get_chain_config();
+
         let block = match get_block_from_payload(
             &self.payload,
             Some(self.parent_beacon_block_root),
             Some(requests_hash),
             block_access_list_hash,
+            chain_config.is_eip8504_activated(self.payload.timestamp),
         ) {
             Ok(block) => block,
             Err(err) => {
@@ -496,8 +501,6 @@ impl NewPayloadV5Request {
                 ))?);
             }
         };
-
-        let chain_config = context.storage.get_chain_config();
 
         // Pre-Amsterdam timestamps must use V4, not V5. Per engine-API spec
         // (amsterdam.md): "Client software MUST return -38005: Unsupported fork
@@ -1314,17 +1317,22 @@ fn validate_execution_requests(execution_requests: &[EncodedRequests]) -> Result
     Ok(())
 }
 
+/// `eip8504_active` says whether EIP-8504 is active at the payload's timestamp,
+/// which decides how its `dependencyWitnesses` field is read.
 fn get_block_from_payload(
     payload: &ExecutionPayload,
     parent_beacon_block_root: Option<H256>,
     requests_hash: Option<H256>,
     block_access_list_hash: Option<H256>,
+    eip8504_active: bool,
 ) -> Result<Block, RLPDecodeError> {
     let block_hash = payload.block_hash;
     let block_number = payload.block_number;
     debug!(%block_hash, %block_number, "Received new payload");
 
-    payload.clone().into_block(
+    let mut payload = payload.clone();
+    payload.normalize_dependency_witnesses(eip8504_active);
+    payload.into_block(
         parent_beacon_block_root,
         requests_hash,
         block_access_list_hash,
@@ -1545,6 +1553,10 @@ async fn try_execute_payload(
             parent_beacon_block_root,
             requests_hash,
             block_access_list_hash,
+            context
+                .storage
+                .get_chain_config()
+                .is_eip8504_activated(payload.timestamp),
         )?;
         status =
             payload_status_for_existing_block(&block, &context.storage, &context.blockchain, true)
@@ -1577,12 +1589,14 @@ fn rebuild_block(
     parent_beacon_block_root: Option<H256>,
     requests_hash: Option<H256>,
     block_access_list_hash: Option<H256>,
+    eip8504_active: bool,
 ) -> Result<Block, RpcErr> {
     get_block_from_payload(
         payload,
         parent_beacon_block_root,
         requests_hash,
         block_access_list_hash,
+        eip8504_active,
     )
     .map_err(|e| RpcErr::Internal(format!("failed to rebuild the block from its payload: {e}")))
 }
@@ -1616,6 +1630,9 @@ async fn classify_execution(
             parent_beacon_block_root,
             requests_hash,
             block_access_list_hash,
+            storage
+                .get_chain_config()
+                .is_eip8504_activated(payload.timestamp),
         )
     };
 
@@ -1883,6 +1900,7 @@ mod tests {
             slot_number: Some(0),
             block_access_list: Some(BlockAccessList::default()),
             burned_fees: None,
+            dependency_witnesses: None,
         }
     }
 
