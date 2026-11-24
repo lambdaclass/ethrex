@@ -26,6 +26,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_storage::error::StoreError;
+use rustc_hash::FxHashSet;
 
 use crate::rlpx::{
     message::RLPxMessage,
@@ -58,6 +59,36 @@ const MAX_ANNOUNCEMENT_BYTES: usize = MAX_PROOF_WRAPPER_ANNOUNCEMENTS * 80 + 64;
 /// Upper bound on the decompressed size of a request: a request id and at most
 /// [`MAX_PROOF_WRAPPER_REQUEST_HASHES`] hashes.
 const MAX_REQUEST_BYTES: usize = MAX_PROOF_WRAPPER_REQUEST_HASHES * 33 + 64;
+
+/// Most transactions a connection remembers as already requested from its peer.
+/// Reaching it forgets them all, so the memory per connection stays bounded.
+pub const MAX_REQUESTED_FROM_PEER: usize = 4 * MAX_PROOF_WRAPPER_ANNOUNCEMENTS;
+
+/// The transactions whose wrapper a connection has already requested from its
+/// peer. A transaction is requested from a given peer at most once. A peer that
+/// announces a wrapper and then withholds it, or sends one the node does not
+/// admit, therefore cannot be made to cost a second fetch and a second witness
+/// verification, and cannot take the request again ahead of the other peers that
+/// announced the same transaction.
+#[derive(Debug, Default)]
+pub struct RequestedFromPeer(FxHashSet<H256>);
+
+impl RequestedFromPeer {
+    /// Drops from `announced` the wrappers of transactions already requested
+    /// from this peer.
+    pub fn retain_unrequested(&self, announced: &mut Vec<ProofWrapperAnnouncement>) {
+        announced.retain(|wrapper| !self.0.contains(&wrapper.tx_hash));
+    }
+
+    /// Records that these wrappers were requested from the peer.
+    pub fn record(&mut self, requested: &[ProofWrapperAnnouncement]) {
+        if self.0.len() + requested.len() > MAX_REQUESTED_FROM_PEER {
+            self.0.clear();
+        }
+        self.0
+            .extend(requested.iter().map(|wrapper| wrapper.tx_hash));
+    }
+}
 
 /// Announces wrappers the sender has admitted and can serve.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -30,7 +30,7 @@ use crate::{
                 proof_wrappers::{
                     GetProofWrappers, MAX_PROOF_WRAPPER_ANNOUNCEMENTS,
                     MAX_PROOF_WRAPPER_REQUEST_HASHES, NewProofWrapperHashes,
-                    PROOF_WRAPPERS_RESPONSE_SOFT_LIMIT, ProofWrappers,
+                    PROOF_WRAPPERS_RESPONSE_SOFT_LIMIT, ProofWrappers, RequestedFromPeer,
                 },
                 status::StatusMessage73,
             },
@@ -101,6 +101,11 @@ const PING_INTERVAL: Duration = Duration::from_secs(10);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
 const INFLIGHT_TX_SWEEP_INTERVAL: Duration = Duration::from_secs(15);
 const INFLIGHT_TX_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// EIP-8504: `GetProofWrappers` requests a peer may leave unanswered before it is
+/// dropped. A node announces only wrappers it can serve, and an empty response is
+/// an answer, so silence is not an honest outcome.
+const MAX_UNANSWERED_PROOF_WRAPPER_REQUESTS: u8 = 2;
 /// Max time a single outbound frame may take to flush to a peer's socket before we
 /// consider the peer wedged and drop it. Without this bound, a slow/half-dead peer
 /// (TCP send window full, never draining) blocks the connection actor's serial drain
@@ -340,6 +345,11 @@ pub struct Established {
     /// EIP-8504: `GetProofWrappers` requests awaiting their response: request id
     /// to the announced wrappers that were requested and the request time.
     pub(crate) requested_proof_wrappers: HashMap<u64, (Vec<ProofWrapperAnnouncement>, Instant)>,
+    /// EIP-8504: the transactions whose wrapper was already requested from this
+    /// peer, none of which is requested from it again.
+    pub(crate) proof_wrappers_requested_from_peer: RequestedFromPeer,
+    /// EIP-8504: how many `GetProofWrappers` requests this peer left unanswered.
+    pub(crate) unanswered_proof_wrapper_requests: u8,
     /// Buffered transaction requests waiting to be flushed as a single batch.
     /// Accumulated between flush ticks (TX_REQUEST_BATCH_INTERVAL).
     pub(crate) pending_tx_requests: Vec<(NewPooledTransactionHashes, Vec<H256>)>,
@@ -749,7 +759,7 @@ impl PeerConnectionServer {
     async fn handle_sweep_inflight_txs(
         &mut self,
         _msg: peer_connection_server_protocol::SweepInflightTxs,
-        _ctx: &Context<Self>,
+        ctx: &Context<Self>,
     ) {
         if let ConnectionState::Established(ref mut state) = self.state {
             let now = Instant::now();
@@ -805,7 +815,21 @@ impl PeerConnectionServer {
                     {
                         warn!(error = %e, "clear_in_flight_proof_wrappers failed while sweeping stale requests");
                     }
+                    state.unanswered_proof_wrapper_requests =
+                        state.unanswered_proof_wrapper_requests.saturating_add(1);
                 }
+            }
+            // A peer that keeps announcing wrappers and never sends them only
+            // delays the transactions it announces: drop it. Its teardown
+            // releases whatever is still requested from it.
+            if state.unanswered_proof_wrapper_requests > MAX_UNANSWERED_PROOF_WRAPPER_REQUESTS {
+                debug!(
+                    peer=%state.node,
+                    "Disconnecting peer: proof wrapper requests left unanswered",
+                );
+                state.disconnect_reason = Some(DisconnectReason::UselessPeer);
+                ctx.stop();
+                return;
             }
             if let Err(e) = request_pending_proof_wrappers(state).await {
                 debug!(error = %e, "Failed to request pending proof wrappers during sweep");
@@ -2958,8 +2982,9 @@ fn supports_proof_wrappers(state: &Established) -> bool {
 }
 
 /// EIP-8504: requests from this peer the wrappers it announced whose transaction
-/// the node still lacks and no other connection is fetching. The ones another
-/// connection is fetching stay pending and are tried again on the next sweep.
+/// the node still lacks, no other connection is fetching, and this peer was not
+/// asked for before. The ones another connection is fetching stay pending and are
+/// tried again on the next sweep.
 /// Requests are sized so that the announced lengths of one request fit the
 /// response soft limit, and a request is tracked only once it was sent.
 async fn request_pending_proof_wrappers(
@@ -2968,10 +2993,15 @@ async fn request_pending_proof_wrappers(
     if state.pending_proof_wrappers.is_empty() {
         return Ok(());
     }
-    let pending = std::mem::take(&mut state.pending_proof_wrappers);
+    let mut pending = std::mem::take(&mut state.pending_proof_wrappers);
+    // Never twice from the same peer, whatever came of the first request.
+    state
+        .proof_wrappers_requested_from_peer
+        .retain_unrequested(&mut pending);
     let (to_request, in_flight_elsewhere) =
         state.blockchain.mempool.reserve_proof_wrappers(pending)?;
     state.pending_proof_wrappers = in_flight_elsewhere;
+    state.proof_wrappers_requested_from_peer.record(&to_request);
 
     let mut chunks: Vec<Vec<ProofWrapperAnnouncement>> = Vec::new();
     let mut chunk_bytes = 0usize;

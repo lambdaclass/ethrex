@@ -24,7 +24,8 @@ use ethrex_p2p::rlpx::{
         cells::GetCells,
         eth73::proof_wrappers::{
             GetProofWrappers, MAX_PROOF_WRAPPER_ANNOUNCEMENTS, MAX_PROOF_WRAPPER_REQUEST_HASHES,
-            NewProofWrapperHashes, PROOF_WRAPPERS_RESPONSE_SOFT_LIMIT, ProofWrappers,
+            MAX_REQUESTED_FROM_PEER, NewProofWrapperHashes, PROOF_WRAPPERS_RESPONSE_SOFT_LIMIT,
+            ProofWrappers, RequestedFromPeer,
         },
     },
     message::{EthCapVersion, RLPxMessage},
@@ -342,4 +343,44 @@ fn a_wrapper_is_requested_from_one_peer_at_a_time() {
         .unwrap();
     assert_eq!(to_request, vec![first_again, second]);
     assert!(in_flight_elsewhere.is_empty());
+}
+
+#[test]
+fn a_transaction_is_requested_from_a_peer_at_most_once() {
+    let first = announcement(&wrapper(1, 1));
+    let second = announcement(&wrapper(2, 1));
+    let mut requested = RequestedFromPeer::default();
+
+    // Nothing was requested yet: both announcements stand.
+    let mut announced = vec![first, second];
+    requested.retain_unrequested(&mut announced);
+    assert_eq!(announced, vec![first, second]);
+
+    // Once `first` was requested, the peer announcing it again, under the same
+    // wrapper or another one for the same transaction, changes nothing: whether
+    // it answered, withheld it or sent a wrapper that was not admitted.
+    requested.record(&[first]);
+    let first_again = ProofWrapperAnnouncement {
+        wrapper_hash: H256::repeat_byte(0xAB),
+        ..first
+    };
+    let mut announced = vec![first, first_again, second];
+    requested.retain_unrequested(&mut announced);
+    assert_eq!(announced, vec![second]);
+
+    // The memory is bounded: past the limit it starts over.
+    let flood: Vec<ProofWrapperAnnouncement> = (0..MAX_REQUESTED_FROM_PEER as u64)
+        .map(|n| ProofWrapperAnnouncement {
+            wrapper_hash: H256::from_low_u64_be(n),
+            tx_hash: H256::from_low_u64_be(n),
+            wrapper_len: 8_000,
+        })
+        .collect();
+    requested.record(&flood);
+    let mut announced = vec![first];
+    requested.retain_unrequested(&mut announced);
+    assert_eq!(announced, vec![first]);
+    let mut announced = vec![flood[0]];
+    requested.retain_unrequested(&mut announced);
+    assert!(announced.is_empty());
 }
