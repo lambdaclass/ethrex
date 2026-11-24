@@ -309,14 +309,14 @@ impl Trie {
     /// Return the hash of the trie's root node.
     /// Returns keccak(RLP_NULL) if the trie is empty
     /// Also commits changes to the DB
-    pub fn hash(&mut self, crypto: &dyn Crypto) -> Result<H256, TrieError> {
+    pub fn hash(&mut self, crypto: &(impl Crypto + ?Sized)) -> Result<H256, TrieError> {
         self.commit(crypto)?;
         Ok(self.hash_no_commit(crypto))
     }
 
     /// Return the hash of the trie's root node.
     /// Returns keccak(RLP_NULL) if the trie is empty
-    pub fn hash_no_commit(&self, crypto: &dyn Crypto) -> H256 {
+    pub fn hash_no_commit(&self, crypto: &(impl Crypto + ?Sized)) -> H256 {
         if self.root.is_valid() {
             // 512 is the maximum size of an encoded node
             let mut buf = Vec::with_capacity(512);
@@ -347,7 +347,7 @@ impl Trie {
     /// A tuple containing the hash and the list of changes.
     pub fn collect_changes_since_last_hash(
         &mut self,
-        crypto: &dyn Crypto,
+        crypto: &(impl Crypto + ?Sized),
     ) -> (H256, Vec<TrieNode>) {
         let updates = self.commit_without_storing(crypto);
         let ret_hash = self.hash_no_commit(crypto);
@@ -358,7 +358,7 @@ impl Trie {
     ///
     /// This method will also compute the hash of all internal nodes indirectly. It will not clear
     /// the cached nodes.
-    pub fn commit(&mut self, crypto: &dyn Crypto) -> Result<(), TrieError> {
+    pub fn commit(&mut self, crypto: &(impl Crypto + ?Sized)) -> Result<(), TrieError> {
         let acc = self.commit_without_storing(crypto);
         self.db.put_batch(acc)?;
 
@@ -370,7 +370,7 @@ impl Trie {
 
     /// Computes the nodes that would be added if updating the trie.
     /// Nodes are given with their hash pre-calculated.
-    pub fn commit_without_storing(&mut self, crypto: &dyn Crypto) -> Vec<TrieNode> {
+    pub fn commit_without_storing(&mut self, crypto: &(impl Crypto + ?Sized)) -> Vec<TrieNode> {
         let mut acc = Vec::new();
         if self.root.is_valid() {
             self.root.commit(Nibbles::default(), &mut acc, crypto);
@@ -528,7 +528,7 @@ impl Trie {
     pub fn get_embedded_root_committed(
         all_nodes: &FxHashMap<H256, Node>,
         root_hash: H256,
-        crypto: &dyn Crypto,
+        crypto: &(impl Crypto + ?Sized),
         key_nibbles: usize,
     ) -> Result<NodeRef, TrieError> {
         // If the root hash is of the empty trie then we can get away by setting the NodeRef to default
@@ -632,7 +632,7 @@ impl Trie {
             all_nodes: &FxHashMap<H256, Node>,
             cur_node: &Node,
             remaining: usize,
-            crypto: &dyn Crypto,
+            crypto: &(impl Crypto + ?Sized),
         ) -> Result<Node, TrieError> {
             Ok(match cur_node.clone() {
                 Node::Branch(mut node) => {
@@ -730,7 +730,7 @@ impl Trie {
     /// Builds an in-memory trie from the given elements and returns its hash
     pub fn compute_hash_from_unsorted_iter(
         iter: impl Iterator<Item = (PathRLP, ValueRLP)>,
-        crypto: &dyn Crypto,
+        crypto: &(impl Crypto + ?Sized),
     ) -> H256 {
         let mut trie = Trie::stateless();
         for (path, value) in iter {
@@ -1215,7 +1215,7 @@ impl ProofTrie {
         Ok(())
     }
 
-    pub fn hash(&self, crypto: &dyn Crypto) -> H256 {
+    pub fn hash(&self, crypto: &(impl Crypto + ?Sized)) -> H256 {
         self.0.hash_no_commit(crypto)
     }
 }

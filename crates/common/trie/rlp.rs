@@ -17,7 +17,7 @@ use ethrex_crypto::NativeCrypto;
 use super::node::{BranchNode, ExtensionNode, LeafNode, Node};
 use crate::{Nibbles, NodeHash};
 
-// SAFETY: `NativeCrypto` is used here instead of a `&dyn Crypto` parameter because
+// SAFETY: `NativeCrypto` is used here instead of a crypto provider parameter because
 // `RLPEncode` is a fixed trait signature that cannot accept extra parameters.
 // This is safe in the `commit()` path: `NodeRef::commit()` recursively populates
 // child `OnceLock` hashes before calling `encode()`, so `compute_hash_ref` returns
