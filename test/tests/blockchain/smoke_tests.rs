@@ -409,6 +409,33 @@ async fn reorg_with_finalized_set_within_reach_is_allowed() {
     assert!(is_canonical(&store, 10, head_b_hash).await.unwrap());
 }
 
+#[tokio::test]
+async fn reorg_replacing_the_safe_block_is_rejected() {
+    let store = test_store().await;
+    let genesis_header = store.get_block_header(0).unwrap().unwrap();
+    let blockchain = Blockchain::default_with_store(store.clone());
+
+    let block_1 = new_block(&store, &genesis_header).await;
+    let hash_1 = block_1.hash();
+    blockchain.add_block(block_1.clone()).unwrap();
+
+    let block_2 = new_block(&store, &block_1.header).await;
+    let hash_2 = block_2.hash();
+    blockchain.add_block(block_2).unwrap();
+
+    apply_fork_choice(&store, hash_2, hash_2, hash_1, None)
+        .await
+        .unwrap();
+
+    // A side chain on block 1 replaces block 2, the safe block.
+    let side_2 = store_fake_block(&store, 2, hash_1).await;
+    let side_3 = store_fake_block(&store, 3, side_2).await;
+    for head in [side_2, side_3] {
+        let result = apply_fork_choice(&store, head, hash_2, hash_1, None).await;
+        assert!(matches!(result, Err(InvalidForkChoice::Disconnected(_, _))));
+    }
+}
+
 /// Regression (Hive Paris engine re-org tests): with no finalized block
 /// and an empty journal (journal reach is zero, so the retention floor rules), a shallow reorg the node
 /// can serve straight from its in-memory layer cache must be allowed. The former
