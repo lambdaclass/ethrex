@@ -26,7 +26,8 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_storage::error::StoreError;
-use rustc_hash::FxHashSet;
+use lru::LruCache;
+use std::num::NonZeroUsize;
 
 use crate::rlpx::{
     message::RLPxMessage,
@@ -61,8 +62,15 @@ const MAX_ANNOUNCEMENT_BYTES: usize = MAX_PROOF_WRAPPER_ANNOUNCEMENTS * 80 + 64;
 const MAX_REQUEST_BYTES: usize = MAX_PROOF_WRAPPER_REQUEST_HASHES * 33 + 64;
 
 /// Most transactions a connection remembers as already requested from its peer.
-/// Reaching it forgets them all, so the memory per connection stays bounded.
+/// Past it the oldest are forgotten, so the memory per connection stays bounded.
 pub const MAX_REQUESTED_FROM_PEER: usize = 4 * MAX_PROOF_WRAPPER_ANNOUNCEMENTS;
+
+/// Most wrappers a peer may announce and then not deliver, over the life of a
+/// connection, before it is dropped. An honest peer misses a request only when
+/// the transaction left its pool in between. The limit sits well below
+/// [`MAX_REQUESTED_FROM_PEER`], so a peer cannot push a transaction out of that
+/// memory by announcing wrappers it never sends.
+pub const MAX_UNDELIVERED_FROM_PEER: usize = MAX_REQUESTED_FROM_PEER / 4;
 
 /// The transactions whose wrapper a connection has already requested from its
 /// peer. A transaction is requested from a given peer at most once. A peer that
@@ -70,8 +78,16 @@ pub const MAX_REQUESTED_FROM_PEER: usize = 4 * MAX_PROOF_WRAPPER_ANNOUNCEMENTS;
 /// admit, therefore cannot be made to cost a second fetch and a second witness
 /// verification, and cannot take the request again ahead of the other peers that
 /// announced the same transaction.
-#[derive(Debug, Default)]
-pub struct RequestedFromPeer(FxHashSet<H256>);
+#[derive(Debug)]
+pub struct RequestedFromPeer(LruCache<H256, ()>);
+
+impl Default for RequestedFromPeer {
+    fn default() -> Self {
+        Self(LruCache::new(
+            NonZeroUsize::new(MAX_REQUESTED_FROM_PEER).unwrap_or(NonZeroUsize::MIN),
+        ))
+    }
+}
 
 impl RequestedFromPeer {
     /// Drops from `announced` the wrappers of transactions already requested
@@ -80,13 +96,12 @@ impl RequestedFromPeer {
         announced.retain(|wrapper| !self.0.contains(&wrapper.tx_hash));
     }
 
-    /// Records that these wrappers were requested from the peer.
+    /// Records that these wrappers were requested from the peer. When the memory
+    /// is full, the transactions requested longest ago make room.
     pub fn record(&mut self, requested: &[ProofWrapperAnnouncement]) {
-        if self.0.len() + requested.len() > MAX_REQUESTED_FROM_PEER {
-            self.0.clear();
+        for wrapper in requested {
+            self.0.put(wrapper.tx_hash, ());
         }
-        self.0
-            .extend(requested.iter().map(|wrapper| wrapper.tx_hash));
     }
 }
 

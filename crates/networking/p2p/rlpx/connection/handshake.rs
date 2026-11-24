@@ -163,6 +163,7 @@ pub(crate) async fn perform(
             requested_proof_wrappers: HashMap::new(),
             proof_wrappers_requested_from_peer: Default::default(),
             unanswered_proof_wrapper_requests: 0,
+            undelivered_proof_wrappers: 0,
             last_custody_generation: 0,
             client_version: context.client_version.clone(),
             connection_broadcast_send: context.broadcast.clone(),

@@ -24,8 +24,8 @@ use ethrex_p2p::rlpx::{
         cells::GetCells,
         eth73::proof_wrappers::{
             GetProofWrappers, MAX_PROOF_WRAPPER_ANNOUNCEMENTS, MAX_PROOF_WRAPPER_REQUEST_HASHES,
-            MAX_REQUESTED_FROM_PEER, NewProofWrapperHashes, PROOF_WRAPPERS_RESPONSE_SOFT_LIMIT,
-            ProofWrappers, RequestedFromPeer,
+            MAX_REQUESTED_FROM_PEER, MAX_UNDELIVERED_FROM_PEER, NewProofWrapperHashes,
+            PROOF_WRAPPERS_RESPONSE_SOFT_LIMIT, ProofWrappers, RequestedFromPeer,
         },
     },
     message::{EthCapVersion, RLPxMessage},
@@ -368,19 +368,27 @@ fn a_transaction_is_requested_from_a_peer_at_most_once() {
     requested.retain_unrequested(&mut announced);
     assert_eq!(announced, vec![second]);
 
-    // The memory is bounded: past the limit it starts over.
-    let flood: Vec<ProofWrapperAnnouncement> = (0..MAX_REQUESTED_FROM_PEER as u64)
+    // The memory is bounded, and what it gives up first is what was requested
+    // longest ago: after as many later requests as it holds minus one, `first`
+    // is still remembered; one more and it is the only one forgotten.
+    let later: Vec<ProofWrapperAnnouncement> = (0..MAX_REQUESTED_FROM_PEER as u64)
         .map(|n| ProofWrapperAnnouncement {
             wrapper_hash: H256::from_low_u64_be(n),
             tx_hash: H256::from_low_u64_be(n),
             wrapper_len: 8_000,
         })
         .collect();
-    requested.record(&flood);
+    requested.record(&later[..MAX_REQUESTED_FROM_PEER - 1]);
     let mut announced = vec![first];
     requested.retain_unrequested(&mut announced);
-    assert_eq!(announced, vec![first]);
-    let mut announced = vec![flood[0]];
-    requested.retain_unrequested(&mut announced);
     assert!(announced.is_empty());
+
+    requested.record(&later[MAX_REQUESTED_FROM_PEER - 1..]);
+    let mut announced = vec![first, later[0], later[MAX_REQUESTED_FROM_PEER - 1]];
+    requested.retain_unrequested(&mut announced);
+    assert_eq!(announced, vec![first]);
+
+    // A peer is dropped long before the wrappers it announces and withholds could
+    // fill that memory.
+    assert!(MAX_UNDELIVERED_FROM_PEER < MAX_REQUESTED_FROM_PEER);
 }

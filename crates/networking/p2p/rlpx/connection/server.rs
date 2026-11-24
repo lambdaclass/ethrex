@@ -29,8 +29,9 @@ use crate::{
             eth73::{
                 proof_wrappers::{
                     GetProofWrappers, MAX_PROOF_WRAPPER_ANNOUNCEMENTS,
-                    MAX_PROOF_WRAPPER_REQUEST_HASHES, NewProofWrapperHashes,
-                    PROOF_WRAPPERS_RESPONSE_SOFT_LIMIT, ProofWrappers, RequestedFromPeer,
+                    MAX_PROOF_WRAPPER_REQUEST_HASHES, MAX_UNDELIVERED_FROM_PEER,
+                    NewProofWrapperHashes, PROOF_WRAPPERS_RESPONSE_SOFT_LIMIT, ProofWrappers,
+                    RequestedFromPeer,
                 },
                 status::StatusMessage73,
             },
@@ -350,6 +351,9 @@ pub struct Established {
     pub(crate) proof_wrappers_requested_from_peer: RequestedFromPeer,
     /// EIP-8504: how many `GetProofWrappers` requests this peer left unanswered.
     pub(crate) unanswered_proof_wrapper_requests: u8,
+    /// EIP-8504: how many wrappers this peer announced, was asked for and did not
+    /// send, whether it answered without them or not at all.
+    pub(crate) undelivered_proof_wrappers: usize,
     /// Buffered transaction requests waiting to be flushed as a single batch.
     /// Accumulated between flush ticks (TX_REQUEST_BATCH_INTERVAL).
     pub(crate) pending_tx_requests: Vec<(NewPooledTransactionHashes, Vec<H256>)>,
@@ -817,12 +821,17 @@ impl PeerConnectionServer {
                     }
                     state.unanswered_proof_wrapper_requests =
                         state.unanswered_proof_wrapper_requests.saturating_add(1);
+                    state.undelivered_proof_wrappers = state
+                        .undelivered_proof_wrappers
+                        .saturating_add(requested.len());
                 }
             }
             // A peer that keeps announcing wrappers and never sends them only
             // delays the transactions it announces: drop it. Its teardown
             // releases whatever is still requested from it.
-            if state.unanswered_proof_wrapper_requests > MAX_UNANSWERED_PROOF_WRAPPER_REQUESTS {
+            if state.unanswered_proof_wrapper_requests > MAX_UNANSWERED_PROOF_WRAPPER_REQUESTS
+                || state.undelivered_proof_wrappers > MAX_UNDELIVERED_FROM_PEER
+            {
                 debug!(
                     peer=%state.node,
                     "Disconnecting peer: proof wrapper requests left unanswered",
@@ -3089,6 +3098,22 @@ async fn handle_proof_wrappers(
     ethrex_metrics::eip8504::METRICS_EIP8504
         .wrappers_received_total
         .inc_by(msg.wrappers.len() as u64);
+    // The peer announced every wrapper it was asked for. Leaving some out is
+    // allowed, since a transaction can leave its pool in between, but a peer
+    // that does it at scale is announcing what it does not serve.
+    state.undelivered_proof_wrappers = state
+        .undelivered_proof_wrappers
+        .saturating_add(requested.len().saturating_sub(msg.wrappers.len()));
+    if state.undelivered_proof_wrappers > MAX_UNDELIVERED_FROM_PEER {
+        debug!(
+            peer=%state.node,
+            "Disconnecting peer: too many announced proof wrappers not delivered",
+        );
+        send_disconnect_message(state, Some(DisconnectReason::UselessPeer)).await;
+        return Err(PeerConnectionError::DisconnectSent(
+            DisconnectReason::UselessPeer,
+        ));
+    }
     if !state.blockchain.is_synced() {
         return Ok(());
     }
