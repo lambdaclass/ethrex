@@ -14,5 +14,6 @@ mod progressive_ssz_tests;
 mod requests_eip8282_tests;
 mod rkyv_utils_tests;
 mod serde_utils_tests;
+mod typed_signature_tests;
 mod utils_tests;
 mod withdrawal_rlp_tests;

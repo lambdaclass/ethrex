@@ -20,7 +20,7 @@ env:
 jobs:
   build-block-benchmark:
     if: contains(github.event.pull_request.labels.*.name, 'performance')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0

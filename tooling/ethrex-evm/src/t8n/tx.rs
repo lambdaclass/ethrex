@@ -94,18 +94,11 @@ fn to_call_address(to: &Option<Address>, tx_type: u64) -> Result<Address, String
     to.ok_or_else(|| format!("Contract creation in type {tx_type} transaction"))
 }
 
-fn y_parity(v: U256) -> Result<bool, String> {
-    if v == U256::zero() {
-        Ok(false)
-    } else if v == U256::one() {
-        Ok(true)
+fn y_parity(v: U256) -> Result<U256, String> {
+    if v <= U256::one() {
+        Ok(v)
     } else {
-        // The canonical ethrex message for a non-boolean parity, as emitted
-        // by the RLP decoder for the same transaction.
-        Err(format!(
-            "Error decoding field 'signature_y_parity' of type bool: \
-             MalformedBoolean (value: {v})"
-        ))
+        Err(format!("invalid signature y_parity (value: {v})"))
     }
 }
 

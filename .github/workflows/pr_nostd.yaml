@@ -30,7 +30,7 @@ jobs:
     # `use std::` regressions. Needs nightly (JSON target spec + build-std);
     # see .github/targets/README.md.
     name: no_std build check (riscv64im_zicclsm)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v6.1.0
 
@@ -56,7 +56,7 @@ jobs:
     # features a host build does not enable. Without this, the first thing to
     # compile `crypto/zkvm_interface.rs` is the Ere docker build in tag_release.
     name: stateless-validator feature check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v6.1.0
 

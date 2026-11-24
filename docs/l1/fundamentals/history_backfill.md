@@ -89,13 +89,23 @@ DEBUG History backfill advanced
 
 The reconciliation bisects the database for the lowest block with a contiguous
 body (~25 reads on mainnet), which is the node's original snap pivot. A node that
-full-synced from genesis reconciles to `0` and completes immediately, since it
-already holds all history.
+full-synced from genesis reconciles to `0`, since it already holds all history.
 
-Note that the reconciliation only runs when backfill is enabled. An upgraded node
-left at `--history.chain off` keeps the stale `earliest_block_number`, so the
-`earliest` block tag still reports genesis even though pre-pivot bodies are
-absent. Enabling backfill (or a fresh snap sync) sets it correctly.
+The reconciliation also runs with `--history.chain off`, once the node is synced.
+It corrects a second bound as well: the block from which the transaction index is
+complete, which sits above genesis on a database that was backfilled with
+`--history.transactions` before that bound was recorded. Since a database does not
+say whether that happened, every database created by an earlier version is
+searched once. The search reads every stored block from the head down, in the
+background, until it finds one that is missing from the index. It therefore takes
+much longer than the bisect above, in proportion to the history the node stores,
+and backfill resumes after it. Its progress is logged every million blocks. It
+keeps no checkpoint: a restart before it completes starts it again from the head.
+
+Until the reconciliation has run, `eth_capabilities` reports `blocks`, `tx`, `logs`
+and `receipts` as disabled on a database created by an earlier version, because
+its bounds may be stale. A node that is never synced, such as one with no
+consensus client, stays in that state.
 
 ## How it works
 
@@ -109,7 +119,7 @@ catching up first, so backfill never competes with a catch-up for peers.
 flowchart TD
     spawned([Backfill task spawned]) --> gate{"Initial sync finished?"}
     gate -- no --> wait["Idle 10s"] --> gate
-    gate -- yes --> reconcile["One-time: reconcile frontier to lowest full-data block"]
+    gate -- yes --> reconcile["One-time: reconcile frontier to lowest full-data block, search the stored history for unindexed blocks"]
     reconcile --> floor{"Resolve floor for mode"}
     floor --> done0{"frontier ≤ floor?"}
     done0 -- yes --> complete([Complete])
@@ -193,6 +203,10 @@ healthy backfill is quiet between the start and completion messages:
 | --- | --- | --- |
 | `Historical chain backfill enabled` | info | task starts |
 | `Reconciled backfill frontier ...` | info | startup, only if the frontier drifted |
+| `Searching the stored history for blocks an earlier backfill left unindexed` | info | the search starts, on a database created by an earlier version |
+| `Searching the stored history for unindexed blocks` | info | every million blocks of that search |
+| `Recorded the transaction index floor of an earlier backfill` | info | the search found unindexed blocks |
+| `Every stored block is in the transaction index` | info | the search found none |
 | `History backfill advanced` | debug | each batch |
 | `Historical chain backfill complete` | info | frontier reaches the floor |
 | `History backfill step failed (will retry)` | warn | a batch failed; it retries |

@@ -20,7 +20,7 @@ env:
 
 jobs:
   detect-changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
@@ -39,7 +39,7 @@ jobs:
     name: Test
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6.1.0

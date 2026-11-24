@@ -16,7 +16,7 @@ env:
 jobs:
   build-and-push-image:
     name: Build and push Docker image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     # Sets the permissions granted to the `GITHUB_TOKEN` for the actions in this job.
     permissions:
