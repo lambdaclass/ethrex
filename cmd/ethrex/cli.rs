@@ -35,7 +35,8 @@ use crate::{
     },
     utils::{
         self, default_datadir, get_client_version, get_client_version_string,
-        get_minimal_client_version, init_datadir, is_memory_datadir,
+        get_long_client_version_string, get_minimal_client_version, init_datadir,
+        is_memory_datadir,
     },
 };
 
@@ -63,7 +64,7 @@ pub fn compute_effective_datadir(base: &Path, network: &Network, dev: bool) -> P
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
-#[command(name="ethrex", author = "Lambdaclass", version=get_client_version_string(), about = "ethrex Execution client", args_override_self = true)]
+#[command(name="ethrex", author = "Lambdaclass", version=get_client_version_string(), long_version=get_long_client_version_string(), about = "ethrex Execution client", args_override_self = true)]
 pub struct CLI {
     #[command(flatten)]
     pub opts: Options,

@@ -67,3 +67,5 @@ Check that Ethrex is installed and working:
 ```sh
 ethrex --version
 ```
+
+The second line of the output lists the features the binary was compiled with, which tells the L1 binary apart from the L2 ones (`l2`, `sp1`, `gpu`) once they are installed under the same `ethrex` name. `ethrex -V` prints the version line alone.
