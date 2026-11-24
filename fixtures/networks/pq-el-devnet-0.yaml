@@ -1,0 +1,52 @@
+# pq-el-devnet-0: leanSPHINCS signatures on frame transactions without
+# aggregation (EIP-8504), on ethrex with ethlambda as the consensus client.
+#
+# Both images are built from the `pq-el-devnet-0` branches of the two clients:
+#
+#   docker build -t ethrex:pq-el-devnet-0 .                      (this repository)
+#   docker build -t ethlambda:pq-el-devnet-0 .                   (ethlambda)
+#
+# Run it with ethpandaops/ethereum-package, which has `cl_type: ethlambda`:
+#
+#   kurtosis run <ethereum-package> --enclave pq-el-devnet-0 \
+#     --args-file fixtures/networks/pq-el-devnet-0.yaml
+#
+# Then send transactions with tooling/leansphincs_sender, whose 16 default
+# accounts are the ones preloaded below (see docs/eip-8504.md).
+participants:
+  - el_type: ethrex
+    el_image: ethrex:pq-el-devnet-0
+    el_extra_params:
+      # The genesis generator does not emit `eip8504Time`: activate EIP-8504
+      # with Hegota.
+      - --eip8504-with-hegota
+      # Dependency transactions travel over eth/73, which ethrex offers under
+      # the same condition as eth/72.
+      - --blob-sampling
+    cl_type: ethlambda
+    cl_image: ethlambda:pq-el-devnet-0
+    vc_type: ethlambda
+    vc_image: ethlambda:pq-el-devnet-0
+    count: 3
+
+network_params:
+  preset: minimal
+  # ethlambda's execution payload is the Gloas one, with the dependency
+  # witnesses appended, from genesis.
+  gloas_fork_epoch: 0
+  # Hegota on the execution layer only, one epoch after genesis: the consensus
+  # layer stays on Gloas. It cannot be at genesis, because the genesis block
+  # the generator computes has no dependency witnesses commitment.
+  heze_fork_epoch: 1
+  frames_enabled: true
+  # The accounts `leansphincs_sender alloc --accounts 16` prints for the
+  # default seed, each controlled by a leanSPHINCS key through its code.
+  additional_preloaded_contracts: '{"0x008292b820008d9d7218710fa962c6d9610dd970":{"balance":"1000ETH","code":"0x60025f35b36004145f3560606020355fb25f516010141660205115166040517f6ab6ee4c803f269a6bf3289c309c4648ce6f13ce90d5a378ba492aba62ae4cf014166048575f5ffd5b60035f5faa","storage":{},"nonce":0},"0x085272f5a99c4c4d8c8fbc0a532425e1ac038c45":{"balance":"1000ETH","code":"0x60025f35b36004145f3560606020355fb25f516010141660205115166040517f118383efc650226468d54daedc2e75c70205479036cff5ce873435d11d41f5b614166048575f5ffd5b60035f5faa","storage":{},"nonce":0},"0x0eb014ab3754ca5783aa0043462a3e17e1aedf4e":{"balance":"1000ETH","code":"0x60025f35b36004145f3560606020355fb25f516010141660205115166040517f1ffedb331699c154b28522a097f88b7b1c1fef8f4bad24fa3ae729179d022f6e14166048575f5ffd5b60035f5faa","storage":{},"nonce":0},"0x1b425c9196788ab3a7745dfae00fce0b5765f932":{"balance":"1000ETH","code":"0x60025f35b36004145f3560606020355fb25f516010141660205115166040517f5d7195b0fc9b35a854b47c5cf50558a94e2e11975d600027393af1b3ed10b64a14166048575f5ffd5b60035f5faa","storage":{},"nonce":0},"0x244f6afc935382fc519746aa488115891b8d3891":{"balance":"1000ETH","code":"0x60025f35b36004145f3560606020355fb25f516010141660205115166040517fb63e05b5e62761f3656631e1a1469301e83dd42f22219fd460e6e48d9f676ba314166048575f5ffd5b60035f5faa","storage":{},"nonce":0},"0x261724cb5c6f4a267b59e4dd33a3137bce4bbf7d":{"balance":"1000ETH","code":"0x60025f35b36004145f3560606020355fb25f516010141660205115166040517fcbeab17e81db5cb33480601e73657e5e80d1a9936a8237acfbc0657a77c3b39714166048575f5ffd5b60035f5faa","storage":{},"nonce":0},"0x3f8d48f97fe5b87db672f7365c4f2c56f084bc27":{"balance":"1000ETH","code":"0x60025f35b36004145f3560606020355fb25f516010141660205115166040517fe5fdf62167d94b0ada68629ef9434328f8d4b96b3873996671e55946d4c249b214166048575f5ffd5b60035f5faa","storage":{},"nonce":0},"0x481c82226fe1a26dd178f16a9884b439de01a1ec":{"balance":"1000ETH","code":"0x60025f35b36004145f3560606020355fb25f516010141660205115166040517f4eff0657d3dd69cc79e5f2e8698febc1a8a3d5889e2d544318baab9b4b4c5c9014166048575f5ffd5b60035f5faa","storage":{},"nonce":0},"0x68d48a11a4c14ef769716b3f48511b9ad161c4d4":{"balance":"1000ETH","code":"0x60025f35b36004145f3560606020355fb25f516010141660205115166040517f2d609aa2776cb687a6d6da02806c3f4533fb915b4699135b5d8afec16d3747ae14166048575f5ffd5b60035f5faa","storage":{},"nonce":0},"0x7ee58c5ff263f5ec8c7c7f4f64edff005b0755af":{"balance":"1000ETH","code":"0x60025f35b36004145f3560606020355fb25f516010141660205115166040517f77ddd67aa131e1b45a4dd4e2e47f47aaaa05908d3be07b914b9ebf37094e5b1f14166048575f5ffd5b60035f5faa","storage":{},"nonce":0},"0xa0df593b65834b964951c36ed2edef38fcdbc30a":{"balance":"1000ETH","code":"0x60025f35b36004145f3560606020355fb25f516010141660205115166040517fd39f1a949a2da3095d4aaeb12b7e0cc3febd7006f846867bc1ef83fc7e754e9e14166048575f5ffd5b60035f5faa","storage":{},"nonce":0},"0xa889834207343ecfc4434734945e3721260026d7":{"balance":"1000ETH","code":"0x60025f35b36004145f3560606020355fb25f516010141660205115166040517f688aab5053f03ba677a47c2d1b823a71fafd951586a3f8f757e7373662a1984a14166048575f5ffd5b60035f5faa","storage":{},"nonce":0},"0xafa17f033638de60e7a4128ce327b67024f57c76":{"balance":"1000ETH","code":"0x60025f35b36004145f3560606020355fb25f516010141660205115166040517f73c1f96610a75abf7b0db33b33dba4042f16d6ff6c5e8801ef065684d5bd854914166048575f5ffd5b60035f5faa","storage":{},"nonce":0},"0xbd6fea88015ad67cc46f39e2bbeb693df935ae50":{"balance":"1000ETH","code":"0x60025f35b36004145f3560606020355fb25f516010141660205115166040517feb7cfb04946e4e36765467a24939f9ff4cc1d3a28d47d6f24e7df2dd989adfc314166048575f5ffd5b60035f5faa","storage":{},"nonce":0},"0xc37cf894d16f75f4e291b55f275a4c68e8308740":{"balance":"1000ETH","code":"0x60025f35b36004145f3560606020355fb25f516010141660205115166040517ff2754f7d1470b57cc98fc0f09c55d1600c54bdb503aee4eb00fb6d46364fbc8714166048575f5ffd5b60035f5faa","storage":{},"nonce":0},"0xed41049aab1e6d80f057e9b385ca19640507cdcd":{"balance":"1000ETH","code":"0x60025f35b36004145f3560606020355fb25f516010141660205115166040517f15e397e816c82d65626f5626a284643bc0b0bb6bdfcc96779d8851f4c0bd777214166048575f5ffd5b60035f5faa","storage":{},"nonce":0}}'
+
+port_publisher:
+  el:
+    enabled: true
+    public_port_start: 42000
+  cl:
+    enabled: true
+    public_port_start: 43000
