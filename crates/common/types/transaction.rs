@@ -2314,6 +2314,13 @@ pub const FRAME_TX_RECENT_ROOT_TUPLE_BYTES: usize = 72;
 /// raised EIP-7976 floor always applies and neither needs a fork parameter.
 const FRAME_TX_STANDARD_TOKEN_COST: u64 = 4;
 const FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN: u64 = 16;
+/// EIP-8504: gas a transaction pays for each of its dependencies, for the
+/// witness the block carries on its behalf (provisional). A witness is priced
+/// byte for byte like transaction data at the calldata floor, so a signature
+/// costs the same beside the transaction as it would inside it.
+pub const LEANSPHINCS_WITNESS_GAS: u64 = LEANSPHINCS_SIGNATURE_SIZE as u64
+    * FRAME_TX_STANDARD_TOKEN_COST
+    * FRAME_TX_TOTAL_COST_FLOOR_PER_TOKEN;
 /// EIP-8141 signature schemes: ARBITRARY=0, SECP256K1=1, P256=2.
 pub const FRAME_SIG_SCHEME_ARBITRARY: u8 = 0;
 pub const FRAME_SIG_SCHEME_SECP256K1: u8 = 1;
@@ -2807,15 +2814,27 @@ impl FrameTransaction {
     }
 
     /// The mandatory costs, always charged in full: the intrinsic cost, the
-    /// per-frame cost, signature verification, value transfers, and EIP-8250's
-    /// keyed-nonce access. They are the terms EIP-8141's `frame_tx_intrinsic_gas` and
-    /// `calldata_floor_gas` share, so each is charged once on either side.
+    /// per-frame cost, signature verification, value transfers, EIP-8250's
+    /// keyed-nonce access, and EIP-8504's witnesses. They are the terms EIP-8141's
+    /// `frame_tx_intrinsic_gas` and `calldata_floor_gas` share, so each is charged
+    /// once on either side.
     pub fn mandatory_gas(&self) -> u64 {
         FRAME_TX_INTRINSIC_COST
             .saturating_add((self.frames.len() as u64).saturating_mul(FRAME_TX_PER_FRAME_COST))
             .saturating_add(self.signature_verification_cost())
             .saturating_add(self.value_transfer_gas())
             .saturating_add(self.keyed_nonce_access_cost())
+            .saturating_add(self.dependency_witness_gas())
+    }
+
+    /// EIP-8504: `LEANSPHINCS_WITNESS_GAS` for every entry of `dependencies()`, so
+    /// a triple declared more than once is paid for once. The witnesses are not
+    /// transaction data, so nothing else prices their bytes; charging them here
+    /// puts them on both sides of the `max_gas` comparison, and the calldata floor
+    /// cannot absorb them. A dependency that two transactions share is paid by
+    /// both, although the block carries a single witness for it.
+    pub fn dependency_witness_gas(&self) -> u64 {
+        (self.dependencies().len() as u64).saturating_mul(LEANSPHINCS_WITNESS_GAS)
     }
 
     /// EIP-8250 `keyed_nonce_access_cost`: `KEYED_NONCE_ACCESS_COST` for every key,
@@ -7359,5 +7378,48 @@ mod tests {
         expected.dedup();
         assert_eq!(dependencies.len(), 3);
         assert_eq!(dependencies, expected);
+    }
+
+    #[test]
+    fn witness_gas_is_charged_once_per_dependency_on_both_sides_of_max_gas() {
+        assert_eq!(LEANSPHINCS_WITNESS_GAS, 495_360);
+
+        let key = H256::repeat_byte(0xAA);
+        let plain = make_test_frame_tx();
+        assert_eq!(plain.dependency_witness_gas(), 0);
+
+        // The same triple declared three times, in two frames, is one dependency;
+        // a second key makes two.
+        let mut tx = make_test_frame_tx();
+        tx.frames
+            .insert(1, proof_frame(&[(H256::zero(), key), (H256::zero(), key)]));
+        tx.frames.push(proof_frame(&[
+            (H256::zero(), key),
+            (H256::zero(), H256::repeat_byte(0xBB)),
+        ]));
+        assert_eq!(tx.dependencies().len(), 2);
+        assert_eq!(tx.dependency_witness_gas(), 2 * LEANSPHINCS_WITNESS_GAS);
+
+        // Against the same transaction with the witnesses unpriced, both the
+        // standard total and the floor total grow by exactly the witness gas.
+        let frames = tx.frames.len() as u64;
+        let unpriced_mandatory = tx.mandatory_gas() - tx.dependency_witness_gas();
+        assert_eq!(
+            unpriced_mandatory,
+            FRAME_TX_INTRINSIC_COST
+                + frames * FRAME_TX_PER_FRAME_COST
+                + tx.signature_verification_cost()
+        );
+        assert_eq!(
+            tx.standard_gas_limit(),
+            unpriced_mandatory
+                + 2 * LEANSPHINCS_WITNESS_GAS
+                + tx.data_cost()
+                + tx.total_frame_gas()
+        );
+        assert_eq!(
+            tx.calldata_floor_total(),
+            unpriced_mandatory + 2 * LEANSPHINCS_WITNESS_GAS + tx.calldata_floor_gas()
+        );
     }
 }

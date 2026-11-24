@@ -161,6 +161,8 @@ pub enum MempoolError {
     FrameTxSenderAlreadyPending,
     #[error("Frame transaction validation-prefix simulation failed: {0}")]
     FrameTxValidationFailed(String),
+    #[error("Frame transaction has dependencies but was submitted without their witnesses")]
+    DependencyTransactionWithoutWitnesses,
     #[error("Frame transaction paymaster has insufficient balance to cover the reserved max cost")]
     FrameTxPaymasterUnderfunded,
     #[error(

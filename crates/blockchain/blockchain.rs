@@ -3879,6 +3879,13 @@ impl Blockchain {
                 .validate_static_constraints_with(config.is_eip8504_activated(header.timestamp))
                 .map_err(MempoolError::InvalidFrameTransaction)?;
 
+            // EIP-8504: a transaction with proof frames is admitted only together
+            // with a witness for each of its dependencies. It can never be included
+            // without them, so one that arrives alone is rejected here.
+            if frame_tx.has_proof_frames() {
+                return Err(MempoolError::DependencyTransactionWithoutWitnesses);
+            }
+
             // Frame `data` size is bounded by the wire-size cap below
             // (MAX_TX_SIZE over encode_canonical_len), which covers the
             // frames' payloads since they are part of the canonical encoding.
