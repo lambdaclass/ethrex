@@ -2,7 +2,7 @@ use crate::cli::Options as L1Options;
 use crate::initializers::{
     self, get_authrpc_socket_addr, get_http_socket_addr, get_local_node_record, get_local_p2p_node,
     get_network, get_signer, get_ws_socket_addr, init_blockchain, init_network, init_store,
-    init_store_with_config,
+    init_store_with_config, load_rocksdb_options,
 };
 use crate::l2::{L2Options, SequencerOptions};
 use crate::utils::{
@@ -231,11 +231,14 @@ pub async fn init_l2(
     let genesis = network.get_genesis()?;
     // An explicit size skips memory detection entirely; the default path runs
     // it once and logs the derivation.
-    let store_config = opts
-        .node_opts
-        .rocksdb_block_cache_size
-        .map(StoreConfig::with_rocksdb_block_cache_size)
-        .unwrap_or_default();
+    let store_config = StoreConfig {
+        rocksdb_options: load_rocksdb_options(&opts.node_opts)?,
+        ..opts
+            .node_opts
+            .rocksdb_block_cache_size
+            .map(StoreConfig::with_rocksdb_block_cache_size)
+            .unwrap_or_default()
+    };
     let store = init_store_with_config(&datadir, genesis.clone(), store_config).await?;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 

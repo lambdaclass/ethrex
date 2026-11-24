@@ -19,6 +19,7 @@ use crate::{
     journal::{FlatDiff, JournalEntry},
     layering::{Overlay, OverlayCf, TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
+    rocksdb_options::RocksDbOptions,
     trie::{BackendTrieDB, BackendTrieDBLocked, classify_trie_key},
     utils::{ChainDataIndex, SnapStateIndex},
 };
@@ -249,13 +250,17 @@ fn cgroup_limit_up_to_root(mount: &Path, relative: &str, file: &str) -> Option<u
 ///
 /// Use [`StoreConfig::default()`] for production-tuned defaults; callers that
 /// don't need to override anything should keep calling [`Store::new`] directly.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct StoreConfig {
     /// Size in bytes of the RocksDB shared block cache. With
     /// `cache_index_and_filter_blocks` enabled (the ethrex default), this is
     /// the effective ceiling on RocksDB's resident memory. Ignored for
     /// in-memory backends.
     pub rocksdb_block_cache_size: usize,
+    /// Overrides for the options RocksDB is opened with, typically loaded from a
+    /// file with [`RocksDbOptions::from_file`]. Empty by default, which keeps
+    /// every built-in option. Ignored for in-memory backends.
+    pub rocksdb_options: RocksDbOptions,
     /// Byte budget of the bytecode cache. `None` keeps [`CODE_CACHE_MAX_SIZE`].
     pub code_cache_size: Option<u64>,
     /// Bound on the persist worker's channel: number of staged (acked) live
@@ -273,6 +278,7 @@ impl StoreConfig {
     pub fn with_rocksdb_block_cache_size(rocksdb_block_cache_size: usize) -> Self {
         Self {
             rocksdb_block_cache_size,
+            rocksdb_options: RocksDbOptions::default(),
             code_cache_size: None,
             persist_channel_capacity: DEFAULT_PERSIST_CHANNEL_CAPACITY,
         }
@@ -2538,9 +2544,10 @@ impl Store {
                     // Open backend, run migrations, then drop obsolete CFs.
                     // Cleanup must happen AFTER migrations so legacy CFs (e.g.
                     // `receipts`) are still readable during the migration.
-                    let rocksdb = Arc::new(RocksDBBackend::open(
+                    let rocksdb = Arc::new(RocksDBBackend::open_with_options(
                         &path,
                         config.rocksdb_block_cache_size,
+                        &config.rocksdb_options,
                     )?);
                     crate::migrations::run_pending_migrations(rocksdb.as_ref(), &db_path, v)?;
                     rocksdb.drop_obsolete_cfs(&path);
@@ -2564,7 +2571,11 @@ impl Store {
         match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
-                let rocksdb = RocksDBBackend::open(&path, config.rocksdb_block_cache_size)?;
+                let rocksdb = RocksDBBackend::open_with_options(
+                    &path,
+                    config.rocksdb_block_cache_size,
+                    &config.rocksdb_options,
+                )?;
                 rocksdb.drop_obsolete_cfs(&path);
                 let backend: Arc<dyn StorageBackend> = Arc::new(rocksdb);
                 Self::from_backend(

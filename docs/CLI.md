@@ -249,6 +249,11 @@ Storage options:
           
           [env: ETHREX_ROCKSDB_BLOCK_CACHE_SIZE=]
 
+      --rocksdb.options-file <PATH>
+          JSON file with RocksDB options that replace ethrex's built-in ones, for trying a different tuning without rebuilding. `db` holds database-wide options and `column_families` holds per-table ones, e.g. {"db": {"max_background_jobs": 12}, "column_families": {"account_trie_nodes": {"block_size": 4096}}}. Options left out keep their default; an unknown option or table is an error.
+          
+          [env: ETHREX_ROCKSDB_OPTIONS_FILE=]
+
       --code-cache-size <BYTES>
           Byte budget of the in-memory bytecode cache. Defaults to 2 GiB, which holds ~29k max-size contracts; the cache only grows with code that blocks actually load. Lower it on memory-constrained hosts, or raise it for workloads that keep reusing more distinct contracts than that.
           
