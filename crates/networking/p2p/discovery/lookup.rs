@@ -53,7 +53,7 @@ impl IterativeLookup {
         }
 
         // Sort by distance (ascending) and truncate to bucket size
-        result.sort_by(|a, b| a.distance.cmp(&b.distance));
+        result.sort_by_key(|a| a.distance);
         result.truncate(LOOKUP_BUCKET_SIZE);
 
         Self {
@@ -115,7 +115,7 @@ impl IterativeLookup {
             }
 
             // Re-sort after insertion
-            self.result.sort_by(|a, b| a.distance.cmp(&b.distance));
+            self.result.sort_by_key(|a| a.distance);
         }
     }
 

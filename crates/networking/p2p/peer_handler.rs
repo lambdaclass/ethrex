@@ -474,7 +474,7 @@ impl PeerHandler {
             }
         }
 
-        ret.sort_by(|x, y| x.number.cmp(&y.number));
+        ret.sort_by_key(|x| x.number);
 
         // Chunks are requested by number from different peers. A peer following another
         // chain with the same history (a shadowfork's parent network, a deep reorg) answers

@@ -79,7 +79,7 @@ fn select_warm_set(
             Some((tip, sender, txs))
         })
         .collect();
-    groups.sort_by(|a, b| b.0.cmp(&a.0));
+    groups.sort_by_key(|group| std::cmp::Reverse(group.0));
 
     let mut out = Vec::new();
     let mut gas_acc: u64 = 0;

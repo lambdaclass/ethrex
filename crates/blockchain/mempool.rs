@@ -1361,7 +1361,7 @@ impl Mempool {
             FxHashMap::with_capacity_and_hasher(128, Default::default());
         let tx_pool = &self.read()?.transaction_pool;
 
-        for (_, tx) in tx_pool.iter() {
+        for tx in tx_pool.values() {
             txs_by_sender
                 .entry(tx.sender())
                 .or_insert_with(|| Vec::with_capacity(128))
@@ -1382,7 +1382,7 @@ impl Mempool {
             FxHashMap::with_capacity_and_hasher(128, Default::default());
         let tx_pool = &self.read()?.transaction_pool;
 
-        for (_, tx) in tx_pool.iter() {
+        for tx in tx_pool.values() {
             if filter(tx) {
                 txs_by_sender
                     .entry(tx.sender())

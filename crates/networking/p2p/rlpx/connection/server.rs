@@ -1366,14 +1366,14 @@ where
                             negotiated_eth_version = cap.version;
                         }
                     }
-                    "snap" => {
-                        // Match against what this connection actually advertised, not the
-                        // full set: negotiating a version we withheld would hand back the
-                        // snap/2 the sync gate above deliberately kept off the wire.
-                        if snap_capabilities.contains(cap) && cap.version > negotiated_snap_version
-                        {
-                            negotiated_snap_version = cap.version;
-                        }
+                    // Match against what this connection actually advertised, not the
+                    // full set: negotiating a version we withheld would hand back the
+                    // snap/2 the sync gate above deliberately kept off the wire.
+                    "snap"
+                        if snap_capabilities.contains(cap)
+                            && cap.version > negotiated_snap_version =>
+                    {
+                        negotiated_snap_version = cap.version;
                     }
                     #[cfg(feature = "l2")]
                     "based" if state.l2_state.is_supported() => {

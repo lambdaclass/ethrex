@@ -195,9 +195,7 @@ impl Deposit {
         ];
 
         // Validate Offsets & Sizes
-        for (i, (expected_offset, expected_size)) in
-            OFFSETS.into_iter().zip(SIZES.into_iter()).enumerate()
-        {
+        for (i, (expected_offset, expected_size)) in OFFSETS.into_iter().zip(SIZES).enumerate() {
             let offset = fixed_bytes::<WORD>(data, i * WORD)?;
             let size = fixed_bytes::<WORD>(data, expected_offset as usize)?;
             if offset[U32_TAIL..] != expected_offset.to_be_bytes()

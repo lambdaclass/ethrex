@@ -42,7 +42,7 @@ pub async fn run_ef_test(test: &EFTest) -> Result<EFTestReport, EFTestRunnerErro
     for fork in test.post.forks.keys() {
         let mut ef_test_report_fork = EFTestReportForkResult::new();
 
-        for (vector, _tx) in test.transactions.iter() {
+        for vector in test.transactions.keys() {
             // This is because there are some test vectors that are not valid for the current fork.
             if !test.post.has_vector_for_fork(vector, *fork) {
                 continue;

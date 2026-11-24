@@ -793,6 +793,9 @@ async fn add_blocks(
         .await
 }
 
+// The error carries the failed batch's position back to the sync loop, and boxing
+// it would change every caller of this path for a lint newer toolchains add.
+#[allow(clippy::result_large_err)]
 async fn run_blocks_pipeline(
     blockchain: Arc<Blockchain>,
     blocks: Vec<Block>,
@@ -800,7 +803,7 @@ async fn run_blocks_pipeline(
 ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
     tokio::task::spawn_blocking(move || {
         let mut last_valid_hash = H256::default();
-        for (block, bal) in blocks.into_iter().zip(bals.into_iter()) {
+        for (block, bal) in blocks.into_iter().zip(bals) {
             let block_hash = block.hash();
             blockchain
                 .add_block_pipeline_bounded(block, bal.map(Arc::new), DB_COMMIT_THRESHOLD)

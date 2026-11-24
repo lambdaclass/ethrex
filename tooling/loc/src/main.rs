@@ -80,7 +80,7 @@ fn main() {
     if let Some(cmd_loc) = count_loc(ethrex_path.join("cmd"), &config) {
         ethrex_crates_loc.push(("cmd".to_owned(), cmd_loc.code));
     }
-    ethrex_crates_loc.sort_by(|a, b| b.1.cmp(&a.1));
+    ethrex_crates_loc.sort_by_key(|entry| std::cmp::Reverse(entry.1));
 
     spinner.success("Lines of code calculated!");
 

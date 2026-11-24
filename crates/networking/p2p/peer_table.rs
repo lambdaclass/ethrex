@@ -1394,7 +1394,7 @@ impl PeerTableServer {
             }
         }
 
-        nodes.sort_by(|a, b| a.2.cmp(&b.2));
+        nodes.sort_by_key(|a| a.2);
         nodes.into_iter().map(|(id, node, _)| (id, node)).collect()
     }
 
