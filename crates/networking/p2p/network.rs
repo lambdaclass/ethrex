@@ -157,10 +157,19 @@ async fn announce_local_entries(
     local_node: &SharedLocalNode,
 ) -> Result<Option<ForkId>, NodeError> {
     let fork_id = context.storage.get_fork_id().await.ok();
-    local_node.edit_record(&context.signer, |pairs| {
-        add_local_entries(pairs, fork_id.clone())
-    })?;
+    announce_entries(local_node, &context.signer, fork_id.clone())?;
     Ok(fork_id)
+}
+
+/// The edit [`announce_local_entries`] makes, once it has the fork id: one
+/// `seq` bump on top of the record the slot holds.
+fn announce_entries(
+    local_node: &SharedLocalNode,
+    signer: &SecretKey,
+    fork_id: Option<ForkId>,
+) -> Result<(), NodeError> {
+    local_node.edit_record(signer, |pairs| add_local_entries(pairs, fork_id.clone()))?;
+    Ok(())
 }
 
 /// Every connection offers snap (see
@@ -173,6 +182,12 @@ pub(crate) fn add_local_entries(pairs: &mut NodeRecordPairs, fork_id: Option<For
     pairs.snap = Some(vec![1, 2]);
 }
 
+/// Starts discovery, the RLPx listener and the tasks around them.
+///
+/// `shared_local_node` must already hold this node's record, for
+/// `context.local_node` and signed by `context.signer`, at the `seq` it should
+/// start from: the local entries are added on top of it with one more bump,
+/// and discovery serves it from then on.
 pub async fn start_network(
     context: P2PContext,
     bootnodes: Vec<Node>,
@@ -937,4 +952,48 @@ fn spawn_fork_id_publisher(
         }
     });
     rx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{LocalNode, NodeRecord};
+    use crate::utils::public_key_from_signing_key;
+    use ethrex_common::H32;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    /// Regression: `start_network` used to rebuild the record from
+    /// `INITIAL_ENR_SEQ`, so every boot served `seq` 2, behind the copy peers
+    /// cached during the previous run. The entries must land on the record the
+    /// caller started, with one bump and nothing else lost.
+    #[test]
+    fn announcing_builds_on_the_record_the_slot_holds() {
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let pubkey = public_key_from_signing_key(&signer);
+        let ip = Ipv4Addr::new(203, 0, 113, 7);
+        let node = Node::new(IpAddr::V4(ip), 30303, 30303, pubkey);
+        let started_at = 1_793_310_171_057;
+        let mut record = NodeRecord::from_node(&node, started_at, &signer).unwrap();
+        record
+            .edit(&signer, |pairs| {
+                pairs.set_extra(b"marker", vec![1u8]);
+            })
+            .unwrap();
+        let local_node = SharedLocalNode::new(LocalNode { node, record });
+        let fork_id = ForkId {
+            fork_hash: H32::from_low_u64_be(0xdead_beef),
+            fork_next: 0,
+        };
+
+        announce_entries(&local_node, &signer, Some(fork_id.clone())).unwrap();
+
+        let announced = local_node.load();
+        let pairs = announced.record.pairs();
+        assert_eq!(announced.record.seq, started_at + 2, "one bump on top");
+        assert_eq!(pairs.eth, Some(fork_id));
+        assert_eq!(pairs.snap, Some(vec![1, 2]));
+        assert_eq!(pairs.extra(b"marker"), Some(vec![1u8].into()));
+        assert_eq!(pairs.ip, Some(ip));
+        assert!(announced.record.verify_signature());
+    }
 }

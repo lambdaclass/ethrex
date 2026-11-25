@@ -721,26 +721,44 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
 /// The record this node starts serving from, at a `seq` above every one it
 /// served before: peers only fetch a record again once its `seq` grows.
 ///
-/// The record saved at shutdown covers a clean restart. An abrupt one (a crash,
-/// `docker restart -t 0`) skips that save and leaves an older `seq` on disk, so
-/// the current time in milliseconds is the floor: the previous run would have
-/// had to change its record more than once per millisecond of uptime to get
-/// past it. The saved `seq` still wins when the clock is behind it.
+/// See [`starting_enr_seq`] for how that `seq` is chosen. A `node_config.json`
+/// that exists but cannot be read is reported and treated as absent, which
+/// leaves the clock as the only floor.
 pub fn get_local_node_record(
     datadir: &Path,
     local_p2p_node: &Node,
     signer: &SecretKey,
 ) -> NodeRecord {
-    let after_saved = match read_node_config_file(datadir) {
-        Ok(Some(config)) => config.node_record.seq.saturating_add(1),
-        _ => 0,
+    let saved_seq = match read_node_config_file(datadir) {
+        Ok(config) => config.map(|config| config.node_record.seq),
+        Err(err) => {
+            warn!(%err, "Could not read the saved node record; the ENR seq starts from the clock");
+            None
+        }
     };
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
         .unwrap_or_default();
-    NodeRecord::from_node(local_p2p_node, after_saved.max(now_ms), signer)
+    NodeRecord::from_node(local_p2p_node, starting_enr_seq(saved_seq, now_ms), signer)
         .expect("Node record could not be created from local node")
+}
+
+/// The `seq` a starting node's record takes: the larger of the `seq` saved at
+/// the last clean shutdown plus one and the current time in milliseconds.
+///
+/// The saved `seq` covers a clean restart, including one after the clock
+/// stepped back. An abrupt exit (a crash, `docker restart -t 0`) skips that
+/// save and leaves an older `seq` on disk, so the clock is the floor: a run
+/// that started from the clock would have had to change its record more than
+/// once per millisecond of uptime to get past it.
+///
+/// The two do not cover each other's gap. A run that started from the saved
+/// `seq` because the clock was behind it, and then exited abruptly, can be
+/// followed by one serving a `seq` no higher than its last, since neither the
+/// disk nor the clock saw the edits it made.
+fn starting_enr_seq(saved_seq: Option<u64>, now_ms: u64) -> u64 {
+    saved_seq.map_or(0, |seq| seq.saturating_add(1)).max(now_ms)
 }
 
 pub fn get_authrpc_socket_addr(opts: &Options) -> SocketAddr {
@@ -1528,7 +1546,7 @@ mod interrupted_batch_recovery_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_p2p_endpoints, validate_rpc_addrs};
+    use super::{resolve_p2p_endpoints, starting_enr_seq, validate_rpc_addrs};
     use std::net::{IpAddr, SocketAddr};
 
     fn ip(s: &str) -> IpAddr {
@@ -1682,5 +1700,29 @@ mod tests {
         let (bind, ext) = resolve_p2p_endpoints(None, None, Some(docker_ip), None);
         assert_eq!(bind, docker_ip);
         assert_eq!(ext, docker_ip, "private IP must be announced, not 0.0.0.0");
+    }
+
+    const NOW_MS: u64 = 1_793_310_171_057;
+
+    /// A first boot, or one whose saved record could not be read, starts at the clock.
+    #[test]
+    fn a_record_with_nothing_saved_starts_at_the_clock() {
+        assert_eq!(starting_enr_seq(None, NOW_MS), NOW_MS);
+    }
+
+    /// The usual restart: the saved `seq` is behind the clock, so the clock wins.
+    #[test]
+    fn a_saved_seq_behind_the_clock_starts_at_the_clock() {
+        assert_eq!(starting_enr_seq(Some(NOW_MS - 60_000), NOW_MS), NOW_MS);
+        // A record saved before `seq` moved to milliseconds counts as behind too.
+        assert_eq!(starting_enr_seq(Some(1_793_310_171), NOW_MS), NOW_MS);
+    }
+
+    /// A clock stepped back since a clean shutdown must not take `seq` back
+    /// with it.
+    #[test]
+    fn a_saved_seq_ahead_of_the_clock_is_passed_by_one() {
+        let saved = NOW_MS + 3_600_000;
+        assert_eq!(starting_enr_seq(Some(saved), NOW_MS), saved + 1);
     }
 }
