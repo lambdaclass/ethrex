@@ -497,6 +497,11 @@ impl ContactTable {
     ///
     /// The stamp is what [`Self::prune`] ages out. A re-handshake restamps it, and so
     /// does ordinary use through [`Self::touch_session`].
+    ///
+    /// Callers must insert the matching `session_ips` entry alongside, binding the keys
+    /// to the address the handshake came from; both handshake paths, the one we answer
+    /// and the one we initiate, do. See [`Self::touch_session`] for what an unguarded
+    /// session loses.
     pub fn set_session(&mut self, node_id: H256, session: Session) {
         self.sessions.insert(node_id, (session, Instant::now()));
     }
