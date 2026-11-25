@@ -315,7 +315,16 @@ pub enum PeerEvent {
     Disconnected,
     /// A connection attempt was turned away, because the peer is on another
     /// network or advertises no capability the consumer wants. Sets the
-    /// contact's `unwanted` flag, so it is never dialed again.
+    /// `unwanted` flag on the node's routing-table contact, which keeps it out
+    /// of the dial candidates for as long as that contact stays in the
+    /// k-buckets.
+    ///
+    /// The verdict is only as durable as the contact that carries it. A node
+    /// the dialer drew from the connection pool alone has no contact to flag,
+    /// so the event does nothing for it, and the node is offered again once the
+    /// dialer's tried set resets. The same holds for a flagged contact that
+    /// later leaves the k-buckets (pruned, or pushed out of a full replacement
+    /// list): its pool entry stays, and is dialable.
     ///
     /// Ignored for a peer that is currently connected; see
     /// [`ContactTable::record_peer_event`].
@@ -420,8 +429,9 @@ impl ContactTable {
             // can only reach us for one while a second connection attempt to the
             // same node fails its handshake, and nothing dedupes those: a
             // transient error on the redundant attempt would otherwise mark a
-            // peer we are happily syncing from as never-dial-again, permanently
-            // and invisibly. The live connection is the better evidence.
+            // peer we are happily syncing from as unwanted, silently keeping it
+            // out of the dial candidates for as long as its contact stays in the
+            // k-buckets. The live connection is the better evidence.
             PeerEvent::Rejected if self.connected.contains(&node_id) => {
                 tracing::debug!(
                     peer = %node_id,
@@ -519,8 +529,10 @@ impl ContactTable {
         }
     }
 
-    /// Mark a contact as known-bad: on another network, no matching
-    /// capabilities, or otherwise rejected by the consumer. Never dialed again.
+    /// Mark a contact as known-bad: on another network, or offering no
+    /// capability the consumer wants. [`Self::next_dial_candidate`] skips it
+    /// while the contact stays in the k-buckets. Does nothing for a node with no
+    /// contact; see [`PeerEvent::Rejected`].
     pub(crate) fn set_unwanted(&mut self, node_id: &H256) {
         if let Some(contact) = self.get_contact_mut(node_id) {
             contact.unwanted = true;
