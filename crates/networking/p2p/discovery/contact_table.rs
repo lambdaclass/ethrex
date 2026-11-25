@@ -1462,21 +1462,31 @@ mod tests {
         // `pruned.push` inside `retain` left every test green.
         let mut table = table_with(FixedAnswer(true));
 
-        // Fill one bucket's main list so the next arrival becomes a replacement.
-        let (target_id, _) = dummy_contact(1);
-        let bucket = bucket_index(&table.local_node_id, &target_id).expect("not the local node");
-        let mut overflow = Vec::new();
-        for seed in 0..u8::MAX {
-            let (id, contact) = dummy_contact(seed);
-            if bucket_index(&table.local_node_id, &id) == Some(bucket) {
-                overflow.push(id);
-                table.insert_contact(id, contact);
-                if overflow.len() > MAX_NODES_PER_BUCKET {
-                    break;
-                }
-            }
+        // Ids built to share one bucket rather than hoping hashed ones do:
+        // against `table_with`'s all-zero local id, any id with the top bit set
+        // is at the maximal distance, bucket 255. `insert_contact` takes the id
+        // separately, so the contact's own node id plays no part.
+        let bucket = 255;
+        let id_in_bucket = |low: u8| {
+            let mut id = H256::zero();
+            id.0[0] = 0x80;
+            id.0[31] = low;
+            id
+        };
+
+        // Fill the bucket's main list so the next arrival becomes a replacement.
+        for low in 0..MAX_NODES_PER_BUCKET as u8 {
+            let id = id_in_bucket(low);
+            assert_eq!(bucket_index(&table.local_node_id, &id), Some(bucket));
+            let (_, contact) = dummy_contact(low);
+            assert!(table.insert_contact(id, contact), "the main list has room");
         }
-        let replacement = *overflow.last().expect("a contact overflowed the bucket");
+        let replacement = id_in_bucket(MAX_NODES_PER_BUCKET as u8);
+        let (_, contact) = dummy_contact(MAX_NODES_PER_BUCKET as u8);
+        assert!(
+            !table.insert_contact(replacement, contact),
+            "the main list is full"
+        );
         assert!(
             table.buckets[bucket]
                 .replacements
