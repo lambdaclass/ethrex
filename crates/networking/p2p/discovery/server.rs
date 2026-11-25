@@ -286,7 +286,7 @@ impl std::fmt::Debug for DiscoveryServer {
 
 #[actor(protocol = DiscoveryServerProtocol)]
 impl DiscoveryServer {
-    ////// Starts the discovery actor, advertising `local_node_record` as this
+    /// Starts the discovery actor, advertising `local_node_record` as this
     /// node's ENR, and returns a handle on the running server.
     ///
     /// `filter` is what this consumer requires of a discovered peer: every ENR

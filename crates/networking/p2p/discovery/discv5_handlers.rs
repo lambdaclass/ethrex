@@ -185,7 +185,22 @@ impl DiscoveryServer {
             &node.node_id(),
         );
 
+        // Bind the new keys to the address the challenge came from, as the inbound
+        // handshake does. Without the entry the IP-rebinding check in
+        // `discv5_handle_ordinary` has nothing to compare against, so these keys would
+        // decrypt packets from anywhere; and an entry left by an earlier session would
+        // hold them to that session's address, bouncing the peer's first packet from a
+        // new one into a needless re-handshake. Done before anything below can return
+        // early, so the keys are never stored unguarded.
         self.contacts.set_session(node.node_id(), session);
+        let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
+        discv5.session_ips.insert(
+            node.node_id(),
+            SessionSource {
+                ip: addr.ip(),
+                last_used: Instant::now(),
+            },
+        );
 
         let whoareyou = WhoAreYou::decode(&packet)?;
         let record = (self.local_node_record.seq != whoareyou.enr_seq)
@@ -1192,19 +1207,23 @@ mod tests {
     const PEER_KEY: [u8; 16] = [7; 16];
     const SESSION_IP: &str = "127.0.0.1";
 
-    async fn server_with_session(session_ip: IpAddr) -> (DiscoveryServer, H256) {
+    async fn server() -> DiscoveryServer {
         let local_node = Node::from_enode_url(
             "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
         ).expect("Bad enode url");
         let signer = SecretKey::new(&mut OsRng);
         let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
-        let mut server = DiscoveryServer::new_for_discv5_test(
+        DiscoveryServer::new_for_discv5_test(
             local_node,
             local_node_record,
             signer,
             Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
             Box::new(AcceptAllFilter),
-        );
+        )
+    }
+
+    async fn server_with_session(session_ip: IpAddr) -> (DiscoveryServer, H256) {
+        let mut server = server().await;
 
         let peer_id = H256::repeat_byte(0xab);
         server.contacts_mut().set_session(
@@ -1461,6 +1480,65 @@ mod tests {
             survives_sweeps(&mut server, &peer_id),
             (false, false),
             "an aged session used from the wrong address is still reaped"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_session_we_initiate_is_bound_to_its_address() {
+        // Keys derived from a peer's WHOAREYOU decrypt its packets exactly as keys
+        // from an inbound handshake do, so they need the same IP guard. Without a
+        // `session_ips` entry the rebinding check finds nothing to compare against,
+        // and the session decrypts traffic from any address.
+        let mut server = server().await;
+        let peer_key = SecretKey::from_slice(&[0x42; 32]).expect("peer key");
+        let peer = Node::new(
+            SESSION_IP.parse().unwrap(),
+            30305,
+            30305,
+            crate::utils::public_key_from_signing_key(&peer_key),
+        );
+        let peer_id = peer.node_id();
+
+        // A request of ours awaiting the peer's challenge, as `discv5_send_ordinary`
+        // leaves it when there is no session yet.
+        let nonce = [9; 12];
+        let request = Message::Ping(PingMessage {
+            req_id: Bytes::from_static(&[1]),
+            enr_seq: 1,
+        });
+        server
+            .discv5
+            .as_mut()
+            .expect("discv5 state must exist")
+            .pending_by_nonce
+            .insert(nonce, (peer, request, Instant::now()));
+        let challenge = WhoAreYou {
+            id_nonce: 1,
+            enr_seq: 0,
+        }
+        .encode(&nonce, [0; 16], &[0; 16])
+        .expect("failed to encode test WHOAREYOU");
+        let from: SocketAddr = format!("{SESSION_IP}:30305").parse().unwrap();
+
+        // The handshake goes out over a real socket to a port with no listener;
+        // whether that send reports an error is irrelevant to what is asserted here.
+        let _ = server.discv5_handle_who_are_you(challenge, from).await;
+
+        assert!(
+            server.contacts_mut().session(&peer_id).is_some(),
+            "answering the challenge derives the session keys"
+        );
+        let bound_ip = server
+            .discv5
+            .as_ref()
+            .expect("discv5 state must exist")
+            .session_ips
+            .get(&peer_id)
+            .map(|source| source.ip);
+        assert_eq!(
+            bound_ip,
+            Some(from.ip()),
+            "the keys are bound to the address the challenge came from"
         );
     }
 }

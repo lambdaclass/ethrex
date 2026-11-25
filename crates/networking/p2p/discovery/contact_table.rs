@@ -190,7 +190,8 @@ pub struct Contact {
 
     /// ENR associated with this contact, if it was provided by the peer.
     pub record: Option<NodeRecord>,
-    /// This contact failed to respond our Ping.
+    /// A discovery message to this contact failed on our side; it goes at the
+    /// next prune.
     pub disposable: bool,
     /// Set to true after we send a successful ENRResponse to it.
     pub knows_us: bool,
@@ -305,9 +306,10 @@ impl Contact {
 /// verdict about whether to dial a peer in future, not a statement that the
 /// current connection is over.
 ///
-/// There is no variant for `disposable`. That flag means a contact did not
-/// answer us over UDP, which only discovery is in a position to observe, so it
-/// is set internally rather than reported. The sync layer used to reach for it
+/// There is no variant for `disposable`. That flag means a discovery message
+/// to the contact failed on our side (it could not be encoded or the socket
+/// refused it), which only discovery is in a position to observe, so it is set
+/// internally rather than reported. The sync layer used to reach for it
 /// to mean "stop using this peer", which is not what it does: it deletes the
 /// peer's routing-table entry, leaves the connection up, and is erased by the
 /// next prune. Scoring the peer down is the mechanism for that.
@@ -321,7 +323,16 @@ pub enum PeerEvent {
     Disconnected,
     /// A connection attempt was turned away, because the peer is on another
     /// network or advertises no capability the consumer wants. Sets the
-    /// contact's `unwanted` flag, so it is never dialed again.
+    /// `unwanted` flag on the node's routing-table contact, which keeps it out
+    /// of the dial candidates for as long as that contact stays in the
+    /// k-buckets.
+    ///
+    /// The verdict is only as durable as the contact that carries it. A node
+    /// the dialer drew from the connection pool alone has no contact to flag,
+    /// so the event does nothing for it, and the node is offered again once the
+    /// dialer's tried set resets. The same holds for a flagged contact that
+    /// later leaves the k-buckets (pruned, or pushed out of a full replacement
+    /// list): its pool entry stays, and is dialable.
     ///
     /// Ignored for a peer that is currently connected; see
     /// [`ContactTable::record_peer_event`].
@@ -426,8 +437,9 @@ impl ContactTable {
             // can only reach us for one while a second connection attempt to the
             // same node fails its handshake, and nothing dedupes those: a
             // transient error on the redundant attempt would otherwise mark a
-            // peer we are happily syncing from as never-dial-again, permanently
-            // and invisibly. The live connection is the better evidence.
+            // peer we are happily syncing from as unwanted, silently keeping it
+            // out of the dial candidates for as long as its contact stays in the
+            // k-buckets. The live connection is the better evidence.
             PeerEvent::Rejected if self.connected.contains(&node_id) => {
                 tracing::debug!(
                     peer = %node_id,
@@ -456,14 +468,20 @@ impl ContactTable {
         self.connected.remove(node_id);
     }
 
-    /// How far along the consumer is towards the connection count it wants.
-    /// Feeds the lookup interval: a node with no peers looks hard, a full one
-    /// coasts.
+    /// How far along the consumer is towards the connection count it wants, in
+    /// `0.0..=1.0`. Feeds the lookup interval: a node with no peers looks hard, a
+    /// full one coasts.
+    ///
+    /// Saturates at 1.0. Nothing stops a consumer from reporting more connections
+    /// than its target (one without a connection cap of its own, say), and the
+    /// easing curve in `lookup_interval_function` is only meant for that range:
+    /// past 1 it keeps climbing, to about five times the interval's upper limit at
+    /// twice the target and over a hundred times at four.
     pub fn peer_completion(&self) -> f64 {
         if self.target_peers == 0 {
             return 1.0;
         }
-        self.connected.len() as f64 / self.target_peers as f64
+        (self.connected.len() as f64 / self.target_peers as f64).min(1.0)
     }
 
     /// Backdates the last use of every stored session by `by`, so a test can drive the
@@ -493,6 +511,11 @@ impl ContactTable {
     ///
     /// The stamp is what [`Self::prune`] ages out. A re-handshake restamps it, and so
     /// does ordinary use through [`Self::touch_session`].
+    ///
+    /// Callers must insert the matching `session_ips` entry alongside, binding the keys
+    /// to the address the handshake came from; both handshake paths, the one we answer
+    /// and the one we initiate, do. See [`Self::touch_session`] for what an unguarded
+    /// session loses.
     pub fn set_session(&mut self, node_id: H256, session: Session) {
         self.sessions.insert(node_id, (session, Instant::now()));
     }
@@ -517,16 +540,21 @@ impl ContactTable {
 
     // --- Contact flags ---
 
-    /// Mark a contact as one we should stop keeping: it failed to answer a ping,
-    /// or the consumer found it useless. Pruned on the next [`Self::prune`].
+    /// Mark a contact as one we should stop keeping: a discovery message to it
+    /// failed on our side. Pruned on the next [`Self::prune`].
+    ///
+    /// Not set for a contact that simply stops answering: no ping or FINDNODE
+    /// timeout marks it.
     pub(crate) fn set_disposable(&mut self, node_id: &H256) {
         if let Some(contact) = self.get_contact_mut(node_id) {
             contact.disposable = true;
         }
     }
 
-    /// Mark a contact as known-bad: on another network, no matching
-    /// capabilities, or otherwise rejected by the consumer. Never dialed again.
+    /// Mark a contact as known-bad: on another network, or offering no
+    /// capability the consumer wants. [`Self::next_dial_candidate`] skips it
+    /// while the contact stays in the k-buckets. Does nothing for a node with no
+    /// contact; see [`PeerEvent::Rejected`].
     pub(crate) fn set_unwanted(&mut self, node_id: &H256) {
         if let Some(contact) = self.get_contact_mut(node_id) {
             contact.unwanted = true;
@@ -931,9 +959,10 @@ impl ContactTable {
     }
 
     /// Get nodes at distances for discv5 (returns Vec<NodeRecord>).
-    /// Uses the discv5 spec log-distance: `floor(log2(XOR))` for non-zero XOR.
-    /// Distance 0 is reserved for the local node itself (handled by the caller),
-    /// so contacts start at distance >= 1.
+    /// Uses the discv5 spec log-distance, the bit length of the XOR:
+    /// `floor(log2(XOR)) + 1` for non-zero XOR, so 1..=256 (one more than the
+    /// k-bucket index). Distance 0 is reserved for the local node itself
+    /// (handled by the caller), so contacts start at distance >= 1.
     pub fn nodes_at_distances(&self, distances: &[u32]) -> Vec<NodeRecord> {
         self.iter_contacts()
             .filter_map(|(contact_id, contact)| {
@@ -1555,21 +1584,31 @@ mod tests {
         // `pruned.push` inside `retain` left every test green.
         let mut table = table_with(FixedAnswer(true));
 
-        // Fill one bucket's main list so the next arrival becomes a replacement.
-        let (target_id, _) = dummy_contact(1);
-        let bucket = bucket_index(&table.local_node_id, &target_id).expect("not the local node");
-        let mut overflow = Vec::new();
-        for seed in 0..u8::MAX {
-            let (id, contact) = dummy_contact(seed);
-            if bucket_index(&table.local_node_id, &id) == Some(bucket) {
-                overflow.push(id);
-                table.insert_contact(id, contact);
-                if overflow.len() > MAX_NODES_PER_BUCKET {
-                    break;
-                }
-            }
+        // Ids built to share one bucket rather than hoping hashed ones do:
+        // against `table_with`'s all-zero local id, any id with the top bit set
+        // is at the maximal distance, bucket 255. `insert_contact` takes the id
+        // separately, so the contact's own node id plays no part.
+        let bucket = 255;
+        let id_in_bucket = |low: u8| {
+            let mut id = H256::zero();
+            id.0[0] = 0x80;
+            id.0[31] = low;
+            id
+        };
+
+        // Fill the bucket's main list so the next arrival becomes a replacement.
+        for low in 0..MAX_NODES_PER_BUCKET as u8 {
+            let id = id_in_bucket(low);
+            assert_eq!(bucket_index(&table.local_node_id, &id), Some(bucket));
+            let (_, contact) = dummy_contact(low);
+            assert!(table.insert_contact(id, contact), "the main list has room");
         }
-        let replacement = *overflow.last().expect("a contact overflowed the bucket");
+        let replacement = id_in_bucket(MAX_NODES_PER_BUCKET as u8);
+        let (_, contact) = dummy_contact(MAX_NODES_PER_BUCKET as u8);
+        assert!(
+            !table.insert_contact(replacement, contact),
+            "the main list is full"
+        );
         assert!(
             table.buckets[bucket]
                 .replacements
@@ -1747,6 +1786,21 @@ mod tests {
 
         // `table_with` targets 10 peers.
         assert_eq!(table.peer_completion(), 0.5);
+    }
+
+    #[test]
+    fn peer_completion_saturates_at_one() {
+        // A consumer with no connection cap of its own can report more peers than
+        // it asked for. The lookup-interval curve extrapolates past 1, so an
+        // unclamped ratio would push the next lookup well beyond the upper limit.
+        let mut table = table_with(FixedAnswer(true));
+
+        // `table_with` targets 10 peers.
+        for seed in 0..15u64 {
+            table.mark_connected(H256::from_low_u64_be(seed + 1));
+        }
+
+        assert_eq!(table.peer_completion(), 1.0);
     }
 
     #[test]
