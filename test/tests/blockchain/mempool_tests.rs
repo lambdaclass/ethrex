@@ -8,7 +8,8 @@ use ethrex_blockchain::constants::{
 };
 use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::mempool::{
-    FramePaymasterReservation, Mempool, is_canonical_paymaster, transaction_intrinsic_gas,
+    FramePaymasterReservation, Mempool, SenderAdmission, is_canonical_paymaster,
+    transaction_intrinsic_gas,
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions};
 use ethrex_common::constants::POST_OSAKA_GAS_LIMIT_CAP;
@@ -3561,4 +3562,44 @@ fn add_transaction_no_broadcast_marks_tx_as_private_for_p2p_filters() {
 
     // Hashes that were never in the pool are also not private.
     assert!(!mempool.is_private(H256::random()).unwrap());
+}
+
+// Two admissions of the same blob tx that both passed the unlocked presence
+// check: each stores the bundle, then inserts. The second insert must keep the
+// pooled tx and its bundle rather than remove and re-add the tx without it.
+#[test]
+fn concurrent_readmission_keeps_the_blobs_bundle() {
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+    let bundle = BlobsBundle {
+        blobs: vec![[0u8; BYTES_PER_BLOB]],
+        commitments: vec![[0u8; 48]],
+        proofs: vec![[0u8; 48]],
+        version: 0,
+    };
+    let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+        gas: 21_000,
+        to: Address::from_low_u64_be(1),
+        ..Default::default()
+    });
+    let (hash, sender) = (H256::random(), H160::random());
+    let admission = SenderAdmission {
+        account_nonce: 0,
+        queued_max: 16,
+        gap_threshold: 100,
+        balance_check: None,
+    };
+    for _ in 0..2 {
+        mempool.add_blobs_bundle(hash, bundle.clone()).unwrap();
+        mempool
+            .add_transaction(
+                hash,
+                sender,
+                MempoolTransaction::new(tx.clone(), sender),
+                None,
+                Some(admission),
+            )
+            .unwrap();
+    }
+    assert!(mempool.contains_tx(hash).unwrap());
+    assert_eq!(mempool.get_blobs_bundle(hash).unwrap(), Some(bundle));
 }
