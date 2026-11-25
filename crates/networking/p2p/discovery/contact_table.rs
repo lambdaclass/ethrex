@@ -1003,10 +1003,12 @@ impl ContactTable {
         }
     }
 
-    /// Take in records a peer handed us, and return the ones that verified and
-    /// parsed, as `(id, node, record)`, so whatever else reads the same NODES
-    /// response sees exactly what the table took, without checking every
-    /// signature a second time. The local node's own record is left out.
+    /// Take in records a peer handed us, and return, for each one that
+    /// verified and parsed, the newest record the table knows for its node, as
+    /// `(id, node, record)`: the incoming one, or the one already held when
+    /// that is newer. Whatever else reads the same NODES response then never
+    /// sees a record the table has already superseded, and does not check
+    /// every signature a second time. The local node's own record is left out.
     pub async fn new_contact_records(
         &mut self,
         node_records: Vec<NodeRecord>,
@@ -1021,7 +1023,20 @@ impl ContactTable {
                 if node_id == self.local_node_id {
                     continue;
                 }
-                verified.push((node_id, node.clone(), node_record.clone()));
+                // A lagging peer can relay a record older than the one we
+                // hold. The table keeps the newer one, and so does the report.
+                let newer_held = self
+                    .get_contact_or_replacement(&node_id)
+                    .and_then(|contact| {
+                        let held = contact
+                            .record
+                            .as_ref()
+                            .filter(|held| held.seq > node_record.seq)?;
+                        Some((contact.node.clone(), held.clone()))
+                    });
+                let (reported_node, reported_record) =
+                    newer_held.unwrap_or_else(|| (node.clone(), node_record.clone()));
+                verified.push((node_id, reported_node, reported_record));
 
                 // Always add to the connection pool (regardless of k-bucket capacity)
                 self.insert_to_connection_pool(node_id, node.clone());
@@ -1362,6 +1377,24 @@ mod tests {
             Some(false),
             "a stale record must not overwrite the answer we hold"
         );
+    }
+
+    #[tokio::test]
+    async fn new_contact_records_reports_the_newer_record_it_holds() {
+        // A lagging peer relaying an old record must not hand whatever else
+        // reads the same NODES response a record the table has superseded.
+        let mut table = table_with(FixedAnswer(true));
+        let (node_id, newer) = record_for(6, 5);
+        let (_, older) = record_for(6, 3);
+
+        table.new_contact_records(vec![newer]).await;
+        let reported = table.new_contact_records(vec![older]).await;
+
+        let reported: Vec<_> = reported
+            .iter()
+            .map(|(id, _, record)| (*id, record.seq))
+            .collect();
+        assert_eq!(reported, vec![(node_id, 5)]);
     }
 
     // --- Consumer lifecycle ---

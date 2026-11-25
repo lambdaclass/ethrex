@@ -289,7 +289,11 @@ impl NodeQuery {
     ) {
         self.in_flight.remove(&(sender, req_id.clone()));
         self.answered.insert(sender);
-        if let Some((_, record)) = self.candidates.remove(&sender) {
+        // Eligibility is checked again: the consumer may have connected to the
+        // node, or turned it down, while the request was in flight.
+        if let Some((_, record)) = self.candidates.remove(&sender)
+            && could_dial(&sender)
+        {
             self.accept(sender, record);
         }
         for (node_id, node, record) in records {
@@ -346,7 +350,8 @@ impl NodeQuery {
         while slots > 0
             && let Some(node_id) = self.to_verify.pop_front()
         {
-            // Gone if it answered a walk request since it matched.
+            // Gone if it answered a walk request since it matched, or lost its
+            // candidacy to a newer record or to the consumer.
             let Some((node, _)) = self.candidates.get(&node_id) else {
                 continue;
             };
@@ -380,8 +385,21 @@ impl NodeQuery {
         if self.seen.insert(node_id) {
             self.walk_found_new = true;
         }
-        if self.matched_ids.contains(&node_id) || !could_dial(&node_id) || !(self.predicate)(record)
-        {
+        if self.matched_ids.contains(&node_id) {
+            return;
+        }
+        let dialable = could_dial(&node_id);
+        if !dialable || !(self.predicate)(record) {
+            // A node the consumer no longer wants loses its candidacy, and so
+            // does one whose newer record stopped matching. An older record
+            // says nothing about the newer one the candidate holds.
+            if self
+                .candidates
+                .get(&node_id)
+                .is_some_and(|(_, held)| !dialable || record.seq > held.seq)
+            {
+                self.candidates.remove(&node_id);
+            }
             return;
         }
         if self.answered.contains(&node_id) {
@@ -415,25 +433,39 @@ impl NodeQuery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::NodeRecordPairs;
     use secp256k1::SecretKey;
     use std::net::{IpAddr, Ipv4Addr};
 
     const MARKER: &[u8] = b"marker";
 
+    /// `signer`'s node, with a valid record at sequence number `seq`, marked
+    /// when `marked`. One signer gives one node, so records at several `seq`s
+    /// describe the same node.
+    fn signed_node(
+        signer: &SecretKey,
+        port: u16,
+        seq: u64,
+        marked: bool,
+    ) -> (H256, Node, NodeRecord) {
+        let public_key = crate::utils::public_key_from_signing_key(signer);
+        let node = Node::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port, port, public_key);
+        let mut pairs = NodeRecordPairs {
+            ip: Some(Ipv4Addr::LOCALHOST),
+            udp_port: Some(port),
+            tcp_port: Some(port),
+            ..Default::default()
+        };
+        if marked {
+            pairs.set_extra(MARKER, vec![1u8]);
+        }
+        let record = NodeRecord::from_pairs(seq, signer, pairs).unwrap();
+        (node.node_id(), node, record)
+    }
+
     /// A node with a valid signed record, marked when `marked`.
     fn node(port: u16, marked: bool) -> (H256, Node, NodeRecord) {
-        let signer = SecretKey::new(&mut rand::rngs::OsRng);
-        let public_key = crate::utils::public_key_from_signing_key(&signer);
-        let node = Node::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port, port, public_key);
-        let mut record = NodeRecord::from_node(&node, 1, &signer).unwrap();
-        if marked {
-            record
-                .edit(&signer, |pairs| {
-                    pairs.set_extra(MARKER, vec![1u8]);
-                })
-                .unwrap();
-        }
-        (node.node_id(), node, record)
+        signed_node(&SecretKey::new(&mut rand::rngs::OsRng), port, 1, marked)
     }
 
     fn query(want: usize, timeout: Duration) -> (NodeQuery, oneshot::Receiver<QueryReply>) {
@@ -536,6 +568,59 @@ mod tests {
         query.on_nodes(marked.0, &req(0), &[], |_| false);
 
         assert!(query.matched.is_empty());
+    }
+
+    #[test]
+    fn a_candidate_written_off_before_it_answers_never_matches() {
+        // The consumer could still dial the node when its record matched, then
+        // connected to it or turned it down while the FINDNODE was in flight.
+        let (mut query, _rx) = query(1, Duration::from_secs(5));
+        let marked = node(1, true);
+        let _ = query.poll(Instant::now());
+        query.start_walk(H256::zero(), std::slice::from_ref(&marked), anyone);
+        assert_eq!(send_all(&mut query), vec![marked.0]);
+
+        query.on_nodes(marked.0, &req(0), &[], |_| false);
+
+        assert!(query.matched.is_empty());
+        assert!(
+            !matches!(
+                query.poll(Instant::now()),
+                QueryStep::Finish(QueryOutcome::Satisfied)
+            ),
+            "a node written off in flight must not satisfy the query"
+        );
+    }
+
+    #[test]
+    fn a_newer_record_that_stops_matching_retracts_the_candidate() {
+        let (mut query, _rx) = query(1, Duration::from_secs(5));
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let matching = signed_node(&signer, 1, 2, true);
+        let older = signed_node(&signer, 1, 1, false);
+        let newer = signed_node(&signer, 1, 3, false);
+        let relay = node(2, false);
+        let _ = query.poll(Instant::now());
+        query.start_walk(H256::zero(), &[matching.clone(), relay.clone()], anyone);
+        // The candidate is asked first, then the walk's one other node.
+        assert_eq!(send_all(&mut query), vec![matching.0, relay.0]);
+
+        // The relay's answer comes in two packets. The first carries an older
+        // record, which says nothing about the newer one the candidate holds.
+        query.on_nodes(relay.0, &req(1), &[older], anyone);
+        assert!(
+            query.candidates.contains_key(&matching.0),
+            "an older record must not retract the candidate"
+        );
+        // The second carries a newer record that no longer matches.
+        query.on_nodes(relay.0, &req(1), &[newer], anyone);
+        // The node then answers, with no match left for it to confirm.
+        query.on_nodes(matching.0, &req(0), &[], anyone);
+
+        assert!(
+            query.matched.is_empty(),
+            "a node must not be returned with a record it has since replaced"
+        );
     }
 
     #[test]
