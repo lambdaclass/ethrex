@@ -91,18 +91,15 @@ impl RpcReceipt {
         init_log_index: u64,
         block_timestamp: u64,
     ) -> Self {
-        let mut logs = vec![];
-        let mut log_index = init_log_index;
-        for log in receipt.logs.clone() {
-            logs.push(RpcLog::new(
-                log,
-                log_index,
-                &tx_info,
-                &block_info,
-                block_timestamp,
-            ));
-            log_index += 1;
-        }
+        let logs = receipt
+            .logs
+            .clone()
+            .into_iter()
+            .zip(init_log_index..)
+            .map(|(log, log_index)| {
+                RpcLog::new(log, log_index, &tx_info, &block_info, block_timestamp)
+            })
+            .collect();
         let payer = receipt.payer;
         // A frame transaction's logs are its frames' logs in frame order, so each
         // frame's logs continue the index from where the previous frame's ended.

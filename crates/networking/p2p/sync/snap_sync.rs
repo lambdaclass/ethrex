@@ -918,10 +918,7 @@ pub async fn store_block_bodies(
             // Track which bodies we have already fetched
             let current_block_headers = block_headers.drain(..block_bodies.len());
             // Add bodies to storage
-            for (hash, body) in current_block_headers
-                .map(|h| h.hash())
-                .zip(block_bodies.into_iter())
-            {
+            for (hash, body) in current_block_headers.map(|h| h.hash()).zip(block_bodies) {
                 store.add_block_body(hash, body).await?;
             }
 

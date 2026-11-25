@@ -70,7 +70,7 @@ impl L2Command {
 
         let args = std::env::args().skip(2).collect::<Vec<_>>();
         let args_with_program = std::iter::once("init".to_string())
-            .chain(args.into_iter())
+            .chain(args)
             .collect::<Vec<_>>();
 
         let matches = app.try_get_matches_from(args_with_program)?;

@@ -700,12 +700,8 @@ pub fn parse_duration(input: String) -> Option<Duration> {
                         }
                     }
                     // Nanosecond
-                    'n' => {
-                        if chars.next().is_some_and(|c| c == 's') {
-                            Duration::from_nanos(integer.round() as u64)
-                        } else {
-                            return None;
-                        }
+                    'n' if chars.next().is_some_and(|c| c == 's') => {
+                        Duration::from_nanos(integer.round() as u64)
                     }
                     _ => return None,
                 };

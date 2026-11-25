@@ -195,7 +195,7 @@ fn main() {
     let callframe = vm.current_call_frame;
     info!(
         "Final Stack (bottom to top): {:?}",
-        &callframe.stack.values[callframe.stack.offset..]
+        callframe.stack.values[callframe.stack.offset..]
             .iter()
             .rev()
             .map(|value| format!("0x{:x}", value))

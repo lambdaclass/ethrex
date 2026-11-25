@@ -494,7 +494,7 @@ impl RpcHandler for GetRawTransactionByBlockAndIndex {
         };
         // The EIP-2718 envelope (`type || payload` for typed transactions), not the
         // RLP form that wraps it in a byte string: its keccak is the transaction hash.
-        serde_json::to_value(format!("0x{}", &hex::encode(tx.encode_canonical_to_vec())))
+        serde_json::to_value(format!("0x{}", hex::encode(tx.encode_canonical_to_vec())))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -538,7 +538,7 @@ impl RpcHandler for GetRawTransaction {
         };
         // The EIP-2718 envelope, as `debug_getRawTransaction` specifies and the
         // `eth_` spellings return elsewhere; see `GetRawTransactionByBlockAndIndex`.
-        serde_json::to_value(format!("0x{}", &hex::encode(tx.encode_canonical_to_vec())))
+        serde_json::to_value(format!("0x{}", hex::encode(tx.encode_canonical_to_vec())))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }

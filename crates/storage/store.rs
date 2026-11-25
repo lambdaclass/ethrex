@@ -1424,7 +1424,7 @@ impl Store {
         };
 
         let mut fetched: Vec<Code> = Vec::new();
-        for (hash, code) in missing.iter().zip(decoded.into_iter()) {
+        for (hash, code) in missing.iter().zip(decoded) {
             let Some(code) = code? else { continue };
             for &i in pending.get(hash).into_iter().flatten() {
                 out[i] = Some(code.clone());
@@ -1965,7 +1965,7 @@ impl Store {
             return Ok(());
         }
         bad_blocks.push(block);
-        bad_blocks.sort_by(|a, b| b.header.number.cmp(&a.header.number));
+        bad_blocks.sort_by_key(|b| std::cmp::Reverse(b.header.number));
         bad_blocks.truncate(MAX_BAD_BLOCKS);
         self.write_async(
             BAD_BLOCKS,
@@ -3697,7 +3697,7 @@ impl Store {
                         .collect()
                 })
             };
-            for (slot, res) in fkv_indices.iter().zip(raw.into_iter()) {
+            for (slot, res) in fkv_indices.iter().zip(raw) {
                 let Some(encoded) = res? else { continue };
                 if encoded.is_empty() {
                     continue;
@@ -3864,7 +3864,7 @@ impl Store {
                         .collect()
                 })
             };
-            for (slot_idx, res) in fkv_indices.iter().zip(raw.into_iter()) {
+            for (slot_idx, res) in fkv_indices.iter().zip(raw) {
                 let Some(encoded) = res? else { continue };
                 if encoded.is_empty() {
                     continue;

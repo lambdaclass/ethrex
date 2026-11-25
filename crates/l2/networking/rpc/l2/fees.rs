@@ -17,7 +17,7 @@ impl RpcHandler for GetBaseFeeVaultAddress {
             "No params provided".to_owned(),
         ))?;
         if params.len() != 1 {
-            return Err(ethrex_rpc::RpcErr::BadParams("Expected 1 param".to_owned()))?;
+            Err(ethrex_rpc::RpcErr::BadParams("Expected 1 param".to_owned()))?;
         };
         let block = BlockIdentifier::parse(params[0].clone(), 0)?;
 
@@ -62,7 +62,7 @@ impl RpcHandler for GetOperatorFeeVaultAddress {
             "No params provided".to_owned(),
         ))?;
         if params.len() != 1 {
-            return Err(ethrex_rpc::RpcErr::BadParams("Expected 1 param".to_owned()))?;
+            Err(ethrex_rpc::RpcErr::BadParams("Expected 1 param".to_owned()))?;
         };
         // Parse BlockNumber
         let block = BlockIdentifier::parse(params[0].clone(), 0)?;
@@ -111,7 +111,7 @@ impl RpcHandler for GetOperatorFee {
             "No params provided".to_owned(),
         ))?;
         if params.len() != 1 {
-            return Err(ethrex_rpc::RpcErr::BadParams("Expected 1 param".to_owned()))?;
+            Err(ethrex_rpc::RpcErr::BadParams("Expected 1 param".to_owned()))?;
         };
         let block = BlockIdentifier::parse(params[0].clone(), 0)?;
 
@@ -151,7 +151,7 @@ impl RpcHandler for GetL1FeeVaultAddress {
             "No params provided".to_owned(),
         ))?;
         if params.len() != 1 {
-            return Err(ethrex_rpc::RpcErr::BadParams("Expected 1 param".to_owned()))?;
+            Err(ethrex_rpc::RpcErr::BadParams("Expected 1 param".to_owned()))?;
         };
         let block = BlockIdentifier::parse(params[0].clone(), 0)?;
 
@@ -196,7 +196,7 @@ impl RpcHandler for GetL1BlobBaseFeeRequest {
             "No params provided".to_owned(),
         ))?;
         if params.len() != 1 {
-            return Err(ethrex_rpc::RpcErr::BadParams("Expected 1 param".to_owned()))?;
+            Err(ethrex_rpc::RpcErr::BadParams("Expected 1 param".to_owned()))?;
         };
         let block = BlockIdentifier::parse(params[0].clone(), 0)?;
 
