@@ -491,8 +491,9 @@ async fn a_predicate_query_walks_to_a_node_it_did_not_know() {
     let mut b = local_node(SecretKey::new(&mut rand::rngs::OsRng), false).await;
     // B hands C over only when asked for C's log-distance from B. A walk asks
     // for the distance to its random target and the two either side, so with C
-    // at 255 one walk reaches it for 7 targets in 8. The query re-walks up to
-    // `MAX_IDLE_WALKS` more times, so missing C altogether is about 1 in 4096.
+    // at 255 one walk reaches it for 7 targets in 8. A query re-walks up to
+    // `MAX_IDLE_WALKS` more times, so one query misses C altogether about 1 in
+    // 4096 times; that ends it `Exhausted`, and the test asks again.
     let c_signer = loop {
         let signer = SecretKey::new(&mut rand::rngs::OsRng);
         let id = ethrex_p2p::utils::node_id(&public_key_from_signing_key(&signer));
@@ -511,14 +512,23 @@ async fn a_predicate_query_walks_to_a_node_it_did_not_know() {
     let _b = b.server.start_for_test();
     let _c = c.server.start_for_test();
 
-    let result = a
-        .find_nodes(
-            |record| record.pairs().extra(MARKER).is_some(),
-            1,
-            Duration::from_secs(10),
-        )
-        .await
-        .expect("the query must run");
+    // Up to three queries, so a miss by chance fails the test about once in
+    // 7e10 runs. A real failure, such as C never confirming, fails them all.
+    let mut attempts = 0;
+    let result = loop {
+        attempts += 1;
+        let result = a
+            .find_nodes(
+                |record| record.pairs().extra(MARKER).is_some(),
+                1,
+                Duration::from_secs(10),
+            )
+            .await
+            .expect("the query must run");
+        if result.outcome != QueryOutcome::Exhausted || attempts == 3 {
+            break result;
+        }
+    };
     assert_eq!(result.outcome, QueryOutcome::Satisfied, "{result:?}");
     assert_eq!(result.records, vec![c_record]);
 }
