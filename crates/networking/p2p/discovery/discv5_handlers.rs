@@ -719,6 +719,9 @@ impl DiscoveryServer {
             return Ok(());
         }
 
+        // How many packets make up the answer, which a predicate query waits
+        // out before giving the request's slot away.
+        let total = nodes_message.total;
         let req_id = nodes_message.req_id;
         let records = self.contacts.new_contact_records(nodes_message.nodes).await;
 
@@ -756,7 +759,7 @@ impl DiscoveryServer {
         // A predicate query is: waiting for the next tick would cost it a slot.
         let contacts = &self.contacts;
         if let Some(query) = discv5.active_queries.iter_mut().find(|q| q.id == owner) {
-            query.on_nodes(sender_id, &req_id, &records, |node_id| {
+            query.on_nodes(sender_id, &req_id, total, &records, |node_id| {
                 contacts.could_dial(node_id)
             });
             self.discv5_drive_query(owner).await;
@@ -1144,12 +1147,28 @@ fn find_node_distances(target: &H256, node_id: &H256) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::discovery::query::FindNodesResult;
     use crate::discv5::server::SESSION_TTL;
     use crate::discv5::session::Session;
     use crate::peer_filter::AcceptAllFilter;
     use std::net::IpAddr;
     use std::sync::Arc;
     use tokio::net::UdpSocket;
+    use tokio::sync::oneshot;
+
+    type QueryAnswer = oneshot::Receiver<Result<FindNodesResult, FindNodesError>>;
+
+    /// A predicate query that matches nothing, and where its answer arrives.
+    fn query_request() -> (FindNodesRequest, QueryAnswer) {
+        let (reply, answer) = oneshot::channel();
+        let request = FindNodesRequest {
+            predicate: Box::new(|_: &NodeRecord| false),
+            want: 1,
+            timeout: Duration::from_secs(5),
+            reply,
+        };
+        (request, answer)
+    }
 
     /// The peer's outbound key, which is our inbound key: what a packet from it is
     /// encrypted with and what the handler must look up to decrypt one.
@@ -1330,6 +1349,48 @@ mod tests {
         };
         assert!(next(asked).contains(&found.node_id()));
         assert!(!next(other).contains(&found.node_id()));
+    }
+
+    #[tokio::test]
+    async fn a_query_keeps_its_request_until_the_last_nodes_packet() {
+        let (mut server, peer_id) = server_with_session(SESSION_IP.parse().unwrap()).await;
+        let (request, mut answer) = query_request();
+        let discv5 = server.discv5.as_mut().expect("discv5 state must exist");
+        let id = discv5.next_lookup_id();
+        let req_id = Bytes::from_static(&[9]);
+        let mut query = NodeQuery::new(id, request, Instant::now());
+        query.record_sent(peer_id, req_id.clone(), Instant::now());
+        discv5.active_queries.push(query);
+        discv5
+            .pending_findnodes
+            .insert((peer_id, req_id.clone()), Instant::now());
+        discv5.findnode_owners.insert((peer_id, req_id.clone()), id);
+        let packet = || NodesMessage {
+            req_id: req_id.clone(),
+            total: 2,
+            nodes: vec![],
+        };
+
+        // Had the first packet freed the request, the query would have walked
+        // on, found no seed in the empty table, and finished.
+        server
+            .discv5_handle_nodes_message(packet(), peer_id)
+            .await
+            .unwrap();
+        assert!(
+            answer.try_recv().is_err(),
+            "the query must wait for the second packet"
+        );
+
+        server
+            .discv5_handle_nodes_message(packet(), peer_id)
+            .await
+            .unwrap();
+        let result = answer
+            .try_recv()
+            .expect("the query must answer once its request is answered in full")
+            .expect("the query must have run");
+        assert_eq!(result.outcome, QueryOutcome::Exhausted);
     }
 
     #[tokio::test]
