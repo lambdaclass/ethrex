@@ -185,7 +185,22 @@ impl DiscoveryServer {
             &node.node_id(),
         );
 
+        // Bind the new keys to the address the challenge came from, as the inbound
+        // handshake does. Without the entry the IP-rebinding check in
+        // `discv5_handle_ordinary` has nothing to compare against, so these keys would
+        // decrypt packets from anywhere; and an entry left by an earlier session would
+        // hold them to that session's address, bouncing the peer's first packet from a
+        // new one into a needless re-handshake. Done before anything below can return
+        // early, so the keys are never stored unguarded.
         self.contacts.set_session(node.node_id(), session);
+        let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
+        discv5.session_ips.insert(
+            node.node_id(),
+            SessionSource {
+                ip: addr.ip(),
+                last_used: Instant::now(),
+            },
+        );
 
         let whoareyou = WhoAreYou::decode(&packet)?;
         let local = self.local_node.load();
@@ -405,6 +420,21 @@ impl DiscoveryServer {
             let _ = request.reply.send(Err(FindNodesError::Discv5Disabled));
             return;
         };
+        // A query whose caller has gone is otherwise dropped only at its next
+        // poll, up to a query tick away; it must not hold a slot against a
+        // caller who is waiting. Dropping it is all `QueryStep::Abandoned`
+        // does too: its FINDNODE owners expire with their pending requests.
+        discv5.active_queries.retain(|query| {
+            let abandoned = query.is_abandoned();
+            if abandoned {
+                trace!(
+                    protocol = "discv5",
+                    query = query.id.0,
+                    "Caller stopped waiting; dropping query"
+                );
+            }
+            !abandoned
+        });
         if discv5.active_queries.len() >= MAX_ACTIVE_QUERIES {
             let _ = request.reply.send(Err(FindNodesError::TooManyQueries));
             return;
@@ -471,7 +501,9 @@ impl DiscoveryServer {
                 }
                 QueryStep::Walk => {
                     let target: H256 = OsRng.r#gen();
-                    let seeds = self.contacts.closest_records(target, LOOKUP_BUCKET_SIZE);
+                    let seeds = self
+                        .contacts
+                        .closest_discv5_contacts(target, LOOKUP_BUCKET_SIZE);
                     let contacts = &self.contacts;
                     let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
                     if seeds.is_empty() {
@@ -719,6 +751,9 @@ impl DiscoveryServer {
             return Ok(());
         }
 
+        // How many packets make up the answer, which a predicate query waits
+        // out before giving the request's slot away.
+        let total = nodes_message.total;
         let req_id = nodes_message.req_id;
         let records = self.contacts.new_contact_records(nodes_message.nodes).await;
 
@@ -756,7 +791,7 @@ impl DiscoveryServer {
         // A predicate query is: waiting for the next tick would cost it a slot.
         let contacts = &self.contacts;
         if let Some(query) = discv5.active_queries.iter_mut().find(|q| q.id == owner) {
-            query.on_nodes(sender_id, &req_id, &records, |node_id| {
+            query.on_nodes(sender_id, &req_id, total, &records, |node_id| {
                 contacts.could_dial(node_id)
             });
             self.discv5_drive_query(owner).await;
@@ -1144,31 +1179,51 @@ fn find_node_distances(target: &H256, node_id: &H256) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::discovery::query::FindNodesResult;
     use crate::discv5::server::SESSION_TTL;
     use crate::discv5::session::Session;
     use crate::peer_filter::AcceptAllFilter;
     use std::net::IpAddr;
     use std::sync::Arc;
     use tokio::net::UdpSocket;
+    use tokio::sync::oneshot;
+
+    type QueryAnswer = oneshot::Receiver<Result<FindNodesResult, FindNodesError>>;
+
+    /// A predicate query that matches nothing, and where its answer arrives.
+    fn query_request() -> (FindNodesRequest, QueryAnswer) {
+        let (reply, answer) = oneshot::channel();
+        let request = FindNodesRequest {
+            predicate: Box::new(|_: &NodeRecord| false),
+            want: 1,
+            timeout: Duration::from_secs(5),
+            reply,
+        };
+        (request, answer)
+    }
 
     /// The peer's outbound key, which is our inbound key: what a packet from it is
     /// encrypted with and what the handler must look up to decrypt one.
     const PEER_KEY: [u8; 16] = [7; 16];
     const SESSION_IP: &str = "127.0.0.1";
 
-    async fn server_with_session(session_ip: IpAddr) -> (DiscoveryServer, H256) {
+    async fn server() -> DiscoveryServer {
         let local_node = Node::from_enode_url(
             "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
         ).expect("Bad enode url");
         let signer = SecretKey::new(&mut OsRng);
         let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
-        let mut server = DiscoveryServer::new_for_discv5_test(
+        DiscoveryServer::new_for_discv5_test(
             local_node,
             local_node_record,
             signer,
             Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
             Box::new(AcceptAllFilter),
-        );
+        )
+    }
+
+    async fn server_with_session(session_ip: IpAddr) -> (DiscoveryServer, H256) {
+        let mut server = server().await;
 
         let peer_id = H256::repeat_byte(0xab);
         server.contacts_mut().set_session(
@@ -1333,6 +1388,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_query_keeps_its_request_until_the_last_nodes_packet() {
+        let (mut server, peer_id) = server_with_session(SESSION_IP.parse().unwrap()).await;
+        let (request, mut answer) = query_request();
+        let discv5 = server.discv5.as_mut().expect("discv5 state must exist");
+        let id = discv5.next_lookup_id();
+        let req_id = Bytes::from_static(&[9]);
+        let mut query = NodeQuery::new(id, request, Instant::now());
+        query.record_sent(peer_id, req_id.clone(), Instant::now());
+        discv5.active_queries.push(query);
+        discv5
+            .pending_findnodes
+            .insert((peer_id, req_id.clone()), Instant::now());
+        discv5.findnode_owners.insert((peer_id, req_id.clone()), id);
+        let packet = || NodesMessage {
+            req_id: req_id.clone(),
+            total: 2,
+            nodes: vec![],
+        };
+
+        // Had the first packet freed the request, the query would have walked
+        // on, found no seed in the empty table, and finished.
+        server
+            .discv5_handle_nodes_message(packet(), peer_id)
+            .await
+            .unwrap();
+        assert!(
+            answer.try_recv().is_err(),
+            "the query must wait for the second packet"
+        );
+
+        server
+            .discv5_handle_nodes_message(packet(), peer_id)
+            .await
+            .unwrap();
+        let result = answer
+            .try_recv()
+            .expect("the query must answer once its request is answered in full")
+            .expect("the query must have run");
+        assert_eq!(result.outcome, QueryOutcome::Exhausted);
+    }
+
+    #[tokio::test]
+    async fn an_abandoned_query_gives_up_its_slot_at_once() {
+        let (mut server, _) = server_with_session(SESSION_IP.parse().unwrap()).await;
+        let discv5 = server.discv5.as_mut().expect("discv5 state must exist");
+        let mut waiting = Vec::new();
+        for _ in 0..MAX_ACTIVE_QUERIES {
+            let (request, answer) = query_request();
+            let id = discv5.next_lookup_id();
+            discv5
+                .active_queries
+                .push(NodeQuery::new(id, request, Instant::now()));
+            waiting.push(answer);
+        }
+
+        // Every slot is taken by a query someone is waiting for.
+        let (request, mut answer) = query_request();
+        server.discv5_start_query(request).await;
+        assert!(matches!(
+            answer.try_recv(),
+            Ok(Err(FindNodesError::TooManyQueries))
+        ));
+
+        // Their callers stop waiting, and no tick has polled the queries since.
+        drop(waiting);
+        let (request, mut answer) = query_request();
+        server.discv5_start_query(request).await;
+        // With nothing to walk from, the query ends at once, but it did run.
+        let result = answer
+            .try_recv()
+            .expect("the query must answer")
+            .expect("abandoned queries must not hold the slots");
+        assert_eq!(result.outcome, QueryOutcome::Exhausted);
+    }
+
+    #[tokio::test]
     async fn a_packet_from_another_ip_refreshes_nothing() {
         // The rebinding check answers this one with a WHOAREYOU. Refreshing here would
         // let whoever can reach us from another address hold a session open forever.
@@ -1349,6 +1480,65 @@ mod tests {
             survives_sweeps(&mut server, &peer_id),
             (false, false),
             "an aged session used from the wrong address is still reaped"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_session_we_initiate_is_bound_to_its_address() {
+        // Keys derived from a peer's WHOAREYOU decrypt its packets exactly as keys
+        // from an inbound handshake do, so they need the same IP guard. Without a
+        // `session_ips` entry the rebinding check finds nothing to compare against,
+        // and the session decrypts traffic from any address.
+        let mut server = server().await;
+        let peer_key = SecretKey::from_slice(&[0x42; 32]).expect("peer key");
+        let peer = Node::new(
+            SESSION_IP.parse().unwrap(),
+            30305,
+            30305,
+            crate::utils::public_key_from_signing_key(&peer_key),
+        );
+        let peer_id = peer.node_id();
+
+        // A request of ours awaiting the peer's challenge, as `discv5_send_ordinary`
+        // leaves it when there is no session yet.
+        let nonce = [9; 12];
+        let request = Message::Ping(PingMessage {
+            req_id: Bytes::from_static(&[1]),
+            enr_seq: 1,
+        });
+        server
+            .discv5
+            .as_mut()
+            .expect("discv5 state must exist")
+            .pending_by_nonce
+            .insert(nonce, (peer, request, Instant::now()));
+        let challenge = WhoAreYou {
+            id_nonce: 1,
+            enr_seq: 0,
+        }
+        .encode(&nonce, [0; 16], &[0; 16])
+        .expect("failed to encode test WHOAREYOU");
+        let from: SocketAddr = format!("{SESSION_IP}:30305").parse().unwrap();
+
+        // The handshake goes out over a real socket to a port with no listener;
+        // whether that send reports an error is irrelevant to what is asserted here.
+        let _ = server.discv5_handle_who_are_you(challenge, from).await;
+
+        assert!(
+            server.contacts_mut().session(&peer_id).is_some(),
+            "answering the challenge derives the session keys"
+        );
+        let bound_ip = server
+            .discv5
+            .as_ref()
+            .expect("discv5 state must exist")
+            .session_ips
+            .get(&peer_id)
+            .map(|source| source.ip);
+        assert_eq!(
+            bound_ip,
+            Some(from.ip()),
+            "the keys are bound to the address the challenge came from"
         );
     }
 }

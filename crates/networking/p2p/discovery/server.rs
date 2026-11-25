@@ -192,6 +192,11 @@ impl DiscoveryHandle {
     /// once; another is refused with
     /// [`FindNodesError::TooManyQueries`] rather than queued. Dropping the
     /// returned future abandons the query.
+    ///
+    /// A `want` of zero asks for nothing: it goes through the same checks as
+    /// any other query, slot cap included, and one that runs finishes
+    /// [`QueryOutcome::Satisfied`](super::QueryOutcome::Satisfied) at once,
+    /// with no records and no FINDNODE sent.
     pub async fn find_nodes(
         &self,
         predicate: impl Fn(&NodeRecord) -> bool + Send + 'static,
