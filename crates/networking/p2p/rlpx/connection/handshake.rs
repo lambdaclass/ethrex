@@ -163,6 +163,7 @@ pub(crate) async fn perform(
             client_version: context.client_version.clone(),
             connection_broadcast_send: context.broadcast.clone(),
             peer_table: context.table.clone(),
+            discovery: context.discovery.clone(),
             #[cfg(feature = "l2")]
             l2_state: context
                 .based_context
@@ -176,6 +177,7 @@ pub(crate) async fn perform(
             short_tx_answer_strikes: 0,
             connection_id: ConnectionId::next(),
             registered_in_peer_table: false,
+            registration_released: false,
             txs_sent_to_peer: 0,
             received_txs_from_peer: false,
             missed_pongs: 0,

@@ -28,6 +28,7 @@ use ethrex_common::{
     },
 };
 use ethrex_p2p::{
+    discovery::DiscoveryHandle,
     network::P2PContext,
     peer_handler::PeerHandler,
     peer_table::{PeerTable, PeerTableServer, TARGET_PEERS},
@@ -275,7 +276,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             jwt_secret,
             shared_local_node,
             dummy_sync_manager().await,
-            dummy_peer_handler(storage).await,
+            dummy_peer_handler().await,
             ClientVersion::new(
                 "ethrex".to_string(),
                 "0.1.0".to_string(),
@@ -419,7 +420,7 @@ impl Drop for TestContext {
 
 pub async fn default_context_with_storage(storage: Store) -> TestContext {
     let syncer = Some(Arc::new(dummy_sync_manager().await));
-    let peer_handler = Some(dummy_peer_handler(storage.clone()).await);
+    let peer_handler = Some(dummy_peer_handler().await);
     context_with(storage, syncer, peer_handler)
 }
 
@@ -477,7 +478,7 @@ pub async fn dummy_sync_manager() -> SyncManager {
     let store = Store::new("", EngineType::InMemory).expect("Failed to start Store Engine");
     let blockchain = Arc::new(Blockchain::for_test_harness(store.clone()));
     SyncManager::new(
-        dummy_peer_handler(store).await,
+        dummy_peer_handler().await,
         &SyncMode::Full,
         CancellationToken::new(),
         blockchain,
@@ -495,9 +496,14 @@ pub async fn dummy_sync_manager() -> SyncManager {
 
 /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
 /// This should only be used in tests as it won't be able to interact with the node's connected peers
-pub async fn dummy_peer_handler(store: Store) -> PeerHandler {
-    let peer_table = PeerTableServer::spawn(H256::random(), TARGET_PEERS, store);
-    PeerHandler::new(peer_table.clone(), dummy_actor(peer_table).await)
+pub async fn dummy_peer_handler() -> PeerHandler {
+    let peer_table = PeerTableServer::spawn(TARGET_PEERS);
+    // No discovery server behind this handle: the dummy handler never dials.
+    PeerHandler::new(
+        peer_table.clone(),
+        dummy_actor(peer_table).await,
+        DiscoveryHandle::new(),
+    )
 }
 
 /// Creates a dummy RLPx initiator actor for tests

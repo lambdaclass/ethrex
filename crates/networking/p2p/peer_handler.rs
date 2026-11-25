@@ -1,3 +1,4 @@
+use crate::discovery::DiscoveryHandle;
 use crate::rlpx::initiator::RLPxInitiator;
 use crate::{
     metrics::{CurrentStepValue, METRICS},
@@ -51,6 +52,9 @@ pub use crate::snap::{DumpError, RequestMetadata, RequestStorageTrieNodesError, 
 #[derive(Debug, Clone)]
 pub struct PeerHandler {
     pub peer_table: PeerTable,
+    /// Reports peers that turned out to be useless back to discovery, and asks
+    /// it to prune. Inert when discovery is not running.
+    pub discovery: DiscoveryHandle,
     pub initiator: ActorRef<RLPxInitiator>,
     /// Latest forkchoice head received from the consensus client, shared with the
     /// `SyncManager` (which owns the writes) and every clone of this handler.
@@ -157,9 +161,14 @@ async fn ask_peer_head_number(
 }
 
 impl PeerHandler {
-    pub fn new(peer_table: PeerTable, initiator: ActorRef<RLPxInitiator>) -> PeerHandler {
+    pub fn new(
+        peer_table: PeerTable,
+        initiator: ActorRef<RLPxInitiator>,
+        discovery: DiscoveryHandle,
+    ) -> PeerHandler {
         Self {
             peer_table,
+            discovery,
             initiator,
             latest_fcu_head: Arc::new(tokio::sync::Mutex::new(H256::zero())),
         }
@@ -534,8 +543,9 @@ impl PeerHandler {
                     if block_headers.is_empty() {
                         // Empty response is valid per eth spec (peer may not have these blocks),
                         // so apply only a soft score penalty (`record_failure`) rather than
-                        // ejecting the peer (`set_disposable`): a spec-conformant peer that simply
-                        // lacks a fork's blocks shouldn't be permanently dropped from rotation.
+                        // bottoming out its score (`record_critical_failure`): a spec-conformant
+                        // peer that simply lacks a fork's blocks shouldn't all but drop out of
+                        // rotation.
                         // Genuine misbehavior below (unchained / wrong-chain-start) uses the same
                         // soft tier, so the distinction stays consistent.
                         debug!(
@@ -572,7 +582,7 @@ impl PeerHandler {
                     self.peer_table.record_failure(peer_id)?;
                     return Ok(HeaderFetchOutcome::PeerFailed);
                 }
-                // Timeout or invalid response - mark peer as disposable
+                // Timeout or invalid response: a soft penalty, like the other no-answer paths
                 debug!("Didn't receive block headers from peer, penalizing peer {peer_id}");
                 self.peer_table.record_failure(peer_id)?;
                 Ok(HeaderFetchOutcome::PeerFailed)
@@ -647,15 +657,14 @@ impl PeerHandler {
                 {
                     if block_bodies.len() > block_hashes_len {
                         // More bodies than hashes requested: a protocol violation, so
-                        // drop the peer rather than just scoring it down.
+                        // bottom out its score rather than just nudging it down.
                         debug!(
                             %peer_id,
                             got = block_bodies.len(),
                             requested = block_hashes_len,
-                            "Peer returned more block bodies than requested, disposing"
+                            "Peer returned more block bodies than requested, penalizing"
                         );
-                        self.peer_table.record_failure(peer_id)?;
-                        let _ = self.peer_table.set_disposable(peer_id);
+                        self.peer_table.record_critical_failure(peer_id)?;
                         return Ok(None);
                     }
                     if !block_bodies.is_empty() {
@@ -809,10 +818,15 @@ impl PeerHandler {
                         }
                         receipts
                     }
+                    // No usable answer: the request timed out, the connection
+                    // failed, or the reply had another id or type. Nothing here
+                    // proves the peer misbehaved (a slow reply during backfill
+                    // lands in this arm too), so it gets the same soft penalty
+                    // as the bodies path gives a missing response. Bottoming
+                    // out the score is kept for the protocol violation below.
                     _ => {
                         debug!("Didn't receive receipts from peer, penalizing peer {peer_id}");
                         self.peer_table.record_failure(peer_id)?;
-                        let _ = self.peer_table.set_disposable(peer_id);
                         return Ok(None);
                     }
                 };
@@ -820,8 +834,8 @@ impl PeerHandler {
                 // none of the requested range — the norm for old history after
                 // the history-expiry rollout — so it earns only a soft penalty:
                 // the peer may still be valuable for head-following. An
-                // oversized response is a protocol violation and makes the peer
-                // disposable.
+                // oversized response is a protocol violation and bottoms out
+                // the peer's score.
                 if receipts.is_empty() {
                     debug!("Received empty receipts from peer {peer_id}, penalizing softly");
                     self.peer_table.record_failure(peer_id)?;
@@ -829,8 +843,7 @@ impl PeerHandler {
                 }
                 if receipts.len() > block_hashes_len {
                     debug!("Received oversized receipts from peer {peer_id}, penalizing");
-                    self.peer_table.record_failure(peer_id)?;
-                    let _ = self.peer_table.set_disposable(peer_id);
+                    self.peer_table.record_critical_failure(peer_id)?;
                     return Ok(None);
                 }
                 // Success is recorded by the caller, once the receipts have been

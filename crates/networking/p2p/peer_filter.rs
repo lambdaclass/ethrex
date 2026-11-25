@@ -18,22 +18,29 @@ use tracing::debug;
 /// discv5 alike. A contact discovered without an ENR is never filtered and stays
 /// dialable.
 ///
-/// Implementations run inside the peer table's message loop, so a slow `accepts`
-/// stalls every other peer-table operation: keep it to work proportional to the
-/// record, and cache anything expensive at construction.
+/// Implementations run inside the discovery server's message loop, so a slow
+/// `accepts` stalls inbound UDP, revalidation, lookups, and the dial-candidate
+/// request the initiator is waiting on. A remote peer decides how often this runs:
+/// a NODES answer to one of our FINDNODE requests, which may span several packets,
+/// is filtered per ENR it carries that is new to us or newer than the one we hold;
+/// so is the record a peer attaches to its discv5 handshake, and the one in every
+/// discv4 ENRResponse a peer sends while our ENR request to it is outstanding,
+/// matching or not. (An unsolicited NODES is dropped before it gets here.) Keep it
+/// to work proportional to the record, and cache anything expensive at
+/// construction.
 ///
 /// `accepts` is synchronous, which states that requirement in the type rather
 /// than in this comment. It also keeps the trait object-safe without boxing a
 /// future for every contact discovery hands over.
 ///
-/// `Send` because the peer table owns the filter and its state is moved into an
-/// actor task. Not `Sync`: only that task ever touches it. `'static` in
-/// practice, since the table stores it as a `Box<dyn PeerFilter>` that outlives
-/// every caller.
+/// `Send` because discovery's contact table owns the filter and its state is
+/// moved into an actor task. Not `Sync`: only that task ever touches it.
+/// `'static` in practice, since the table stores it as a `Box<dyn PeerFilter>`
+/// that outlives every caller.
 pub trait PeerFilter: Send {
     /// Whether this peer is worth dialing, judged from the ENR it published.
     ///
-    /// A `false` is never final: the peer table runs the contact through the
+    /// A `false` is never final: the contact table runs the contact through the
     /// filter again as soon as the peer publishes a higher-`seq` record, so a
     /// filter may reject on facts that later change, such as a fork id read
     /// against a head we have not synced to yet.
@@ -100,6 +107,19 @@ impl PeerFilter for EthForkIdFilter {
                 true
             }
         }
+    }
+}
+
+/// Accepts every peer discovery finds.
+///
+/// What a consumer that only wants the discovery stack passes: it has no
+/// requirement of its own to express, and screening on our behalf would only
+/// throw away peers it might want.
+pub struct AcceptAllFilter;
+
+impl PeerFilter for AcceptAllFilter {
+    fn accepts(&self, _record: &NodeRecord) -> bool {
+        true
     }
 }
 
